@@ -240,6 +240,12 @@ class WorkflowTests(unittest.TestCase):
         args = self.args("unlock") + ["--execute", "--confirm-device", "ABC", "--accept-data-loss"]
         with patch.object(device, "run", side_effect=fake):
             self.assertEqual(self.call(args), 0)
+        # Real engineering ABL rejected persistent unlock writes until permissive
+        # mode was enabled. Normal unlock must also precede critical unlock.
+        self.assertEqual([command[3:] for command in commands[2:5]], [
+            ["oem", "setenforce", "0"], ["flashing", "unlock"],
+            ["flashing", "unlock_critical"],
+        ])
         self.assertEqual(commands[-2][-2:], ["reboot", "bootloader"])
         self.assertEqual(commands[-1][-2:], ["oem", "device-info"])
         with patch.object(device, "run", side_effect=["ABC fastboot", ValueError("failure")]) as run:

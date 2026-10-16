@@ -129,14 +129,17 @@ Manually enter fastboot with the engineering ABL active:
 python device.py unlock --identity out/device.json --backup backup/stock
 ```
 
-This previews the OEM code, normal/critical unlock, SELinux permissive command and bootloader
-reboot. Execution requires all three flags:
+This previews the OEM code, SELinux permissive command, normal unlock, critical unlock and
+bootloader reboot, in that order. Execution requires all three flags:
 `--execute --confirm-device YOUR_ADB_SERIAL --accept-data-loss`.
 **Unlocking wipes user data and the upstream sequence enables permissive SELinux.**
 If fastboot exposes a different USB serial, pass it with `--serial FASTBOOT_SERIAL` after
 checking the physical device. Every command must succeed; failures stop the sequence.
 
 The tool checks both normal and critical unlock state **after** rebooting the bootloader.
+On the tested 5.13.7 headset, issuing unlock before `oem setenforce 0` returned
+`Set device unlocked! failed: 00000050` and changed only the reported in-memory flags;
+they reverted after reboot. The corrected order persisted both flags across a reboot.
 Locked, missing or contradictory state is failure. Upstream reports that unlock persistence
 can require another attempt; there is no automatic retry loop. Inspect the failure and rerun
 explicitly if appropriate. You can also inspect without modifying the device:
@@ -145,9 +148,17 @@ explicitly if appropriate. You can also inspect without modifying the device:
 python device.py check-unlocked --critical
 ```
 
-## 5. Restore stock ABL and return to the Linux workflow
+## 5. Test with engineering ABL, then restore stock ABL
 
-Re-enter EDL. Restore each ABL partition you staged from its original verified backup:
+Boot PICO OS and follow its recovery prompts for the required factory reset. Complete setup
+and authorize USB debugging again before using the [hardware acceptance runner](HARDWARE-TEST.md).
+Keep engineering ABL active for RAM-boot experiments: restoring production ABL can remove
+usable fastboot commands even when the unlock bits persist. A successful unlock alone does
+not establish that `fastboot boot` works; the runner checks that on the device and has no
+automatic flashing fallback.
+
+After the experiments, re-enter EDL. Restore each ABL partition you staged from its original
+verified backup for normal boot reliability:
 
 ```sh
 python device.py restore-abl --identity out/device.json --backup backup/stock --loader assets/firehose.elf --partition abl --readback out/stock-abl-readback.bin
@@ -156,17 +167,12 @@ python device.py restore-abl --identity out/device.json --backup backup/stock --
 Add `--execute --confirm-device YOUR_ADB_SERIAL` to write and verify. Restoration deliberately
 does not require a successful unlock state: it must also work when recovering a failed attempt.
 It restores ABL only; devinfo is not automatically reverted because that may undo the workflow.
-Follow the device's recovery prompts for the required factory reset. Do not automatically
-restore encrypted userdata across resets or firmware changes.
+Do not automatically restore encrypted userdata across resets or firmware changes.
 
-Upstream recommends restoring production ABL for normal boot reliability. Its technical notes
-also warn that production ABL can remove usable fastboot access even when unlock bits persist.
-Therefore a successful unlock is **not** proof that `fastboot boot` works. Our boot scripts now
-refuse locked or unknown state. Follow [README.md](README.md) to build and attempt a RAM boot;
-the flashing fallback there is a separate, persistent operation requiring working recovery.
-
-For a prepared headset, the [hardware acceptance runner](HARDWARE-TEST.md) automates preflight,
-RAM boot, shell/storage/diagnostic checks and verified return to stock PICO OS.
+The runner verifies return to the original Android build while engineering ABL is still
+installed. It does not restore ABL or relock the device; verify another normal boot after
+restoring ABL. The flashing fallback in [README.md](README.md) remains a separate, persistent
+operation requiring working recovery.
 
 ## Host verification
 

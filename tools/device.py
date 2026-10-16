@@ -272,9 +272,11 @@ def dispatch(args) -> None:
         print("Image bytes verified by EDL readback; no reboot performed.")
         return
     if args.command == "unlock":
+        # Engineering ABL needs permissive mode before writing the unlock flags.
+        # Otherwise 00000050 can leave apparently unlocked, nonpersistent state.
         commands = [["oem", unlock_token(identity["chip_id"]), "unlock"],
-                    ["flashing", "unlock_critical"], ["flashing", "unlock"],
-                    ["oem", "setenforce", "0"], ["reboot", "bootloader"]]
+                    ["oem", "setenforce", "0"], ["flashing", "unlock"],
+                    ["flashing", "unlock_critical"], ["reboot", "bootloader"]]
         if not args.execute:
             for command in commands:
                 print(subprocess.list2cmdline([args.fastboot, "-s", args.serial or identity["serial"], *command]))
@@ -286,7 +288,8 @@ def dispatch(args) -> None:
             run([args.fastboot, "-s", serial, *command], timeout=120)
         # fastboot itself waits for reconnection; subprocess timeout bounds that wait.
         check_unlock(args.fastboot, serial, critical=True)
-        print("Normal and critical unlock confirmed after bootloader reboot. Restore stock ABL next.")
+        print("Normal and critical unlock confirmed after bootloader reboot. "
+              "See DEVICE.md for reset, RAM testing and stock ABL restoration.")
 
 
 def parser() -> argparse.ArgumentParser:
