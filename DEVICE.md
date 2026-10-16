@@ -152,6 +152,10 @@ python device.py check-unlocked --critical
 
 Boot PICO OS and follow its recovery prompts for the required factory reset. Complete setup
 and authorize USB debugging again before using the [hardware acceptance runner](HARDWARE-TEST.md).
+The original PICO 4's volume rocker is on the top edge of the rigid right-hand strap, just
+behind the headset body. In recovery, use Volume +/- to move and a short Power press to select
+the reset and confirm it; select `Reboot system now` afterward if shown. See
+[PICO's recovery instructions and button diagrams](https://www.picoxr.com/uk/support/faq/recovery-restore-factory-settings).
 Keep engineering ABL active for RAM-boot experiments: restoring production ABL can remove
 usable fastboot commands even when the unlock bits persist. A successful unlock alone does
 not establish that `fastboot boot` works; the runner checks that on the device and has no
