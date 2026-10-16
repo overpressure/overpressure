@@ -92,6 +92,14 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(self.call(self.args(command)), 0)
             run.assert_not_called()
 
+    def test_python_edl_entrypoint_keeps_arguments_separate(self):
+        script = self.root / "tool with spaces" / "edl.py"
+        args = device.parser().parse_args(self.args("backup") + [
+            "--edl-script", str(script), "--edl-python", "venv/python.exe"])
+        command = device.edl_command(args, "rl", str(self.backup), "--genxml")
+        self.assertEqual(command[:3], ["venv/python.exe", str(script.resolve()), "rl"])
+        self.assertIn("--memory=ufs", command)
+
     def test_backup_requires_recovery_files_and_does_not_overwrite(self):
         args = self.args("backup") + ["--execute", "--confirm-device", "ABC"]
         with patch.object(device, "run") as run:

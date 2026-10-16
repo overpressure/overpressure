@@ -120,7 +120,12 @@ def verified_backup(folder: Path) -> dict:
 def edl_command(args, *words: str) -> list[str]:
     loader = Path(args.loader).resolve()
     digest(loader)
-    return [args.edl, *words, "--memory=ufs", f"--loader={loader}"]
+    # Windows Git checkouts may materialize edlclient's entrypoint symlink as
+    # plain text. Calling its top-level script avoids that broken entrypoint.
+    executable = [args.edl]
+    if args.edl_script:
+        executable = [args.edl_python, str(Path(args.edl_script).resolve())]
+    return [*executable, *words, "--memory=ufs", f"--loader={loader}"]
 
 
 def confirm(args, identity: dict) -> None:
@@ -262,6 +267,8 @@ def parser() -> argparse.ArgumentParser:
             p.add_argument("--accept-data-loss", action="store_true")
         else:
             p.add_argument("--edl", default="edl", help="path to separately installed bkerler/edl executable")
+            p.add_argument("--edl-script", help="alternative: path to bkerler/edl's top-level edl.py")
+            p.add_argument("--edl-python", default=sys.executable, help="Python environment for --edl-script")
             p.add_argument("--loader", required=True, help="user-supplied compatible signed Firehose ELF")
         if name == "backup":
             p.add_argument("--include-userdata", action="store_true", help="full userdata partition, potentially hundreds of GB")

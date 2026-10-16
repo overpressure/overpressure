@@ -20,6 +20,10 @@ interface; it does not support the different edl-ng/QFIL command syntax. Supply 
 signed Firehose loader and the engineering ABL/devinfo images yourself, with hashes from a
 trusted source. No automatic download or driver installation takes place.
 
+If Windows materializes the EDL package's entrypoint symlink as a text file, use
+`--edl-script cache/edl-client/edl.py --edl-python cache/edl-venv/Scripts/python.exe`
+instead of `--edl`. This invokes the separately installed client directly without a shell wrapper.
+
 Preparation accepts original PICO 4 A8110/phoenix fingerprints through 5.13.8, matching the
 upstream reported version ceiling. It deliberately rejects Neo 3 and other PICO generations.
 An accepted version does not prove that your loader/images or device variant are compatible.
