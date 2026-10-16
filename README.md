@@ -10,14 +10,15 @@ The output is a standard Android boot image you start from RAM with `fastboot bo
 * **ramdisk:** replaced with Alpine Linux 3.24 (aarch64) plus the POC init in [initramfs/](initramfs/)
 * **USB-C cable:** brings up a network link (`ssh root@172.16.42.1`), a web page with logs and a
   hardware report, and a read-only USB drive with the boot logs
-* **storage:** nothing is written to the headset; every block device is switched to read-only at boot
+* **storage:** the POC userspace switches every block device to read-only at boot
 
-> **Status:** images are verified offline (AOSP tools) and in an emulated ARM64 VM (see
-> [Verification](#verification)). On a real PICO 4 running 5.13.7, all 20 userspace preflight
-> checks passed, but the signed Neo3 engineering ABL rejected `fastboot boot` as an unknown
-> command. The test verified return to PICO OS. **Linux has not booted on the headset yet.**
-> An explicit boot-partition test with stock-image restoration is available in the
-> [hardware runner](HARDWARE-TEST.md#explicit-boot-partition-test).
+> **Status:** Linux has booted on an original PICO 4 running 5.13.7. Its USB log drive
+> supplied a report with the expected test nonce and SoC identity. The engineering ABL
+> rejected `fastboot boot`, so this used the explicit
+> [boot-partition test](HARDWARE-TEST.md#explicit-boot-partition-test). **Full acceptance is
+> pending:** Windows NCM networking prevented SSH verification. A subsequent test verified
+> automatic return to fastboot, stock boot restoration and matching Android boot completion
+> after the SSH timeout, without physical intervention.
 
 ## Prerequisites
 
@@ -227,8 +228,10 @@ The USB log drive supplied a hardware report with the matching test nonce and So
 The stock kernel ran Alpine userspace, Dropbear and the probe. **Full acceptance is still
 pending:** Windows 11's NCM link produced `Wrong NDP SIGN` errors and SSH was unreachable.
 After physical entry into fastboot, the runner restored the original boot image and verified
-the original Android identity and boot completion. The recovery watchdog now handles this
-configured-but-unusable USB case without relying on a successful connection.
+the original Android identity and boot completion. A second run verified the independent
+watchdog on the real headset: failed SSH led to automatic fastboot entry, restoration and
+verified Android boot without a button press. A host-side `SET_CRC_MODE(0)` experiment was
+acknowledged by the gadget; end-to-end Windows networking remains unverified.
 
 ### Offline and emulated verification
 
