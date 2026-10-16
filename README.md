@@ -233,6 +233,10 @@ watchdog on the real headset: failed SSH led to automatic fastboot entry, restor
 verified Android boot without a button press. A host-side `SET_CRC_MODE(0)` experiment was
 acknowledged by the gadget; end-to-end Windows networking remains unverified.
 
+After these tests, complete EDL readbacks of `boot` (96 MiB) and `abl` (1 MiB) matched the
+original recovery backup. The headset booted the matching PICO OS with its original ABL and
+SELinux enforcing. The bootloader remains unlocked for further development.
+
 ### Offline and emulated verification
 
 All of this was done before any hardware was involved:
