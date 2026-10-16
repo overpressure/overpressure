@@ -55,6 +55,9 @@ serial)
 usb-watch)
 	exec "$POC_LIB/usb-gadget" watch
 	;;
+recovery-watch)
+	exec "$POC_LIB/recovery-watch"
+	;;
 shutdown)
 	log "shutting down"
 	sync

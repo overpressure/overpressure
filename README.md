@@ -103,8 +103,10 @@ The output is a standard Android boot image you start from RAM with `fastboot bo
 | 6 | busybox init runs `dropbear` (ssh), `telnetd`, `httpd`, `udhcpd` | |
 | 7 | `pico4-probe` collects a hardware inventory ~15 s later and refreshes the log drive | |
 
-If no PC configures the USB device within 5 minutes, the headset reboots into fastboot by itself
-(`pico4poc.autoreboot=0` disables this), so it never sits there as a black brick.
+If no usable USB traffic or shell login arrives within 5 minutes, an independent watchdog
+reboots into fastboot (`pico4poc.autoreboot=0` disables this for interactive boots). USB
+enumeration alone does not cancel recovery. Hardware tests require the runner to authenticate
+and also have a maximum device runtime; see [test recovery](HARDWARE-TEST.md#failure-and-timeout-behavior).
 
 If the link is up but no packet arrives from the PC for 20 s, the headset re-plugs the USB device
 in software, at most twice. A PC whose side of the link is up always sends something right away
@@ -220,8 +222,13 @@ flashing is performed. The regular `boot-poc` scripts remain interactive helpers
 Linux running; their ping check alone is not a hardware acceptance result.
 
 Host simulation tests: `python -m unittest discover -s test -p "test_*.py" -v`.
-The hardware runner has been checked with simulated devices and the existing image offline;
-**a real-headset acceptance run has not yet been performed**.
+On 2026-10-16, an original PICO 4 running 5.13.7 booted the Linux POC through `flash-run`.
+The USB log drive supplied a hardware report with the matching test nonce and SoC identity.
+The stock kernel ran Alpine userspace, Dropbear and the probe. **Full acceptance is still
+pending:** Windows 11's NCM link produced `Wrong NDP SIGN` errors and SSH was unreachable.
+After physical entry into fastboot, the runner restored the original boot image and verified
+the original Android identity and boot completion. The recovery watchdog now handles this
+configured-but-unusable USB case without relying on a successful connection.
 
 ### Offline and emulated verification
 

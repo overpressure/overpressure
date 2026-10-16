@@ -2,7 +2,7 @@
 # USB gadget for the PICO 4 Linux POC (configfs).
 #
 #   usb-gadget         set up the gadget and the network (run once by /init)
-#   usb-gadget watch   follow the link state: log, status LED, auto-reboot
+#   usb-gadget watch   follow the link state: log, status LED, bounded re-plug
 #
 # Functions, first one the kernel provides wins (pico4poc.usbnet / usbserial):
 #   network : ncm (built into the stock PICO kernel), rndis, ecm
@@ -222,35 +222,14 @@ replug() {
 	return 0
 }
 
-# Follow the controller state. The LED turns green once a PC has configured
-# the device. If no PC ever does (no configured state, no network carrier, no
-# login) within pico4poc.autoreboot seconds (default 300, 0 = never), reboot
-# into fastboot so the headset is not left stranded with a black screen; the
-# log survives in pstore.
-give_up_later() {
-	# USB never came up: nobody can reach the headset, so return to fastboot
-	# after the auto-reboot delay unless that is disabled.
-	limit=$(poc_arg autoreboot 300)
-	[ "$limit" -gt 0 ] || exec sleep 2147483647
-	while [ "$(cut -d. -f1 /proc/uptime)" -lt "$limit" ]; do
-		sleep 5
-	done
-	[ -e "$POC_RUN/no-autoreboot" ] && exec sleep 2147483647
-	log "USB: setup failed ($(cat "$POC_RUN/usb.state" 2>/dev/null)), rebooting to fastboot (pico4poc.autoreboot=0 disables)"
-	sync
-	sleep 2
-	pico4-reboot bootloader
-}
-
+# Follow controller state; recovery-watch independently handles unreachable PCs.
 watch() {
 	wait_for "$POC_RUN/usb.done"
 	. "$POC_RUN/usb.env" 2>/dev/null
 	. "$POC_RUN/net.env" 2>/dev/null
 	if [ -z "$UDC" ]; then
-		give_up_later
 		exec sleep 2147483647
 	fi
-	limit=$(poc_arg autoreboot 300)
 	kick_after=$(poc_arg usbkick 20)
 	last=""
 	seen=0
@@ -266,12 +245,6 @@ watch() {
 			*) [ "$seen" = 1 ] && led waiting ;;
 			esac
 			last=$state
-		fi
-		if [ "$seen" = 0 ]; then
-			if [ -e "$POC_RUN/no-autoreboot" ] ||
-				[ "$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null)" = 1 ]; then
-				seen=1
-			fi
 		fi
 		# A PC whose side of the NCM link is up sends packets at once (DHCP,
 		# IPv6 router solicitations, ...). If the link is configured but
@@ -294,15 +267,6 @@ watch() {
 				fi
 			else
 				quiet_since=""
-			fi
-		fi
-		if [ "$seen" = 0 ] && [ "$limit" -gt 0 ]; then
-			up=$(cut -d. -f1 /proc/uptime)
-			if [ "$up" -ge "$limit" ]; then
-				log "USB: no PC configured the gadget within ${limit}s, rebooting to fastboot (pico4poc.autoreboot=0 disables)"
-				sync
-				sleep 2
-				pico4-reboot bootloader
 			fi
 		fi
 		sleep 2

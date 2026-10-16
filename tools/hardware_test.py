@@ -75,7 +75,8 @@ def validate_report(data: bytes, run_id: str) -> None:
                 require(run_id.encode() in payload, "HTTP report is from a different boot")
 
 
-def prepare_image(source: Path, folder: Path, run_id: str, public_key: bytes) -> dict:
+def prepare_image(source: Path, folder: Path, run_id: str, public_key: bytes,
+                  connect_timeout: int = 210, test_timeout: int = 900) -> dict:
     original = source.read_bytes()
     image = bootimg.parse(original)
     require(image.id == image.compute_id(), "Source boot image checksum mismatch")
@@ -85,13 +86,19 @@ def prepare_image(source: Path, folder: Path, run_id: str, public_key: bytes) ->
                     for w in words), "Hardware tests require read-only mode and QEMU selftest disabled")
     tree = cpio.Tree(nodes=dict(cpio.read_cpio(compress.decompress(image.ramdisk)[0])))
     require("etc/pico4-poc/build-info" in tree.nodes, "Image is not a PICO 4 POC build")
+    require("usr/libexec/pico4-poc/recovery-watch" in tree.nodes and
+            "etc/inittab" in tree.nodes and b"svc recovery-watch" in tree.nodes["etc/inittab"].data,
+            "Rebuild the POC image: independent recovery watchdog is missing")
     info = json.loads(tree.nodes["etc/pico4-poc/build-info"].data)
+    require(0 < connect_timeout < test_timeout, "Invalid device recovery deadlines")
     # Preflight runs the exact source userspace, excluding device nodes.
     with (folder / "rootfs.tar").open("wb") as stream:
         tree.to_tar(stream, skip_devices=True)
     tree.mkdir("root/.ssh", 0o700)
     tree.add_file("root/.ssh/authorized_keys", public_key.rstrip() + b"\n", 0o600)
     tree.add_file("etc/pico4-poc/test-run", run_id.encode() + b"\n")
+    tree.add_file("etc/pico4-poc/test-connect-timeout", f"{connect_timeout}\n".encode())
+    tree.add_file("etc/pico4-poc/test-timeout", f"{test_timeout}\n".encode())
     words = [w for w in words if not w.startswith("pico4poc.test_run=")]
     image = image.with_cmdline(" ".join(words + [f"pico4poc.test_run={run_id}"]))
     image.ramdisk = gzip.compress(tree.to_cpio(), mtime=0)
@@ -102,7 +109,8 @@ def prepare_image(source: Path, folder: Path, run_id: str, public_key: bytes) ->
             "Instrumented boot image failed validation")
     (folder / "test-boot.img").write_bytes(data)
     return {"source_image": str(source.resolve()), "source_sha256": hashlib.sha256(original).hexdigest(),
-            "boot_sha256": hashlib.sha256(data).hexdigest(), "build_info": info}
+            "boot_sha256": hashlib.sha256(data).hexdigest(), "build_info": info,
+            "device_recovery": {"connect_timeout": connect_timeout, "test_timeout": test_timeout}}
 
 
 def prepare_restore_image(backup: Path, folder: Path, serial: str, identity: dict, image: Path) -> dict:
@@ -250,7 +258,9 @@ class Runner:
         self.command([self.args.ssh_keygen, "-q", "-t", "ed25519", "-N", "", "-f", self.folder / "id_ed25519"])
         (self.folder / "ssh_config").write_text("", encoding="utf-8")
         self.result.update(prepare_image(self.args.image, self.folder, self.run_id,
-                                        (self.folder / "id_ed25519.pub").read_bytes()))
+                                        (self.folder / "id_ed25519.pub").read_bytes(),
+                                        self.args.boot_timeout + 30,
+                                        self.args.boot_timeout + self.args.report_timeout + 300))
 
     def prepare_restore(self):
         require(self.args.confirm_device == self.args.serial,
@@ -326,6 +336,9 @@ class Runner:
         require(len(lines) == 2 and lines[0] == self.run_id and device.chip_id(lines[1]) == self.baseline["chip_id"],
                 "SSH endpoint is not the expected test run and headset")
         self.authenticated = True
+        # Only a verified endpoint may cancel the connection deadline. The
+        # independent maximum test duration still recovers a crashed runner.
+        self.ssh("touch /run/pico4-poc/test-authenticated", timeout)
 
     def assertions(self):
         info = json.loads(self.ssh("cat /etc/pico4-poc/build-info"))

@@ -117,6 +117,14 @@ by a final in-flight command's timeout. Preflight has separate bounded push/run/
 For flash tests, waiting for fastboot restoration and waiting for Android each have their own
 recovery limit; each flash uses the boot timeout.
 
+Rebuild old POC images before testing: the runner requires the independent `recovery-watch`
+service. Each test image sets a device connection deadline of `boot-timeout + 30` seconds
+and a maximum runtime of `boot-timeout + report-timeout + 300` seconds, measured from Linux
+startup. Enumeration, carrier and DHCP traffic cannot cancel the test connection deadline;
+only the runner's verified SSH identity check acknowledges it. The maximum runtime still
+returns to fastboot if the host runner dies after authentication. These limits apply even
+when the source image disables the interactive auto-reboot timer.
+
 After a failure following the first reboot, recovery is attempted in a `finally` path.
 In RAM mode:
 

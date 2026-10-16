@@ -69,6 +69,8 @@ class HarnessTests(unittest.TestCase):
         tree = cpio.Tree()
         tree.add_file("etc/pico4-poc/build-info", json.dumps(self.info).encode())
         tree.add_file("init", b"#!/bin/sh\n", 0o755)
+        tree.add_file("usr/libexec/pico4-poc/recovery-watch", b"#!/bin/sh\n", 0o755)
+        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4-poc/svc recovery-watch\n")
         tree.mkdir("root", 0o700)
         img = bootimg.BootImage(2, 4096, b"kernel", gzip.compress(tree.to_cpio()), dtb=b"dtb")
         self.source.write_bytes(img.pack())
@@ -201,6 +203,11 @@ class HarnessTests(unittest.TestCase):
         self.assertNotEqual(result["boot_sha256"], result["source_sha256"])
         self.assertFalse((self.runner.folder / "id_ed25519").exists())
         self.assertTrue((self.runner.folder / "report.tar.gz").exists())
+        image = bootimg.parse((self.runner.folder / "test-boot.img").read_bytes())
+        tree = dict(cpio.read_cpio(gzip.decompress(image.ramdisk)))
+        self.assertEqual(tree["etc/pico4-poc/test-connect-timeout"].data, b"31\n")
+        self.assertEqual(tree["etc/pico4-poc/test-timeout"].data, b"302\n")
+        self.assertTrue(any(cmd[-1] == "touch /run/pico4-poc/test-authenticated" for cmd in self.calls))
         for cmd in self.calls:
             self.assertNotIn("flash", cmd)
             self.assertNotIn("unlock", cmd)
@@ -246,6 +253,7 @@ class HarnessTests(unittest.TestCase):
         self.scenario = "identity"
         self.assertEqual(self.execute(), 1)
         self.assertFalse(any("pico4-reboot" in command[-1] for command in self.calls))
+        self.assertFalse(any("test-authenticated" in command[-1] for command in self.calls))
 
     def test_recovery_failure_is_not_a_pass(self):
         self.scenario = "recovery"
