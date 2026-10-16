@@ -279,9 +279,13 @@ class Runner:
     def authorize_flash(self):
         self.check_restore_image()
         self.check_fastboot_unlock()
-        require(fastboot_value(self.fastboot("getvar", "has-slot:boot"), "has-slot:boot") == "no",
+        # This engineering ABL lists every partition but lacks getvar has-slot.
+        inventory = self.fastboot("getvar", "all")
+        names = re.findall(r"^[ \t]*(?:\(bootloader\)[ \t]*)?partition-size:(boot(?:_[ab])?):",
+                           inventory, re.M)
+        require(names == ["boot"],
                 "Flash tests only support a non-slotted boot partition")
-        size = fastboot_value(self.fastboot("getvar", "partition-size:boot"), "partition-size:boot")
+        size = fastboot_value(inventory, "partition-size:boot")
         require(re.fullmatch(r"0x[0-9a-fA-F]+", size) and
                 int(size, 16) == self.result["stock_boot"]["size"],
                 "Live boot partition size differs from its original backup")

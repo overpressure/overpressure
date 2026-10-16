@@ -124,9 +124,12 @@ class HarnessTests(unittest.TestCase):
             if argv[-1] == "device-info":
                 return "Device unlocked: false" if self.scenario == "locked" else "Device unlocked: true"
             if argv[-2:] == ["getvar", "has-slot:boot"]:
-                return "has-slot:boot: " + ("yes" if self.scenario == "slotted" else "no")
-            if argv[-2:] == ["getvar", "partition-size:boot"]:
-                return "partition-size:boot: " + ("0x20000" if self.scenario == "size" else "0x10000")
+                raise ValueError("GetVar Variable Not found")
+            if argv[-2:] == ["getvar", "all"]:
+                output = "(bootloader) partition-size:boot: " + ("0x20000" if self.scenario == "size" else "0x10000")
+                if self.scenario == "slotted":
+                    output += "\n(bootloader) partition-size:boot_a: 0x10000\n(bootloader) partition-size:boot_b: 0x10000"
+                return output
             if argv[3:5] == ["flash", "boot"]:
                 restoring = Path(argv[-1]).name == "stock-boot.img"
                 journal = json.loads((self.runner.folder / "result.json").read_text())

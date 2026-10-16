@@ -51,6 +51,8 @@ live headset/build, checks that the POC retains the stock kernel, device trees a
 and pins a verified copy of the original boot image in the result directory. Before writing,
 it requires an unlocked, non-slotted boot partition with the backed-up size and sends the
 engineering ABL's per-session OEM authorization command. `--confirm-device` must match `--serial`.
+The partition check uses `getvar all`: this older ABL does not implement `has-slot:boot`.
+The inventory must list exactly `boot` and no `boot_a`/`boot_b` partitions.
 
 The result records `boot_restore_required: true` and manual restore commands **before** the
 first flash. Even a failed, timed-out or interrupted write triggers restoration. A running
