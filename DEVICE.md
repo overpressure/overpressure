@@ -14,15 +14,25 @@ Host tests use simulated tools; **this implementation has not been validated on 
 
 ## Tools and device scope
 
-Install Android platform-tools and, separately, [bkerler/edl](https://github.com/bkerler/edl).
-The EDL adapter uses that client's `rl`, `r`, `w`, `--genxml`, `--memory=ufs` and `--loader`
-interface; it does not support the different edl-ng/QFIL command syntax. Supply a compatible
+Install Android platform-tools and, separately, [bkerler/edl](https://github.com/bkerler/edl)
+or [edl-ng](https://github.com/strongtz/edl-ng). The default adapter uses bkerler's `rl`,
+`r`, `w`, `--genxml`, `--memory=ufs` and `--loader` interface. Select the native client with
+`--edl-backend edl-ng --edl PATH_TO_EDL_NG`; its different syntax is handled explicitly.
+QFIL command syntax is not supported. Supply a compatible
 signed Firehose loader and the engineering ABL/devinfo images yourself, with hashes from a
 trusted source. No automatic download or driver installation takes place.
 
 If Windows materializes the EDL package's entrypoint symlink as a text file, use
 `--edl-script cache/edl-client/edl.py --edl-python cache/edl-venv/Scripts/python.exe`
 instead of `--edl`. This invokes the separately installed client directly without a shell wrapper.
+
+On Windows, edl-ng can use the Qualcomm QDLoader COM interface directly. Device Manager must
+show the EDL device as healthy, not an unknown `QUSB_BULK` device with error 28. A matching
+signed driver for `USB\VID_05C6&PID_9008` is available from the
+[Microsoft Update Catalog](https://www.catalog.update.microsoft.com/ScopedViewInline.aspx?updateid=bcdb99c1-fd4a-4ded-a97f-5bcf6e57fb58).
+Install only its serial driver (`qcser.inf`); verify the catalog signature and hardware ID.
+UsbDk is not needed for the native COM connection. If an interrupted EDL session stops
+responding, restart the headset into stock OS, verify ADB identity, and enter EDL afresh.
 
 Preparation accepts original PICO 4 A8110/phoenix fingerprints through 5.13.8, matching the
 upstream reported version ceiling. It deliberately rejects Neo 3 and other PICO generations.
@@ -65,6 +75,20 @@ required. It requests all partitions and GPT/rawprogram metadata, excluding user
 default. Add `--include-userdata` to capture the full userdata partition too; allow enough
 space for the headset's full storage capacity. There is no experimental used-sector mode.
 Do not proceed without a separate backup of personal data you need to retain.
+
+For edl-ng, first inspect `edl-ng --loader assets/firehose.elf --memory Ufs printgpt`.
+Pass **all LUNs reported by that device**, for example:
+
+```sh
+python device.py backup --identity out/device.json --backup backup/stock --loader assets/firehose.elf --edl-backend edl-ng --edl cache/edl-ng/edl-ng.exe --edl-luns 4 1 2 3 5 0 --include-userdata
+```
+
+This still previews by default. Execution captures each LUN in a separate directory,
+preserving duplicate partition names across LUNs. It requires every non-skipped file in each
+rawprogram map to have exactly the advertised sector count before creating a manifest.
+The LUN list is explicit; the adapter does not prove that a manually supplied list is complete.
+The example captures the smaller firmware LUNs before LUN 0, which commonly contains userdata.
+Use `--edl-backend edl-ng --edl PATH_TO_EDL_NG` for later stage/readback/restore operations too.
 
 ```sh
 python device.py verify-backup --backup backup/stock

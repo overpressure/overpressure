@@ -100,6 +100,45 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(command[:3], ["venv/python.exe", str(script.resolve()), "rl"])
         self.assertIn("--memory=ufs", command)
 
+    def test_native_backend_requires_explicit_luns_and_keeps_commands_read_only(self):
+        base = self.args("backup") + ["--edl-backend", "edl-ng", "--edl", "native tool.exe"]
+        self.assertEqual(self.call(base), 1)
+        self.assertEqual(self.call(base + ["--edl-luns", "0", "0"]), 1)
+        args = device.parser().parse_args(base + ["--edl-luns", "4", "0"])
+        commands = device.backup_commands(args)
+        self.assertEqual(len(commands), 2)
+        for command, lun in zip(commands, (4, 0)):
+            self.assertEqual(command[:3], ["native tool.exe", "--memory", "Ufs"])
+            self.assertEqual(command[5], "dump-rawprogram")
+            self.assertEqual(Path(command[6]), (self.backup / f"lun{lun}").resolve())
+            self.assertEqual(command[7:], ["--lun", str(lun), "--skip", "userdata"])
+        args.include_userdata = True
+        self.assertNotIn("--skip", device.backup_commands(args)[0])
+        self.assertEqual(device.edl_command(args, "r", "abl", "read.bin")[5:],
+                         ["read-part", "abl", "read.bin"])
+        self.assertEqual(device.edl_command(args, "w", "abl", "write.bin")[5:],
+                         ["write-part", "abl", "write.bin"])
+
+    def test_native_dump_rejects_missing_truncated_and_escaping_files(self):
+        directory = self.backup / "lun4"
+        directory.mkdir()
+        xml = directory / "rawprogram4.xml"
+        def map_file(name="abl.bin"):
+            xml.write_text('<data><program filename="' + name + '" label="abl" '
+                           'num_partition_sectors="1" SECTOR_SIZE_IN_BYTES="4096" '
+                           'physical_partition_number="4" /></data>')
+        map_file()
+        with self.assertRaises(ValueError):
+            device.validate_native_dump(self.backup, [4], True)
+        (directory / "abl.bin").write_bytes(b"x" * 4095)
+        with self.assertRaises(ValueError):
+            device.validate_native_dump(self.backup, [4], True)
+        (directory / "abl.bin").write_bytes(b"x" * 4096)
+        device.validate_native_dump(self.backup, [4], True)
+        map_file("../abl.bin")
+        with self.assertRaises(ValueError):
+            device.validate_native_dump(self.backup, [4], True)
+
     def test_backup_requires_recovery_files_and_does_not_overwrite(self):
         args = self.args("backup") + ["--execute", "--confirm-device", "ABC"]
         with patch.object(device, "run") as run:

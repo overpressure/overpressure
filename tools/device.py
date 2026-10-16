@@ -1,7 +1,7 @@
 """Independent host-side implementation of the documented PICO unlock workflow.
 
 No upstream code or binaries are bundled. EDL is a separately installed bkerler/edl
-CLI; partition names must come from the device's GPT, never a guessed slot.
+or edl-ng CLI; partition names must come from the device's GPT, never a guessed slot.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -120,12 +121,55 @@ def verified_backup(folder: Path) -> dict:
 def edl_command(args, *words: str) -> list[str]:
     loader = Path(args.loader).resolve()
     digest(loader)
+    if args.edl_backend == "edl-ng":
+        if args.edl_script:
+            raise ValueError("edl-ng requires its native executable via --edl")
+        operation = {"r": "read-part", "w": "write-part",
+                     "dump-rawprogram": "dump-rawprogram"}[words[0]]
+        return [args.edl, "--memory", "Ufs", "--loader", str(loader), operation, *words[1:]]
     # Windows Git checkouts may materialize edlclient's entrypoint symlink as
     # plain text. Calling its top-level script avoids that broken entrypoint.
     executable = [args.edl]
     if args.edl_script:
         executable = [args.edl_python, str(Path(args.edl_script).resolve())]
     return [*executable, *words, "--memory=ufs", f"--loader={loader}"]
+
+
+def backup_commands(args) -> list[list[str]]:
+    if args.edl_backend == "edl-ng":
+        if not args.edl_luns or len(set(args.edl_luns)) != len(args.edl_luns):
+            raise ValueError("edl-ng backup requires distinct --edl-luns from the device's GPT scan")
+        commands = [edl_command(args, "dump-rawprogram", str((args.backup / f"lun{lun}").resolve()),
+                                "--lun", str(lun)) for lun in args.edl_luns]
+        if not args.include_userdata:
+            for command in commands:
+                command.extend(["--skip", "userdata"])
+        return commands
+    if args.edl_luns:
+        raise ValueError("--edl-luns applies only to the edl-ng backend")
+    command = edl_command(args, "rl", str(args.backup.resolve()), "--genxml")
+    if not args.include_userdata:
+        command.append("--skip=userdata")
+    return [command]
+
+
+def validate_native_dump(folder: Path, luns: list[int], include_userdata: bool) -> None:
+    """Reject missing or truncated files against each native client's rawprogram map."""
+    for lun in luns:
+        directory = (folder / f"lun{lun}").resolve()
+        rows = ET.parse(directory / f"rawprogram{lun}.xml").getroot().findall("program")
+        if not rows:
+            raise ValueError(f"Empty rawprogram map for LUN {lun}")
+        for row in rows:
+            if not include_userdata and row.get("label") == "userdata":
+                continue
+            name = row.attrib["filename"]
+            path = (directory / name).resolve()
+            size = int(row.attrib["num_partition_sectors"]) * int(row.attrib["SECTOR_SIZE_IN_BYTES"])
+            if (directory not in path.parents or size <= 0
+                    or int(row.attrib["physical_partition_number"]) != lun
+                    or not path.is_file() or path.stat().st_size != size):
+                raise ValueError(f"Incomplete dump for LUN {lun}: {name}")
 
 
 def confirm(args, identity: dict) -> None:
@@ -159,17 +203,21 @@ def dispatch(args) -> None:
     identity = read_identity(args.identity)
     confirm(args, identity)
     if args.command == "backup":
-        command = edl_command(args, "rl", str(args.backup.resolve()), "--genxml")
-        if not args.include_userdata:
-            command.append("--skip=userdata")
+        commands = backup_commands(args)
         if not args.execute:
-            print(subprocess.list2cmdline(command))
+            for command in commands:
+                print(subprocess.list2cmdline(command))
             return
         if args.backup.exists():
             raise ValueError("Use a new backup directory; existing or partial backups are never overwritten")
         args.backup.mkdir(parents=True)
-        output = run(command, timeout=86400)
-        (args.backup / "edl.log").write_text(output, encoding="utf-8")
+        with (args.backup / "edl.log").open("w", encoding="utf-8") as log:
+            for command in commands:
+                output = run(command, timeout=86400)
+                log.write(output + "\n")
+                log.flush()
+        if args.edl_backend == "edl-ng":
+            validate_native_dump(args.backup, args.edl_luns, args.include_userdata)
         files = {p.relative_to(args.backup).as_posix(): digest(p)
                  for p in args.backup.rglob("*") if p.is_file() and p.suffix in (".bin", ".img", ".xml")}
         stems = {Path(name).stem for name in files}
@@ -182,7 +230,8 @@ def dispatch(args) -> None:
         if args.include_userdata and "userdata" not in stems:
             raise ValueError("Requested userdata backup is missing; no manifest written")
         save_new(args.backup / "manifest.json", {"schema": 1, "identity": identity,
-                 "includes_userdata": args.include_userdata, "files": files})
+                 "includes_userdata": args.include_userdata, "edl_backend": args.edl_backend,
+                 "luns": args.edl_luns, "files": files})
         print("Backup captured. Run verify-backup and retain an independent copy before modifying the device.")
         return
 
@@ -266,12 +315,15 @@ def parser() -> argparse.ArgumentParser:
             p.add_argument("--serial", help="fastboot serial, if different from ADB")
             p.add_argument("--accept-data-loss", action="store_true")
         else:
-            p.add_argument("--edl", default="edl", help="path to separately installed bkerler/edl executable")
+            p.add_argument("--edl", default="edl", help="path to the separately installed EDL executable")
+            p.add_argument("--edl-backend", choices=("bkerler", "edl-ng"), default="bkerler")
             p.add_argument("--edl-script", help="alternative: path to bkerler/edl's top-level edl.py")
             p.add_argument("--edl-python", default=sys.executable, help="Python environment for --edl-script")
             p.add_argument("--loader", required=True, help="user-supplied compatible signed Firehose ELF")
         if name == "backup":
             p.add_argument("--include-userdata", action="store_true", help="full userdata partition, potentially hundreds of GB")
+            p.add_argument("--edl-luns", nargs="+", type=int, choices=range(8),
+                           help="edl-ng only: all LUNs found by the device's printgpt scan")
         if name in ("stage", "restore-abl"):
             p.add_argument("--partition", required=True, help="exact partition name from the captured GPT")
             p.add_argument("--readback", type=Path, required=True)
@@ -285,7 +337,7 @@ def main(argv=None) -> int:
     args = parser().parse_args(argv)
     try:
         dispatch(args)
-    except (ValueError, OSError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
+    except (ValueError, OSError, KeyError, TypeError, ET.ParseError, subprocess.TimeoutExpired) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0
