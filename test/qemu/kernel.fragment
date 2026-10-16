@@ -1,0 +1,54 @@
+# Kernel config fragment for the QEMU test VM (applied on top of arm64 defconfig).
+#
+# The VM plays both sides of the USB cable: dummy_hcd connects the USB gadget
+# configured by our initramfs to a virtual host controller in the same kernel,
+# so the NCM/RNDIS/ACM functions can be enumerated and exercised end to end.
+#
+# Modules are disabled to keep the build short; everything needed is built in.
+# Like the stock PICO 4 kernel (kona-perf_defconfig) there is no devtmpfs, so
+# the initramfs has to populate /dev with mdev exactly as on the headset.
+# CONFIG_MODULES is not set
+# CONFIG_DEVTMPFS is not set
+# Same address-space layout as the stock kernel: 4K pages, 39-bit VA.
+CONFIG_ARM64_4K_PAGES=y
+CONFIG_ARM64_VA_BITS_39=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_TMPFS=y
+CONFIG_PSTORE=y
+CONFIG_PSTORE_PMSG=y
+CONFIG_PSTORE_RAM=y
+CONFIG_CONFIGFS_FS=y
+CONFIG_IKCONFIG=y
+CONFIG_IKCONFIG_PROC=y
+CONFIG_NET_NS=y
+CONFIG_USB_SUPPORT=y
+CONFIG_USB=y
+CONFIG_USB_GADGET=y
+CONFIG_USB_DUMMY_HCD=y
+# No legacy gadget may grab the controller before configfs (as on the stock kernel).
+# CONFIG_USB_MASS_STORAGE is not set
+CONFIG_USB_LIBCOMPOSITE=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_SERIAL=y
+CONFIG_USB_CONFIGFS_ACM=y
+CONFIG_USB_CONFIGFS_NCM=y
+CONFIG_USB_CONFIGFS_ECM=y
+CONFIG_USB_CONFIGFS_RNDIS=y
+CONFIG_USB_CONFIGFS_MASS_STORAGE=y
+CONFIG_USB_CONFIGFS_F_FS=y
+CONFIG_USB_ACM=y
+CONFIG_USB_STORAGE=y
+CONFIG_SCSI=y
+CONFIG_BLK_DEV_SD=y
+CONFIG_VFAT_FS=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_EFI_PARTITION=y
+CONFIG_USB_USBNET=y
+CONFIG_USB_NET_CDCETHER=y
+CONFIG_USB_NET_CDC_NCM=y
+CONFIG_USB_NET_RNDIS_HOST=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_TRIGGERS=y
+CONFIG_LEDS_TRIGGER_TIMER=y
+CONFIG_LEDS_TRIGGER_HEARTBEAT=y

@@ -1,0 +1,20 @@
+# downloads (Alpine packages, stock boot images, test kernel)
+/cache/
+# build output
+/out/
+# device identities, recovery dumps and independently obtained engineering assets
+/backup/
+/assets/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+# Local credentials and editor/agent state
+id_ed25519*
+known_hosts
+.idea/
+.vscode/
+.serena/

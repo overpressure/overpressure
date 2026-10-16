@@ -1,0 +1,66 @@
+#!/bin/sh
+# Service runner for busybox init's respawn entries: waits for whatever the
+# service needs, then execs it in the foreground. Output goes to
+# /run/pico4-poc/svc-<name>.log.
+. /usr/libexec/pico4-poc/lib.sh
+
+name=$1
+# Keep a crashing service from respawning in a tight loop.
+sleep 1
+exec >>"$POC_RUN/svc-$name.log" 2>&1
+
+idle() { exec sleep 2147483647; }
+
+case "$name" in
+udhcpd)
+	# DHCP for the PC on the USB link: hands out exactly one address and
+	# deliberately no router/DNS, so the PC keeps its normal internet route.
+	wait_for "$POC_RUN/net.env"
+	. "$POC_RUN/net.env"
+	[ -n "$IFACE" ] || idle
+	cat > "$POC_RUN/udhcpd.conf" <<-EOF
+	interface $IFACE
+	start $HOST_IP
+	end $HOST_IP
+	max_leases 1
+	lease_file $POC_RUN/udhcpd.leases
+	option subnet $NETMASK
+	option lease 86400
+	EOF
+	touch "$POC_RUN/udhcpd.leases"
+	exec udhcpd -f "$POC_RUN/udhcpd.conf"
+	;;
+telnetd)
+	exec telnetd -F -l "$POC_LIB/login-shell"
+	;;
+dropbear)
+	mkdir -p /etc/dropbear
+	# -R: generate host keys on first connection, -B: allow the empty root password
+	exec dropbear -F -E -R -B -p 22
+	;;
+httpd)
+	exec httpd -f -p 80 -h /srv/www
+	;;
+serial)
+	# Shell on the USB serial function (CDC-ACM), when the kernel has one.
+	# getty asks for a login name first (any name works, there is no
+	# password): until the PC's terminal has switched off echo, whatever it
+	# reflects back lands in that prompt instead of being run as commands.
+	wait_for "$POC_RUN/serial.env"
+	. "$POC_RUN/serial.env"
+	[ -n "$TTY" ] || idle
+	wait_for "/dev/$TTY" 30 || idle
+	exec getty -i -l "$POC_LIB/login-shell" -L 115200 "$TTY" vt100
+	;;
+usb-watch)
+	exec "$POC_LIB/usb-gadget" watch
+	;;
+shutdown)
+	log "shutting down"
+	sync
+	;;
+*)
+	log "svc: unknown service $name"
+	idle
+	;;
+esac

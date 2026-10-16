@@ -1,0 +1,31 @@
+#!/bin/sh
+# Print a short status summary of the PICO 4 Linux POC.
+# Every line starts with "#": if a terminal ever echoes this text back into
+# the shell, it is a comment, not a command.
+. /usr/libexec/pico4-poc/lib.sh
+
+info() { sed -n "s/^ *\"$1\": \"\(.*\)\",\{0,1\}$/\1/p" /etc/pico4-poc/build-info 2>/dev/null; }
+[ -f "$POC_RUN/net.env" ] && . "$POC_RUN/net.env"
+link=$(cat "$POC_RUN/usb.link" 2>/dev/null)
+ro="read-only"
+[ "$(poc_arg rw 0)" = 1 ] && ro="WRITABLE (pico4poc.rw=1)"
+if [ -f "$POC_RUN/report.tar.gz" ]; then
+	report="$POC_RUN/report.tar.gz (also http://${IP:-$POC_IP}/)"
+else
+	report="not collected yet, run pico4-probe"
+fi
+
+cat <<EOF
+#
+# PICO 4 Linux POC - Alpine $(info alpine) userspace on the stock PICO kernel
+#   kernel   : $(uname -r) ($(uname -m)), up $(uptime_s)s
+#   stock fw : $(info stock), image built $(info built)
+#   usb      : ${IFACE:-no network} ${IP:+$IP (PC: $HOST_IP)}, link ${link:-unknown}
+#   storage  : all block devices $ro, partitions in /dev/block/by-name
+#   report   : $report
+#
+#   commands : pico4-probe | pico4-mount-ro PART | pico4-info
+#              pico4-reboot [bootloader|recovery|poweroff]  (no argument: PICO OS)
+#   boot log : $POC_LOG
+#
+EOF

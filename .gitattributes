@@ -1,0 +1,11 @@
+# Files that end up inside the Linux ramdisk must keep LF line endings,
+# even on Windows checkouts (build.py also strips CRs as a safety net).
+* text=auto eol=lf
+initramfs/** text eol=lf
+test/** text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+prebuilt/** binary

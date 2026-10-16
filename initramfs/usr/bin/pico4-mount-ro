@@ -1,0 +1,28 @@
+#!/bin/sh
+# Mount a stock partition read-only for inspection.
+#
+#   pico4-mount-ro <partition> [directory]     e.g. pico4-mount-ro modem
+#
+# Interesting ones: modem (firmware blobs, vfat), dsp (ext4), bluetooth (vfat),
+# persist (sensor/camera calibration, ext4), fsg (PICO VR data, ext4).
+# Dynamic partitions (system, vendor, product, odm) live inside "super" and
+# need device-mapper tables; they are not handled here.
+set -e
+part=$1
+dir=${2:-/mnt/$1}
+[ -n "$part" ] || { echo "usage: pico4-mount-ro <partition> [directory]" >&2; exit 2; }
+dev=$(readlink -f "/dev/block/by-name/$part" 2>/dev/null) || true
+[ -b "$dev" ] || { echo "no partition '$part' (see: ls /dev/block/by-name)" >&2; exit 1; }
+
+blockdev --setro "$dev"
+type=$(blkid "$dev" | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p')
+case "$type" in
+ext2 | ext3 | ext4) opts=ro,noload ;;  # noload: never replay the journal
+f2fs) opts=ro,norecovery ;;
+vfat) opts=ro,shortname=lower ;;
+"") echo "$dev: unknown filesystem" >&2; exit 1 ;;
+*) opts=ro ;;
+esac
+mkdir -p "$dir"
+mount -t "$type" -o "$opts" "$dev" "$dir"
+echo "$part ($dev, $type) mounted read-only on $dir"
