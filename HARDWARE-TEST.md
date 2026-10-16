@@ -4,7 +4,7 @@ The acceptance criterion is a Linux shell on the original PICO 4, with working U
 diagnostics, protected persistent storage and a verified return to the same stock PICO OS.
 It does not establish working VR, displays, tracking, audio or GPU acceleration.
 
-## Run
+## Run from RAM
 
 First complete [device preparation](DEVICE.md), including recovery backups. Start in PICO OS
 on an already-unlocked headset, with USB debugging authorized. Install Python 3.9+, Android
@@ -29,7 +29,46 @@ The runner does not change host networking or install drivers.
 Use `--out out/my-test` to choose a **new** output directory. Existing results are never
 overwritten. Run one hardware test at a time against a headset; concurrent runs are unsupported.
 
-## What is checked
+## Explicit boot-partition test
+
+On the tested PICO 4 with the signed Neo3 engineering ABL, `fastboot boot` returned
+`unknown command` after transferring the image. The RAM test correctly failed and verified
+return to PICO OS. It never falls back to writing storage.
+
+Use the separate `flash-run` command only when deliberately choosing a persistent boot write:
+
+```sh
+python hardware_test.py flash-run --serial YOUR_ADB_SERIAL --fastboot-serial YOUR_FASTBOOT_SERIAL --image out/pico4-poc-5.13.7-global-seko.img --backup backup/stock --confirm-device YOUR_ADB_SERIAL --out out/flash-test
+```
+
+This temporarily replaces the headset's single `boot` partition, runs the same Linux checks,
+then restores the original boot image through fastboot. It does not write ABL, recovery,
+userdata, calibration or any other partition, and it does not unlock or relock the bootloader.
+Keep engineering ABL installed until restoration is complete.
+
+Before rebooting, it verifies every backup manifest entry, matches the backup identity to the
+live headset/build, checks that the POC retains the stock kernel, device trees and boot layout,
+and pins a verified copy of the original boot image in the result directory. Before writing,
+it requires an unlocked, non-slotted boot partition with the backed-up size and sends the
+engineering ABL's per-session OEM authorization command. `--confirm-device` must match `--serial`.
+
+The result records `boot_restore_required: true` and manual restore commands **before** the
+first flash. Even a failed, timed-out or interrupted write triggers restoration. A running
+POC is asked to reboot to the bootloader, where the pinned stock image is checked again and
+flashed. A failed restoration leaves the headset in fastboot when possible and keeps the
+restoration requirement in the result. A hard hang can still require physical recovery.
+
+In Linux, the runner hashes the written test-image bytes read back from `boot`. Stock recovery
+requires fastboot to acknowledge the original-image write and the original Android identity
+to complete boot. `boot_restore: android_boot_verified` denotes those checks; it is **not**
+a full stock-partition byte readback. An independent EDL readback can establish that separately.
+
+Killing the host process or losing power can leave the POC in `boot`. In that case, use the
+saved `manual_restore_commands` and `stock-boot.img` once the headset is in fastboot, or use
+the original EDL backup. A normal reboot alone cannot restore PICO OS while the POC is flashed.
+The result directory deliberately retains the stock restoration image.
+
+## What is checked in both boot modes
 
 1. Validate the source image and record its SHA-256. Derive a RAM-only test variant with
    a fresh SSH public key and run identifier; record its distinct SHA-256. Kernel, DTBs
@@ -38,7 +77,8 @@ overwritten. Run one hardware test at a time against a headset; concurrent runs 
 2. Record the selected headset's fingerprint, OEM state and SoC ID, after PICO OS reports
    boot completion. Run all userspace preflight checks and require a successful exit code
    and a complete, zero-failure summary. Clean up temporary preflight files on failure too.
-3. Enter fastboot and require a known unlocked state before `fastboot boot`.
+3. Enter fastboot and require a known unlocked state. `run` uses `fastboot boot`;
+   `flash-run` performs the additional backup/partition checks above and flashes only `boot`.
 4. Establish noninteractive SSH with the per-run key. Check the run identifier and SoC ID
    before treating the endpoint as the headset. Compare build metadata, kernel release and
    ARM64 architecture, and execute a command in the root shell.
@@ -49,7 +89,8 @@ overwritten. Run one hardware test at a time against a headset; concurrent runs 
 6. Fetch HTTP status, this boot's log and a valid hardware-report archive identifying this
    run. Save the report and kernel log locally. HTTP bypasses proxy settings and rejects
    redirects. Host mounting of the USB log drive is not part of this test.
-7. Request a normal reboot, wait for the original ADB serial, require Android boot completion
+7. For `flash-run`, first return to fastboot and restore the original boot image. Request a
+   normal reboot, wait for the original ADB serial, require Android boot completion
    and compare fingerprint, OEM state and SoC ID with the baseline. Returning to fastboot
    alone does not count as recovery.
 
@@ -71,8 +112,11 @@ Default limits are 180 seconds for fastboot/SSH readiness and RAM boot, 180 seco
 readiness, and 420 seconds for recovery. Override with `--boot-timeout`, `--report-timeout` and
 `--recovery-timeout`. Each subprocess and HTTP transfer is bounded; phase limits can be exceeded
 by a final in-flight command's timeout. Preflight has separate bounded push/run/cleanup commands.
+For flash tests, waiting for fastboot restoration and waiting for Android each have their own
+recovery limit; each flash uses the boot timeout.
 
-After a failure following the first reboot, recovery is attempted in a `finally` path:
+After a failure following the first reboot, recovery is attempted in a `finally` path.
+In RAM mode:
 
 - If this run's SSH identity is verified, collect a best-effort boot log and request PICO OS.
 - If the selected serial appears in fastboot (including the POC's automatic fallback), request
@@ -104,5 +148,7 @@ python -m unittest discover -s test -p "test_*.py" -v
 
 Simulated-device tests cover success, failed preflight, locked/unsupported bootloaders, wrong
 SSH identity, wrong build, writable partitions, broken HTTP and unsuccessful stock recovery.
+Flash-mode cases additionally cover wrong/tampered backups, mismatched kernels or partition
+layouts, partial/interrupted writes, changed restore files, readback failures and failed restores.
 They also exercise archive validation, command timeouts and artifact preservation. They do
 not replace a real headset run. QEMU tests remain a separate userspace regression check.

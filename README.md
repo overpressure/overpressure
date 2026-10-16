@@ -12,9 +12,12 @@ The output is a standard Android boot image you start from RAM with `fastboot bo
   hardware report, and a read-only USB drive with the boot logs
 * **storage:** nothing is written to the headset; every block device is switched to read-only at boot
 
-> **Status:** the image is built from the official 5.13.8 firmware and verified offline (AOSP tools)
-> and in an emulated ARM64 VM (see [Verification](#verification)). **It has not been run on a real
-> PICO 4 yet.** The first real boot is the experiment.
+> **Status:** images are verified offline (AOSP tools) and in an emulated ARM64 VM (see
+> [Verification](#verification)). On a real PICO 4 running 5.13.7, all 20 userspace preflight
+> checks passed, but the signed Neo3 engineering ABL rejected `fastboot boot` as an unknown
+> command. The test verified return to PICO OS. **Linux has not booted on the headset yet.**
+> An explicit boot-partition test with stock-image restoration is available in the
+> [hardware runner](HARDWARE-TEST.md#explicit-boot-partition-test).
 
 ## Prerequisites
 
@@ -137,12 +140,15 @@ survives a warm reboot.
 
 ### If fastboot boot is not available
 
-Unverified: whether PICO's production bootloader (ABL) accepts `fastboot boot`. Qualcomm's
-LinuxLoader only compiles that command in when the OEM builds it with `ENABLE_BOOT_CMD`, and the
-PICO unlock tools ship an "engineering" ABL. Follow their unlock procedure exactly; if
-`fastboot boot` still fails with an unknown-command error, the fallback is to flash the image to
-the boot partition. That is reversible, but PICO OS won't start until you flash the stock image
-back:
+The signed Neo3 engineering ABL tested on the PICO 4 rejects `fastboot boot` with an
+unknown-command error even after persistent normal and critical unlock. For that bootloader,
+use the explicitly selected [boot-partition test](HARDWARE-TEST.md#explicit-boot-partition-test),
+which checks the device's verified backup and attempts stock-image restoration after testing.
+The RAM runner never switches to flashing automatically.
+
+The equivalent manual sequence is below. It replaces the sole Android boot partition, so
+PICO OS cannot start until the original image is flashed back. Keep engineering ABL and a
+working EDL recovery path available:
 
 ```powershell
 fastboot flash boot out\pico4-poc-5.13.8-global-sek.img

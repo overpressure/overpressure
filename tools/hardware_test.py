@@ -1,4 +1,4 @@
-"""Bounded, serial-bound PICO 4 acceptance tests. Never flash or unlock a device."""
+"""Bounded, serial-bound PICO 4 tests; RAM boot by default, explicit flash-run opt-in."""
 from __future__ import annotations
 
 import argparse
@@ -105,10 +105,48 @@ def prepare_image(source: Path, folder: Path, run_id: str, public_key: bytes) ->
             "boot_sha256": hashlib.sha256(data).hexdigest(), "build_info": info}
 
 
+def prepare_restore_image(backup: Path, folder: Path, serial: str, identity: dict, image: Path) -> dict:
+    require(backup.resolve() not in (folder.resolve(), *folder.resolve().parents),
+            "Test results must be outside the immutable backup directory")
+    manifest = device.verified_backup(backup)
+    saved = manifest.get("identity", {})
+    require(saved.get("serial") == serial and
+            all(saved.get(key) == value for key, value in identity.items()),
+            "Backup identity does not match this headset and firmware")
+    names = [name for name in manifest["files"]
+             if re.fullmatch(r"boot(?:_[ab])?", Path(name).stem) and Path(name).suffix in (".bin", ".img")]
+    require(len(names) == 1 and Path(names[0]).stem == "boot",
+            "Flash tests require exactly one original, non-slotted boot partition")
+    original = backup / names[0]
+    expected = manifest["files"][names[0]]
+    require(image.stat().st_size <= expected["size"], "Test image exceeds the boot partition")
+    stock, test = bootimg.parse(original.read_bytes()), bootimg.parse(image.read_bytes())
+    require(stock.header_version <= 2 and stock.id == stock.compute_id(), "Stock boot checksum mismatch")
+    for field in ("header_version", "page_size", "kernel", "second", "recovery_dtbo", "dtb", "name",
+                  "os_version", "kernel_addr", "ramdisk_addr", "second_addr", "tags_addr", "dtb_addr"):
+        require(getattr(stock, field) == getattr(test, field), f"POC differs from backed-up stock {field}")
+    target = folder / "stock-boot.img"
+    with original.open("rb") as source, target.open("xb") as output:
+        shutil.copyfileobj(source, output)
+    require(device.digest(target) == expected, "Restoration copy differs from the verified backup")
+    return {"source": str(original.resolve()), "path": str(target.resolve()), **expected}
+
+
+def fastboot_value(output: str, name: str) -> str:
+    values = re.findall(r"^[ \t]*(?:\(bootloader\)[ \t]*)?" + re.escape(name)
+                        + r":[ \t]*(\S+)[ \t]*\r?$", output, re.M)
+    require(len(values) == 1, f"Missing or ambiguous fastboot variable: {name}")
+    return values[0]
+
+
 class Runner:
     def __init__(self, args):
         self.args = args
         self.folder = args.out.resolve()
+        self.flash_mode = args.command == "flash-run"
+        if self.flash_mode:
+            require(args.backup.resolve() not in (self.folder, *self.folder.parents),
+                    "Test results must be outside the immutable backup directory")
         self.folder.mkdir(parents=True, exist_ok=False)
         self.run_id = uuid.uuid4().hex
         self.result = {"schema": 1, "run_id": self.run_id, "started": utc(), "status": "running",
@@ -118,6 +156,9 @@ class Runner:
         self.boot_attempted = False
         self.authenticated = False
         self.baseline = None
+        self.boot_dirty = False
+        self.result.update(boot_method="flash" if self.flash_mode else "ram" if args.command == "run" else "none",
+                           boot_restore="not_needed", boot_restore_required=False)
         self.save()
 
     def save(self):
@@ -166,8 +207,8 @@ class Runner:
             value = operation()
             record["status"] = "passed"
             return value
-        except Exception as exc:
-            record.update(status="failed", error=str(exc))
+        except (Exception, KeyboardInterrupt) as exc:
+            record.update(status="failed", error=str(exc) or "Interrupted")
             raise
         finally:
             record["finished"] = utc()
@@ -211,6 +252,42 @@ class Runner:
         self.result.update(prepare_image(self.args.image, self.folder, self.run_id,
                                         (self.folder / "id_ed25519.pub").read_bytes()))
 
+    def prepare_restore(self):
+        require(self.args.confirm_device == self.args.serial,
+                "Flash tests require --confirm-device matching --serial")
+        self.result["stock_boot"] = prepare_restore_image(self.args.backup, self.folder,
+                self.args.serial, self.baseline, self.folder / "test-boot.img")
+        base = [self.args.fastboot, "-s", self.args.fastboot_serial or self.args.serial]
+        self.result["manual_restore_commands"] = [
+            [*base, "oem", device.unlock_token(self.baseline["chip_id"]), "unlock"],
+            [*base, "flash", "boot", self.result["stock_boot"]["path"]], [*base, "reboot"],
+        ]
+        self.save()
+
+    def check_restore_image(self):
+        saved = self.result["stock_boot"]
+        require(device.digest(Path(saved["path"])) == {key: saved[key] for key in ("size", "sha256")},
+                "Pinned stock restoration image changed; refusing to flash")
+
+    def check_fastboot_unlock(self):
+        try:
+            output = self.fastboot("oem", "device-info")
+        except ValueError:
+            output = self.fastboot("getvar", "unlocked")
+        require(device.unlocked(output), "Bootloader is locked or unlock state is unknown")
+
+    def authorize_flash(self):
+        self.check_restore_image()
+        self.check_fastboot_unlock()
+        require(fastboot_value(self.fastboot("getvar", "has-slot:boot"), "has-slot:boot") == "no",
+                "Flash tests only support a non-slotted boot partition")
+        size = fastboot_value(self.fastboot("getvar", "partition-size:boot"), "partition-size:boot")
+        require(re.fullmatch(r"0x[0-9a-fA-F]+", size) and
+                int(size, 16) == self.result["stock_boot"]["size"],
+                "Live boot partition size differs from its original backup")
+        # Engineering ABL's per-session command authorization; no flashing unlock/reset.
+        self.fastboot("oem", device.unlock_token(self.baseline["chip_id"]), "unlock")
+
     def enter_fastboot(self):
         self.moved = True  # Even a command timeout may have rebooted the device.
         self.adb("reboot", "bootloader")
@@ -220,15 +297,22 @@ class Runner:
             require(any(line.split()[:2] == [serial, "fastboot"] for line in output.splitlines()),
                     "Selected fastboot serial is missing")
         self.wait("fastboot", self.args.boot_timeout, detect)
-        try:
-            output = self.fastboot("oem", "device-info")
-        except ValueError:
-            output = self.fastboot("getvar", "unlocked")
-        require(device.unlocked(output), "Bootloader is locked or unlock state is unknown")
+        self.check_fastboot_unlock()
 
     def boot(self):
         path = self.folder / "test-boot.img"
         require(device.digest(path)["sha256"] == self.result["boot_sha256"], "Test image changed before boot")
+        if self.flash_mode:
+            self.authorize_flash()
+            # A failed or timed-out write may still have changed storage. Journal first.
+            self.boot_dirty = True
+            self.result["boot_restore"] = "required"
+            self.result["boot_restore_required"] = True
+            self.save()
+            self.fastboot("flash", "boot", str(path), timeout=self.args.boot_timeout)
+            self.boot_attempted = True
+            self.fastboot("reboot")
+            return
         self.boot_attempted = True
         self.fastboot("boot", str(path), timeout=self.args.boot_timeout)
 
@@ -254,6 +338,12 @@ class Runner:
         mounts = self.ssh("cat /proc/mounts")
         (self.folder / "mounts.txt").write_text(mounts + "\n", encoding="utf-8")
         validate_mounts(mounts)
+        if self.flash_mode:
+            size = (self.folder / "test-boot.img").stat().st_size
+            output = self.ssh(f"head -c {size} /dev/block/by-name/boot | sha256sum")
+            (self.folder / "boot-readback.txt").write_text(output + "\n", encoding="utf-8")
+            require(output.split() and output.split()[0] == self.result["boot_sha256"],
+                    "Flashed test image failed readback verification")
 
     def http(self, endpoint, timeout=15):
         # The USB address must bypass desktop/environment HTTP proxies.
@@ -302,9 +392,12 @@ class Runner:
             except (ValueError, OSError):
                 pass
             try:
-                self.ssh("(sleep 2; pico4-reboot) </dev/null >/dev/null 2>&1 &", timeout=10)
+                target = " bootloader" if self.boot_dirty else ""
+                self.ssh(f"(sleep 2; pico4-reboot{target}) </dev/null >/dev/null 2>&1 &", timeout=10)
             except (ValueError, OSError):
                 pass  # A dropped SSH connection can mean the reboot already began.
+        if self.boot_dirty:
+            self.restore_boot()
         rebooted_fastboot = False
         def stock(timeout):
             nonlocal rebooted_fastboot
@@ -322,19 +415,45 @@ class Runner:
                 raise ValueError("Waiting for original PICO OS to complete boot")
         self.wait("stock PICO OS recovery", self.args.recovery_timeout, stock)
         self.result["recovery"] = "verified"
+        if self.result["boot_restore"] == "flash_acknowledged":
+            self.result["boot_restore"] = "android_boot_verified"
+
+    def restore_boot(self):
+        self.result["boot_restore"] = "attempting"
+        self.save()
+        serial = self.args.fastboot_serial or self.args.serial
+        def ready(timeout):
+            output = self.command([self.args.fastboot, "devices"], timeout)
+            if any(line.split()[:2] == [serial, "fastboot"] for line in output.splitlines()):
+                return
+            # A partial/failed write could still have left a bootable stock image.
+            identity = self.identity(timeout)
+            require(identity == self.baseline, "Unexpected Android identity during restoration")
+            self.adb("reboot", "bootloader", timeout=timeout)
+            raise ValueError("Waiting for bootloader to restore original boot image")
+        self.wait("fastboot for stock boot restoration", self.args.recovery_timeout, ready)
+        self.authorize_flash()
+        self.fastboot("flash", "boot", self.result["stock_boot"]["path"], timeout=self.args.boot_timeout)
+        self.boot_dirty = False
+        self.result["boot_restore"] = "flash_acknowledged"
+        self.result["boot_restore_required"] = False
+        self.save()
+        self.fastboot("reboot")
 
     def execute(self):
         failed = False
         try:
-            if self.args.command == "run":
-                self.step("prepare RAM test image", self.prepare)
+            if self.args.command != "preflight":
+                self.step("prepare test boot image", self.prepare)
             self.baseline = self.step("identify stock headset", self.identity)
             self.result["identity"] = self.baseline
-            rootfs = self.folder / "rootfs.tar" if self.args.command == "run" else self.args.rootfs
+            if self.flash_mode:
+                self.step("verify and pin stock boot restoration image", self.prepare_restore)
+            rootfs = self.args.rootfs if self.args.command == "preflight" else self.folder / "rootfs.tar"
             self.step("userspace preflight", lambda: self.preflight(rootfs))
-            if self.args.command == "run":
+            if self.args.command != "preflight":
                 self.step("enter unlocked fastboot", self.enter_fastboot)
-                self.step("RAM boot", self.boot)
+                self.step("flash test boot image" if self.flash_mode else "RAM boot", self.boot)
                 self.step("SSH identity", lambda: self.wait("SSH", self.args.boot_timeout, self.authenticate))
                 self.step("Linux shell and read-only storage", self.assertions)
                 self.step("HTTP and diagnostic report", self.diagnostics)
@@ -349,6 +468,7 @@ class Runner:
                     failed = True
                     self.result["recovery"] = "failed"
                     self.result["recovery_error"] = str(exc) or "Interrupted"
+            self.result["boot_restore_required"] = self.boot_dirty
             self.result.update(status="failed" if failed else "passed", finished=utc())
             self.save()
             # A per-run credential must not remain usable after the test.
@@ -360,9 +480,9 @@ class Runner:
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
-    for name in ("preflight", "run"):
+    for name in ("preflight", "run", "flash-run"):
         p = sub.add_parser(name)
-        p.add_argument("--serial", required=name == "run", help="authorized ADB serial (preflight can select a sole device)")
+        p.add_argument("--serial", required=name != "preflight", help="authorized ADB serial (preflight can select a sole device)")
         p.add_argument("--adb", default="adb")
         p.add_argument("--out", type=Path, default=ROOT / "out" / ("hardware-" + uuid.uuid4().hex[:12]),
                        help="new result directory (never overwritten)")
@@ -377,15 +497,20 @@ def main(argv=None):
             p.add_argument("--host", default="172.16.42.1", help="headset USB IPv4 address")
             for flag, default in (("boot", 180), ("report", 180), ("recovery", 420)):
                 p.add_argument(f"--{flag}-timeout", type=int, default=default)
+            if name == "flash-run":
+                p.add_argument("--backup", type=Path, required=True, help="verified original device backup")
+                p.add_argument("--confirm-device", required=True, help="repeat --serial to authorize boot writes")
     args = ap.parse_args(argv)
     try:
         for tool in ("adb", "fastboot", "ssh", "ssh_keygen"):
             if hasattr(args, tool):
                 require(shutil.which(getattr(args, tool)), f"Required executable missing: {getattr(args, tool)}")
-        if args.command == "run":
+        if args.command != "preflight":
             ipaddress.IPv4Address(args.host)
             require(all(getattr(args, f"{n}_timeout") > 0 for n in ("boot", "report", "recovery")),
                     "Timeouts must be positive")
+            if args.command == "flash-run":
+                require(args.confirm_device == args.serial, "--confirm-device must match --serial")
         elif args.serial is None:
             args.serial = device.select_device(args.adb, None)
         return Runner(args).execute()
