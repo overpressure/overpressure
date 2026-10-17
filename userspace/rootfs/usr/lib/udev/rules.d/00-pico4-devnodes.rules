@@ -1,0 +1,14 @@
+# The stock PICO 4 kernel has no devtmpfs, and udev never creates device
+# nodes itself. These rules run first, so the node exists before any other
+# rule or udev's own permission and symlink handling refers to it.
+#
+# The helper also keeps the storage policy of the Linux POC: every physical
+# disk and partition is switched read-only when it appears.
+
+ACTION=="remove", ENV{DEVNAME}=="?*", RUN+="/usr/libexec/pico4-poc/devnode remove"
+ACTION=="remove", GOTO="pico4_devnodes_end"
+ENV{DEVNAME}=="?*", ENV{MAJOR}=="?*", PROGRAM="/usr/libexec/pico4-poc/devnode add"
+LABEL="pico4_devnodes_end"
+
+# The GPU is /dev/kgsl-3d0 on this kernel (Android grants it to everyone).
+SUBSYSTEM=="kgsl", KERNEL=="kgsl-3d0", GROUP="render", MODE="0666"

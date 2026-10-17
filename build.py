@@ -25,7 +25,7 @@ import sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
-from tools import alpine, bootimg, compress, cpio, firmware, kernelinfo  # noqa: E402
+from tools import alpine, bootimg, compress, cpio, firmware, kernelinfo, userspace  # noqa: E402
 
 CACHE = os.path.join(ROOT, "cache")
 OVERLAY = os.path.join(ROOT, "initramfs")
@@ -44,6 +44,8 @@ PACKAGES = [
     "mtools",  # builds the read-only FAT "log drive" exposed over USB
     "kmod", "dtc", "evtest", "i2c-tools", "libgpiod", "tinyalsa", "strace", "htop",
     "drm_info", "libdrm-tests", "usbutils", "pciutils", "lsblk", "device-mapper",
+    # pico4-userspace: unpack the step-4 userspace into zram, keep the SSH host key
+    "tar", "zstd", "e2fsprogs", "dropbear-convert",
 ]
 
 # Appended to the stock command line:
@@ -274,6 +276,11 @@ def cmd_inspect(args) -> int:
     if kinfo.config_text:
         with open(os.path.join(out_dir, "kernel.config"), "w", encoding="utf-8", newline="\n") as f:
             f.write(kinfo.config_text)
+        # Roadmap step 4: what the SteamOS userspace gets from this kernel.
+        compat = userspace.kernel_compat(kinfo.config, kinfo.version)
+        print(userspace.format_compat(compat))
+        with open(os.path.join(out_dir, "userspace-compat.json"), "w", encoding="utf-8") as f:
+            json.dump(compat, f, indent=2)
     log(f">> wrote {out_dir}")
     for p in check_requirements(kinfo):
         log(f"!! {p}")

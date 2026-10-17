@@ -1,0 +1,16 @@
+# QEMU self-test (kernel argument pico4poc.userspace_selftest=1): run the
+# acceptance check once the boot settles, report to the kernel log, power off.
+[Unit]
+Description=PICO 4 userspace self-test (QEMU)
+ConditionKernelCommandLine=pico4poc.userspace_selftest=1
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+# Not oneshot: the boot must be able to finish while the check waits for it.
+Type=exec
+ExecStart=/usr/libexec/pico4-poc/userspace-selftest
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

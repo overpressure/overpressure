@@ -1,0 +1,42 @@
+#!/bin/sh
+# pico4-init "restart" action (SIGQUIT to PID 1): it has already run the
+# shutdown entry and stopped every user process; this script replaces it as PID 1.
+#
+# With a userspace prepared by "pico4-userspace switch" it moves the kernel
+# file systems into /newroot and executes systemd there. Without one it
+# restarts stage-1 init. A failure before the switch returns to fastboot, so
+# the recovery path never depends on the new userspace.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /usr/libexec/pico4-poc/lib.sh
+NEW=/newroot
+
+if [ ! -e "$POC_RUN/userspace/ready" ]; then
+	log "init restart without a prepared userspace: restarting stage-1 init"
+	exec /usr/libexec/pico4-poc/pico4-init
+fi
+fail() {
+	log "userspace: switch failed: $*; rebooting to fastboot"
+	sync
+	exec pico4-reboot bootloader
+}
+
+# The stock kernel has no devtmpfs: /dev is a directory of the initramfs,
+# which switch_root deletes. Give the new root a tmpfs copy of the nodes mdev
+# made; udev's pico4 rules maintain it from then on.
+mount -t tmpfs -o nosuid,mode=0755,size=16m dev "$NEW/dev" || fail "mounting $NEW/dev"
+for m in pts shm; do
+	mkdir -p "$NEW/dev/$m"
+	mount --move "/dev/$m" "$NEW/dev/$m" || fail "moving /dev/$m"
+done
+for e in /dev/* /dev/.[!.]*; do
+	case "${e##*/}" in pts | shm | '.[!.]*') continue ;; esac
+	cp -a "$e" "$NEW/dev/" || fail "copying $e"
+done
+# Hotplug goes to udev (netlink) from now on; nothing may call stage-1 mdev.
+echo > /proc/sys/kernel/hotplug 2>/dev/null
+umount -l /tmp 2>/dev/null
+log "userspace: executing systemd from $(sed -n "s|^\([^ ]*\) $NEW .*|\1|p" /proc/mounts)"
+for m in /run /sys /proc; do
+	mount --move "$m" "$NEW$m" || fail "moving $m"
+done
+exec switch_root "$NEW" /usr/lib/systemd/systemd

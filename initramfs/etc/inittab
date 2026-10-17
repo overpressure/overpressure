@@ -1,4 +1,5 @@
-# busybox init services for the PICO 4 Linux POC (see /usr/libexec/pico4-poc/svc).
+# Services of the PICO 4 Linux POC, run by /usr/libexec/pico4-poc/pico4-init
+# (busybox inittab syntax; see also /usr/libexec/pico4-poc/svc).
 # /init has already done all one-time setup before exec'ing init.
 ::respawn:/usr/libexec/pico4-poc/svc udhcpd
 ::respawn:/usr/libexec/pico4-poc/svc telnetd
@@ -8,4 +9,6 @@
 ::respawn:/usr/libexec/pico4-poc/svc usb-watch
 ::respawn:/usr/libexec/pico4-poc/svc recovery-watch
 ::ctrlaltdel:/sbin/reboot
+# SIGQUIT (pico4-userspace switch): hand PID 1 to systemd in the received userspace.
+::restart:/usr/libexec/pico4-poc/switch-userspace
 ::shutdown:/usr/libexec/pico4-poc/svc shutdown

@@ -6,11 +6,19 @@
 #
 # Usage: test/qemu/build-test-kernel.sh [kernel-version]
 # Output: cache/qemu/Image (inside the project directory)
+#
+# A 4.x version also applies kernel-4.19.fragment and writes cache/qemu/Image-4.19:
+#   test/qemu/build-test-kernel.sh 4.19.325   # for test/qemu/run-userspace.sh
 set -euo pipefail
 
 VERSION=${1:-6.18.56}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PROJECT=$(cd "$HERE/../.." && pwd)
+FRAGMENTS=("$HERE/kernel.fragment")
+IMAGE=Image
+case "$VERSION" in
+4.*) FRAGMENTS+=("$HERE/kernel-4.19.fragment"); IMAGE=Image-4.19 ;;
+esac
 # Build on a native Linux filesystem: compiling under /mnt/c (WSL) is very slow.
 WORK=${PICO4_BUILD_DIR:-$HOME/.cache/pico4-poc}/linux-$VERSION
 OUT=$PROJECT/cache/qemu
@@ -25,20 +33,28 @@ if [ ! -f "$WORK/Makefile" ]; then
 fi
 
 cd "$WORK"
-make -s ARCH=arm64 CROSS_COMPILE="$CROSS" defconfig
-./scripts/kconfig/merge_config.sh -m .config "$HERE/kernel.fragment" >/dev/null
-make -s ARCH=arm64 CROSS_COMPILE="$CROSS" olddefconfig
+# Old kernels predate GCC 10's -fno-common default (scripts/dtc yylloc).
+MAKE=(make -s ARCH=arm64 CROSS_COMPILE="$CROSS" HOSTCFLAGS=-fcommon)
+"${MAKE[@]}" defconfig
+./scripts/kconfig/merge_config.sh -m .config "${FRAGMENTS[@]}" >/dev/null
+"${MAKE[@]}" olddefconfig
 
 # merge_config only warns; fail loudly if a required option did not stick.
 missing=0
-while read -r line; do
-    case "$line" in CONFIG_*=*) ;; *) continue ;; esac
-    grep -qx "$line" .config || { echo "!! $line did not apply"; missing=1; }
-done < "$HERE/kernel.fragment"
+for fragment in "${FRAGMENTS[@]}"; do
+    while read -r line; do
+        case "$line" in
+        CONFIG_*=*) grep -qx "$line" .config || { echo "!! $line did not apply"; missing=1; } ;;
+        "# CONFIG_"*" is not set")
+            opt=${line#\# }; opt=${opt%% *}
+            ! grep -q "^$opt=" .config || { echo "!! $opt is still enabled"; missing=1; } ;;
+        esac
+    done < "$fragment"
+done
 [ "$missing" = 0 ] || exit 1
 
 echo ">> building Image with $(nproc) jobs"
-make -s ARCH=arm64 CROSS_COMPILE="$CROSS" -j"$(nproc)" Image
-cp arch/arm64/boot/Image "$OUT/Image"
-cp .config "$OUT/Image.config"
-echo ">> done: $OUT/Image ($(make -s kernelrelease))"
+"${MAKE[@]}" -j"$(nproc)" Image
+cp arch/arm64/boot/Image "$OUT/$IMAGE"
+cp .config "$OUT/$IMAGE.config"
+echo ">> done: $OUT/$IMAGE ($("${MAKE[@]}" kernelrelease))"

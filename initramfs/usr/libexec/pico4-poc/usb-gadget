@@ -208,7 +208,7 @@ replug() {
 		return 1
 	fi
 	# The network interface may have been re-created: re-apply the address
-	# and restart udhcpd (busybox init respawns it with the new name).
+	# and restart udhcpd (pico4-init respawns it with the new name).
 	[ -n "$NET_FN" ] || return 0
 	iface=$(cat "$G/functions/$NET_FN/ifname" 2>/dev/null)
 	[ -e "/sys/class/net/$iface" ] || return 0

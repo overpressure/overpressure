@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
 
-from . import bootimg, compress, cpio, device
+from . import bootimg, compress, cpio, device, userspace
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -56,10 +56,11 @@ def validate_mounts(output: str) -> None:
     rows = [row.split() for row in output.splitlines()]
     require(rows and all(len(r) == 6 for r in rows), "Invalid mount inventory")
     roots = [r for r in rows if r[1] == "/"]
-    require(roots and all(r[2] in ("rootfs", "tmpfs", "ramfs") for r in roots),
-            "Root filesystem is not RAM-backed")
+    # The step-4 userspace runs from ext4 on zram: compressed RAM, not storage.
+    require(roots and all(r[2] in ("rootfs", "tmpfs", "ramfs") or r[0].startswith("/dev/zram")
+                          for r in roots), "Root filesystem is not RAM-backed")
     for row in rows:
-        if row[0].startswith("/dev/"):
+        if row[0].startswith("/dev/") and not row[0].startswith("/dev/zram"):
             require("rw" not in row[3].split(","), "A device-backed filesystem is mounted writable")
 
 
@@ -76,7 +77,7 @@ def validate_report(data: bytes, run_id: str) -> None:
 
 
 def prepare_image(source: Path, folder: Path, run_id: str, public_key: bytes,
-                  connect_timeout: int = 210, test_timeout: int = 900) -> dict:
+                  connect_timeout: int = 210, test_timeout: int = 900, userspace: bool = False) -> dict:
     original = source.read_bytes()
     image = bootimg.parse(original)
     require(image.id == image.compute_id(), "Source boot image checksum mismatch")
@@ -89,6 +90,11 @@ def prepare_image(source: Path, folder: Path, run_id: str, public_key: bytes,
     require("usr/libexec/pico4-poc/recovery-watch" in tree.nodes and
             "etc/inittab" in tree.nodes and b"svc recovery-watch" in tree.nodes["etc/inittab"].data,
             "Rebuild the POC image: independent recovery watchdog is missing")
+    if userspace:
+        require("usr/bin/pico4-userspace" in tree.nodes and "usr/bin/zstd" in tree.nodes
+                and "usr/libexec/pico4-poc/pico4-init" in tree.nodes
+                and b"::restart:/usr/libexec/pico4-poc/switch-userspace" in tree.nodes["etc/inittab"].data,
+                "Rebuild the POC image: the userspace handoff is missing")
     info = json.loads(tree.nodes["etc/pico4-poc/build-info"].data)
     require(0 < connect_timeout < test_timeout, "Invalid device recovery deadlines")
     # Preflight runs the exact source userspace, excluding device nodes.
@@ -152,6 +158,7 @@ class Runner:
         self.args = args
         self.folder = args.out.resolve()
         self.flash_mode = args.command == "flash-run"
+        self.userspace = bool(getattr(args, "userspace", None))
         if self.flash_mode:
             require(args.backup.resolve() not in (self.folder, *self.folder.parents),
                     "Test results must be outside the immutable backup directory")
@@ -175,14 +182,15 @@ class Runner:
         temp.write_text(json.dumps(self.result, indent=2) + "\n", encoding="utf-8")
         temp.replace(self.folder / "result.json")
 
-    def command(self, argv, timeout=30):
+    def command(self, argv, timeout=30, stdin=None):
         self.count += 1
         prefix = self.folder / f"command-{self.count:04d}"
         Path(str(prefix) + ".json").write_text(json.dumps({"argv": list(map(str, argv)),
-                    "timeout": timeout, "started": utc()}, indent=2), encoding="utf-8")
+                    "timeout": timeout, "started": utc(),
+                    "stdin": str(stdin.name) if stdin else None}, indent=2), encoding="utf-8")
         try:
             process = subprocess.run(list(map(str, argv)), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     timeout=timeout)
+                                     timeout=timeout, stdin=stdin)
             output = process.stdout
             Path(str(prefix) + ".log").write_bytes(output)
             text = output.decode("utf-8", errors="replace").strip()
@@ -199,13 +207,14 @@ class Runner:
     def fastboot(self, *words, timeout=30):
         return self.command([self.args.fastboot, "-s", self.args.fastboot_serial or self.args.serial, *words], timeout)
 
-    def ssh(self, command, timeout=30):
+    def ssh(self, command, timeout=30, stdin=None):
         return self.command([self.args.ssh, "-F", self.folder / "ssh_config", "-i", self.folder / "id_ed25519",
                              "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=5",
                              "-o", "StrictHostKeyChecking=accept-new", "-o",
                              f'UserKnownHostsFile="{(self.folder / "known_hosts").as_posix()}"', "-o",
                              f'GlobalKnownHostsFile="{(self.folder / "known_hosts").as_posix()}"',
-                             f"root@{self.args.host}", command], timeout)
+                             f"root@{self.args.host}", command], timeout,
+                            **({"stdin": stdin} if stdin is not None else {}))
 
     def step(self, name, operation):
         print(f">> {name}", flush=True)
@@ -272,7 +281,9 @@ class Runner:
                                         (self.folder / "id_ed25519.pub").read_bytes(),
                                         self.args.boot_timeout + 30,
                                         self.args.boot_timeout + self.args.report_timeout + 300
-                                        + getattr(self.args, "debug_session_seconds", 0)))
+                                        + getattr(self.args, "debug_session_seconds", 0)
+                                        + (2 * self.args.userspace_timeout + 300 if self.userspace else 0),
+                                        userspace=self.userspace))
 
     def prepare_restore(self):
         require(self.args.confirm_device == self.args.serial,
@@ -367,7 +378,7 @@ class Runner:
         # independent maximum test duration still recovers a crashed runner.
         self.ssh("touch /run/pico4-poc/test-authenticated", timeout)
 
-    def assertions(self):
+    def assertions(self, suffix=""):
         info = json.loads(self.ssh("cat /etc/pico4-poc/build-info"))
         require(info == self.result["build_info"], "Running build metadata differs from supplied image")
         require(self.ssh("uname -m") == "aarch64", "Linux is not running ARM64")
@@ -377,15 +388,15 @@ class Runner:
         require(self.ssh("printf 'SHELL-%s' $((6*7))") == "SHELL-42", "SSH shell execution failed")
         storage = self.ssh("for d in /sys/class/block/*; do [ -e \"$d\" ] || continue; "
                            "printf 'BLOCK %s %s\\n' \"${d##*/}\" \"$(cat \"$d/ro\")\"; done")
-        (self.folder / "storage.txt").write_text(storage + "\n", encoding="utf-8")
+        (self.folder / f"storage{suffix}.txt").write_text(storage + "\n", encoding="utf-8")
         validate_storage(storage)
         mounts = self.ssh("cat /proc/mounts")
-        (self.folder / "mounts.txt").write_text(mounts + "\n", encoding="utf-8")
+        (self.folder / f"mounts{suffix}.txt").write_text(mounts + "\n", encoding="utf-8")
         validate_mounts(mounts)
         if self.flash_mode:
             size = (self.folder / "test-boot.img").stat().st_size
             output = self.ssh(f"head -c {size} /dev/block/by-name/boot | sha256sum")
-            (self.folder / "boot-readback.txt").write_text(output + "\n", encoding="utf-8")
+            (self.folder / f"boot-readback{suffix}.txt").write_text(output + "\n", encoding="utf-8")
             require(output.split() and output.split()[0] == self.result["boot_sha256"],
                     "Flashed test image failed readback verification")
 
@@ -456,6 +467,56 @@ class Runner:
         # Graphics must preserve the same storage policy as the shell acceptance run.
         self.assertions()
         require(not errors, "; ".join(errors))
+
+    def userspace_handoff(self):
+        """Roadmap step 4: stream the userspace into zram, hand PID 1 to systemd, check it."""
+        archive = self.args.userspace
+        manifest = json.loads(archive.with_name("pico4-userspace.manifest.json").read_text(encoding="utf-8"))
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        require(manifest.get("archive", {}).get("sha256") == digest, "Userspace archive does not match its manifest")
+        state = {"archive": str(archive.resolve()), "sha256": digest, "bytes": archive.stat().st_size,
+                 "packages": len(manifest.get("packages", {})), "systemd": manifest.get("packages", {}).get("systemd"),
+                 "gpu_firmware": bool(manifest.get("gpu_firmware"))}
+        self.result["userspace"] = state
+        self.save()
+        print(f">> userspace: sending {state['bytes'] >> 20} MiB", flush=True)
+        started = time.monotonic()
+        with archive.open("rb") as stream:
+            output = self.ssh(f"pico4-userspace receive --sha256 {digest}", self.args.userspace_timeout, stdin=stream)
+        require(output.splitlines()[-1:] == [f"received {digest}"], "Headset did not confirm the userspace archive")
+        state["receive_seconds"] = round(time.monotonic() - started, 1)
+        require(self.ssh("pico4-userspace switch", 30).splitlines()[-1:] == ["switching"], "Handoff was refused")
+        state["switch"] = utc()
+        self.save()
+
+        def stage2(timeout):
+            # Same pinned host key and test-run identity, but systemd as PID 1.
+            # (Re-running the Windows NCM initialization here stalled UsbDk and
+            # left the host's NCM and storage drivers in an error state.)
+            self.authenticate(timeout)
+            require(self.ssh("cat /proc/1/comm", timeout) == "systemd", "Stage 1 is still running")
+            # Cancels stage 2's own connection deadline (recovery-policy.sh).
+            self.ssh("touch /run/pico4-poc/userspace-authenticated", timeout)
+        self.wait("userspace SSH", self.args.userspace_timeout, stage2)
+        state["ssh_seconds"] = round(time.monotonic() - started, 1)
+        output = self.ssh("pico4-userspace-check --wait 240; echo EXIT=$?", 300)
+        report, _, code = output.rpartition("EXIT=")
+        (self.folder / "userspace-check.json").write_text(report.strip() + "\n", encoding="utf-8")
+        for name, command in (("journal", "journalctl -b --no-pager -o short-monotonic"),
+                              ("units", "systemctl list-units --all --no-pager --plain"),
+                              ("analyze", "systemd-analyze; systemd-analyze blame --no-pager | head -n 40"),
+                              ("dmesg", "dmesg")):
+            try:
+                (self.folder / f"userspace-{name}.txt").write_text(self.ssh(command, 60), encoding="utf-8")
+            except (ValueError, OSError) as exc:  # evidence is best effort, the check decides
+                (self.folder / f"userspace-{name}.txt").write_text(f"unavailable: {exc}\n", encoding="utf-8")
+        value = json.loads(report)
+        state["check"] = {k: value.get(k) for k in ("status", "errors", "systemd", "versions", "vulkan")}
+        self.save()
+        require(code.strip() == "0", "Userspace check failed")
+        userspace.validate_check(value, require_vulkan=state["gpu_firmware"])
+        # The storage and identity guarantees of stage 1 must hold in stage 2.
+        self.assertions("-userspace")
 
     def development_session(self):
         """Keep one authenticated boot available for bounded userspace iteration."""
@@ -575,6 +636,8 @@ class Runner:
                 self.step("HTTP and diagnostic report", self.diagnostics)
                 if getattr(self.args, "graphics", None):
                     self.step("native graphics", self.graphics)
+                if self.userspace:
+                    self.step("SteamOS-compatible userspace", self.userspace_handoff)
                 if getattr(self.args, "debug_session_seconds", 0):
                     self.step("bounded development session", self.development_session)
         except (Exception, KeyboardInterrupt) as exc:
@@ -621,6 +684,10 @@ def main(argv=None):
             activity.add_argument("--debug-session-seconds", type=int, default=0, metavar="SECONDS",
                                   help="keep Linux available for userspace iteration (60-1800 seconds), then restore")
             p.add_argument("--graphics-seconds", type=int, default=10, help="KMS measurement duration per mode (3-120 seconds)")
+            p.add_argument("--userspace", type=Path, metavar="ARCHIVE",
+                           help="pico4-userspace.tar.zst from scripts/build-userspace.sh: hand over to systemd and check it")
+            p.add_argument("--userspace-timeout", type=int, default=600,
+                           help="seconds for receiving the archive and for the systemd boot (default: %(default)s)")
             p.add_argument("--host", default="172.16.42.1", help="headset USB IPv4 address")
             for flag, default in (("boot", 180), ("report", 180), ("recovery", 420)):
                 p.add_argument(f"--{flag}-timeout", type=int, default=default)
@@ -634,12 +701,18 @@ def main(argv=None):
                 require(shutil.which(getattr(args, tool)), f"Required executable missing: {getattr(args, tool)}")
         if args.command != "preflight":
             require(3 <= args.graphics_seconds <= 120, "Graphics duration must be between 3 and 120 seconds")
+            if args.userspace:
+                require(args.userspace.is_file() and args.userspace.with_name("pico4-userspace.manifest.json").is_file(),
+                        "--userspace needs pico4-userspace.tar.zst with its manifest beside it")
+                require(60 <= args.userspace_timeout <= 1800, "Userspace timeout must be between 60 and 1800 seconds")
             require(args.debug_session_seconds == 0 or 60 <= args.debug_session_seconds <= 1800,
                     "Development sessions must be between 60 and 1800 seconds")
             ipaddress.IPv4Address(args.host)
             if args.windows_ncm_python:
                 require(sys.platform == "win32", "--windows-ncm-python requires Windows")
                 require(shutil.which(args.windows_ncm_python), "Windows NCM Python executable is missing")
+                # CreateProcess rejects relative paths written with forward slashes.
+                args.windows_ncm_python = str(Path(shutil.which(args.windows_ncm_python)).resolve())
             require(all(getattr(args, f"{n}_timeout") > 0 for n in ("boot", "report", "recovery")),
                     "Timeouts must be positive")
             if args.command == "flash-run":

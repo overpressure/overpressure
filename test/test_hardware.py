@@ -70,7 +70,11 @@ class HarnessTests(unittest.TestCase):
         tree.add_file("etc/pico4-poc/build-info", json.dumps(self.info).encode())
         tree.add_file("init", b"#!/bin/sh\n", 0o755)
         tree.add_file("usr/libexec/pico4-poc/recovery-watch", b"#!/bin/sh\n", 0o755)
-        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4-poc/svc recovery-watch\n")
+        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4-poc/svc recovery-watch\n"
+                      b"::restart:/usr/libexec/pico4-poc/switch-userspace\n")
+        tree.add_file("usr/bin/pico4-userspace", b"#!/bin/sh\n", 0o755)
+        tree.add_file("usr/bin/zstd", b"\x7fELF", 0o755)
+        tree.add_file("usr/libexec/pico4-poc/pico4-init", b"#!/bin/sh\n", 0o755)
         tree.mkdir("root", 0o700)
         img = bootimg.BootImage(2, 4096, b"kernel", gzip.compress(tree.to_cpio()), dtb=b"dtb")
         self.source.write_bytes(img.pack())
@@ -100,11 +104,38 @@ class HarnessTests(unittest.TestCase):
         self.save_backup_manifest()
         self.runner = hw.Runner(self.args)
 
+    def enable_userspace(self, firmware=False):
+        archive = self.root / "userspace" / "pico4-userspace.tar.zst"
+        archive.parent.mkdir()
+        archive.write_bytes(b"userspace archive")
+        self.userspace_sha = hw.hashlib.sha256(archive.read_bytes()).hexdigest()
+        (archive.parent / "pico4-userspace.manifest.json").write_text(json.dumps({
+            "archive": {"sha256": self.userspace_sha}, "packages": {"systemd": "257.7-2.2"},
+            "gpu_firmware": [{"file": "a650_sqe.fw", "sha256": "0" * 64}] if firmware else []}))
+        self.args.userspace = archive
+        self.args.userspace_timeout = 60
+        self.args.out = self.root / "userspace-results"
+        self.runner = hw.Runner(self.args)
+
+    def userspace_check(self):
+        value = {"schema": 1, "status": "passed", "errors": [],
+                 "systemd": {"pid1": "/usr/lib/systemd/systemd", "version": "257.7", "state": "running",
+                             "failed_units": []},
+                 "dev": {"fstype": "tmpfs", "missing_nodes": [], "udev_devices": 300},
+                 "storage": {"root": "/dev/zram0", "writable_block_devices": []}, "seats": ["seat0"],
+                 "vulkan": {"status": "skipped", "result": None}}
+        if self.scenario == "userspace-check":
+            value.update(status="failed", errors=["no failed units"])
+            value["systemd"].update(state="degraded", failed_units=["sshd.service"])
+        return json.dumps(value) + "\nEXIT=" + ("1" if value["status"] == "failed" else "0")
+
     def save_backup_manifest(self):
         (self.args.backup / "manifest.json").write_text(json.dumps(self.backup_manifest))
 
-    def fake_command(self, argv, timeout=30):
+    def fake_command(self, argv, timeout=30, stdin=None):
         argv = list(map(str, argv))
+        if stdin is not None:
+            self.assertEqual(stdin.read(), b"userspace archive")
         self.calls.append(argv)
         if argv[0] == "ncm-python":
             if argv[-1] == "--check":
@@ -160,6 +191,16 @@ class HarnessTests(unittest.TestCase):
             return "OKAY"
         if argv[0] == "ssh":
             command = argv[-1]
+            if command.startswith("pico4-userspace receive"):
+                self.assertIn(f"--sha256 {self.userspace_sha}", command)
+                return "received " + ("0" * 64 if self.scenario == "userspace-sha" else self.userspace_sha)
+            if command == "pico4-userspace switch":
+                self.switched = True
+                return "switching"
+            if command == "cat /proc/1/comm":
+                return "systemd" if getattr(self, "switched", False) else "init"
+            if command.startswith("pico4-userspace-check"):
+                return self.userspace_check()
             if "pico4-kms-test" in command:
                 return "EXIT=1" if self.scenario == "graphics" else "EXIT=0"
             if command == "cat /run/pico4-poc/kms.json":
@@ -240,6 +281,42 @@ class HarnessTests(unittest.TestCase):
         self.assertTrue(self.restored)
         self.assertEqual(self.runner.result["graphics"]["kms"]["status"],"passed")
         self.assertEqual(self.runner.result["graphics_visual_confirmation"],"not_recorded")
+
+    def test_userspace_handoff_is_checked_and_restored(self):
+        self.enable_flash_mode()
+        self.enable_userspace()
+        self.assertEqual(self.execute(), 0)
+        self.assertTrue(self.restored)
+        state = self.runner.result["userspace"]
+        self.assertEqual((state["sha256"], state["check"]["status"]), (self.userspace_sha, "passed"))
+        # Two deadlines of 60 s plus 300 s handoff margin on top of the normal budget.
+        self.assertEqual(self.runner.result["device_recovery"]["test_timeout"], 302 + 420)
+        self.assertTrue((self.runner.folder / "userspace-check.json").exists())
+        self.assertTrue((self.runner.folder / "storage-userspace.txt").exists())
+        receive = [c for c in self.calls if c[0] == "ssh" and c[-1].startswith("pico4-userspace receive")]
+        self.assertEqual(len(receive), 1)
+
+    def test_userspace_failures_still_restore_stock(self):
+        for scenario in ("userspace-check", "userspace-sha"):
+            with self.subTest(scenario):
+                self.setUp()
+                self.enable_flash_mode()
+                self.enable_userspace()
+                self.scenario = scenario
+                self.assertEqual(self.execute(), 1)
+                self.assertTrue(self.restored)
+                self.assertEqual(self.runner.result["recovery"], "verified")
+                self.assertFalse(self.runner.result["boot_restore_required"])
+
+    def test_userspace_requires_handoff_image(self):
+        self.enable_userspace()
+        tree = cpio.Tree()
+        tree.add_file("etc/pico4-poc/build-info", json.dumps(self.info).encode())
+        tree.add_file("usr/libexec/pico4-poc/recovery-watch", b"#!/bin/sh\n", 0o755)
+        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4-poc/svc recovery-watch\n")
+        self.source.write_bytes(bootimg.BootImage(2, 4096, b"kernel", gzip.compress(tree.to_cpio()), dtb=b"dtb").pack())
+        with self.assertRaisesRegex(ValueError, "handoff"):
+            hw.prepare_image(self.source, self.root, "run", b"key", userspace=True)
 
     def test_graphics_failure_still_restores_stock(self):
         self.enable_flash_mode()

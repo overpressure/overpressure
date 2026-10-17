@@ -118,6 +118,14 @@ def verified_backup(folder: Path) -> dict:
     return manifest
 
 
+def executable(name: str) -> str:
+    """Absolute path for a relative tool path: Windows CreateProcess rejects
+    relative paths written with forward slashes. Bare names stay PATH lookups."""
+    if "/" not in name and "\\" not in name:
+        return name
+    return str(Path(name).resolve())
+
+
 def edl_command(args, *words: str) -> list[str]:
     loader = Path(args.loader).resolve()
     digest(loader)
@@ -126,13 +134,13 @@ def edl_command(args, *words: str) -> list[str]:
             raise ValueError("edl-ng requires its native executable via --edl")
         operation = {"r": "read-part", "w": "write-part",
                      "dump-rawprogram": "dump-rawprogram"}[words[0]]
-        return [args.edl, "--memory", "Ufs", "--loader", str(loader), operation, *words[1:]]
+        return [executable(args.edl), "--memory", "Ufs", "--loader", str(loader), operation, *words[1:]]
     # Windows Git checkouts may materialize edlclient's entrypoint symlink as
     # plain text. Calling its top-level script avoids that broken entrypoint.
-    executable = [args.edl]
+    tool = [executable(args.edl)]
     if args.edl_script:
-        executable = [args.edl_python, str(Path(args.edl_script).resolve())]
-    return [*executable, *words, "--memory=ufs", f"--loader={loader}"]
+        tool = [executable(args.edl_python), str(Path(args.edl_script).resolve())]
+    return [*tool, *words, "--memory=ufs", f"--loader={loader}"]
 
 
 def backup_commands(args) -> list[list[str]]:

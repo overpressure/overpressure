@@ -28,6 +28,12 @@ explicit backup-validated `flash-run` test on the bootloader tested here:
 > Original boot and ABL were restored and verified by full EDL readback. See [GRAPHICS.md](GRAPHICS.md)
 > for measurements, reproduction and the boundary between this bring-up and compositor/XR work.
 
+> **Step 4 complete on the tested headset — 2026-10-17.** A SteamOS-compatible ARM64 userspace
+> (the Steam Frame's systemd 257.7, SteamOS services, gamescope, PipeWire, KGSL Turnip) is
+> streamed into zram and takes over PID 1 from this image's init (`pico4-userspace receive` /
+> `switch`). On the stock 4.19 kernel it reached `running` with no failed units and passed the
+> Turnip Vulkan readback; stock boot and ABL were restored and verified. See [USERSPACE.md](USERSPACE.md).
+
 ## Prerequisites
 
 * An original PICO 4 / PICO 4 Pro / Enterprise (A8110, codename *phoenix*) with an **unlocked
@@ -109,7 +115,7 @@ explicit backup-validated `flash-run` test on the bootloader tested here:
 | 3 | USB gadget via configfs: **NCM** network + mass-storage log drive (+ ACM serial if the kernel had it) | amber once bound |
 | 4 | `usb0` = 172.16.42.1/24, DHCP hands the PC 172.16.42.2 (no gateway/DNS, so the PC's internet route is untouched) | green when a PC configures the device |
 | 5 | cpufreq governor → `schedutil`, CPU idle states re-enabled (PICO OS does this in its post-boot script) | |
-| 6 | busybox init runs `dropbear` (ssh), `telnetd`, `httpd`, `udhcpd` | |
+| 6 | `pico4-init` (PID 1, runs `/etc/inittab` like busybox init) starts `dropbear` (ssh), `telnetd`, `httpd`, `udhcpd` | |
 | 7 | `pico4-probe` collects a hardware inventory ~15 s later and refreshes the log drive | |
 
 If no usable USB traffic or shell login arrives within 5 minutes, an independent watchdog
@@ -234,7 +240,7 @@ flashing is performed in RAM mode; the explicit `flash-run` mode temporarily wri
 the boot partition. The regular `boot-poc` scripts remain interactive helpers that leave
 Linux running; their ping check alone is not a hardware acceptance result.
 
-Host simulation tests: `python -m unittest discover -s test -p "test_*.py" -v` — **59 passed**.
+Host simulation tests: `python -m unittest discover -s test -p "test_*.py" -v` — **86 passed**.
 
 On 2026-10-17, two real-headset `flash-run` cycles passed on an original PICO 4 running 5.13.7.
 The first established the Windows NCM workaround; the second performed it automatically,
@@ -392,6 +398,7 @@ prebuilt copy is in `prebuilt/aarch64/`.
 | `pico4-probe` | hardware inventory → `/run/pico4-poc/report/`, `report.tar.gz` |
 | `pico4-mount-ro <part> [dir]` | mount a stock partition read-only |
 | `pico4-reboot [bootloader\|recovery\|poweroff]` | reboot into a mode (no argument: PICO OS); `-r <string>` passes any other reboot reason. Unknown words are refused |
+| `pico4-userspace receive\|switch\|status` | step 4: unpack the SteamOS userspace archive from stdin into zram, then hand PID 1 to its systemd ([USERSPACE.md](USERSPACE.md)) |
 | `drm_info`, `modetest`, `evtest`, `i2cdetect`, `lsusb`, `dtc`, `strace`, `htop`, `dmsetup`, `tinymix`, `gpioinfo` | exploration tools (the probe avoids the risky ones) |
 
 The probe skips debugfs GPIO/clock dumps, PCIe config reads and audio mixer reads, because those
@@ -421,9 +428,11 @@ can hard-crash Qualcomm SoCs. Run them by hand, knowing the risk.
 build.py                 build / inspect entry point
 firmware.json            official PICO 4 OTA builds (URLs on PICO's CDN)
 tools/                   boot image, cpio, Alpine, OTA and kernel analysis modules
-initramfs/               files added to the ramdisk (init, scripts, web UI)
-src/, prebuilt/aarch64/  pico4-reboot helper (source + static binary)
-scripts/                 boot-poc.ps1/.sh (fastboot boot), preflight.ps1/.sh (+ preflight-device.sh)
-test/qemu/               test kernel config + build script, QEMU self-test runner
+initramfs/               files added to the ramdisk (init, scripts, web UI, pico4-userspace handoff)
+userspace/               step-4 SteamOS userspace: package list, pacman config, PICO overlay, PKGBUILDs
+src/, prebuilt/aarch64/  pico4-reboot helper (source + static binary), graphics tests
+scripts/                 boot-poc.ps1/.sh (fastboot boot), preflight.ps1/.sh (+ preflight-device.sh),
+                         build-graphics.sh, build-userspace.sh
+test/qemu/               test kernels (6.18, stock-like 4.19), stage-1 and userspace QEMU self-tests
 cache/, out/             downloads and build output (not versioned)
 ```

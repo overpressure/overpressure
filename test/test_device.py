@@ -97,8 +97,13 @@ class WorkflowTests(unittest.TestCase):
         args = device.parser().parse_args(self.args("backup") + [
             "--edl-script", str(script), "--edl-python", "venv/python.exe"])
         command = device.edl_command(args, "rl", str(self.backup), "--genxml")
-        self.assertEqual(command[:3], ["venv/python.exe", str(script.resolve()), "rl"])
+        # Relative tool paths become absolute: CreateProcess rejects "venv/python.exe".
+        self.assertEqual(command[:3], [str(Path("venv/python.exe").resolve()), str(script.resolve()), "rl"])
         self.assertIn("--memory=ufs", command)
+
+    def test_bare_edl_name_stays_a_path_lookup(self):
+        self.assertEqual(device.executable("edl-ng"), "edl-ng")
+        self.assertEqual(device.executable("cache/edl-ng/edl-ng.exe"), str(Path("cache/edl-ng/edl-ng.exe").resolve()))
 
     def test_native_backend_requires_explicit_luns_and_keeps_commands_read_only(self):
         base = self.args("backup") + ["--edl-backend", "edl-ng", "--edl", "native tool.exe"]

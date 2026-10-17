@@ -8,7 +8,7 @@
 #   1. pseudo filesystems, /dev via mdev (the stock kernel has no devtmpfs)
 #   2. logging to kmsg/pstore, status LED, CPU power management
 #   3. USB gadget: NCM network 172.16.42.1 (+ read-only log drive)
-#   4. hand over to busybox init, which keeps telnetd/sshd/httpd running
+#   4. hand over to pico4-init, which keeps telnetd/sshd/httpd running
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 umask 022
@@ -77,6 +77,19 @@ fi
 if [ "$(poc_arg selftest 0)" = 1 ]; then
 	"$POC_LIB/selftest" &
 fi
+# QEMU userspace test: pico4poc.userspace_payload=<partition>:<bytes>:<sha256>
+# unpacks the step-4 userspace from that partition and switches to it.
+payload=$(poc_arg userspace_payload "")
+if [ -n "$payload" ]; then
+	(
+		wait_for "$POC_RUN/usb.done" 120
+		IFS=: read -r part bytes sha <<-EOF
+		$payload
+		EOF
+		pico4-userspace receive --from "/dev/block/by-name/$part" --bytes "$bytes" --sha256 "$sha" &&
+			pico4-userspace switch
+	) &
+fi
 
-log "handing over to busybox init"
-exec /sbin/init
+log "handing over to pico4-init"
+exec /usr/libexec/pico4-poc/pico4-init

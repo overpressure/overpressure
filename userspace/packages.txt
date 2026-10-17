@@ -1,0 +1,47 @@
+# Packages of the PICO 4 SteamOS-compatible userspace (roadmap step 4), with
+# their dependencies resolved by pacman. One name per line; '#' starts a comment.
+# "deckard-arch-hotfixes-release-0.3/<name>" takes the Steam Frame's own build.
+
+# Arch/Holo base system, with the Frame's systemd (258+ needs Linux >= 5.4)
+base
+deckard-arch-hotfixes-release-0.3/systemd
+deckard-arch-hotfixes-release-0.3/systemd-libs
+deckard-arch-hotfixes-release-0.3/systemd-sysvcompat
+dbus-broker-units
+polkit
+sudo
+openssh
+iproute2
+e2fsprogs
+less
+zstd
+
+# SteamOS integration as on the Steam Frame
+deckard-arch-hotfixes-release-0.3/steamos-customizations-deckard
+deckard-arch-hotfixes-release-0.3/steamos-manager
+networkmanager
+
+# Session, audio and graphics stack of the Frame. The Frame's gamescope links
+# libXxf86vm without declaring it. Mesa (OpenGL for Xwayland) comes from the
+# preview: Valve's deckard Mesa needs libdisplay-info.so.1, which only the
+# Frame's private base has, and its Turnip lacks KGSL anyway.
+deckard-arch-hotfixes-release-0.3/gamescope
+libxxf86vm
+mesa
+xorg-xwayland
+pipewire
+pipewire-pulse
+wireplumber
+vulkan-icd-loader
+vulkan-tools
+
+# Project-built: Turnip with the KGSL backend and the step-3 graphics tests
+pico4/pico4-turnip-kgsl
+pico4/pico4-graphics-tests
+
+# Diagnostics (mtools: the stage-2 USB log drive)
+libdrm
+mtools
+evtest
+strace
+usbutils

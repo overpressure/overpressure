@@ -1,0 +1,156 @@
+#!/bin/bash
+# Acceptance check for the SteamOS-compatible userspace on the PICO 4
+# (roadmap step 4). Prints one JSON object; exit status 0 only if it passed.
+#
+#   pico4-userspace-check [--wait SECONDS] [--no-vulkan]
+#
+# Validated on the host by tools/userspace.py (validate_check).
+set -u
+wait_s=180
+vulkan=1
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--wait) wait_s=$2; shift ;;
+	--no-vulkan) vulkan=0 ;;
+	*) echo "usage: $0 [--wait SECONDS] [--no-vulkan]" >&2; exit 2 ;;
+	esac
+	shift
+done
+
+json_str() {
+	local s=${1//\\/\\\\}
+	s=${s//\"/\\\"}
+	s=${s//$'\n'/\\n}
+	s=${s//$'\t'/ }
+	printf '"%s"' "$s"
+}
+json_list() {
+	local first=1 item
+	printf '['
+	while IFS= read -r item; do
+		[ -n "$item" ] || continue
+		[ $first = 1 ] || printf ','
+		json_str "$item"
+		first=0
+	done
+	printf ']'
+}
+bool() { if "$@" >/dev/null 2>&1; then echo true; else echo false; fi; }
+
+errors=()
+need() { # need DESCRIPTION COMMAND...: record a failed requirement
+	local what=$1
+	shift
+	"$@" >/dev/null 2>&1 || errors+=("$what")
+}
+
+# -- systemd ---------------------------------------------------------------
+pid1=$(readlink /proc/1/exe)
+state=$(timeout "$wait_s" systemctl is-system-running --wait 2>/dev/null)
+[ -n "$state" ] || state=$(systemctl is-system-running 2>/dev/null)
+failed=$(systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
+sd_version=$(systemctl --version 2>/dev/null | sed -n '1s/^systemd \([0-9.]*\).*/\1/p')
+taint=$(systemctl show --property=Tainted --value 2>/dev/null)
+need "PID 1 is systemd" [ "$pid1" = /usr/lib/systemd/systemd ]
+need "systemd 257 (258+ requires Linux >= 5.4)" [ "${sd_version%%.*}" = 257 ]
+need "system state running (is: $state)" [ "$state" = running ]
+need "no failed units" [ -z "$failed" ]
+
+# -- /dev without devtmpfs ---------------------------------------------------
+dev_fs=$(findmnt -no FSTYPE /dev 2>/dev/null)
+missing_nodes=$(
+	for u in /sys/dev/char/*/uevent /sys/dev/block/*/uevent; do
+		name=$(sed -n 's/^DEVNAME=//p' "$u" 2>/dev/null)
+		[ -n "$name" ] || continue
+		[ -e "/dev/$name" ] || echo "$name"
+	done
+)
+udev_devices=$(udevadm info --export-db 2>/dev/null | grep -c '^P:')
+need "/dev is a tmpfs (no devtmpfs on this kernel)" [ "$dev_fs" = tmpfs ]
+need "every kernel device has a node" [ -z "$missing_nodes" ]
+need "udev database populated" [ "${udev_devices:-0}" -gt 0 ]
+
+# -- storage policy ------------------------------------------------------------
+writable=$(
+	for d in /sys/class/block/*; do
+		n=${d##*/}
+		case "$n" in loop* | ram* | zram* | dm-* | nbd*) continue ;; esac
+		[ "$(cat "$d/ro" 2>/dev/null)" = 1 ] || echo "$n"
+	done
+)
+root_src=$(findmnt -no SOURCE /)
+need "every physical block device read-only" [ -z "$writable" ]
+need "root filesystem in RAM (zram)" sh -c "case '$root_src' in /dev/zram*) exit 0;; esac; exit 1"
+
+# -- services and SteamOS userspace -------------------------------------------
+seats=$(loginctl list-seats --no-legend 2>/dev/null | awk '{print $1}')
+need "D-Bus system bus" busctl --system status
+need "logind seat0" grep -qx seat0 <<<"$seats"
+need "sshd active" systemctl is-active --quiet sshd.service
+need "Android network groups" getent group aid_inet aid_net_raw
+# The USB link to the PC must survive the handoff exactly as stage 1 left it
+# (the PC's ARP entry and DHCP lease point at this name, MAC and address).
+link_status=absent
+link_now=""
+if [ -s /etc/pico4-poc/usb-link.env ]; then
+	IFACE="" MAC="" IP=""
+	. /etc/pico4-poc/usb-link.env
+	link_now="$IFACE $(cat "/sys/class/net/$IFACE/address" 2>/dev/null) $(cat "/sys/class/net/$IFACE/operstate" 2>/dev/null)"
+	link_now+=" $(ip -4 -o addr show dev "$IFACE" 2>/dev/null | awk '{print $4}' | tr '\n' ' ')"
+	link_status=unchanged
+	[ -e "/sys/class/net/$IFACE" ] || link_status="interface $IFACE vanished: $(ls /sys/class/net | tr '\n' ' ')"
+	[ "$link_status" = unchanged ] && [ "$(cat "/sys/class/net/$IFACE/address")" != "$MAC" ] && link_status="MAC changed from $MAC"
+	[ "$link_status" = unchanged ] && ! grep -qw "$IP/24" <<<"$link_now" && link_status="address $IP missing"
+	[ "$link_status" = unchanged ] && grep -qw down <<<"$link_now" && link_status="link down"
+	need "USB link unchanged ($link_status)" [ "$link_status" = unchanged ]
+fi
+# The handoff must stop every stage-1 process (their executables were deleted
+# with the initramfs) but no kernel thread: the USB mass-storage thread
+# serves the log drive, and losing it resets the PC's view of the device.
+stale=$(for e in /proc/[0-9]*/exe; do readlink "$e" 2>/dev/null; done | grep -c ' (deleted)$')
+need "no stage-1 process survived the handoff ($stale found)" [ "$stale" = 0 ]
+if [ -d /sys/kernel/config/usb_gadget/pico4/functions/mass_storage.0 ]; then
+	need "USB mass-storage thread alive" grep -qx file-storage /proc/[0-9]*/comm
+fi
+packages=$(pacman -Q 2>/dev/null | wc -l)
+pkg() { pacman -Q "$1" 2>/dev/null | awk '{print $2}'; }
+for p in steamos-customizations-deckard steamos-manager gamescope pipewire pico4-turnip-kgsl; do
+	need "package $p installed" pacman -Q "$p"
+done
+os_id=$(. /etc/os-release && echo "${ID:-}")
+os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-}")
+
+# -- Vulkan through Turnip/KGSL (needs the GPU firmware from your own backup) ---
+vk_status=skipped
+vk_json=null
+if [ "$vulkan" = 1 ] && [ -c /dev/kgsl-3d0 ]; then
+	if out=$(VK_DRIVER_FILES=/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json \
+		timeout 45 pico4-vulkan-test 2>/run/pico4-vulkan-test.log); then
+		vk_status=passed
+	else
+		vk_status=failed
+		errors+=("Turnip/KGSL Vulkan test")
+	fi
+	vk_json=${out:-null}
+	grep -q '^{' <<<"$vk_json" || vk_json=null
+fi
+
+status=passed
+[ ${#errors[@]} = 0 ] || status=failed
+printf '{"schema":1,"status":%s' "$(json_str "$status")"
+printf ',"errors":%s' "$(printf '%s\n' "${errors[@]+"${errors[@]}"}" | json_list)"
+printf ',"kernel":%s,"os_id":%s,"os_name":%s' "$(json_str "$(uname -r)")" "$(json_str "$os_id")" "$(json_str "$os_name")"
+printf ',"systemd":{"pid1":%s,"version":%s,"state":%s,"failed_units":%s,"tainted":%s}' \
+	"$(json_str "$pid1")" "$(json_str "$sd_version")" "$(json_str "$state")" \
+	"$(json_list <<<"$failed")" "$(json_str "$taint")"
+printf ',"dev":{"fstype":%s,"missing_nodes":%s,"udev_devices":%s}' \
+	"$(json_str "$dev_fs")" "$(json_list <<<"$missing_nodes")" "${udev_devices:-0}"
+printf ',"storage":{"root":%s,"writable_block_devices":%s}' "$(json_str "$root_src")" "$(json_list <<<"$writable")"
+printf ',"usb_link":{"status":%s,"now":%s}' "$(json_str "$link_status")" "$(json_str "$link_now")"
+printf ',"seats":%s,"packages":%s' "$(json_list <<<"$seats")" "${packages:-0}"
+printf ',"versions":{"steamos-customizations-deckard":%s,"steamos-manager":%s,"gamescope":%s,"mesa":%s,"pico4-turnip-kgsl":%s,"glibc":%s}' \
+	"$(json_str "$(pkg steamos-customizations-deckard)")" "$(json_str "$(pkg steamos-manager)")" \
+	"$(json_str "$(pkg gamescope)")" "$(json_str "$(pkg mesa)")" \
+	"$(json_str "$(pkg pico4-turnip-kgsl)")" "$(json_str "$(pkg glibc)")"
+printf ',"vulkan":{"status":%s,"result":%s}}\n' "$(json_str "$vk_status")" "$vk_json"
+[ "$status" = passed ]

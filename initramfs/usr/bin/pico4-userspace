@@ -1,0 +1,171 @@
+#!/bin/sh
+# Stage-2 handoff: run the SteamOS-compatible userspace (roadmap step 4) from
+# compressed RAM, without writing to the headset's storage.
+#
+#   pico4-userspace receive [--sha256 HEX] [--size-mb N] < pico4-userspace.tar.zst
+#   pico4-userspace receive --from FILE --bytes N [--sha256 HEX]
+#       unpack the archive (scripts/build-userspace.sh) into an ext4 file
+#       system on /dev/zram0, mounted at /newroot, and check that its systemd
+#       runs on this kernel
+#   pico4-userspace switch
+#       carry over SSH identity, test-run state and USB network settings, then
+#       let pico4-init hand PID 1 to systemd (the SSH session is closed)
+#   pico4-userspace status
+#
+# From the PC:
+#   ssh root@172.16.42.1 pico4-userspace receive < out/userspace/pico4-userspace.tar.zst
+#   ssh root@172.16.42.1 pico4-userspace switch
+. /usr/libexec/pico4-poc/lib.sh
+set -o pipefail
+
+NEW=/newroot
+STATE=$POC_RUN/userspace
+die() { log "userspace: $*"; echo "pico4-userspace: $*" >&2; exit 1; }
+
+receive() {
+	local sha="" size_mb=6144 from="" bytes="" dev=/dev/zram0 zram=/sys/block/zram0 got
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--sha256) sha=$2; shift ;;
+		--size-mb) size_mb=$2; shift ;;
+		--from) from=$2; shift ;;
+		--bytes) bytes=$2; shift ;;
+		*) die "unknown option $1" ;;
+		esac
+		shift
+	done
+	[ -z "$from" ] || [ -n "$bytes" ] || die "--from needs --bytes"
+	tar --version 2>/dev/null | grep GNU >/dev/null || die "GNU tar is missing from this image (rebuild it)"
+	command -v zstd >/dev/null && command -v mkfs.ext4 >/dev/null || die "zstd/mkfs.ext4 missing from this image"
+	[ -e "$zram" ] || die "this kernel has no zram0"
+	grep -q " $NEW " /proc/mounts && die "$NEW is already mounted; reboot for a new attempt"
+	[ "$(cat "$zram/disksize")" = 0 ] || die "zram0 is already in use"
+	mkdir -p "$STATE" "$NEW"
+	rm -f "$STATE"/*
+
+	# zram stores pages compressed; the stock kernel offers lzo. Only the
+	# data actually written takes RAM. ext4 without journal: nothing to recover.
+	echo lzo > "$zram/comp_algorithm" 2>/dev/null
+	echo "${size_mb}M" > "$zram/disksize" || die "could not size zram0"
+	[ -b "$dev" ] || mknod "$dev" b "$(cut -d: -f1 "$zram/dev")" "$(cut -d: -f2 "$zram/dev")"
+	# e2fsprogs >= 1.47 enables features this 4.19 kernel cannot mount.
+	mkfs.ext4 -q -F -L pico4-steamos -O ^has_journal,^orphan_file,^metadata_csum_seed \
+		-E nodiscard,lazy_itable_init=0 "$dev" || die "mkfs.ext4 failed"
+	mount -t ext4 -o discard,noatime "$dev" "$NEW" || die "mounting the zram file system failed"
+	log "userspace: receiving archive into $dev (${size_mb} MiB virtual)"
+
+	mkfifo "$STATE/fifo"
+	sha256sum < "$STATE/fifo" | cut -d' ' -f1 > "$STATE/sha256" &
+	local hasher=$!
+	if [ -n "$from" ]; then
+		head -c "$bytes" "$from"
+	else
+		cat
+	fi | tee "$STATE/fifo" | zstd -dc |
+		tar -x --numeric-owner --xattrs --xattrs-include=security.capability --no-acls -C "$NEW" 2> "$STATE/tar.log"
+	local rc=$?
+	wait "$hasher"
+	got=$(cat "$STATE/sha256")
+	rm -f "$STATE/fifo"
+	[ $rc = 0 ] || die "unpacking failed ($(tail -n 3 "$STATE/tar.log" | tr '\n' ' '))"
+	[ -z "$sha" ] || [ "$got" = "$sha" ] || die "archive sha256 $got does not match $sha"
+	echo "$got" > "$STATE/archive.sha256"
+
+	# The new root must be able to run on this kernel before PID 1 depends on it.
+	[ -x "$NEW/usr/lib/systemd/systemd" ] || die "no systemd in the archive"
+	chroot "$NEW" /usr/lib/systemd/systemd --version > "$STATE/systemd-version" 2>&1 ||
+		die "the archive's systemd does not run here: $(head -n 2 "$STATE/systemd-version")"
+	touch "$STATE/received"
+	log "userspace: received sha256 $got, $(df -k "$NEW" | awk 'NR==2 {print int($3/1024)}') MiB used," \
+		"zram $(awk '{print int($2/1048576)}' "$zram/mm_stat") MiB, $(head -n 1 "$STATE/systemd-version")"
+	echo "received $got"
+}
+
+# Convert the stage-1 dropbear host keys, so the hardware runner's pinned
+# known_hosts entry stays valid after the switch.
+host_keys() {
+	local k t
+	mkdir -p "$NEW/etc/ssh"
+	for t in ed25519 ecdsa rsa; do
+		k=/etc/dropbear/dropbear_${t}_host_key
+		[ -s "$k" ] || continue
+		dropbearconvert dropbear openssh "$k" "$NEW/etc/ssh/ssh_host_${t}_key" >/dev/null 2>&1 ||
+			die "could not convert the $t host key"
+		chmod 600 "$NEW/etc/ssh/ssh_host_${t}_key"
+		dropbearkey -y -f "$k" | grep "^ssh-\|^ecdsa-" > "$NEW/etc/ssh/ssh_host_${t}_key.pub"
+	done
+}
+
+network() {
+	local offset
+	. "$POC_RUN/net.env" 2>/dev/null
+	[ -n "$IFACE" ] || { log "userspace: no USB network to carry over"; return 0; }
+	offset=${HOST_IP##*.}
+	# The PC keeps talking to this exact link: stage 2 checks it is unchanged.
+	mkdir -p "$NEW/etc/pico4-poc"
+	printf 'IFACE=%s\nMAC=%s\nIP=%s\n' "$IFACE" "$(cat "/sys/class/net/$IFACE/address")" "$IP" \
+		> "$NEW/etc/pico4-poc/usb-link.env"
+	mkdir -p "$NEW/etc/systemd/network"
+	cat > "$NEW/etc/systemd/network/50-pico4-usb.network" <<-EOF
+	# Written by pico4-userspace switch from the stage-1 USB setup.
+	[Match]
+	Name=$IFACE
+
+	[Link]
+	RequiredForOnline=no
+
+	[Network]
+	Address=$IP/24
+	DHCPServer=yes
+	LinkLocalAddressing=no
+	IPv6AcceptRA=no
+	ConfigureWithoutCarrier=yes
+	KeepConfiguration=yes
+
+	[DHCPServer]
+	PoolOffset=$offset
+	PoolSize=1
+	EmitDNS=no
+	EmitNTP=no
+	EmitRouter=no
+	DefaultLeaseTimeSec=86400
+	EOF
+}
+
+switch() {
+	[ -e "$STATE/received" ] || die "nothing received yet (pico4-userspace receive)"
+	grep -q " $NEW " /proc/mounts || die "$NEW is not mounted"
+	[ "$(cat /proc/1/comm)" = pico4-init ] || die "PID 1 is not pico4-init (rebuild the image)"
+	grep -q '^::restart:/usr/libexec/pico4-poc/switch-userspace' /etc/inittab || die "image lacks the handoff entry"
+
+	host_keys
+	mkdir -p "$NEW/etc/pico4-poc" "$NEW/root/.ssh"
+	cp -a /etc/pico4-poc/. "$NEW/etc/pico4-poc/"
+	cp "$STATE/archive.sha256" "$NEW/etc/pico4-poc/userspace-archive.sha256"
+	if [ -s /root/.ssh/authorized_keys ]; then
+		cp /root/.ssh/authorized_keys "$NEW/root/.ssh/authorized_keys"
+		chmod 700 "$NEW/root/.ssh"
+		chmod 600 "$NEW/root/.ssh/authorized_keys"
+	fi
+	# Stable per headset, so journals of different boots belong together.
+	device_serial | md5sum | cut -c1-32 > "$NEW/etc/machine-id"
+	network
+	# Uptime of the switch: starts stage 2's connection deadline in test runs.
+	cut -d. -f1 /proc/uptime > "$STATE/ready"
+	log "userspace: prepared; handing over to systemd"
+	# Detached: pico4-init stops every user process, including this SSH session.
+	( sleep 2; kill -QUIT 1 ) </dev/null >/dev/null 2>&1 &
+	echo "switching"
+}
+
+case "${1:-}" in
+receive) shift; receive "$@" ;;
+switch) switch ;;
+status)
+	for f in received ready archive.sha256; do
+		[ -e "$STATE/$f" ] && echo "$f: $(cat "$STATE/$f")"
+	done
+	grep " $NEW " /proc/mounts
+	;;
+*) sed -n '2,18s/^# \{0,1\}//p' "$0"; exit 2 ;;
+esac

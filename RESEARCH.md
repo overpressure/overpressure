@@ -6,8 +6,10 @@ Implementation update, October 17, 2026: **technical roadmap step 2 is complete 
 original PICO 4 running 5.13.7**. A fully automated test verified an ARM64 Linux root shell,
 USB networking, read-only storage, diagnostics and return to stock PICO OS. See the
 [measured acceptance results](README.md#verification) and [reproduction procedure](HARDWARE-TEST.md).
-The research findings below retain their original date; this local result does not establish
-graphics, tracking or SteamOS/SteamVR support.
+Steps 3 (native graphics, [GRAPHICS.md](GRAPHICS.md)) and 4 (a SteamOS-compatible userspace
+running on the stock kernel, [USERSPACE.md](USERSPACE.md)) followed on the same day. The
+research findings below retain their original date; these local results do not establish a
+compositor or Steam session in the headset, tracking or SteamVR support.
 
 ## Executive summary
 
@@ -292,6 +294,16 @@ Suggested technical roadmap
 4. Build a SteamOS-compatible ARM64 userspace
 
    Study the publicly available Steam Frame packages and the `steamac` and `steam-frame-nixos` projects. Adapt system services, input and graphics dependencies to the PICO kernel instead of attempting to use the Frame kernel.
+
+   **Completed locally on October 17, 2026:** 358 packages from Valve's public Holo Core
+   aarch64 preview plus the Steam Frame's own systemd 257.7, `steamos-customizations-deckard`,
+   `steamos-manager` and gamescope. The preview's systemd 258 requires Linux 5.4 and cannot run
+   on the PICO's 4.19. Neither Valve Turnip build has the KGSL backend, so the build adds one.
+   The userspace runs from zram after a PID-1 handoff from the stage-1 initramfs. On the
+   headset's stock kernel it reached `running` with no failed units and Turnip verified all
+   65,536 pixels of the Vulkan test; stock boot and ABL were restored by verified readback.
+   The graphical session (gamescope on the two-eye display) is not started yet. See
+   [USERSPACE.md](USERSPACE.md) for the kernel compatibility analysis and evidence.
 5. Integrate native XR hardware
 
    Establish IMU access, camera acquisition, 6DoF tracking, controller connectivity and lens calibration. Monado offers a possible foundation for developing and testing this layer.
@@ -330,7 +342,7 @@ These are engineering estimates based on the publicly documented work, not confi
 | Unlock PICO 4 bootloader                 | Already demonstrated                     |
 | Boot minimal Linux                       | Demonstrated locally on PICO 4 / 5.13.7; step 2 complete |
 | Obtain accelerated Linux graphics        | Hardware Vulkan readback and native 90/72 Hz display presentation verified separately; step 3 complete |
-| Run ARM64 SteamOS userspace              | Plausible after Linux bring-up           |
+| Run ARM64 SteamOS userspace              | Demonstrated locally on PICO 4 / 5.13.7: Frame systemd 257.7 + SteamOS services running, Turnip Vulkan verified; step 4 complete |
 | Display a Steam-style desktop in-headset | Challenging                              |
 | Full 6DoF and controllers                | Major research effort                    |
 | Complete standalone SteamVR experience   | Highly uncertain                         |

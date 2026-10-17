@@ -14,4 +14,10 @@ cd "$(dirname "$0")/.."
 [ -z "$(recovery_reason 659 210 660 1 1 1)" ]
 # A connected, authenticated but abandoned test eventually returns to fastboot.
 [ -n "$(recovery_reason 660 210 660 1 1 1)" ]
-echo 'Recovery policy: 8 checks passed'
+# Step-4 userspace: only test runs, only after a switch, until the runner reaches it.
+[ -z "$(userspace_reason 929 600 330 1 0)" ]
+[ -n "$(userspace_reason 930 600 330 1 0)" ]
+[ -z "$(userspace_reason 930 600 330 1 1)" ]
+[ -z "$(userspace_reason 930 600 330 0 0)" ]
+[ -z "$(userspace_reason 930 '' 330 1 0)" ]
+echo 'Recovery policy: 13 checks passed'

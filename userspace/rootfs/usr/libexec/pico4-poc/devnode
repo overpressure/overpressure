@@ -1,0 +1,70 @@
+#!/bin/bash
+# udev helper for the stock PICO 4 kernel, which has no devtmpfs:
+#   devnode add     create the node for $DEVNAME (from 00-pico4-devnodes.rules)
+#   devnode remove  delete it again
+#   devnode sweep   apply the storage policy to every block device present
+#
+# Block devices are made read-only as soon as they appear, exactly like the
+# stage-1 initramfs does (pico4poc.rw=1 on the kernel command line disables
+# this), and get Android-style /dev/block/by-name/<PARTNAME> links.
+# udev runs this for every device event: the common path stays builtin-only.
+set -u
+
+block_policy() {
+	local name=$1 partname
+	case "$name" in loop* | ram* | zram* | dm-* | nbd*) return 0 ;; esac
+	[ -e "/sys/class/block/$name" ] || return 0
+	. /usr/libexec/pico4-poc/lib.sh
+	if [ "$(poc_arg rw 0)" != 1 ]; then
+		blockdev --setro "/dev/$name" 2>/dev/null || log "could not set /dev/$name read-only"
+	fi
+	partname=$(sed -n 's/^PARTNAME=//p' "/sys/class/block/$name/uevent" 2>/dev/null)
+	if [ -n "$partname" ]; then
+		mkdir -p /dev/block/by-name
+		ln -sfn "../../$name" "/dev/block/by-name/$partname"
+		[ -e /dev/block/bootdevice ] || ln -s . /dev/block/bootdevice
+	fi
+}
+
+# matches NODE TYPE: true if NODE is a TYPE (b/c) node with $MAJOR:$MINOR.
+matches() {
+	local want
+	[ "$2" = b ] && want="block special file" || want="character special file"
+	[ "$(stat -c '%F %t:%T' "$1" 2>/dev/null)" = "$want $(printf '%x:%x' "$MAJOR" "$MINOR")" ]
+}
+
+case "${1:-}" in
+add)
+	[ -n "${DEVNAME:-}" ] && [ -n "${MAJOR:-}" ] && [ -n "${MINOR:-}" ] || exit 0
+	node=/dev/${DEVNAME#/dev/}
+	type=c
+	[ "${SUBSYSTEM:-}" = block ] && type=b
+	if ! matches "$node" "$type"; then
+		rm -f "$node"
+		mkdir -p "${node%/*}"
+		# Same default as devtmpfs: the driver's mode, else root-only.
+		mknod -m "${DEVMODE:-0600}" "$node" "$type" "$MAJOR" "$MINOR" || exit 0
+	fi
+	if [ "$type" = b ] && [ "${ACTION:-add}" != change ]; then
+		block_policy "${node#/dev/}"
+	fi
+	;;
+remove)
+	[ -n "${DEVNAME:-}" ] && [ -n "${MAJOR:-}" ] || exit 0
+	node=/dev/${DEVNAME#/dev/}
+	type=c
+	[ "${SUBSYSTEM:-}" = block ] && type=b
+	matches "$node" "$type" && rm -f "$node"
+	if [ "$type" = b ]; then
+		for l in /dev/block/by-name/*; do
+			[ "$(readlink "$l")" = "../../${node#/dev/}" ] && rm -f "$l"
+		done
+	fi
+	;;
+sweep)
+	for d in /sys/class/block/*; do
+		[ -e "$d" ] && block_policy "${d##*/}"
+	done
+	;;
+esac
+exit 0

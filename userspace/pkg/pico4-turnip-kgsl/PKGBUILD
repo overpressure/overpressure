@@ -1,0 +1,61 @@
+# Turnip (Mesa's Vulkan driver for Adreno) with the KGSL kernel backend, for
+# the stock PICO 4 kernel. Valve's deckard Mesa and the Holo/Arch Mesa only
+# build the upstream msm backend; the PICO kernel exposes the GPU as
+# /dev/kgsl-3d0 instead. Same upstream release and options as the verified
+# step-3 Alpine build (GRAPHICS.md), now against glibc, plus window-system
+# support. Installed beside Valve's Mesa: separate library and ICD names.
+pkgbase=pico4-turnip-kgsl
+pkgname=(pico4-turnip-kgsl pico4-graphics-tests)
+pkgver=26.1.6
+pkgrel=1
+arch=(aarch64)
+url="https://docs.mesa3d.org/drivers/freedreno.html"
+license=(MIT)
+makedepends=(meson ninja python-mako python-yaml python-packaging bison flex glslang
+             libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf
+             wayland wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms)
+source=("https://archive.mesa3d.org/mesa-$pkgver.tar.xz"
+        pico4-vulkan-test.c pico4-kms-test.c fullscreen.vert quadrants.frag)
+# Mesa: the SHA-512 from Alpine's 3.24 recipe, as in scripts/build-graphics.sh.
+# Test sources are this project's own files, copied in by build-userspace.sh.
+sha512sums=('6746b73f5b87e8ff3723eee586b4b5f033dbe6d13cd0309d743b7fa484c350268859ec8ff21aadcbca7a04070cdaa7828146dd28dde4b1935bb879891d687f0b'
+            SKIP SKIP SKIP SKIP)
+
+build() {
+  # arch-meson's paths and makepkg's flags, but without --auto-features=enabled:
+  # this build deliberately leaves most of Mesa out.
+  meson setup "mesa-$pkgver" build --prefix /usr --libexecdir lib --sbindir bin \
+    --buildtype plain --wrap-mode nodownload -Db_pie=true -Db_ndebug=true \
+    -Dvulkan-drivers=freedreno -Dfreedreno-kmds=kgsl \
+    -Dgallium-drivers= -Dplatforms=wayland,x11 \
+    -Dglx=disabled -Degl=disabled -Dopengl=false -Dgbm=disabled -Dgles1=disabled -Dgles2=disabled \
+    -Dllvm=disabled -Dvideo-codecs= -Dbuild-tests=false -Dglvnd=disabled \
+    -Dlibunwind=disabled -Dvalgrind=disabled -Dvulkan-layers=
+  meson compile -C build
+
+  mkdir -p tests
+  cc -std=c11 -O2 -Wall -Wextra -Werror pico4-vulkan-test.c -lvulkan -o tests/pico4-vulkan-test
+  cc -std=c11 -O2 -Wall -Wextra -Werror -I/usr/include/libdrm pico4-kms-test.c -ldrm -o tests/pico4-kms-test
+  glslang -V fullscreen.vert -o tests/fullscreen.vert.spv
+  glslang -V quadrants.frag -o tests/quadrants.frag.spv
+}
+
+package_pico4-turnip-kgsl() {
+  pkgdesc="Turnip Vulkan driver with the KGSL backend for the stock PICO 4 kernel"
+  depends=(libdrm vulkan-icd-loader zlib zstd expat libelf wayland libx11 libxcb libxshmfence
+           libxrandr xcb-util-keysyms spirv-tools gcc-libs glibc)
+  provides=(vulkan-driver)
+  install -Dm755 build/src/freedreno/vulkan/libvulkan_freedreno.so \
+    "$pkgdir/usr/lib/pico4/libvulkan_freedreno_kgsl.so"
+  install -dm755 "$pkgdir/usr/share/vulkan/icd.d"
+  printf '%s\n' '{"file_format_version":"1.0.0","ICD":{"library_path":"/usr/lib/pico4/libvulkan_freedreno_kgsl.so","api_version":"1.3.0"}}' \
+    > "$pkgdir/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json"
+  install -Dm644 "mesa-$pkgver/docs/license.rst" "$pkgdir/usr/share/licenses/$pkgname/license.rst"
+}
+
+package_pico4-graphics-tests() {
+  pkgdesc="PICO 4 native graphics acceptance tests (offscreen Vulkan, fenced KMS)"
+  depends=(vulkan-icd-loader libdrm glibc)
+  install -Dm755 tests/pico4-vulkan-test tests/pico4-kms-test -t "$pkgdir/usr/bin"
+  install -Dm644 tests/fullscreen.vert.spv tests/quadrants.frag.spv -t "$pkgdir/usr/share/pico4-poc/graphics"
+}
