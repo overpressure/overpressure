@@ -4,21 +4,22 @@ This is step 2 of the roadmap in [RESEARCH.md](RESEARCH.md): **boot a minimal AR
 original PICO 4 (2022, "phoenix") and get a shell**. It is the foundation for the later SteamOS
 userspace work, not SteamOS itself.
 
-The output is a standard Android boot image you start from RAM with `fastboot boot`:
+The output is a standard Android boot image. Use `fastboot boot` where supported, or the
+explicit backup-validated `flash-run` test on the bootloader tested here:
 
 * **kernel + device trees:** the stock PICO kernel (Linux 4.19.81) and DTBs, byte for byte
 * **ramdisk:** replaced with Alpine Linux 3.24 (aarch64) plus the POC init in [initramfs/](initramfs/)
 * **USB-C cable:** brings up a network link (`ssh root@172.16.42.1`), a web page with logs and a
   hardware report, and a read-only USB drive with the boot logs
-* **storage:** the POC userspace switches every block device to read-only at boot
+* **storage:** the POC userspace switches physical disks and partitions to read-only at boot
 
-> **Status:** Linux has booted on an original PICO 4 running 5.13.7. Its USB log drive
-> supplied a report with the expected test nonce and SoC identity. The engineering ABL
-> rejected `fastboot boot`, so this used the explicit
-> [boot-partition test](HARDWARE-TEST.md#explicit-boot-partition-test). **Full acceptance is
-> pending:** Windows NCM networking prevented SSH verification. A subsequent test verified
-> automatic return to fastboot, stock boot restoration and matching Android boot completion
-> after the SSH timeout, without physical intervention.
+> **Step 2 complete on the tested headset — 2026-10-17.** An original PICO 4 on PICO OS 5.13.7
+> passed the full hardware acceptance cycle: authenticated ARM64 Linux root shell, read-only
+> storage, HTTP diagnostics and automatic return to the matching PICO OS. Windows NCM
+> initialization is automated by the [hardware runner](HARDWARE-TEST.md#windows-ncm-initialization).
+> The engineering ABL does not support RAM boot, so the verified route is
+> [temporary boot-partition flashing with stock restoration](HARDWARE-TEST.md#explicit-boot-partition-test).
+> This establishes the Linux shell milestone; graphics and VR remain later roadmap steps.
 
 ## Prerequisites
 
@@ -131,6 +132,9 @@ survives a warm reboot.
 * **No network, but a PICO4POC drive appeared.** Open `boot.log` on it; it shows what the USB
   setup did. The drive is rebuilt after the probe; eject and replug, or look again, to see the
   newer files.
+* **Windows has an NCM adapter but no DHCP or SSH, with `Wrong NDP SIGN` in the kernel log.**
+  Use the runner's [Windows NCM initialization](HARDWARE-TEST.md#windows-ncm-initialization)
+  and leave the USB adapter on DHCP. This is the tested workaround for the 5.13.7 stock kernel.
 * **Nothing appears on the PC at all.** Wait 5 minutes: the headset should come back in fastboot
   mode (auto-reboot). Boot PICO OS, then read the last kernel log as root:
   `cat /sys/fs/pstore/console-ramoops*` and `cat /sys/fs/pstore/pmsg-ramoops*`. Every POC message
@@ -216,26 +220,45 @@ python hardware_test.py run --serial YOUR_ADB_SERIAL --image out/pico4-poc-5.13.
 ```
 
 Start with the already-unlocked headset running PICO OS and USB debugging authorized.
-The runner performs preflight, boots a per-run RAM image, checks SSH identity, Linux shell,
+In its default RAM mode, the runner performs preflight, boots a per-run image, checks SSH identity, Linux shell,
 storage protection and HTTP diagnostics, then verifies return to the original PICO OS.
 It records image hashes and all commands/results under `out/hardware-*/`. No unlocking or
-flashing is performed. The regular `boot-poc` scripts remain interactive helpers that leave
+flashing is performed in RAM mode; the explicit `flash-run` mode temporarily writes and restores
+the boot partition. The regular `boot-poc` scripts remain interactive helpers that leave
 Linux running; their ping check alone is not a hardware acceptance result.
 
-Host simulation tests: `python -m unittest discover -s test -p "test_*.py" -v`.
-On 2026-10-16, an original PICO 4 running 5.13.7 booted the Linux POC through `flash-run`.
-The USB log drive supplied a hardware report with the matching test nonce and SoC identity.
-The stock kernel ran Alpine userspace, Dropbear and the probe. **Full acceptance is still
-pending:** Windows 11's NCM link produced `Wrong NDP SIGN` errors and SSH was unreachable.
-After physical entry into fastboot, the runner restored the original boot image and verified
-the original Android identity and boot completion. A second run verified the independent
-watchdog on the real headset: failed SSH led to automatic fastboot entry, restoration and
-verified Android boot without a button press. A host-side `SET_CRC_MODE(0)` experiment was
-acknowledged by the gadget; end-to-end Windows networking remains unverified.
+Host simulation tests: `python -m unittest discover -s test -p "test_*.py" -v` — **59 passed**.
 
-After these tests, complete EDL readbacks of `boot` (96 MiB) and `abl` (1 MiB) matched the
-original recovery backup. The headset booted the matching PICO OS with its original ABL and
-SELinux enforcing. The bootloader remains unlocked for further development.
+On 2026-10-17, two real-headset `flash-run` cycles passed on an original PICO 4 running 5.13.7.
+The first established the Windows NCM workaround; the second performed it automatically,
+using the default POC configuration and a fresh per-run credential and nonce. That repeat
+needed no button presses, administrator actions or manual network commands during the run.
+
+| Real-headset acceptance | Result |
+| --- | --- |
+| Exact-image userspace preflight | 20 passed, 0 failed |
+| SSH identity and root shell execution | Matching per-run nonce and SoC ID; ARM64, UID 0 |
+| Running kernel and build | Stock 4.19.81-perf+, Alpine 3.24.2; metadata matched |
+| Persistent storage protection | All 99 physical block entries read-only; RAM-backed root; no writable device mounts |
+| Flashed POC readback | SHA-256 matched the instrumented image |
+| HTTP status, boot log, hardware report | Retrieved and validated against this run |
+| Stock boot restoration | Original image flashed; matching Android identity and boot completion verified |
+
+The unassisted run's private evidence is `out/hardware-20261017-flash-02/result.json`
+(all ten phases passed). Its source image SHA-256 is
+`c98b5372b3b8454670b1f3eaf264efa55ae7b3220b9b8b87e2fd77a9e798dfc8`;
+the instrumented test image is recorded separately in the result. The tested host used
+Windows 11, UsbDk 1.0.22, PyUSB 1.3.1 and libusb-package 1.0.30.0.
+
+Complete EDL readbacks of restored `boot` (96 MiB) and `abl` (1 MiB) matched the original
+recovery backup after testing. Stock ABL was restored as a separate preparation/recovery
+operation; `flash-run` itself only writes `boot`. The bootloader remains unlocked for further
+development. Evidence and backups stay private and are excluded from Git.
+
+The failed-network recovery path was also verified on the real headset on 2026-10-16:
+the independent watchdog returned to fastboot and the runner restored PICO OS without a
+button press. This covers a configured but unusable USB link; a kernel hard hang or loss
+of host power can still require physical/EDL recovery.
 
 ### Offline and emulated verification
 

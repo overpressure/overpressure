@@ -103,7 +103,7 @@ The result directory deliberately retains the stock restoration image.
 
 ## What is checked in both boot modes
 
-1. Validate the source image and record its SHA-256. Derive a RAM-only test variant with
+1. Validate the source image and record its SHA-256. Derive a test variant with
    a fresh SSH public key and run identifier; record its distinct SHA-256. Kernel, DTBs
    and boot layout are retained. Preflight uses userspace extracted from the same source
    image, preventing accidental pairing with another rootfs tar.
@@ -193,3 +193,26 @@ Flash-mode cases additionally cover wrong/tampered backups, mismatched kernels o
 layouts, partial/interrupted writes, changed restore files, readback failures and failed restores.
 They also exercise archive validation, command timeouts and artifact preservation. They do
 not replace a real headset run. QEMU tests remain a separate userspace regression check.
+
+## Verified step-two completion: 2026-10-17
+
+The local original PICO 4 / 5.13.7 passed two complete cycles, including an unassisted repeat
+using automatic Windows NCM initialization and the default POC configuration. All ten phases
+passed in `out/hardware-20261017-flash-02/result.json`. The original boot and ABL partitions
+were then read back in full through EDL and matched their backups. Stock ABL restoration was
+a separate `device.py restore-abl` operation. The final PICO OS boot was verified with SELinux
+enforcing; the bootloader remains unlocked.
+
+After the documented device/driver preparation, reproduce the tested route with:
+
+```powershell
+python build.py build --firmware 5.13.7-global-seko
+python hardware_test.py flash-run --serial YOUR_ADB_SERIAL --fastboot-serial YOUR_FASTBOOT_SERIAL --image out/pico4-poc-5.13.7-global-seko.img --backup backup/stock --confirm-device YOUR_ADB_SERIAL --windows-ncm-python cache/ncm-venv/Scripts/python.exe --out out/acceptance-new
+```
+
+Use the backup directory belonging to that headset and a new result directory. The example
+assumes platform-tools/OpenSSH are on PATH and the optional NCM environment was prepared as
+above. Engineering ABL must be staged for this test, then restored through the separate device
+workflow after testing. The completion evidence is `out/stage2-completion-20261017.json`;
+private artifacts are intentionally excluded from Git. This completes the Linux-shell
+milestone, not graphics or VR compatibility.

@@ -1,7 +1,7 @@
 """Initialize the stock 4.19 NCM gadget for Windows, then release it to UsbNcm.
 
 Requires PyUSB, libusb-package and the separately installed UsbDk driver.
-Only the explicit POC USB serial may receive a configuration/control request.
+Only the explicit POC USB serial may receive configuration changes or NCM setup.
 The caller must bound this process: a Windows driver open/close can stall.
 """
 from __future__ import annotations

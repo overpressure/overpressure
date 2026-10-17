@@ -2,6 +2,13 @@
 
 Research date: October 14, 2026 · Target: PICO 4 (2022, codename Phoenix), not PICO 4 Ultra
 
+Implementation update, October 17, 2026: **technical roadmap step 2 is complete on the local
+original PICO 4 running 5.13.7**. A fully automated test verified an ARM64 Linux root shell,
+USB networking, read-only storage, diagnostics and return to stock PICO OS. See the
+[measured acceptance results](README.md#verification) and [reproduction procedure](HARDWARE-TEST.md).
+The research findings below retain their original date; this local result does not establish
+graphics, tracking or SteamOS/SteamVR support.
+
 ## Executive summary
 
 Running SteamOS 3 on the original PICO 4 is technically plausible, but I could not verify an existing, working open-source port specifically targeting this headset.
@@ -262,6 +269,13 @@ Suggested technical roadmap
 2. Boot a minimal ARM64 Linux environment
 
    Use the PICO kernel and device-tree information to prepare a minimal initramfs with serial or USB debugging where available. The first measurable success is a Linux shell, not a VR interface.
+
+   **Completed locally on October 17, 2026:** stock kernel/DTBs with Alpine ARM64 userspace,
+   authenticated root SSH, USB HTTP diagnostics, read-only storage checks and automated
+   stock-boot restoration passed. Full EDL readbacks of restored boot and ABL matched the
+   original backup. The validated route uses temporary boot flashing because the tested
+   engineering bootloader rejects RAM boot.
+
 3. Bring up native graphics
 
    Investigate DRM/KMS, display initialization, Mesa Turnip and Vulkan. Verify whether the two eye displays can be driven reliably at their native resolution and refresh rates.
@@ -304,7 +318,7 @@ These are engineering estimates based on the publicly documented work, not confi
 | Milestone                                | Assessment                               |
 | ---------------------------------------- | ---------------------------------------- |
 | Unlock PICO 4 bootloader                 | Already demonstrated                     |
-| Boot minimal Linux                       | Plausible; no verified PICO 4 port found |
+| Boot minimal Linux                       | Demonstrated locally on PICO 4 / 5.13.7; step 2 complete |
 | Obtain accelerated Linux graphics        | Plausible but unverified                 |
 | Run ARM64 SteamOS userspace              | Plausible after Linux bring-up           |
 | Display a Steam-style desktop in-headset | Challenging                              |
