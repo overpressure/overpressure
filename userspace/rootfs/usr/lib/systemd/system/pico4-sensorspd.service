@@ -1,0 +1,17 @@
+[Unit]
+Description=FastRPC file server for the SLPI sensors process (sensor registry and config)
+ConditionPathExists=/usr/share/qcom/pico4/sensors/config
+ConditionPathExists=/sys/kernel/boot_slpi
+Requires=pico4-slpi.service
+After=pico4-slpi.service pico4-pd-mapper.service
+
+[Service]
+# The driver marks the SLPI channel secure: the plain adsprpc-smd node gets
+# EACCES. udev creates the node during coldplug (no devtmpfs on this kernel).
+ExecStartPre=/bin/sh -c 'for i in $$(seq 100); do [ -c /dev/adsprpc-smd-secure ] && exit 0; sleep 0.1; done; exit 1'
+ExecStart=/usr/bin/hexagonrpcd -f /dev/adsprpc-smd-secure -d sdsp -s -R /usr/share/qcom/pico4
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=pico4-sensors.target

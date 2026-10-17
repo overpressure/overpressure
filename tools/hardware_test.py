@@ -476,7 +476,8 @@ class Runner:
         require(manifest.get("archive", {}).get("sha256") == digest, "Userspace archive does not match its manifest")
         state = {"archive": str(archive.resolve()), "sha256": digest, "bytes": archive.stat().st_size,
                  "packages": len(manifest.get("packages", {})), "systemd": manifest.get("packages", {}).get("systemd"),
-                 "gpu_firmware": bool(manifest.get("gpu_firmware"))}
+                 "gpu_firmware": bool(manifest.get("gpu_firmware")),
+                 "sensor_data": bool(manifest.get("sensor_data"))}
         self.result["userspace"] = state
         self.save()
         print(f">> userspace: sending {state['bytes'] >> 20} MiB", flush=True)
@@ -517,6 +518,28 @@ class Runner:
         userspace.validate_check(value, require_vulkan=state["gpu_firmware"])
         # The storage and identity guarantees of stage 1 must hold in stage 2.
         self.assertions("-userspace")
+        if state["sensor_data"]:
+            self.head_imu(state)
+
+    def head_imu(self, state):
+        """Roadmap step 5: stream the head IMU through the sensor DSP (XR.md)."""
+        print(">> head IMU: sensor DSP and SSC stream", flush=True)
+        for name, command in (("sensors-units", "systemctl status --no-pager -l pico4-qrtr-ns pico4-slpi "
+                                                "pico4-pd-mapper pico4-sensorspd"),
+                              ("sensors-list", "pico4-imu list accel gyro")):
+            try:
+                (self.folder / f"userspace-{name}.txt").write_text(self.ssh(command, 60), encoding="utf-8")
+            except (ValueError, OSError) as exc:
+                (self.folder / f"userspace-{name}.txt").write_text(f"unavailable: {exc}\n", encoding="utf-8")
+        output = self.ssh(f"pico4-imu stream --rate {userspace.IMU_RATE_HZ:g} --seconds 10 --check "
+                          "--orientation; echo EXIT=$?", 120)
+        report, _, code = output.rpartition("EXIT=")
+        (self.folder / "userspace-imu.json").write_text(report.strip() + "\n", encoding="utf-8")
+        value = json.loads(report)
+        state["imu"] = {k: value.get(k) for k in ("status", "failures", "streams", "orientation")}
+        self.save()
+        require(code.strip() == "0", "Head IMU check failed")
+        userspace.validate_imu(value)
 
     def development_session(self):
         """Keep one authenticated boot available for bounded userspace iteration."""

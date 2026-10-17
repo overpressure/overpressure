@@ -136,3 +136,22 @@ def validate_check(value, require_vulkan: bool = False) -> None:
         if vk.get("status") != "passed":
             raise ValueError("Turnip/KGSL Vulkan test did not pass in the userspace")
         validate_vulkan(vk.get("result"))
+
+
+IMU_RATE_HZ = 500.0  # requested; the SSC runs the ICM-42688 at 512 Hz for it
+
+
+def validate_imu(value, rate: float = IMU_RATE_HZ) -> None:
+    """Validate `pico4-imu stream --check` JSON: head IMU streaming from the SLPI."""
+    if not isinstance(value, dict) or value.get("schema") != 1:
+        raise ValueError("IMU check produced no schema-1 result")
+    if value.get("status") != "pass" or value.get("failures"):
+        raise ValueError("Head IMU check failed: " + "; ".join(map(str, value.get("failures") or [value.get("error", "unknown")])))
+    if value.get("requested_rate_hz") != rate:
+        raise ValueError(f"IMU check ran at {value.get('requested_rate_hz')} Hz, expected {rate}")
+    streams = value.get("streams") or {}
+    for name in ("accel", "gyro"):
+        stream = streams.get(name) or {}
+        if not stream.get("samples") or stream.get("non_increasing_timestamps"):
+            raise ValueError(f"IMU {name} stream is missing or not monotonic")
+

@@ -96,5 +96,32 @@ class MountPolicyTests(unittest.TestCase):
                 hw.validate_mounts(value)
 
 
+IMU_PASSING = {
+    "schema": 1, "status": "pass", "failures": [], "seconds": 10, "requested_rate_hz": 500.0,
+    "streams": {"accel": {"samples": 5120, "rate_hz": 511.95, "non_increasing_timestamps": 0},
+                "gyro": {"samples": 5120, "rate_hz": 511.95, "non_increasing_timestamps": 0}},
+}
+
+
+class ImuValidationTests(unittest.TestCase):
+    def test_passing_stream(self):
+        userspace.validate_imu(IMU_PASSING)
+
+    def test_failures_are_rejected(self):
+        cases = [
+            ("not run", None),
+            ("failed check", {"status": "fail", "failures": ["accel: |g| 3.1 m/s^2"]}),
+            ("unchecked run", {"status": "collected"}),
+            ("other rate", {"requested_rate_hz": 100.0}),
+            ("no gyro", {"streams": {"accel": IMU_PASSING["streams"]["accel"]}}),
+            ("time going backwards", {"streams": {**IMU_PASSING["streams"],
+                                                  "gyro": {"samples": 5000, "non_increasing_timestamps": 2}}}),
+        ]
+        for name, change in cases:
+            value = None if change is None else {**copy.deepcopy(IMU_PASSING), **change}
+            with self.subTest(name), self.assertRaises(ValueError):
+                userspace.validate_imu(value)
+
+
 if __name__ == "__main__":
     unittest.main()

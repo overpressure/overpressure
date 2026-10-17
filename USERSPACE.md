@@ -172,6 +172,8 @@ bash scripts/build-userspace.sh /var/tmp/pico4-userspace-build "$PWD/out/userspa
 
 `--gpu-firmware` takes the `a650_*` files from **your own** stock backup (see
 [GRAPHICS.md](GRAPHICS.md)); without them the userspace still boots, but Vulkan cannot start.
+`--sensor-data` (optional) adds the sensor DSP firmware and registry for the head IMU, extracted
+from your own backup by `scripts/extract-sensor-data.sh` (see [XR.md](XR.md#build)).
 The first run compiles Mesa under emulation (about half an hour on a 20-thread PC). Outputs:
 `out/userspace/pico4-userspace.tar.zst` and `pico4-userspace.manifest.json`.
 
@@ -198,7 +200,9 @@ python hardware_test.py flash-run --serial SERIAL --confirm-device SERIAL --back
 The runner streams the archive over the pinned SSH connection, switches, waits for SSH from
 systemd as PID 1, runs `pico4-userspace-check`, collects the journal, unit list, boot timing and
 kernel log, and repeats the stage-1 storage and identity assertions. With GPU firmware in the
-manifest, the Turnip/KGSL Vulkan readback must also pass. The usual restoration follows.
+manifest, the Turnip/KGSL Vulkan readback must also pass; with sensor data, the head IMU stream
+check (`pico4-imu stream --check`, [XR.md](XR.md#run)) must pass as well. The usual restoration
+follows.
 
 ## Verification
 

@@ -1,0 +1,611 @@
+#!/usr/bin/env python3
+"""Stream the PICO 4 head IMU from the Qualcomm Sensor Core (SSC) on the SLPI.
+
+The IMU is wired to the sensor DSP, not to the application processor. Clients
+talk to the DSP's SNS client service (QMI service 0x190) over QRTR; requests
+and events inside the QMI messages are protobuf-encoded. This tool needs no
+libraries beyond Python: it encodes the few messages it uses by hand.
+
+  pico4-imu list                         sensors the DSP offers, with attributes
+  pico4-imu stream [--rate HZ] [--seconds S] [--csv FILE] [--orientation] [--check]
+
+`stream` prints one JSON summary; `--check` makes it exit 1 unless the
+stationary-headset acceptance limits hold (see check_summary()).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import select
+import socket
+import struct
+import sys
+import time
+
+AF_QIPCRTR = getattr(socket, "AF_QIPCRTR", 42)
+QRTR_PORT_CTRL = 0xFFFFFFFE
+QRTR_TYPE_NEW_SERVER = 4
+QRTR_TYPE_NEW_LOOKUP = 10
+
+SNS_CLIENT_SERVICE = 0x190
+QMI_REQUEST, QMI_RESPONSE, QMI_INDICATION = 0, 2, 4
+SSC_MSG_CONTROL = 0x20
+SSC_IND_SMALL, SSC_IND_LARGE = 0x21, 0x22
+
+SUID_SENSOR = (0xABABABABABABABAB, 0xABABABABABABABAB)
+MSG_ATTR_REQ, MSG_ATTR_EVENT = 1, 128
+MSG_DISABLE = 10
+MSG_SUID_REQ, MSG_SUID_EVENT = 512, 768
+MSG_CONFIG = 513
+MSG_PHYSICAL_CONFIG_EVENT = 768
+MSG_SENSOR_EVENT = 1025
+
+QTIMER_HZ = 19_200_000
+STANDARD_GRAVITY = 9.80665
+
+ATTR_NAMES = {0: "name", 1: "vendor", 2: "type", 3: "available", 4: "version",
+              6: "rates", 8: "fifo_size", 11: "ranges", 12: "op_modes",
+              17: "dynamic", 18: "hw_id", 19: "rigid_body", 20: "placement",
+              21: "physical_sensor", 23: "selected_resolution", 24: "selected_range"}
+
+
+# --- protobuf (proto2 wire format) ---------------------------------------
+
+def _varint(value: int) -> bytes:
+    out = bytearray()
+    value &= (1 << 64) - 1
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def pb_varint(field: int, value: int) -> bytes:
+    return _varint(field << 3) + _varint(value)
+
+
+def pb_fixed32(field: int, value: int) -> bytes:
+    return _varint(field << 3 | 5) + struct.pack("<I", value)
+
+
+def pb_fixed64(field: int, value: int) -> bytes:
+    return _varint(field << 3 | 1) + struct.pack("<Q", value)
+
+
+def pb_float(field: int, value: float) -> bytes:
+    return _varint(field << 3 | 5) + struct.pack("<f", value)
+
+
+def pb_bytes(field: int, value: bytes) -> bytes:
+    return _varint(field << 3 | 2) + _varint(len(value)) + value
+
+
+def pb_parse(data: bytes) -> list[tuple[int, int, object]]:
+    """Return (field, wire type, raw value) in order; values stay undecoded."""
+    fields = []
+    pos = 0
+    while pos < len(data):
+        key, pos = _read_varint(data, pos)
+        field, wire = key >> 3, key & 7
+        if wire == 0:
+            value, pos = _read_varint(data, pos)
+        elif wire == 1:
+            value = data[pos:pos + 8]
+            pos += 8
+        elif wire == 2:
+            length, pos = _read_varint(data, pos)
+            value = data[pos:pos + length]
+            pos += length
+        elif wire == 5:
+            value = data[pos:pos + 4]
+            pos += 4
+        else:
+            raise ValueError(f"unsupported protobuf wire type {wire}")
+        if pos > len(data):
+            raise ValueError("truncated protobuf message")
+        fields.append((field, wire, value))
+    return fields
+
+
+def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
+    result = shift = 0
+    while True:
+        if pos >= len(data):
+            raise ValueError("truncated varint")
+        byte = data[pos]
+        pos += 1
+        result |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return result, pos
+        shift += 7
+
+
+def pb_floats(fields, field: int) -> list[float]:
+    """Repeated float, packed or not."""
+    out = []
+    for f, wire, value in fields:
+        if f != field:
+            continue
+        if wire == 5:
+            out.append(struct.unpack("<f", value)[0])
+        elif wire == 2:
+            out.extend(struct.unpack(f"<{len(value) // 4}f", value))
+    return out
+
+
+def pb_first(fields, field: int, default=None):
+    for f, _wire, value in fields:
+        if f == field:
+            return value
+    return default
+
+
+def u64(raw: bytes) -> int:
+    return struct.unpack("<Q", raw)[0]
+
+
+def u32(raw: bytes) -> int:
+    return struct.unpack("<I", raw)[0]
+
+
+# --- SSC messages ---------------------------------------------------------
+
+def suid_bytes(suid: tuple[int, int]) -> bytes:
+    return pb_fixed64(1, suid[0]) + pb_fixed64(2, suid[1])
+
+
+def client_request(suid, msg_id: int, payload: bytes = b"") -> bytes:
+    """sns_client_request_msg: APPS processor, wakeup delivery."""
+    susp = pb_varint(1, 1) + pb_varint(2, 0)
+    request = pb_bytes(2, payload) if payload else b""
+    return (pb_bytes(1, suid_bytes(suid)) + pb_fixed32(2, msg_id)
+            + pb_bytes(3, susp) + pb_bytes(4, request))
+
+
+def suid_request(data_type: str) -> bytes:
+    payload = pb_bytes(1, data_type.encode()) + pb_varint(2, 0) + pb_varint(3, 0)
+    return client_request(SUID_SENSOR, MSG_SUID_REQ, payload)
+
+
+def parse_suid(raw: bytes) -> tuple[int, int]:
+    fields = pb_parse(raw)
+    return u64(pb_first(fields, 1)), u64(pb_first(fields, 2))
+
+
+def parse_client_event(data: bytes):
+    """sns_client_event_msg -> (suid, [(msg_id, timestamp, payload)])."""
+    fields = pb_parse(data)
+    suid = parse_suid(pb_first(fields, 1, b""))
+    events = []
+    for f, _wire, value in fields:
+        if f != 2:
+            continue
+        ev = pb_parse(value)
+        events.append((u32(pb_first(ev, 1)), u64(pb_first(ev, 2)), pb_first(ev, 3, b"")))
+    return suid, events
+
+
+def parse_attr_value(raw: bytes):
+    """sns_std_attr_value -> list of python values."""
+    out = []
+    for f, _wire, value in pb_parse(raw):
+        if f != 1:
+            continue
+        data = pb_parse(value)
+        for g, wire, v in data:
+            if g == 1:
+                out.append(parse_attr_value(v))
+            elif g == 2:
+                out.append(v.decode(errors="replace").rstrip("\0"))
+            elif g == 3:
+                out.append(round(struct.unpack("<f", v)[0], 6))
+            elif g == 4:
+                out.append(struct.unpack("<q", v)[0] if wire == 1 else v)
+            elif g == 5:
+                out.append(bool(v))
+    return out
+
+
+def parse_attributes(payload: bytes) -> dict:
+    attrs = {}
+    for f, _wire, value in pb_parse(payload):
+        if f != 1:
+            continue
+        attr = pb_parse(value)
+        attr_id = pb_first(attr, 1)
+        values = parse_attr_value(pb_first(attr, 2, b""))
+        key = ATTR_NAMES.get(attr_id, str(attr_id))
+        attrs[key] = values[0] if len(values) == 1 else values
+    return attrs
+
+
+# --- QMI over QRTR --------------------------------------------------------
+
+def qmi_tlv(tlv_type: int, value: bytes) -> bytes:
+    return struct.pack("<BH", tlv_type, len(value)) + value
+
+
+def qmi_message(msg_type: int, txn: int, msg_id: int, tlvs: bytes) -> bytes:
+    return struct.pack("<BHHH", msg_type, txn, msg_id, len(tlvs)) + tlvs
+
+
+def qmi_parse(packet: bytes):
+    if len(packet) < 7:
+        raise ValueError("short QMI packet")
+    msg_type, txn, msg_id, length = struct.unpack_from("<BHHH", packet)
+    tlvs = {}
+    pos = 7
+    end = min(len(packet), 7 + length)
+    while pos + 3 <= end:
+        tlv_type, tlv_len = struct.unpack_from("<BH", packet, pos)
+        pos += 3
+        tlvs[tlv_type] = packet[pos:pos + tlv_len]
+        pos += tlv_len
+    return msg_type, txn, msg_id, tlvs
+
+
+def ssc_control(txn: int, request: bytes, large: bool = False) -> bytes:
+    data = struct.pack("<H", len(request)) + request
+    return qmi_message(QMI_REQUEST, txn, SSC_MSG_CONTROL,
+                       qmi_tlv(0x01, data) + qmi_tlv(0x10, bytes([1 if large else 0])))
+
+
+def ssc_indication_data(tlvs: dict) -> bytes:
+    raw = tlvs.get(0x02, b"")
+    if len(raw) < 2:
+        return b""
+    (length,) = struct.unpack_from("<H", raw)
+    return raw[2:2 + length]
+
+
+VERBOSE = False
+
+
+def debug(message: str) -> None:
+    if VERBOSE:
+        print(message, file=sys.stderr, flush=True)
+
+
+class Ssc:
+    """One QMI client of the SNS client service on the SLPI."""
+
+    def __init__(self, timeout: float = 5.0):
+        self.sock = socket.socket(AF_QIPCRTR, socket.SOCK_DGRAM)
+        self.node = self.sock.getsockname()[0]  # (node, port)
+        self.server = self._lookup(timeout)
+        self.txn = 0
+        self.backlog: list[bytes] = []
+
+    def _lookup(self, timeout: float):
+        lookup = struct.pack("<IIIII", QRTR_TYPE_NEW_LOOKUP, SNS_CLIENT_SERVICE, 0, 0, 0)
+        self.sock.sendto(lookup, (self.node, QRTR_PORT_CTRL))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not select.select([self.sock], [], [], deadline - time.monotonic())[0]:
+                break
+            data, _addr = self.sock.recvfrom(65536)
+            if len(data) < 20:
+                continue
+            cmd, service, _instance, node, port = struct.unpack_from("<IIIII", data)
+            if cmd == QRTR_TYPE_NEW_SERVER and service == SNS_CLIENT_SERVICE and (node or port):
+                debug(f"SNS client service at node {node} port {port}")
+                return node, port
+        raise RuntimeError("SNS client service (QMI 0x190) not found; is the SLPI up and sensorspd attached?")
+
+    def request(self, request: bytes, timeout: float = 5.0) -> dict:
+        self.txn = (self.txn + 1) & 0xFFFF or 1
+        self.sock.sendto(ssc_control(self.txn, request), self.server)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            packet = self._recv(deadline - time.monotonic())
+            if packet is None:
+                break
+            msg_type, txn, msg_id, tlvs = qmi_parse(packet)
+            if msg_type == QMI_RESPONSE and txn == self.txn and msg_id == SSC_MSG_CONTROL:
+                result, error = struct.unpack("<HH", tlvs.get(0x02, b"\0\0\0\0")[:4])
+                debug(f"response txn {txn}: result {result} error {error} tlvs {sorted(tlvs)}")
+                if result:
+                    raise RuntimeError(f"SSC request failed: QMI error {error}")
+                return tlvs
+            self.backlog.append(packet)
+        raise TimeoutError("no response from the SNS client service")
+
+    def _recv(self, timeout: float):
+        if not select.select([self.sock], [], [], max(0.0, timeout))[0]:
+            return None
+        data, _addr = self.sock.recvfrom(65536)
+        return data
+
+    def events(self, timeout: float):
+        """Yield (suid, msg_id, timestamp, payload) until timeout passes without data."""
+        while True:
+            if self.backlog:
+                packet = self.backlog.pop(0)
+            else:
+                packet = self._recv(timeout)
+                if packet is None:
+                    return
+            msg_type, _txn, msg_id, tlvs = qmi_parse(packet)
+            if msg_type != QMI_INDICATION or msg_id not in (SSC_IND_SMALL, SSC_IND_LARGE):
+                debug(f"ignored packet type {msg_type} id {msg_id:#x}: {packet[:32].hex()}")
+                continue
+            suid, events = parse_client_event(ssc_indication_data(tlvs))
+            for ev_id, ts, payload in events:
+                debug(f"event {suid[1]:016x}{suid[0]:016x} msg {ev_id} ts {ts} {payload[:48].hex()}")
+                yield suid, ev_id, ts, payload
+
+    def find(self, data_type: str, timeout: float = 3.0) -> list[tuple[int, int]]:
+        self.request(suid_request(data_type))
+        deadline = time.monotonic() + timeout
+        for suid, msg_id, _ts, payload in self.events(timeout):
+            if suid == SUID_SENSOR and msg_id == MSG_SUID_EVENT:
+                fields = pb_parse(payload)
+                if pb_first(fields, 1, b"").decode(errors="replace") == data_type:
+                    return [parse_suid(v) for f, _w, v in fields if f == 2]
+            if time.monotonic() > deadline:
+                break
+        return []
+
+    def attributes(self, suid, timeout: float = 3.0) -> dict:
+        self.request(client_request(suid, MSG_ATTR_REQ, b""))
+        for ev_suid, msg_id, _ts, payload in self.events(timeout):
+            if ev_suid == suid and msg_id == MSG_ATTR_EVENT:
+                return parse_attributes(payload)
+        return {}
+
+    def enable(self, suid, rate: float) -> None:
+        self.request(client_request(suid, MSG_CONFIG, pb_float(1, rate)))
+
+    def disable(self, suid) -> None:
+        try:
+            self.request(client_request(suid, MSG_DISABLE), timeout=2.0)
+        except (RuntimeError, TimeoutError):
+            pass
+
+
+# --- analysis -------------------------------------------------------------
+
+class Stream:
+    def __init__(self, name: str):
+        self.name = name
+        self.timestamps: list[int] = []
+        self.samples: list[tuple[float, float, float]] = []
+        self.config: dict = {}
+
+    def add(self, ts: int, values: list[float]) -> None:
+        if len(values) >= 3:
+            self.timestamps.append(ts)
+            self.samples.append((values[0], values[1], values[2]))
+
+    def summary(self) -> dict:
+        n = len(self.samples)
+        out = {"samples": n, "config": self.config}
+        if n < 2:
+            return out
+        ts = self.timestamps
+        deltas = [b - a for a, b in zip(ts, ts[1:])]
+        span = (ts[-1] - ts[0]) / QTIMER_HZ
+        mean = [sum(s[i] for s in self.samples) / n for i in range(3)]
+        std = [math.sqrt(sum((s[i] - mean[i]) ** 2 for s in self.samples) / n) for i in range(3)]
+        norms = [math.sqrt(sum(v * v for v in s)) for s in self.samples]
+        nominal = sorted(deltas)[len(deltas) // 2]
+        out.update({
+            "rate_hz": round((n - 1) / span, 2) if span > 0 else None,
+            "non_increasing_timestamps": sum(1 for d in deltas if d <= 0),
+            "gaps": sum(1 for d in deltas if nominal and d > 1.5 * nominal),
+            "max_interval_ms": round(max(deltas) / QTIMER_HZ * 1000, 3),
+            "mean": [round(v, 6) for v in mean],
+            "std": [round(v, 6) for v in std],
+            "norm_mean": round(sum(norms) / n, 6),
+        })
+        return out
+
+
+def orientation_from(accel: Stream, gyro: Stream) -> dict:
+    """Integrate gyro with a gravity-corrected (Mahony-style) complementary filter.
+
+    Returns the final gravity-aligned roll/pitch and the integrated yaw. On a
+    still headset roll/pitch must agree with the accelerometer and yaw drift
+    shows the residual gyro bias.
+    """
+    if len(gyro.samples) < 2 or not accel.samples:
+        return {}
+    q = q_start = _quat_from_gravity(accel.samples[0])
+    ai = 0
+    kp = 2.0
+    for i in range(1, len(gyro.samples)):
+        dt = (gyro.timestamps[i] - gyro.timestamps[i - 1]) / QTIMER_HZ
+        while ai + 1 < len(accel.samples) and accel.timestamps[ai + 1] <= gyro.timestamps[i]:
+            ai += 1
+        w = list(gyro.samples[i])
+        a = accel.samples[ai]
+        na = math.sqrt(sum(v * v for v in a))
+        if na > 0:
+            vx, vy, vz = _rotate_inverse(q, (0.0, 0.0, 1.0))
+            ax, ay, az = (v / na for v in a)
+            ex, ey, ez = ay * vz - az * vy, az * vx - ax * vz, ax * vy - ay * vx
+            w = [w[0] + kp * ex, w[1] + kp * ey, w[2] + kp * ez]
+        q = _integrate(q, w, dt)
+    roll, pitch, yaw = _euler(q)
+    a = accel.samples[-1]
+    # Relative rotation in the world frame, and its twist about gravity (up):
+    # turning the headset on a table by 90 degrees reads +-90 here.
+    w0, x0, y0, z0 = q_start
+    rel = _multiply(q, [w0, -x0, -y0, -z0])
+    angle = 2 * math.acos(max(-1.0, min(1.0, abs(rel[0]))))
+    heading = 2 * math.atan2(rel[3], rel[0])
+    heading = (heading + math.pi) % (2 * math.pi) - math.pi
+    return {
+        "rotation_deg": round(math.degrees(angle), 3),
+        "heading_change_deg": round(math.degrees(heading), 3),
+        "quaternion_wxyz": [round(v, 6) for v in q],
+        "roll_deg": round(math.degrees(roll), 3),
+        "pitch_deg": round(math.degrees(pitch), 3),
+        "yaw_deg": round(math.degrees(yaw), 3),
+        "accel_roll_deg": round(math.degrees(math.atan2(a[1], a[2])), 3),
+        "accel_pitch_deg": round(math.degrees(math.atan2(-a[0], math.hypot(a[1], a[2]))), 3),
+    }
+
+
+def _quat_from_gravity(a):
+    roll = math.atan2(a[1], a[2])
+    pitch = math.atan2(-a[0], math.hypot(a[1], a[2]))
+    cr, sr, cp, sp = math.cos(roll / 2), math.sin(roll / 2), math.cos(pitch / 2), math.sin(pitch / 2)
+    return [cr * cp, sr * cp, cr * sp, -sr * sp]
+
+
+def _integrate(q, w, dt):
+    w0, w1, w2 = (v * dt / 2 for v in w)
+    a, b, c, d = q
+    q = [a - b * w0 - c * w1 - d * w2, b + a * w0 + c * w2 - d * w1,
+         c + a * w1 - b * w2 + d * w0, d + a * w2 + b * w1 - c * w0]
+    n = math.sqrt(sum(v * v for v in q))
+    return [v / n for v in q]
+
+
+def _multiply(p, q):
+    a, b, c, d = p
+    e, f, g, h = q
+    return [a * e - b * f - c * g - d * h, a * f + b * e + c * h - d * g,
+            a * g - b * h + c * e + d * f, a * h + b * g - c * f + d * e]
+
+
+def _rotate_inverse(q, v):
+    """Rotate world vector v into the body frame."""
+    w, x, y, z = q
+    x, y, z = -x, -y, -z
+    vx, vy, vz = v
+    tx, ty, tz = 2 * (y * vz - z * vy), 2 * (z * vx - x * vz), 2 * (x * vy - y * vx)
+    return (vx + w * tx + y * tz - z * ty, vy + w * ty + z * tx - x * tz, vz + w * tz + x * ty - y * tx)
+
+
+def _euler(q):
+    w, x, y, z = q
+    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
+    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    return roll, pitch, yaw
+
+
+def check_summary(summary: dict, rate: float) -> list[str]:
+    """Acceptance limits for a stationary headset; returns the failures."""
+    failures = []
+    for name in ("accel", "gyro"):
+        s = summary["streams"].get(name, {})
+        if s.get("samples", 0) < 0.5 * rate * summary["seconds"]:
+            failures.append(f"{name}: {s.get('samples', 0)} samples")
+            continue
+        # The SSC picks the sensor's next output data rate at or above the
+        # request and reports it (500 -> 500, which the ICM-42688 runs at 512 Hz).
+        configured = s.get("config", {}).get("sample_rate_hz")
+        if configured is None or configured < 0.95 * rate:
+            failures.append(f"{name}: configured rate {configured} Hz, requested {rate}")
+        elif s["rate_hz"] is None or abs(s["rate_hz"] - configured) > 0.05 * configured:
+            failures.append(f"{name}: measured rate {s['rate_hz']} Hz, configured {configured}")
+        if s["non_increasing_timestamps"]:
+            failures.append(f"{name}: {s['non_increasing_timestamps']} non-increasing timestamps")
+    accel = summary["streams"].get("accel", {})
+    if accel.get("norm_mean") is not None and abs(accel["norm_mean"] - STANDARD_GRAVITY) > 0.5:
+        failures.append(f"accel: |g| {accel['norm_mean']} m/s^2")
+    gyro = summary["streams"].get("gyro", {})
+    if gyro.get("mean") and max(abs(v) for v in gyro["mean"]) > 0.05:
+        failures.append(f"gyro: mean {gyro['mean']} rad/s (not still, or uncalibrated)")
+    return failures
+
+
+# --- commands -------------------------------------------------------------
+
+def cmd_list(ssc: Ssc, args) -> int:
+    out = {}
+    for data_type in args.types:
+        sensors = []
+        for suid in ssc.find(data_type):
+            sensors.append({"suid": f"{suid[1]:016x}{suid[0]:016x}", **ssc.attributes(suid)})
+        out[data_type] = sensors
+    print(json.dumps(out, indent=2))
+    return 0 if any(out.values()) else 1
+
+
+def cmd_stream(ssc: Ssc, args) -> int:
+    streams = {}
+    suids = {}
+    for name in ("accel", "gyro"):
+        found = ssc.find(name)
+        if not found:
+            print(json.dumps({"status": "fail", "error": f"no {name} sensor"}))
+            return 1
+        suids[name] = found[0]
+        streams[name] = Stream(name)
+    by_suid = {suid: streams[name] for name, suid in suids.items()}
+    csv = open(args.csv, "w") if args.csv else None
+    if csv:
+        csv.write("sensor,qtimer_ticks,x,y,z\n")
+    try:
+        for name, suid in suids.items():
+            ssc.enable(suid, args.rate)
+        end = time.monotonic() + args.seconds
+        for suid, msg_id, ts, payload in ssc.events(1.0):
+            stream = by_suid.get(suid)
+            if stream is not None:
+                fields = pb_parse(payload)
+                if msg_id == MSG_SENSOR_EVENT:
+                    values = pb_floats(fields, 1)
+                    stream.add(ts, values)
+                    if csv and len(values) >= 3:
+                        csv.write(f"{stream.name},{ts},{values[0]:.7g},{values[1]:.7g},{values[2]:.7g}\n")
+                elif msg_id == MSG_PHYSICAL_CONFIG_EVENT and not stream.config:
+                    rate = pb_first(fields, 1)
+                    stream.config = {"sample_rate_hz": round(struct.unpack("<f", rate)[0], 3)} if rate else {}
+            if time.monotonic() > end:
+                break
+    finally:
+        for suid in suids.values():
+            ssc.disable(suid)
+        if csv:
+            csv.close()
+    summary = {
+        "schema": 1,
+        "seconds": args.seconds,
+        "requested_rate_hz": args.rate,
+        "streams": {name: s.summary() for name, s in streams.items()},
+    }
+    if args.orientation:
+        summary["orientation"] = orientation_from(streams["accel"], streams["gyro"])
+    failures = check_summary(summary, args.rate) if args.check else []
+    summary["status"] = ("fail" if failures else "pass") if args.check else "collected"
+    summary["failures"] = failures
+    print(json.dumps(summary, indent=2))
+    return 1 if failures else 0
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("list")
+    p.add_argument("types", nargs="*", default=["accel", "gyro", "mag", "pressure", "sensor_temperature"])
+    p = sub.add_parser("stream")
+    p.add_argument("--rate", type=float, default=500.0, help="Hz; 500 runs the ICM-42688 at 512 Hz, 1000 at 1024 Hz")
+    p.add_argument("--seconds", type=float, default=10.0)
+    p.add_argument("--csv")
+    p.add_argument("--orientation", action="store_true")
+    p.add_argument("--check", action="store_true", help="fail unless the stationary acceptance limits hold")
+    parser.add_argument("-v", "--verbose", action="store_true", help="log QMI traffic to stderr")
+    args = parser.parse_args(argv)
+    global VERBOSE
+    VERBOSE = args.verbose
+    try:
+        ssc = Ssc()
+    except (OSError, RuntimeError) as exc:
+        print(json.dumps({"status": "fail", "error": str(exc)}))
+        return 1
+    return {"list": cmd_list, "stream": cmd_stream}[args.command](ssc, args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

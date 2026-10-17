@@ -39,6 +39,11 @@ vulkan-tools
 pico4/pico4-turnip-kgsl
 pico4/pico4-graphics-tests
 
+# Project-built: host daemons for the sensor DSP (head IMU, XR.md); python runs
+# the pico4-imu client
+pico4/pico4-sensors
+python
+
 # Diagnostics (mtools: the stage-2 USB log drive)
 libdrm
 mtools

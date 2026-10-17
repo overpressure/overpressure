@@ -7,7 +7,8 @@ original PICO 4 running 5.13.7**. A fully automated test verified an ARM64 Linux
 USB networking, read-only storage, diagnostics and return to stock PICO OS. See the
 [measured acceptance results](README.md#verification) and [reproduction procedure](HARDWARE-TEST.md).
 Steps 3 (native graphics, [GRAPHICS.md](GRAPHICS.md)) and 4 (a SteamOS-compatible userspace
-running on the stock kernel, [USERSPACE.md](USERSPACE.md)) followed on the same day. The
+running on the stock kernel, [USERSPACE.md](USERSPACE.md)) followed on the same day, as did the
+first part of step 5, the head IMU ([XR.md](XR.md)). The
 research findings below retain their original date; these local results do not establish a
 compositor or Steam session in the headset, tracking or SteamVR support.
 
@@ -307,6 +308,13 @@ Suggested technical roadmap
 5. Integrate native XR hardware
 
    Establish IMU access, camera acquisition, 6DoF tracking, controller connectivity and lens calibration. Monado offers a possible foundation for developing and testing this layer.
+
+   **Started on October 17, 2026; head IMU working:** the IMU sits behind the sensor DSP
+   (SLPI). Free software from linux-msm (qrtr-ns, pd-mapper, hexagonrpcd), ported to the stock
+   kernel's downstream FastRPC ABI, boots it and serves its registry. The project's `pico4-imu`
+   client streams the ICM-42688 at 512 Hz with monotonic DSP timestamps; a guided 90° turn read
+   90.3°. The inventory of cameras (OV7251 on Spectra CSL), controllers (nRF52832 on SPI) and
+   the factory calibration is in [XR.md](XR.md), together with the next steps.
 6. Attempt Valve's VR session
 
    Only after tracking and graphics are operational would I attempt to bring up the Frame-style gamescope/SteamVR session. Compatibility with Valve's proprietary headset-specific components remains unproven.
@@ -344,7 +352,7 @@ These are engineering estimates based on the publicly documented work, not confi
 | Obtain accelerated Linux graphics        | Hardware Vulkan readback and native 90/72 Hz display presentation verified separately; step 3 complete |
 | Run ARM64 SteamOS userspace              | Demonstrated locally on PICO 4 / 5.13.7: Frame systemd 257.7 + SteamOS services running, Turnip Vulkan verified; step 4 complete |
 | Display a Steam-style desktop in-headset | Challenging                              |
-| Full 6DoF and controllers                | Major research effort                    |
+| Full 6DoF and controllers                | Major research effort; head IMU (3DoF input) demonstrated locally |
 | Complete standalone SteamVR experience   | Highly uncertain                         |
 
 The strongest supporting evidence is the September 2026 Steam Frame NixOS experiment. It shows that Valve's VR session is not fundamentally tied to the Arch-based SteamOS distribution. However, that experiment preserves the actual Frame's hardware-specific environment, including calibration and device configuration.&#x20;

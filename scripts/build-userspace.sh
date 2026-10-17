@@ -2,11 +2,12 @@
 # Build the SteamOS-compatible ARM64 userspace for the PICO 4 (roadmap step 4).
 #
 # Usage (Linux/WSL, root):
-#   scripts/build-userspace.sh BUILD_ROOT OUTPUT_DIR [--gpu-firmware DIR]
+#   scripts/build-userspace.sh BUILD_ROOT OUTPUT_DIR [--gpu-firmware DIR] [--sensor-data DIR]
 #
 # 1. Unpacks Valve/Collabora's Holo Core aarch64 preview rootfs (sha256-pinned)
 #    as an isolated build environment, run through QEMU user emulation.
-# 2. Builds pico4-turnip-kgsl / pico4-graphics-tests (userspace/pkg) there.
+# 2. Builds the project packages (userspace/pkg: pico4-turnip-kgsl,
+#    pico4-graphics-tests, pico4-sensors) there.
 # 3. Installs userspace/packages.txt into a fresh root with pacman, from the
 #    Steam Frame hotfix repository and the Holo Core preview (userspace/pacman.conf).
 # 4. Adds the PICO adaptation layer (userspace/rootfs and shared stage-1
@@ -16,6 +17,9 @@
 #
 # --gpu-firmware DIR adds a650_* GPU firmware from YOUR OWN stock backup (see
 # GRAPHICS.md). Without it the userspace boots, but Vulkan cannot start.
+# --sensor-data DIR adds the sensor DSP firmware, sensor registry and config
+# extracted from YOUR OWN backup by scripts/extract-sensor-data.sh (XR.md).
+# Without it the head IMU stack stays inactive.
 # Requires host curl, tar, zstd, sha256sum, python3, chroot and an aarch64
 # binfmt handler with the F (fix-binary) flag. Nothing touches the headset.
 # The output contains Valve packages: keep it private, do not redistribute.
@@ -25,9 +29,11 @@ build_root=${1:?specify an isolated Linux-filesystem build directory}
 output=${2:?specify an output directory}
 shift 2
 firmware=""
+sensor_data=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --gpu-firmware) firmware=$(realpath "${2:?}"); shift 2 ;;
+    --sensor-data) sensor_data=$(realpath "${2:?}"); shift 2 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
     esac
 done
@@ -87,28 +93,35 @@ mnt -t tmpfs tmpfs "$B/run"
 in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root "$@"; }
 
 # The build environment keeps its own preview-only configuration.
-in_b pacman -Sy --noconfirm --needed base-devel meson ninja python-mako python-yaml python-packaging \
+in_b pacman -Sy --noconfirm --needed base-devel git meson ninja python-mako python-yaml python-packaging \
     glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
     wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
 
 # -- 2. project packages ---------------------------------------------------------
-pkgdir=$B/build/pico4-turnip-kgsl
-pkgver=$(sed -n 's/^pkgver=//p' "$project/userspace/pkg/pico4-turnip-kgsl/PKGBUILD")
-pkgrel=$(sed -n 's/^pkgrel=//p' "$project/userspace/pkg/pico4-turnip-kgsl/PKGBUILD")
-recipe_hash=$(cat "$project/userspace/pkg/pico4-turnip-kgsl/PKGBUILD" "$project"/src/graphics/* | sha256sum | cut -d' ' -f1)
-if [[ "$(cat "$pkgdir/.recipe" 2>/dev/null)" != "$recipe_hash" ]] || ! ls "$pkgdir"/pico4-turnip-kgsl-"$pkgver-$pkgrel"-*.pkg.tar.zst >/dev/null 2>&1; then
-    log "building pico4-turnip-kgsl $pkgver-$pkgrel (Mesa under QEMU, this takes a while)"
-    rm -rf "$pkgdir"
-    mkdir -p "$pkgdir"
-    cp "$project/userspace/pkg/pico4-turnip-kgsl/PKGBUILD" "$project"/src/graphics/* "$pkgdir/"
-    [[ -s "$mesa_archive" ]] && cp "$mesa_archive" "$pkgdir/"
-    in_b chown -R builder: /build/pico4-turnip-kgsl
-    in_b su builder -c 'cd /build/pico4-turnip-kgsl && MAKEFLAGS=-j$(nproc) makepkg --noconfirm --nocheck -f'
-    echo "$recipe_hash" > "$pkgdir/.recipe"
-fi
+# build_package NAME [EXTRA_FILE...]: makepkg userspace/pkg/NAME unless the
+# packages of the same recipe (PKGBUILD, patches and extra files) exist.
 rm -f "$B"/var/cache/pico4-repo/*
-cp "$pkgdir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst "$B/var/cache/pico4-repo/"
+build_package() {
+    local name=$1 dir=$B/build/$1 recipe pkgver pkgrel
+    shift
+    pkgver=$(sed -n 's/^pkgver=//p' "$project/userspace/pkg/$name/PKGBUILD")
+    pkgrel=$(sed -n 's/^pkgrel=//p' "$project/userspace/pkg/$name/PKGBUILD")
+    recipe=$(cat "$project/userspace/pkg/$name"/* "$@" | sha256sum | cut -d' ' -f1)
+    if [[ "$(cat "$dir/.recipe" 2>/dev/null)" != "$recipe" ]] || ! ls "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst >/dev/null 2>&1; then
+        log "building $name $pkgver-$pkgrel (under QEMU, this can take a while)"
+        rm -rf "$dir"
+        mkdir -p "$dir"
+        cp "$project/userspace/pkg/$name"/* "$@" "$dir/"
+        [[ "$name" != pico4-turnip-kgsl || ! -s "$mesa_archive" ]] || cp "$mesa_archive" "$dir/"
+        in_b chown -R builder: "/build/$name"
+        in_b su builder -c "cd /build/$name && MAKEFLAGS=-j\$(nproc) makepkg --noconfirm --nocheck -f"
+        echo "$recipe" > "$dir/.recipe"
+    fi
+    cp "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst "$B/var/cache/pico4-repo/"
+}
+build_package pico4-turnip-kgsl "$project"/src/graphics/*
+build_package pico4-sensors
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
 
 # -- 3. the userspace root ------------------------------------------------------
@@ -178,6 +191,22 @@ if [[ -n "$firmware" ]]; then
     done
     firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
+# Sensor DSP: firmware for the kernel's PIL loader, protection-domain maps for
+# pd-mapper, and the tree hexagonrpcd serves to the sensors process (-R).
+sensor_json="[]"
+if [[ -n "$sensor_data" ]]; then
+    [[ -s "$sensor_data/firmware/slpi.mdt" && -d "$sensor_data/sensors/config" && -d "$sensor_data/sensors/registry" ]] ||
+        { echo "incomplete sensor data in $sensor_data (see scripts/extract-sensor-data.sh)" >&2; exit 1; }
+    mkdir -p "$T/usr/lib/firmware"
+    install -m 0644 "$sensor_data"/firmware/slpi* "$T/usr/lib/firmware/"
+    qcom=$T/usr/share/qcom/pico4
+    mkdir -p "$qcom"
+    cp -r --no-preserve=ownership "$sensor_data/sensors" "$qcom/"
+    chown -R 0:0 "$qcom"
+    ln -sfn /sys/devices/soc0 "$qcom/socinfo"
+    sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/share/qcom/pico4 -type f -print0 | sort -z | xargs -0 sha256sum |
+        python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
+fi
 
 in_t systemd-sysusers
 # The Frame's session user (steamos-customizations-deckard refers to it).
@@ -195,7 +224,7 @@ rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
 in_t systemd-tmpfiles --create steamos-offload.conf
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
-    pico4-userspace-logdisk.timer pico4-userspace-netdiag.service
+    pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
@@ -222,9 +251,9 @@ tar --numeric-owner --xattrs --xattrs-include=security.capability --sort=name -C
     zstd -q -T0 -12 -o "$archive.part" -f
 mv "$archive.part" "$archive"
 installed_bytes=$(du -sb --apparent-size "$T" | cut -f1)
-python3 - "$archive" "$build_root" "$holo_url" "$holo_sha256" "$installed_bytes" "$firmware_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
+python3 - "$archive" "$build_root" "$holo_url" "$holo_sha256" "$installed_bytes" "$firmware_json" "$sensor_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
 import hashlib, json, os, sys, datetime
-archive, root, holo_url, holo_sha, installed, firmware = sys.argv[1:7]
+archive, root, holo_url, holo_sha, installed, firmware, sensors = sys.argv[1:8]
 def lines(name):
     with open(os.path.join(root, name)) as f:
         return [l.split() for l in f if l.strip()]
@@ -242,6 +271,7 @@ print(json.dumps({
     "packages": {n: v for n, v in lines("packages.txt")},
     "package_files": {n.lstrip("./"): s for s, n in lines("package-hashes.txt")},
     "gpu_firmware": json.loads(firmware),
+    "sensor_data": json.loads(sensors),
 }, indent=1, sort_keys=True))
 EOF
 log "done: $archive ($(du -h "$archive" | cut -f1), installed $((installed_bytes >> 20)) MiB)"

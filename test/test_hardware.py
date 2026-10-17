@@ -104,14 +104,15 @@ class HarnessTests(unittest.TestCase):
         self.save_backup_manifest()
         self.runner = hw.Runner(self.args)
 
-    def enable_userspace(self, firmware=False):
+    def enable_userspace(self, firmware=False, sensors=False):
         archive = self.root / "userspace" / "pico4-userspace.tar.zst"
         archive.parent.mkdir()
         archive.write_bytes(b"userspace archive")
         self.userspace_sha = hw.hashlib.sha256(archive.read_bytes()).hexdigest()
         (archive.parent / "pico4-userspace.manifest.json").write_text(json.dumps({
             "archive": {"sha256": self.userspace_sha}, "packages": {"systemd": "257.7-2.2"},
-            "gpu_firmware": [{"file": "a650_sqe.fw", "sha256": "0" * 64}] if firmware else []}))
+            "gpu_firmware": [{"file": "a650_sqe.fw", "sha256": "0" * 64}] if firmware else [],
+            "sensor_data": [{"file": "usr/lib/firmware/slpi.mdt", "sha256": "0" * 64}] if sensors else []}))
         self.args.userspace = archive
         self.args.userspace_timeout = 60
         self.args.out = self.root / "userspace-results"
@@ -201,6 +202,18 @@ class HarnessTests(unittest.TestCase):
                 return "systemd" if getattr(self, "switched", False) else "init"
             if command.startswith("pico4-userspace-check"):
                 return self.userspace_check()
+            if command.startswith("pico4-imu stream"):
+                self.assertIn("--rate 500 ", command)
+                stream = {"samples": 5120, "rate_hz": 511.95, "non_increasing_timestamps": 0,
+                          "config": {"sample_rate_hz": 500.0}}
+                failed = self.scenario == "imu"
+                return json.dumps({"schema": 1, "seconds": 10, "requested_rate_hz": 500.0,
+                                   "streams": {"accel": stream, "gyro": stream}, "orientation": {},
+                                   "status": "fail" if failed else "pass",
+                                   "failures": ["accel: |g| 3.0 m/s^2"] if failed else []}) + \
+                    "\nEXIT=" + ("1" if failed else "0")
+            if command.startswith(("pico4-imu list", "systemctl status")):
+                return "sensor evidence"
             if "pico4-kms-test" in command:
                 return "EXIT=1" if self.scenario == "graphics" else "EXIT=0"
             if command == "cat /run/pico4-poc/kms.json":
@@ -295,6 +308,26 @@ class HarnessTests(unittest.TestCase):
         self.assertTrue((self.runner.folder / "storage-userspace.txt").exists())
         receive = [c for c in self.calls if c[0] == "ssh" and c[-1].startswith("pico4-userspace receive")]
         self.assertEqual(len(receive), 1)
+
+    def test_head_imu_is_checked_with_sensor_data(self):
+        for scenario, code in (("", 0), ("imu", 1)):
+            with self.subTest(scenario or "passing"):
+                self.setUp()
+                self.enable_flash_mode()
+                self.enable_userspace(sensors=True)
+                self.scenario = scenario
+                self.assertEqual(self.execute(), code)
+                self.assertTrue(self.restored)
+                self.assertEqual(self.runner.result["userspace"]["imu"]["status"], "fail" if code else "pass")
+                self.assertTrue((self.runner.folder / "userspace-imu.json").exists())
+                self.assertTrue((self.runner.folder / "userspace-sensors-list.txt").exists())
+
+    def test_head_imu_skipped_without_sensor_data(self):
+        self.enable_flash_mode()
+        self.enable_userspace()
+        self.assertEqual(self.execute(), 0)
+        self.assertNotIn("imu", self.runner.result["userspace"])
+        self.assertFalse(any(c[0] == "ssh" and "pico4-imu" in c[-1] for c in self.calls))
 
     def test_userspace_failures_still_restore_stock(self):
         for scenario in ("userspace-check", "userspace-sha"):

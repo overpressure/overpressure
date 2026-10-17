@@ -1,0 +1,617 @@
+diff --git a/hexagonrpcd/apps_mem.c b/hexagonrpcd/apps_mem.c
+index 1477f0b..f3d7fe7 100644
+--- a/hexagonrpcd/apps_mem.c
++++ b/hexagonrpcd/apps_mem.c
+@@ -24,6 +24,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <libhexagonrpc/downstream.h>
+ #include <misc/fastrpc.h>
+ #include <sys/ioctl.h>
+ 
+@@ -70,7 +71,10 @@ static uint32_t apps_mem_request_map64(void *data,
+ 	mmap.vaddrin = 0;
+ 	mmap.size = first_in->len;
+ 
+-	ret = ioctl(ctx->fd, FASTRPC_IOCTL_MMAP, &mmap);
++	if (hexagonrpc_is_downstream(ctx->fd))
++		ret = hexagonrpc_downstream_mmap(ctx->fd, &mmap);
++	else
++		ret = ioctl(ctx->fd, FASTRPC_IOCTL_MMAP, &mmap);
+ 	if (ret) {
+ 		fprintf(stderr, "Memory map failed: %s\n",
+ 			hexagonrpc_strerror(ret));
+diff --git a/hexagonrpcd/rpcd.c b/hexagonrpcd/rpcd.c
+index 600237b..724391a 100644
+--- a/hexagonrpcd/rpcd.c
++++ b/hexagonrpcd/rpcd.c
+@@ -21,6 +21,7 @@
+ 
+ #include <errno.h>
+ #include <fcntl.h>
++#include <libhexagonrpc/downstream.h>
+ #include <libhexagonrpc/error.h>
+ #include <libhexagonrpc/handle.h>
+ #include <libhexagonrpc/interface/remotectl.h>
+@@ -417,7 +418,19 @@ int main(int argc, char* argv[])
+ 		goto err_free_pids;
+ 	}
+ 
+-	if (attach_sns)
++	/*
++	 * Vendor kernels name the node adsprpc-smd and use the older ioctl
++	 * ABI; the DSP comes from -d (sensorspd lives on the sdsp).
++	 */
++	if (strstr(fastrpc_node, "adsprpc-smd") != NULL) {
++		if (create_shell != NULL) {
++			fprintf(stderr, "Creating a pd is not supported on %s\n", fastrpc_node);
++			goto err_close_dev;
++		}
++		ret = hexagonrpc_downstream_attach(fd,
++			hexagonrpc_downstream_domain(*dsp ? dsp : (attach_sns ? "sdsp" : "adsp")),
++			attach_sns);
++	} else if (attach_sns)
+ 		ret = ioctl(fd, FASTRPC_IOCTL_INIT_ATTACH_SNS, NULL);
+ 	else if (create_shell != NULL)
+ 		ret = create_shell_pd(fd, create_shell);
+diff --git a/hexagonrpcd/rpcd_builder.c b/hexagonrpcd/rpcd_builder.c
+index d374958..bd166e8 100644
+--- a/hexagonrpcd/rpcd_builder.c
++++ b/hexagonrpcd/rpcd_builder.c
+@@ -31,6 +31,7 @@
+ #define SENSORS_CONFIG		"/sensors/config/"
+ #define SENSORS_REGISTRY	"/sensors/registry/"
+ #define SNS_REG_CONFIG		"/sensors/sns_reg.conf"
++#define SNS_REG_VERSION		"/sensors/sns_reg_version"
+ #define SYSFS_SOCINFO		"/socinfo/"
+ 
+ static struct hexagonfs_dirent *hfs_mkdir(const char *name, size_t n_ents, ...)
+@@ -111,7 +112,7 @@ static struct hexagonfs_dirent *hfs_map_or_empty(const char *name, const char *p
+  */
+ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+ {
+-	char *acdbdata, *dsp_libs, *sns_cfg, *sns_reg, *sns_reg_config, *socinfo;
++	char *acdbdata, *dsp_libs, *sns_cfg, *sns_reg, *sns_reg_config, *sns_reg_version, *socinfo;
+ 	size_t n_prefix;
+ 	struct hexagonfs_dirent *persist_dir, *vendor_dir;
+ 
+@@ -121,6 +122,7 @@ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+ 	sns_cfg = malloc(n_prefix + strlen(SENSORS_CONFIG) + 1);
+ 	sns_reg = malloc(n_prefix + strlen(SENSORS_REGISTRY) + 1);
+ 	sns_reg_config = malloc(n_prefix + strlen(SNS_REG_CONFIG) + 1);
++	sns_reg_version = malloc(n_prefix + strlen(SNS_REG_VERSION) + 1);
+ 	socinfo = malloc(n_prefix + strlen(SYSFS_SOCINFO) + 1);
+ 
+ 	dsp_libs = malloc(n_prefix + strlen(DSP_LIBS) + strlen(dsp) + 1);
+@@ -145,6 +147,11 @@ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+ 		strcat(sns_reg_config, SNS_REG_CONFIG);
+ 	}
+ 
++	if (sns_reg_version != NULL) {
++		strcpy(sns_reg_version, prefix);
++		strcat(sns_reg_version, SNS_REG_VERSION);
++	}
++
+ 	if (socinfo != NULL) {
+ 		strcpy(socinfo, prefix);
+ 		strcat(socinfo, SYSFS_SOCINFO);
+@@ -162,8 +169,9 @@ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+ 	 */
+ 	persist_dir = hfs_mkdir("persist", 1,
+ 				hfs_mkdir("sensors", 1,
+-					hfs_mkdir("registry", 1,
+-						hfs_map("registry", sns_reg)
++					hfs_mkdir("registry", 2,
++						hfs_map("registry", sns_reg),
++						hfs_map("sns_reg_version", sns_reg_version)
+ 					)
+ 				)
+ 		      );
+diff --git a/include/libhexagonrpc/downstream.h b/include/libhexagonrpc/downstream.h
+new file mode 100644
+index 0000000..f86cc08
+--- /dev/null
++++ b/include/libhexagonrpc/downstream.h
+@@ -0,0 +1,39 @@
++/*
++ * Downstream (msm-4.x "adsprpc") FastRPC ioctl translation
++ *
++ * This file is part of sensh.
++ *
++ * Sensh is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#ifndef LIBHEXAGONRPC_DOWNSTREAM_H
++#define LIBHEXAGONRPC_DOWNSTREAM_H
++
++#include <stdbool.h>
++#include <stdint.h>
++#include <misc/fastrpc.h>
++
++/* Map "adsp", "mdsp", "sdsp", "cdsp" to the downstream channel id, or -1. */
++int hexagonrpc_downstream_domain(const char *name);
++
++/*
++ * Select the DSP channel and attach to its guest OS (or sensors) process.
++ * After a successful attach, every call on fd uses the downstream ABI.
++ */
++int hexagonrpc_downstream_attach(int fd, int domain, bool sensors);
++
++bool hexagonrpc_is_downstream(int fd);
++
++/* args: one upstream-format entry per buffer/handle described by sc. */
++int hexagonrpc_downstream_invoke(int fd, uint32_t handle, uint32_t sc,
++				 const struct fastrpc_invoke_args *args);
++
++int hexagonrpc_downstream_mmap(int fd, struct fastrpc_req_mmap *req);
++
++/* For tests: replace the ioctl() system call. */
++void hexagonrpc_downstream_set_ioctl(long (*fn)(int, unsigned long, void *));
++
++#endif
+diff --git a/libhexagonrpc/downstream.c b/libhexagonrpc/downstream.c
+new file mode 100644
+index 0000000..9eab34a
+--- /dev/null
++++ b/libhexagonrpc/downstream.c
+@@ -0,0 +1,238 @@
++/*
++ * Downstream (msm-4.x "adsprpc") FastRPC ioctl translation
++ *
++ * Android vendor kernels expose FastRPC as /dev/adsprpc-smd with an older
++ * ioctl ABI than the upstream misc/fastrpc.h driver: the DSP is selected with
++ * FASTRPC_IOCTL_GETINFO after open(), a process attaches with
++ * FASTRPC_IOCTL_INIT_ATTRS, and invocations pass 16-byte remote_arg entries
++ * instead of 24-byte fastrpc_invoke_args. The remote protocol on the DSP is
++ * the same, so only the ioctl layer is translated here.
++ *
++ * Upstream and downstream ioctl numbers overlap with different meanings (the
++ * upstream INVOKE number is the downstream MUNMAP), so a descriptor is only
++ * ever driven with one ABI: the one it was attached with.
++ *
++ * This file is part of sensh.
++ *
++ * Sensh is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include <errno.h>
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/ioctl.h>
++
++#include <libhexagonrpc/downstream.h>
++
++struct ds_remote_buf {
++	void *pv;
++	size_t len;
++};
++
++struct ds_remote_dma_handle {
++	int fd;
++	uint32_t offset;
++};
++
++union ds_remote_arg {
++	struct ds_remote_buf buf;
++	struct ds_remote_dma_handle dma;
++	uint32_t h;
++};
++
++struct ds_ioctl_invoke {
++	uint32_t handle;
++	uint32_t sc;
++	union ds_remote_arg *pra;
++};
++
++struct ds_ioctl_invoke_fd {
++	struct ds_ioctl_invoke inv;
++	int *fds;
++};
++
++struct ds_ioctl_init {
++	uint32_t flags;
++	uintptr_t file;
++	uint32_t filelen;
++	int32_t filefd;
++	uintptr_t mem;
++	uint32_t memlen;
++	int32_t memfd;
++};
++
++struct ds_ioctl_init_attrs {
++	struct ds_ioctl_init init;
++	int attrs;
++	unsigned int siglen;
++};
++
++struct ds_ioctl_mmap {
++	int fd;
++	uint32_t flags;
++	uintptr_t vaddrin;
++	size_t size;
++	uintptr_t vaddrout;
++};
++
++#define DS_IOCTL_INVOKE		_IOWR('R', 1, struct ds_ioctl_invoke)
++#define DS_IOCTL_MMAP		_IOWR('R', 2, struct ds_ioctl_mmap)
++#define DS_IOCTL_INVOKE_FD	_IOWR('R', 4, struct ds_ioctl_invoke_fd)
++#define DS_IOCTL_GETINFO	_IOWR('R', 8, uint32_t)
++#define DS_IOCTL_INIT_ATTRS	_IOWR('R', 10, struct ds_ioctl_init_attrs)
++
++#define DS_INIT_ATTACH		0
++#define DS_INIT_ATTACH_SENSORS	3
++
++#define DS_MAX_FDS 64
++
++/* Small fixed table: hexagonrpcd drives one or two descriptors. */
++static int ds_fds[DS_MAX_FDS];
++static int ds_n_fds;
++
++static long (*ds_ioctl)(int fd, unsigned long req, void *arg) = NULL;
++
++static long ds_sys_ioctl(int fd, unsigned long req, void *arg)
++{
++	return ioctl(fd, req, arg);
++}
++
++void hexagonrpc_downstream_set_ioctl(long (*fn)(int, unsigned long, void *))
++{
++	ds_ioctl = fn;
++}
++
++static long ds_call(int fd, unsigned long req, void *arg)
++{
++	return (ds_ioctl ? ds_ioctl : ds_sys_ioctl)(fd, req, arg);
++}
++
++bool hexagonrpc_is_downstream(int fd)
++{
++	int i;
++
++	for (i = 0; i < ds_n_fds; i++) {
++		if (ds_fds[i] == fd)
++			return true;
++	}
++
++	return false;
++}
++
++int hexagonrpc_downstream_domain(const char *name)
++{
++	static const char *const names[] = { "adsp", "mdsp", "sdsp", "cdsp" };
++	size_t i;
++
++	if (name == NULL)
++		return -1;
++
++	for (i = 0; i < sizeof(names) / sizeof(*names); i++) {
++		if (!strcmp(name, names[i]))
++			return (int) i;
++	}
++
++	return -1;
++}
++
++int hexagonrpc_downstream_attach(int fd, int domain, bool sensors)
++{
++	struct ds_ioctl_init_attrs init;
++	uint32_t info;
++	long ret;
++
++	if (domain < 0 || ds_n_fds >= DS_MAX_FDS) {
++		errno = EINVAL;
++		return -1;
++	}
++
++	/* Selects the DSP channel and allocates the session. */
++	info = (uint32_t) domain;
++	ret = ds_call(fd, DS_IOCTL_GETINFO, &info);
++	if (ret)
++		return (int) ret;
++
++	memset(&init, 0, sizeof(init));
++	init.init.flags = sensors ? DS_INIT_ATTACH_SENSORS : DS_INIT_ATTACH;
++	init.init.filefd = -1;
++	init.init.memfd = -1;
++
++	ret = ds_call(fd, DS_IOCTL_INIT_ATTRS, &init);
++	if (ret)
++		return (int) ret;
++
++	ds_fds[ds_n_fds++] = fd;
++	return 0;
++}
++
++int hexagonrpc_downstream_invoke(int fd, uint32_t handle, uint32_t sc,
++				 const struct fastrpc_invoke_args *args)
++{
++	struct ds_ioctl_invoke_fd inv;
++	union ds_remote_arg *pra;
++	int *fds;
++	bool any_fd = false;
++	size_t n, i;
++	long ret;
++
++	n = ((sc >> 16) & 0xff) + ((sc >> 8) & 0xff)
++	  + ((sc >> 4) & 0x0f) + (sc & 0x0f);
++
++	pra = calloc(n ? n : 1, sizeof(*pra));
++	fds = calloc(n ? n : 1, sizeof(*fds));
++	if (pra == NULL || fds == NULL) {
++		free(pra);
++		free(fds);
++		errno = ENOMEM;
++		return -1;
++	}
++
++	for (i = 0; i < n; i++) {
++		pra[i].buf.pv = (void *) (uintptr_t) args[i].ptr;
++		pra[i].buf.len = (size_t) args[i].length;
++		fds[i] = args[i].fd;
++		if (args[i].fd != -1)
++			any_fd = true;
++	}
++
++	memset(&inv, 0, sizeof(inv));
++	inv.inv.handle = handle;
++	inv.inv.sc = sc;
++	inv.inv.pra = pra;
++
++	if (any_fd) {
++		inv.fds = fds;
++		ret = ds_call(fd, DS_IOCTL_INVOKE_FD, &inv);
++	} else {
++		ret = ds_call(fd, DS_IOCTL_INVOKE, &inv.inv);
++	}
++
++	free(pra);
++	free(fds);
++	return (int) ret;
++}
++
++int hexagonrpc_downstream_mmap(int fd, struct fastrpc_req_mmap *req)
++{
++	struct ds_ioctl_mmap mmap;
++	long ret;
++
++	memset(&mmap, 0, sizeof(mmap));
++	mmap.fd = req->fd;
++	mmap.flags = req->flags;
++	mmap.vaddrin = (uintptr_t) req->vaddrin;
++	mmap.size = (size_t) req->size;
++
++	ret = ds_call(fd, DS_IOCTL_MMAP, &mmap);
++	if (ret)
++		return (int) ret;
++
++	req->vaddrout = mmap.vaddrout;
++	return 0;
++}
+diff --git a/libhexagonrpc/hexagonrpc.c b/libhexagonrpc/hexagonrpc.c
+index c4665f8..e5c92eb 100644
+--- a/libhexagonrpc/hexagonrpc.c
++++ b/libhexagonrpc/hexagonrpc.c
+@@ -29,6 +29,7 @@
+ #include <misc/fastrpc.h>
+ #include <sys/ioctl.h>
+ 
++#include <libhexagonrpc/downstream.h>
+ #include <libhexagonrpc/hexagonrpc.h>
+ 
+ /*
+@@ -807,7 +808,11 @@ int vhexagonrpc(const struct hrpc_method_def_interp4 *def,
+ 		invoke.sc = REMOTE_SCALARS_MAKE(def->msg_id,
+ 						count.n_inbufs, count.n_outbufs);
+ 
+-	ret = ioctl(fd, FASTRPC_IOCTL_INVOKE, (__u64) &invoke);
++	if (hexagonrpc_is_downstream(fd))
++		ret = hexagonrpc_downstream_invoke(fd, invoke.handle,
++						   invoke.sc, args);
++	else
++		ret = ioctl(fd, FASTRPC_IOCTL_INVOKE, (__u64) &invoke);
+ 	if (ret)
+ 		goto err;
+ 
+diff --git a/libhexagonrpc/meson.build b/libhexagonrpc/meson.build
+index 6811853..816b2d9 100644
+--- a/libhexagonrpc/meson.build
++++ b/libhexagonrpc/meson.build
+@@ -1,6 +1,7 @@
+ libhexagonrpc = shared_library('hexagonrpc',
+   'error.c',
+   'handle.c',
++  'downstream.c',
+   'hexagonrpc.c',
+   'interface/remotectl.c',
+   'session.c',
+diff --git a/tests/meson.build b/tests/meson.build
+index 70fd8ee..bceca9d 100644
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -26,6 +26,7 @@ test_hexagonfs = executable('test_hexagonfs',
+ 
+ test_hexagonrpc = executable('test_hexagonrpc',
+   'test_hexagonrpc.c',
++  '../libhexagonrpc/downstream.c',
+   '../libhexagonrpc/hexagonrpc.c',
+   c_args : cflags,
+   include_directories : include,
+@@ -34,3 +35,11 @@ test_hexagonrpc = executable('test_hexagonrpc',
+ test('iobuffer', test_iobuffer)
+ test('hexagonfs', test_hexagonfs, args : [sample_file])
+ test('hexagonrpc', test_hexagonrpc)
++
++test_downstream = executable('test_downstream',
++  'test_downstream.c',
++  '../libhexagonrpc/downstream.c',
++  c_args : cflags,
++  include_directories : include,
++)
++test('downstream', test_downstream)
+diff --git a/tests/test_downstream.c b/tests/test_downstream.c
+new file mode 100644
+index 0000000..65b9a94
+--- /dev/null
++++ b/tests/test_downstream.c
+@@ -0,0 +1,151 @@
++/*
++ * Tests for the downstream (adsprpc) FastRPC ioctl translation
++ *
++ * This file is part of sensh.
++ *
++ * Sensh is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++
++#include <assert.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/ioctl.h>
++
++#include <libhexagonrpc/downstream.h>
++
++#define REMOTE_SCALARS_MAKE(method, in, out) \
++	((((uint32_t) (method) & 0x1f) << 24) | (((in) & 0xff) << 16) | (((out) & 0xff) << 8))
++
++/* Byte layout of the msm-4.19 structures on LP64 (aarch64). */
++struct ds_arg { uint64_t pv; uint64_t len; };
++struct ds_invoke { uint32_t handle; uint32_t sc; uint64_t pra; };
++struct ds_invoke_fd { struct ds_invoke inv; uint64_t fds; };
++struct ds_init_attrs {
++	uint32_t flags; uint32_t pad0; uint64_t file; uint32_t filelen;
++	int32_t filefd; uint64_t mem; uint32_t memlen; int32_t memfd;
++	int32_t attrs; uint32_t siglen;
++};
++struct ds_mmap { int32_t fd; uint32_t flags; uint64_t vaddrin; uint64_t size; uint64_t vaddrout; };
++
++static unsigned long calls[8];
++static int n_calls;
++static uint32_t getinfo_domain;
++static struct ds_init_attrs last_init;
++static struct ds_invoke last_invoke;
++static struct ds_arg last_args[4];
++static int last_fds[4];
++static int used_fds;
++static struct ds_mmap last_mmap;
++
++static long fake_ioctl(int fd, unsigned long req, void *arg)
++{
++	(void) fd;
++	calls[n_calls++] = req;
++
++	if (req == _IOWR('R', 8, uint32_t)) {
++		getinfo_domain = *(uint32_t *) arg;
++		*(uint32_t *) arg = 1;
++	} else if (req == _IOWR('R', 10, struct ds_init_attrs)) {
++		memcpy(&last_init, arg, sizeof(last_init));
++	} else if (req == _IOWR('R', 1, struct ds_invoke)) {
++		memcpy(&last_invoke, arg, sizeof(last_invoke));
++		memcpy(last_args, (void *) (uintptr_t) last_invoke.pra, sizeof(last_args));
++		used_fds = 0;
++	} else if (req == _IOWR('R', 4, struct ds_invoke_fd)) {
++		struct ds_invoke_fd *inv = arg;
++
++		memcpy(&last_invoke, &inv->inv, sizeof(last_invoke));
++		memcpy(last_args, (void *) (uintptr_t) last_invoke.pra, sizeof(last_args));
++		memcpy(last_fds, (void *) (uintptr_t) inv->fds, sizeof(last_fds));
++		used_fds = 1;
++	} else if (req == _IOWR('R', 2, struct ds_mmap)) {
++		memcpy(&last_mmap, arg, sizeof(last_mmap));
++		((struct ds_mmap *) arg)->vaddrout = 0x12345000;
++	} else {
++		return -1;
++	}
++
++	return 0;
++}
++
++int main(void)
++{
++	struct fastrpc_invoke_args args[3];
++	struct fastrpc_req_mmap req;
++	char a[4], b[8], c[16];
++	int ret;
++
++	/* The kernel ABI this translates to: sizes are part of the ioctl numbers. */
++	assert(sizeof(struct ds_invoke) == 16);
++	assert(sizeof(struct ds_init_attrs) == 48);
++	assert(sizeof(struct ds_mmap) == 32);
++
++	hexagonrpc_downstream_set_ioctl(fake_ioctl);
++
++	assert(hexagonrpc_downstream_domain("adsp") == 0);
++	assert(hexagonrpc_downstream_domain("sdsp") == 2);
++	assert(hexagonrpc_downstream_domain("cdsp") == 3);
++	assert(hexagonrpc_downstream_domain("") == -1);
++	assert(hexagonrpc_downstream_domain(NULL) == -1);
++
++	/* Attach: channel first, then the sensors process. */
++	assert(!hexagonrpc_is_downstream(7));
++	ret = hexagonrpc_downstream_attach(7, 2, true);
++	assert(ret == 0);
++	assert(n_calls == 2);
++	assert(calls[0] == _IOWR('R', 8, uint32_t));
++	assert(calls[1] == _IOWR('R', 10, struct ds_init_attrs));
++	assert(getinfo_domain == 2);
++	assert(last_init.flags == 3);
++	assert(last_init.filefd == -1 && last_init.memfd == -1);
++	assert(hexagonrpc_is_downstream(7));
++	assert(!hexagonrpc_is_downstream(8));
++
++	/* Invoke without descriptors: 24-byte upstream args become 16-byte ones. */
++	memset(args, 0, sizeof(args));
++	args[0].ptr = (uintptr_t) a; args[0].length = sizeof(a); args[0].fd = -1;
++	args[1].ptr = (uintptr_t) b; args[1].length = sizeof(b); args[1].fd = -1;
++	args[2].ptr = (uintptr_t) c; args[2].length = sizeof(c); args[2].fd = -1;
++	n_calls = 0;
++	ret = hexagonrpc_downstream_invoke(7, 3, REMOTE_SCALARS_MAKE(4, 2, 1), args);
++	assert(ret == 0);
++	assert(n_calls == 1 && calls[0] == _IOWR('R', 1, struct ds_invoke));
++	assert(!used_fds);
++	assert(last_invoke.handle == 3);
++	assert(last_invoke.sc == REMOTE_SCALARS_MAKE(4, 2, 1));
++	assert(last_args[0].pv == (uintptr_t) a && last_args[0].len == sizeof(a));
++	assert(last_args[1].pv == (uintptr_t) b && last_args[1].len == sizeof(b));
++	assert(last_args[2].pv == (uintptr_t) c && last_args[2].len == sizeof(c));
++
++	/* A buffer backed by a dma-buf needs the fd-carrying variant. */
++	args[1].fd = 42;
++	n_calls = 0;
++	ret = hexagonrpc_downstream_invoke(7, 3, REMOTE_SCALARS_MAKE(4, 2, 1), args);
++	assert(ret == 0);
++	assert(calls[0] == _IOWR('R', 4, struct ds_invoke_fd));
++	assert(used_fds);
++	assert(last_fds[0] == -1 && last_fds[1] == 42 && last_fds[2] == -1);
++
++	/* mmap keeps the field values and returns the DSP address. */
++	memset(&req, 0, sizeof(req));
++	req.fd = -1;
++	req.flags = 0x1000;
++	req.size = 0x200000;
++	n_calls = 0;
++	ret = hexagonrpc_downstream_mmap(7, &req);
++	assert(ret == 0);
++	assert(calls[0] == _IOWR('R', 2, struct ds_mmap));
++	assert(last_mmap.fd == -1 && last_mmap.flags == 0x1000 && last_mmap.size == 0x200000);
++	assert(req.vaddrout == 0x12345000);
++
++	/* No invalid domains. */
++	assert(hexagonrpc_downstream_attach(9, -1, false) != 0);
++	assert(!hexagonrpc_is_downstream(9));
++
++	printf("downstream: ok\n");
++	return 0;
++}

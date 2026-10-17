@@ -33,6 +33,12 @@ explicit backup-validated `flash-run` test on the bootloader tested here:
 > streamed into zram and takes over PID 1 from this image's init (`pico4-userspace receive` /
 > `switch`). On the stock 4.19 kernel it reached `running` with no failed units and passed the
 > Turnip Vulkan readback; stock boot and ABL were restored and verified. See [USERSPACE.md](USERSPACE.md).
+>
+> **Step 5 started: head IMU working on the tested headset, 2026-10-17.** A free software stack
+> (qrtr-ns, pd-mapper and hexagonrpcd, ported to the stock kernel's FastRPC ABI, plus the
+> `pico4-imu` client) boots the sensor DSP and streams the ICM-42688 at 512 Hz into the
+> SteamOS-compatible userspace. A guided 90° turn read 90.3°. Cameras, controllers and 6DoF are
+> still open. See [XR.md](XR.md).
 
 ## Prerequisites
 
@@ -240,7 +246,7 @@ flashing is performed in RAM mode; the explicit `flash-run` mode temporarily wri
 the boot partition. The regular `boot-poc` scripts remain interactive helpers that leave
 Linux running; their ping check alone is not a hardware acceptance result.
 
-Host simulation tests: `python -m unittest discover -s test -p "test_*.py" -v` — **86 passed**.
+Host simulation tests: `python -m unittest discover -s test -p "test_*.py" -v` — **106 passed**.
 
 On 2026-10-17, two real-headset `flash-run` cycles passed on an original PICO 4 running 5.13.7.
 The first established the Windows NCM workaround; the second performed it automatically,
