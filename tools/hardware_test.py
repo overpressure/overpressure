@@ -163,6 +163,7 @@ class Runner:
         self.moved = False
         self.boot_attempted = False
         self.authenticated = False
+        self.ncm_initialized = False
         self.baseline = None
         self.boot_dirty = False
         self.result.update(boot_method="flash" if self.flash_mode else "ram" if args.command == "run" else "none",
@@ -255,6 +256,11 @@ class Runner:
             self.adb("shell", f"rm -rf {remote}")
 
     def prepare(self):
+        if getattr(self.args, "windows_ncm_python", None):
+            readiness = json.loads(self.command([self.args.windows_ncm_python,
+                                    ROOT / "tools/windows_ncm.py", "--check"], timeout=15))
+            require(readiness.get("status") == "ready", "Windows NCM helper is not ready")
+            self.result["windows_ncm"] = readiness
         self.command([self.args.ssh_keygen, "-q", "-t", "ed25519", "-N", "", "-f", self.folder / "id_ed25519"])
         (self.folder / "ssh_config").write_text("", encoding="utf-8")
         self.result.update(prepare_image(self.args.image, self.folder, self.run_id,
@@ -329,6 +335,21 @@ class Runner:
             return
         self.boot_attempted = True
         self.fastboot("boot", str(path), timeout=self.args.boot_timeout)
+
+    def connect(self, timeout):
+        if getattr(self.args, "windows_ncm_python", None) and not self.ncm_initialized:
+            serial = self.args.fastboot_serial or self.args.serial
+            initialized = json.loads(self.command([self.args.windows_ncm_python,
+                                     ROOT / "tools/windows_ncm.py", "--serial", serial], timeout))
+            require(initialized.get("status") == "initialized" and initialized.get("serial") == serial,
+                    "Windows NCM initialization did not identify this headset")
+            self.ncm_initialized = True
+            self.result["windows_ncm"] = initialized
+            self.save()
+            # Return through wait() so initialization and SSH each receive a
+            # fresh timeout bounded by the same connection deadline.
+            raise ValueError("Windows NCM initialized; waiting for DHCP and SSH")
+        self.authenticate(timeout)
 
     def authenticate(self, timeout):
         output = self.ssh("cat /etc/pico4-poc/test-run; cat /sys/devices/soc0/serial_number", timeout)
@@ -471,7 +492,7 @@ class Runner:
             if self.args.command != "preflight":
                 self.step("enter unlocked fastboot", self.enter_fastboot)
                 self.step("flash test boot image" if self.flash_mode else "RAM boot", self.boot)
-                self.step("SSH identity", lambda: self.wait("SSH", self.args.boot_timeout, self.authenticate))
+                self.step("SSH identity", lambda: self.wait("SSH", self.args.boot_timeout, self.connect))
                 self.step("Linux shell and read-only storage", self.assertions)
                 self.step("HTTP and diagnostic report", self.diagnostics)
         except (Exception, KeyboardInterrupt) as exc:
@@ -511,6 +532,7 @@ def main(argv=None):
             p.add_argument("--fastboot-serial", help="explicit fastboot serial if different from ADB")
             p.add_argument("--ssh", default="ssh")
             p.add_argument("--ssh-keygen", default="ssh-keygen")
+            p.add_argument("--windows-ncm-python", help="Python with requirements-windows-ncm.txt; enable UsbDk NCM initialization")
             p.add_argument("--host", default="172.16.42.1", help="headset USB IPv4 address")
             for flag, default in (("boot", 180), ("report", 180), ("recovery", 420)):
                 p.add_argument(f"--{flag}-timeout", type=int, default=default)
@@ -524,6 +546,9 @@ def main(argv=None):
                 require(shutil.which(getattr(args, tool)), f"Required executable missing: {getattr(args, tool)}")
         if args.command != "preflight":
             ipaddress.IPv4Address(args.host)
+            if args.windows_ncm_python:
+                require(sys.platform == "win32", "--windows-ncm-python requires Windows")
+                require(shutil.which(args.windows_ncm_python), "Windows NCM Python executable is missing")
             require(all(getattr(args, f"{n}_timeout") > 0 for n in ("boot", "report", "recovery")),
                     "Timeouts must be positive")
             if args.command == "flash-run":

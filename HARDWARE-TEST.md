@@ -26,6 +26,37 @@ All ADB/fastboot operations target explicit serials. Use `--host 172.16.42.1` fo
 configured in the image, and `--adb`, `--fastboot`, `--ssh`, `--ssh-keygen` for executable paths.
 The runner does not change host networking or install drivers.
 
+### Windows NCM initialization
+
+The tested 5.13.7 stock kernel rejected Windows NCM packets with `Wrong NDP SIGN`.
+Sending the CDC `SET_CRC_MODE(0)` request through UsbDk, then releasing the device back to
+Windows' UsbNcm driver, restored DHCP, SSH and HTTP without changing the stock kernel.
+The runner can perform that initialization automatically with `--windows-ncm-python`.
+
+Install [UsbDk](https://github.com/daynix/UsbDk/releases) separately, then prepare a Python
+environment for the optional host helper:
+
+```powershell
+python -m venv cache/ncm-venv
+cache/ncm-venv/Scripts/python.exe -m pip install -r requirements-windows-ncm.txt
+cache/ncm-venv/Scripts/python.exe tools/windows_ncm.py --check
+```
+
+Add `--windows-ncm-python cache/ncm-venv/Scripts/python.exe` to either hardware-test command.
+Dependencies are checked before reboot. After Linux enumerates, the helper requires exactly
+one POC gadget, verifies its serial against `--fastboot-serial` (or `--serial` when omitted),
+selects its sole configuration and initializes the NCM control interface. It always releases
+the USB handle. Initialization runs once, within the SSH readiness deadline, and is recorded
+in `result.json`. A missing, ambiguous or mismatched gadget cannot produce a pass.
+
+Keep the Windows USB adapter configured for DHCP. The helper makes no IP, DNS, route or
+firewall changes; driver installation and any earlier manual IP configuration must be handled
+before acceptance. UsbDk briefly disconnects the composite gadget, including its log drive.
+Avoid using that drive during initialization. The tested dependencies are pinned in
+`requirements-windows-ncm.txt`; [libusb's Windows documentation](https://github.com/libusb/libusb/wiki/Windows)
+describes selecting its UsbDk backend. This workaround is validated for the recorded headset,
+firmware and Windows host; other combinations still require their own acceptance run.
+
 Use `--out out/my-test` to choose a **new** output directory. Existing results are never
 overwritten. Run one hardware test at a time against a headset; concurrent runs are unsupported.
 

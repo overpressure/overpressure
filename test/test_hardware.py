@@ -106,6 +106,14 @@ class HarnessTests(unittest.TestCase):
     def fake_command(self, argv, timeout=30):
         argv = list(map(str, argv))
         self.calls.append(argv)
+        if argv[0] == "ncm-python":
+            if argv[-1] == "--check":
+                if self.scenario == "ncm-dependencies":
+                    raise ValueError("NCM dependencies missing")
+                return json.dumps({"status": "ready"})
+            if self.scenario == "ncm-device":
+                raise ValueError("NCM gadget did not appear")
+            return json.dumps({"status": "initialized", "serial": self.args.fastboot_serial or self.args.serial})
         if argv[0] == "ssh-keygen":
             (self.runner.folder / "id_ed25519").write_text("private")
             (self.runner.folder / "id_ed25519.pub").write_text("ssh-ed25519 AAAATEST")
@@ -219,6 +227,33 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(self.execute(), 1)
         self.assertFalse(any("reboot" in command for command in self.calls))
         self.assertEqual(self.runner.result["recovery"], "not_needed")
+
+    def test_ncm_dependencies_are_checked_before_reboot(self):
+        self.args.windows_ncm_python = "ncm-python"
+        self.scenario = "ncm-dependencies"
+        self.assertEqual(self.execute(), 1)
+        self.assertFalse(self.runner.moved)
+        self.assertFalse(any(cmd[0] in ("adb", "fastboot") for cmd in self.calls))
+
+    def test_ncm_initialization_runs_once_before_ssh(self):
+        self.enable_flash_mode()
+        self.args.windows_ncm_python = "ncm-python"
+        self.args.boot_timeout = 3
+        self.assertEqual(self.execute(), 0)
+        requests = [n for n, cmd in enumerate(self.calls) if cmd[0] == "ncm-python" and "--serial" in cmd]
+        self.assertEqual(len(requests), 1)
+        first_ssh = next(n for n, cmd in enumerate(self.calls) if cmd[0] == "ssh")
+        self.assertLess(requests[0], first_ssh)
+        self.assertEqual(self.runner.result["windows_ncm"]["status"], "initialized")
+        self.assertEqual(self.runner.result["recovery"], "verified")
+
+    def test_ncm_failure_still_restores_stock_boot(self):
+        self.enable_flash_mode()
+        self.args.windows_ncm_python = "ncm-python"
+        self.scenario = "ncm-device"
+        self.assertEqual(self.execute(), 1)
+        self.assertEqual(self.runner.result["recovery"], "verified")
+        self.assertFalse(self.runner.result["boot_restore_required"])
 
     def test_lock_failure_returns_to_stock(self):
         self.scenario = "locked"
