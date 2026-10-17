@@ -101,6 +101,36 @@ saved `manual_restore_commands` and `stock-boot.img` once the headset is in fast
 the original EDL backup. A normal reboot alone cannot restore PICO OS while the POC is flashed.
 The result directory deliberately retains the stock restoration image.
 
+## Iterate within one Linux boot
+
+For userspace development, replace `--graphics ...` with `--debug-session-seconds 900` on a
+normal `run` or `flash-run` command. The runner performs the same identity, backup, preflight,
+shell, storage and diagnostic checks, then leaves Linux available for up to 15 minutes.
+Sessions accept 60–1800 seconds. They are recorded as development sessions; their successful
+completion does not certify manually launched graphics experiments.
+
+Once the console reports `development session ready`, use the generated SSH configuration:
+
+```sh
+ssh -F out/dev-session/ssh_config pico4
+scp -F out/dev-session/ssh_config out/revised-kms-test pico4:/run/revised-kms-test
+ssh -F out/dev-session/ssh_config pico4 'chmod +x /run/revised-kms-test; timeout 100 /run/revised-kms-test 45'
+```
+
+Use the actual output directory instead of `out/dev-session`. Programs and logs in `/run`
+live in RAM. Save useful logs to the host before ending the session. Each experiment should
+have its own short timeout. Repeated program uploads and runs do not require reflashing or
+restoring PICO OS; kernel/boot-image changes and an unrecoverable driver failure still do.
+
+Create the file `out/dev-session/end-session` to finish early (`New-Item` in PowerShell or
+`touch` on Linux). Expiry, identity/connection failure, or interruption of the runner also
+enters its existing recovery path. The runner checks storage again, collects final kernel
+logs, restores stock boot once for `flash-run`, verifies Android and removes its session key.
+Both deadline expiry and an explicit early finish were exercised on the headset on October 17,
+2026; each restored and verified PICO OS. See [GRAPHICS.md](GRAPHICS.md) for the graphics results.
+The independent device watchdog remains enabled; its maximum runtime includes the requested
+development interval. It cannot restore a flashed boot partition without a running host.
+
 ## What is checked in both boot modes
 
 1. Validate the source image and record its SHA-256. Derive a test variant with
@@ -135,7 +165,9 @@ prompts, personal SSH configuration or global known-host updates are used.
 
 ## Failure and timeout behavior
 
-Exit code `0` means every acceptance check **and stock recovery** passed. Any failed check or
+Exit code `0` means every automated acceptance check **and stock recovery** passed. Graphics
+runs still require separate physical confirmation of both lenses; see [GRAPHICS.md](GRAPHICS.md).
+Any failed check or
 failed recovery returns `1`; a successful recovery never erases an earlier failure.
 `result.json` records each phase, timestamps, identities, image hashes, error and recovery status.
 Numbered command JSON/log files retain subprocess output, including partial output on timeout.
@@ -150,7 +182,8 @@ recovery limit; each flash uses the boot timeout.
 
 Rebuild old POC images before testing: the runner requires the independent `recovery-watch`
 service. Each test image sets a device connection deadline of `boot-timeout + 30` seconds
-and a maximum runtime of `boot-timeout + report-timeout + 300` seconds, measured from Linux
+and a maximum runtime of `boot-timeout + report-timeout + 300 + debug-session-seconds` seconds
+(the development interval defaults to zero), measured from Linux
 startup. Enumeration, carrier and DHCP traffic cannot cancel the test connection deadline;
 only the runner's verified SSH identity check acknowledges it. The maximum runtime still
 returns to fastboot if the host runner dies after authentication. These limits apply even

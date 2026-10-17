@@ -160,8 +160,17 @@ class HarnessTests(unittest.TestCase):
             return "OKAY"
         if argv[0] == "ssh":
             command = argv[-1]
+            if "pico4-kms-test" in command:
+                return "EXIT=1" if self.scenario == "graphics" else "EXIT=0"
+            if command == "cat /run/pico4-poc/kms.json":
+                return json.dumps(dict(schema=2,status="passed",presentation="page_flip",retire_fence=True,
+                    composition="rgb_layers",buffer_layout="combined",eye_routing="sspp_layout",width=4320,height=2160,modes=[
+                    dict(requested_hz=h,vblank_hz=float(h),completion_hz=float(h),flips=10*h,
+                         vblank_samples=10*h,vblank_sequence_gaps=0,status="passed") for h in (90,72)]))
             if "test-run" in command:
-                return ("wrong-run" if self.scenario == "identity" else self.runner.run_id) + "\n1234567"
+                wrong = self.scenario == "identity" or (self.scenario == "session-identity"
+                        and self.runner.result.get("development_session", {}).get("status") == "active")
+                return ("wrong-run" if wrong else self.runner.run_id) + "\n1234567"
             if command == "cat /etc/pico4-poc/build-info":
                 return json.dumps({} if self.scenario == "build" else self.info)
             if command == "uname -m":
@@ -208,6 +217,7 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["recovery"], "verified")
         self.assertEqual(result["identity"]["chip_id"], 1234567)
+
         self.assertNotEqual(result["boot_sha256"], result["source_sha256"])
         self.assertFalse((self.runner.folder / "id_ed25519").exists())
         self.assertTrue((self.runner.folder / "report.tar.gz").exists())
@@ -221,6 +231,57 @@ class HarnessTests(unittest.TestCase):
             self.assertNotIn("unlock", cmd)
             if cmd[0] in ("adb", "fastboot") and cmd[-1] != "devices":
                 self.assertEqual(cmd[1:3], ["-s", "ABC"])
+
+    def test_graphics_phase_collects_measurements_and_restores(self):
+        self.enable_flash_mode()
+        self.args.graphics="kms"
+        self.args.graphics_seconds=10
+        self.assertEqual(self.execute(),0)
+        self.assertTrue(self.restored)
+        self.assertEqual(self.runner.result["graphics"]["kms"]["status"],"passed")
+        self.assertEqual(self.runner.result["graphics_visual_confirmation"],"not_recorded")
+
+    def test_graphics_failure_still_restores_stock(self):
+        self.enable_flash_mode()
+        self.args.graphics="kms"
+        self.args.graphics_seconds=10
+        self.scenario="graphics"
+        self.assertEqual(self.execute(),1)
+        self.assertTrue(self.restored)
+        self.assertEqual(self.runner.result["recovery"],"verified")
+        self.assertFalse(self.runner.result["boot_restore_required"])
+
+    def test_development_session_restores_once_after_requested_end(self):
+        self.enable_flash_mode()
+        self.args.debug_session_seconds=60
+        with patch.object(hw.time,"sleep",side_effect=lambda _: (self.runner.folder/"end-session").touch()):
+            self.assertEqual(self.execute(),0)
+        state=self.runner.result["development_session"]
+        self.assertEqual((state["status"],state["end_reason"]),("completed","requested"))
+        self.assertEqual(self.runner.result["graphics_acceptance"],"not_evaluated")
+        self.assertTrue(self.restored)
+        self.assertEqual(len([c for c in self.calls if c[0]=="fastboot" and c[3:5]==["flash","boot"]]),2)
+        self.assertEqual(self.runner.result["device_recovery"]["test_timeout"],362)
+        self.assertFalse((self.runner.folder/"id_ed25519").exists())
+
+    def test_development_session_identity_failure_restores(self):
+        self.enable_flash_mode()
+        self.args.debug_session_seconds=60
+        self.scenario="session-identity"
+        self.assertEqual(self.execute(),1)
+        self.assertEqual(self.runner.result["development_session"]["status"],"failed")
+        self.assertTrue(self.restored)
+        self.assertEqual(self.runner.result["recovery"],"verified")
+
+    def test_development_session_deadline_does_not_wait_indefinitely(self):
+        self.args.debug_session_seconds=60
+        with patch.object(hw.time,"monotonic",side_effect=[0,61]), \
+                patch.object(self.runner,"assertions") as assertions, \
+                patch.object(self.runner,"ssh",return_value="kernel log"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.runner.development_session()
+        self.assertEqual(self.runner.result["development_session"]["end_reason"],"deadline")
+        assertions.assert_called_once()
 
     def test_preflight_failure_never_reboots(self):
         self.scenario = "preflight"

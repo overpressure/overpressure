@@ -227,15 +227,18 @@ PicoUnlock and related tools make custom boot experiments possible. However, an 
 
 Adreno GPU acceleration
 
-Significant work
+Hardware rendering verified; compositor integration remains
 
-The PICO 4's Adreno 650-family GPU has a potential open-source Linux driver route through Mesa's Freedreno/Turnip stack. What is not demonstrated is a functioning accelerated Vulkan desktop or SteamVR compositor on this headset.
+Mesa Turnip's KGSL backend has rendered and verified an offscreen Vulkan image on this headset.
+An accelerated desktop or SteamVR compositor still requires integration and its own validation.
 
 Display initialization
 
-Significant work
+Native scanout verified
 
-The headset's display topology, panel initialization, refresh modes and distortion parameters must be understood. The identical per-eye resolution does not make the Steam Frame's display driver interchangeable.
+Both eye displays have shown stable native-resolution output with continuous framebuffer swaps
+at 90 and 72 Hz using the stock PICO kernel. Lens correction and compositor presentation remain
+separate integration tasks; the Steam Frame's display driver is not interchangeable.
 
 6DoF headset tracking
 
@@ -279,6 +282,13 @@ Suggested technical roadmap
 3. Bring up native graphics
 
    Investigate DRM/KMS, display initialization, Mesa Turnip and Vulkan. Verify whether the two eye displays can be driven reliably at their native resolution and refresh rates.
+
+   **Completed locally on October 17, 2026:** hardware Turnip rendered and verified all
+   65,536 pixels of an offscreen Vulkan test. Both lenses showed stable native-resolution
+   grids with continuous framebuffer swaps at measured 90/72 Hz. The tested path uses
+   vendor release/retire fences; page-flip events alone produced corrupted output. Extended
+   and fresh-boot runs passed, followed by byte-verified original boot/ABL restoration and
+   matching Android startup. See [GRAPHICS.md](GRAPHICS.md) for evidence and scope.
 4. Build a SteamOS-compatible ARM64 userspace
 
    Study the publicly available Steam Frame packages and the `steamac` and `steam-frame-nixos` projects. Adapt system services, input and graphics dependencies to the PICO kernel instead of attempting to use the Frame kernel.
@@ -319,7 +329,7 @@ These are engineering estimates based on the publicly documented work, not confi
 | ---------------------------------------- | ---------------------------------------- |
 | Unlock PICO 4 bootloader                 | Already demonstrated                     |
 | Boot minimal Linux                       | Demonstrated locally on PICO 4 / 5.13.7; step 2 complete |
-| Obtain accelerated Linux graphics        | Plausible but unverified                 |
+| Obtain accelerated Linux graphics        | Hardware Vulkan readback and native 90/72 Hz display presentation verified separately; step 3 complete |
 | Run ARM64 SteamOS userspace              | Plausible after Linux bring-up           |
 | Display a Steam-style desktop in-headset | Challenging                              |
 | Full 6DoF and controllers                | Major research effort                    |

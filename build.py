@@ -209,6 +209,14 @@ def build_rootfs(args, stock_entries, build_info: dict) -> cpio.Tree:
     with open(helper, "rb") as f:
         tree.add_file("usr/sbin/pico4-reboot", f.read(), 0o755)
 
+    # Optional local experiments (for example a separately built graphics bundle).
+    # Keep these out of the default, verified shell image.
+    for extra in getattr(args, "extra_overlay", []):
+        if not os.path.isdir(extra):
+            raise ValueError(f"Extra overlay directory does not exist: {extra}")
+        log(f">> extra overlay: {extra}")
+        add_overlay(tree, extra)
+
     # Static device nodes: the stock kernel has no devtmpfs, and the kernel
     # opens /dev/console before /init runs.
     for name, major, minor, mode in (("console", 5, 1, 0o600), ("null", 1, 3, 0o666), ("zero", 1, 5, 0o666),
@@ -401,6 +409,8 @@ def main(argv: list[str]) -> int:
             p.add_argument("--name", help="output base name (default: pico4-poc-<firmware>)")
             p.add_argument("--extra-packages", nargs="*", default=[], metavar="PKG",
                            help="additional Alpine packages to include")
+            p.add_argument("--extra-overlay", action="append", default=[], metavar="DIR",
+                           help="merge a local rootfs overlay after the default files (repeatable)")
             p.add_argument("--minimal", action="store_true", help="only the minirootfs + overlay")
             p.add_argument("--cmdline-append", nargs="*", default=[], metavar="ARG",
                            help="extra kernel arguments, e.g. pico4poc.autoreboot=0")

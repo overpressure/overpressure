@@ -1,8 +1,8 @@
 # PICO 4 Linux POC: a bootable Linux userspace for the original PICO 4
 
-This is step 2 of the roadmap in [RESEARCH.md](RESEARCH.md): **boot a minimal ARM64 Linux on the
-original PICO 4 (2022, "phoenix") and get a shell**. It is the foundation for the later SteamOS
-userspace work, not SteamOS itself.
+This implements steps 2 and 3 of the roadmap in [RESEARCH.md](RESEARCH.md): **boot a minimal
+ARM64 Linux on the original PICO 4 (2022, "phoenix"), get a shell and validate native graphics**.
+It is the foundation for the later SteamOS userspace work.
 
 The output is a standard Android boot image. Use `fastboot boot` where supported, or the
 explicit backup-validated `flash-run` test on the bootloader tested here:
@@ -19,7 +19,14 @@ explicit backup-validated `flash-run` test on the bootloader tested here:
 > initialization is automated by the [hardware runner](HARDWARE-TEST.md#windows-ncm-initialization).
 > The engineering ABL does not support RAM boot, so the verified route is
 > [temporary boot-partition flashing with stock restoration](HARDWARE-TEST.md#explicit-boot-partition-test).
-> This establishes the Linux shell milestone; graphics and VR remain later roadmap steps.
+> This establishes the Linux shell milestone.
+
+> **Step 3 complete on the tested headset — 2026-10-17.** Hardware Turnip rendering verified
+> every pixel of the offscreen Vulkan test. Both lenses showed stable 2160 x 2160 grids with
+> continuous framebuffer swaps at measured 90/72 Hz, including a fresh-boot acceptance run.
+> The working display path uses the stock RGB-layer arrangement and release/retire fences.
+> Original boot and ABL were restored and verified by full EDL readback. See [GRAPHICS.md](GRAPHICS.md)
+> for measurements, reproduction and the boundary between this bring-up and compositor/XR work.
 
 ## Prerequisites
 

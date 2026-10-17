@@ -262,11 +262,17 @@ class Runner:
             require(readiness.get("status") == "ready", "Windows NCM helper is not ready")
             self.result["windows_ncm"] = readiness
         self.command([self.args.ssh_keygen, "-q", "-t", "ed25519", "-N", "", "-f", self.folder / "id_ed25519"])
-        (self.folder / "ssh_config").write_text("", encoding="utf-8")
+        (self.folder / "ssh_config").write_text(
+            f'Host pico4\n  HostName {self.args.host}\n  User root\n'
+            f'  IdentityFile "{(self.folder / "id_ed25519").as_posix()}"\n'
+            '  IdentitiesOnly yes\n  BatchMode yes\n  ConnectTimeout 5\n  StrictHostKeyChecking yes\n'
+            f'  UserKnownHostsFile "{(self.folder / "known_hosts").as_posix()}"\n'
+            f'  GlobalKnownHostsFile "{(self.folder / "known_hosts").as_posix()}"\n', encoding="utf-8")
         self.result.update(prepare_image(self.args.image, self.folder, self.run_id,
                                         (self.folder / "id_ed25519.pub").read_bytes(),
                                         self.args.boot_timeout + 30,
-                                        self.args.boot_timeout + self.args.report_timeout + 300))
+                                        self.args.boot_timeout + self.args.report_timeout + 300
+                                        + getattr(self.args, "debug_session_seconds", 0)))
 
     def prepare_restore(self):
         require(self.args.confirm_device == self.args.serial,
@@ -414,6 +420,78 @@ class Runner:
         validate_report(report, self.run_id)
         (self.folder / "dmesg.txt").write_text(self.ssh("dmesg"), encoding="utf-8")
 
+    def graphics(self):
+        from tools.graphics import validate_kms, validate_vulkan
+        duration = self.args.graphics_seconds
+        requested = self.args.graphics
+        results, errors = {}, []
+        for name in ("vulkan", "kms"):
+            if requested not in (name, "all"):
+                continue
+            limit = 45 if name == "vulkan" else 2 * duration + 30
+            command = ("VK_DRIVER_FILES=/usr/share/vulkan/icd.d/pico4-turnip.json "
+                       f"timeout {limit} pico4-{name}-test" + (f" {duration}" if name == "kms" else ""))
+            print(f">> graphics: {name}" + (f" ({duration} seconds per mode)" if name == "kms" else ""), flush=True)
+            try:
+                # Keep stderr separate so warnings cannot masquerade as JSON evidence.
+                code = self.ssh(command + f" >/run/pico4-poc/{name}.json 2>/run/pico4-poc/{name}.log; echo EXIT=$?", limit + 10)
+                for suffix in ("json", "log"):
+                    content = self.ssh(f"cat /run/pico4-poc/{name}.{suffix}")
+                    (self.folder / f"graphics-{name}.{suffix}").write_text(content, encoding="utf-8")
+                value = json.loads((self.folder / f"graphics-{name}.json").read_text(encoding="utf-8"))
+                if isinstance(value, dict):
+                    results[name] = value
+                require(code == "EXIT=0", f"{name} test failed: {code}")
+                validate_vulkan(value) if name == "vulkan" else validate_kms(value, duration)
+                results[name] = value
+            except (ValueError, OSError) as exc:
+                results[name] = {**results.get(name, {}), "status": "failed", "error": str(exc)}
+                errors.append(f"{name}: {exc}")
+            self.result["graphics"] = results
+            self.save()
+        (self.folder / "graphics-dmesg.txt").write_text(self.ssh("dmesg"), encoding="utf-8")
+        (self.folder / "graphics-display-state.txt").write_text(self.ssh(
+            "cat /sys/class/drm/card0-DSI-1/enabled; cat /sys/class/backlight/panel0-backlight/actual_brightness"), encoding="utf-8")
+        self.result["graphics_visual_confirmation"] = "not_recorded"
+        # Graphics must preserve the same storage policy as the shell acceptance run.
+        self.assertions()
+        require(not errors, "; ".join(errors))
+
+    def development_session(self):
+        """Keep one authenticated boot available for bounded userspace iteration."""
+        duration = self.args.debug_session_seconds
+        stop_file = self.folder / "end-session"
+        state = {"status": "active", "started": utc(), "duration_seconds": duration,
+                 "deadline": (datetime.datetime.now(datetime.timezone.utc)
+                              + datetime.timedelta(seconds=duration)).isoformat(),
+                 "end_session_file": str(stop_file)}
+        self.result.update(run_kind="development", graphics_acceptance="not_evaluated", development_session=state)
+        self.save()
+        print(f">> development session ready for {duration} seconds; create {stop_file} to finish", flush=True)
+        deadline, next_check = time.monotonic() + duration, 0.0
+        try:
+            while True:
+                now = time.monotonic()
+                if stop_file.exists() or now >= deadline:
+                    state["end_reason"] = "requested" if stop_file.exists() else "deadline"
+                    break
+                if now >= next_check:
+                    self.authenticate(min(10, deadline - now))
+                    next_check = now + 15
+                time.sleep(min(1, max(0, deadline - time.monotonic())))
+            self.assertions()
+            state["status"] = "completed"
+        except (Exception, KeyboardInterrupt) as exc:
+            state.update(status="failed", error=str(exc) or "Interrupted")
+            raise
+        finally:
+            state["finished"] = utc()
+            self.save()
+            try:
+                (self.folder / "development-dmesg.txt").write_text(self.ssh("dmesg", timeout=10), encoding="utf-8")
+            except (ValueError, OSError):
+                pass
+
     def recover(self):
         self.result["recovery"] = "attempting"
         self.save()
@@ -495,6 +573,10 @@ class Runner:
                 self.step("SSH identity", lambda: self.wait("SSH", self.args.boot_timeout, self.connect))
                 self.step("Linux shell and read-only storage", self.assertions)
                 self.step("HTTP and diagnostic report", self.diagnostics)
+                if getattr(self.args, "graphics", None):
+                    self.step("native graphics", self.graphics)
+                if getattr(self.args, "debug_session_seconds", 0):
+                    self.step("bounded development session", self.development_session)
         except (Exception, KeyboardInterrupt) as exc:
             failed = True
             self.result["error"] = str(exc) or "Interrupted"
@@ -533,6 +615,12 @@ def main(argv=None):
             p.add_argument("--ssh", default="ssh")
             p.add_argument("--ssh-keygen", default="ssh-keygen")
             p.add_argument("--windows-ncm-python", help="Python with requirements-windows-ncm.txt; enable UsbDk NCM initialization")
+            activity = p.add_mutually_exclusive_group()
+            activity.add_argument("--graphics", choices=("kms", "vulkan", "all"),
+                                  help="run optional native graphics tests; requires a graphics-enabled image")
+            activity.add_argument("--debug-session-seconds", type=int, default=0, metavar="SECONDS",
+                                  help="keep Linux available for userspace iteration (60-1800 seconds), then restore")
+            p.add_argument("--graphics-seconds", type=int, default=10, help="KMS measurement duration per mode (3-120 seconds)")
             p.add_argument("--host", default="172.16.42.1", help="headset USB IPv4 address")
             for flag, default in (("boot", 180), ("report", 180), ("recovery", 420)):
                 p.add_argument(f"--{flag}-timeout", type=int, default=default)
@@ -545,6 +633,9 @@ def main(argv=None):
             if hasattr(args, tool):
                 require(shutil.which(getattr(args, tool)), f"Required executable missing: {getattr(args, tool)}")
         if args.command != "preflight":
+            require(3 <= args.graphics_seconds <= 120, "Graphics duration must be between 3 and 120 seconds")
+            require(args.debug_session_seconds == 0 or 60 <= args.debug_session_seconds <= 1800,
+                    "Development sessions must be between 60 and 1800 seconds")
             ipaddress.IPv4Address(args.host)
             if args.windows_ncm_python:
                 require(sys.platform == "win32", "--windows-ncm-python requires Windows")
