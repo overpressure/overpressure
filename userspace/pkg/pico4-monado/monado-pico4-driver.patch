@@ -26,6 +26,308 @@ index 41e822af0..38be1c7c2 100644
  message(STATUS "#    DRIVER_SIMULATED:            ${XRT_BUILD_DRIVER_SIMULATED}")
  message(STATUS "#    DRIVER_SIMULAVR:             ${XRT_BUILD_DRIVER_SIMULAVR}")
  message(STATUS "#    DRIVER_SURVIVE:              ${XRT_BUILD_DRIVER_SURVIVE}")
+diff --git a/src/xrt/compositor/CMakeLists.txt b/src/xrt/compositor/CMakeLists.txt
+index 1ba5ec438..a475e44bb 100644
+--- a/src/xrt/compositor/CMakeLists.txt
++++ b/src/xrt/compositor/CMakeLists.txt
+@@ -237,6 +237,11 @@ if(XRT_MODULE_COMPOSITOR_MAIN)
+ 	if(VK_USE_PLATFORM_DISPLAY_KHR)
+ 		target_sources(comp_main PRIVATE main/comp_window_vk_display.c)
+ 	endif()
++	if(XRT_BUILD_DRIVER_PICO4 AND LIBDRM_FOUND)
++		target_sources(comp_main PRIVATE main/comp_window_pico4_kms.c)
++		target_link_libraries(comp_main PRIVATE PkgConfig::LIBDRM)
++		target_compile_definitions(comp_main PRIVATE XRT_HAVE_PICO4_KMS)
++	endif()
+ 	if(VK_USE_PLATFORM_DISPLAY_KHR OR XRT_HAVE_XCB)
+ 		target_sources(comp_main PRIVATE main/comp_window_direct.c)
+ 	endif()
+diff --git a/src/xrt/compositor/main/comp_compositor.c b/src/xrt/compositor/main/comp_compositor.c
+index 41dfe48bc..0cf24a8db 100644
+--- a/src/xrt/compositor/main/comp_compositor.c
++++ b/src/xrt/compositor/main/comp_compositor.c
+@@ -753,6 +753,9 @@ compositor_init_vulkan(struct comp_compositor *c)
+  */
+ 
+ const struct comp_target_factory *ctfs[] = {
++#ifdef XRT_HAVE_PICO4_KMS
++    &comp_target_factory_pico4_kms,
++#endif
+ #if defined VK_USE_PLATFORM_WAYLAND_KHR && defined XRT_HAVE_WAYLAND_DIRECT
+     &comp_target_factory_direct_wayland,
+ #endif
+@@ -991,7 +994,16 @@ compositor_init_renderer(struct comp_compositor *c)
+ {
+ 	COMP_TRACE_MARKER();
+ 
++#ifdef XRT_HAVE_PICO4_KMS
++	/*
++	 * PICO 4: no lens distortion yet, so the scratch images map 1:1 to the
++	 * panels. Scratch images at the scaled view size only cost bandwidth.
++	 */
++	VkExtent2D scratch_extent = {c->xdev->hmd->views[0].display.w_pixels, c->xdev->hmd->views[0].display.h_pixels};
++	c->r = comp_renderer_create(c, scratch_extent);
++#else
+ 	c->r = comp_renderer_create(c, c->view_extents);
++#endif
+ 
+ #ifdef XRT_FEATURE_WINDOW_PEEK
+ 	c->peek = comp_window_peek_create(c);
+diff --git a/src/xrt/compositor/main/comp_renderer.c b/src/xrt/compositor/main/comp_renderer.c
+index 16c16fd7a..697491fee 100644
+--- a/src/xrt/compositor/main/comp_renderer.c
++++ b/src/xrt/compositor/main/comp_renderer.c
+@@ -589,7 +589,8 @@ renderer_init(struct comp_renderer *r, struct comp_compositor *c, VkExtent2D scr
+ 	    &c->nr,                     // struct render_resources
+ 	    c->nr.view_count,           // view_count
+ 	    scratch_extent,             // extent
+-	    VK_FORMAT_R8G8B8A8_SRGB);   // format
++	    VK_FORMAT_R8G8B8A8_SRGB,    // format
++	    c->settings.use_compute);   // storage
+ 	if (!bret) {
+ 		COMP_ERROR(c, "chl_scratch_ensure: false");
+ 		assert(bret && "Whelp, can't return a error. But should never really fail.");
+diff --git a/src/xrt/compositor/main/comp_settings.c b/src/xrt/compositor/main/comp_settings.c
+index 900c64097..1d3534d32 100644
+--- a/src/xrt/compositor/main/comp_settings.c
++++ b/src/xrt/compositor/main/comp_settings.c
+@@ -10,7 +10,8 @@
+ #include "util/u_debug.h"
+ #include "comp_settings.h"
+ 
+-#ifdef XRT_OS_ANDROID
++#if defined(XRT_OS_ANDROID) || defined(XRT_HAVE_PICO4_KMS)
++// PICO 4: Turnip renders into the linear scanout images about twice as fast as compute writes them.
+ #define USE_COMPUTE_DEFAULT false
+ #else
+ #define USE_COMPUTE_DEFAULT true
+diff --git a/src/xrt/compositor/main/comp_window.h b/src/xrt/compositor/main/comp_window.h
+index eb41c3c36..bb38bd709 100644
+--- a/src/xrt/compositor/main/comp_window.h
++++ b/src/xrt/compositor/main/comp_window.h
+@@ -34,6 +34,15 @@ extern "C" {
+  */
+ extern const struct comp_target_factory comp_target_factory_debug_image;
+ 
++#ifdef XRT_HAVE_PICO4_KMS
++/*!
++ * The PICO 4 panels through the stock msm_drm KMS driver.
++ *
++ * @ingroup comp_main
++ */
++extern const struct comp_target_factory comp_target_factory_pico4_kms;
++#endif
++
+ #ifdef VK_USE_PLATFORM_XCB_KHR
+ 
+ /*!
+diff --git a/src/xrt/compositor/util/comp_high_level_scratch.c b/src/xrt/compositor/util/comp_high_level_scratch.c
+index d1ad4e755..2d9ba95e8 100644
+--- a/src/xrt/compositor/util/comp_high_level_scratch.c
++++ b/src/xrt/compositor/util/comp_high_level_scratch.c
+@@ -36,7 +36,8 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+                    struct render_resources *rr,
+                    uint32_t view_count,
+                    VkExtent2D extent,
+-                   const VkFormat format)
++                   const VkFormat format,
++                   bool storage)
+ {
+ 	struct vk_bundle *vk = rr->vk;
+ 	bool bret = false;
+@@ -45,7 +46,8 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+ 	if (scratch->view_count == view_count &&       //
+ 	    scratch->extent.width == extent.width &&   //
+ 	    scratch->extent.height == extent.height && //
+-	    scratch->format == format) {
++	    scratch->format == format &&               //
++	    scratch->storage == storage) {
+ 		return true;
+ 	}
+ 
+@@ -73,7 +75,8 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+ 
+ 		if (format == VK_FORMAT_R8G8B8A8_SRGB) {
+ 			// Special creation function for the mutable format.
+-			bret = comp_scratch_single_images_ensure_mutable(cssi, vk, extent);
++			bret = storage ? comp_scratch_single_images_ensure_mutable(cssi, vk, extent)
++			               : comp_scratch_single_images_ensure_mutable_sampled(cssi, vk, extent);
+ 		} else {
+ 			bret = comp_scratch_single_images_ensure(cssi, vk, extent, format);
+ 		}
+@@ -113,6 +116,7 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+ 	// Update the cached values.
+ 	scratch->extent = extent;
+ 	scratch->format = format;
++	scratch->storage = storage;
+ 
+ 	return true;
+ }
+diff --git a/src/xrt/compositor/util/comp_high_level_scratch.h b/src/xrt/compositor/util/comp_high_level_scratch.h
+index 12271721c..7dcaabd0a 100644
+--- a/src/xrt/compositor/util/comp_high_level_scratch.h
++++ b/src/xrt/compositor/util/comp_high_level_scratch.h
+@@ -51,6 +51,9 @@ struct chl_scratch
+ 	//! Format requested.
+ 	VkFormat format;
+ 
++	//! Whether the images can be written as storage images (compute path).
++	bool storage;
++
+ 	//! Has the render pass been initialized.
+ 	bool render_pass_initialized;
+ };
+@@ -83,7 +86,8 @@ chl_scratch_ensure(struct chl_scratch *scratch,
+                    struct render_resources *rr,
+                    uint32_t view_count,
+                    VkExtent2D extent,
+-                   const VkFormat format);
++                   const VkFormat format,
++                   bool storage);
+ 
+ /*!
+  * Free all Vulkan resources that this scratch has created.
+diff --git a/src/xrt/compositor/util/comp_scratch.c b/src/xrt/compositor/util/comp_scratch.c
+index 716be02f6..4e7e7061f 100644
+--- a/src/xrt/compositor/util/comp_scratch.c
++++ b/src/xrt/compositor/util/comp_scratch.c
+@@ -26,19 +26,31 @@
+  */
+ 
+ static inline void
+-fill_info(VkExtent2D extent, VkFormat srgb_format, VkFormat unorm_format, struct xrt_swapchain_create_info *out_info)
++fill_info(VkExtent2D extent,
++          VkFormat srgb_format,
++          VkFormat unorm_format,
++          bool storage,
++          struct xrt_swapchain_create_info *out_info)
+ {
+ 	// Must be true.
+ 	assert(unorm_format != VK_FORMAT_UNDEFINED);
+ 
+ 	enum xrt_swapchain_create_flags create = 0;
+ 
+-	enum xrt_swapchain_usage_bits bits =      //
+-	    XRT_SWAPCHAIN_USAGE_COLOR |           //
+-	    XRT_SWAPCHAIN_USAGE_SAMPLED |         //
+-	    XRT_SWAPCHAIN_USAGE_TRANSFER_SRC |    //
+-	    XRT_SWAPCHAIN_USAGE_TRANSFER_DST |    //
+-	    XRT_SWAPCHAIN_USAGE_UNORDERED_ACCESS; //
++	enum xrt_swapchain_usage_bits bits =   //
++	    XRT_SWAPCHAIN_USAGE_COLOR |        //
++	    XRT_SWAPCHAIN_USAGE_SAMPLED |      //
++	    XRT_SWAPCHAIN_USAGE_TRANSFER_SRC | //
++	    XRT_SWAPCHAIN_USAGE_TRANSFER_DST;  //
++
++	/*
++	 * Only the compute path writes scratch images as storage images. Some
++	 * GPUs (Adreno 6xx with Turnip) cannot compress storage images, which
++	 * doubles the memory traffic of the graphics path.
++	 */
++	if (storage) {
++		bits |= XRT_SWAPCHAIN_USAGE_UNORDERED_ACCESS;
++	}
+ 
+ 	struct xrt_swapchain_create_info info = {
+ 	    .create = create,
+@@ -171,8 +183,10 @@ tmp_init_and_create(struct tmp *t,
+ 	// Base info.
+ 	const VkImageViewType view_type = VK_IMAGE_VIEW_TYPE_2D;
+ 
+-	// Both usages are common.
+-	const VkImageUsageFlags unorm_usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
++	// Storage only when the images were created for it.
++	const VkImageUsageFlags unorm_usage =
++	    VK_IMAGE_USAGE_SAMPLED_BIT |
++	    ((info->bits & XRT_SWAPCHAIN_USAGE_UNORDERED_ACCESS) != 0 ? VK_IMAGE_USAGE_STORAGE_BIT : 0);
+ 
+ 	// Very few cards support SRGB storage.
+ 	const VkImageUsageFlags srgb_usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+@@ -276,18 +290,21 @@ ensure(struct comp_scratch_single_images *cssi,
+        struct vk_bundle *vk,
+        VkExtent2D extent,
+        const VkFormat srgb_format,
+-       const VkFormat unorm_format)
++       const VkFormat unorm_format,
++       bool storage)
+ {
++	bool has_storage = (cssi->info.bits & XRT_SWAPCHAIN_USAGE_UNORDERED_ACCESS) != 0;
+ 	if (cssi->info.width == extent.width &&      //
+ 	    cssi->info.height == extent.height &&    //
+ 	    cssi->info.formats[0] == unorm_format && //
+-	    cssi->info.formats[1] == srgb_format) {  //
++	    cssi->info.formats[1] == srgb_format &&  //
++	    has_storage == storage) {                //
+ 		// Our work here is done!
+ 		return true;
+ 	}
+ 
+ 	struct xrt_swapchain_create_info info = XRT_STRUCT_INIT;
+-	fill_info(extent, srgb_format, unorm_format, &info);
++	fill_info(extent, srgb_format, unorm_format, storage, &info);
+ 
+ 	struct tmp t; // Is initialized in function.
+ 	if (!tmp_init_and_create(&t, vk, &info, srgb_format, unorm_format)) {
+@@ -337,7 +354,7 @@ comp_scratch_single_images_ensure(struct comp_scratch_single_images *cssi,
+                                   VkExtent2D extent,
+                                   const VkFormat format)
+ {
+-	return ensure(cssi, vk, extent, VK_FORMAT_UNDEFINED, format);
++	return ensure(cssi, vk, extent, VK_FORMAT_UNDEFINED, format, true);
+ }
+ 
+ /*!
+@@ -352,7 +369,15 @@ comp_scratch_single_images_ensure_mutable(struct comp_scratch_single_images *css
+                                           struct vk_bundle *vk,
+                                           VkExtent2D extent)
+ {
+-	return ensure(cssi, vk, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM);
++	return ensure(cssi, vk, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM, true);
++}
++
++bool
++comp_scratch_single_images_ensure_mutable_sampled(struct comp_scratch_single_images *cssi,
++                                                  struct vk_bundle *vk,
++                                                  VkExtent2D extent)
++{
++	return ensure(cssi, vk, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM, false);
+ }
+ 
+ void
+@@ -462,7 +487,7 @@ comp_scratch_stereo_images_ensure(struct comp_scratch_stereo_images *cssi, struc
+ 
+ 	// Get info we need to share with.
+ 	struct xrt_swapchain_create_info info = XRT_STRUCT_INIT;
+-	fill_info(extent, srgb_format, unorm_format, &info);
++	fill_info(extent, srgb_format, unorm_format, true, &info);
+ 
+ 	struct tmp ts[2]; // Is initialized in function.
+ 	if (!tmp_init_and_create(&ts[0], vk, &info, srgb_format, unorm_format)) {
+diff --git a/src/xrt/compositor/util/comp_scratch.h b/src/xrt/compositor/util/comp_scratch.h
+index 137cf0544..45cc0bdfb 100644
+--- a/src/xrt/compositor/util/comp_scratch.h
++++ b/src/xrt/compositor/util/comp_scratch.h
+@@ -126,6 +126,20 @@ comp_scratch_single_images_ensure_mutable(struct comp_scratch_single_images *css
+                                           struct vk_bundle *vk,
+                                           VkExtent2D extent);
+ 
++/*!
++ * Like @ref comp_scratch_single_images_ensure_mutable, but for images that are
++ * only rendered to and sampled, never written as storage images. That keeps
++ * them compressible on GPUs that cannot compress storage images.
++ *
++ * @public @memberof comp_scratch_single_images
++ *
++ * @ingroup comp_util
++ */
++bool
++comp_scratch_single_images_ensure_mutable_sampled(struct comp_scratch_single_images *cssi,
++                                                  struct vk_bundle *vk,
++                                                  VkExtent2D extent);
++
+ /*!
+  * Free all images allocated, @p init must be called before calling this
+  * function, is safe to call without any image allocated.
 diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
 index bd31b3374..9cae9505b 100644
 --- a/src/xrt/drivers/CMakeLists.txt

@@ -219,6 +219,15 @@ class HarnessTests(unittest.TestCase):
                                    "orientation_tracking": True, "located": 980, "orientation_tracked": 975,
                                    "invalid_after_warmup": 0, "final_tilt_from_vertical_deg": tilt,
                                    "heading_rate_deg_per_s": -0.1}) + "\nEXIT=0"
+            if "pico4-openxr-display" in command:
+                self.assertNotIn("--projection-only", command)
+                return json.dumps({"schema": 1, "status": "pass", "system": "Monado: PICO 4", "frames": 900,
+                                   "frame_hz": 90.0, "late_frames": 1}) + "\nEXIT=0"
+            if command == "cat /run/pico4-poc/openxr-display-kms.json":
+                eyes = [[70.2, 40.1, 25.4], [26.3, 41.4, 71.9]]
+                return json.dumps({"target": "pico4_kms", "commits": 848, "commit_hz": 87.8, "vblank_hz": 89.998,
+                                   "retire_timeouts": 0,
+                                   "eye_mean_rgb": eyes[::-1] if self.scenario == "display" else eyes})
             if command.startswith(("pico4-imu list", "systemctl status", "cat /run/pico4-poc/openxr")):
                 return "sensor evidence"
             if "pico4-kms-test" in command:
@@ -342,6 +351,19 @@ class HarnessTests(unittest.TestCase):
                 self.assertEqual(state["system"], "Monado: PICO 4")
                 self.assertAlmostEqual(state["accel_tilt_deg"], 8.79, places=2)
                 self.assertTrue((self.runner.folder / "userspace-openxr-pose.json").exists())
+
+    def test_openxr_display_is_checked_with_monado(self):
+        for scenario, code in (("", 0), ("display", 1)):
+            with self.subTest(scenario or "passing"):
+                self.setUp()
+                self.enable_flash_mode()
+                self.enable_userspace(sensors=True, openxr=True)
+                self.scenario = scenario
+                self.assertEqual(self.execute(), code)
+                self.assertTrue(self.restored)
+                state = self.runner.result["userspace"]["openxr_display"]
+                self.assertEqual((state["frame_hz"], state["kms"]["target"]), (90.0, "pico4_kms"))
+                self.assertTrue((self.runner.folder / "userspace-openxr-display-kms.json").exists())
 
     def test_head_imu_skipped_without_sensor_data(self):
         self.enable_flash_mode()

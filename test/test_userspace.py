@@ -158,5 +158,39 @@ class OpenXrPoseTests(unittest.TestCase):
                 userspace.validate_openxr_pose(value, accel_tilt_deg=accel)
 
 
+DISPLAY_PASSING = {
+    "schema": 1, "status": "pass", "system": "Monado: PICO 4", "frames": 900, "frame_hz": 90.0, "late_frames": 1,
+}
+KMS_PASSING = {
+    "target": "pico4_kms", "commits": 848, "commit_hz": 87.78, "vblank_hz": 89.998, "retire_timeouts": 0,
+    "eye_mean_rgb": [[70.2, 40.1, 25.4], [26.3, 41.4, 71.9]],
+}
+
+
+class OpenXrDisplayTests(unittest.TestCase):
+    def test_passing_display(self):
+        userspace.validate_openxr_display(DISPLAY_PASSING, KMS_PASSING)
+
+    def test_failures_are_rejected(self):
+        cases = [
+            ("not run", None, {}),
+            ("client failed", {"status": "fail"}, {}),
+            ("simulated HMD", {"system": "Monado: Simulated HMD"}, {}),
+            ("half rate", {"frame_hz": 45.0}, {}),
+            ("late frames", {"late_frames": 30}, {}),
+            ("other target", {}, {"target": "debug_image"}),
+            ("lost fences", {}, {"retire_timeouts": 2}),
+            ("72 Hz panel", {}, {"vblank_hz": 72.0}),
+            ("slow compositor", {}, {"commit_hz": 29.6}),
+            ("no frame", {}, {"eye_mean_rgb": None}),
+            ("eyes swapped", {}, {"eye_mean_rgb": [[26.3, 41.4, 71.9], [70.2, 40.1, 25.4]]}),
+            ("black", {}, {"eye_mean_rgb": [[0, 0, 0], [0, 0, 0]]}),
+        ]
+        for name, client, kms in cases:
+            value = None if client is None else {**DISPLAY_PASSING, **client}
+            with self.subTest(name), self.assertRaises(ValueError):
+                userspace.validate_openxr_display(value, {**KMS_PASSING, **kms})
+
+
 if __name__ == "__main__":
     unittest.main()

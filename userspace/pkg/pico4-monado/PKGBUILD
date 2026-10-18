@@ -2,10 +2,12 @@
 # kernel: head orientation from the ICM-42688 behind the sensor DSP (3DoF),
 # through the same Qualcomm Sensor Core client protocol as pico4-imu (XR.md).
 # Upstream Monado, pinned by commit, plus this project's driver files and a
-# patch that registers them. Built as an in-process runtime (no service yet);
-# the null compositor serves headless clients, the main compositor is built
-# for the display integration that follows. pico4-openxr-pose is the
-# acceptance client: it reads the head pose through the OpenXR loader.
+# patch that registers them. Built as an in-process runtime (no service yet).
+# The main compositor shows frames on the two panels through the stock msm_drm
+# KMS driver (comp_window_pico4_kms.c, the fenced path of GRAPHICS.md); the
+# null compositor serves headless clients. The acceptance clients read the head
+# pose (pico4-openxr-pose) and render frames (pico4-openxr-display) through the
+# OpenXR loader.
 pkgname=pico4-monado
 pkgver=25.1.0
 pkgrel=1
@@ -20,13 +22,14 @@ _commit=3b450e37b624f5edea366492ee2d267d673a35aa # v25.1.0
 source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_commit"
         monado-pico4-driver.patch
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
-        pico4-openxr-pose.c)
-# Project files; pico4-openxr-pose.c is copied in by build-userspace.sh.
-sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
+        comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c)
+# Project files; the src/xr clients are copied in by build-userspace.sh.
+sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
 
 prepare() {
   patch -d monado -p1 < monado-pico4-driver.patch
   install -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c
+  install -Dm644 -t monado/src/xrt/compositor/main comp_window_pico4_kms.c
 }
 
 build() {
@@ -50,11 +53,12 @@ build() {
   cmake --build build
 
   cc -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-pose pico4-openxr-pose.c -lopenxr_loader -lm
+  cc -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-display pico4-openxr-display.c -lopenxr_loader -lvulkan
 }
 
 package() {
   DESTDIR="$pkgdir" cmake --install build
-  install -Dm755 pico4-openxr-pose -t "$pkgdir/usr/bin"
+  install -Dm755 pico4-openxr-pose pico4-openxr-display -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.
   install -dm755 "$pkgdir/etc/openxr/1"
   ln -s /usr/share/openxr/1/openxr_monado.json "$pkgdir/etc/openxr/1/active_runtime.json"

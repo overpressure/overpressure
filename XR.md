@@ -15,8 +15,16 @@ image (`backup/`, unpacked privately), the stock kernel and device tree, and rea
 > [PICO 4 driver](#monado-3dof-driver) that fuses this IMU at 1 kHz. An OpenXR client reads the
 > head pose through the standard loader. Over 60 s on a still headset, every pose after warm-up
 > was tracked, the sample-to-pose latency was about 1 ms, and the view rotated by 0.009°. The
-> tilt agreed with the accelerometer within 0.2°. Display output through Monado's compositor,
-> cameras, controllers and 6DoF are still open; see [next steps](#next-steps).
+> tilt agreed with the accelerometer within 0.2°.
+>
+> **OpenXR frames on both panels, 2026-10-18.** Monado's compositor now presents through the
+> stock KMS driver with a [PICO 4 target](#display-output-through-monado). It uses the fenced
+> six-layer path verified in step 3. A Vulkan OpenXR client rendered 5,400 frames in 60 s at
+> 90.000 Hz with 3 late frames. The panels refreshed at 89.998 Hz, and every display fence
+> arrived. Each eye's content was on its own panel, in the scanned-out image and as seen in
+> the lenses. Frames with several layers also run at 90 Hz after three bandwidth fixes. Cameras,
+> controllers, 6DoF, lens distortion and a Monado service are still open; see
+> [next steps](#next-steps).
 
 ## Inventory
 
@@ -139,6 +147,77 @@ time every 10 ms and reports the system name, tracked/valid counts, rotation, he
 rate and the tilt from vertical. The tilt is measured in STAGE because LOCAL keeps only the
 start yaw of a tilted head.
 
+## Display output through Monado
+
+Monado's direct-mode targets need `VK_KHR_display` or an X/Wayland server. Turnip's KGSL
+backend has no display support, and the stock kernel's panels follow a vendor KMS contract
+anyway. The package therefore adds a compositor target,
+[`comp_window_pico4_kms.c`](userspace/pkg/pico4-monado/comp_window_pico4_kms.c). It
+presents with the sequence that step 3 verified ([GRAPHICS.md](GRAPHICS.md)):
+
+- **Selection.** The target is picked automatically wherever `/dev/dri/card0` is `msm_drm`
+  with a connected 4320×2160 DSI output. `PICO4_KMS=0` turns it off.
+- **Images.** Three linear Vulkan images (4320×2160, both eyes side by side), exportable as
+  dma-bufs. Turnip allocates them from ION on this kernel. `msm_drm` imports them with PRIME
+  and adds them as `XRGB8888` framebuffers. Compositor and display share the memory with no
+  copy.
+- **Layers.** The stock arrangement: six layers, one per colour component and eye, routed by
+  `sspp_layout`. The right eye reads the right half of the shared image.
+- **Commits.** The first commit sets the 90 Hz mode. Every later commit flips all six layers
+  without blocking and requests the CRTC release fence and the connector retire fence.
+  - Before each commit the target waits for the renderer's queue and for the previous
+    commit's retire fence. Only then can the image acquired next be off screen.
+  - Pacing uses Monado's fixed-period pacer at the HMD's 90 Hz.
+- **GPU clock.** While the target drives the panels, it keeps the GPU at 587 MHz or faster
+  (KGSL `min_pwrlevel`; `PICO4_KMS_GPU_MIN_MHZ`, 0 turns it off). On exit it restores the
+  previous floor. Under the compositor's load, the stock `msm-adreno-tz` governor stayed at
+  305 MHz.
+
+Monado has two composition paths:
+
+- **Fast path.** A frame with a single projection layer is distorted straight from the client
+  images into the target.
+- **Layer squasher.** Any other frame (for example a projection plus a quad layer) is first
+  rendered into per-eye scratch images, which a distortion pass then copies into the target.
+
+A first version ran two-layer frames at 30 Hz, which looked visibly stuttery in the headset.
+GPU timestamps around both passes showed that each pass was limited by memory bandwidth. The
+memory ran at its full 2,096 MHz, and the GPU reached about 25 GB/s with real data. Three
+changes in the patch bring the squasher to 90 Hz:
+
+1. **Scratch images without storage use** when the compositor uses its graphics pipelines.
+   Turnip on Adreno 6xx does not compress (UBWC) storage images, and Monado had requested
+   storage for the compute path in every case. This cut the squash pass from 12.7 to 7.7 ms
+   and distortion from 9.0 to 6.7 ms.
+2. **Scratch images at panel size** (2160² per eye) instead of the 140% view size. Without lens
+   distortion they map 1:1 to the panels; larger ones only cost bandwidth. With this, squash
+   took 4.0 ms and distortion 5.2 ms.
+3. **The GPU clock floor** above: squash then takes 2.3 ms.
+
+The compute path is switched off for this build (`XRT_COMPOSITOR_COMPUTE=1` brings it back):
+its writes into the linear images took twice as long. Measured on the headset, 10 s runs:
+
+| Frame content (140% eye buffers, 3024²) | Setup | GPU time per frame | Frames on the panels |
+| --- | --- | --- | --- |
+| One projection layer | compute, 305 MHz | 18.5 ms | 43 Hz |
+| One projection layer | graphics, final | 6.2 ms | 90 Hz |
+| Projection + quad layer | graphics, original scratch images | 22–23 ms | 30 Hz |
+| Projection + quad layer | no storage use | 14.4 ms | 45 Hz |
+| Projection + quad layer | + panel-size scratch, 305 MHz | 9.1–10.3 ms | 61–65 Hz |
+| Projection + quad layer | + 587 MHz floor (final) | 8.0 ms | 90 Hz |
+
+[`pico4-openxr-display`](src/xr/pico4-openxr-display.c) is the acceptance client. It renders
+through `XR_KHR_vulkan_enable2`:
+
+- **Projection layer.** A dim grid with a large L (left eye, red) or R (right eye, blue).
+- **Quad layer.** A checkerboard 1.5 m ahead in LOCAL space, so it stays put while the head
+  turns. `--projection-only` leaves it out.
+- **Report.** The frame rate, the display period, late frames and tracking.
+
+The target writes its own statistics with `PICO4_KMS_STATS=path`. With
+`PICO4_KMS_DUMP=path` it also saves one scanned-out image (commit `PICO4_KMS_DUMP_FRAME`,
+default 300) as a PPM, and records the mean colour of each eye.
+
 ## Build
 
 Extract the inputs from **your own** EDL backup (as root, Linux/WSL). This needs `debugfs` and
@@ -187,6 +266,25 @@ XRT_COMPOSITOR_NULL=1 pico4-openxr-pose 10 10
 If `pico4-monado` is installed, the runner also runs this for 10 s. It then requires the PICO 4
 system with orientation tracking, no invalid pose after the first second, a tilt within 2° of
 the accelerometer's (from the IMU check), and a heading drift below 0.5°/s.
+
+On the panels, through Monado's main compositor and the KMS target. Nothing else may hold the
+display:
+
+```sh
+PICO4_KMS_STATS=/run/kms.json PICO4_KMS_DUMP=/run/frame.ppm pico4-openxr-display 10 [--projection-only]
+```
+
+The runner then runs this for 10 s with both layers, so it exercises the layer squasher, and
+requires all of the following:
+
+- **Client.** The PICO 4 system, frames at 95% of 90 Hz or better, and at most 1% of them late.
+- **Target.** The frames went through `pico4_kms`, the panels refreshed within 1% of 90 Hz, at
+  least 85.5 commits per second, and no retire fence timed out.
+- **Eyes.** In the scanned-out image, the left half is red and the right half blue: each eye's
+  content is on its own panel.
+
+The runner cannot see the panels themselves. As in step 3, the user has to confirm by eye that
+the image appears in the lenses.
 
 ## Verification
 
@@ -241,18 +339,84 @@ unattended acceptance cycle on 2026-10-18:
 | Restoration | stock boot verified by EDL readback, stock ABL restored, PICO OS 5.13.7 started |
 | QEMU (same archive, no SLPI) | self-test passed; Monado's PICO 4 prober and the sensor units stay inactive |
 
+Display output through Monado, headset still, development builds (2026-10-18):
+
+| Check | Result |
+| --- | --- |
+| Target | `pico4_kms` on connector 29 / CRTC 140, `4320x2160x90` mode, six stock layers; images `B8G8R8A8_SRGB`, linear, pitch 17,408 bytes, imported from ION dma-bufs |
+| 60 s, one projection layer (3024² per eye) | client 5,400 frames at 90.000 Hz, 3 late (max interval 19.5 ms); 5,343 commits; panel vblank 89.998 Hz; 0 retire fence timeouts; GPU 7.2 ms per frame |
+| Scanned-out image (commit 300 / 2,000) | left half red L, right half blue R; eye means (70, 40, 25) and (26, 41, 72) |
+| Projection + world-locked quad | correct image with stereo offset between the eyes, 30 Hz (multi-layer path, see above) |
+| GPU temperature after 60 s | 38 °C |
+
+The first archive with display output (SHA-256
+`2b507e7c3b6f654e95a82db6b0263bca18c7aa3b95d781d5a6018f02b116cb0f`, 388,934,520 bytes, before the
+squasher changes) passed the unattended acceptance cycle on 2026-10-18:
+
+| Acceptance (display archive) | Result |
+| --- | --- |
+| Handoff, userspace check | received in 89 s, SSH after 114 s; systemd `running`, 0 failed units |
+| `pico4-imu stream --check` | pass: 5,066 samples per stream at 511.95 Hz, 0 gaps |
+| `pico4-openxr-pose 10 10` | pass: 977 locations, 0 invalid after warm-up; tilt 9.03° vs. accelerometer 8.93°; heading −0.0005°/s |
+| `pico4-openxr-display 10 --projection-only` | pass: 901 frames at 90.004 Hz, 0 late; 882 commits (87.5/s including the mode set); panel vblank 89.998 Hz; 0 retire timeouts; GPU 7.1 ms per frame; scanned-out eye means (70, 40, 25) left and (26, 41, 72) right |
+| Restoration | stock boot verified by EDL readback, stock ABL restored, PICO OS 5.13.7 started |
+| QEMU (same archive, no `msm_drm`, no SLPI) | self-test passed |
+
+The panels were not observed during these runs. The user then looked into the lenses during
+two runs of the same archive, in a fresh dev-loop boot:
+
+| Visual check | Measured | Seen in the lenses |
+| --- | --- | --- |
+| One projection layer, 30 s | 2,700 frames at 90.0 Hz, 2 late; panel 89.998 Hz | steady image: red L only in the left eye, blue R only in the right eye |
+| Projection + world-locked quad, 60 s, head turned (first version) | 30.3 commits per second; orientation tracked throughout | the checkerboard stays in place in the room, but moves visibly in steps while the head turns: each frame stays on screen for three refreshes |
+
+That stutter led to the squasher changes above. With them the same two-layer scene ran in a
+development build at 90.004 Hz (1 late frame in 10 s, 89.6 commits per second including the
+mode set). Before each of these runs, the GPU floor was at the stock level 6 (305 MHz), and it
+was restored to level 6 afterwards.
+
+The final archive then ran the two-layer scene again for 90 s, with the user turning their
+head:
+
+- **Measured.** Client 8,100 frames at 90.000 Hz, 7 late. 87.0 commits per second: about 3%
+  of the refreshes repeated a frame, none for longer than one refresh (longest gap 21.9 ms).
+  Panel at 89.998 Hz, no retire timeout, GPU 8.2 ms per frame.
+- **Seen in the lenses.** The checkerboard stayed fixed in the room and moved smoothly, with
+  good tracking and no visible latency.
+
+The final archive (SHA-256 `01d98f14162d6e0816aa0f9408e223153d00dbdebab966571a4059548347228c`,
+388,935,072 bytes) passed the unattended acceptance cycle, now with the two-layer scene:
+
+| Acceptance (final archive) | Result |
+| --- | --- |
+| Handoff, userspace check | received in 90 s, SSH after 114 s; systemd `running`, 0 failed units |
+| `pico4-imu stream --check` | pass: 5,066 samples per stream at 511.95 Hz, 0 gaps |
+| `pico4-openxr-pose 10 10` | pass: 978 locations, 0 invalid after warm-up; tilt 4.02° vs. accelerometer 4.06°; heading −0.0005°/s |
+| `pico4-openxr-display 10` (projection + quad) | pass: 899 frames at 89.97 Hz, 0 late; 881 commits (87.5/s including the mode set); panel vblank 89.998 Hz; 0 retire timeouts; GPU 7.9 ms per frame; scanned-out eye means (72, 45, 28) left and (29, 45, 72) right |
+| Restoration | stock boot verified by EDL readback, stock ABL restored, PICO OS 5.13.7 started |
+| QEMU (same archive, no `msm_drm`, no SLPI) | self-test passed |
+
 Unit tests cover the protobuf/QMI encoding (Python and C), a simulated DSP (lookup,
 attributes, streaming, disable), the acceptance limits, the orientation filter, the
 super-image reader and the FastRPC ABI translation (in the hexagonrpc patch, `meson test`).
 
 ## Next steps
 
-1. **Monado display output.** Present Monado's compositor on the two panels through the
-   step-3 KMS path (fenced flips, `sspp_layout` eye routing), then run it as a service.
-2. **Tracking cameras.** Capture raw OV7251 frames through Spectra CSL (sensor I2C, CSIPHY,
+1. **Monado service and session.** Monado runs in-process for now. As a service it would own
+   the display and sensors for several clients. Its socket lives in the client's
+   `XDG_RUNTIME_DIR`, and upstream ships user units that exclude root. Where the socket goes
+   depends on the session user that the gamescope/Steam session (roadmap step 6) brings.
+2. **Composition headroom.** The squasher fits 11 ms only with the GPU clock floor. Remaining
+   options:
+   - compressed (UBWC) scanout images, using the display's compressed formats;
+   - compressed client swapchain images;
+   - composing the layers directly through the distortion mesh, without scratch images, once
+     lens distortion makes the scratch images larger again;
+   - display-timing pacing from the retire fences' timestamps.
+3. **Tracking cameras.** Capture raw OV7251 frames through Spectra CSL (sensor I2C, CSIPHY,
    CSID, IFE-lite RDI), with the `sixdof` frame-sync timestamps.
-3. **6DoF.** Run Monado's SLAM (Basalt) on camera + IMU with the factory Kalibr calibration.
-4. **Controllers.** Implement the station SPI protocol (pairing, controller IMU, buttons;
+4. **6DoF.** Run Monado's SLAM (Basalt) on camera + IMU with the factory Kalibr calibration.
+5. **Controllers.** Implement the station SPI protocol (pairing, controller IMU, buttons;
    never the OTA commands), then IR-LED constellation tracking.
-5. **Lens calibration.** Convert `OpticalCalibrationData.json` and the lens/IPD tables into
-   distortion meshes for the compositor.
+6. **Lens calibration.** Convert `OpticalCalibrationData.json` and the lens/IPD tables into
+   distortion meshes for the compositor. That replaces the provisional 104° field of view.

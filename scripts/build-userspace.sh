@@ -122,7 +122,7 @@ build_package() {
 }
 build_package pico4-turnip-kgsl "$project"/src/graphics/*
 build_package pico4-sensors
-build_package pico4-monado "$project/src/xr/pico4-openxr-pose.c"
+build_package pico4-monado "$project/src/xr/pico4-openxr-pose.c" "$project/src/xr/pico4-openxr-display.c"
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
 
 # -- 3. the userspace root ------------------------------------------------------

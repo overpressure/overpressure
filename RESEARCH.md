@@ -321,6 +321,14 @@ Suggested technical roadmap
    timestamps onto `CLOCK_MONOTONIC`, starts level from the measured gravity and learns the gyro
    bias while the headset is still. A headless OpenXR client sees a tracked pose with about 1 ms
    sensor-to-pose latency. On a still headset the pose rotated 0.009° in 60 s.
+
+   **October 18, 2026: OpenXR frames on the panels.** A compositor target for Monado presents
+   through the stock KMS driver, with the fenced six-layer path of step 3. Compositor and
+   display share linear dma-buf images with no copy. A Vulkan OpenXR client ran at 90 Hz with
+   a single projection layer, and the scanned-out image had each eye on its own panel. Frames
+   with several layers first ran at 30 Hz, which looked stuttery in the headset. Three changes
+   bring them to 90 Hz as well: compressible scratch images, scratch images at panel size and
+   a GPU clock floor. Lens distortion and a Monado service are still open.
 6. Attempt Valve's VR session
 
    Only after tracking and graphics are operational would I attempt to bring up the Frame-style gamescope/SteamVR session. Compatibility with Valve's proprietary headset-specific components remains unproven.

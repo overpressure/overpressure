@@ -39,8 +39,9 @@ explicit backup-validated `flash-run` test on the bootloader tested here:
 > `pico4-imu` client) boots the sensor DSP and streams the ICM-42688 at 512 Hz into the
 > SteamOS-compatible userspace. A guided 90° turn read 90.3°. Since 2026-10-18, Monado 25.1.0
 > with a PICO 4 driver also gives OpenXR clients the head orientation: 1 kHz fusion, about 1 ms
-> latency, 0.009° of rotation in 60 s on a still headset. Display output through Monado,
-> cameras, controllers and 6DoF are still open. See [XR.md](XR.md).
+> latency, 0.009° of rotation in 60 s on a still headset. Monado's compositor also shows OpenXR
+> frames on both panels: it uses the fenced KMS path of step 3 and holds 90 Hz, also with
+> several layers. Cameras, controllers and 6DoF are still open. See [XR.md](XR.md).
 
 ## Prerequisites
 
@@ -248,7 +249,7 @@ flashing is performed in RAM mode; the explicit `flash-run` mode temporarily wri
 the boot partition. The regular `boot-poc` scripts remain interactive helpers that leave
 Linux running; their ping check alone is not a hardware acceptance result.
 
-Host simulation tests: `python -m unittest discover -s test -p "test_*.py" -v` — **110 passed**.
+Host simulation tests: `python -m unittest discover -s test -p "test_*.py" -v` — **113 passed**.
 
 On 2026-10-17, two real-headset `flash-run` cycles passed on an original PICO 4 running 5.13.7.
 The first established the Windows NCM workaround; the second performed it automatically,

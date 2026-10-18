@@ -563,6 +563,37 @@ class Runner:
         self.save()
         require(code.strip() == "0", "OpenXR head pose check failed")
         userspace.validate_openxr_pose(value, accel_tilt)
+        self.openxr_display(state)
+
+    def openxr_display(self, state):
+        """Frames from an OpenXR client through Monado's compositor to both panels (KMS target).
+
+        The client submits a projection and a quad layer, so Monado composes
+        through its layer squasher, the heavier of its two paths.
+        """
+        print(">> OpenXR display: Monado compositor on the panels", flush=True)
+        output = self.ssh("PICO4_KMS_STATS=/run/pico4-poc/openxr-display-kms.json "
+                          "PICO4_KMS_DUMP=/run/pico4-poc/openxr-display-frame.ppm "
+                          f"pico4-openxr-display {userspace.DISPLAY_SECONDS} "
+                          "2>/run/pico4-poc/openxr-display.log; echo EXIT=$?", 120)
+        report, _, code = output.rpartition("EXIT=")
+        (self.folder / "userspace-openxr-display.json").write_text(report.strip() + "\n", encoding="utf-8")
+        kms_report = self.ssh("cat /run/pico4-poc/openxr-display-kms.json", 30)
+        (self.folder / "userspace-openxr-display-kms.json").write_text(kms_report.strip() + "\n", encoding="utf-8")
+        try:
+            (self.folder / "userspace-openxr-display.log").write_text(
+                self.ssh("cat /run/pico4-poc/openxr-display.log", 30), encoding="utf-8")
+        except (ValueError, OSError) as exc:
+            (self.folder / "userspace-openxr-display.log").write_text(f"unavailable: {exc}\n", encoding="utf-8")
+        value, kms = json.loads(report), json.loads(kms_report)
+        state["openxr_display"] = {
+            **{k: value.get(k) for k in ("status", "system", "eye_size", "frames", "frame_hz", "late_frames",
+                                         "max_frame_interval_ms")},
+            "kms": {k: kms.get(k) for k in ("target", "mode", "format", "commits", "commit_hz", "vblank_hz",
+                                            "repeated_vblanks", "retire_timeouts", "gpu_wait_ms", "eye_mean_rgb")}}
+        self.save()
+        require(code.strip() == "0", "OpenXR display check failed")
+        userspace.validate_openxr_display(value, kms)
 
     def development_session(self):
         """Keep one authenticated boot available for bounded userspace iteration."""
