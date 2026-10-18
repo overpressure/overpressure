@@ -477,7 +477,8 @@ class Runner:
         state = {"archive": str(archive.resolve()), "sha256": digest, "bytes": archive.stat().st_size,
                  "packages": len(manifest.get("packages", {})), "systemd": manifest.get("packages", {}).get("systemd"),
                  "gpu_firmware": bool(manifest.get("gpu_firmware")),
-                 "sensor_data": bool(manifest.get("sensor_data"))}
+                 "sensor_data": bool(manifest.get("sensor_data")),
+                 "openxr_runtime": "pico4-monado" in manifest.get("packages", {})}
         self.result["userspace"] = state
         self.save()
         print(f">> userspace: sending {state['bytes'] >> 20} MiB", flush=True)
@@ -540,6 +541,28 @@ class Runner:
         self.save()
         require(code.strip() == "0", "Head IMU check failed")
         userspace.validate_imu(value)
+        if state["openxr_runtime"]:
+            self.openxr_pose(state, userspace.imu_tilt_deg(value))
+
+    def openxr_pose(self, state, accel_tilt):
+        """Head pose through the OpenXR loader, Monado and its PICO 4 driver (headless)."""
+        print(">> OpenXR head pose: Monado PICO 4 driver", flush=True)
+        output = self.ssh("XRT_COMPOSITOR_NULL=1 pico4-openxr-pose 10 10 2>/run/pico4-poc/openxr-pose.log; "
+                          "echo EXIT=$?", 120)
+        report, _, code = output.rpartition("EXIT=")
+        (self.folder / "userspace-openxr-pose.json").write_text(report.strip() + "\n", encoding="utf-8")
+        try:
+            (self.folder / "userspace-openxr-pose.log").write_text(
+                self.ssh("cat /run/pico4-poc/openxr-pose.log", 30), encoding="utf-8")
+        except (ValueError, OSError) as exc:
+            (self.folder / "userspace-openxr-pose.log").write_text(f"unavailable: {exc}\n", encoding="utf-8")
+        value = json.loads(report)
+        state["openxr"] = {**{k: value.get(k) for k in (
+            "status", "system", "runtime", "located", "orientation_tracked", "invalid_after_warmup",
+            "final_tilt_from_vertical_deg", "heading_rate_deg_per_s")}, "accel_tilt_deg": round(accel_tilt, 3)}
+        self.save()
+        require(code.strip() == "0", "OpenXR head pose check failed")
+        userspace.validate_openxr_pose(value, accel_tilt)
 
     def development_session(self):
         """Keep one authenticated boot available for bounded userspace iteration."""

@@ -104,13 +104,14 @@ class HarnessTests(unittest.TestCase):
         self.save_backup_manifest()
         self.runner = hw.Runner(self.args)
 
-    def enable_userspace(self, firmware=False, sensors=False):
+    def enable_userspace(self, firmware=False, sensors=False, openxr=False):
         archive = self.root / "userspace" / "pico4-userspace.tar.zst"
         archive.parent.mkdir()
         archive.write_bytes(b"userspace archive")
         self.userspace_sha = hw.hashlib.sha256(archive.read_bytes()).hexdigest()
         (archive.parent / "pico4-userspace.manifest.json").write_text(json.dumps({
-            "archive": {"sha256": self.userspace_sha}, "packages": {"systemd": "257.7-2.2"},
+            "archive": {"sha256": self.userspace_sha},
+            "packages": {"systemd": "257.7-2.2", **({"pico4-monado": "25.1.0-1"} if openxr else {})},
             "gpu_firmware": [{"file": "a650_sqe.fw", "sha256": "0" * 64}] if firmware else [],
             "sensor_data": [{"file": "usr/lib/firmware/slpi.mdt", "sha256": "0" * 64}] if sensors else []}))
         self.args.userspace = archive
@@ -205,14 +206,20 @@ class HarnessTests(unittest.TestCase):
             if command.startswith("pico4-imu stream"):
                 self.assertIn("--rate 500 ", command)
                 stream = {"samples": 5120, "rate_hz": 511.95, "non_increasing_timestamps": 0,
-                          "config": {"sample_rate_hz": 500.0}}
+                          "config": {"sample_rate_hz": 500.0}, "mean": [9.7, 0.0, 1.5]}
                 failed = self.scenario == "imu"
                 return json.dumps({"schema": 1, "seconds": 10, "requested_rate_hz": 500.0,
                                    "streams": {"accel": stream, "gyro": stream}, "orientation": {},
                                    "status": "fail" if failed else "pass",
                                    "failures": ["accel: |g| 3.0 m/s^2"] if failed else []}) + \
                     "\nEXIT=" + ("1" if failed else "0")
-            if command.startswith(("pico4-imu list", "systemctl status")):
+            if "pico4-openxr-pose" in command:
+                tilt = 25.0 if self.scenario == "openxr" else 8.8
+                return json.dumps({"schema": 1, "status": "pass", "system": "Monado: PICO 4",
+                                   "orientation_tracking": True, "located": 980, "orientation_tracked": 975,
+                                   "invalid_after_warmup": 0, "final_tilt_from_vertical_deg": tilt,
+                                   "heading_rate_deg_per_s": -0.1}) + "\nEXIT=0"
+            if command.startswith(("pico4-imu list", "systemctl status", "cat /run/pico4-poc/openxr")):
                 return "sensor evidence"
             if "pico4-kms-test" in command:
                 return "EXIT=1" if self.scenario == "graphics" else "EXIT=0"
@@ -321,6 +328,20 @@ class HarnessTests(unittest.TestCase):
                 self.assertEqual(self.runner.result["userspace"]["imu"]["status"], "fail" if code else "pass")
                 self.assertTrue((self.runner.folder / "userspace-imu.json").exists())
                 self.assertTrue((self.runner.folder / "userspace-sensors-list.txt").exists())
+
+    def test_openxr_pose_is_checked_with_monado(self):
+        for scenario, code in (("", 0), ("openxr", 1)):
+            with self.subTest(scenario or "passing"):
+                self.setUp()
+                self.enable_flash_mode()
+                self.enable_userspace(sensors=True, openxr=True)
+                self.scenario = scenario
+                self.assertEqual(self.execute(), code)
+                self.assertTrue(self.restored)
+                state = self.runner.result["userspace"]["openxr"]
+                self.assertEqual(state["system"], "Monado: PICO 4")
+                self.assertAlmostEqual(state["accel_tilt_deg"], 8.79, places=2)
+                self.assertTrue((self.runner.folder / "userspace-openxr-pose.json").exists())
 
     def test_head_imu_skipped_without_sensor_data(self):
         self.enable_flash_mode()

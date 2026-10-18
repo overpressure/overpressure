@@ -4,7 +4,9 @@
 #
 #   test/qemu/run-userspace.sh [initramfs.cpio.gz] [pico4-userspace.tar.zst]
 #
-# EXTRA_APPEND adds kernel arguments. Needs qemu-system-aarch64, sfdisk, and cache/qemu/Image-4.19 from
+# EXTRA_APPEND adds kernel arguments. QEMU_SMP sets the vCPU count, default 2:
+# with 4 TCG vCPUs, RCU stalls intermittently made systemd's generator fork time
+# out. Needs qemu-system-aarch64, sfdisk, and cache/qemu/Image-4.19 from
 #   test/qemu/build-test-kernel.sh 4.19.325
 # The archive is stored on a GPT partition named pico4_payload; stage 1 reads
 # it with the same "pico4-userspace receive" used over SSH on the headset.
@@ -37,7 +39,7 @@ echo ">> initrd : $INITRD"
 echo ">> rootfs : $ROOTFS ($bytes bytes, sha256 $sha)"
 LOG=${CONSOLE_LOG:-$PROJECT/out/qemu-userspace-console.log}
 set +e
-timeout 2400 qemu-system-aarch64 -M virt -cpu "$cpu" -smp 4 -m 4096 -nographic -no-reboot \
+timeout 2400 qemu-system-aarch64 -M virt -cpu "$cpu" -smp "${QEMU_SMP:-2}" -m 4096 -nographic -no-reboot \
 	-kernel "$KERNEL" -initrd "$INITRD" \
 	-drive file="$WORK/disk.img",if=virtio,format=raw \
 	-append "console=ttyAMA0 printk.devkmsg=on pico4poc.autoreboot=0 pico4poc.probe=0 pico4poc.userspace_selftest=1 pico4poc.userspace_payload=pico4_payload:$bytes:$sha ${EXTRA_APPEND:-}" \

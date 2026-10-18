@@ -1,0 +1,89 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 41e822af0..38be1c7c2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -344,6 +344,7 @@ option_with_deps(XRT_BUILD_DRIVER_REMOTE "Enable remote debugging driver" DEPEND
+ option_with_deps(XRT_BUILD_DRIVER_RIFT "Enable Oculus Rift (DK2) device driver")
+ option_with_deps(XRT_BUILD_DRIVER_RIFT_S "Enable Oculus Rift S device driver" DEPENDS XRT_HAVE_V4L2)
+ option_with_deps(XRT_BUILD_DRIVER_ROKID "Enable Rokid driver" DEPENDS "XRT_HAVE_LIBUSB")
++option(XRT_BUILD_DRIVER_PICO4 "Enable PICO 4 driver (IMU through the Qualcomm Sensor Core)" OFF)
+ option_with_deps(XRT_BUILD_DRIVER_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" DEPENDS XRT_HAVE_LINUX XRT_MODULE_AUX_VIVE)
+ option_with_deps(XRT_BUILD_DRIVER_SURVIVE "Enable libsurvive driver" DEPENDS SURVIVE_FOUND XRT_MODULE_AUX_VIVE)
+ option_with_deps(XRT_BUILD_DRIVER_ULV2 "Enable Ultraleap v2 driver" DEPENDS LeapV2_FOUND)
+@@ -447,6 +448,7 @@ list(
+ 	"RIFT"
+ 	"RIFT_S"
+ 	"ROKID"
++	"PICO4"
+ 	"SURVIVE"
+ 	"V4L2"
+ 	"ULV2"
+@@ -687,6 +689,7 @@ message(STATUS "#    DRIVER_REMOTE:               ${XRT_BUILD_DRIVER_REMOTE}")
+ message(STATUS "#    DRIVER_RIFT:                 ${XRT_BUILD_DRIVER_RIFT}")
+ message(STATUS "#    DRIVER_RIFT_S:               ${XRT_BUILD_DRIVER_RIFT_S}")
+ message(STATUS "#    DRIVER_ROKID:                ${XRT_BUILD_DRIVER_ROKID}")
++message(STATUS "#    DRIVER_PICO4:                ${XRT_BUILD_DRIVER_PICO4}")
+ message(STATUS "#    DRIVER_SIMULATED:            ${XRT_BUILD_DRIVER_SIMULATED}")
+ message(STATUS "#    DRIVER_SIMULAVR:             ${XRT_BUILD_DRIVER_SIMULAVR}")
+ message(STATUS "#    DRIVER_SURVIVE:              ${XRT_BUILD_DRIVER_SURVIVE}")
+diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
+index bd31b3374..9cae9505b 100644
+--- a/src/xrt/drivers/CMakeLists.txt
++++ b/src/xrt/drivers/CMakeLists.txt
+@@ -249,6 +249,15 @@ if(XRT_BUILD_DRIVER_ROKID)
+ 	list(APPEND ENABLED_HEADSET_DRIVERS rokid)
+ endif()
+ 
++if(XRT_BUILD_DRIVER_PICO4)
++	add_library(
++		drv_pico4 STATIC pico4/pico4_hmd.c pico4/pico4_interface.h pico4/pico4_ssc.c
++				 pico4/pico4_ssc.h
++		)
++	target_link_libraries(drv_pico4 PRIVATE xrt-interfaces aux_util aux_os aux_math)
++	list(APPEND ENABLED_HEADSET_DRIVERS pico4)
++endif()
++
+ if(XRT_BUILD_DRIVER_RIFT)
+ 	add_library(drv_rift STATIC rift/rift_hmd.c rift/rift_distortion.c rift/rift_prober.c)
+ 	target_include_directories(drv_rift SYSTEM PRIVATE)
+diff --git a/src/xrt/targets/common/CMakeLists.txt b/src/xrt/targets/common/CMakeLists.txt
+index a78847a05..b60c6ecca 100644
+--- a/src/xrt/targets/common/CMakeLists.txt
++++ b/src/xrt/targets/common/CMakeLists.txt
+@@ -158,6 +158,10 @@ if(XRT_BUILD_DRIVER_ROKID)
+ 	target_link_libraries(target_lists PRIVATE drv_rokid)
+ endif()
+ 
++if(XRT_BUILD_DRIVER_PICO4)
++	target_link_libraries(target_lists PRIVATE drv_pico4)
++endif()
++
+ if(XRT_HAVE_V4L2)
+ 	target_link_libraries(target_lists PRIVATE drv_v4l2)
+ endif()
+diff --git a/src/xrt/targets/common/target_lists.c b/src/xrt/targets/common/target_lists.c
+index 74482e0b6..829c1c187 100644
+--- a/src/xrt/targets/common/target_lists.c
++++ b/src/xrt/targets/common/target_lists.c
+@@ -56,6 +56,10 @@
+ #include "rokid/rokid_interface.h"
+ #endif
+ 
++#ifdef XRT_BUILD_DRIVER_PICO4
++#include "pico4/pico4_interface.h"
++#endif
++
+ #ifdef XRT_BUILD_DRIVER_HYDRA
+ #include "hydra/hydra_interface.h"
+ #endif
+@@ -221,6 +225,10 @@ struct xrt_prober_entry *target_entry_lists[] = {
+ };
+ 
+ xrt_auto_prober_create_func_t target_auto_list[] = {
++#ifdef XRT_BUILD_DRIVER_PICO4
++    pico4_create_auto_prober,
++#endif
++
+ #ifdef XRT_BUILD_DRIVER_PSVR
+     psvr_create_auto_prober,
+ #endif

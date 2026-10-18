@@ -5,6 +5,8 @@ firmware build is re-evaluated instead of trusting the analysis in USERSPACE.md.
 """
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 
 from .graphics import validate_vulkan
@@ -154,4 +156,44 @@ def validate_imu(value, rate: float = IMU_RATE_HZ) -> None:
         stream = streams.get(name) or {}
         if not stream.get("samples") or stream.get("non_increasing_timestamps"):
             raise ValueError(f"IMU {name} stream is missing or not monotonic")
+
+
+def imu_tilt_deg(value) -> float:
+    """Tilt of the HMD's up axis from vertical, from `pico4-imu stream` accel means.
+
+    The HMD's up axis is the IMU's +X (factory camera extrinsics, XR.md).
+    """
+    mean = ((value.get("streams") or {}).get("accel") or {}).get("mean")
+    if not mean or len(mean) != 3:
+        raise ValueError("IMU result has no accelerometer mean")
+    norm = math.sqrt(sum(v * v for v in mean))
+    if norm == 0:
+        raise ValueError("IMU accelerometer mean is zero")
+    return math.degrees(math.acos(max(-1.0, min(1.0, mean[0] / norm))))
+
+
+POSE_TILT_TOLERANCE_DEG = 2.0
+POSE_HEADING_RATE_LIMIT = 0.5  # deg/s on a still headset, uncorrected gyro bias
+
+
+def validate_openxr_pose(value, accel_tilt_deg: float) -> None:
+    """Validate `pico4-openxr-pose` JSON: head pose from Monado's PICO 4 driver.
+
+    On a still headset the pose must be valid and tracked after one second,
+    tilted like the accelerometer says, and drift slowly about the vertical.
+    """
+    if not isinstance(value, dict) or value.get("schema") != 1:
+        raise ValueError("OpenXR pose check produced no schema-1 result")
+    if value.get("status") != "pass":
+        raise ValueError("OpenXR pose check failed: " + str(value.get("error", "invalid poses after warm-up")))
+    if "PICO 4" not in str(value.get("system")) or not value.get("orientation_tracking"):
+        raise ValueError(f"OpenXR system is {value.get('system')!r}, not the PICO 4 driver with orientation tracking")
+    if not value.get("orientation_tracked") or value.get("invalid_after_warmup"):
+        raise ValueError("OpenXR head orientation was not tracked throughout")
+    tilt = value.get("final_tilt_from_vertical_deg")
+    if tilt is None or abs(tilt - accel_tilt_deg) > POSE_TILT_TOLERANCE_DEG:
+        raise ValueError(f"OpenXR tilt {tilt} deg disagrees with the accelerometer ({accel_tilt_deg:.2f} deg)")
+    rate = value.get("heading_rate_deg_per_s")
+    if rate is None or abs(rate) > POSE_HEADING_RATE_LIMIT:
+        raise ValueError(f"OpenXR heading drifts at {rate} deg/s")
 

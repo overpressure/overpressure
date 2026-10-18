@@ -315,6 +315,12 @@ Suggested technical roadmap
    client streams the ICM-42688 at 512 Hz with monotonic DSP timestamps; a guided 90° turn read
    90.3°. The inventory of cameras (OV7251 on Spectra CSL), controllers (nRF52832 on SPI) and
    the factory calibration is in [XR.md](XR.md), together with the next steps.
+
+   **October 18, 2026: OpenXR head orientation through Monado.** Monado 25.1.0 has a PICO 4
+   driver that reads the IMU through the same sensor service at 1 kHz. It maps the DSP's QTimer
+   timestamps onto `CLOCK_MONOTONIC`, starts level from the measured gravity and learns the gyro
+   bias while the headset is still. A headless OpenXR client sees a tracked pose with about 1 ms
+   sensor-to-pose latency. On a still headset the pose rotated 0.009° in 60 s.
 6. Attempt Valve's VR session
 
    Only after tracking and graphics are operational would I attempt to bring up the Frame-style gamescope/SteamVR session. Compatibility with Valve's proprietary headset-specific components remains unproven.

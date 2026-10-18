@@ -218,7 +218,9 @@ archive; `pico4poc.userspace_payload=` makes stage 1 run the same `pico4-userspa
 and `switch` used over SSH. In stage 2, `pico4-userspace-selftest.service` runs the
 acceptance check and powers off. Kernel: mainline 4.19.325 with
 [kernel-4.19.fragment](test/qemu/kernel-4.19.fragment) (no devtmpfs, `FHANDLE`, PID/IPC/UTS/user
-namespaces, memcg, SysV IPC, binfmt_misc, hidraw, VT), `-cpu cortex-a76`, 4 vCPUs, 4 GiB, TCG.
+namespaces, memcg, SysV IPC, binfmt_misc, hidraw, VT), `-cpu cortex-a76`, 4 GiB, TCG. It uses 2
+vCPUs. The step-4 runs below used 4; later, 4 TCG vCPUs intermittently stalled long enough to
+time out systemd's generator fork.
 
 Result on 2026-10-17 (archive SHA-256 `dc0796a82b3e0527eb391d924a6f3617b53bbc7cdd945e0cd830e4c97b7ec71f`,
 383,874,179 bytes, 1,416 MiB installed):

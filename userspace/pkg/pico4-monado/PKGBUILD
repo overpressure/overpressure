@@ -1,0 +1,62 @@
+# Monado (OpenXR runtime) with a driver for the original PICO 4 on its stock
+# kernel: head orientation from the ICM-42688 behind the sensor DSP (3DoF),
+# through the same Qualcomm Sensor Core client protocol as pico4-imu (XR.md).
+# Upstream Monado, pinned by commit, plus this project's driver files and a
+# patch that registers them. Built as an in-process runtime (no service yet);
+# the null compositor serves headless clients, the main compositor is built
+# for the display integration that follows. pico4-openxr-pose is the
+# acceptance client: it reads the head pose through the OpenXR loader.
+pkgname=pico4-monado
+pkgver=25.1.0
+pkgrel=1
+arch=(aarch64)
+url="https://monado.freedesktop.org"
+license=(BSL-1.0)
+depends=(openxr vulkan-icd-loader libusb systemd-libs dbus libcap libdrm libffi libx11 libxau libxcb
+         libxdmcp wayland gcc-libs glibc)
+makedepends=(git cmake ninja eigen vulkan-headers glslang python)
+provides=(openxr-runtime)
+_commit=3b450e37b624f5edea366492ee2d267d673a35aa # v25.1.0
+source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_commit"
+        monado-pico4-driver.patch
+        pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
+        pico4-openxr-pose.c)
+# Project files; pico4-openxr-pose.c is copied in by build-userspace.sh.
+sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
+
+prepare() {
+  patch -d monado -p1 < monado-pico4-driver.patch
+  install -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c
+}
+
+build() {
+  # The protocol test runs here because build-userspace.sh uses --nocheck.
+  cc -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_ssc test_pico4_ssc.c pico4_ssc.c
+  ./test_pico4_ssc
+
+  # Only the PICO 4 driver and the simulated HMD (headless fallback).
+  local off
+  off=$(sed -n '/^\tAVAILABLE_DRIVERS$/,/^\t)$/p' monado/CMakeLists.txt | grep -o '"[A-Z0-9_]*"' | tr -d '"' |
+    grep -vx 'PICO4\|SIMULATED' | sed 's/^/-DXRT_BUILD_DRIVER_/; s/$/=OFF/')
+  [[ -n "$off" ]]
+  # shellcheck disable=SC2086
+  cmake -S monado -B build -G Ninja -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBDIR=lib -DXRT_BUILD_DRIVER_PICO4=ON -DXRT_BUILD_DRIVER_SIMULATED=ON $off \
+    -DXRT_FEATURE_SERVICE=OFF -DXRT_MODULE_COMPOSITOR_MAIN=ON -DXRT_MODULE_COMPOSITOR_NULL=ON \
+    -DXRT_FEATURE_STEAMVR_PLUGIN=OFF -DXRT_MODULE_MONADO_GUI=OFF -DXRT_BUILD_SAMPLES=OFF -DBUILD_TESTING=OFF \
+    -DXRT_HAVE_SDL2=OFF -DXRT_HAVE_OPENCV=OFF -DXRT_HAVE_LIBUVC=OFF -DXRT_HAVE_FFMPEG=OFF -DXRT_HAVE_GST=OFF \
+    -DXRT_HAVE_PERCETTO=OFF -DXRT_FEATURE_TRACING=OFF -DXRT_HAVE_OPENGL=OFF -DXRT_HAVE_OPENGLES=OFF \
+    -DXRT_HAVE_EGL=OFF
+  cmake --build build
+
+  cc -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-pose pico4-openxr-pose.c -lopenxr_loader -lm
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm755 pico4-openxr-pose -t "$pkgdir/usr/bin"
+  # The loader's system-wide active runtime.
+  install -dm755 "$pkgdir/etc/openxr/1"
+  ln -s /usr/share/openxr/1/openxr_monado.json "$pkgdir/etc/openxr/1/active_runtime.json"
+  install -Dm644 monado/LICENSES/BSL-1.0.txt "$pkgdir/usr/share/licenses/$pkgname/BSL-1.0.txt"
+}

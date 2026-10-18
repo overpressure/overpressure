@@ -7,7 +7,7 @@
 # 1. Unpacks Valve/Collabora's Holo Core aarch64 preview rootfs (sha256-pinned)
 #    as an isolated build environment, run through QEMU user emulation.
 # 2. Builds the project packages (userspace/pkg: pico4-turnip-kgsl,
-#    pico4-graphics-tests, pico4-sensors) there.
+#    pico4-graphics-tests, pico4-sensors, pico4-monado) there.
 # 3. Installs userspace/packages.txt into a fresh root with pacman, from the
 #    Steam Frame hotfix repository and the Holo Core preview (userspace/pacman.conf).
 # 4. Adds the PICO adaptation layer (userspace/rootfs and shared stage-1
@@ -93,7 +93,7 @@ mnt -t tmpfs tmpfs "$B/run"
 in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root "$@"; }
 
 # The build environment keeps its own preview-only configuration.
-in_b pacman -Sy --noconfirm --needed base-devel git meson ninja python-mako python-yaml python-packaging \
+in_b pacman -Sy --noconfirm --needed base-devel git meson ninja cmake eigen openxr python-mako python-yaml python-packaging \
     glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
     wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
@@ -122,6 +122,7 @@ build_package() {
 }
 build_package pico4-turnip-kgsl "$project"/src/graphics/*
 build_package pico4-sensors
+build_package pico4-monado "$project/src/xr/pico4-openxr-pose.c"
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
 
 # -- 3. the userspace root ------------------------------------------------------

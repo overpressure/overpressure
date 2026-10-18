@@ -10,7 +10,13 @@ image (`backup/`, unpacked privately), the stock kernel and device tree, and rea
 > free software stack boots the sensor DSP and streams the ICM-42688 accelerometer and
 > gyroscope at 512 Hz, with no gaps and monotonic DSP timestamps. A guided, edge-aligned
 > 90° turn of the headset read +90.3 to +90.5°, and turning it back closed to within 0.4°.
-> Cameras, controllers, 6DoF and Monado integration are still open; see [next steps](#next-steps).
+>
+> **OpenXR head orientation through Monado, 2026-10-18.** Monado 25.1.0 has a
+> [PICO 4 driver](#monado-3dof-driver) that fuses this IMU at 1 kHz. An OpenXR client reads the
+> head pose through the standard loader. Over 60 s on a still headset, every pose after warm-up
+> was tracked, the sample-to-pose latency was about 1 ms, and the view rotated by 0.009°. The
+> tilt agreed with the accelerometer within 0.2°. Display output through Monado's compositor,
+> cameras, controllers and 6DoF are still open; see [next steps](#next-steps).
 
 ## Inventory
 
@@ -94,6 +100,45 @@ Findings on this kernel:
 The units (`pico4-sensors.target`: `pico4-qrtr-ns`, `pico4-slpi`, `pico4-pd-mapper`,
 `pico4-sensorspd`) only start when the userspace was built with sensor data.
 
+## Monado 3DoF driver
+
+The `pico4-monado` package builds Monado 25.1.0 (pinned by commit) with a `pico4` driver.
+The driver lives in [`userspace/pkg/pico4-monado`](userspace/pkg/pico4-monado), and
+[`monado-pico4-driver.patch`](userspace/pkg/pico4-monado/monado-pico4-driver.patch) registers
+it. The package builds Monado as an in-process OpenXR runtime and makes it the system's active
+runtime (`/etc/openxr/1/active_runtime.json`).
+
+- **Sensor service.** `pico4_ssc.c` is a C port of the `pico4-imu` client, limited to service
+  lookup, sensor lookup, enable/disable and sensor events. Its unit test checks the encoder
+  byte for byte against messages produced by the hardware-verified Python client. The test
+  also runs during the package build.
+- **Auto-probing.** The prober only creates the HMD where `/sys/kernel/boot_slpi` exists and
+  the SNS client service answers. Elsewhere Monado continues without the driver: QEMU, other
+  kernels, or a userspace built without sensor data.
+- **Time base.** Sensor timestamps are QTimer ticks, and on this SoC the arch counter is the
+  QTimer (`cntfrq_el0` = 19.2 MHz). The driver reads `cntvct_el0` alongside `CLOCK_MONOTONIC`
+  and maps each sample into Monado's timeline. Measured sample-to-pose latency: about 1 ms.
+- **Axes.** The IMU's +X is up, −Z forward and −Y right, derived from the factory camera
+  extrinsics (the RGB camera looks along −Z with image-up +X). The driver rotates samples into
+  the OpenXR head frame (x right, y up, z back).
+- **Fusion.** Monado's `m_imu_3dof` runs at 1 kHz with gravity correction. Two additions came
+  from the measurements:
+  - **Warm-up.** The first accelerometer samples after enabling are off by about 2°. The
+    driver skips 100 samples and starts the fusion level from the mean of the next 100.
+  - **Gyro bias.** The bias (about 5 mrad/s here) tilts the estimate away from gravity faster
+    than the correction pulls it back. The driver learns the bias in quarter-second windows in
+    which gyro and accelerometer are quiet and the rate is below 0.02 rad/s. That excludes
+    deliberate turns.
+- **Display description.** Two 2160×2160 views side by side (4320×2160), 90 Hz and a
+  provisional 104° field of view. There is no distortion yet; the lens data replaces this
+  later.
+
+[`pico4-openxr-pose`](src/xr/pico4-openxr-pose.c) is the acceptance client. It uses the
+OpenXR loader with `XR_MND_headless`, so it needs no graphics. It locates VIEW at the current
+time every 10 ms and reports the system name, tracked/valid counts, rotation, heading drift
+rate and the tilt from vertical. The tilt is measured in STAGE because LOCAL keeps only the
+start yaw of a tilted head.
+
 ## Build
 
 Extract the inputs from **your own** EDL backup (as root, Linux/WSL). This needs `debugfs` and
@@ -132,6 +177,17 @@ rate is within 5% of the rate the DSP configured, no timestamp goes backwards, |
 lying still. With `--userspace` and a sensor-data build, `hardware_test.py flash-run` runs this
 check after the userspace check and stores the sensor list, unit status and the IMU JSON.
 
+Through OpenXR (Monado's null compositor; `PICO4_LOG=debug` adds the driver's latency, tilt
+and bias every 5000 samples):
+
+```sh
+XRT_COMPOSITOR_NULL=1 pico4-openxr-pose 10 10
+```
+
+If `pico4-monado` is installed, the runner also runs this for 10 s. It then requires the PICO 4
+system with orientation tracking, no invalid pose after the first second, a tilt within 2° of
+the accelerometer's (from the IMU check), and a heading drift below 0.5°/s.
+
 ## Verification
 
 Headset (PICO 4, PICO OS 5.13.7, stock kernel, step-4 userspace), 2026-10-17:
@@ -162,15 +218,37 @@ followed by restoration as in [USERSPACE.md](USERSPACE.md#headset).
 | Restoration | stock boot verified by EDL readback, stock ABL restored by readback, PICO OS 5.13.7 started |
 | QEMU (same archive, 4.19 without an SLPI) | self-test passed; the sensor units are skipped by their conditions |
 
-Unit tests cover the protobuf/QMI encoding, a simulated DSP (lookup, attributes, streaming,
-disable), the acceptance limits, the orientation filter, the super-image reader and the
-FastRPC ABI translation (in the hexagonrpc patch, `meson test`).
+Monado driver, headset still, development builds (2026-10-18):
+
+| Check | Result |
+| --- | --- |
+| OpenXR system | `Monado: PICO 4`, runtime `Monado(XRT) … v25.1.0`, orientation tracking |
+| 60 s at 100 Hz | 5,882 locations, 0 invalid after the first second; rotation 0.009°, heading −0.006° (−0.0001°/s) |
+| Tilt vs. accelerometer | 9.12° vs. 8.96–9.11° |
+| Latency, sensor sample to pose | 0.94–1.16 ms |
+| Learned gyro bias | (0.0039, −0.0009, −0.0056) rad/s in the head frame |
+| Before warm-up averaging and bias learning | tilt 1.2–2° below the accelerometer, heading −0.10°/s |
+
+The final archive with `pico4-monado` (SHA-256
+`1665a0194959168af8bd29b82dfe0ac3afea9fe40c1a18dc74ed40bf67e9002f`, 388,962,094 bytes) passed the
+unattended acceptance cycle on 2026-10-18:
+
+| Acceptance (Monado archive) | Result |
+| --- | --- |
+| Handoff, userspace check | received in 86 s, SSH after 112 s; systemd `running`, 0 failed units |
+| `pico4-imu stream --check` | pass: 5,066 samples per stream at 511.95 Hz, 0 gaps |
+| `pico4-openxr-pose 10 10` | pass: `Monado: PICO 4`, 981 locations, 0 invalid after warm-up; tilt 9.08° vs. accelerometer 8.95°; heading −0.0002°/s |
+| Restoration | stock boot verified by EDL readback, stock ABL restored, PICO OS 5.13.7 started |
+| QEMU (same archive, no SLPI) | self-test passed; Monado's PICO 4 prober and the sensor units stay inactive |
+
+Unit tests cover the protobuf/QMI encoding (Python and C), a simulated DSP (lookup,
+attributes, streaming, disable), the acceptance limits, the orientation filter, the
+super-image reader and the FastRPC ABI translation (in the hexagonrpc patch, `meson test`).
 
 ## Next steps
 
-1. **Monado 3DoF driver.** Feed the IMU into Monado as the HMD's pose source, with bias
-   estimation and timestamps on the QTimer/`CLOCK_MONOTONIC` mapping. Present through the
-   step-3 display path.
+1. **Monado display output.** Present Monado's compositor on the two panels through the
+   step-3 KMS path (fenced flips, `sspp_layout` eye routing), then run it as a service.
 2. **Tracking cameras.** Capture raw OV7251 frames through Spectra CSL (sensor I2C, CSIPHY,
    CSID, IFE-lite RDI), with the `sixdof` frame-sync timestamps.
 3. **6DoF.** Run Monado's SLAM (Basalt) on camera + IMU with the factory Kalibr calibration.

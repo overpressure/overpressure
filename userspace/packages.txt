@@ -44,6 +44,9 @@ pico4/pico4-graphics-tests
 pico4/pico4-sensors
 python
 
+# Project-built: Monado OpenXR runtime with the PICO 4 head-tracking driver (XR.md)
+pico4/pico4-monado
+
 # Diagnostics (mtools: the stage-2 USB log drive)
 libdrm
 mtools
