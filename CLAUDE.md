@@ -22,6 +22,20 @@ Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; on
 MCU acknowledges, and longer sessions and tuning are open ([docs/cooling.md](docs/cooling.md)).
 Build system, tests and the Windows/WSL environment: [docs/development.md](docs/development.md).
 
+## Backlog
+
+The backlog lives in the issue tracker: project "PICO 4" (key `PICO`) in the "Devices"
+workspace. Every new bug, gap (something unverified or unmeasured) or missing feature found
+during work gets an issue there, in the active release, when it is found; search the project
+first so that nothing is filed twice.
+
+- **Kind.** `story` for features and gaps, `bug` for defects, `task` for technical work.
+- **Description.** A user story ("As a ... I want ... so that ..."), a "Now:" line with the
+  measured state, and short, exact acceptance criteria.
+- **Labels.** The area (graphics, tracking, controllers, cooling, steam, ...) and, except for
+  bugs, the category: `gap`, `feature`, `limitation` or `disabled`. Link blocking issues as
+  dependencies.
+
 ## Documentation
 
 All documentation lives in `docs/`; the root README is the overview. Documents state facts:
