@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSL-1.0
 /*
  * pico4-vrdisplay-test: drive a Vulkan direct-mode display the way SteamVR's
- * compositor does, and print a JSON summary (SESSION.md).
+ * compositor does, and print a JSON summary (docs/session.md).
  *
  *   PICO4_VRDISPLAY=1 pico4-vrdisplay-test [SECONDS] [--min-hz HZ]
  *

@@ -1,44 +1,61 @@
 #!/bin/bash
-# Build the SteamOS-compatible ARM64 userspace for the PICO 4 (roadmap step 4).
+# Build the SteamOS-compatible ARM64 userspace for the PICO 4 (docs/userspace.md).
 #
-# Usage (Linux/WSL, root):
-#   scripts/build-userspace.sh BUILD_ROOT OUTPUT_DIR [--gpu-firmware DIR] [--sensor-data DIR]
+# Usage (Linux or WSL, as root):
+#   scripts/build-userspace.sh BUILD_ROOT OUTPUT_DIR [OPTIONS]
 #
-# 1. Unpacks Valve/Collabora's Holo Core aarch64 preview rootfs (sha256-pinned)
-#    as an isolated build environment, run through QEMU user emulation.
-# 2. Builds the project packages (userspace/pkg: pico4-turnip-kgsl,
-#    pico4-graphics-tests, pico4-sensors, pico4-monado) there.
-# 3. Installs userspace/packages.txt into a fresh root with pacman, from the
-#    Steam Frame hotfix repository and the Holo Core preview (userspace/pacman.conf).
-# 4. Adds the PICO adaptation layer (userspace/rootfs and shared stage-1
-#    scripts), configures users and units, and writes:
+#   --gpu-firmware DIR  a650_* GPU firmware from YOUR OWN stock backup (docs/graphics.md).
+#                       Without it the userspace boots, but Vulkan cannot start.
+#   --sensor-data DIR   sensor DSP firmware, registry, config and calibration extracted
+#                       from YOUR OWN backup by scripts/extract-sensor-data.sh (docs/xr.md).
+#                       Without it the head IMU stack stays inactive.
+#   --refresh           download the current package databases and reinstall the base
+#                       root; without it every build installs the same package versions
+#   --clean             rebuild the project packages from scratch
+#   --emulated-cc       compile with the build environment's own GCC under QEMU
+#
+# Each step is skipped when its inputs did not change:
+# 1. Build environment: Valve/Collabora's Holo Core aarch64 preview rootfs (sha256-pinned),
+#    entered with chroot; on other hosts than arm64 its programs run under QEMU.
+# 2. Project packages (userspace/pkgbuilds) with makepkg. A package is rebuilt when its
+#    recipe changes; when only the project's own sources (src/) changed, it is rebuilt
+#    incrementally in its last build tree (makepkg -e). On x86-64 hosts the host's clang
+#    and lld compile natively inside the build environment, which is their sysroot.
+# 3. Base root: userspace/packages.txt installed with pacman from the Steam Frame hotfix
+#    repository and the Holo Core preview (userspace/pacman.conf). Reinstalled when the
+#    list or pacman.conf changes, and with --refresh.
+# 4. Image root: an overlay on the base root with the current project packages and the
+#    PICO 4 adaptation layer (userspace/rootfs, shared stage-1 scripts, users, units),
+#    checked natively for unresolved ELF dependencies (pico4/elfdeps.py), written as:
 #      OUTPUT_DIR/pico4-userspace.tar.zst        root filesystem for the handoff
 #      OUTPUT_DIR/pico4-userspace.manifest.json  sources, hashes, package list
 #
-# --gpu-firmware DIR adds a650_* GPU firmware from YOUR OWN stock backup (see
-# GRAPHICS.md). Without it the userspace boots, but Vulkan cannot start.
-# --sensor-data DIR adds the sensor DSP firmware, sensor registry and config
-# extracted from YOUR OWN backup by scripts/extract-sensor-data.sh (XR.md).
-# Without it the head IMU stack stays inactive.
-# Requires host curl, tar, zstd, sha256sum, python3, chroot and an aarch64
-# binfmt handler with the F (fix-binary) flag. Nothing touches the headset.
-# The output contains Valve packages: keep it private, do not redistribute.
+# Requires curl, tar, zstd, sha256sum, python3, chroot and overlayfs; on x86-64 an
+# aarch64 binfmt handler with the F (fix-binary) flag and LLVM (apt install clang-20
+# lld-20). The build reads a snapshot of the tree taken at its start, so the tree can be
+# edited meanwhile. Nothing touches the headset. The output contains Valve packages:
+# keep it private, do not redistribute.
 set -euo pipefail
-project=${PICO4_PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
+source_dir=$(cd "$(dirname "$0")/.." && pwd)
 build_root=${1:?specify an isolated Linux-filesystem build directory}
 output=${2:?specify an output directory}
 shift 2
-firmware=""
-sensor_data=""
+firmware="" sensor_data="" refresh=0 clean=0 emulated_cc=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --gpu-firmware) firmware=$(realpath "${2:?}"); shift 2 ;;
     --sensor-data) sensor_data=$(realpath "${2:?}"); shift 2 ;;
+    --refresh) refresh=1; shift ;;
+    --clean) clean=1; shift ;;
+    --emulated-cc) emulated_cc=1; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
     esac
 done
 [[ $EUID == 0 && "$build_root" = /* && "$build_root" != / ]] || { echo 'Root and an absolute isolated build directory are required' >&2; exit 2; }
-grep -qs '^flags: .*F' /proc/sys/fs/binfmt_misc/qemu-aarch64 || { echo 'An aarch64 binfmt handler with the F flag is required' >&2; exit 2; }
+host_arch=$(uname -m)
+if [[ $host_arch != aarch64 ]]; then
+    grep -qs '^flags: .*F' /proc/sys/fs/binfmt_misc/qemu-aarch64 || { echo 'An aarch64 binfmt handler with the F flag is required' >&2; exit 2; }
+fi
 mkdir -p "$build_root" "$output"
 build_root=$(realpath "$build_root")
 output=$(realpath "$output")
@@ -47,26 +64,51 @@ output=$(realpath "$output")
 holo_snapshot=mash-20251118.3
 holo_url=https://holo-packages.steamos.cloud/holo-core-aarch64-preview/$holo_snapshot/system.rootfs.zst
 holo_sha256=7e3fb88454e1ac633b7488abb72d3ca0cc7d2578a38146fdd7d58b50fcbd60bf
-holo_archive=$project/cache/holo/$holo_snapshot-system.rootfs.zst
-mesa_archive=$project/cache/mesa-26.1.6.tar.xz
+holo_archive=$source_dir/cache/holo/$holo_snapshot-system.rootfs.zst
+mesa_archive=$source_dir/cache/mesa-26.1.6.tar.xz
 B=$build_root/bootstrap
-T=$B/target
+T=$B/target    # the image root, an overlay on $B/base
 log() { printf '>> %s\n' "$*"; }
+phase() { printf '>> [%4ss] %s\n' "$SECONDS" "$*"; }
 
 mounted=()
 mnt() { mount "$@"; mounted+=("${!#}"); }
 cleanup() { for ((i=${#mounted[@]}-1;i>=0;i--)); do umount -l "${mounted[$i]}" 2>/dev/null || true; done; mounted=(); }
 trap cleanup EXIT
-# unmount_below DIR: detach every mount at or below DIR (left over from an
-# interrupted build) so that removing DIR can never reach the host's /dev or /sys.
+# unmount_below DIR [inner]: detach every mount at or below DIR (left over from an
+# interrupted build) so that removing DIR can never reach the host's /dev or /sys;
+# "inner" keeps DIR itself mounted.
 unmount_below() {
     local p
-    while read -r p; do umount -l "$p"; done < <(awk -v d="$1" '$2 == d || index($2, d "/") == 1 {print $2}' /proc/mounts | sort -r)
-    ! awk -v d="$1" '$2 == d || index($2, d "/") == 1 {found=1} END {exit !found}' /proc/mounts || { echo "mounts remain below $1" >&2; exit 1; }
+    while read -r p; do umount -l "$p"; done < <(awk -v d="$1" -v i="${2:-}" \
+        '(i == "" && $2 == d) || index($2, d "/") == 1 {print $2}' /proc/mounts | sort -r)
+    ! awk -v d="$1" -v i="${2:-}" '(i == "" && $2 == d) || index($2, d "/") == 1 {found=1} END {exit !found}' /proc/mounts ||
+        { echo "mounts remain below $1" >&2; exit 1; }
+}
+# mount_api DIR: the kernel file systems a chroot into DIR needs.
+mount_api() {
+    mnt --bind /proc "$1/proc"
+    mnt --bind /sys "$1/sys"
+    mnt --bind /dev "$1/dev"
+    mnt -t devpts -o newinstance,ptmxmode=0666 devpts "$1/dev/pts"
+    mnt -t tmpfs tmpfs "$1/run"
 }
 
-# -- 1. build environment ------------------------------------------------------
-mkdir -p "$project/cache/holo"
+# -- 0. a snapshot of the inputs ------------------------------------------------------
+project=$build_root/project
+rm -rf "$project.new"
+mkdir -p "$project.new/initramfs/usr/libexec/pico4-poc" "$project.new/prebuilt/aarch64"
+cp -r "$source_dir/pico4" "$source_dir/src" "$source_dir/userspace" "$project.new/"
+for f in lib.sh recovery-policy.sh recovery-watch; do
+    cp "$source_dir/initramfs/usr/libexec/pico4-poc/$f" "$project.new/initramfs/usr/libexec/pico4-poc/"
+done
+cp "$source_dir/prebuilt/aarch64/pico4-reboot" "$project.new/prebuilt/aarch64/"
+find "$project.new" -name __pycache__ -prune -exec rm -rf {} +
+rm -rf "$project"
+mv "$project.new" "$project"
+
+# -- 1. build environment ----------------------------------------------------------------
+mkdir -p "$source_dir/cache/holo"
 if [[ ! -s "$holo_archive" ]]; then
     log "downloading $holo_url"
     curl --fail --location --output "$holo_archive.part" "$holo_url"
@@ -74,7 +116,7 @@ if [[ ! -s "$holo_archive" ]]; then
 fi
 printf '%s  %s\n' "$holo_sha256" "$holo_archive" | sha256sum --check --quiet
 if [[ ! -f "$B/.pico4-bootstrap" ]]; then
-    log "unpacking Holo Core aarch64 $holo_snapshot"
+    phase "unpacking Holo Core aarch64 $holo_snapshot"
     unmount_below "$B"
     rm -rf "$B"
     mkdir -p "$B"
@@ -85,41 +127,89 @@ unmount_below "$B"
 cp -L /etc/resolv.conf "$B/etc/resolv.conf"
 mkdir -p "$B"/{proc,sys,dev,run,tmp} "$B/etc/pico4" "$B/var/cache/pico4-repo" "$B/var/cache/pico4-pkgs" "$B/build"
 cp "$project/userspace/pacman.conf" "$B/etc/pico4/pacman.conf"
-mnt --bind /proc "$B/proc"
-mnt --bind /sys "$B/sys"
-mnt --bind /dev "$B/dev"
-mnt -t devpts -o newinstance,ptmxmode=0666 devpts "$B/dev/pts"
-mnt -t tmpfs tmpfs "$B/run"
+mount_api "$B"
 in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root "$@"; }
 
-# The build environment keeps its own preview-only configuration.
-in_b pacman -Sy --noconfirm --needed base-devel git meson ninja cmake eigen openxr python-mako python-yaml python-packaging \
-    glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
+# Package databases are downloaded by the first build and with --refresh only, so that
+# repeated builds install the same versions.
+sync=""
+[[ $refresh == 1 || -z "$(ls "$B"/var/lib/pacman/sync/*.db 2>/dev/null)" ]] && sync=y
+in_b pacman "-S$sync" --noconfirm --needed base-devel git meson ninja cmake eigen openxr python-mako python-yaml \
+    python-packaging glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
     wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
-# Every change to a recipe rebuilds the package from scratch under emulation;
-# ccache (in the builder's home, kept between builds) makes that cheap.
+builder=$(in_b id -u builder):$(in_b id -g builder)
+# Emulated compilers: ccache (in the builder's home, kept between builds) saves repeats.
 sed -i -E 's/^(BUILDENV=\(.*)!ccache/\1ccache/' "$B/etc/makepkg.conf"
 
-# -- 2. project packages ---------------------------------------------------------
-# build_package NAME [EXTRA_FILE...]: makepkg userspace/pkg/NAME unless the
-# packages of the same recipe (PKGBUILD, patches and extra files) exist.
+# Native compilers: the kernel runs the host's x86-64 clang and lld directly inside the
+# build environment, where they compile for aarch64 with the environment as sysroot (its
+# glibc, GCC runtime and libraries). The target comes from the program names.
+llvm=""
+if [[ $host_arch == x86_64 && $emulated_cc == 0 ]]; then
+    for v in 21 20 19; do
+        if [[ -x /usr/lib/llvm-$v/bin/clang && -x /usr/lib/llvm-$v/bin/ld.lld ]]; then llvm=/usr/lib/llvm-$v; break; fi
+    done
+    [[ -n $llvm ]] || log "WARNING: no host clang and lld (apt install clang-20 lld-20): compiling under QEMU, about ten times slower"
+fi
+compiler="GCC under QEMU"
+ccenv=""
+if [[ -n $llvm ]]; then
+    multiarch=/usr/lib/x86_64-linux-gnu
+    for d in "$llvm" "$multiarch"; do
+        mkdir -p "$B$d"
+        mnt --bind "$d" "$B$d"
+        mount -o remount,bind,ro "$B$d"
+    done
+    # The x86-64 dynamic loader where x86-64 programs look for it (/lib64 is usr/lib here).
+    ln -sfn "$multiarch/ld-linux-x86-64.so.2" "$B/usr/lib/ld-linux-x86-64.so.2"
+    mkdir -p "$B/usr/local/bin"
+    ln -sfn "$llvm/bin/clang" "$B/usr/local/bin/aarch64-unknown-linux-gnu-clang"
+    ln -sfn "$llvm/bin/clang++" "$B/usr/local/bin/aarch64-unknown-linux-gnu-clang++"
+    compiler=$("$llvm/bin/clang" --version | head -n 1)
+    ccenv="PICO4_CC=1"
+fi
+# lld links; no LTO, whose bitcode objects would need LLVM's archiver in every build system.
+cat > "$B/etc/makepkg.conf.d/pico4.conf" <<'EOF'
+# Written by scripts/build-userspace.sh: the host's clang and lld when PICO4_CC is set.
+if [[ -n ${PICO4_CC:-} ]]; then
+    export CC=/usr/local/bin/aarch64-unknown-linux-gnu-clang CXX=/usr/local/bin/aarch64-unknown-linux-gnu-clang++
+    LDFLAGS+=" -fuse-ld=lld"
+    OPTIONS+=(!lto)
+fi
+EOF
+
+# -- 2. project packages -------------------------------------------------------------------
+# build_package NAME [SOURCE...]: makepkg userspace/pkgbuilds/NAME with the project's
+# SOURCE files next to the PKGBUILD. Packages of the same recipe (PKGBUILD directory,
+# compiler and makepkg settings) and sources are reused; new sources alone rebuild in the
+# last build tree.
 rm -f "$B"/var/cache/pico4-repo/*
 build_package() {
-    local name=$1 dir=$B/build/$1 recipe pkgver pkgrel
+    local name=$1 dir=$B/build/$1 recipe sources built pkgver pkgrel mode=clean extra=""
     shift
-    pkgver=$(sed -n 's/^pkgver=//p' "$project/userspace/pkg/$name/PKGBUILD")
-    pkgrel=$(sed -n 's/^pkgrel=//p' "$project/userspace/pkg/$name/PKGBUILD")
-    recipe=$(cat "$project/userspace/pkg/$name"/* "$@" | sha256sum | cut -d' ' -f1)
-    if [[ "$(cat "$dir/.recipe" 2>/dev/null)" != "$recipe" ]] || ! ls "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst >/dev/null 2>&1; then
-        log "building $name $pkgver-$pkgrel (under QEMU, this can take a while)"
-        rm -rf "$dir"
+    pkgver=$(sed -n 's/^pkgver=//p' "$project/userspace/pkgbuilds/$name/PKGBUILD")
+    pkgrel=$(sed -n 's/^pkgrel=//p' "$project/userspace/pkgbuilds/$name/PKGBUILD")
+    recipe=$({ cat "$project/userspace/pkgbuilds/$name"/* "$B/etc/makepkg.conf.d/pico4.conf"; echo "$compiler"; } |
+        sha256sum | cut -d' ' -f1)
+    sources=$(cat /dev/null "$@" | sha256sum | cut -d' ' -f1)
+    built=$(cat "$dir/.recipe" 2>/dev/null || true)
+    if [[ "$built" != "$recipe $sources" ]] || ! ls "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst >/dev/null 2>&1; then
+        if [[ $clean == 0 && "${built%% *}" == "$recipe" && -d "$dir/src" ]]; then
+            mode=incremental extra=-e
+        else
+            rm -rf "$dir"
+        fi
+        phase "building $name $pkgver-$pkgrel ($mode, $compiler)"
         mkdir -p "$dir"
-        cp "$project/userspace/pkg/$name"/* "$@" "$dir/"
-        [[ "$name" != pico4-turnip-kgsl || ! -s "$mesa_archive" ]] || cp "$mesa_archive" "$dir/"
-        in_b chown -R builder: "/build/$name"
-        in_b su builder -c "cd /build/$name && MAKEFLAGS=-j\$(nproc) makepkg --noconfirm --nocheck -f"
-        echo "$recipe" > "$dir/.recipe"
+        rm -f "$dir/.recipe"
+        cp "$project/userspace/pkgbuilds/$name"/* "$@" "$dir/"
+        if [[ "$name" == pico4-turnip-kgsl && -s "$mesa_archive" && ! -s "$dir/${mesa_archive##*/}" ]]; then
+            cp "$mesa_archive" "$dir/"
+        fi
+        chown -R "$builder" "$dir"
+        in_b su builder -c "cd /build/$name && MAKEFLAGS=-j\$(nproc) $ccenv makepkg --noconfirm --nocheck -f $extra"
+        echo "$recipe $sources" > "$dir/.recipe"
     fi
     cp "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst "$B/var/cache/pico4-repo/"
 }
@@ -128,61 +218,90 @@ build_package pico4-sensors
 build_package pico4-basalt
 build_package pico4-vrdisplay "$project"/src/vrdisplay/*
 build_package pico4-sysvsem "$project"/src/sysvsem/*
-build_package pico4-monado "$project/src/xr/pico4-openxr-pose.c" "$project/src/xr/pico4-openxr-display.c"     "$project/src/xr/pico4-cam.c"
+build_package pico4-monado "$project"/src/monado/* "$project"/src/xr/*
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
+if [[ -n $llvm ]]; then
+    umount "$B$multiarch" "$B$llvm"
+fi
 
-# -- 3. the userspace root ------------------------------------------------------
-log "installing userspace/packages.txt into a fresh root"
-unmount_below "$T"
-rm -rf "$T"
-mkdir -p "$T"/{dev,proc,sys,run,tmp,etc,var/lib/pacman,var/cache/pacman/pkg}
-chmod 1777 "$T/tmp"
-mnt --bind /proc "$T/proc"
-mnt --bind /sys "$T/sys"
-mnt --bind /dev "$T/dev"
-mnt -t devpts -o newinstance,ptmxmode=0666 devpts "$T/dev/pts"
-mnt -t tmpfs tmpfs "$T/run"
+# -- 3. base root ------------------------------------------------------------------------
 mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^!/d' "$project/userspace/packages.txt")
 # "!name": dependencies on name count as satisfied, name is not installed.
 mapfile -t assumed < <(sed -n 's/^!\([^[:space:]#]*\).*/--assume-installed=\1=0/p' "$project/userspace/packages.txt")
-in_b pacman --config /etc/pico4/pacman.conf -r /target --cachedir /var/cache/pico4-pkgs \
-    -Sy --noconfirm --needed "${assumed[@]}" "${packages[@]}"
+base=$B/base
+base_key=$(cat "$project/userspace/packages.txt" "$project/userspace/pacman.conf" | sha256sum | cut -d' ' -f1)
+if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null)" != "$base_key" ]]; then
+    phase "installing userspace/packages.txt into a new base root"
+    rm -f "$build_root/base.key"
+    # Without --refresh the new base root keeps the package databases of the last one.
+    dbs=$build_root/base-databases
+    if [[ $refresh == 0 && -d "$base/var/lib/pacman/sync" ]]; then
+        rm -rf "$dbs"
+        cp -a "$base/var/lib/pacman/sync" "$dbs"
+    fi
+    unmount_below "$T"
+    unmount_below "$base"
+    rm -rf "$base"
+    mkdir -p "$base"/{dev,proc,sys,run,tmp,etc,var/lib/pacman/sync,var/cache/pacman/pkg}
+    chmod 1777 "$base/tmp"
+    sync=y
+    if [[ $refresh == 0 && -d "$dbs" ]]; then
+        cp -a "$dbs"/. "$base/var/lib/pacman/sync/"
+        cp "$B/var/cache/pico4-repo/pico4.db.tar.gz" "$base/var/lib/pacman/sync/pico4.db"
+        sync=""
+    fi
+    mount_api "$base"
+    in_b pacman --config /etc/pico4/pacman.conf -r /base --cachedir /var/cache/pico4-pkgs \
+        "-S$sync" --noconfirm --needed "${assumed[@]}" "${packages[@]}"
+    unmount_below "$base" inner
+    systemd_version=$(chroot "$base" /usr/bin/pacman -Q systemd | cut -d' ' -f2)
+    [[ "$systemd_version" == 257.* ]] || { echo "systemd $systemd_version was selected; the PICO 4 kernel needs 257.x" >&2; exit 1; }
+    # The project packages in the base root, by package file hash.
+    (cd "$B/var/cache/pico4-repo" && sha256sum ./*.pkg.tar.zst) > "$build_root/base.project"
+    echo "$base_key" > "$build_root/base.key"
+fi
+
+# -- 4. image root -----------------------------------------------------------------------
+phase "assembling the image root"
+unmount_below "$T"
+rm -rf "$T" "$build_root/overlay"
+mkdir -p "$T" "$build_root/overlay/upper" "$build_root/overlay/work"
+mnt -t overlay overlay -o "lowerdir=$base,upperdir=$build_root/overlay/upper,workdir=$build_root/overlay/work" "$T"
+mount_api "$T"
 in_t() { chroot "$T" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root "$@"; }
-systemd_version=$(in_t pacman -Q systemd | cut -d' ' -f2)
-[[ "$systemd_version" == 257.* ]] || { echo "systemd $systemd_version was selected; the PICO 4 kernel needs 257.x" >&2; exit 1; }
+cp "$B/var/cache/pico4-repo/pico4.db.tar.gz" "$T/var/lib/pacman/sync/pico4.db"
+# This build's project packages where they differ from the base root's.
+changed=()
+while read -r sum file; do
+    grep -qxF "$sum  $file" "$build_root/base.project" || [[ "$file" == *-debug-* ]] || changed+=("/var/cache/pico4-repo/${file#./}")
+done < <(cd "$B/var/cache/pico4-repo" && sha256sum ./*.pkg.tar.zst)
+if [[ ${#changed[@]} -gt 0 ]]; then
+    phase "installing ${#changed[@]} changed project packages"
+    in_b pacman --config /etc/pico4/pacman.conf -r /target --cachedir /var/cache/pico4-pkgs -U --noconfirm "${changed[@]}"
+fi
 # Same repositories on the headset, but an upgrade must never pull systemd 258+.
 sed -e '/^\[options\]/a IgnorePkg = systemd systemd-libs systemd-sysvcompat systemd-resolvconf' \
     -e '/^\[pico4\]/,/^$/d' "$project/userspace/pacman.conf" > "$T/etc/pacman.conf"
 
-# Packages from the Frame repository and our own were built against other
-# library versions than the preview base: their programs and public libraries
-# must resolve. (ldd follows dependencies transitively; libraries in private
-# directories such as /usr/lib/systemd are reached through their programs.)
-log "checking shared libraries of Frame and project packages"
+# Packages from the Frame repository and our own were built against other library
+# versions than the preview base: their programs and public libraries must resolve.
+phase "checking ELF dependencies of Frame and project packages"
 mapfile -t foreign < <(in_b pacman --config /etc/pico4/pacman.conf -r /target -Sl deckard-arch-hotfixes-release-0.3 pico4 |
     awk '/\[installed\]$/ {print $2}')
-# Optional programs whose libraries are deliberately not installed. SteamVR's
-# desktop tools need Qt5 or GLEW; its launcher puts libopenvr_api and
-# libsteam_api on LD_LIBRARY_PATH for the rest.
-optional='^(systemd /usr/lib/systemd/systemd-journal-(gatewayd|remote)|libinput /usr/lib/libinput/libinput-debug-gui|v4l-utils /usr/bin/qv4l2|v4l-utils /usr/bin/qvidcap'
+# Optional programs whose libraries are deliberately not installed. SteamVR's desktop
+# tools need Qt5 or GLEW; its launcher puts libopenvr_api and libsteam_api on
+# LD_LIBRARY_PATH for the rest. (Python regular expression.)
+optional='^(systemd /usr/lib/systemd/systemd-journal-(gatewayd|remote)|libinput /usr/lib/libinput/libinput-debug-gui'
+optional+='|v4l-utils /usr/bin/qv4l2|v4l-utils /usr/bin/qvidcap'
 optional+='|deckard-steamvr-rel /opt/steamvr/bin/linuxarm64/(vrmonitor|overlay_viewer|hellovr_sdl)):'
-optional+='|^deckard-steamvr-rel /opt/steamvr/[^:]*:[[:space:]]*(\./)?lib(openvr_api|steam_api)\.so '
-unresolved=$(for p in "${foreign[@]}"; do
-    in_t pacman -Qlq "$p" | while read -r f; do
-        [[ -f "$T$f" && ! -L "$T$f" && "$(od -An -tx1 -N4 "$T$f")" == " 7f 45 4c 46" ]] || continue
-        # Programs, public libraries, our private driver directory and SteamVR drivers.
-        [[ ( -x "$T$f" && "$f" != *.so* ) || "$f" =~ ^/usr/lib/[^/]+\.so || "$f" == /usr/lib/pico4/* ||
-           "$f" == /usr/share/steamvr-monado/*.so ]] || continue
-        in_t ldd "$f" 2>/dev/null | grep -F 'not found' | sed "s|^|$p $f:|"
-    done
-done | grep -Ev "$optional" || true)
-[[ -z "$unresolved" ]] || { echo "unresolved libraries:" >&2; echo "$unresolved" >&2; exit 1; }
+optional+='|^deckard-steamvr-rel /opt/steamvr/[^:]*:\s*(\./)?lib(openvr_api|steam_api)\.so '
+PYTHONPATH=$project python3 -m pico4.elfdeps "$T" "${foreign[@]}" --ignore "$optional" >&2 ||
+    { echo "unresolved ELF dependencies (above)" >&2; exit 1; }
 log "${#foreign[@]} Frame/project packages: all ELF dependencies resolve"
 
-# -- 4. PICO adaptation layer -----------------------------------------------------
-log "applying the PICO 4 adaptation layer"
+phase "applying the PICO 4 adaptation layer"
 # overlay FILE DEST: root-owned; scripts executable, everything else 0644
-# (modes from a Windows checkout are meaningless, as in build.py).
+# (modes from a Windows checkout are meaningless, as in pico4/image.py).
 overlay() {
     local mode=0644
     [[ "$(head -c 2 "$1")" == '#!' ]] && mode=0755
@@ -250,7 +369,7 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
 in_t systemctl mask systemd-firstboot.service systemd-pstore.service systemd-oomd.service \
     systemd-oomd.socket systemd-boot-update.service systemd-repart.service steamos-dump-info.service \
     usb-gadget.target usb-ncm-gadget@.service usb-ncm-dnsmasq@.service
-# Valve's VR session (SESSION.md): no display manager (pico4-session.service
+# Valve's VR session (docs/session.md): no display manager (pico4-session.service
 # starts the session), and none of the Frame-only system units: the controller
 # radio programmer (a firmware OTA for the Frame's nRF, never to run here),
 # the tracking DSP service, kernel-thread priorities for the Frame's kernel,
@@ -298,19 +417,25 @@ ln -sfn /dev/null "$T/etc/systemd/system-generators/systemd-gpt-auto-generator"
 in_t systemctl set-default graphical.target
 in_t ldconfig
 
-# -- manifest and archive -----------------------------------------------------------
-log "writing archive and manifest"
+# -- manifest and archive --------------------------------------------------------------
+phase "writing archive and manifest"
 in_t pacman -Q > "$build_root/packages.txt"
-(cd "$B/var/cache/pico4-pkgs" && sha256sum ./*.pkg.tar.zst) > "$build_root/package-hashes.txt"
-(cd "$B/var/cache/pico4-repo" && sha256sum ./*.pkg.tar.zst) >> "$build_root/package-hashes.txt"
+# The package files of exactly the installed versions (the caches keep older ones too).
+while read -r name version; do
+    for f in "$B/var/cache/pico4-pkgs/$name-$version"-{aarch64,any}.pkg.tar.zst \
+             "$B/var/cache/pico4-repo/$name-$version"-{aarch64,any}.pkg.tar.zst; do
+        [[ ! -f "$f" ]] || sha256sum "$f" | sed 's|  .*/|  ./|'
+    done
+done < "$build_root/packages.txt" | sort -u -k2 > "$build_root/package-hashes.txt"
 (cd "$T/var/lib/pacman/sync" && sha256sum ./*.db) > "$build_root/db-hashes.txt"
-cleanup
+unmount_below "$T" inner
 rm -rf "$T/var/cache/pacman/pkg"/* "$T/var/log/pacman.log"
 archive=$output/pico4-userspace.tar.zst
 tar --numeric-owner --xattrs --xattrs-include=security.capability --sort=name -C "$T" -cf - . |
     zstd -q -T0 -12 -o "$archive.part" -f
 mv "$archive.part" "$archive"
 installed_bytes=$(du -sb --apparent-size "$T" | cut -f1)
+cleanup
 python3 - "$archive" "$build_root" "$holo_url" "$holo_sha256" "$installed_bytes" "$firmware_json" "$sensor_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
 import hashlib, json, os, sys, datetime
 archive, root, holo_url, holo_sha, installed, firmware, sensors = sys.argv[1:8]
@@ -334,4 +459,4 @@ print(json.dumps({
     "sensor_data": json.loads(sensors),
 }, indent=1, sort_keys=True))
 EOF
-log "done: $archive ($(du -h "$archive" | cut -f1), installed $((installed_bytes >> 20)) MiB)"
+phase "done: $archive ($(du -h "$archive" | cut -f1), installed $((installed_bytes >> 20)) MiB)"

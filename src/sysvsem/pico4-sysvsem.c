@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSL-1.0
 /*
  * pico4-sysvsem: System V semaphores for a kernel without CONFIG_SYSVIPC
- * (SESSION.md).
+ * (docs/session.md).
  *
  * SteamVR's processes take their named locks (such as the bootstrapper lock
  * that keeps a second SteamVR from starting) with semget/semop/semctl. The

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Valve's VR session on the PICO 4 (roadmap step 6, SESSION.md): runs Valve's
+# Valve's VR session on the PICO 4 (roadmap step 6, docs/session.md): runs Valve's
 # gamescope-session.target through pico4-session.service for a short while, then
 # returns to the configured session. Checks that SteamVR's compositor drives the
 # panels through the pico4-vrdisplay layer and that SteamVR tracks the headset
@@ -9,7 +9,7 @@
 #
 # The session keeps the GPU busy and nothing cools the headset actively under
 # this userspace: SECONDS (default 30) bounds the run after startup. Validated
-# on the host by tools/userspace.py (validate_valve_session).
+# on the host by pico4/userspace.py (validate_valve_session).
 set -u
 seconds=30
 while [ $# -gt 0 ]; do

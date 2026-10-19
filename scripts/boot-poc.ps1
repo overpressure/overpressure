@@ -21,14 +21,14 @@ $root = Split-Path -Parent $PSScriptRoot
 if (-not $Image) {
     $latest = Get-ChildItem (Join-Path $root 'out\pico4-poc-*.img') -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $latest) { throw 'No image in out\ - run: python build.py build' }
+    if (-not $latest) { throw 'No image in out\ - run: python -m pico4 build' }
     $Image = $latest.FullName
 }
 if (-not (Get-Command fastboot -ErrorAction SilentlyContinue)) {
     throw 'fastboot not found: install Android platform-tools and add them to PATH'
 }
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    throw 'Python 3.9+ is required for the unlock-state check (device.py).'
+    throw 'Python 3.9+ is required for the unlock-state check (python -m pico4 device).'
 }
 
 if (Get-Command adb -ErrorAction SilentlyContinue) {
@@ -48,15 +48,16 @@ for ($i = 0; $i -lt 60; $i++) {
 if (-not $devices) { throw 'No fastboot device found (cable? bootloader mode? WinUSB driver?)' }
 Write-Host $devices
 
-& python (Join-Path $root 'device.py') check-unlocked
+$env:PYTHONPATH = $root
+& python -m pico4 device check-unlocked
 if ($LASTEXITCODE -ne 0) {
-    throw 'Unlock state is locked or unknown. See DEVICE.md before attempting to boot.'
+    throw 'Unlock state is locked or unknown. See docs/device-preparation.md before attempting to boot.'
 }
 
 Write-Host ">> fastboot boot $Image   (RAM only, nothing is written to the headset)"
 & fastboot boot $Image
 if ($LASTEXITCODE -ne 0) {
-    throw ('fastboot boot failed. If the bootloader reports an unknown command, see README.md, ' +
+    throw ('fastboot boot failed. If the bootloader reports an unknown command, see docs/stage1.md, ' +
            '"If fastboot boot is not available".')
 }
 
@@ -73,6 +74,6 @@ for ($i = 0; $i -lt 90; $i++) {
     Start-Sleep -Seconds 1
 }
 Write-Host ''
-Write-Host 'No network yet. Check README.md > Troubleshooting: look for a "PICO4POC" USB drive'
+Write-Host 'No network yet. Check docs/stage1.md > Troubleshooting: look for a "PICO4POC" USB drive'
 Write-Host '(boot logs) and for an unknown "PICO 4 Linux POC" device in Device Manager.'
 exit 1

@@ -1,5 +1,5 @@
 #!/bin/bash
-# The steamos user's session (SESSION.md). pico4-session.service runs this
+# The steamos user's session (docs/session.md). pico4-session.service runs this
 # inside a logind session; the user manager starts the session target:
 #   pico4-session.target       Monado is the OpenXR runtime (system service)
 #   gamescope-session.target   Valve's VR session: SteamVR with driver_monado,

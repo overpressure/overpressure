@@ -5,7 +5,7 @@ POC_LOG=$POC_RUN/boot.log
 POC_LIB=/usr/libexec/pico4-poc
 
 # Defaults; every value can be overridden on the kernel command line as
-# pico4poc.<name>=<value> (see README.md).
+# pico4poc.<name>=<value> (see docs/stage1.md).
 POC_IP=172.16.42.1
 POC_HOST_IP=172.16.42.2
 POC_PREFIX=24

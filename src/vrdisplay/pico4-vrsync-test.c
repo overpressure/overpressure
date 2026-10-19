@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSL-1.0
 /*
  * Two processes share a timeline semaphore as an OPAQUE_FD handle, the way
- * SteamVR's compositor shares them with its clients (SESSION.md). On Turnip's
+ * SteamVR's compositor shares them with its clients (docs/session.md). On Turnip's
  * KGSL backend this exercises VK_LAYER_PICO4_vrdisplay's emulation
  * (pico4-vrsync.c); run it with PICO4_VRDISPLAY=1.
  *

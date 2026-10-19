@@ -4,7 +4,7 @@
 #
 #   pico4-userspace-check [--wait SECONDS] [--no-vulkan]
 #
-# Validated on the host by tools/userspace.py (validate_check).
+# Validated on the host by pico4/userspace.py (validate_check).
 set -u
 wait_s=180
 vulkan=1
@@ -112,7 +112,7 @@ need "no stage-1 process survived the handoff ($stale found)" [ "$stale" = 0 ]
 if [ -d /sys/kernel/config/usb_gadget/pico4/functions/mass_storage.0 ]; then
 	need "USB mass-storage thread alive" grep -qx file-storage /proc/[0-9]*/comm
 fi
-# -- the session user and Monado's socket (SESSION.md) -----------------------
+# -- the session user and Monado's socket (docs/session.md) -----------------------
 # pico4-session.service logs steamos in through PAM and its user manager
 # starts the session target; the target takes a moment after the system is up.
 session_user=steamos

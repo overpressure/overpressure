@@ -6,7 +6,7 @@
 # busybox init stops everything with kill(-1), which also reaches the kernel's
 # USB mass-storage thread (f_mass_storage accepts SIGTERM/SIGKILL and exits).
 # The PC then resets the composite USB device and the NCM network dies, which
-# broke the step-4 userspace handoff on the headset (see USERSPACE.md).
+# broke the step-4 userspace handoff on the headset (see docs/userspace.md).
 #
 #   SIGQUIT  stop, then exec the ::restart: entry (pico4-userspace switch)
 #   SIGTERM  stop, reboot            SIGUSR1 / SIGUSR2  stop, halt / power off

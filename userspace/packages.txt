@@ -39,20 +39,20 @@ vulkan-tools
 pico4/pico4-turnip-kgsl
 pico4/pico4-graphics-tests
 
-# Project-built: host daemons for the sensor DSP (head IMU, XR.md); python runs
+# Project-built: host daemons for the sensor DSP (head IMU, docs/xr.md); python runs
 # the pico4-imu client
 pico4/pico4-sensors
 python
 
 # Project-built: Monado OpenXR runtime with the PICO 4 head-tracking driver, and
-# Basalt as its SLAM backend for 6DoF (XR.md)
+# Basalt as its SLAM backend for 6DoF (docs/xr.md)
 pico4/pico4-monado
 pico4/pico4-basalt
 # Arch's OpenCV links its highgui module against Qt without depending on it;
 # Monado and Basalt load that module
 qt6-base
 
-# Valve's VR session as on the Steam Frame (SESSION.md): SteamVR for
+# Valve's VR session as on the Steam Frame (docs/session.md): SteamVR for
 # linuxarm64 and the session scripts and user units around gamescope's OpenVR
 # backend. pacman.conf leaves out SteamVR's Frame-only drivers and tools. The
 # "steamvr" script needs jq.

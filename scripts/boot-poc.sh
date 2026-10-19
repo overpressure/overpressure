@@ -5,7 +5,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 IMAGE=${1:-$(ls -t "$ROOT"/out/pico4-poc-*.img 2>/dev/null | head -n 1)}
-[ -n "$IMAGE" ] || { echo "no image in out/ - run: python3 build.py build" >&2; exit 1; }
+[ -n "$IMAGE" ] || { echo "no image in out/ - run: python3 -m pico4 build" >&2; exit 1; }
 command -v fastboot >/dev/null || { echo "fastboot not found (Android platform-tools)" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 required for the unlock-state check" >&2; exit 1; }
 
@@ -20,11 +20,11 @@ until [ -n "$(fastboot devices 2>/dev/null)" ]; do
 	[ "$i" -lt 60 ] || { echo "no fastboot device found" >&2; exit 1; }
 	sleep 1
 done
-python3 "$ROOT/device.py" check-unlocked
+PYTHONPATH="$ROOT" python3 -m pico4 device check-unlocked
 echo ">> fastboot boot $IMAGE   (RAM only, nothing is written to the headset)"
 fastboot boot "$IMAGE" || {
 	echo "fastboot boot failed. If the bootloader reports an unknown command, see" >&2
-	echo "README.md, \"If fastboot boot is not available\"." >&2
+	echo "docs/stage1.md, \"If fastboot boot is not available\"." >&2
 	exit 1
 }
 
@@ -32,7 +32,7 @@ echo ">> waiting for the headset on 172.16.42.1 (up to 3 minutes)"
 i=0
 until ping -c 1 -W 1 172.16.42.1 >/dev/null 2>&1; do
 	i=$((i + 1))
-	[ "$i" -lt 90 ] || { echo; echo "no network yet - see README.md > Troubleshooting"; exit 1; }
+	[ "$i" -lt 90 ] || { echo; echo "no network yet - see docs/stage1.md > Troubleshooting"; exit 1; }
 	printf .
 	sleep 1
 done

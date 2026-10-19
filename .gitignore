@@ -18,3 +18,4 @@ known_hosts
 .idea/
 .vscode/
 .serena/
+*.egg-info/

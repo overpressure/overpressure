@@ -1,9 +1,9 @@
-# Monado OpenXR runtime as a system service (SESSION.md): the compositor on the
+# Monado OpenXR runtime as a system service (docs/session.md): the compositor on the
 # panels, the head IMU, the tracking cameras with Basalt, the controllers and
 # the lens motor, for clients of any user through pico4-monado.socket. The
 # first client starts it (socket activation); it keeps the hardware until it
 # is stopped. SteamVR's driver_monado opens the same hardware, so the two
-# never run together (SESSION.md).
+# never run together (docs/session.md).
 # No CPUWeight/CPUQuota here: the cpu controller would cost the compositor its
 # real-time threads (CLAUDE.md).
 [Unit]

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSL-1.0
 /*
  * pico4-cam: the four OV7251 tracking cameras through the Spectra CSL UAPI
- * (pico4_cam.c in userspace/pkg/pico4-monado).
+ * (src/monado/pico4_cam.c).
  *
  *   pico4-cam list
  *       Request manager, sync, ISP, sensor and CSIPHY nodes with the slot and

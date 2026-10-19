@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pico4"
+version = "0.6.0"
+description = "Linux and a SteamOS-compatible userspace on the original PICO 4: image, device and test tooling"
+readme = "README.md"
+requires-python = ">=3.9"
+# The tooling itself uses the standard library only.
+dependencies = []
+
+[project.optional-dependencies]
+# Windows hosts: initializes the stock kernel's NCM gadget through UsbDk (pico4/windows_ncm.py).
+windows-ncm = ["pyusb==1.3.1", "libusb-package==1.0.30.0"]
+
+[project.scripts]
+pico4 = "pico4.__main__:main"
+
+[tool.setuptools]
+packages = ["pico4"]
+
+[tool.setuptools.package-data]
+pico4 = ["firmware.json"]

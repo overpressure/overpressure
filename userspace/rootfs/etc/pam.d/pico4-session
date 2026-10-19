@@ -1,4 +1,4 @@
-# PAM stack of pico4-session.service (SESSION.md): systemd opens a logind
+# PAM stack of pico4-session.service (docs/session.md): systemd opens a logind
 # session for the steamos user here (no authentication: User= is fixed).
 # pam_env runs before pam_systemd so that the session gets class "user",
 # which a session without a terminal would not get by itself.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSL-1.0
 /*
  * Exportable semaphores without kernel support, part of VK_LAYER_PICO4_vrdisplay
- * (SESSION.md).
+ * (docs/session.md).
  *
  * SteamVR shares timeline semaphores between its compositor and other processes
  * (mirror textures, application swapchains) as OPAQUE_FD handles. Turnip's KGSL

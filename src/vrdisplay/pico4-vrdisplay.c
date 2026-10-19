@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: BSL-1.0
 /*
  * VK_LAYER_PICO4_vrdisplay: the PICO 4 panels as a Vulkan direct-mode display,
- * for SteamVR's compositor (SESSION.md).
+ * for SteamVR's compositor (docs/session.md).
  *
  * vrcompositor drives a headset through VK_KHR_display: it looks for the
  * display, acquires it (VK_EXT_acquire_drm_display), presents a swapchain on a
  * display-plane surface and paces itself with VK_EXT_display_control's vblank
  * events and counter. On the stock PICO 4 kernel Turnip's KGSL backend reports
  * no display (the GPU is not a DRM device), and msm_drm shows clean frames only
- * with the vendor fence contract and six colour-component layers (GRAPHICS.md,
+ * with the vendor fence contract and six colour-component layers (docs/graphics.md,
  * comp_window_pico4_kms.c in pico4-monado). This layer answers those calls for
  * one display, 4320x2160 at 90 Hz: swapchain images are linear dma-bufs imported
  * as framebuffers, a present thread commits them atomically with the release

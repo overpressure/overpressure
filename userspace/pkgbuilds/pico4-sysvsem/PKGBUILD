@@ -1,0 +1,27 @@
+# System V semaphores for the stock PICO 4 kernel, which has no
+# CONFIG_SYSVIPC (docs/session.md). SteamVR takes its named locks with
+# semget/semop/semctl and refuses to start without them. A preloaded library
+# (/etc/ld.so.preload, from the userspace overlay) implements them on shared
+# memory; it is inert until a program calls them. The test runs here because
+# build-userspace.sh uses --nocheck.
+# Sources are this project's own files, copied in by build-userspace.sh.
+pkgname=pico4-sysvsem
+pkgver=1
+pkgrel=1
+arch=(aarch64)
+url="https://man.archlinux.org/man/semop.2"
+license=(BSL-1.0)
+depends=(glibc)
+source=(pico4-sysvsem.c test_pico4_sysvsem.c)
+sha256sums=(SKIP SKIP)
+
+build() {
+  ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror -fPIC -shared -fvisibility=hidden $LDFLAGS \
+    -o libpico4-sysvsem.so pico4-sysvsem.c -lpthread
+  ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror $LDFLAGS -o test_pico4_sysvsem test_pico4_sysvsem.c
+  PICO4_SYSVSEM_TABLE="$srcdir/test-table" LD_PRELOAD="$srcdir/libpico4-sysvsem.so" ./test_pico4_sysvsem
+}
+
+package() {
+  install -Dm755 libpico4-sysvsem.so -t "$pkgdir/usr/lib"
+}

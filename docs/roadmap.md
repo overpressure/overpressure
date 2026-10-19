@@ -1,0 +1,368 @@
+# Roadmap
+
+The project runs Linux, a SteamOS-compatible userspace and Valve's VR session on the original
+PICO 4 (2022, codename phoenix, Snapdragon XR2), always on its stock Android kernel
+(4.19.81-perf+, PICO OS 5.13.7 and 5.13.8) and stock device trees. The plan has six steps,
+from a recoverable development device to Valve's VR session, and follows the strategy of the
+background research in [research.md](research.md). All six steps work on the tested headset,
+an original PICO 4 on PICO OS 5.13.7. Open work: cooling, the Steam client and its network,
+performance, controller positions and a standalone boot.
+
+## Status
+
+| Step | Status | Document |
+| --- | --- | --- |
+| 1. Recoverable development device | Works: EDL backup, engineering ABL, persistent unlock, stock restore verified by readback | [device-preparation.md](device-preparation.md) |
+| 2. Minimal Linux | Works: root shell over USB-C, read-only storage, automatic return to PICO OS | [stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md) |
+| 3. Native graphics | Works: Turnip Vulkan on KGSL; both panels at 90 and 72 Hz through the stock KMS driver | [graphics.md](graphics.md) |
+| 4. SteamOS-compatible userspace | Works: Holo Core aarch64 with the Frame's systemd 257.7, no failed units | [userspace.md](userspace.md) |
+| 5. Native XR hardware | Works: head IMU, display, lens correction, tracking cameras, 6DoF head tracking, 3DoF controllers. Open: controller positions | [xr.md](xr.md) |
+| 6. Valve's VR session | Runs: SteamVR on both panels at about 50 fps, GPU-bound. Open: Steam client, performance, cooling | [session.md](session.md), [cooling.md](cooling.md) |
+
+Each step's document holds its design, measurements and reproduction steps.
+
+## Constraints
+
+- **Stock kernel.** No kernel or device-tree changes. The kernel loads only modules signed with
+  PICO's per-build key, so its gaps are bridged in userspace: udev creates the device nodes
+  (no devtmpfs), the QRTR name service runs in userspace, FastRPC uses the downstream
+  `adsprpc` ABI, a preloaded library provides System V semaphores, and a Vulkan layer shares
+  GPU semaphores between processes over sync files. systemd stays at 257.x: 258 needs Linux
+  5.4.
+- **Read-only storage.** Both stages switch every physical block device read-only. Only the
+  explicit, backup-validated flash and restore paths write to the headset's storage (`boot`
+  for a test run, ABL through EDL); each write is checked against the backup's hash and
+  verified by readback.
+- **Stock restoration.** Hardware work ends on stock boot and stock ABL, verified by EDL
+  readback, with PICO OS booted. `python -m pico4 cycle` runs the acceptance cycle unattended:
+  engineering ABL through EDL, `python -m pico4 hwtest flash-run` with the userspace, EDL
+  readback of `boot`, stock ABL, PICO OS. Between cycles, `python -m pico4 dev` iterates on a
+  flashed development image, bounded by device-side deadlines. Both read the headset's
+  settings from a git-ignored `.env` ([.env.example](../.env.example)); see
+  [hardware-testing.md](hardware-testing.md).
+- **Private data.** Backups, vendor firmware, factory calibration, Valve's packages and the
+  built images stay out of the repository. Builds take the GPU firmware and sensor data from
+  the user's own backup and Valve's packages from its public repositories
+  ([development.md](development.md)).
+
+## Steps
+
+### 1. Recoverable development device
+
+**Goal.** Back up the stock firmware and device-specific partitions, validate the recovery
+method, and unlock the original PICO 4 bootloader. Do not replace the stock operating system
+until recovery has been tested.
+
+**Status.**
+
+- `python -m pico4 device` ([pico4/device.py](../pico4/device.py)) captures the headset's
+  identity in PICO OS (`probe`), takes an EDL backup of every partition with a SHA-256 manifest
+  (`backup`, `verify-backup`; userdata optional), stages the engineering ABL with a byte
+  readback (`stage`), unlocks (`unlock`, `check-unlocked`) and restores the stock ABL
+  (`restore-abl`). It implements the process documented by
+  [more-picohaxx-tool](https://github.com/chaixshot/more-picohaxx-tool) independently, without
+  its scripts or images.
+- Normal and critical unlock persist across reboots when `oem setenforce 0` comes before the
+  unlock commands. In the other order the unlock fails (`00000050`) and the flags revert at the
+  next reboot. Unlocking wipes user data.
+- `adb reboot edl` enters EDL from PICO OS without buttons, so cycles run unattended.
+- The tested engineering ABL (a signed Neo3 build) has no `fastboot boot`, so Linux starts from
+  a temporarily flashed `boot` partition (step 2). Flashing `boot` needs the engineering ABL and
+  its per-session OEM authorization command.
+- After a cycle, full EDL readbacks of `boot` (96 MiB) and `abl` (1 MiB) match the backup. The
+  bootloader stays unlocked; PICO OS boots with SELinux enforcing.
+
+**Open.** The EDL reset at the end of a cycle can leave the headset off, with stock boot and
+ABL already verified; a hard reset then starts PICO OS. The cause is not known.
+
+### 2. Minimal Linux
+
+**Goal.** Prepare a minimal initramfs from the PICO kernel and device-tree information, with
+serial or USB debugging. The first measurable success is a Linux shell, not a VR interface.
+
+**Status.**
+
+- The stage-1 image is a standard Android boot image: the stock kernel and DTBs byte for byte,
+  with the ramdisk replaced by Alpine Linux 3.24 (aarch64) and the project's init, whose PID 1
+  is `pico4-init`. `python -m pico4 build --firmware <build>` builds it from the boot image of
+  the matching official OTA ([pico4/image.py](../pico4/image.py),
+  [pico4/firmware.json](../pico4/firmware.json)).
+- USB-C carries the debugging: an NCM network link (headset 172.16.42.1; DHCP gives the PC an
+  address without gateway or DNS), SSH, telnet, a web page with logs and a hardware report,
+  and a read-only log drive. There is no serial console: the stock kernel has no ACM function.
+- Every physical block device is read-only; the root file system is in RAM.
+- The stock kernel rejects Windows' NCM packets (`Wrong NDP SIGN`) until the host sends CDC
+  `SET_CRC_MODE(0)`. [pico4/windows_ncm.py](../pico4/windows_ncm.py) sends it through UsbDk
+  after each stage-1 boot and hands the device back to Windows' UsbNcm driver.
+- A watchdog returns the headset to fastboot after 5 minutes without usable USB traffic or a
+  login; test runs add a connection deadline and a maximum runtime. A kernel panic reboots
+  instead of leaving the headset in Qualcomm's crash-dump mode.
+- `python -m pico4 hwtest flash-run` writes the image to `boot`, checks a per-run SSH identity,
+  the stock kernel, an ARM64 root shell, read-only storage (all 99 physical block entries) and
+  the HTTP diagnostics, then flashes the stock boot image back and waits for the original
+  PICO OS build. The tested headset passes this cycle, including the Windows NCM
+  initialization. With a configured but unusable USB link, the watchdog and the runner bring
+  it back to PICO OS without a button press.
+
+**Limits.** A kernel hard hang or a loss of host power can still need physical or EDL
+recovery. Windows 10 has no NCM driver.
+
+### 3. Native graphics
+
+**Goal.** Investigate DRM/KMS, display initialization, Mesa Turnip and Vulkan, and verify that
+the two eye displays can be driven reliably at their native resolution and refresh rates.
+
+**Status.**
+
+- **Display.** `msm_drm` exposes one 4320×2160 DSI connector for the two 2160×2160 panels
+  (Sharp LS026B3SA), with 90 and 72 Hz modes. Frames use the stock arrangement (six
+  colour-component layers, routed to the eyes with `sspp_layout`) and the vendor fence
+  contract: each commit requests the CRTC release fence and the connector retire fence and
+  waits for the retire fence. With page-flip events alone, swapped frames come out corrupted.
+  Output starts at the boot-time 90 Hz mode; a first frame at 72 Hz fails with
+  `DMS not supported on first frame`.
+- **Measured.** From a fresh boot, 90 s per mode: 8,100 flips at 89.9976 Hz and 6,481 flips
+  at 72.0045 Hz, with no vblank sequence gaps and steady left and right images in the lenses;
+  120 s runs give 90.0021 and 72.0082 Hz. Generic `drm_info` and `modetest` compute about
+  32.83 and 26.27 Hz for these modes; the kernel's vblank events give the real rates.
+- **GPU.** The Adreno 650 is driven by KGSL; it is not a DRM device on this kernel. Turnip built
+  with its KGSL backend (Mesa 26.1.6, `-Dfreedreno-kmds=kgsl`) renders an offscreen Vulkan test
+  and verifies all 65,536 pixels. Alpine's and Valve's Mesa builds lack that backend.
+- The compositors of steps 5 and 6 present through this display path, scanning out
+  GPU-rendered images without a copy.
+
+**Limits.** The tests are bounded runs, not a long-duration reliability or Vulkan conformance
+claim. The GPU firmware comes from the user's own backup.
+
+### 4. SteamOS-compatible userspace
+
+**Goal.** Study the public Steam Frame packages and the steamac and steam-frame-nixos
+projects, and adapt system services, input and graphics dependencies to the PICO kernel
+instead of using the Frame's kernel.
+
+**Status.**
+
+- **Packages.** Valve's public Holo Core aarch64 preview resolves the system. The Frame's own
+  builds come from its public hotfix repository, named explicitly in
+  [packages.txt](../userspace/packages.txt): systemd 257.7,
+  `steamos-customizations-deckard`, `steamos-manager`, gamescope 3.16.28 and, for step 6,
+  SteamVR. The preview's systemd 258 needs Linux 5.4, so the build takes 257.7 and the device
+  pins it (`IgnorePkg`). Neither Valve's Turnip nor the preview's has the KGSL backend;
+  `pico4-turnip-kgsl` installs beside the system Mesa. The current archive holds 409 packages:
+  840 MB, 2,567 MiB installed.
+- **Handoff.** Stage 1 receives the archive over SSH into ext4 on zram
+  (`pico4-userspace receive`) and hands PID 1 to its systemd (`pico4-userspace switch`). The
+  USB link, the SSH host key, read-only storage and the recovery deadlines carry over into
+  stage 2.
+- **On the stock kernel** systemd reaches `running` with no failed units (taint `old-kernel`
+  only), and Turnip renders and verifies the Vulkan test inside the userspace. Adaptations: a
+  udev rule creates the device nodes; the session user `steamos` is in the Android network
+  groups that `ANDROID_PARANOID_NETWORK` requires for sockets; drop-ins keep systemd's `cpu`
+  controller off, because with `CONFIG_RT_GROUP_SCHED` the kernel refuses real-time threads
+  inside it; zram uses LZO, the only compressor the kernel offers.
+- **QEMU.** [tests/qemu/run-userspace.sh](../tests/qemu/run-userspace.sh) boots the same
+  stage 1 and archive on a mainline 4.19 kernel configured like the stock one: the same handoff
+  and syscall surface, without the headset's drivers.
+
+**Open.** Kernel features the Steam client and games will miss: user, PID, IPC and UTS
+namespaces (Steam Linux Runtime's containers), `binfmt_misc` (FEX for x86 games), `hidraw`
+(Steam Input; input comes only through evdev and uhid), System V shared memory and message
+queues, and memcg (no resource limits; `systemd-oomd` is masked). How to run the Steam Linux
+Runtime on this kernel is undecided.
+
+### 5. Native XR hardware
+
+**Goal.** Establish IMU access, camera acquisition, 6DoF tracking, controller connectivity and
+lens calibration, with Monado as the foundation.
+
+**Status.** Monado 25.1.0 with the project's `pico4` driver ([src/monado/](../src/monado/)) is
+the system's OpenXR runtime and runs as a socket-activated system service. The factory
+calibration it uses comes from the user's own backup.
+
+- **Head IMU.** The ICM-42688 sits behind the sensor DSP (SLPI). linux-msm's qrtr-ns, pd-mapper
+  and hexagonrpcd, ported to the stock kernel's downstream FastRPC ABI, boot the DSP and serve
+  its sensor registry. The `pico4-imu` client streams it at 512 Hz with no gaps and monotonic
+  DSP timestamps; a guided 90° turn reads +90.3 to +90.5°. Monado's driver fuses it at 1 kHz:
+  it maps the DSP's QTimer timestamps onto `CLOCK_MONOTONIC`, starts level from the measured
+  gravity and learns the gyro bias while the headset is still. A headless OpenXR client gets a
+  tracked pose about 1 ms after the sample; on a still headset the view rotates 0.009° in 60 s.
+- **Display.** A Monado compositor target presents through the stock KMS driver with the fenced
+  six-layer path of step 3, sharing linear dma-buf images with the display without a copy.
+  OpenXR frames reach the panels at 90 Hz with one projection layer. Frames with several layers
+  reach 90 Hz with compressible scratch images at panel size and a GPU clock floor of 587 MHz.
+- **Lenses and IPD.** The compositor pre-distorts each eye with the headset's factory lens
+  model over a 106.7° field of view; lines look straight in the lenses. The chromatic
+  aberration terms are implemented but off by default, as on PICO OS. The IPD comes from the
+  lens motor's GD32 MCU through one read-only command (71.99 mm with the wheel at 72 mm).
+- **Tracking cameras.** The four OV7251s stream through Qualcomm's Spectra camera stack (CSL)
+  without vendor libraries. The controller radio ("station", an nRF52832 on SPI) provides their
+  50 Hz frame sync and their exposure: in 30 s each camera delivers 1,500 of 1,500 frames,
+  17.5 ms on average from start of frame to delivery.
+- **Controllers.** Inputs and IMU arrive through the sensor DSP (`ble_mcu`). Both controllers
+  appear in OpenXR with the PICO 4 controller profile, all buttons, touch sensors, sticks and
+  triggers, and 3DoF orientation, at about 500 IMU samples and 100 input packets per second
+  each.
+- **6DoF.** Basalt runs inside Monado on all four cameras and the IMU at 25 Hz, without
+  blocking the 3DoF path. A measured 50 cm slide reads 0.52 m (0.49 m on a repeat) and returns
+  to within 2–4 cm of the start; a resting headset holds within millimetres.
+- **Acceptance.** In the step's acceptance cycle, with 6DoF running, an OpenXR client renders
+  2,698 frames in 30 s at 89.996 Hz (2 late), each eye on its own panel.
+
+**Open.** Controller positions and haptics, 6DoF robustness and composition headroom; see
+[Open work](#open-work).
+
+### 6. Valve's VR session
+
+**Goal.** Once tracking and graphics work, bring up the Frame-style gamescope/SteamVR session.
+Valve's headset-specific components are proprietary and built for the Frame's hardware.
+
+**Status.**
+
+- Valve's `gamescope-session.target` runs gamescope's OpenVR backend and SteamVR 2.17.10 from
+  the Frame's repository, in a logind session of the `steamos` user that
+  `pico4-session.service` starts. The Frame's tracking driver, controller driver and radio
+  firmware stay out of the image. The Frame's radio firmware updater is masked: it must never
+  run against the PICO's station.
+- **Display.** SteamVR's compositor presents only in direct mode. The `pico4-vrdisplay` Vulkan
+  layer gives it the panels as one 4320×2160 display at 90 Hz, through the stock KMS driver with
+  the fenced path of step 3.
+- **Tracking.** `driver_monado`, Monado's SteamVR plugin, runs the step-5 driver inside
+  SteamVR: the headset with 6DoF, both controllers with 3DoF and an arm model.
+- **Kernel gaps.** SteamVR's process locks use System V semaphores, which the preloaded
+  `pico4-sysvsem` provides. Its compositor shares GPU semaphores between processes, which
+  neither Turnip's KGSL backend nor the kernel supports (no DRM syncobjs); the display layer
+  emulates them over sync files.
+- **Measured.** In the full session (gamescope's overlay and the dashboard besides the
+  compositor) the GPU is 99 % busy at 587 MHz, and the compositor presents about 42–54 frames
+  per second against the panels' 90 Hz. SteamVR on its own presents most frames at 90 Hz;
+  about one in five is a refresh late. In the lenses the SteamVR environment shows, slightly
+  jittery; the controllers turn with the wrists but do not move in space.
+- **Heat.** Nothing cools the headset actively: no fan control and no thermal daemon, only the
+  kernel's throttling. Valve's session takes the hottest thermal zone from about 54 °C to
+  92 °C within a minute, so session checks run for 30 s.
+- **Monado service.** Outside Valve's session, the default `pico4-session.target` uses Monado's
+  service as the OpenXR runtime. The two never run together, because both own the hardware;
+  `/etc/pico4-poc/session.conf` selects the target.
+- **Acceptance.** The acceptance cycle includes 30 s of Valve's session: presenting 15 s after
+  the switch at about 51 frames per second, no fence or GPU timeout, the headset and both
+  controllers in SteamVR.
+
+**Open.** The Steam client and its network, performance, cooling and controller positions;
+see [Open work](#open-work).
+
+## Milestones
+
+The milestones of the research's feasibility assessment ([research.md](research.md#feasibility))
+and where they stand.
+
+| Milestone | Status |
+| --- | --- |
+| Unlock the PICO 4 bootloader | Done: normal and critical unlock persist with the engineering ABL (step 1) |
+| Boot minimal Linux | Done: stock kernel with an Alpine initramfs, root shell over USB-C (step 2) |
+| Obtain accelerated Linux graphics | Done: Turnip Vulkan on KGSL and both panels at 90 and 72 Hz through KMS (step 3); the compositors of steps 5 and 6 scan out GPU-rendered images |
+| Run the ARM64 SteamOS userspace | Done: Holo Core aarch64 with the Frame's systemd 257.7 and SteamOS services, no failed units (step 4) |
+| Display a Steam-style desktop in the headset | Partly: SteamVR's environment shows in the lenses and its dashboard runs (step 6); gamescope's desktop overlays need the Steam client |
+| Full 6DoF and controllers | Partly: 6DoF head tracking and 3DoF controllers with all inputs (step 5); controller positions are open |
+| Complete standalone SteamVR experience | Not yet: SteamVR runs on the panels, GPU-bound at about 50 fps, and every boot needs the PC; the Steam client, network, cooling and a standalone boot are open |
+
+## Open work
+
+### Cooling
+
+Details: [cooling.md](cooling.md).
+
+Nothing cools the headset actively under this userspace. The kernel's `step_wise` zones
+throttle the prime core from 75 °C and the GPU only from 95 °C. On PICO OS the fan, an AVC
+blower, hangs off the GD32 MCU that also moves the lenses and drives the backlight;
+`pxrfanservice` sets its duty over that MCU's UART (`/dev/ttyHS1`). The kernel's `pwm-fan`
+driver has no device-tree node, and Qualcomm's `thermal-engine` is off on PICO OS as well.
+
+[`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan) runs PICO OS's policy with the same
+frames: 14 CPU and GPU zones every 200 ms, 10 s means, PICO's duty tables with their
+hysteresis. It adds full speed while any sensor reads 95 °C or more, until the hottest mean is
+below 90 °C, and 100 % without usable readings. It builds frames only from an allowlist
+(SetFanSpeed 0–100 % and four queries). Host tests cover it; it has not run on the headset.
+Remaining:
+
+1. **Integration.** Enable `pico4-fan.service` in the userspace build; write the fan profile
+   (the production-batch word only, never the serial) in `scripts/extract-sensor-data.sh`;
+   take the same `flock` on `/dev/ttyHS1` in Monado's IPD reader (`pico4_ipd.c`); record duty
+   and RPM in `pico4-valve-session-check`; check the service in `pico4-userspace-check`.
+2. **Hardware.** Read the MCU's duty and RPM before the daemon sends anything; sweep the duty
+   against the RPM; check the fan's response to a load step; run Valve's session for 10
+   minutes against an agreed limit for the hottest zone.
+3. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
+   that limit.
+4. **GetFanInfo.** Decode its reply; if it identifies the fan, the daemon can choose its table
+   without the backup.
+
+### Performance
+
+Details: [session.md](session.md), [xr.md](xr.md).
+
+Valve's full session is GPU-bound at about 50 frames per second, the GPU 99 % busy at 587 MHz.
+
+- Measure what gamescope's overlay and the dashboard's CEF renderer cost on the GPU.
+- Try the Frame's other compositor settings: simplified shaders, overlay quality.
+- Monado's composition headroom: its layer squasher fits the 11 ms frame only with the GPU
+  clock floor. Options are compressed (UBWC) scanout images in the display's compressed
+  formats; compressed client swapchain images; composing the layers directly through the
+  distortion mesh, without scratch images; a cheaper chromatic aberration correction (the
+  current one costs 2–5 % of the refreshes in the two-layer scene, hence off by default); and
+  pacing from the retire fences' timestamps.
+
+### Steam client and network
+
+Details: [session.md](session.md), [userspace.md](userspace.md).
+
+- The Steam client (2.5 GB unpacked) is not in the image; it only satisfies package
+  dependencies. It needs a network and a Steam login.
+- The headset's only network is the USB link to one PC, without gateway or DNS. A network for
+  Steam can come over Wi-Fi, which is not brought up, or over USB.
+- Without the client, gamescope has no Steam or desktop apps to show as SteamVR overlays.
+  MangoHud's `mangoapp`, the client's performance overlay, is left out: the Frame's build
+  needs libraries of the Frame's private base.
+- The client will meet the kernel limits of step 4: no namespaces for Steam Linux Runtime's
+  containers, no `binfmt_misc` for FEX, no `hidraw` for Steam Input.
+
+### Controllers
+
+Details: [xr.md](xr.md).
+
+- **Positions.** Constellation tracking of the controllers' IR LEDs. The cameras already
+  deliver the LED frames: every other frame is a short exposure in which only the LEDs show.
+  Still needed are the LED layout of the tracking rings, which is in the controllers'
+  calibration or in PICO's encrypted tracking configuration, and a tracker (Monado has one for
+  WMR controllers). Until then Monado places the controllers at a fixed offset from the head,
+  and SteamVR shows them where its arm model puts them.
+- **Haptics.** Accepted but without effect: the station command is not identified and is not
+  in the station allowlist. Firmware and OTA commands stay excluded from it.
+- **SteamVR.** SteamVR uses its generic bindings for this controller type; clicking in its
+  dashboard is unchecked.
+
+### Head tracking
+
+Details: [xr.md](xr.md).
+
+- Worn sessions with longer paths.
+- Basalt can jump in its first seconds, before it has initialized (0.8 m in one walking test).
+  The driver could hold the 3DoF pose until Basalt has settled.
+- A still headset facing a surface a few centimetres away drifts by metres: there is no stereo
+  depth. The driver could fall back to the 3DoF position while Basalt reports too few
+  landmarks.
+- Basalt settings: `optical_flow_image_safe_radius` for the fisheye borders, the IMU noise,
+  and a config file (the VIT build runs Basalt's built-in defaults).
+
+### Standalone boot
+
+Every boot depends on the PC. Stage 1 runs from a temporarily flashed `boot` partition (the
+engineering ABL has no RAM boot); the 840 MB userspace archive arrives over USB into zram,
+which takes about 3 minutes; and test and development runs are bounded by device-side
+deadlines that return the headset to fastboot. A headset that boots into the session on its
+own needs the userspace stored on the headset and a boot path that keeps the read-only storage
+and stock-restoration guarantees. There is no design for this yet.
+
+### Other hardware
+
+Wi-Fi, Bluetooth, audio, battery reporting and suspend have not been brought up under the
+userspace.

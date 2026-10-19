@@ -1,4 +1,4 @@
-# The session user's default target on the PICO 4 (SESSION.md): a graphical
+# The session user's default target on the PICO 4 (docs/session.md): a graphical
 # session with Monado's socket and SteamOS's user services, without Valve's VR
 # session. deckard-steamvr-session's gamescope-session.target replaces it when
 # /etc/pico4-poc/session.conf selects it.

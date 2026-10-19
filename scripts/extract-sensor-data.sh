@@ -1,10 +1,10 @@
 #!/bin/bash
-# Extract the head-IMU sensor stack inputs from YOUR OWN stock backup (XR.md).
+# Extract the head-IMU sensor stack inputs from YOUR OWN stock backup (docs/xr.md).
 #
 # Usage (Linux/WSL, root):
 #   scripts/extract-sensor-data.sh BACKUP_DIR OUTPUT_DIR
 #
-# BACKUP_DIR is a full EDL backup as described in DEVICE.md (lun0/super.bin,
+# BACKUP_DIR is a full EDL backup as described in docs/device-preparation.md (lun0/super.bin,
 # lun0/persist.bin, lun4/modem.bin). OUTPUT_DIR receives:
 #   firmware/slpi.mdt, slpi.bNN, slpi*.jsn   sensor DSP image (modem partition)
 #   sensors/config/*.json                     sensor driver config (vendor)
@@ -60,14 +60,14 @@ dump() {
 }
 
 echo ">> vendor: sensor config"
-(cd "$project" && python3 -m tools.superimg extract "$backup/lun0/super.bin" vendor "$work/vendor.img") >/dev/null
+(cd "$project" && python3 -m pico4.superimg extract "$backup/lun0/super.bin" vendor "$work/vendor.img") >/dev/null
 dump "$work/vendor.img" /etc/sensors/config "$work"
 mv "$work/config" "$output/sensors/config"
 dump "$work/vendor.img" /etc/sensors/sns_reg_config "$output/sensors/sns_reg.conf"
 rm -f "$work/vendor.img"
 
 echo ">> system: lens configuration"
-(cd "$project" && python3 -m tools.superimg extract "$backup/lun0/super.bin" system "$work/system.img") >/dev/null
+(cd "$project" && python3 -m pico4.superimg extract "$backup/lun0/super.bin" system "$work/system.img") >/dev/null
 mkdir -p "$output/calibration/pxrconfig"
 dump "$work/system.img" /system/etc/pxrconfig/config/SDK_Lens_ConfigFile.txt \
     "$output/calibration/pxrconfig/SDK_Lens_ConfigFile.txt"

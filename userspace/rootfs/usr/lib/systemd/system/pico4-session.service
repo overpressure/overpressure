@@ -1,5 +1,5 @@
 # The session of the Frame's user, steamos, without a display manager
-# (SESSION.md): a logind session through PAM, whose user manager runs the
+# (docs/session.md): a logind session through PAM, whose user manager runs the
 # session target. The target comes from /etc/pico4-poc/session.conf
 # (PICO4_SESSION_TARGET), default pico4-session.target.
 [Unit]
