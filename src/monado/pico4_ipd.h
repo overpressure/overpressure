@@ -5,8 +5,10 @@
  * @brief  Read the PICO 4 lens separation (IPD) from the GD32 MCU.
  *
  * The MCU on the UART behind /dev/ttyHS1 moves the lenses, drives the panel
- * backlight and takes firmware updates. This module only ever sends its
- * read-only "get IPD position" command; it has no way to build any other frame.
+ * backlight, runs the fan and takes firmware updates. This module only ever
+ * sends its read-only "get IPD position" command; it has no way to build any
+ * other frame. pico4-fan shares the port: both hold an exclusive flock() on it
+ * for each transaction.
  *
  * @ingroup drv_pico4
  */
@@ -36,7 +38,7 @@ pico4_ipd_parse_position(const uint8_t *reply, size_t size, double *out_ipd_m);
 
 /*!
  * Ask the MCU once. Returns 0 and the lens separation in metres, or a negative
- * errno value.
+ * errno value (-EBUSY when the port stays locked for a second).
  */
 int
 pico4_ipd_read(const char *device, double *out_ipd_m);

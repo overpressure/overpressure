@@ -295,7 +295,7 @@ Then, in this order:
 
 | Check | Runs when | Must hold |
 | --- | --- | --- |
-| Userspace check | always | `pico4-userspace-check --wait 240` passes: systemd 257 as PID 1, state `running`, no failed units; `/dev` on tmpfs with every node; root on zram and no writable block device; the USB link unchanged; logind's `seat0`; the `steamos` user's session, `pico4-session.service` and its target active; Monado's socket listening; the session user can open its devices; with GPU firmware in the archive, the Turnip/KGSL Vulkan readback. The stage-1 shell and storage assertions (phase 8) then hold in stage 2 too. |
+| Userspace check | always | `pico4-userspace-check --wait 240` passes: systemd 257 as PID 1, state `running`, no failed units; `/dev` on tmpfs with every node; root on zram and no writable block device; the USB link unchanged; logind's `seat0`; the `steamos` user's session, `pico4-session.service` and its target active; Monado's socket listening; the session user can open its devices; `pico4-fan.service` active and writing its state ([cooling.md](cooling.md#checks)); with GPU firmware in the archive, the Turnip/KGSL Vulkan readback. The stage-1 shell and storage assertions (phase 8) then hold in stage 2 too. |
 | Head IMU | the manifest has sensor data | `pico4-imu stream --rate 500 --seconds 10 --check --orientation`: accelerometer and gyroscope samples with increasing timestamps at the requested 500 Hz; the accelerometer's mean is the tilt reference for the next check |
 | OpenXR pose | the archive has `pico4-monado` | `pico4-openxr-pose 10 10`: the PICO 4 system with orientation tracking, tracked throughout after the warm-up, tilt within 2° of the accelerometer's, heading drift at most 0.5°/s |
 | OpenXR display | the archive has `pico4-monado` | `pico4-openxr-display 30` (projection and quad layer): frames at ≥ 95 % of 90 Hz, late frames at most 1 % (or 1); Monado's `pico4_kms` target commits at ≥ 95 % of 90 Hz with vblank at 90 Hz ± 1 % and no fence timeouts; the scanned-out image is red on the left panel and blue on the right |
@@ -309,12 +309,12 @@ tests. The thresholds are in [pico4/userspace.py](../pico4/userspace.py). Each O
 target writes its statistics when the service stops. The display-layer test runs with Monado
 stopped, so the layer drives the panels.
 
-Nothing cools the headset actively under this userspace ([cooling.md](cooling.md)). Before
+The fan control ([cooling.md](cooling.md)) has not been measured with Valve's session. Before
 Valve's session, the runner reads the hottest thermal zone every 5 s (ignoring readings of 200 °C
 and above) and starts once it is below 70 °C, or after 180 s regardless; `valve_session_cooldown`
 in `result.json` records the wait and the temperature. The session check waits up to 180 s for
-SteamVR's compositor to present, runs 30 s, records the hottest zone before and after
-(`max_temp_c`) and is bounded to 400 s.
+SteamVR's compositor to present, runs 30 s, records the hottest zone (`max_temp_c`) and the fan's
+state (`fan`) before and after, and is bounded to 400 s.
 
 ### Graphics
 

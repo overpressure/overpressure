@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <time.h>
@@ -51,8 +52,18 @@ pico4_ipd_read(const char *device, double *out_ipd_m)
 	if (fd < 0) {
 		return -errno;
 	}
-	struct termios t;
 	int ret = 0;
+	// pico4-fan sends the fan's frames on the same port (docs/cooling.md). Each side
+	// holds an exclusive lock for its transaction, about 0.1 s; wait for it up to 1 s.
+	for (int i = 0; flock(fd, LOCK_EX | LOCK_NB) != 0; i++) {
+		if (errno != EWOULDBLOCK || i == 200) {
+			ret = errno == EWOULDBLOCK ? -EBUSY : -errno;
+			goto out;
+		}
+		const struct timespec wait = {0, 5 * 1000 * 1000};
+		nanosleep(&wait, NULL);
+	}
+	struct termios t;
 	if (tcgetattr(fd, &t) != 0) {
 		ret = -errno;
 		goto out;

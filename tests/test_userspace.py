@@ -11,6 +11,10 @@ STOCK = {f"CONFIG_{o}": "y" for o in (
     "UEVENT_HELPER", "FW_LOADER_USER_HELPER_FALLBACK")}
 VERSION = "Linux version 4.19.81-perf+ (smartcm@dc01) (clang version 8.0.12) #1 SMP PREEMPT"
 
+# `pico4-fan state` on the headset (docs/cooling.md).
+FAN_STATE = {"profile": "late", "duty": 30, "reason": "table", "boost": False, "rpm": 5700,
+             "hottest": "cpu-1-4-usr", "hottest_mean_c": 61.2, "error": None}
+
 PASSING = {
     "schema": 1, "status": "passed", "errors": [], "kernel": "4.19.81-perf+",
     "systemd": {"pid1": "/usr/lib/systemd/systemd", "version": "257.7", "state": "running",
@@ -21,6 +25,7 @@ PASSING = {
     "session": {"user": "steamos", "user_state": "active", "service": "active", "target": "pico4-session.target",
                 "target_state": "active", "failed_units": [], "monado_socket": "active", "monado_service": "inactive",
                 "access_denied": []},
+    "fan": {"service": "active", "state": FAN_STATE},
     "vulkan": {"status": "passed", "result": {"status": "passed", "driver": "turnip", "width": 256,
                                                "height": 256, "verified_pixels": 65536, "bad_pixels": 0}},
 }
@@ -53,7 +58,18 @@ class KernelCompatTests(unittest.TestCase):
 
 class CheckValidationTests(unittest.TestCase):
     def test_passing_check(self):
-        userspace.validate_check(PASSING, require_vulkan=True)
+        userspace.validate_check(PASSING, require_vulkan=True, require_fan=True)
+
+    def test_fan_only_required_on_the_headset(self):
+        # QEMU has no lens MCU UART: the check skips the fan service.
+        value = copy.deepcopy(PASSING)
+        value["fan"] = {"service": "skipped", "state": None}
+        userspace.validate_check(value)
+        with self.assertRaises(ValueError):
+            userspace.validate_check(value, require_fan=True)
+        # An MCU that does not answer is reported, not a failure.
+        value["fan"] = {"service": "active", "state": {**FAN_STATE, "duty": None, "error": "SetFanSpeed 30 %: no reply"}}
+        userspace.validate_check(value, require_fan=True)
 
     def test_vulkan_only_required_with_firmware(self):
         value = copy.deepcopy(PASSING)
@@ -81,6 +97,10 @@ class CheckValidationTests(unittest.TestCase):
             lambda v: v["session"].update(monado_socket="inactive"),
             lambda v: v["session"].update(access_denied=["/dev/spidev0.0"]),
             lambda v: v.pop("session"),
+            lambda v: v["fan"].update(service="failed"),
+            lambda v: v["fan"].update(service="inactive"),
+            lambda v: v["fan"].update(state=None),
+            lambda v: v.pop("fan"),
         )
         for mutate in mutations:
             value = copy.deepcopy(PASSING)
@@ -286,12 +306,15 @@ VALVE_SESSION_PASSING = {
                 {"index": 1, "position": [0.09, 0.96, -0.6], "rotation": [-0.27, 0.05, 0.86]},
                 {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]}],
     "max_temp_c": {"before": 80.1, "after_run": 92.3},
+    "fan": {"before": FAN_STATE, "after_run": {**FAN_STATE, "duty": 50, "rpm": 8500, "hottest_mean_c": 90.4}},
 }
 
 
 class ValveSessionTests(unittest.TestCase):
     def test_passing_session(self):
         userspace.validate_valve_session(VALVE_SESSION_PASSING)
+        # Without the fan daemon both states are null.
+        userspace.validate_valve_session({**VALVE_SESSION_PASSING, "fan": {"before": None, "after_run": None}})
 
     def test_failures_are_rejected(self):
         devices = VALVE_SESSION_PASSING["devices"]
@@ -312,6 +335,8 @@ class ValveSessionTests(unittest.TestCase):
             ("headset only", {"devices": devices[:1]}),
             ("pose not a number", {"devices": [devices[0], {**devices[1], "rotation": ["nan", 0, 0]}, devices[2]]}),
             ("controller at the origin", {"devices": [devices[0], {**devices[1], "position": [0, 0, 0]}, devices[2]]}),
+            ("no fan record", {"fan": None}),
+            ("fan record not a state", {"fan": {"before": "30 %", "after_run": None}}),
         ]
         for name, change in cases:
             value = None if change is None else {**VALVE_SESSION_PASSING, **change}

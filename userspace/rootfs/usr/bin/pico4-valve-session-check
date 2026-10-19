@@ -7,9 +7,10 @@
 #
 #   pico4-valve-session-check [--seconds SECONDS]
 #
-# The session keeps the GPU busy and nothing cools the headset actively under
-# this userspace: SECONDS (default 30) bounds the run after startup. Validated
-# on the host by pico4/userspace.py (validate_valve_session).
+# The session keeps the GPU busy and heats the headset quickly: SECONDS (default
+# 30) bounds the run after startup. The hottest thermal zone and the fan daemon's
+# state (docs/cooling.md) are recorded before and after. Validated on the host by
+# pico4/userspace.py (validate_valve_session).
 set -u
 seconds=30
 while [ $# -gt 0 ]; do
@@ -54,6 +55,11 @@ user_systemctl() {
 max_temp() { # hottest thermal zone, degrees C
 	cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | awk '$1 < 200000 && $1 > m {m = $1} END {printf "%.1f", m / 1000}'
 }
+fan_state() { # pico4-fan's duty, RPM and hottest mean, or null without the daemon
+	local s
+	s=$(pico4-fan state 2>/dev/null)
+	if grep -q '^{' <<<"$s"; then printf '%s' "$s"; else printf null; fi
+}
 
 # Valve's session for the duration of the check; the layer reports into $work.
 saved=""
@@ -67,6 +73,7 @@ rm -f "$logs"/*.txt
 # driver_monado in SteamVR owns the hardware: the Monado service must not hold it.
 systemctl stop pico4-monado.service
 temp_before=$(max_temp)
+fan_before=$(fan_state)
 echo PICO4_SESSION_TARGET=gamescope-session.target > "$conf"
 systemctl restart pico4-session.service
 
@@ -103,6 +110,7 @@ devices=$(runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid
 				v[1], v[2], v[3], v[4], v[5], v[6], v[7]} printf "]"}')
 grep -q '^\[' <<<"$devices" || devices="[]"
 temp_after=$(max_temp)
+fan_after=$(fan_state)
 
 [ "$target_state" = active ] || errors+=("gamescope-session.target is $target_state")
 [ "$steamvr_state" = active ] || errors+=("steamvr.service is $steamvr_state")
@@ -130,6 +138,7 @@ printf ',"session":{"target":"gamescope-session.target","target_state":%s,"steam
 	"$(json_list <<<"$failed")" "$(json_str "$restored")"
 printf ',"compositor":{"started":%s,"gamescope_client":%s,"asserts":%s,"present_wait_errors":%s}' \
 	"$started" "$gamescope_client" "${asserts:-0}" "${present_wait_errors:-0}"
-printf ',"layer":%s,"devices":%s,"max_temp_c":{"before":%s,"after_run":%s}}\n' "$stats" "$devices" \
+printf ',"layer":%s,"devices":%s,"max_temp_c":{"before":%s,"after_run":%s}' "$stats" "$devices" \
 	"${temp_before:-null}" "${temp_after:-null}"
+printf ',"fan":{"before":%s,"after_run":%s}}\n' "$fan_before" "$fan_after"
 [ "$status" = passed ]

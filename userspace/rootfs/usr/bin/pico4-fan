@@ -1,0 +1,727 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Run the PICO 4 fan from the CPU and GPU temperatures with PICO OS's policy (docs/cooling.md).
+
+The fan hangs off the GD32 MCU that also moves the lenses and drives the
+backlight. The AP reaches the MCU on /dev/ttyHS1 (115200 8N1): 6-byte
+requests A0 cmd p1 p2 p3 xor; replies start with 79 and end with the XOR of the
+bytes before. PICO OS's pxrfanservice sets the duty with SetFanSpeed (0x0E,
+0-100 %) through gd32ipdservice:
+
+- it samples the CPU core and GPU sensors (cpu-*-usr, gpuss-*-usr) every 200 ms
+  and keeps each sensor's mean over its last 50 readings (10 s);
+- the hottest mean picks the duty from a six-step table. On the way down a duty
+  holds until the temperature falls one more step; between the two lowest
+  thresholds nothing changes;
+- an unchanged duty is sent again every 10 s.
+
+PICO OS has two tables for the PICO 4 and picks one by the production batch in
+the serial number ("early" and "late" here). This daemon adds one thing: full
+speed while any of those sensors reads 95 °C or more, until the hottest mean is
+below 90 °C again.
+
+Safety: the MCU also takes lens-motor moves, calibration writes and firmware
+updates. This tool builds only the queries in QUERIES and SetFanSpeed with a
+duty of 0-100; it has no way to build any other frame.
+"""
+
+import argparse
+import json
+import os
+import re
+import signal
+import sys
+import time
+from collections import deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Deque, Dict, List, Optional, Tuple
+
+DEVICE = "/dev/ttyHS1"
+THERMAL = Path("/sys/class/thermal")
+STATE = Path("/run/pico4-fan/state.json")
+# The headset's batch ("early" or "late"), from the private sensor data.
+PROFILE_FILE = Path("/usr/share/qcom/pico4/calibration/fan-profile")
+
+# GD32 frames.
+REQUEST, REPLY = 0xA0, 0x79
+SET_FAN_SPEED = 0x0E
+GET_FAN_SPEED, GET_FAN_RPM, GET_MCU_VERSION, GET_FAN_INFO = 0x0F, 0x10, 0x26, 0x30
+QUERIES = (GET_FAN_SPEED, GET_FAN_RPM, GET_MCU_VERSION, GET_FAN_INFO)
+# Reply lengths, as gd32ipdservice reads them.
+REPLY_LENGTH = {SET_FAN_SPEED: 1, GET_FAN_SPEED: 4, GET_FAN_RPM: 4, GET_MCU_VERSION: 8, GET_FAN_INFO: 10}
+GENI_CLOCK_VOTE = 0x544D  # TIOCPMGET: the stock service votes the UART's clocks before each transaction
+REPLY_TIMEOUT = 0.1  # s
+LOCK_TIMEOUT = 2.0   # s
+
+# The control loop, as pxrfanservice runs it.
+SENSORS = re.compile(r"cpu-0-[0-3]-usr|cpu-1-[0-7]-usr|gpuss-[01]-usr")
+PERIOD = 0.2       # s between readings
+WINDOW = 50        # readings per mean: 10 s
+REFRESH = 10.0     # s before an unchanged duty is sent again
+VALID = (1, 110000)  # m°C; pxrfanservice ignores readings above 110 °C
+OVERHEAT = 95100   # m°C: PICO OS warns when the hottest mean stays at or above this ...
+OVERHEAT_AFTER = 120.0  # ... for 2 minutes,
+OVERHEAT_REPEAT = 30.0  # and again every 30 s.
+# Additions of this daemon.
+BOOST = (95000, 90000, 100)  # full speed from 95 °C (any reading) until the hottest mean is below 90 °C
+RETRY = 1.0        # s between attempts after a failed transaction
+ERROR_REPEAT = 60.0  # s between repeated error messages
+STATE_EVERY = 1.0  # s between state file updates
+STATE_STALE = 5.0  # s: an older state file is from a daemon that stopped
+STATE_FIELDS = ("profile", "duty", "reason", "boost", "rpm", "hottest", "hottest_mean_c", "error")
+STALL_READS = 3    # RPM readings of 0 at a duty of 30 % or more before a warning
+ZONE_MAX = 200000  # m°C; disabled zones read placeholders such as 274 °C
+# FanControl's batch limits: the defaults of persist.pxr.fancontrol.limit1, limit2, serial1.
+BATCH_LIMITS = (b"717", b"726", b"D")
+
+
+def c(millidegrees: Optional[int]) -> Optional[float]:
+    return None if millidegrees is None else round(millidegrees / 1000, 1)
+
+
+@dataclass(frozen=True)
+class Table:
+    """Thresholds in m°C, hottest first, and the duty in % from each threshold up."""
+
+    thresholds: Tuple[int, ...]
+    duties: Tuple[int, ...]
+
+    def __post_init__(self):
+        t, d = self.thresholds, self.duties
+        if len(t) < 2 or len(t) != len(d):
+            raise ValueError("a table needs two or more thresholds with one duty each")
+        if any(a <= b for a, b in zip(t, t[1:])):
+            raise ValueError("thresholds must fall strictly, hottest first")
+        if any(not 0 <= x <= 100 for x in d):
+            raise ValueError("duties must be 0-100 %")
+
+    @classmethod
+    def parse(cls, text: str) -> "Table":
+        """'90:50,85:45,...': threshold in °C and duty in %, hottest first."""
+        try:
+            pairs = [p.split(":") for p in text.replace(" ", "").split(",") if p]
+            return cls(tuple(round(float(t) * 1000) for t, _ in pairs), tuple(int(d) for _, d in pairs))
+        except ValueError as e:
+            raise ValueError(f"bad table {text!r}: {e}") from None
+
+    def describe(self) -> str:
+        return ", ".join(f"{t / 1000:g}:{d}" for t, d in zip(self.thresholds, self.duties))
+
+
+# pxrfanservice's tables for the PICO 4 (product "Phoenix"), from FanControl's constructor.
+PROFILES = {
+    "early": Table((90000, 85000, 70000, 60000, 55000, 50000), (75, 60, 45, 30, 30, 30)),
+    "late": Table((90000, 85000, 80500, 72000, 60000, 55000), (50, 45, 40, 35, 30, 0)),
+}
+
+
+def serial_batch(serial: bytes, limits: Tuple[bytes, bytes, bytes] = BATCH_LIMITS) -> str:
+    """PICO OS's production batch, "early" or "late", from the serial number in persist/falcon/sn.
+
+    FanControl reads 32 bytes into a zeroed buffer and decides by the ninth character;
+    at "G" a three-digit date code after it decides, between the two limits together
+    with the seventeenth character.
+    """
+    limit1, limit2, serial1 = limits
+    sn = serial[:32].ljust(32, b"\0")
+    if sn[8] != ord("G"):
+        return "late" if sn[8] > ord("G") else "early"
+    code = sn[9:12]
+    if limit1 <= code < limit2:
+        return "late" if sn[16] >= serial1[0] else "early"
+    return "late" if code >= limit2 else "early"
+
+
+def table_duty(table: Table, temp: int, last: Optional[int]) -> Optional[int]:
+    """pxrfanservice's step: the duty for the hottest mean `temp` after duty `last`.
+
+    From threshold k up the duty is duties[k]. In the band below threshold k a fan
+    running faster than duties[k] runs at duties[k - 1]: on the way down a duty holds
+    until the temperature falls one more step. Between the two lowest thresholds the
+    duty stays as it is (None); below the lowest it is the last entry.
+    """
+    t, d = table.thresholds, table.duties
+    if temp >= t[0]:
+        return d[0]
+    for k in range(1, len(t) - 1):
+        if temp >= t[k]:
+            return d[k - 1] if last is not None and last > d[k] else d[k]
+    if temp >= t[-1]:
+        return None
+    return d[-1]
+
+
+@dataclass
+class Controller:
+    """The duty from the CPU and GPU sensors: the stock table, full speed when hot."""
+
+    table: Table
+    boost_on: int = BOOST[0]   # m°C, any reading: full speed ...
+    boost_off: int = BOOST[1]  # ... until the hottest mean is below this
+    boost_duty: int = BOOST[2]
+    duty: Optional[int] = None
+    boosting: bool = False
+
+    def step(self, hottest_mean: Optional[int], hottest_now: Optional[int]) -> Tuple[int, str]:
+        """The duty to run at and why: table, hold, boost or failsafe (no usable readings)."""
+        if hottest_now is not None and hottest_now >= self.boost_on:
+            self.boosting = True
+        elif self.boosting and (hottest_mean is None or hottest_mean < self.boost_off):
+            self.boosting = False
+        if self.boosting or hottest_mean is None:
+            self.duty = self.boost_duty
+            return self.duty, "boost" if self.boosting else "failsafe"
+        duty = table_duty(self.table, hottest_mean, self.duty)
+        if duty is None:
+            if self.duty is not None:
+                return self.duty, "hold"
+            duty = self.table.duties[-1]  # the first step: as if coming from below
+        self.duty = duty
+        return duty, "table"
+
+
+@dataclass
+class Sensor:
+    """A thermal zone the policy watches, with its last WINDOW valid readings."""
+
+    name: str
+    path: str
+    readings: Deque[int] = field(default_factory=lambda: deque(maxlen=WINDOW))
+    now: Optional[int] = None
+
+    def add(self, value: Optional[int]) -> None:
+        self.now = value
+        if value is not None and VALID[0] <= value <= VALID[1]:
+            self.readings.append(value)
+
+    def mean(self) -> Optional[int]:
+        return sum(self.readings) // len(self.readings) if self.readings else None
+
+
+class Zones:
+    """Thermal zone readings through descriptors kept open, as pxrfanservice reads them."""
+
+    def __init__(self, root: Path = THERMAL):
+        self.root = Path(root)
+        self.fds: Dict[str, int] = {}
+
+    def kinds(self) -> List[Tuple[str, str]]:
+        """(type, temp path) of every zone, in zone order."""
+        out = []
+        zones = sorted(self.root.glob("thermal_zone*"), key=lambda p: int(re.sub(r"\D", "", p.name) or 0))
+        for zone in zones:
+            try:
+                out.append(((zone / "type").read_text().strip(), str(zone / "temp")))
+            except OSError:
+                pass
+        return out
+
+    def read(self, path: str) -> Optional[int]:
+        try:
+            fd = self.fds.get(path)
+            if fd is None:
+                fd = self.fds[path] = os.open(path, os.O_RDONLY)
+            os.lseek(fd, 0, os.SEEK_SET)
+            return int(os.read(fd, 32).strip())
+        except (OSError, ValueError):
+            fd = self.fds.pop(path, None)
+            if fd is not None:
+                os.close(fd)
+            return None
+
+    def hottest(self) -> Tuple[Optional[int], Optional[str]]:
+        """The hottest zone below ZONE_MAX, as pico4-valve-session-check counts it."""
+        best: Tuple[Optional[int], Optional[str]] = (None, None)
+        for kind, path in self.kinds():
+            value = self.read(path)
+            if value is not None and value < ZONE_MAX and (best[0] is None or value > best[0]):
+                best = (value, kind)
+        return best
+
+    def sensors(self) -> List[Sensor]:
+        return [Sensor(kind, path) for kind, path in self.kinds() if SENSORS.fullmatch(kind)]
+
+
+def xor(data: bytes) -> int:
+    x = 0
+    for b in data:
+        x ^= b
+    return x
+
+
+def request(command: int, duty: Optional[int] = None) -> bytes:
+    """A request frame. Only the queries and SetFanSpeed with a duty of 0-100 can be built."""
+    if command in QUERIES and duty is None:
+        body = bytes((REQUEST, command, 0, 0, 0))
+    elif command == SET_FAN_SPEED and type(duty) is int and 0 <= duty <= 100:
+        body = bytes((REQUEST, command, 0, duty, 0))
+    else:
+        raise ValueError(f"command {command:#04x} ({duty!r}) is not allowed")
+    return body + bytes((xor(body),))
+
+
+def find_reply(command: int, data: bytes) -> Optional[bytes]:
+    """The reply to `command` among the bytes read so far, or None (not yet).
+
+    Bytes before the 79 marker are skipped, as the stock service does, and so is a
+    candidate whose checksum fails."""
+    n = REPLY_LENGTH[command]
+    i = data.find(REPLY)
+    while 0 <= i <= len(data) - n:
+        frame = data[i:i + n]
+        if n == 1 or xor(frame[:-1]) == frame[-1]:
+            return frame
+        i = data.find(REPLY, i + 1)
+    return None
+
+
+class Uart:
+    """One transaction on the MCU's UART, as gd32ipdservice does it: open, clock vote,
+    flush, write the request, poll for the reply, close. An exclusive flock keeps the
+    port's other user (the IPD read of Monado's PICO 4 driver) out meanwhile."""
+
+    def __init__(self, device: str = DEVICE, timeout: float = REPLY_TIMEOUT):
+        self.device, self.timeout = device, timeout
+
+    def __call__(self, tx: bytes, command: int) -> bytes:
+        import fcntl
+        import termios
+
+        fd = os.open(self.device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK | os.O_CLOEXEC)
+        try:
+            deadline = time.monotonic() + LOCK_TIMEOUT
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(f"{self.device} stays locked") from None
+                    time.sleep(0.005)
+            # Raw 115200 8N1 (cfmakeraw), as Monado's pico4_ipd.c.
+            iflag, oflag, cflag, lflag, _, _, cc = termios.tcgetattr(fd)
+            iflag &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK | termios.ISTRIP
+                       | termios.INLCR | termios.IGNCR | termios.ICRNL | termios.IXON)
+            oflag &= ~termios.OPOST
+            lflag &= ~(termios.ECHO | termios.ECHONL | termios.ICANON | termios.ISIG | termios.IEXTEN)
+            cflag = (cflag & ~(termios.CSIZE | termios.PARENB)) | termios.CS8 | termios.CLOCAL | termios.CREAD
+            cc[termios.VMIN], cc[termios.VTIME] = 0, 0
+            termios.tcsetattr(fd, termios.TCSANOW,
+                              [iflag, oflag, cflag, lflag, termios.B115200, termios.B115200, cc])
+            try:
+                fcntl.ioctl(fd, GENI_CLOCK_VOTE, 0)
+            except OSError:
+                pass  # not a GENI UART (tests)
+            termios.tcflush(fd, termios.TCIOFLUSH)
+            if os.write(fd, tx) != len(tx):
+                raise OSError(f"short write to {self.device}")
+            data = b""
+            deadline = time.monotonic() + self.timeout
+            while True:
+                time.sleep(0.001)
+                try:
+                    data += os.read(fd, 64)
+                except BlockingIOError:
+                    pass
+                frame = find_reply(command, data)
+                if frame is not None:
+                    return frame
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"no reply to {command:#04x} ({data.hex() or 'nothing'})")
+        except termios.error as e:  # not an OSError: the daemon handles OSError only
+            raise OSError(*e.args) from None
+        finally:
+            os.close(fd)
+
+
+class Fan:
+    """The fan's commands on the MCU, over a transport (Uart, or a fake in the tests)."""
+
+    def __init__(self, transact: Callable[[bytes, int], bytes]):
+        self.transact = transact
+
+    def set_duty(self, duty: int) -> None:
+        self.transact(request(SET_FAN_SPEED, duty), SET_FAN_SPEED)
+
+    def query(self, command: int) -> bytes:
+        return self.transact(request(command), command)
+
+    def duty(self) -> int:
+        frame = self.query(GET_FAN_SPEED)
+        return frame[1] | frame[2] << 8
+
+    def rpm(self) -> int:
+        frame = self.query(GET_FAN_RPM)
+        return frame[1] | frame[2] << 8
+
+
+def log_stderr(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+class Daemon:
+    """The control loop: read the sensors, step the controller, keep the MCU on the duty."""
+
+    def __init__(self, controller: Controller, sensors: List[Sensor], fan: Optional[Fan],
+                 read: Callable[[str], Optional[int]], clock: Callable[[], float] = time.monotonic,
+                 log: Callable[[str], None] = log_stderr, state_path: Optional[Path] = STATE,
+                 profile: str = ""):
+        self.controller, self.sensors, self.fan, self.read = controller, sensors, fan, read
+        self.clock, self.log, self.state_path, self.profile = clock, log, state_path, profile
+        never = float("-inf")
+        self.sent: Optional[int] = None   # duty the MCU acknowledged last
+        self.sent_at = never
+        self.failed_at = never            # last failed SetFanSpeed
+        self.rpm: Optional[int] = None
+        self.rpm_at = never
+        self.zero_rpm = 0
+        self.hot_since: Optional[float] = None
+        self.warned_at = never
+        self.error = ""
+        self.error_at = never
+        self.errors = 0
+        self.state_at = never
+        self.last: Dict = {}
+
+    def cycle(self) -> Dict:
+        now = self.clock()
+        for s in self.sensors:
+            s.add(self.read(s.path))
+        means = [(m, s.name) for s in self.sensors for m in [s.mean()] if m is not None]
+        nows = [s.now for s in self.sensors if s.now is not None and 0 < s.now < ZONE_MAX]
+        hottest_mean, hottest = max(means, key=lambda m: m[0]) if means else (None, None)
+        hottest_now = max(nows) if nows else None
+        duty, reason = self.controller.step(hottest_mean, hottest_now)
+        if self.fan is not None:
+            due = duty != self.sent or now - self.sent_at >= REFRESH
+            if due and now - self.failed_at >= RETRY:
+                self.send(duty, reason, hottest_mean, hottest, now)
+            if now - self.rpm_at >= REFRESH:
+                self.read_rpm(now)
+        elif duty != self.sent:
+            self.sent = duty
+            self.log(f"duty {duty} % ({reason}; hottest mean {c(hottest_mean)} °C, {hottest}) [dry run]")
+        self.watch(now, hottest_mean)
+        self.last = {
+            "pid": os.getpid(), "time": round(time.time(), 1), "profile": self.profile,
+            "duty": self.sent, "target": duty, "reason": reason, "boost": self.controller.boosting,
+            "hottest": hottest, "hottest_mean_c": c(hottest_mean), "hottest_now_c": c(hottest_now),
+            "rpm": self.rpm, "error": self.error or None,
+            "sensors": {s.name: {"now_c": c(s.now), "mean_c": c(s.mean())} for s in self.sensors},
+        }
+        if self.state_path is not None and now - self.state_at >= STATE_EVERY:
+            self.state_at = now
+            self.write_state()
+        return self.last
+
+    def send(self, duty: int, reason: str, hottest_mean: Optional[int], hottest: Optional[str],
+             now: float) -> None:
+        try:
+            self.fan.set_duty(duty)
+        except OSError as e:
+            self.failed_at = now
+            self.fail(f"SetFanSpeed {duty} %: {e}", now)
+            return
+        self.failed_at = float("-inf")
+        changed = duty != self.sent
+        self.sent, self.sent_at = duty, now
+        if changed:
+            self.log(f"duty {duty} % ({reason}; hottest mean {c(hottest_mean)} °C, {hottest})")
+        self.recovered()
+
+    def read_rpm(self, now: float) -> None:
+        self.rpm_at = now
+        try:
+            self.rpm = self.fan.rpm()
+        except OSError as e:
+            self.rpm = None
+            self.fail(f"GetFanRPM: {e}", now)
+            return
+        self.recovered()
+        if self.sent is not None and self.sent >= 30 and self.rpm == 0:
+            self.zero_rpm += 1
+            if self.zero_rpm == STALL_READS:
+                self.log(f"warning: the fan reports 0 rpm at {self.sent} %")
+        else:
+            self.zero_rpm = 0
+
+    def fail(self, message: str, now: float) -> None:
+        """Log the first error of an outage, then one a minute."""
+        self.errors += 1
+        if not self.error or now - self.error_at >= ERROR_REPEAT:
+            more = f" ({self.errors} errors)" if self.errors > 1 else ""
+            self.log(f"MCU: {message}{more}")
+            self.error_at = now
+        self.error = message
+
+    def recovered(self) -> None:
+        if self.error:
+            self.log(f"MCU answers again after {self.errors} errors")
+        self.error, self.errors, self.error_at = "", 0, float("-inf")
+
+    def watch(self, now: float, hottest_mean: Optional[int]) -> None:
+        """PICO OS shows an overheating notice when the hottest mean stays at or above 95.1 °C."""
+        if hottest_mean is None or hottest_mean < OVERHEAT:
+            self.hot_since = None
+            return
+        if self.hot_since is None:
+            self.hot_since = now
+        if now - self.hot_since >= OVERHEAT_AFTER and now - self.warned_at >= OVERHEAT_REPEAT:
+            self.warned_at = now
+            self.log(f"warning: hottest mean {c(hottest_mean)} °C for {now - self.hot_since:.0f} s "
+                     "(PICO OS shows its overheating notice here)")
+
+    def write_state(self) -> None:
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.state_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.last, separators=(",", ":")) + "\n")
+            os.replace(tmp, self.state_path)
+        except OSError:
+            pass
+
+    def run(self, stopping: Callable[[], bool], sleep: Callable[[float], None] = time.sleep) -> None:
+        next_at = self.clock()
+        while not stopping():
+            self.cycle()
+            next_at += PERIOD
+            delay = next_at - self.clock()
+            if delay < 0:
+                next_at, delay = self.clock(), 0.0
+            sleep(delay)
+
+
+def resolve_profile(name: Optional[str], table: Optional[str],
+                    profile_file: Path = PROFILE_FILE) -> Tuple[str, Table, str]:
+    """(profile, table, where the choice came from)."""
+    if table:
+        return "custom", Table.parse(table), "configured"
+    name = (name or "auto").strip()
+    if name != "auto":
+        if name not in PROFILES:
+            raise ValueError(f"unknown profile {name!r} (early, late or auto)")
+        return name, PROFILES[name], "configured"
+    try:
+        found = profile_file.read_text().strip()
+    except OSError:
+        found = ""
+    if found in PROFILES:
+        return found, PROFILES[found], str(profile_file)
+    # Unknown batch: the early table runs the fan at least as fast at every temperature.
+    return "early", PROFILES["early"], "default, batch unknown"
+
+
+def parse_boost(text: Optional[str]) -> Tuple[int, int, int]:
+    """'95:90:100' (on °C, off °C, duty %) or 'off'."""
+    if not text:
+        return BOOST
+    if text.strip() == "off":
+        return (ZONE_MAX, 0, 100)
+    try:
+        on, off, duty = text.split(":")
+        values = (round(float(on) * 1000), round(float(off) * 1000), int(duty))
+    except ValueError:
+        raise ValueError(f"bad boost {text!r} (on °C:off °C:duty %, or off)") from None
+    if not values[1] <= values[0] or not 0 <= values[2] <= 100:
+        raise ValueError(f"bad boost {text!r}")
+    return values
+
+
+def fan_state(path: Path = STATE, now: Optional[float] = None) -> Optional[Dict]:
+    """The running daemon's duty, RPM and hottest mean from its state file, or None."""
+    try:
+        state = json.loads(path.read_text())
+        written = float(state["time"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if (time.time() if now is None else now) - written > STATE_STALE:
+        return None
+    return {k: state.get(k) for k in STATE_FIELDS}
+
+
+def daemon_pid(state: Path = STATE) -> Optional[int]:
+    """The running daemon's pid from its state file, if it is alive."""
+    try:
+        pid = int(json.loads(state.read_text())["pid"])
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return pid if b"pico4-fan" in cmdline and pid != os.getpid() else None
+
+
+def cmd_run(args) -> int:
+    name, table, source = resolve_profile(args.profile, args.table)
+    on, off, duty = parse_boost(args.boost)
+    controller = Controller(table, on, off, duty)
+    zones = Zones(args.thermal)
+    sensors = zones.sensors()
+    fan = None if args.dry_run else Fan(Uart(args.device))
+    state = None if args.no_state else STATE
+    daemon = Daemon(controller, sensors, fan, zones.read, state_path=state, profile=name)
+    boost = f"{duty} % from {on / 1000:g} °C until the hottest mean is below {off / 1000:g} °C" \
+        if on < ZONE_MAX else "off"
+    log_stderr(f"profile {name} ({source}): {table.describe()}; boost {boost}; "
+               f"{len(sensors)} sensors: {', '.join(s.name for s in sensors) or 'none (failsafe)'}")
+    if fan is not None:
+        try:
+            log_stderr(f"MCU before control: duty {fan.duty()} %, {fan.rpm()} rpm")
+        except OSError as e:
+            log_stderr(f"MCU before control: {e}")
+    stop = []
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.append(True))
+    daemon.run(lambda: bool(stop))
+    if state is not None:
+        daemon.write_state()
+    log_stderr(f"stopped; the fan stays at {daemon.sent} %")
+    return 0
+
+
+def busy(args) -> bool:
+    pid = daemon_pid()
+    if pid and not args.force:
+        print(f"pico4-fan is running (pid {pid}); stop pico4-fan.service first, or --force",
+              file=sys.stderr)
+        return True
+    return False
+
+
+def cmd_set(args) -> int:
+    if busy(args):
+        return 1
+    fan = Fan(Uart(args.device))
+    fan.set_duty(args.duty)
+    time.sleep(args.settle)
+    print(json.dumps({"duty": args.duty, "readback": fan.duty(), "rpm": fan.rpm()}))
+    return 0
+
+
+def cmd_sweep(args) -> int:
+    if busy(args):
+        return 1
+    fan = Fan(Uart(args.device))
+    zones = Zones(args.thermal)
+    start = fan.duty()
+    try:
+        for duty in (int(d) for d in args.duties.split(",")):
+            fan.set_duty(duty)
+            time.sleep(args.settle)
+            rpms = []
+            for _ in range(3):
+                rpms.append(fan.rpm())
+                time.sleep(1.0)
+            hottest, zone = zones.hottest()
+            print(json.dumps({"duty": duty, "readback": fan.duty(), "rpm": sorted(rpms)[1],
+                              "rpms": rpms, "hottest_c": c(hottest), "zone": zone}), flush=True)
+    finally:
+        fan.set_duty(start)
+    return 0
+
+
+def cmd_status(args) -> int:
+    out: Dict = {"daemon": None}
+    if daemon_pid():
+        try:
+            out["daemon"] = json.loads(STATE.read_text())
+        except (OSError, ValueError):
+            pass
+    fan = Fan(Uart(args.device))
+    for key, call in (("duty", fan.duty), ("rpm", fan.rpm),
+                      ("version", lambda: fan.query(GET_MCU_VERSION)[1:-1]),
+                      ("info", lambda: fan.query(GET_FAN_INFO)[1:-1])):
+        try:
+            value = call()
+            out[key] = value.hex(" ") if isinstance(value, bytes) else value
+        except OSError as e:
+            out[key] = f"error: {e}"
+    hottest, zone = Zones(args.thermal).hottest()
+    out["hottest_c"], out["zone"] = c(hottest), zone
+    print(json.dumps(out, indent=None if args.compact else 1))
+    return 0
+
+
+def cmd_state(args) -> int:
+    """One JSON line for pico4-userspace-check and pico4-valve-session-check: null without a daemon."""
+    print(json.dumps(fan_state(), separators=(",", ":")))
+    return 0
+
+
+def cmd_batch(args) -> int:
+    """The batch word for scripts/extract-sensor-data.sh; the serial number itself is never printed."""
+    serial = sys.stdin.buffer.read() if args.serial == "-" else Path(args.serial).read_bytes()
+    if not serial.strip(b"\0\r\n\t "):
+        print("pico4-fan: no serial number", file=sys.stderr)
+        return 1
+    print(serial_batch(serial))
+    return 0
+
+
+def cmd_monitor(args) -> int:
+    """JSON lines for a run: the hottest zone and the daemon's state; no MCU traffic."""
+    zones = Zones(args.thermal)
+    start = time.monotonic()
+    while True:
+        elapsed = time.monotonic() - start
+        hottest, zone = zones.hottest()
+        line = {"t": round(elapsed, 1), "hottest_c": c(hottest), "zone": zone}
+        try:
+            state = json.loads(STATE.read_text())
+            line.update({k: state.get(k) for k in ("duty", "reason", "rpm", "hottest_mean_c", "hottest", "boost")})
+        except (OSError, ValueError):
+            line["duty"] = None
+        print(json.dumps(line), flush=True)
+        if args.seconds and elapsed >= args.seconds:
+            return 0
+        time.sleep(args.interval)
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="pico4-fan", description=__doc__.split("\n\n")[0])
+    parser.add_argument("--device", default=DEVICE)
+    parser.add_argument("--thermal", default=str(THERMAL), help=argparse.SUPPRESS)
+    sub = parser.add_subparsers(dest="command", required=True)
+    run = sub.add_parser("run", help="the control loop (pico4-fan.service)")
+    run.add_argument("--profile", default=os.environ.get("PICO4_FAN_PROFILE"),
+                     help="early, late or auto (default; the batch file, else early)")
+    run.add_argument("--table", default=os.environ.get("PICO4_FAN_TABLE"),
+                     help="threshold °C:duty %%, hottest first, e.g. 90:50,85:45,80.5:40,72:35,60:30,55:0")
+    run.add_argument("--boost", default=os.environ.get("PICO4_FAN_BOOST"),
+                     help="on °C:off °C:duty %% (default 95:90:100), or off")
+    run.add_argument("--dry-run", action="store_true", help="decide and log, never touch the MCU")
+    run.add_argument("--no-state", action="store_true", help=argparse.SUPPRESS)
+    run.set_defaults(func=cmd_run)
+    status = sub.add_parser("status", help="the MCU's duty, RPM, version and fan info; the daemon's state")
+    status.add_argument("--compact", action="store_true")
+    status.set_defaults(func=cmd_status)
+    set_ = sub.add_parser("set", help="one SetFanSpeed (with the service stopped)")
+    set_.add_argument("duty", type=int, choices=range(101), metavar="DUTY")
+    set_.add_argument("--settle", type=float, default=3.0)
+    set_.add_argument("--force", action="store_true")
+    set_.set_defaults(func=cmd_set)
+    sweep = sub.add_parser("sweep", help="duty against RPM, as JSON lines (with the service stopped)")
+    sweep.add_argument("--duties", default="0,10,20,30,40,50,60,70,80,90,100")
+    sweep.add_argument("--settle", type=float, default=5.0)
+    sweep.add_argument("--force", action="store_true")
+    sweep.set_defaults(func=cmd_sweep)
+    monitor = sub.add_parser("monitor", help="hottest zone and the daemon's state, as JSON lines")
+    monitor.add_argument("--seconds", type=float, default=0, help="stop after this long (default: never)")
+    monitor.add_argument("--interval", type=float, default=5.0)
+    monitor.set_defaults(func=cmd_monitor)
+    state = sub.add_parser("state", help="the daemon's duty, RPM and hottest mean as one JSON line (null if it is not running)")
+    state.set_defaults(func=cmd_state)
+    batch = sub.add_parser("batch", help="early or late, from a serial number file (- for stdin); prints only the word")
+    batch.add_argument("serial")
+    batch.set_defaults(func=cmd_batch)
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except ValueError as e:
+        parser.error(str(e))
+    except OSError as e:
+        print(f"pico4-fan: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -8,8 +8,9 @@ supplies the headset (6DoF) and both controllers (3DoF) from the PICO 4 driver o
 [xr.md](xr.md). Semaphores shared between processes and System V semaphores, which the kernel
 cannot provide, are implemented in userspace. Outside Valve's session, Monado runs as a
 socket-activated system service. The session is verified on the headset, including an
-acceptance cycle with stock restore. It is GPU-bound at 42–54 frames per second, nothing cools
-the headset actively yet, and the Steam client is not set up (no network, no Steam login).
+acceptance cycle with stock restore. It is GPU-bound at 42–54 frames per second, the fan
+control ([cooling.md](cooling.md)) has not been measured with it, and the Steam client is not
+set up (no network, no Steam login).
 Valve's packages come from the Frame's public repository ([userspace.md](userspace.md)); the
 build output stays private.
 
@@ -307,13 +308,14 @@ per second; a present waits 12–16.5 ms on average for its rendering. SteamVR o
 without gamescope, presents most frames at 90 Hz; about one in five misses its vblank and
 shows one refresh later.
 
-Nothing cools the headset actively under this userspace: no fan control and no Qualcomm
-`thermal-engine`, whose user-space thermal zones stay idle; only the kernel's `step_wise` zones
-throttle ([cooling.md](cooling.md)). Valve's session takes the hottest thermal zone from
-47–54 °C to 86–92 °C within a minute, and a few minutes of it bring the GPU to about 95 °C and
-the CPU clusters to 96–98 °C. `pico4-valve-session-check` therefore runs the session for 30 s
-by default and records the hottest zone before and after, and the acceptance runner lets the
-headset cool below 70 °C first.
+`pico4-fan.service` drives the fan with PICO OS's policy ([cooling.md](cooling.md)); Qualcomm's
+`thermal-engine` does not run here, as on PICO OS, and the kernel's `step_wise` zones throttle.
+The figures that follow were measured without fan control, and the session has not been
+measured with it. Valve's session took the hottest thermal zone from 47–54 °C to 86–92 °C
+within a minute, and a few minutes of it brought the GPU to about 95 °C and the CPU clusters
+to 96–98 °C. `pico4-valve-session-check` therefore runs the session for 30 s by default and
+records the hottest zone and the fan's state before and after, and the acceptance runner lets
+the headset cool below 70 °C first.
 
 ## Build
 
@@ -389,11 +391,12 @@ runs Valve's session for a bounded time and returns to the configured one:
 It prints one JSON object (schema 1): status and errors, the startup time, the units' states,
 what the compositor's log shows (startup, gamescope's connection, assertions, failed present
 waits), the layer's statistics, each device's position (m) and rotation (rad), and the hottest
-zone before and after. The exit status is 0 only if the check passed. On the host,
+zone and the fan daemon's state (`pico4-fan state`, [cooling.md](cooling.md#checks)) before
+and after. The exit status is 0 only if the check passed. On the host,
 `validate_valve_session` in [pico4/userspace.py](../pico4/userspace.py) also requires at least
 36 commits/s (40 % of 90 Hz, since the session is GPU-bound), vblanks within 1 % of 90 Hz, no
 retire or GPU timeouts, a scanned-out image that is not black, finite poses for the three
-devices, and a position for each controller.
+devices, a position for each controller, and the fan record (a state or null, before and after).
 
 ### Acceptance
 
@@ -432,7 +435,8 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 
 1. **Performance.** What gamescope's overlay and the dashboard cost on the GPU in the full
    session, and the Frame's other compositor settings (simplified shaders, overlay quality).
-2. **Cooling.** The fan and a thermal policy under this userspace: [cooling.md](cooling.md).
+2. **Cooling.** Measure the fan control ([cooling.md](cooling.md)) on the headset, with the
+   full session for 10 minutes against an agreed limit for the hottest zone.
 3. **The Steam client.** A network (Wi-Fi or USB) and a Steam login; gamescope's desktop
    overlays need the client.
 4. **Controller positions.** IR-LED tracking, as for Monado ([xr.md](xr.md)); until then the

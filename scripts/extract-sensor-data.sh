@@ -14,6 +14,9 @@
 #   calibration/pvr/                          factory camera/IMU/lens calibration
 #   calibration/pxrconfig/SDK_Lens_ConfigFile.txt  stock lens configuration
 #                                             (chromatic aberration terms; system)
+#   calibration/fan-profile                   early or late: the production batch that
+#                                             selects the fan table (from the serial
+#                                             number in persist, which is not kept)
 #   manifest.json                             sources and sha256 of every file
 # The result is device-specific and partly proprietary: keep it private
 # (assets/ is ignored by Git). Nothing touches the headset.
@@ -78,6 +81,15 @@ dump "$backup/lun0/persist.bin" /sensors/registry/registry "$work"
 mv "$work/registry" "$output/sensors/registry"
 dump "$backup/lun0/persist.bin" /sensors/registry/sns_reg_version "$output/sensors/sns_reg_version"
 dump "$backup/lun0/persist.bin" /pvr "$output/calibration"
+
+echo ">> persist: the fan's production batch"
+# PICO OS picks its fan table by the production batch in the serial number
+# (docs/cooling.md). Only the batch word is written; the serial goes no further.
+if ! debugfs -R "cat /falcon/sn" "$backup/lun0/persist.bin" 2>/dev/null |
+    python3 "$project/userspace/rootfs/usr/bin/pico4-fan" batch - > "$output/calibration/fan-profile"; then
+    rm -f "$output/calibration/fan-profile"
+    echo "no serial number in persist: pico4-fan will use its early table" >&2
+fi
 
 echo ">> modem: sensor DSP firmware"
 export MTOOLS_SKIP_CHECK=1

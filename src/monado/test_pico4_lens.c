@@ -3,14 +3,19 @@
 /*
  * Unit test of the lens model and the IPD reply parser, with synthetic values
  * (no device data): file parsing, the polynomial, chromatic aberration, the
- * fitted radius, the field of view and the only MCU request the driver sends.
+ * fitted radius, the field of view, the only MCU request the driver sends and
+ * the port lock it shares with pico4-fan.
  */
 
 #include "pico4_ipd.h"
 #include "pico4_lens.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 static int failures;
 
@@ -96,6 +101,17 @@ main(void)
 	EXPECT(pico4_ipd_parse_position(swapped, sizeof(swapped), &ipd) && NEAR(ipd, 0.0635));
 	reply[5] ^= 1;
 	EXPECT(!pico4_ipd_parse_position(reply, sizeof(reply), &ipd));
+
+	// The port lock shared with pico4-fan: while another descriptor holds it, the read
+	// gives up after a second; once it is free the read goes on (and a plain file then
+	// fails at tcgetattr).
+	char port[] = "test_pico4_ipd_XXXXXX";
+	int holder = mkstemp(port);
+	EXPECT(holder >= 0 && flock(holder, LOCK_EX) == 0);
+	EXPECT(pico4_ipd_read(port, &ipd) == -EBUSY);
+	close(holder);
+	EXPECT(pico4_ipd_read(port, &ipd) == -ENOTTY);
+	unlink(port);
 
 	if (failures == 0) {
 		printf("test_pico4_lens: all checks passed\n");

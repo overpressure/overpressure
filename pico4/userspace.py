@@ -119,11 +119,13 @@ MONADO_RUNTIME_DIR = "/run/pico4-monado"
 TURNIP_ICD = "/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json"
 
 
-def validate_check(value, require_vulkan: bool = False) -> None:
+def validate_check(value, require_vulkan: bool = False, require_fan: bool = False) -> None:
     """Validate pico4-userspace-check JSON from the headset or QEMU.
 
     Besides systemd, /dev and the storage policy, the session user must be
-    logged in with its target active, and Monado's socket must listen.
+    logged in with its target active, and Monado's socket must listen. The fan
+    service must run wherever the lens MCU's UART exists, which require_fan
+    demands (the headset); whether the MCU acknowledges its duty is reported only.
     """
     if not isinstance(value, dict) or value.get("schema") != 1:
         raise ValueError("Userspace check produced no schema-1 result")
@@ -153,6 +155,12 @@ def validate_check(value, require_vulkan: bool = False) -> None:
         raise ValueError("Monado's socket is not listening")
     if session.get("access_denied"):
         raise ValueError(f"The {SESSION_USER} user cannot open {', '.join(session['access_denied'])}")
+    fan = value.get("fan") or {}
+    service = fan.get("service")
+    if service not in ("active", "skipped") or (require_fan and service != "active"):
+        raise ValueError(f"The fan service is not running (docs/cooling.md): {service}")
+    if service == "active" and not isinstance(fan.get("state"), dict):
+        raise ValueError("The fan daemon writes no state")
     if require_vulkan:
         vk = value.get("vulkan") or {}
         if vk.get("status") != "passed":
@@ -324,7 +332,7 @@ def validate_vr_sync(value) -> None:
         raise ValueError(f"The waiting GPU work started at {start}, before the signalling work ended at {end}")
 
 
-VALVE_SESSION_SECONDS = 30  # bounded: nothing cools the headset actively under this userspace
+VALVE_SESSION_SECONDS = 30  # bounded: the session heats the headset quickly (docs/cooling.md)
 VALVE_SESSION_START_C = 70.0  # the hottest thermal zone before the session starts...
 VALVE_SESSION_COOLDOWN_SECONDS = 180  # ...or this long a wait for it
 # SteamVR's compositor is GPU-bound in the full session (gamescope's overlay and
@@ -338,7 +346,8 @@ def validate_valve_session(value) -> None:
     gamescope's session must run with SteamVR, whose compositor presents
     through the pico4-vrdisplay layer without lost fences and shows an image;
     SteamVR must report the headset and both controllers, the controllers
-    placed by the arm model; and the configured session must come back.
+    placed by the arm model; and the configured session must come back. The
+    fan daemon's state before and after is recorded (null without the daemon).
     """
     if not isinstance(value, dict) or value.get("schema") != 1:
         raise ValueError("Valve session check produced no schema-1 result")
@@ -373,3 +382,7 @@ def validate_valve_session(value) -> None:
     for index in (1, 2):
         if not any(devices[index]["position"]):
             raise ValueError(f"Controller {index} has no position in SteamVR")
+    fan = value.get("fan")
+    if not isinstance(fan, dict) or any(fan.get(k) is not None and not isinstance(fan.get(k), dict)
+                                        for k in ("before", "after_run")):
+        raise ValueError(f"The Valve session check recorded no fan state: {fan}")

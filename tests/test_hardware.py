@@ -159,6 +159,7 @@ class HarnessTests(unittest.TestCase):
                  "session": {"user": "steamos", "user_state": "active", "service": "active",
                              "target": "pico4-session.target", "target_state": "active", "failed_units": [],
                              "monado_socket": "active", "monado_service": "inactive"},
+                 "fan": {"service": "active", "state": self.FAN_STATE},
                  "vulkan": {"status": "skipped", "result": None}}
         if self.scenario == "userspace-check":
             value.update(status="failed", errors=["no failed units"])
@@ -167,6 +168,10 @@ class HarnessTests(unittest.TestCase):
 
     def save_backup_manifest(self):
         (self.args.backup / "manifest.json").write_text(json.dumps(self.backup_manifest))
+
+    # `pico4-fan state` (docs/cooling.md).
+    FAN_STATE = {"profile": "late", "duty": 30, "reason": "table", "boost": False, "rpm": 5700,
+                 "hottest": "cpu-1-4-usr", "hottest_mean_c": 61.2, "error": None}
 
     # What systemctl writes to stderr when it stops a socket-activated service.
     SYSTEMCTL_NOTE = ("Stopping 'pico4-monado.service', but its triggering units are still active:\n"
@@ -319,7 +324,9 @@ class HarnessTests(unittest.TestCase):
                     "devices": [{"index": 0, "position": [-0.01, 1.61, 0.07], "rotation": [-2.5, -1.56, 2.42]},
                                 {"index": 1, "position": [0.09, 0.96, -0.6], "rotation": [-0.27, 0.05, 0.86]},
                                 {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]}],
-                    "max_temp_c": {"before": 80.1, "after_run": 92.3}}) + "\nEXIT=" + ("1" if failed else "0")
+                    "max_temp_c": {"before": 80.1, "after_run": 92.3},
+                    "fan": {"before": self.FAN_STATE, "after_run": {**self.FAN_STATE, "duty": 50}}}) + \
+                    "\nEXIT=" + ("1" if failed else "0")
             if command.startswith(("pico4-imu list", "systemctl status", "cat /run/pico4-poc/openxr",
                                    "cat /run/pico4-poc/vrdisplay.log", "cat /run/pico4-poc/vrsync.log")):
                 return "sensor evidence"
@@ -411,6 +418,7 @@ class HarnessTests(unittest.TestCase):
         self.assertTrue(self.restored)
         state = self.runner.result["userspace"]
         self.assertEqual((state["sha256"], state["check"]["status"]), (self.userspace_sha, "passed"))
+        self.assertEqual(state["check"]["fan"], {"service": "active", "state": self.FAN_STATE})
         # Two deadlines of 60 s plus 300 s handoff margin on top of the normal budget.
         self.assertEqual(self.runner.result["device_recovery"]["test_timeout"], 302 + 420)
         self.assertTrue((self.runner.folder / "userspace-check.json").exists())
@@ -487,6 +495,7 @@ class HarnessTests(unittest.TestCase):
                     continue
                 valve = state["valve_session"]
                 self.assertEqual((valve["layer"]["target"], len(valve["devices"])), ("pico4_vrdisplay", 3))
+                self.assertEqual(valve["fan"]["after_run"]["duty"], 50)
                 self.assertEqual(state["valve_session_cooldown"], {"seconds": 0, "hottest_c": 61.2})
                 self.assertTrue((self.runner.folder / "userspace-valve-session.json").exists())
                 self.assertTrue((self.runner.folder / "userspace-valve-vrcompositor.txt").exists())

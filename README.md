@@ -23,8 +23,9 @@ readback; storage stays read-only otherwise. Keep your own EDL backup
 | 5 XR hardware | head IMU, Monado with KMS output, lens correction and IPD, four tracking cameras, Basalt 6DoF, controllers (inputs, 3DoF) |
 | 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, about 50 fps (GPU-bound) |
 
-Open: cooling (fan control), performance, the Steam client and network, controller position
-tracking, a standalone boot. Plan and details: [docs/roadmap.md](docs/roadmap.md).
+Open: running the fan control on the headset (integrated, not yet run there), performance, the
+Steam client and network, controller position tracking, a standalone boot. Plan and details:
+[docs/roadmap.md](docs/roadmap.md).
 
 ## Quick start
 

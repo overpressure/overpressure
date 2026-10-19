@@ -526,10 +526,10 @@ class Runner:
             except (ValueError, OSError) as exc:  # evidence is best effort, the check decides
                 (self.folder / f"userspace-{name}.txt").write_text(f"unavailable: {exc}\n", encoding="utf-8")
         value = json.loads(report)
-        state["check"] = {k: value.get(k) for k in ("status", "errors", "systemd", "versions", "vulkan")}
+        state["check"] = {k: value.get(k) for k in ("status", "errors", "systemd", "versions", "vulkan", "fan")}
         self.save()
         require(code.strip() == "0", "Userspace check failed")
-        userspace.validate_check(value, require_vulkan=state["gpu_firmware"])
+        userspace.validate_check(value, require_vulkan=state["gpu_firmware"], require_fan=True)
         # The storage and identity guarantees of stage 1 must hold in stage 2.
         self.assertions("-userspace")
         if state["sensor_data"]:
@@ -732,7 +732,7 @@ class Runner:
         layer = value.get("layer") if isinstance(value.get("layer"), dict) else {}
         state["valve_session"] = {
             **{k: value.get(k) for k in ("status", "errors", "startup_seconds", "session", "compositor", "devices",
-                                         "max_temp_c")},
+                                         "max_temp_c", "fan")},
             "layer": {k: layer.get(k) for k in ("target", "commits", "commit_hz", "vblank_hz", "late",
                                                 "retire_timeouts", "gpu_timeouts", "gpu_wait_ms",
                                                 "present_wait_timeouts", "eye_mean_rgb")}}

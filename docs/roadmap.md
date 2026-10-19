@@ -237,9 +237,10 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
   per second against the panels' 90 Hz. SteamVR on its own presents most frames at 90 Hz;
   about one in five is a refresh late. In the lenses the SteamVR environment shows, slightly
   jittery; the controllers turn with the wrists but do not move in space.
-- **Heat.** Nothing cools the headset actively: no fan control and no thermal daemon, only the
-  kernel's throttling. Valve's session takes the hottest thermal zone from about 54 °C to
-  92 °C within a minute, so session checks run for 30 s.
+- **Heat.** Without fan control Valve's session takes the hottest thermal zone from about 54 °C
+  to 92 °C within a minute. The userspace enables `pico4-fan.service`, which runs PICO OS's fan
+  policy ([cooling.md](cooling.md)); its effect on the headset is not measured yet. Session
+  checks run for 30 s.
 - **Monado service.** Outside Valve's session, the default `pico4-session.target` uses Monado's
   service as the OpenXR runtime. The two never run together, because both own the hardware;
   `/etc/pico4-poc/session.conf` selects the target.
@@ -271,26 +272,26 @@ and where they stand.
 
 Details: [cooling.md](cooling.md).
 
-Nothing cools the headset actively under this userspace. The kernel's `step_wise` zones
-throttle the prime core from 75 °C and the GPU only from 95 °C. On PICO OS the fan, an AVC
-blower, hangs off the GD32 MCU that also moves the lenses and drives the backlight;
-`pxrfanservice` sets its duty over that MCU's UART (`/dev/ttyHS1`). The kernel's `pwm-fan`
-driver has no device-tree node, and Qualcomm's `thermal-engine` is off on PICO OS as well.
+The kernel's `step_wise` zones throttle the prime core from 75 °C and the GPU only from 95 °C.
+On PICO OS the fan, an AVC blower, hangs off the GD32 MCU that also moves the lenses and drives
+the backlight; `pxrfanservice` sets its duty over that MCU's UART (`/dev/ttyHS1`). The kernel's
+`pwm-fan` driver has no device-tree node, and Qualcomm's `thermal-engine` is off on PICO OS as
+well.
 
 [`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan) runs PICO OS's policy with the same
 frames: 14 CPU and GPU zones every 200 ms, 10 s means, PICO's duty tables with their
 hysteresis. It adds full speed while any sensor reads 95 °C or more, until the hottest mean is
 below 90 °C, and 100 % without usable readings. It builds frames only from an allowlist
-(SetFanSpeed 0–100 % and four queries). Host tests cover it; it has not run on the headset.
-Remaining:
+(SetFanSpeed 0–100 % and four queries) and shares the UART with Monado's IPD read through an
+exclusive `flock`. The userspace build enables its service, and the acceptance checks require
+it on the headset and record its duty and RPM. Host tests cover it; it has not run on the
+headset. Remaining:
 
-1. **Integration.** Enable `pico4-fan.service` in the userspace build; write the fan profile
-   (the production-batch word only, never the serial) in `scripts/extract-sensor-data.sh`;
-   take the same `flock` on `/dev/ttyHS1` in Monado's IPD reader (`pico4_ipd.c`); record duty
-   and RPM in `pico4-valve-session-check`; check the service in `pico4-userspace-check`.
-2. **Hardware.** Read the MCU's duty and RPM before the daemon sends anything; sweep the duty
+1. **Hardware.** Read the MCU's duty and RPM before the daemon sends anything; sweep the duty
    against the RPM; check the fan's response to a load step; run Valve's session for 10
    minutes against an agreed limit for the hottest zone.
+2. **Stricter checks.** Once the MCU is seen to acknowledge on the headset,
+   `pico4-userspace-check` can require an acknowledged duty instead of reporting it.
 3. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
    that limit.
 4. **GetFanInfo.** Decode its reply; if it identifies the fan, the daemon can choose its table

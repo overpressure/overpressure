@@ -26,8 +26,9 @@ the OpenXR test clients and `pico4-cam` in [src/xr/](../src/xr), and the Python 
 >   whole headset.
 > - **No firmware commands.** The station link (`/dev/spidev0.0`) also carries station and
 >   controller firmware updates (OTA), and the GD32 MCU (`/dev/ttyHS1`) also takes motor moves,
->   calibration writes and firmware. Never send such commands. The station modules and the IPD
->   reader build frames only from allowlists; keep it that way.
+>   calibration writes and firmware. Never send such commands. The station modules, the IPD
+>   reader and `pico4-fan` ([cooling.md](cooling.md)) build frames only from allowlists; keep it
+>   that way.
 > - **One owner for cameras and station.** The OV7251s stream only while the station pulses
 >   FSIN, so every capture resets the station first. One process at a time may own the cameras
 >   and the station: stop `pico4-monado.service` (or Valve's session) before `pico4-cam` or
@@ -317,9 +318,11 @@ clock-vote ioctl (`0x544D`) that the stock service also issues: `A0 08 00 00 00 
 position; the last byte is the XOR of the others). The reply `79 a_lo a_hi b_lo b_hi xor`
 carries the lens separation in 0.01 mm and the Hall sensor reading, told apart by range (the
 separation lies within 57.00–73.00 mm); the driver waits up to 200 ms for it. The module cannot
-build any other frame: the MCU also takes motor moves, calibration writes and firmware. The
-driver passes the separation to Monado's view poses and falls back to Monado's default if the
-MCU does not answer.
+build any other frame: the MCU also takes motor moves, calibration writes and firmware. The MCU
+also runs the fan, and `pico4-fan` ([cooling.md](cooling.md)) sends its frames on the same port:
+both hold an exclusive `flock` on `/dev/ttyHS1` for each transaction, and the IPD read gives up
+after waiting a second for it. The driver passes the separation to Monado's view poses and falls
+back to Monado's default if the MCU does not answer or the port stays locked.
 
 ## Controller radio ("station")
 
@@ -555,6 +558,7 @@ bash scripts/extract-sensor-data.sh backup/stock assets/sensor-data-5.13.7
 | `sensors/registry/`, `sns_reg_version` | this headset's registry with its factory calibration (persist) |
 | `calibration/pvr/` | factory camera, IMU and lens calibration (persist) |
 | `calibration/pxrconfig/SDK_Lens_ConfigFile.txt` | stock lens configuration with the chromatic aberration terms (system) |
+| `calibration/fan-profile` | `early` or `late`: the production batch that selects the fan's table, from the serial number, which is not kept (persist; [cooling.md](cooling.md)) |
 | `manifest.json` | sources and SHA-256 of every file |
 
 Then build the userspace with it (`make userspace` uses these defaults; see
@@ -585,8 +589,8 @@ the orientation filter, the runner's validators and the super-image reader.
 
 ## Run
 
-The sensor units start at boot. Nothing cools the headset actively under this userspace
-([cooling.md](cooling.md)): keep display and SLAM runs short.
+The sensor units start at boot. The fan control ([cooling.md](cooling.md)) has not been measured
+on the headset yet: keep display and SLAM runs short.
 
 ```sh
 pico4-imu list accel gyro mag          # sensors and attributes the DSP reports
