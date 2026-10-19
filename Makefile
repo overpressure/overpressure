@@ -21,8 +21,8 @@ image: ## stage-1 boot image for FIRMWARE in out/
 userspace: ## userspace archive in USERSPACE/ (as root; add USERSPACE_FLAGS+=--refresh for new packages)
 	scripts/build-userspace.sh $(BUILD_ROOT) $(USERSPACE) $(USERSPACE_FLAGS)
 
-qemu-stage1: ## stage 1 on the QEMU test kernel (tests/qemu/build-test-kernel.sh first)
+qemu-stage1: ## optional: stage 1 on the QEMU test kernel, about 3 min
 	tests/qemu/run-selftest.sh out/pico4-poc-$(FIRMWARE)-initramfs.cpio.gz
 
-qemu-userspace: ## stage 1 and the userspace on the 4.19 QEMU test kernel
+qemu-userspace: ## optional: the userspace on the 4.19 QEMU kernel, 10-20 min, often fails
 	tests/qemu/run-userspace.sh out/pico4-poc-$(FIRMWARE)-initramfs.cpio.gz $(USERSPACE)/pico4-userspace.tar.zst

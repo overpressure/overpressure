@@ -62,8 +62,7 @@ python -m pico4 build --firmware 5.13.7-global-seko      # stage-1 image -> out/
 # Linux/WSL as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
 scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7
-tests/qemu/run-userspace.sh out/pico4-poc-5.13.7-global-seko-initramfs.cpio.gz out/userspace/pico4-userspace.tar.zst
-# The headset (settings from .env):
+# The headset (settings from .env); this is the integration test:
 python -m pico4 dev boot && python -m pico4 dev check    # iterate on the flashed dev image
 python -m pico4 cycle --userspace out/userspace/pico4-userspace.tar.zst   # acceptance, ends on stock
 ```
@@ -72,10 +71,10 @@ python -m pico4 cycle --userspace out/userspace/pico4-userspace.tar.zst   # acce
 - Project packages rebuild only when their recipe changes, and incrementally when only `src/`
   changed; `--clean` forces a clean package build. Package databases change only with
   `--refresh`. Details and timings: docs/development.md.
-- The QEMU userspace test takes about 10 minutes under TCG; run it when stage 1, the handoff
-  or early boot change, on an otherwise idle host: concurrent heavy work (or 4 TCG vCPUs
-  instead of the harness's 2) pushes systemd's generators past their limit and systemd stops
-  with "Failed to start up manager".
+- Test on the headset, not in QEMU. The QEMU boot tests in `tests/qemu/` emulate the whole
+  system under TCG: a userspace boot takes 10–20 minutes and often fails on RCU stalls
+  ("Failed to start up manager"), while `dev boot` and `dev check` answer in minutes on the real
+  kernel. Don't run them unless the user asks.
 
 ## Hard rules
 

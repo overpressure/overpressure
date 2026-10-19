@@ -138,15 +138,17 @@ debug packages and compression take about a minute for Monado.
 | Host tests: protocols, validators, the runner, cycle and dev loop against fakes | `python -m unittest discover -s tests` | about 6 s |
 | Stage-1 recovery policy | `bash tests/test_recovery_policy.sh` | seconds |
 | Both of the above | `make test` | seconds |
-| Stage 1 on a QEMU test kernel | `tests/qemu/run-selftest.sh` (`make qemu-stage1`) | minutes |
-| Stage 1 and the userspace on the stock-like 4.19 QEMU kernel | `tests/qemu/run-userspace.sh` (`make qemu-userspace`) | about 10 min |
-| On the headset | `python -m pico4 dev boot` and `dev check`; `python -m pico4 cycle` | [hardware-testing.md](hardware-testing.md) |
+| On the headset: the integration test | `python -m pico4 dev boot` and `dev check`; `python -m pico4 cycle` | minutes; [hardware-testing.md](hardware-testing.md) |
+| Optional: stage 1 on a QEMU test kernel | `tests/qemu/run-selftest.sh` (`make qemu-stage1`) | about 3 min |
+| Optional: stage 1 and the userspace on the stock-like 4.19 QEMU kernel | `tests/qemu/run-userspace.sh` (`make qemu-userspace`) | 10–20 min, often fails |
 
-The test kernels come from `tests/qemu/build-test-kernel.sh` (once). The QEMU userspace test
-emulates the whole system and is worth running when stage 1, the handoff or early boot change;
-for other userspace changes the development loop on the headset answers sooner. It is timing
-sensitive: other heavy work on the host during the run can push systemd's generators past their
-limit, and systemd stops with "Failed to start up manager". Run it on an otherwise idle host.
+The headset is the integration test: the development loop boots a new archive on the real
+kernel and runs the acceptance checks in minutes. The QEMU boot tests remain for work without a
+headset. They emulate the whole system under TCG (the test kernels come from
+`tests/qemu/build-test-kernel.sh`): unpacking the userspace archive takes about 2.5 minutes, and
+the guest's CPUs stall (RCU stall warnings) while systemd runs its generators. A userspace boot
+takes 10–20 minutes and often stops with "Failed to start up manager" when those stalls push the
+generators past their limit; one vCPU instead of two avoids the stalls but takes twice as long.
 
 New behaviour gets host tests with fakes for hardware and golden data for protocols; the C
 protocol tests run inside the package builds, because makepkg runs with `--nocheck`.

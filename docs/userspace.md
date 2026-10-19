@@ -344,8 +344,11 @@ cable, so the NCM link and the log drive exist as on the headset. In stage 2,
 `pico4-userspace-check --no-vulkan`, logs `PICO4-USERSPACE-SELFTEST: PASS` or `FAIL` and powers
 off; the harness saves the console log and the check's JSON in `out/`. The kernel is mainline
 4.19.325 with [kernel-4.19.fragment](../tests/qemu/kernel-4.19.fragment), on `-cpu cortex-a76`
-(`cortex-a57` where QEMU lacks it), 4 GiB, TCG and 2 vCPUs (`QEMU_SMP`): with 4 TCG vCPUs, RCU
-stalls intermittently time out systemd's generator fork.
+(`cortex-a57` where QEMU lacks it), 4 GiB, TCG and 2 vCPUs (`QEMU_SMP`). The test is optional
+and slow: a boot of the current archive takes 10–20 minutes, and RCU stalls in the emulated
+CPUs often push systemd's generators past their limit ("Failed to start up manager"); 4 vCPUs
+stall more, 1 vCPU takes twice as long. The headset's development loop is the routine test
+([hardware-testing.md](hardware-testing.md)).
 
 Base userspace (the Frame's systemd, SteamOS packages, gamescope, PipeWire, NetworkManager,
 Turnip/KGSL; 366 MiB archive, 1,416 MiB installed):
