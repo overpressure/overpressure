@@ -7,7 +7,7 @@
 pkgbase=pico4-turnip-kgsl
 pkgname=(pico4-turnip-kgsl pico4-graphics-tests)
 pkgver=26.1.6
-pkgrel=1
+pkgrel=2
 arch=(aarch64)
 url="https://docs.mesa3d.org/drivers/freedreno.html"
 license=(MIT)
@@ -15,11 +15,19 @@ makedepends=(meson ninja python-mako python-yaml python-packaging bison flex gls
              libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf
              wayland wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms)
 source=("https://archive.mesa3d.org/mesa-$pkgver.tar.xz"
+        kgsl-context-priority.patch
         pico4-vulkan-test.c pico4-kms-test.c fullscreen.vert quadrants.frag)
 # Mesa: the SHA-512 from Alpine's 3.24 recipe, as in scripts/build-graphics.sh.
 # Test sources are this project's own files, copied in by build-userspace.sh.
 sha512sums=('6746b73f5b87e8ff3723eee586b4b5f033dbe6d13cd0309d743b7fa484c350268859ec8ff21aadcbca7a04070cdaa7828146dd28dde4b1935bb879891d687f0b'
+            'b9b0bc182a16e40ad5f4d5abda3b36184a10af754640e9fdeee3c245f3c55956fa087bc9ed253e13f5dda29d3e24c2afa90110ba9d99453f4415d5f6be2c7714'
             SKIP SKIP SKIP SKIP)
+
+prepare() {
+  # Vulkan queue priorities as KGSL context priorities, so that SteamVR's
+  # compositor queue preempts other GPU work (docs/session.md).
+  patch -d "mesa-$pkgver" -p1 < kgsl-context-priority.patch
+}
 
 build() {
   # arch-meson's paths and makepkg's flags, but without --auto-features=enabled:

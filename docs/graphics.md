@@ -193,7 +193,12 @@ test binaries to `/run` through the run's SSH configuration.
 In the userspace, `pico4-turnip-kgsl` provides Turnip under its own ICD file
 (`/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json`) and `pico4-graphics-tests` the same
 two tests, built for glibc. `pico4-userspace-check` runs the Vulkan test there
-([userspace.md](userspace.md)).
+([userspace.md](userspace.md)). Its one patch,
+[kgsl-context-priority.patch](../userspace/pkgbuilds/pico4-turnip-kgsl/kgsl-context-priority.patch),
+gives Vulkan's queue priorities to the KGSL contexts. Upstream, the KGSL backend reports a single
+priority and creates every context at KGSL's default level 8. The PICO 4's KGSL preempts between
+four ringbuffers, one per four levels (`preemption` is 1), so the patch reports four priorities
+and maps realtime, high, medium and low to levels 1, 4, 8 and 12.
 
 ## Verified results
 

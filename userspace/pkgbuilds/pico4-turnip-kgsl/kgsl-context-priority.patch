@@ -1,0 +1,38 @@
+Map Vulkan queue global priority onto KGSL context priority.
+
+The KGSL backend created every context without a priority and reported
+a single level, so SteamVR's high-priority compositor queue could not
+preempt other GPU work. The PICO 4's KGSL has preemption with one
+ringbuffer per four priority levels.
+
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -50,10 +50,18 @@
+ static int
+ kgsl_submitqueue_new(struct tu_device *dev, struct tu_queue *queue)
+ {
++   /* KGSL keeps one ringbuffer per four context priority levels (a lower
++    * level is more important) and preempts between them. queue->priority
++    * runs from 0 (realtime) to 3 (low); medium is KGSL's default level 8,
++    * and level 0 would mean "unset".
++    */
++   uint32_t priority = queue->priority ? queue->priority * 4 : 1;
+    struct kgsl_drawctxt_create req = {
+       .flags = KGSL_CONTEXT_SAVE_GMEM |
+               KGSL_CONTEXT_NO_GMEM_ALLOC |
+-              KGSL_CONTEXT_PREAMBLE,
++              KGSL_CONTEXT_PREAMBLE |
++              ((priority << KGSL_CONTEXT_PRIORITY_SHIFT) &
++               KGSL_CONTEXT_PRIORITY_MASK),
+    };
+ 
+    int ret = safe_ioctl(dev->physical_device->local_fd, IOCTL_KGSL_DRAWCTXT_CREATE, &req);
+@@ -1861,7 +1869,7 @@
+ 
+    device->has_raytracing = tu_kgsl_get_raytracing(fd);
+ 
+-   device->submitqueue_priority_count = 1;
++   device->submitqueue_priority_count = 4;
+    
+    device->timeline_type = vk_sync_timeline_get_type(&vk_kgsl_sync_type);
+ 

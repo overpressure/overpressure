@@ -308,6 +308,40 @@ per second; a present waits 12–16.5 ms on average for its rendering. SteamVR o
 without gamescope, presents most frames at 90 Hz; about one in five misses its vblank and
 shows one refresh later.
 
+The uneven cadence in the lenses comes from the compositor's frame loop. After each present,
+`vrcompositor` waits up to 15 ms for that present to be shown (`WaitForPendingPresent`). A frame
+needs about 10 ms of GPU time after the present, then on average half a refresh (5.75 ms) until
+its retire fence signals at the next vblank, so most waits time out. The loop then runs at the
+15 ms timeout plus the compositor's own work, about 55 frames per second, out of phase with the
+vblank: a mix of one- and two-refresh frames. Closing it needs a frame that fits the 11.1 ms
+period with room for the phase, or a 72 Hz mode (13.9 ms).
+
+`vrcompositor` and gamescope create their queues with a raised global priority, and with
+[the Turnip patch](graphics.md#run-the-tests) their KGSL contexts run at level 1 on the highest
+ringbuffer, ahead of the dashboard's CEF renderer at level 8. In the 30 s session check this
+took the compositor from 53.1 to 55.6 commits/s, the mean GPU wait per frame from 11.5 to
+10.3 ms (longest 35.6 to 25.7 ms) and the late commits from 1,486 to 1,259; the present waits
+still time out.
+
+gamescope and the dashboard's web helper submit little GPU work of their own (17 submissions
+each in 30 s, against the compositor's 2,776); their cost is the overlay layers the compositor
+draws.
+
+The Frame driver's compositor settings (in its `frame_hmd_additional.vrsettings`, not loaded
+with that driver disabled) cut the compositor's GPU time but are not usable here. They switch
+to the Facet renderer with simplified, achromatic distortion shaders and draw the dashboard in
+the distortion pass. With them and without the background dome (`showSkydome` off; any dome
+costs 3–4 ms per frame at the panels' resolution, whatever the render scale) a frame needed
+8.9 ms and the layer's statistics showed almost every frame at 90 Hz with no present-wait
+timeout. In the lenses the picture warped with every head movement, because the lens
+correction from `driver_monado` was not applied as before, and it froze every few seconds.
+
+The freezes are SteamVR's one-second waits: `vrcompositor` logs `Aborting WaitForPresent after
+1.000000 seconds!` with a `TimeSinceLastVSync` equal to the system's uptime, while the vblank
+count beside it advances at 90 Hz. SteamVR has no time for the last vsync. The compositor keeps
+presenting during such a wait, so the layer's statistics do not show it. Each session start has
+at least one; with the Frame's settings they came every five seconds or so (47 in four minutes).
+
 `pico4-fan.service` drives the fan with PICO OS's policy ([cooling.md](cooling.md)); Qualcomm's
 `thermal-engine` does not run here, as on PICO OS, and the kernel's `step_wise` zones throttle.
 With the fan at 30 %, the 30 s session check takes the hottest zone from 45 °C to 69 °C. The
@@ -429,13 +463,17 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: Valve's session (`gamescope-session.target`) | gamescope connected to SteamVR as an overlay client; dashboard running; 2,700 commits at 42.5/s, vblank 89.998 Hz, no fence or GPU timeout, GPU 99 % busy, 16.5 ms GPU wait per frame; SteamVR poses for the headset (6DoF) and both controllers (arm model) |
 | Headset: Valve's session in the lenses (user, two minutes) | the full SteamVR environment, slightly jittery but mostly good (5,969 commits at 50/s); both controllers shown as SteamVR's generic locator, turning with the wrists, not moving in space (3DoF) |
 | Headset: `pico4-valve-session-check`, 20 and 30 s | passes: startup 15–16 s, 51–54 commits/s, vblank 89.998 Hz, 12.1 ms GPU wait per frame, no fence or GPU timeout, no `mangoapp` restarts, scanned-out eye means about (10, 13, 19); headset and both controllers in SteamVR; the Monado session back afterwards; hottest zone 47–54 °C before, 86–92 °C after |
+| Headset: `pico4-valve-session-check`, 30 s, KGSL context priorities | passes: `vrcompositor` and gamescope at KGSL level 1, the CEF renderer at 8; 2,188 commits at 55.6/s, 1,259 late, 10.3 ms GPU wait per frame (longest 25.7 ms), 5.75 ms retire wait, 1,847 of 2,187 present waits over SteamVR's 15 ms; without the priorities 53.1/s, 1,486 late, 11.5 ms (35.6 ms) |
+| Headset: Valve's session with the Frame driver's compositor settings, no background dome (user, four minutes) | layer: 13,068 commits, 598 late, 8.4 ms GPU wait per frame, no present-wait timeout, hottest zone up to 69.4 °C; in the lenses the picture warped with head movement (lens correction not applied as before) and froze every few seconds: 47 of SteamVR's one-second present waits |
 | Headset: Monado service | userspace check passes (session active, every listed device node accessible to `steamos`); OpenXR pose: 959–960 of 960 located, tilt 4.29° against the accelerometer's 4.28°, heading rate 0.005°/s; display client through the service (two layers, 30 s): about 2,686 frames at 89.5–89.6 Hz, 11 late, KMS target 88.4–89.6 commits/s at vblank 89.998 Hz, no fence timeout, eyes left/right correct; statistics written when the service stops, GPU floor back to the stock level 6 (305 MHz); the session user's client through the socket link: 1,348 frames at 89.74 Hz |
 | Headset: acceptance cycle with stock restore (flash-run with the archive, EDL readback of boot, stock ABL restore) | passes in about 8 minutes from PICO OS to PICO OS on stock boot and ABL, 39 s of it receiving the 801 MiB archive: userspace check with the fan service, head IMU, OpenXR pose (tilt 3.8°), Monado display client at 89.9 frames/s, display layer at 86 frames/s on a 90 Hz vblank, shared semaphores, Valve's session presenting after 15 s at 51.3 commits/s with the headset and both controllers in SteamVR (hottest zone 45.3 → 69.4 °C with the fan at 30 %; 47.1 → 85.7 °C without fan control); stock boot and ABL verified by EDL readback; PICO OS 5.13.7 boots |
 
 ## Next steps
 
-1. **Performance.** What gamescope's overlay and the dashboard cost on the GPU in the full
-   session, and the Frame's other compositor settings (simplified shaders, overlay quality).
+1. **Performance.** A time for the last vsync for SteamVR (the one-second freezes), then a
+   compositor frame within the 11.1 ms period with room for the vblank phase and with the lens
+   correction intact. The panels' 72 Hz mode would give 13.9 ms but needs a 90 Hz frame before
+   the switch.
 2. **Cooling.** Measure the fan control ([cooling.md](cooling.md)) on the headset, with the
    full session for 10 minutes against an agreed limit for the hottest zone.
 3. **The Steam client.** A network (Wi-Fi or USB) and a Steam login; gamescope's desktop
