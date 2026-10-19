@@ -1,0 +1,20 @@
+# The session of the Frame's user, steamos, without a display manager
+# (SESSION.md): a logind session through PAM, whose user manager runs the
+# session target. The target comes from /etc/pico4-poc/session.conf
+# (PICO4_SESSION_TARGET), default pico4-session.target.
+[Unit]
+Description=PICO 4 user session (steamos)
+After=systemd-user-sessions.service systemd-logind.service pico4-monado.socket
+Wants=pico4-monado.socket
+
+[Service]
+User=steamos
+PAMName=pico4-session
+EnvironmentFile=-/etc/pico4-poc/session.conf
+ExecStart=/usr/libexec/pico4-poc/session
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+
+[Install]
+WantedBy=graphical.target

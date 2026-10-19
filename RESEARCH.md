@@ -348,6 +348,25 @@ Suggested technical roadmap
 
    Only after tracking and graphics are operational would I attempt to bring up the Frame-style gamescope/SteamVR session. Compatibility with Valve's proprietary headset-specific components remains unproven.
 
+   **October 19, 2026: Valve's session on the PICO 4** ([SESSION.md](SESSION.md)). Valve's
+   `gamescope-session.target` runs gamescope's OpenVR backend and SteamVR 2.17.10 from the
+   Frame's repository. The Frame's own tracking driver, controller driver and radio firmware
+   stay out. Instead:
+   - **Display.** SteamVR's compositor only presents in direct mode. A Vulkan layer gives it
+     the panels through the stock KMS driver with the fenced path of step 3.
+   - **Tracking.** Monado's SteamVR plugin runs the PICO 4 driver of step 5 inside SteamVR: the
+     headset with 6DoF, both controllers with 3DoF.
+   - **Kernel gaps.** SteamVR's process locks need System V semaphores, which the stock kernel
+     lacks; a preloaded library provides them. Its compositor shares GPU semaphores between
+     processes, which neither Turnip's KGSL backend nor the kernel can; the layer emulates them
+     over sync files.
+
+   In the lenses the user saw the full SteamVR environment, slightly jittery: the Adreno 650 is
+   the limit at about 50 frames per second with gamescope's overlay and the dashboard. Without
+   fan control or Qualcomm's thermal daemon the headset gets hot within a minute. The step-6
+   archive passed the acceptance cycle with stock restoration the same day. The Steam client
+   still needs a network and a login.
+
 An intermediate alternative would be to experiment with SteamOS components on top of the existing Android kernel and firmware. That could preserve some working low-level device support, but would not automatically make PICO's Android XR services accessible to a native Linux SteamVR runtime.
 
 ## 6. Related projects worth monitoring
@@ -380,9 +399,9 @@ These are engineering estimates based on the publicly documented work, not confi
 | Boot minimal Linux                       | Demonstrated locally on PICO 4 / 5.13.7; step 2 complete |
 | Obtain accelerated Linux graphics        | Hardware Vulkan readback and native 90/72 Hz display presentation verified separately; step 3 complete |
 | Run ARM64 SteamOS userspace              | Demonstrated locally on PICO 4 / 5.13.7: Frame systemd 257.7 + SteamOS services running, Turnip Vulkan verified; step 4 complete |
-| Display a Steam-style desktop in-headset | Challenging                              |
-| Full 6DoF and controllers                | Major research effort; head IMU (3DoF input) demonstrated locally |
-| Complete standalone SteamVR experience   | Highly uncertain                         |
+| Display a Steam-style desktop in-headset | SteamVR's environment and dashboard shown in the lenses (step 6); gamescope's desktop overlays wait for the Steam client |
+| Full 6DoF and controllers                | 6DoF head tracking and 3DoF controllers demonstrated locally (step 5); controller positions open |
+| Complete standalone SteamVR experience   | SteamVR runs with its compositor on the panels (step 6), still tethered to a PC and GPU-bound at about 50 frames per second; cooling, network and the Steam client, and a standalone boot remain |
 
 The strongest supporting evidence is the September 2026 Steam Frame NixOS experiment. It shows that Valve's VR session is not fundamentally tied to the Arch-based SteamOS distribution. However, that experiment preserves the actual Frame's hardware-specific environment, including calibration and device configuration.&#x20;
 

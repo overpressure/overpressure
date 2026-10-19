@@ -112,6 +112,42 @@ need "no stage-1 process survived the handoff ($stale found)" [ "$stale" = 0 ]
 if [ -d /sys/kernel/config/usb_gadget/pico4/functions/mass_storage.0 ]; then
 	need "USB mass-storage thread alive" grep -qx file-storage /proc/[0-9]*/comm
 fi
+# -- the session user and Monado's socket (SESSION.md) -----------------------
+# pico4-session.service logs steamos in through PAM and its user manager
+# starts the session target; the target takes a moment after the system is up.
+session_user=steamos
+session_target=pico4-session.target
+[ ! -s /etc/pico4-poc/session.conf ] || . /etc/pico4-poc/session.conf
+[ -z "${PICO4_SESSION_TARGET:-}" ] || session_target=$PICO4_SESSION_TARGET
+session_uid=$(id -u "$session_user" 2>/dev/null)
+user_systemctl() { # the session user's own manager
+	runuser -u "$session_user" -- env "XDG_RUNTIME_DIR=/run/user/$session_uid" 		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$session_uid/bus" systemctl --user "$@"
+}
+session_service=$(systemctl is-active pico4-session.service 2>/dev/null)
+session_target_state=unknown
+for _ in $(seq 60); do
+	session_target_state=$(user_systemctl is-active "$session_target" 2>/dev/null)
+	[ "$session_target_state" != active ] || break
+	sleep 1
+done
+session_user_state=$(loginctl show-user "$session_user" -p State --value 2>/dev/null)
+session_failed=$(user_systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
+# Device nodes the session user needs in Valve's session (SteamVR's
+# driver_monado and compositor run as steamos); those missing in QEMU are skipped.
+access_denied=$(
+	for node in /dev/dri/card0 /dev/kgsl-3d0 /dev/ion /dev/spidev0.0 /dev/ttyHS1 /dev/media0 /dev/video0; do
+		[ -e "$node" ] || continue
+		runuser -u "$session_user" -- test -r "$node" -a -w "$node" 2>/dev/null || echo "$node"
+	done
+)
+monado_socket=$(systemctl is-active pico4-monado.socket 2>/dev/null)
+monado_service=$(systemctl is-active pico4-monado.service 2>/dev/null)
+need "session service active (is: $session_service)" [ "$session_service" = active ]
+need "session user logged in (is: $session_user_state)" [ "$session_user_state" = active ]
+need "session target $session_target active (is: $session_target_state)" [ "$session_target_state" = active ]
+need "Monado socket listening (is: $monado_socket)" [ "$monado_socket" = active ]
+need "Monado socket file" [ -S /run/pico4-monado/monado_comp_ipc ]
+need "Monado socket linked into the session" [ -L "/run/user/$session_uid/monado_comp_ipc" ]
 packages=$(pacman -Q 2>/dev/null | wc -l)
 pkg() { pacman -Q "$1" 2>/dev/null | awk '{print $2}'; }
 for p in steamos-customizations-deckard steamos-manager gamescope pipewire pico4-turnip-kgsl; do
@@ -148,6 +184,11 @@ printf ',"dev":{"fstype":%s,"missing_nodes":%s,"udev_devices":%s}' \
 printf ',"storage":{"root":%s,"writable_block_devices":%s}' "$(json_str "$root_src")" "$(json_list <<<"$writable")"
 printf ',"usb_link":{"status":%s,"now":%s}' "$(json_str "$link_status")" "$(json_str "$link_now")"
 printf ',"seats":%s,"packages":%s' "$(json_list <<<"$seats")" "${packages:-0}"
+printf ',"session":{"user":%s,"user_state":%s,"service":%s,"target":%s,"target_state":%s,"failed_units":%s' \
+	"$(json_str "$session_user")" "$(json_str "$session_user_state")" "$(json_str "$session_service")" \
+	"$(json_str "$session_target")" "$(json_str "$session_target_state")" "$(json_list <<<"$session_failed")"
+printf ',"monado_socket":%s,"monado_service":%s,"access_denied":%s}' "$(json_str "$monado_socket")" \
+	"$(json_str "$monado_service")" "$(json_list <<<"$access_denied")"
 printf ',"versions":{"steamos-customizations-deckard":%s,"steamos-manager":%s,"gamescope":%s,"mesa":%s,"pico4-turnip-kgsl":%s,"glibc":%s}' \
 	"$(json_str "$(pkg steamos-customizations-deckard)")" "$(json_str "$(pkg steamos-manager)")" \
 	"$(json_str "$(pkg gamescope)")" "$(json_str "$(pkg mesa)")" \

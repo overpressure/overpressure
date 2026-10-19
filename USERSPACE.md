@@ -81,7 +81,7 @@ writes `userspace-compat.json`. For the stock 5.13.7/5.13.8 kernel (`4.19.81-per
 | `FHANDLE` | systemd mount detection, udev | none needed: systemd falls back to mount IDs |
 | `USER_NS`, `PID_NS`, `IPC_NS`, `UTS_NS` | unit sandboxing; Steam's pressure-vessel containers | systemd ignores the settings; Steam Linux Runtime isolation needs a later decision (setuid bubblewrap or a kernel rebuild) |
 | `MEMCG`, `CGROUP_PIDS`, `CGROUP_DEVICE` | resource control | `systemd-oomd` masked; limits are not enforced |
-| `SYSVIPC`, `POSIX_MQUEUE` | X11 MIT-SHM via `shmget`, some games | clients must use memfd/fd passing |
+| `SYSVIPC`, `POSIX_MQUEUE` | X11 MIT-SHM via `shmget`, SteamVR's process locks (`semget`), some games | semaphores: [`pico4-sysvsem`](src/sysvsem/pico4-sysvsem.c), preloaded for every process ([SESSION.md](SESSION.md)); shared memory and message queues: clients must use memfd/fd passing |
 | `BINFMT_MISC` | FEX for x86 games | FEX must be launched explicitly (step 6 question) |
 | `HIDRAW` | Steam Input, SteamVR HID access | input only through evdev/uhid |
 | `VT`, `DMIID`, `AUTOFS`, ext4 POSIX ACLs | logind, udev, automounts | seat0 without VTs; device identity from the device tree |

@@ -478,7 +478,9 @@ class Runner:
                  "packages": len(manifest.get("packages", {})), "systemd": manifest.get("packages", {}).get("systemd"),
                  "gpu_firmware": bool(manifest.get("gpu_firmware")),
                  "sensor_data": bool(manifest.get("sensor_data")),
-                 "openxr_runtime": "pico4-monado" in manifest.get("packages", {})}
+                 "openxr_runtime": "pico4-monado" in manifest.get("packages", {}),
+                 "vr_display": "pico4-vrdisplay" in manifest.get("packages", {}),
+                 "steamvr": "deckard-steamvr-rel" in manifest.get("packages", {})}
         self.result["userspace"] = state
         self.save()
         print(f">> userspace: sending {state['bytes'] >> 20} MiB", flush=True)
@@ -545,10 +547,24 @@ class Runner:
             self.openxr_pose(state, userspace.imu_tilt_deg(value))
 
     def openxr_pose(self, state, accel_tilt):
-        """Head pose through the OpenXR loader, Monado and its PICO 4 driver (headless)."""
+        """Head pose through the OpenXR loader and the Monado service with its PICO 4 driver (headless).
+
+        Monado runs as a system service (SESSION.md); the root clients here
+        reach its socket through MONADO_RUNTIME_DIR.
+        """
         print(">> OpenXR head pose: Monado PICO 4 driver", flush=True)
-        output = self.ssh("XRT_COMPOSITOR_NULL=1 pico4-openxr-pose 10 10 2>/run/pico4-poc/openxr-pose.log; "
-                          "echo EXIT=$?", 120)
+        for name, command in (("session", "loginctl list-sessions --no-pager; loginctl user-status steamos --no-pager -l; "
+                                          "runuser -u steamos -- env XDG_RUNTIME_DIR=/run/user/1000 "
+                                          "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "
+                                          "systemctl --user list-units --no-pager --plain"),):
+            try:
+                (self.folder / f"userspace-{name}.txt").write_text(self.ssh(command, 60), encoding="utf-8")
+            except (ValueError, OSError) as exc:
+                (self.folder / f"userspace-{name}.txt").write_text(f"unavailable: {exc}\n", encoding="utf-8")
+        # The client starts the service (socket activation), a fresh one.
+        output = self.ssh(f"systemctl stop pico4-monado.service 2>/dev/null; XDG_RUNTIME_DIR={userspace.MONADO_RUNTIME_DIR} "
+                          "pico4-openxr-pose 10 10 2>/run/pico4-poc/openxr-pose.log; "
+                          "echo EXIT=$?", 180)
         report, _, code = output.rpartition("EXIT=")
         (self.folder / "userspace-openxr-pose.json").write_text(report.strip() + "\n", encoding="utf-8")
         try:
@@ -572,19 +588,26 @@ class Runner:
         through its layer squasher, the heavier of its two paths.
         """
         print(">> OpenXR display: Monado compositor on the panels", flush=True)
-        output = self.ssh("PICO4_KMS_STATS=/run/pico4-poc/openxr-display-kms.json "
-                          "PICO4_KMS_DUMP=/run/pico4-poc/openxr-display-frame.ppm "
+        # A fresh service for this client: the KMS target's statistics cover the
+        # service's lifetime, and an idle stretch before the client's frames
+        # (the pose client above renders none) would count against the rates.
+        output = self.ssh(f"systemctl stop pico4-monado.service 2>/dev/null; XDG_RUNTIME_DIR={userspace.MONADO_RUNTIME_DIR} "
                           f"pico4-openxr-display {userspace.DISPLAY_SECONDS} "
                           "2>/run/pico4-poc/openxr-display.log; echo EXIT=$?", 120)
         report, _, code = output.rpartition("EXIT=")
         (self.folder / "userspace-openxr-display.json").write_text(report.strip() + "\n", encoding="utf-8")
-        kms_report = self.ssh("cat /run/pico4-poc/openxr-display-kms.json", 30)
+        # The service's KMS target writes its statistics when the service stops
+        # (paths from pico4-monado.service); the socket starts it again for the
+        # next client.
+        kms_report = self.ssh(f"systemctl stop pico4-monado.service 2>/dev/null; cat {userspace.MONADO_RUNTIME_DIR}/kms.json", 60)
         (self.folder / "userspace-openxr-display-kms.json").write_text(kms_report.strip() + "\n", encoding="utf-8")
-        try:
-            (self.folder / "userspace-openxr-display.log").write_text(
-                self.ssh("cat /run/pico4-poc/openxr-display.log", 30), encoding="utf-8")
-        except (ValueError, OSError) as exc:
-            (self.folder / "userspace-openxr-display.log").write_text(f"unavailable: {exc}\n", encoding="utf-8")
+        for name, command in (("openxr-display.log", "cat /run/pico4-poc/openxr-display.log"),
+                              ("monado-journal.txt", "journalctl -b --no-pager -o short-monotonic "
+                                                     "-u pico4-monado.service -u pico4-session.service")):
+            try:
+                (self.folder / f"userspace-{name}").write_text(self.ssh(command, 30), encoding="utf-8")
+            except (ValueError, OSError) as exc:
+                (self.folder / f"userspace-{name}").write_text(f"unavailable: {exc}\n", encoding="utf-8")
         value, kms = json.loads(report), json.loads(kms_report)
         state["openxr_display"] = {
             **{k: value.get(k) for k in ("status", "system", "eye_size", "frames", "frame_hz", "late_frames",
@@ -594,6 +617,117 @@ class Runner:
         self.save()
         require(code.strip() == "0", "OpenXR display check failed")
         userspace.validate_openxr_display(value, kms)
+        if state.get("vr_display"):
+            self.vr_display(state)
+
+    def vr_display(self, state):
+        """SteamVR's display path: the pico4-vrdisplay layer shows a VK_KHR_display swapchain on the panels.
+
+        The test client drives the layer the way SteamVR's compositor does
+        (SESSION.md); the Monado service above has released the display.
+        """
+        print(">> SteamVR display layer: VK_KHR_display on the panels", flush=True)
+        output = self.ssh("systemctl stop pico4-monado.service 2>/dev/null; PICO4_VRDISPLAY=1 "
+                          "PICO4_VRDISPLAY_STATS=/run/pico4-poc/vrdisplay.json "
+                          "PICO4_VRDISPLAY_DUMP=/run/pico4-poc/vrdisplay.ppm "
+                          f"pico4-vrdisplay-test {userspace.VR_DISPLAY_SECONDS} "
+                          "2>/run/pico4-poc/vrdisplay.log; echo EXIT=$?", 120)
+        report, _, code = output.rpartition("EXIT=")
+        (self.folder / "userspace-vrdisplay.json").write_text(report.strip() + "\n", encoding="utf-8")
+        stats_report = self.ssh("cat /run/pico4-poc/vrdisplay.json", 30)
+        (self.folder / "userspace-vrdisplay-stats.json").write_text(stats_report.strip() + "\n", encoding="utf-8")
+        try:
+            (self.folder / "userspace-vrdisplay.log").write_text(
+                self.ssh("cat /run/pico4-poc/vrdisplay.log", 30), encoding="utf-8")
+        except (ValueError, OSError) as exc:
+            (self.folder / "userspace-vrdisplay.log").write_text(f"unavailable: {exc}\n", encoding="utf-8")
+        value, stats = json.loads(report), json.loads(stats_report)
+        state["vrdisplay"] = {
+            **{k: value.get(k) for k in ("status", "display", "mode", "acquire", "frames", "frame_hz",
+                                         "vblank_hz", "counter")},
+            "layer": {k: stats.get(k) for k in ("target", "fake", "mode", "format", "commits", "commit_hz",
+                                                "vblank_hz", "retire_timeouts", "gpu_timeouts", "eye_mean_rgb")}}
+        self.save()
+        require(code.strip() == "0", "SteamVR display layer check failed")
+        userspace.validate_vr_display(value, stats)
+        self.vr_sync(state)
+        if state.get("steamvr"):
+            self.valve_session(state)
+
+    def vr_sync(self, state):
+        """Semaphores shared between processes, as SteamVR's compositor shares them.
+
+        Two processes of the session user share a timeline semaphore as an
+        OPAQUE_FD handle, which the display layer emulates over sync files
+        (pico4-vrsync.c): the kernel has no object that could carry it.
+        """
+        print(">> SteamVR semaphores: a timeline shared between processes", flush=True)
+        output = self.ssh(f"runuser -u {userspace.SESSION_USER} -- env PICO4_VRDISPLAY=1 "
+                          f"VK_DRIVER_FILES={userspace.TURNIP_ICD} pico4-vrsync-test "
+                          "2>/run/pico4-poc/vrsync.log; echo EXIT=$?", 120)
+        report, _, code = output.rpartition("EXIT=")
+        (self.folder / "userspace-vrsync.json").write_text(report.strip() + "\n", encoding="utf-8")
+        try:
+            (self.folder / "userspace-vrsync.log").write_text(self.ssh("cat /run/pico4-poc/vrsync.log", 30),
+                                                             encoding="utf-8")
+        except (ValueError, OSError) as exc:
+            (self.folder / "userspace-vrsync.log").write_text(f"unavailable: {exc}\n", encoding="utf-8")
+        value = json.loads(report)
+        state["vrsync"] = {k: value.get(k) for k in ("status", "gpu_wait", "host_wait", "host_signal", "early_wait",
+                                                     "work_ms", "early_held_ms")}
+        self.save()
+        require(code.strip() == "0", "Semaphore sharing check failed")
+        userspace.validate_vr_sync(value)
+
+    def valve_session(self, state):
+        """Roadmap step 6: Valve's VR session with gamescope and SteamVR on the panels (SESSION.md).
+
+        The check runs gamescope-session.target briefly (the GPU stays busy and
+        nothing cools the headset actively), then returns to the configured
+        session. driver_monado gives SteamVR the headset and controllers.
+        """
+        print(">> Valve's session: gamescope and SteamVR with driver_monado", flush=True)
+        # The tests before it warmed the headset; let it cool first (bounded).
+        started, hottest = time.monotonic(), None
+        while True:
+            try:
+                hottest = float(self.ssh("cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | "
+                                         "awk '$1 < 200000 && $1 > m {m = $1} END {print m / 1000}'", 30))
+            except ValueError:
+                break
+            if hottest < userspace.VALVE_SESSION_START_C or \
+                    time.monotonic() - started > userspace.VALVE_SESSION_COOLDOWN_SECONDS:
+                break
+            time.sleep(5)
+        state["valve_session_cooldown"] = {"seconds": round(time.monotonic() - started), "hottest_c": hottest}
+        self.save()
+        # Its stderr (systemctl's notes among it) stays out of the JSON.
+        output = self.ssh(f"pico4-valve-session-check --seconds {userspace.VALVE_SESSION_SECONDS} "
+                          "2>/run/pico4-poc/valve-session.log; echo EXIT=$?", 400)
+        report, _, code = output.rpartition("EXIT=")
+        (self.folder / "userspace-valve-session.json").write_text(report.strip() + "\n", encoding="utf-8")
+        logs = f"/home/{userspace.SESSION_USER}/.local/share/Steam/logs"
+        for name, command in (("valve-session.log", "cat /run/pico4-poc/valve-session.log"),
+                              ("valve-vrcompositor.txt", f"cat {logs}/vrcompositor.txt"),
+                              ("valve-vrserver.txt", f"tail -n 400 {logs}/vrserver.txt"),
+                              ("valve-vrdisplay.txt", f"cat {logs}/pico4-vrdisplay.txt"),
+                              ("valve-journal.txt", "journalctl -b --no-pager -o short-monotonic _UID=1000 "
+                                                    "| tail -n 2000")):
+            try:
+                (self.folder / f"userspace-{name}").write_text(self.ssh(command, 60), encoding="utf-8")
+            except (ValueError, OSError) as exc:
+                (self.folder / f"userspace-{name}").write_text(f"unavailable: {exc}\n", encoding="utf-8")
+        value = json.loads(report)
+        layer = value.get("layer") if isinstance(value.get("layer"), dict) else {}
+        state["valve_session"] = {
+            **{k: value.get(k) for k in ("status", "errors", "startup_seconds", "session", "compositor", "devices",
+                                         "max_temp_c")},
+            "layer": {k: layer.get(k) for k in ("target", "commits", "commit_hz", "vblank_hz", "late",
+                                                "retire_timeouts", "gpu_timeouts", "gpu_wait_ms",
+                                                "present_wait_timeouts", "eye_mean_rgb")}}
+        self.save()
+        require(code.strip() == "0", "Valve session check failed")
+        userspace.validate_valve_session(value)
 
     def development_session(self):
         """Keep one authenticated boot available for bounded userspace iteration."""

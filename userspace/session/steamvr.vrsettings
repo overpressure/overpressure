@@ -1,0 +1,34 @@
+{
+	"driver_cv" : {
+		"enable" : false
+	},
+	"driver_frame_controller" : {
+		"enable" : false
+	},
+	"driver_frame_hmd" : {
+		"enable" : false
+	},
+	"driver_htc" : {
+		"enable" : false
+	},
+	"driver_indexcontroller" : {
+		"enable" : false
+	},
+	"driver_indexhmd" : {
+		"enable" : false
+	},
+	"driver_monado" : {
+		"enable" : true
+	},
+	"driver_prism" : {
+		"enable" : false
+	},
+	"jsonid" : "vrsettings",
+	"steamvr" : {
+		"activateMultipleDrivers" : false,
+		"enableLinuxVulkanAsync" : true,
+		"forcedDriver" : "monado",
+		"requireHmd" : true
+	},
+	"version" : "1"
+}

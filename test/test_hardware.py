@@ -104,14 +104,16 @@ class HarnessTests(unittest.TestCase):
         self.save_backup_manifest()
         self.runner = hw.Runner(self.args)
 
-    def enable_userspace(self, firmware=False, sensors=False, openxr=False):
+    def enable_userspace(self, firmware=False, sensors=False, openxr=False, vrdisplay=False, steamvr=False):
         archive = self.root / "userspace" / "pico4-userspace.tar.zst"
         archive.parent.mkdir()
         archive.write_bytes(b"userspace archive")
         self.userspace_sha = hw.hashlib.sha256(archive.read_bytes()).hexdigest()
         (archive.parent / "pico4-userspace.manifest.json").write_text(json.dumps({
             "archive": {"sha256": self.userspace_sha},
-            "packages": {"systemd": "257.7-2.2", **({"pico4-monado": "25.1.0-1"} if openxr else {})},
+            "packages": {"systemd": "257.7-2.2", **({"pico4-monado": "25.1.0-1"} if openxr else {}),
+                         **({"pico4-vrdisplay": "1-1"} if vrdisplay else {}),
+                         **({"deckard-steamvr-rel": "r25358740-1"} if steamvr else {})},
             "gpu_firmware": [{"file": "a650_sqe.fw", "sha256": "0" * 64}] if firmware else [],
             "sensor_data": [{"file": "usr/lib/firmware/slpi.mdt", "sha256": "0" * 64}] if sensors else []}))
         self.args.userspace = archive
@@ -125,6 +127,9 @@ class HarnessTests(unittest.TestCase):
                              "failed_units": []},
                  "dev": {"fstype": "tmpfs", "missing_nodes": [], "udev_devices": 300},
                  "storage": {"root": "/dev/zram0", "writable_block_devices": []}, "seats": ["seat0"],
+                 "session": {"user": "steamos", "user_state": "active", "service": "active",
+                             "target": "pico4-session.target", "target_state": "active", "failed_units": [],
+                             "monado_socket": "active", "monado_service": "inactive"},
                  "vulkan": {"status": "skipped", "result": None}}
         if self.scenario == "userspace-check":
             value.update(status="failed", errors=["no failed units"])
@@ -134,7 +139,22 @@ class HarnessTests(unittest.TestCase):
     def save_backup_manifest(self):
         (self.args.backup / "manifest.json").write_text(json.dumps(self.backup_manifest))
 
+    # What systemctl writes to stderr when it stops a socket-activated service.
+    SYSTEMCTL_NOTE = ("Stopping 'pico4-monado.service', but its triggering units are still active:\n"
+                      "pico4-monado.socket\n")
+
     def fake_command(self, argv, timeout=30, stdin=None):
+        output = self.fake_device(argv, timeout, stdin)
+        if str(argv[0]) == "ssh" and isinstance(output, str):
+            # As on the headset: SSH passes systemctl's note on unless the command discards it.
+            command = str(argv[-1])
+            stops = command.count("systemctl stop pico4-monado.service")
+            if stops > command.count("systemctl stop pico4-monado.service 2>/dev/null") or \
+                    (command.startswith("pico4-valve-session-check") and "2>" not in command):
+                output = self.SYSTEMCTL_NOTE + output
+        return output
+
+    def fake_device(self, argv, timeout=30, stdin=None):
         argv = list(map(str, argv))
         if stdin is not None:
             self.assertEqual(stdin.read(), b"userspace archive")
@@ -221,14 +241,58 @@ class HarnessTests(unittest.TestCase):
                                    "heading_rate_deg_per_s": -0.1}) + "\nEXIT=0"
             if "pico4-openxr-display" in command:
                 self.assertNotIn("--projection-only", command)
+                # A fresh service: its KMS statistics must cover this client alone.
+                self.assertTrue(command.startswith("systemctl stop pico4-monado.service"))
                 return json.dumps({"schema": 1, "status": "pass", "system": "Monado: PICO 4", "frames": 900,
                                    "frame_hz": 90.0, "late_frames": 1}) + "\nEXIT=0"
-            if command == "cat /run/pico4-poc/openxr-display-kms.json":
+            if command.endswith("cat /run/pico4-monado/kms.json"):
+                self.assertIn("systemctl stop pico4-monado.service", command)
                 eyes = [[70.2, 40.1, 25.4], [26.3, 41.4, 71.9]]
                 return json.dumps({"target": "pico4_kms", "commits": 848, "commit_hz": 87.8, "vblank_hz": 89.998,
                                    "retire_timeouts": 0,
                                    "eye_mean_rgb": eyes[::-1] if self.scenario == "display" else eyes})
-            if command.startswith(("pico4-imu list", "systemctl status", "cat /run/pico4-poc/openxr")):
+            if "pico4-vrdisplay-test" in command:
+                self.assertIn("PICO4_VRDISPLAY=1", command)
+                failed = self.scenario == "vrdisplay"
+                return json.dumps({"schema": 1, "status": "fail" if failed else "pass", "display": "PICO 4",
+                                   "mode": "4320x2160@90.000", "acquire": "drm", "frames": 1350, "frame_hz": 89.9,
+                                   "event_hz": 88.7, "vblank_hz": 89.998, "counter": [100, 1450]}) + \
+                    "\nEXIT=" + ("1" if failed else "0")
+            if command == "cat /run/pico4-poc/vrdisplay.json":
+                return json.dumps({"target": "pico4_vrdisplay", "fake": False, "commits": 1350, "commit_hz": 89.9,
+                                   "vblank_hz": 89.998, "retire_timeouts": 0, "gpu_timeouts": 0,
+                                   "eye_mean_rgb": [[255.0, 0.0, 0.0], [0.0, 0.0, 255.0]]})
+            if "pico4-vrsync-test" in command:
+                self.assertIn("PICO4_VRDISPLAY=1", command)
+                self.assertIn("runuser -u steamos", command)
+                failed = self.scenario == "vrsync"
+                return json.dumps({"schema": 1, "status": "fail" if failed else "pass", "gpu_wait": not failed,
+                                   "host_wait": True, "host_signal": True, "early_wait": True,
+                                   "same_submit": True, "child_exit": 0,
+                                   "counter": 2, "child_start_ticks": 3562566, "parent_end_ticks": 3554537,
+                                   "work_ms": 160.5, "early_held_ms": 203.5}) + "\nEXIT=" + ("1" if failed else "0")
+            if command.startswith("cat /sys/class/thermal/thermal_zone*/temp"):
+                return "61.2"
+            if command.startswith("pico4-valve-session-check"):
+                self.assertIn("--seconds 30", command)
+                failed = self.scenario == "valve"
+                return json.dumps({
+                    "schema": 1, "status": "failed" if failed else "passed",
+                    "errors": ["steamvr.service is failed"] if failed else [], "seconds": 30, "startup_seconds": 21,
+                    "session": {"target": "gamescope-session.target", "target_state": "active",
+                                "steamvr": "failed" if failed else "active", "gamescope": "active",
+                                "failed_units": [], "restored": "active"},
+                    "compositor": {"started": True, "gamescope_client": True, "asserts": 0,
+                                   "present_wait_errors": 2689},
+                    "layer": {"target": "pico4_vrdisplay", "fake": False, "commits": 2700, "commit_hz": 42.49,
+                              "vblank_hz": 89.998, "retire_timeouts": 0, "gpu_timeouts": 0,
+                              "eye_mean_rgb": [[9.4, 12.3, 18.2], [9.1, 12.2, 18.3]]},
+                    "devices": [{"index": 0, "position": [-0.01, 1.61, 0.07], "rotation": [-2.5, -1.56, 2.42]},
+                                {"index": 1, "position": [0.09, 0.96, -0.6], "rotation": [-0.27, 0.05, 0.86]},
+                                {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]}],
+                    "max_temp_c": {"before": 80.1, "after_run": 92.3}}) + "\nEXIT=" + ("1" if failed else "0")
+            if command.startswith(("pico4-imu list", "systemctl status", "cat /run/pico4-poc/openxr",
+                                   "cat /run/pico4-poc/vrdisplay.log", "cat /run/pico4-poc/vrsync.log")):
                 return "sensor evidence"
             if "pico4-kms-test" in command:
                 return "EXIT=1" if self.scenario == "graphics" else "EXIT=0"
@@ -364,6 +428,54 @@ class HarnessTests(unittest.TestCase):
                 state = self.runner.result["userspace"]["openxr_display"]
                 self.assertEqual((state["frame_hz"], state["kms"]["target"]), (90.0, "pico4_kms"))
                 self.assertTrue((self.runner.folder / "userspace-openxr-display-kms.json").exists())
+
+    def test_vr_display_is_checked_with_the_layer(self):
+        for scenario, code in (("", 0), ("vrdisplay", 1)):
+            with self.subTest(scenario or "passing"):
+                self.setUp()
+                self.enable_flash_mode()
+                self.enable_userspace(sensors=True, openxr=True, vrdisplay=True)
+                self.scenario = scenario
+                self.assertEqual(self.execute(), code)
+                self.assertTrue(self.restored)
+                state = self.runner.result["userspace"]["vrdisplay"]
+                self.assertEqual((state["acquire"], state["layer"]["target"]), ("drm", "pico4_vrdisplay"))
+                self.assertTrue((self.runner.folder / "userspace-vrdisplay-stats.json").exists())
+
+    def test_semaphores_and_valve_session_are_checked_with_steamvr(self):
+        for scenario, code in (("", 0), ("vrsync", 1), ("valve", 1)):
+            with self.subTest(scenario or "passing"):
+                self.setUp()
+                self.enable_flash_mode()
+                self.enable_userspace(sensors=True, openxr=True, vrdisplay=True, steamvr=True)
+                self.scenario = scenario
+                self.assertEqual(self.execute(), code)
+                self.assertTrue(self.restored)
+                state = self.runner.result["userspace"]
+                self.assertEqual(state["vrsync"]["status"], "fail" if scenario == "vrsync" else "pass")
+                if scenario == "vrsync":
+                    self.assertNotIn("valve_session", state)
+                    continue
+                valve = state["valve_session"]
+                self.assertEqual((valve["layer"]["target"], len(valve["devices"])), ("pico4_vrdisplay", 3))
+                self.assertEqual(state["valve_session_cooldown"], {"seconds": 0, "hottest_c": 61.2})
+                self.assertTrue((self.runner.folder / "userspace-valve-session.json").exists())
+                self.assertTrue((self.runner.folder / "userspace-valve-vrcompositor.txt").exists())
+
+    def test_valve_session_skipped_without_steamvr(self):
+        self.enable_flash_mode()
+        self.enable_userspace(sensors=True, openxr=True, vrdisplay=True)
+        self.assertEqual(self.execute(), 0)
+        self.assertIn("vrsync", self.runner.result["userspace"])
+        self.assertNotIn("valve_session", self.runner.result["userspace"])
+        self.assertFalse(any("pico4-valve-session-check" in command[-1] for command in self.calls))
+
+    def test_vr_display_skipped_without_the_layer(self):
+        self.enable_flash_mode()
+        self.enable_userspace(sensors=True, openxr=True)
+        self.assertEqual(self.execute(), 0)
+        self.assertNotIn("vrdisplay", self.runner.result["userspace"])
+        self.assertFalse(any("pico4-vrdisplay-test" in command[-1] for command in self.calls))
 
     def test_head_imu_skipped_without_sensor_data(self):
         self.enable_flash_mode()

@@ -14,10 +14,11 @@ measurements and reproduction steps:
 | 2 Linux shell (Alpine initramfs, USB NCM/SSH, read-only storage) | verified on hardware | [README.md](README.md), [HARDWARE-TEST.md](HARDWARE-TEST.md) |
 | 3 Native graphics (Turnip/KGSL Vulkan, fenced KMS on both panels) | verified | [GRAPHICS.md](GRAPHICS.md) |
 | 4 SteamOS-compatible userspace (Holo Core aarch64 + Steam Frame systemd 257.7) | verified | [USERSPACE.md](USERSPACE.md) |
-| 5 XR hardware: head IMU, Monado driver and KMS display output, lens distortion + IPD, tracking cameras (Spectra CSL + station sync), controllers (inputs, 3DoF), Basalt 6DoF head tracking | verified, acceptance with stock restore 2026-10-19 (6DoF: 50 cm slide read 0.52 m); Monado service, controller positions and in-app controller checks open | [XR.md](XR.md) |
+| 5 XR hardware: head IMU, Monado driver and KMS display output, lens distortion + IPD, tracking cameras (Spectra CSL + station sync), controllers (inputs, 3DoF), Basalt 6DoF head tracking | verified, acceptance with stock restore 2026-10-19 (6DoF: 50 cm slide read 0.52 m); controller positions open | [XR.md](XR.md) |
+| 6 Valve's VR session: gamescope + SteamVR 2.17.10 with `driver_monado`, direct mode through the `pico4-vrdisplay` layer, System V and shared GPU semaphores in userspace, Monado as a system service | verified, acceptance with stock restore 2026-10-19 (user saw the SteamVR environment; ~50 fps, GPU-bound); Steam client, performance and cooling open | [SESSION.md](SESSION.md) |
 
 Device preparation (EDL backups, engineering ABL, unlock, restore) is in [DEVICE.md](DEVICE.md).
-For new work, continue from XR.md's "Next steps". Each doc ends with an evidence table: add
+For new work, continue from SESSION.md's and XR.md's "Next steps". Each doc ends with an evidence table: add
 the new results there, and update the status notes in README.md and RESEARCH.md.
 
 ## Layout
@@ -26,7 +27,7 @@ the new results there, and update the status notes in README.md and RESEARCH.md.
   - `tools/`: boot images, compression, cpio, kernel inspection, Alpine packages,
     `device.py` (EDL/fastboot/ADB),
   - `hardware_test.py` (bounded flash-run acceptance with stock restoration),
-  - `userspace.py` (kernel compatibility, check/IMU/OpenXR validators),
+  - `userspace.py` (kernel compatibility, check/IMU/OpenXR/SteamVR validators),
   - `superimg.py` (Android super images), `windows_ncm.py`.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed the
   f_mass_storage kernel thread and with it the USB link. `pico4-userspace receive/switch` hands
@@ -34,26 +35,31 @@ the new results there, and update the status notes in README.md and RESEARCH.md.
 - `userspace/`: stage 2.
   - `packages.txt` and `pacman.conf`: the Holo preview first; Frame packages are named
     explicitly from `deckard-arch-hotfixes-release-0.3`.
-  - `rootfs/`: overlay with udev rules, sysctl, units and the `pico4-imu` and `pico4-station` clients.
+  - `rootfs/`: overlay with udev rules, sysctl, units, the session (PAM stack, `pico4-session` and
+    `pico4-monado` units), the `pico4-imu` and `pico4-station` clients and the checks.
+  - `session/`: the session user's SteamVR configuration (drivers, `driver_monado`).
   - `pkg/`: project PKGBUILDs:
     - `pico4-turnip-kgsl`;
     - `pico4-sensors` (qrtr-ns, pd-mapper and hexagonrpcd with this project's patches);
     - `pico4-monado` (Monado 25.1.0 + `pico4` driver: IMU, lens/IPD, cameras, station, SLAM feed,
       controllers, plus the KMS compositor target and `pico4-cam`);
-    - `pico4-basalt` (Basalt for Monado's VIT interface, built for `armv8.2-a`).
+    - `pico4-basalt` (Basalt for Monado's VIT interface, built for `armv8.2-a`);
+    - `pico4-vrdisplay` (the Vulkan layer that gives SteamVR's compositor the panels and shared
+      semaphores) and `pico4-sysvsem` (System V semaphores, preloaded).
 - `scripts/`:
   - `build-userspace.sh` and `build-graphics.sh`: root on Linux/WSL, aarch64 via QEMU user
     emulation;
   - `extract-sensor-data.sh`;
   - preflight helpers.
-- `src/`: project C sources (graphics tests, `pico4-reboot`, the OpenXR clients in `xr/`).
+- `src/`: project C sources (graphics tests, `pico4-reboot`, the OpenXR clients in `xr/`, the
+  SteamVR display layer in `vrdisplay/`, the System V semaphore library in `sysvsem/`).
 - `test/`: unittest suites, `test_recovery_policy.sh`, `test/qemu/` (4.19 test kernel,
   `run-selftest.sh`, `run-userspace.sh`).
 
 ## Commands
 
 ```sh
-python -m unittest discover -s test -p "test_*.py"     # host tests (113), no hardware, ~45 s
+python -m unittest discover -s test -p "test_*.py"     # host tests (123), no hardware, ~55 s
 bash test/test_recovery_policy.sh                      # 13 checks
 python build.py build --firmware 5.13.7-global-seko    # stage-1 image -> out/
 python build.py inspect                                # stock kernel config/DTB analysis
@@ -118,8 +124,16 @@ passed.
   - for Monado, rebuild incrementally in the Holo bootstrap chroot and push a tarball.
 - **Deadlines.** Device-side deadlines return the headset to fastboot. A kernel panic reboots
   rather than parking in crash-dump mode (stage 1 sets `msm_poweroff.download_mode=0`).
+- **Heat.** Nothing cools the headset actively under this userspace (no fan control, no
+  Qualcomm `thermal-engine`; only the kernel's `step_wise` zones throttle the CPUs). Valve's
+  session takes the hottest zone from about 54 °C to 92 °C within a minute. Keep GPU-heavy runs
+  short (`pico4-valve-session-check` runs 30 s), stop them as soon as the evidence is in, and
+  read `/sys/class/thermal/thermal_zone*/temp` when in doubt.
 - **Acceptance.** Finish with one acceptance cycle and restore the stock image:
   `flash-run --userspace ...`, then EDL readback of boot, stock ABL restore, PICO OS check.
+  Once (2026-10-19) the headset stayed off after the final EDL reset, with stock boot and ABL
+  already verified; a hard reset by the user brought PICO OS back. If PICO OS does not appear,
+  ask the user to look at the headset rather than retrying anything.
 - **Local helpers.** Unversioned helpers for this live in `out/dev-loop/` and
   `out/userspace-hardware-cycle.ps1`. Run project PowerShell scripts with `pwsh` (7): Windows
   PowerShell 5.1 aborts on native stderr. `out/dev-loop/slamtest.sh NAME SECONDS [ENV=...]`

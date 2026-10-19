@@ -52,6 +52,29 @@ pico4/pico4-basalt
 # Monado and Basalt load that module
 qt6-base
 
+# Valve's VR session as on the Steam Frame (SESSION.md): SteamVR for
+# linuxarm64 and the session scripts and user units around gamescope's OpenVR
+# backend. pacman.conf leaves out SteamVR's Frame-only drivers and tools. The
+# "steamvr" script needs jq.
+deckard-arch-hotfixes-release-0.3/deckard-steamvr-session
+deckard-arch-hotfixes-release-0.3/deckard-steamvr-rel
+# Project-built: the panels as SteamVR's direct-mode display (Vulkan layer)
+pico4/pico4-vrdisplay
+# Project-built: System V semaphores, which SteamVR needs and the kernel lacks
+pico4/pico4-sysvsem
+jq
+# SteamVR's dashboard (vrwebhelper, CEF) links ATK and AT-SPI; gamescope-onready
+# runs xhost and xrdb before it reports the session ready
+at-spi2-core
+xorg-xhost
+xorg-xrdb
+# "!name" satisfies dependencies on name without installing it. The Steam
+# client (2.5 GB unpacked) cannot sign in without a network and a Steam login,
+# which the POC has neither of yet; pico4-session.service replaces sddm.
+!deckard-steam-rel
+!deckard-steam
+!sddm
+
 # Diagnostics (mtools: the stage-2 USB log drive)
 libdrm
 mtools

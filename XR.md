@@ -134,8 +134,9 @@ The units (`pico4-sensors.target`: `pico4-qrtr-ns`, `pico4-slpi`, `pico4-pd-mapp
 The `pico4-monado` package builds Monado 25.1.0 (pinned by commit) with a `pico4` driver.
 The driver lives in [`userspace/pkg/pico4-monado`](userspace/pkg/pico4-monado), and
 [`monado-pico4-driver.patch`](userspace/pkg/pico4-monado/monado-pico4-driver.patch) registers
-it. The package builds Monado as an in-process OpenXR runtime and makes it the system's active
-runtime (`/etc/openxr/1/active_runtime.json`).
+it. The package makes Monado the system's active runtime (`/etc/openxr/1/active_runtime.json`).
+Since step 6 it runs as a system service that clients reach through a socket
+([SESSION.md](SESSION.md#monado-as-a-service)); in step 5 it ran inside each client.
 
 - **Sensor service.** `pico4_ssc.c` is a C port of the `pico4-imu` client, limited to service
   lookup, sensor lookup, enable/disable and sensor events. Its unit test checks the encoder
@@ -475,19 +476,21 @@ rate is within 5% of the rate the DSP configured, no timestamp goes backwards, |
 lying still. With `--userspace` and a sensor-data build, `hardware_test.py flash-run` runs this
 check after the userspace check and stores the sensor list, unit status and the IMU JSON.
 
-Through OpenXR (Monado's null compositor; `PICO4_LOG=debug` adds the driver's latency, tilt
-and bias every 5000 samples):
+Through OpenXR and the Monado service, as root (the session user's clients find the socket
+in their own runtime directory; `PICO4_LOG=debug` in the service adds the driver's latency,
+tilt and bias every 5000 samples):
 
 ```sh
-XRT_COMPOSITOR_NULL=1 pico4-openxr-pose 10 10
+XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-pose 10 10
 ```
 
 If `pico4-monado` is installed, the runner also runs this for 10 s. It then requires the PICO 4
 system with orientation tracking, no invalid pose after the first second, a tilt within 2° of
 the accelerometer's (from the IMU check), and a heading drift below 0.5°/s.
 
-Monado runs inside the client, and Basalt prints its diagnostics to stdout, so both acceptance
-clients point their stdout at stderr and keep the original stdout for the JSON report alone.
+When Monado runs inside a client, Basalt prints its diagnostics to that client's stdout, so
+both acceptance clients point their stdout at stderr and keep the original stdout for the JSON
+report alone. With the service, they go to its journal.
 
 With the cameras and Basalt available, the HMD reports position tracking, and the client adds
 `position_tracked`, the path length, the largest distance from the start and the last
@@ -508,10 +511,12 @@ pico4-station listen --seconds 5                  # frames the station sends
 frame rate and timestamp monotonicity.
 
 On the panels, through Monado's main compositor and the KMS target. Nothing else may hold the
-display:
+display. The service writes the KMS statistics and the frame dump when it stops
+(`PICO4_KMS_STATS` and `PICO4_KMS_DUMP` in `pico4-monado.service`):
 
 ```sh
-PICO4_KMS_STATS=/run/kms.json PICO4_KMS_DUMP=/run/frame.ppm pico4-openxr-display 10 [--projection-only]
+XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-display 10 [--projection-only]
+systemctl stop pico4-monado.service; cat /run/pico4-monado/kms.json
 ```
 
 The runner then runs this for 30 s with both layers, so it exercises the layer squasher, and
@@ -697,14 +702,15 @@ tracking helpers:
    config file (the VIT build runs Basalt's built-in defaults).
    A still headset facing a surface a few centimetres away drifts by metres (no stereo depth);
    the driver could fall back to 3DoF position while Basalt reports too few landmarks.
-2. **Controller check in an OpenXR app.** Grip orientation while worn and the bindings in a
-   real application (step 6). Haptics need a station command still to be identified; it is not
-   part of the allowlist yet.
-3. **Monado service and session.** Monado runs in-process for now. As a service it would own
-   the display, sensors, cameras and radio for several clients. Its socket lives in the
-   client's `XDG_RUNTIME_DIR`, and upstream ships user units that exclude root. Where the
-   socket goes depends on the session user that the gamescope/Steam session (roadmap step 6)
-   brings.
+2. **Controllers in applications.** In SteamVR (step 6, [SESSION.md](SESSION.md)) both
+   controllers appear with the PICO 4 input profile and turn with the wrists while worn
+   (checked in the lenses on 2026-10-19); they stay where the arm model puts them. SteamVR uses
+   its generic bindings for this controller type; clicking in its dashboard is still to be
+   checked.
+   Haptics need a station command still to be identified; it is not part of the allowlist yet.
+3. **Monado service and session.** Done in step 6: Monado runs as a socket-activated system
+   service for clients of any user, and the session user's logind session links its socket
+   ([SESSION.md](SESSION.md#monado-as-a-service)).
 4. **Controller positions.** The cameras already deliver the IR-LED frames. Constellation
    tracking needs the LED layout of the rings, which is in the controllers' calibration or
    PICO's encrypted tracking config, and a tracker (Monado has one for WMR controllers).

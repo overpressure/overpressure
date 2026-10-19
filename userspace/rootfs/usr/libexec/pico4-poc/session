@@ -1,0 +1,42 @@
+#!/bin/bash
+# The steamos user's session (SESSION.md). pico4-session.service runs this
+# inside a logind session; the user manager starts the session target:
+#   pico4-session.target       Monado is the OpenXR runtime (system service)
+#   gamescope-session.target   Valve's VR session: SteamVR with driver_monado,
+#                              gamescope on SteamVR's OpenVR overlays
+set -euo pipefail
+target=${PICO4_SESSION_TARGET:-pico4-session.target}
+runtime=${XDG_RUNTIME_DIR:?not inside a logind session}
+
+# logind starts the user manager with the session; wait until it listens.
+for _ in $(seq 100); do
+	[ -S "$runtime/systemd/private" ] && break
+	sleep 0.1
+done
+[ -S "$runtime/systemd/private" ] || { echo "the user manager did not start" >&2; exit 1; }
+
+# The user's OpenXR runtime: SteamVR's first start links SteamVR here
+# (steamvr_first_init.sh); without SteamVR, the system's Monado applies.
+user_runtime=$HOME/.config/openxr/1/active_runtime.json
+case "$target" in
+gamescope-session.target | plasma-session.target)
+	# Valve's VR session (deckard-steamvr-session). SteamVR is the OpenXR
+	# runtime and its driver_monado owns the hardware; the Monado service
+	# stays stopped (nothing connects to its socket).
+	[ -x /usr/bin/start-gamescope-session ] || { echo "deckard-steamvr-session is not installed" >&2; exit 1; }
+	rm -f "$runtime/monado_comp_ipc"
+	exec /usr/bin/start-gamescope-session "$target"
+	;;
+esac
+
+# Monado is a system service (root owns the hardware); its clients look for
+# the socket in their own runtime directory.
+ln -sfn /run/pico4-monado/monado_comp_ipc "$runtime/monado_comp_ipc"
+if [ -L "$user_runtime" ] && [[ "$(readlink "$user_runtime")" == /opt/steamvr/* ]]; then
+	rm -f "$user_runtime"
+fi
+
+systemctl --user reset-failed
+trap 'systemctl --user stop "$target"' HUP INT TERM
+systemctl --user --wait start "$target" &
+wait

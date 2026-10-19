@@ -18,6 +18,9 @@ PASSING = {
     "dev": {"fstype": "tmpfs", "missing_nodes": [], "udev_devices": 412},
     "storage": {"root": "/dev/zram0", "writable_block_devices": []},
     "seats": ["seat0"], "packages": 348,
+    "session": {"user": "steamos", "user_state": "active", "service": "active", "target": "pico4-session.target",
+                "target_state": "active", "failed_units": [], "monado_socket": "active", "monado_service": "inactive",
+                "access_denied": []},
     "vulkan": {"status": "passed", "result": {"status": "passed", "driver": "turnip", "width": 256,
                                                "height": 256, "verified_pixels": 65536, "bad_pixels": 0}},
 }
@@ -72,6 +75,12 @@ class CheckValidationTests(unittest.TestCase):
             lambda v: v["storage"].update(root="/dev/sda5"),
             lambda v: v.update(seats=[]),
             lambda v: v.update(schema=2),
+            lambda v: v["session"].update(user_state="lingering"),
+            lambda v: v["session"].update(target_state="inactive"),
+            lambda v: v["session"].update(service="failed"),
+            lambda v: v["session"].update(monado_socket="inactive"),
+            lambda v: v["session"].update(access_denied=["/dev/spidev0.0"]),
+            lambda v: v.pop("session"),
         )
         for mutate in mutations:
             value = copy.deepcopy(PASSING)
@@ -194,3 +203,117 @@ class OpenXrDisplayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+VR_DISPLAY_PASSING = {
+    "schema": 1, "status": "pass", "display": "PICO 4", "mode": "4320x2160@90.000", "acquire": "drm",
+    "frames": 1350, "frame_hz": 89.9, "event_hz": 88.7, "vblank_hz": 89.998, "counter": [100, 1450],
+}
+VR_DISPLAY_STATS = {
+    "target": "pico4_vrdisplay", "fake": False, "commits": 1350, "commit_hz": 89.9, "vblank_hz": 89.998,
+    "retire_timeouts": 0, "gpu_timeouts": 0, "eye_mean_rgb": [[255.0, 0.0, 0.0], [0.0, 0.0, 255.0]],
+}
+
+
+class VrDisplayTests(unittest.TestCase):
+    def test_passing_layer(self):
+        userspace.validate_vr_display(VR_DISPLAY_PASSING, VR_DISPLAY_STATS)
+
+    def test_failures_are_rejected(self):
+        cases = [
+            ("not run", None, {}),
+            ("client failed", {"status": "fail"}, {}),
+            ("not acquired", {"acquire": "none"}, {}),
+            ("other display", {"display": "DSI-1"}, {}),
+            ("slow frames", {"frame_hz": 45.0}, {}),
+            ("no vblanks", {"vblank_hz": 0.0}, {}),
+            ("missed events", {"event_hz": 60.0}, {}),
+            ("counter stuck", {"counter": [100, 100]}, {}),
+            ("fake panels", {}, {"fake": True}),
+            ("other target", {}, {"target": "pico4_kms"}),
+            ("lost fences", {}, {"retire_timeouts": 1}),
+            ("GPU hang", {}, {"gpu_timeouts": 1}),
+            ("slow commits", {}, {"commit_hz": 44.9}),
+            ("no frame", {}, {"eye_mean_rgb": None}),
+            ("eyes swapped", {}, {"eye_mean_rgb": [[0.0, 0.0, 255.0], [255.0, 0.0, 0.0]]}),
+        ]
+        for name, client, stats in cases:
+            value = None if client is None else {**VR_DISPLAY_PASSING, **client}
+            with self.subTest(name), self.assertRaises(ValueError):
+                userspace.validate_vr_display(value, {**VR_DISPLAY_STATS, **stats})
+
+
+VR_SYNC_PASSING = {
+    "schema": 1, "status": "pass", "gpu_wait": True, "host_wait": True, "host_signal": True, "early_wait": True,
+    "same_submit": True, "same_submit_ms": 2.1,
+    "child_exit": 0, "counter": 2, "work_ms": 160.5, "wait2_ms": 157.1, "child_start_ticks": 3562566,
+    "parent_end_ticks": 3554537, "early_held_ms": 203.5, "wait5_ms": 25.2,
+}
+
+
+class VrSyncTests(unittest.TestCase):
+    def test_passing_semaphores(self):
+        userspace.validate_vr_sync(VR_SYNC_PASSING)
+
+    def test_failures_are_rejected(self):
+        cases = [
+            ("not run", None),
+            ("no schema", {"schema": None}),
+            ("failed", {"status": "fail"}),
+            ("GPU did not wait", {"gpu_wait": False}),
+            ("host wait", {"host_wait": False}),
+            ("host signal", {"host_signal": False}),
+            ("early wait", {"early_wait": False}),
+            ("same submission", {"same_submit": False}),
+            ("child crashed", {"child_exit": 139}),
+            ("work overlapped", {"child_start_ticks": 3550000}),
+            ("no timestamps", {"child_start_ticks": 0, "parent_end_ticks": 0}),
+        ]
+        for name, change in cases:
+            value = None if change is None else {**VR_SYNC_PASSING, **change}
+            with self.subTest(name), self.assertRaises(ValueError):
+                userspace.validate_vr_sync(value)
+
+
+VALVE_SESSION_PASSING = {
+    "schema": 1, "status": "passed", "errors": [], "seconds": 30, "startup_seconds": 21,
+    "session": {"target": "gamescope-session.target", "target_state": "active", "steamvr": "active",
+                "gamescope": "active", "failed_units": [], "restored": "active"},
+    "compositor": {"started": True, "gamescope_client": True, "asserts": 0, "present_wait_errors": 2689},
+    "layer": {"target": "pico4_vrdisplay", "fake": False, "commits": 2700, "commit_hz": 42.49, "vblank_hz": 89.998,
+              "retire_timeouts": 0, "gpu_timeouts": 0, "eye_mean_rgb": [[9.4, 12.3, 18.2], [9.1, 12.2, 18.3]]},
+    "devices": [{"index": 0, "position": [-0.01, 1.61, 0.07], "rotation": [-2.5, -1.56, 2.42]},
+                {"index": 1, "position": [0.09, 0.96, -0.6], "rotation": [-0.27, 0.05, 0.86]},
+                {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]}],
+    "max_temp_c": {"before": 80.1, "after_run": 92.3},
+}
+
+
+class ValveSessionTests(unittest.TestCase):
+    def test_passing_session(self):
+        userspace.validate_valve_session(VALVE_SESSION_PASSING)
+
+    def test_failures_are_rejected(self):
+        devices = VALVE_SESSION_PASSING["devices"]
+        cases = [
+            ("not run", None),
+            ("failed", {"status": "failed", "errors": ["steamvr.service is failed"]}),
+            ("SteamVR stopped", {"session": {**VALVE_SESSION_PASSING["session"], "steamvr": "inactive"}}),
+            ("not restored", {"session": {**VALVE_SESSION_PASSING["session"], "restored": "failed"}}),
+            ("no compositor", {"compositor": {"started": False, "gamescope_client": True, "asserts": 0}}),
+            ("no gamescope", {"compositor": {"started": True, "gamescope_client": False, "asserts": 0}}),
+            ("assertion", {"compositor": {"started": True, "gamescope_client": True, "asserts": 1}}),
+            ("no layer", {"layer": None}),
+            ("fake panels", {"layer": {**VALVE_SESSION_PASSING["layer"], "fake": True}}),
+            ("lost fence", {"layer": {**VALVE_SESSION_PASSING["layer"], "retire_timeouts": 2}}),
+            ("stalled", {"layer": {**VALVE_SESSION_PASSING["layer"], "commit_hz": 12.0}}),
+            ("vblanks", {"layer": {**VALVE_SESSION_PASSING["layer"], "vblank_hz": 60.0}}),
+            ("black", {"layer": {**VALVE_SESSION_PASSING["layer"], "eye_mean_rgb": [[0, 0, 0], [0, 0, 0]]}}),
+            ("headset only", {"devices": devices[:1]}),
+            ("pose not a number", {"devices": [devices[0], {**devices[1], "rotation": ["nan", 0, 0]}, devices[2]]}),
+            ("controller at the origin", {"devices": [devices[0], {**devices[1], "position": [0, 0, 0]}, devices[2]]}),
+        ]
+        for name, change in cases:
+            value = None if change is None else {**VALVE_SESSION_PASSING, **change}
+            with self.subTest(name), self.assertRaises(ValueError):
+                userspace.validate_valve_session(value)

@@ -48,6 +48,16 @@ explicit backup-validated `flash-run` test on the bootloader tested here:
 > 6DoF inside Monado on all four cameras: a measured 50 cm slide read 0.52 m and returned
 > within a few centimetres. The step-5 archive passed the unattended acceptance cycle with
 > stock restoration on 2026-10-19, including 30 s of OpenXR frames at 90 Hz with SLAM running.
+>
+> **Step 6: Valve's VR session runs on the tested headset, 2026-10-19.** The Steam Frame's own
+> session target starts gamescope and SteamVR 2.17.10 from the Frame's repository. SteamVR's
+> compositor drives both panels in direct mode through a project Vulkan layer on the stock KMS
+> driver. Monado's SteamVR plugin gives it the headset (6DoF) and both controllers (3DoF). Two
+> kernel gaps are bridged in userspace: System V semaphores and GPU semaphores shared between
+> processes. In the lenses the full SteamVR environment showed, slightly jittery: the Adreno 650
+> holds about 50 frames per second in the full session, and without active cooling the headset
+> heats up within a minute. The step-6 archive passed the unattended acceptance cycle with stock
+> restoration on 2026-10-19, including 30 s of Valve's session. See [SESSION.md](SESSION.md).
 > See [XR.md](XR.md).
 
 ## Prerequisites

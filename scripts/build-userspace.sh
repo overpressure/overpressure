@@ -95,8 +95,11 @@ in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bi
 # The build environment keeps its own preview-only configuration.
 in_b pacman -Sy --noconfirm --needed base-devel git meson ninja cmake eigen openxr python-mako python-yaml python-packaging \
     glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
-    wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost
+    wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
+# Every change to a recipe rebuilds the package from scratch under emulation;
+# ccache (in the builder's home, kept between builds) makes that cheap.
+sed -i -E 's/^(BUILDENV=\(.*)!ccache/\1ccache/' "$B/etc/makepkg.conf"
 
 # -- 2. project packages ---------------------------------------------------------
 # build_package NAME [EXTRA_FILE...]: makepkg userspace/pkg/NAME unless the
@@ -123,6 +126,8 @@ build_package() {
 build_package pico4-turnip-kgsl "$project"/src/graphics/*
 build_package pico4-sensors
 build_package pico4-basalt
+build_package pico4-vrdisplay "$project"/src/vrdisplay/*
+build_package pico4-sysvsem "$project"/src/sysvsem/*
 build_package pico4-monado "$project/src/xr/pico4-openxr-pose.c" "$project/src/xr/pico4-openxr-display.c"     "$project/src/xr/pico4-cam.c"
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
 
@@ -137,9 +142,11 @@ mnt --bind /sys "$T/sys"
 mnt --bind /dev "$T/dev"
 mnt -t devpts -o newinstance,ptmxmode=0666 devpts "$T/dev/pts"
 mnt -t tmpfs tmpfs "$T/run"
-mapfile -t packages < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$project/userspace/packages.txt")
+mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^!/d' "$project/userspace/packages.txt")
+# "!name": dependencies on name count as satisfied, name is not installed.
+mapfile -t assumed < <(sed -n 's/^!\([^[:space:]#]*\).*/--assume-installed=\1=0/p' "$project/userspace/packages.txt")
 in_b pacman --config /etc/pico4/pacman.conf -r /target --cachedir /var/cache/pico4-pkgs \
-    -Sy --noconfirm --needed "${packages[@]}"
+    -Sy --noconfirm --needed "${assumed[@]}" "${packages[@]}"
 in_t() { chroot "$T" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root "$@"; }
 systemd_version=$(in_t pacman -Q systemd | cut -d' ' -f2)
 [[ "$systemd_version" == 257.* ]] || { echo "systemd $systemd_version was selected; the PICO 4 kernel needs 257.x" >&2; exit 1; }
@@ -154,13 +161,18 @@ sed -e '/^\[options\]/a IgnorePkg = systemd systemd-libs systemd-sysvcompat syst
 log "checking shared libraries of Frame and project packages"
 mapfile -t foreign < <(in_b pacman --config /etc/pico4/pacman.conf -r /target -Sl deckard-arch-hotfixes-release-0.3 pico4 |
     awk '/\[installed\]$/ {print $2}')
-# Optional programs whose libraries are deliberately not installed.
-optional='^(systemd /usr/lib/systemd/systemd-journal-(gatewayd|remote)|libinput /usr/lib/libinput/libinput-debug-gui|v4l-utils /usr/bin/qv4l2|v4l-utils /usr/bin/qvidcap):'
+# Optional programs whose libraries are deliberately not installed. SteamVR's
+# desktop tools need Qt5 or GLEW; its launcher puts libopenvr_api and
+# libsteam_api on LD_LIBRARY_PATH for the rest.
+optional='^(systemd /usr/lib/systemd/systemd-journal-(gatewayd|remote)|libinput /usr/lib/libinput/libinput-debug-gui|v4l-utils /usr/bin/qv4l2|v4l-utils /usr/bin/qvidcap'
+optional+='|deckard-steamvr-rel /opt/steamvr/bin/linuxarm64/(vrmonitor|overlay_viewer|hellovr_sdl)):'
+optional+='|^deckard-steamvr-rel /opt/steamvr/[^:]*:[[:space:]]*(\./)?lib(openvr_api|steam_api)\.so '
 unresolved=$(for p in "${foreign[@]}"; do
     in_t pacman -Qlq "$p" | while read -r f; do
         [[ -f "$T$f" && ! -L "$T$f" && "$(od -An -tx1 -N4 "$T$f")" == " 7f 45 4c 46" ]] || continue
-        # Programs, public libraries and our private driver directory.
-        [[ ( -x "$T$f" && "$f" != *.so* ) || "$f" =~ ^/usr/lib/[^/]+\.so || "$f" == /usr/lib/pico4/* ]] || continue
+        # Programs, public libraries, our private driver directory and SteamVR drivers.
+        [[ ( -x "$T$f" && "$f" != *.so* ) || "$f" =~ ^/usr/lib/[^/]+\.so || "$f" == /usr/lib/pico4/* ||
+           "$f" == /usr/share/steamvr-monado/*.so ]] || continue
         in_t ldd "$f" 2>/dev/null | grep -F 'not found' | sed "s|^|$p $f:|"
     done
 done | grep -Ev "$optional" || true)
@@ -228,7 +240,8 @@ rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
 in_t systemd-tmpfiles --create steamos-offload.conf
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
-    pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target
+    pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target \
+    pico4-monado.socket pico4-session.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
@@ -237,9 +250,52 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
 in_t systemctl mask systemd-firstboot.service systemd-pstore.service systemd-oomd.service \
     systemd-oomd.socket systemd-boot-update.service systemd-repart.service steamos-dump-info.service \
     usb-gadget.target usb-ncm-gadget@.service usb-ncm-dnsmasq@.service
+# Valve's VR session (SESSION.md): no display manager (pico4-session.service
+# starts the session), and none of the Frame-only system units: the controller
+# radio programmer (a firmware OTA for the Frame's nRF, never to run here),
+# the tracking DSP service, kernel-thread priorities for the Frame's kernel,
+# v4l2loopback, the Frame's video codec nodes and the debug port forwards.
+in_t systemctl mask sddm.service dsp_service.service steamvr-program-ble.service \
+    steamvr-set-kernel-thread-priorities.service steamvr-v4l2loopback.service \
+    steamvr-web-debug-portforward.service steam-video-codec-setup.service \
+    steam-web-debug-portforward.service
+# The session's user units for Frame hardware (the headset-view loopback camera,
+# proximity microphone mute), input methods (ibus is not installed), the
+# sched_ext CPU scheduler (scx_lavd needs Linux 6.12; steamos-manager offers
+# no scheduler interface here, and stage 1 already sets schedutil) and
+# SteamVR's log forwarder (its inotify module is built for the Frame's Python;
+# SteamVR's logs stay in ~/.local/share/Steam/logs).
+in_t systemctl --global mask steamvr-v4l2cam.service steamvr-proxmicmute.service ibus-gamescope.service \
+    steamos-scheduler.service steamvr-logs.service
+# gamescope's session starts MangoHud's mangoapp, the Steam client's
+# performance overlay. The Frame's MangoHud needs libraries of the Frame's
+# private base (spdlog 1.13, fmt 10, libtracefs), and without the Steam client
+# the overlay has nothing to show: the session runs without it instead of
+# restarting the missing program in a loop.
+sed -i '/^[[:space:]]*--mangoapp$/d' "$T/usr/lib/steamos/gamescope-session"
+if grep -q -- '--mangoapp' "$T/usr/lib/steamos/gamescope-session"; then
+    echo "gamescope-session still starts mangoapp" >&2
+    exit 1
+fi
+# SteamVR's headset driver is Monado's plugin (driver_monado, pico4-monado);
+# the Frame's drivers stay off. steamvr_first_init.sh keeps these files.
+install -d -o 1000 -g 1000 -m 0755 "$T/home/$user/.config/openvr" "$T/home/$user/.local/share/Steam/config" \
+    "$T/home/$user/.local/share/Steam/logs" "$T/home/$user/.steam"
+install -o 1000 -g 1000 -m 0644 "$project/userspace/session/openvrpaths.vrpath" "$T/home/$user/.config/openvr/"
+install -o 1000 -g 1000 -m 0644 "$project/userspace/session/steamvr.vrsettings" "$T/home/$user/.local/share/Steam/config/"
+# The Steam client's RUNSTEAM.sh makes these links; SteamVR finds its logs and
+# the Steam folder through them.
+ln -sfn "/home/$user/.local/share/Steam" "$T/home/$user/.steam/steam"
+ln -sfn "/home/$user/.local/share/Steam" "$T/home/$user/.steam/root"
+chown -h 1000:1000 "$T/home/$user/.steam/steam" "$T/home/$user/.steam/root"
+# install -d made the parent directories root's: the session user owns its home.
+chown -R 1000:1000 "$T/home/$user"
+# The compositor's launcher raises its priority (as SteamVR's setup does on
+# desktops); the archive keeps file capabilities.
+in_t setcap cap_sys_nice=eip /opt/steamvr/bin/linuxarm64/vrcompositor-launcher
 mkdir -p "$T/etc/systemd/system-generators"
 ln -sfn /dev/null "$T/etc/systemd/system-generators/systemd-gpt-auto-generator"
-in_t systemctl set-default multi-user.target
+in_t systemctl set-default graphical.target
 in_t ldconfig
 
 # -- manifest and archive -----------------------------------------------------------

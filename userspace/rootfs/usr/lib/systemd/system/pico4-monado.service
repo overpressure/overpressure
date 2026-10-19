@@ -1,0 +1,26 @@
+# Monado OpenXR runtime as a system service (SESSION.md): the compositor on the
+# panels, the head IMU, the tracking cameras with Basalt, the controllers and
+# the lens motor, for clients of any user through pico4-monado.socket. The
+# first client starts it (socket activation); it keeps the hardware until it
+# is stopped. SteamVR's driver_monado opens the same hardware, so the two
+# never run together (SESSION.md).
+# No CPUWeight/CPUQuota here: the cpu controller would cost the compositor its
+# real-time threads (CLAUDE.md).
+[Unit]
+Description=Monado OpenXR runtime (PICO 4)
+Requires=pico4-monado.socket
+After=pico4-monado.socket pico4-sensors.target
+Wants=pico4-sensors.target
+ConditionPathExists=/dev/kgsl-3d0
+
+[Service]
+ExecStart=/usr/bin/monado-service
+Environment=XDG_RUNTIME_DIR=/run/pico4-monado
+Environment=XRT_NO_STDIN=1
+# The KMS target writes its statistics when the service stops and the image
+# of one commit; the acceptance runner reads both.
+Environment=PICO4_KMS_STATS=/run/pico4-monado/kms.json
+Environment=PICO4_KMS_DUMP=/run/pico4-monado/frame.ppm
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10

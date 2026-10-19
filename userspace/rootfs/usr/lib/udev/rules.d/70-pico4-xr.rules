@@ -1,0 +1,14 @@
+# The XR hardware for the session user (SESSION.md). In Valve's VR session
+# SteamVR's driver_monado opens it as steamos; the Monado service runs as root.
+# The controller radio (station, spidev0.0) and the lens motor MCU (ttyHS1).
+SUBSYSTEM=="spidev", KERNEL=="spidev0.0", GROUP="video", MODE="0660"
+SUBSYSTEM=="tty", KERNEL=="ttyHS1", GROUP="video", MODE="0660"
+# The tracking cameras' Spectra stack: request manager, sync, subdevices, media graph.
+SUBSYSTEM=="video4linux", GROUP="video", MODE="0660"
+SUBSYSTEM=="media", GROUP="video", MODE="0660"
+# The display, for SteamVR's compositor (pico4-vrdisplay).
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", GROUP="video", MODE="0660"
+# Turnip's KGSL backend allocates exportable (dma-buf) memory from ION or a
+# dma-buf heap: without them a non-root client has no VK_KHR_external_memory_fd.
+SUBSYSTEM=="misc", KERNEL=="ion", GROUP="video", MODE="0660"
+SUBSYSTEM=="dma_heap", GROUP="video", MODE="0660"

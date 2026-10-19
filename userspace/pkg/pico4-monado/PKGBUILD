@@ -5,20 +5,23 @@
 # controller radio) through Monado's SLAM tracker with Basalt (pico4-basalt),
 # plus the two controllers (inputs, 3DoF) from the radio's packets.
 # Upstream Monado, pinned by commit, plus this project's driver files and a
-# patch that registers them. Built as an in-process runtime (no service yet).
-# The main compositor shows frames on the two panels through the stock msm_drm
-# KMS driver (comp_window_pico4_kms.c, the fenced path of GRAPHICS.md); the
-# null compositor serves headless clients. The acceptance clients read the head
-# pose (pico4-openxr-pose) and render frames (pico4-openxr-display) through the
-# OpenXR loader; pico4-cam checks the tracking cameras on their own.
+# patch that registers them. Built as a service (monado-service owns the
+# hardware for clients of any user, SESSION.md; the runtime library is its IPC
+# client) and as a SteamVR driver plugin (driver_monado, the headset driver of
+# Valve's VR session). The main compositor shows frames on the two panels
+# through the stock msm_drm KMS driver (comp_window_pico4_kms.c, the fenced
+# path of GRAPHICS.md); the null compositor serves headless clients. The
+# acceptance clients read the head pose (pico4-openxr-pose) and render frames
+# (pico4-openxr-display) through the OpenXR loader; pico4-cam checks the
+# tracking cameras on their own.
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=2
+pkgrel=3
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
 depends=(openxr vulkan-icd-loader libusb systemd-libs dbus libcap libdrm libffi libx11 libxau libxcb
-         libxdmcp wayland gcc-libs glibc opencv)
+         libxdmcp wayland gcc-libs glibc opencv libbsd)
 makedepends=(git cmake ninja eigen vulkan-headers glslang python)
 # Loaded at runtime (VIT); without it the HMD stays on 3DoF.
 optdepends=('pico4-basalt: 6DoF head tracking')
@@ -29,7 +32,7 @@ _camuapi=https://raw.githubusercontent.com/LineageOS/android_kernel_xiaomi_sm825
 _camheaders=(cam_cpas.h cam_defs.h cam_isp.h cam_isp_ife.h cam_isp_vfe.h cam_req_mgr.h cam_sensor.h cam_sync.h)
 source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_commit"
         "${_camheaders[@]/#/$_camuapi/}"
-        monado-pico4-driver.patch
+        monado-pico4-driver.patch monado-steamvr-pico4.patch monado-service-sigterm.patch
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
@@ -46,11 +49,13 @@ sha256sums=(SKIP
             891a5906ffaf4388adc07f21309b7a9bac7007efbafbb37dc7eb8387f8130941
             7ba04fb72ef7d0fdd6abe6a044cf3586b059ae98129011086f38d30ca4fd0c6a
             a7e0b04b5fdff083e8556442f33a1ebc2cda18152bf7d4a711e9d2549d988762
-            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
+            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
 
 prepare() {
   patch -d monado -p1 < monado-pico4-driver.patch
+  patch -d monado -p1 < monado-steamvr-pico4.patch
+  patch -d monado -p1 < monado-service-sigterm.patch
   install -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c \
     pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c \
     pico4_tcam.h pico4_tcam.c pico4_slam.h pico4_slam.c pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
@@ -82,8 +87,9 @@ build() {
   # shellcheck disable=SC2086
   cmake -S monado -B build -G Ninja -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \
     -DCMAKE_INSTALL_LIBDIR=lib -DXRT_BUILD_DRIVER_PICO4=ON -DXRT_BUILD_DRIVER_SIMULATED=ON $off \
-    -DXRT_FEATURE_SERVICE=OFF -DXRT_MODULE_COMPOSITOR_MAIN=ON -DXRT_MODULE_COMPOSITOR_NULL=ON \
-    -DXRT_FEATURE_STEAMVR_PLUGIN=OFF -DXRT_MODULE_MONADO_GUI=OFF -DXRT_BUILD_SAMPLES=OFF -DBUILD_TESTING=OFF \
+    -DXRT_FEATURE_SERVICE=ON -DXRT_HAVE_SYSTEMD=ON -DXRT_FEATURE_SERVICE_SYSTEMD=ON \
+    -DXRT_INSTALL_SYSTEMD_UNIT_FILES=OFF -DXRT_MODULE_COMPOSITOR_MAIN=ON -DXRT_MODULE_COMPOSITOR_NULL=ON \
+    -DXRT_FEATURE_STEAMVR_PLUGIN=ON -DXRT_MODULE_MONADO_GUI=OFF -DXRT_BUILD_SAMPLES=OFF -DBUILD_TESTING=OFF \
     -DXRT_HAVE_SDL2=OFF -DXRT_HAVE_OPENCV=ON -DXRT_FEATURE_SLAM=ON -DXRT_MODULE_MERCURY_HANDTRACKING=OFF \
     -DXRT_HAVE_LIBUVC=OFF -DXRT_HAVE_FFMPEG=OFF -DXRT_HAVE_GST=OFF \
     -DXRT_HAVE_PERCETTO=OFF -DXRT_FEATURE_TRACING=OFF -DXRT_HAVE_OPENGL=OFF -DXRT_HAVE_OPENGLES=OFF \
@@ -98,6 +104,14 @@ build() {
 
 package() {
   DESTDIR="$pkgdir" cmake --install build
+  # SteamVR for linuxarm64 loads drivers from bin/linuxarm64; Monado names the
+  # directory after the pointer size. The session's openvrpaths.vrpath lists
+  # /usr/share/steamvr-monado as an external driver.
+  mv "$pkgdir/usr/share/steamvr-monado/bin/linux64" "$pkgdir/usr/share/steamvr-monado/bin/linuxarm64"
+  [[ -s "$pkgdir/usr/share/steamvr-monado/bin/linuxarm64/driver_monado.so" ]]
+  # The service units are the project's (userspace/rootfs): upstream's user
+  # units would start a second Monado per user.
+  rm -rf "$pkgdir/usr/lib/systemd"
   install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.
   install -dm755 "$pkgdir/etc/openxr/1"
