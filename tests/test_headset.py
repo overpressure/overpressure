@@ -262,6 +262,18 @@ class DevTests(HeadsetFixture):
         with self.assertRaisesRegex(RuntimeError, "readback differs"):
             dev.connect()
 
+    def test_reboot_from_fastboot_restarts_stage_1_without_a_flash(self):
+        dev = self.make({"cat /etc/pico4-poc/test-run": "dev-loop\n1234567"})
+        dev.reboot()
+        self.assertIn(["fastboot", "-s", "FB1", "reboot"], self.calls)
+        self.assertNotIn("flash-boot", self.steps())
+        self.assertFalse(any("systemctl reboot" in c for c in self.texts()))
+        self.calls.clear()
+        self.fastboot_listed = False
+        dev.reboot()
+        self.assertTrue(any("systemctl reboot" in c for c in self.texts()))
+        self.assertNotIn(["fastboot", "-s", "FB1", "reboot"], self.calls)
+
     def test_restore_flashes_the_verified_backup_boot_image(self):
         dev = self.make()
         dev.restore()

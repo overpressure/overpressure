@@ -6,8 +6,9 @@ writes the engineering ABL, unlocks the bootloader and restores the stock ABL. I
 standard-library Python for Windows, Linux and macOS. `backup`, `stage`, `unlock` and
 `restore-abl` only print their external commands unless `--execute` is given. On the tested headset
 (original PICO 4, PICO OS 5.13.7), `backup`, `stage`, `unlock` and `restore-abl` have been used,
-and the routine acceptance cycle runs `stage` and `restore-abl` unattended
-([Routine cycle](#routine-cycle)).
+and `python -m pico4 dev stage-abl` and `python -m pico4 cycle` run `stage` and `restore-abl`
+unattended when the headset enters and leaves development mode
+([Development mode](#development-mode)).
 
 The implementation is independent, informed by
 [PicoUnlock's documented process](https://github.com/chaixshot/more-picohaxx-tool) and
@@ -24,8 +25,8 @@ Magisk, OS downgrades, relocking and automated userdata restoration are out of s
 | 2. Backup | `device backup`, `device verify-backup` | EDL |
 | 3. Engineering ABL | `device stage` | EDL |
 | 4. Unlock | `device unlock` | fastboot, engineering ABL |
-| 5. Factory reset, stage-1 work | PICO OS recovery; [stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md) | PICO OS, fastboot |
-| 6. Stock ABL | `device restore-abl` | EDL |
+| 5. Factory reset, development | PICO OS recovery; [stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md) | PICO OS, then development mode |
+| 6. Stock ABL, when leaving development | `device restore-abl` | EDL |
 
 ## Tools and device scope
 
@@ -33,7 +34,7 @@ Install Android platform-tools and, separately, [bkerler/edl](https://github.com
 or [edl-ng](https://github.com/strongtz/edl-ng). The default adapter uses bkerler's `rl`, `r`,
 `w`, `--genxml`, `--memory=ufs` and `--loader` interface. `--edl-backend edl-ng --edl PATH`
 selects the native client, whose different syntax (`--memory Ufs`, `read-part`, `write-part`,
-`dump-rawprogram`) is handled explicitly; the routine cycle uses edl-ng. QFIL command syntax is
+`dump-rawprogram`) is handled explicitly; `cycle` and `dev` use edl-ng. QFIL command syntax is
 not supported. Supply a compatible signed Firehose loader and the engineering ABL (and a devinfo
 image, if needed) yourself, with hashes from a trusted source. Nothing is downloaded and no
 driver is installed automatically.
@@ -60,7 +61,7 @@ saved identity: `--confirm-device` (the saved ADB serial) is the user's acknowle
 physical check. `python -m pico4 cycle` additionally compares the serial number that edl-ng
 reports with `PICO4_EDL_SERIAL` before it restores the ABL. The `device` commands do not switch
 the headset between PICO OS, fastboot and EDL, so no operation silently moves from inspection to
-writing; the routine cycle does switch modes. The command log on stderr contains device
+writing; `dev stage-abl` and the cycle do switch modes. The command log on stderr contains device
 identifiers. Identity files, logs and backups stay private; `backup/` and `assets/` are ignored
 by Git.
 
@@ -160,7 +161,7 @@ new and outside the backup directory. Nothing reboots automatically. If the writ
 readback fails, stay in EDL and recover with the original image.
 
 The engineering ABL on the tested headset is a signed PICO Neo3 engineering ABL, and PICO OS
-boots normally with it. The routine cycle stages only `abl`.
+boots normally with it. `dev stage-abl` and the cycle stage only `abl`.
 
 ## 4. Unlock
 
@@ -207,7 +208,8 @@ Keep the engineering ABL active while working with stage 1:
   runner accept. The stock ABL reports `DeviceUnlocked=true`, which they refuse, and restoring
   the stock ABL can remove usable fastboot commands even when the unlock bits persist.
 * The engineering ABL rejects `fastboot boot` with an unknown-command error, so stage 1 is
-  written to `boot` and restored afterwards ([stage1.md](stage1.md),
+  written to `boot`: the development loop keeps it there until `dev restore`, and the runner
+  restores stock boot after its run ([stage1.md](stage1.md),
   [hardware-testing.md](hardware-testing.md)). A successful unlock alone does not establish that
   `fastboot boot` works; the RAM-boot runner checks that on the device and never falls back to
   flashing.
@@ -217,8 +219,9 @@ Keep the engineering ABL active while working with stage 1:
 
 ## 6. Stock ABL
 
-After the stage-1 work, enter EDL again and restore each ABL partition that was staged from its
-verified original:
+When the headset leaves development mode, enter EDL again and restore each ABL partition that
+was staged from its verified original; after `python -m pico4 dev restore`,
+`python -m pico4 cycle --restore-only` does this unattended:
 
 ```sh
 python -m pico4 device restore-abl --identity backup/device.json --backup backup/stock --loader assets/firehose.elf --partition abl --readback out/stock-abl-readback.bin
@@ -236,11 +239,12 @@ PICO OS boot after restoring the ABL; `python -m pico4 cycle` waits for it. The 
 boot-partition sequence in [stage1.md](stage1.md#if-fastboot-boot-is-not-available) is a
 separate, persistent operation that needs a working recovery path.
 
-## Routine cycle
+## Development mode
 
-`python -m pico4 dev stage-abl` and `python -m pico4 cycle` wrap `stage` and `restore-abl` for
-the routine acceptance cycle ([hardware-testing.md](hardware-testing.md)), with the edl-ng
-backend and without buttons:
+`python -m pico4 dev stage-abl` and `python -m pico4 cycle` wrap `stage` and `restore-abl` with
+the edl-ng backend and without buttons. The first stages the engineering ABL for development
+mode, in which the headset stays between tasks; the second returns it to stock
+([hardware-testing.md](hardware-testing.md#development-mode)):
 
 | Command | Steps |
 | --- | --- |

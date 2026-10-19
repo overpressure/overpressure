@@ -126,7 +126,10 @@ python -m pico4 hwtest flash-run --serial SERIAL --confirm-device SERIAL --backu
 `--graphics vulkan` or `--graphics kms` runs one test. `--graphics-seconds` is the KMS
 measurement per mode (3 to 120 s, default 10). The run's identity and storage checks, the
 device watchdog, failure cleanup and stock-boot restoration apply as in every hardware run.
-`--graphics` cannot be combined with `--debug-session-seconds`.
+`--graphics` cannot be combined with `--debug-session-seconds`. In
+[development mode](hardware-testing.md#development-mode), `python -m pico4 dev check` runs the
+Vulkan test and the display checks in stage 2 instead; a `flash-run` leaves the stock boot image
+in `boot` and so ends development mode.
 
 - **Vulkan** (`pico4-vulkan-test`): selects the KGSL Turnip ICD explicitly (`VK_DRIVER_FILES`),
   requires the Turnip driver and an integrated GPU, renders a full-screen triangle into a

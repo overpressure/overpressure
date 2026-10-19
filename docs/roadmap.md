@@ -31,14 +31,16 @@ Each step's document holds its design, measurements and reproduction steps.
   5.4.
 - **Read-only storage.** Both stages switch every physical block device read-only. Only the
   explicit, backup-validated flash and restore paths write to the headset's storage (`boot`
-  for a test run, ABL through EDL); each write is checked against the backup's hash and
-  verified by readback.
-- **Stock restoration.** Hardware work ends on stock boot and stock ABL, verified by EDL
-  readback, with PICO OS booted. `python -m pico4 cycle` runs the acceptance cycle unattended:
-  engineering ABL through EDL, `python -m pico4 hwtest flash-run` with the userspace, EDL
-  readback of `boot`, stock ABL, PICO OS. Between cycles, `python -m pico4 dev` iterates on a
-  flashed development image, bounded by device-side deadlines. Both read the headset's
-  settings from a git-ignored `.env` ([.env.example](../.env.example)); see
+  for the dev image or a test run, ABL through EDL); each write is checked against the
+  backup's hash and verified by readback.
+- **Development mode, stock on request.** The headset stays in development mode between
+  tasks: the engineering ABL, and a development image in `boot` on which `python -m pico4 dev`
+  boots each userspace archive, bounded by device-side deadlines. Tasks do not end on stock.
+  The way back is verified whenever it is taken: `python -m pico4 cycle` checks stock boot by
+  EDL readback, restores the stock ABL with readback and waits for PICO OS, either alone (after
+  `python -m pico4 dev restore`, with `--restore-only`) or after an acceptance run
+  (`python -m pico4 hwtest flash-run` with the userspace). Both read the headset's settings
+  from a git-ignored `.env` ([.env.example](../.env.example)); see
   [hardware-testing.md](hardware-testing.md).
 - **Private data.** Backups, vendor firmware, factory calibration, Valve's packages and the
   built images stay out of the repository. Builds take the GPU firmware and sensor data from
@@ -67,8 +69,8 @@ until recovery has been tested.
   next reboot. Unlocking wipes user data.
 - `adb reboot edl` enters EDL from PICO OS without buttons, so cycles run unattended.
 - The tested engineering ABL (a signed Neo3 build) has no `fastboot boot`, so Linux starts from
-  a temporarily flashed `boot` partition (step 2). Flashing `boot` needs the engineering ABL and
-  its per-session OEM authorization command.
+  a flashed `boot` partition (step 2), which holds the dev image in development mode. Flashing
+  `boot` needs the engineering ABL and its per-session OEM authorization command.
 - After a cycle, full EDL readbacks of `boot` (96 MiB) and `abl` (1 MiB) match the backup. The
   bootloader stays unlocked; PICO OS boots with SELinux enforcing.
 
@@ -359,7 +361,7 @@ Details: [xr.md](xr.md).
 
 ### Standalone boot
 
-Every boot depends on the PC. Stage 1 runs from a temporarily flashed `boot` partition (the
+Every boot depends on the PC. Stage 1 runs from the dev image in the `boot` partition (the
 engineering ABL has no RAM boot); the 840 MB userspace archive arrives over USB into zram,
 which takes about 3 minutes; and test and development runs are bounded by device-side
 deadlines that return the headset to fastboot. A headset that boots into the session on its

@@ -62,9 +62,11 @@ python -m pico4 build --firmware 5.13.7-global-seko      # stage-1 image -> out/
 # Linux/WSL as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
 scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7
-# The headset (settings from .env); this is the integration test:
+# The headset, which stays in development mode (settings from .env); the integration test:
 python -m pico4 dev boot && python -m pico4 dev check    # iterate on the flashed dev image
-python -m pico4 cycle --userspace out/userspace/pico4-userspace.tar.zst   # acceptance, ends on stock
+python -m pico4 dev reboot                               # next attempt; also from fastboot
+# Back to stock only when the user asks: python -m pico4 dev restore, then
+python -m pico4 cycle --restore-only                     # verified stock boot and ABL, PICO OS
 ```
 
 - The userspace build snapshots its inputs at the start: the tree can be edited during a build.
@@ -97,8 +99,9 @@ python -m pico4 cycle --userspace out/userspace/pico4-userspace.tar.zst   # acce
 - **Hardware actions need a recoverable path.** Boot flashing goes through
   `python -m pico4 hwtest flash-run`, `python -m pico4 cycle`, `python -m pico4 dev flash` or the
   documented fastboot sequence. Check every write against the backup hash and verify it by
-  readback. The headset must end on stock boot + stock ABL. Ask the user before the first flash
-  or EDL action in a new conversation.
+  readback. The way back to stock (`dev restore`, `cycle --restore-only`) must keep working,
+  but tasks do not end on stock: the headset stays in development mode. Ask the user before the
+  first flash or EDL action in a new conversation.
 - **SLPI restart level.** Set it to `RELATED` before any restart (`slpi-boot` does this). The
   kernel default `SYSTEM` reboots the whole headset.
 - **Never send controller/station OTA commands** when working on the controller SPI protocol.
@@ -112,18 +115,26 @@ python -m pico4 cycle --userspace out/userspace/pico4-userspace.tar.zst   # acce
 The user wants no unnecessary flashes, reboots or waits, and no re-running of checks that just
 passed.
 
-- **Unattended setup.** The headset is usually reachable without the user: `adb reboot edl`
-  works from PICO OS, and EDL needs no buttons. `.env` holds the headset's serials and the
-  paths of its backup, loader and engineering ABL (see `.env.example`).
+- **Development mode.** The headset stays in development mode between tasks and
+  conversations: the engineering ABL in `abl` and the dev image in `boot`, so every boot starts
+  stage 1. Tasks do not restore stock boot, stock ABL or PICO OS, and do not run the cycle to
+  prove the restoration. `hwtest flash-run` and `cycle` leave stock boot in `boot`, so they end
+  development mode.
+- **Entering development mode** (from PICO OS): `dev stage-abl`, `dev image`, `dev flash`,
+  `dev connect`. It runs unattended: `adb reboot edl` works from PICO OS, and EDL needs no
+  buttons. `.env` holds the headset's serials and the paths of its backup, loader and
+  engineering ABL (see `.env.example`).
 - **Engineering ABL.** Flashing the POC needs the engineering ABL (`python -m pico4 dev
   stage-abl`). The stock ABL reports `DeviceUnlocked=true`, and the runner refuses it. Writing
   boot also needs the per-session `fastboot oem <token> unlock` authorization, which the tools
   derive from the identity.
-- **Iterate in stage 2.** Flash the dev image once (`dev image`, `dev flash`), then repeat
-  `dev reboot`, `dev boot [ARCHIVE] [--push LOCAL=REMOTE]`, `dev check`, `dev ssh CMD`; no
-  restore between attempts. `dev check` runs the acceptance runner's stage-2 checks.
-- **Deadlines.** Device-side deadlines return the headset to fastboot. A kernel panic reboots
-  rather than parking in crash-dump mode (stage 1 sets `msm_poweroff.download_mode=0`).
+- **Iterate in stage 2.** Repeat `dev reboot`, `dev boot [ARCHIVE] [--push LOCAL=REMOTE]`,
+  `dev check`, `dev ssh CMD`; no flash or restore between attempts or tasks. Only a changed
+  stage-1 image needs `dev image` and `dev flash` again. `dev check` runs the acceptance
+  runner's stage-2 checks.
+- **Deadlines.** Device-side deadlines return the headset to fastboot; `dev reboot` starts
+  stage 1 from there without a flash. A kernel panic reboots rather than parking in crash-dump
+  mode (stage 1 sets `msm_poweroff.download_mode=0`).
 - **Heat.** `pico4-fan.service` drives the fan with PICO OS's policy: with the fan at 30 % the
   30 s Valve session check peaks at 69 °C (86 °C without fan control). Qualcomm's
   `thermal-engine` does not run (it is off on PICO OS too), and the kernel's `step_wise` zones
@@ -131,9 +142,10 @@ passed.
   54 °C to 92 °C. Keep GPU-heavy runs short (`pico4-valve-session-check`
   runs 30 s), stop them as soon as the evidence is in, and read
   `/sys/class/thermal/thermal_zone*/temp` when in doubt.
-- **Acceptance.** Finish with one cycle: `dev restore`, then `python -m pico4 cycle --skip-stage
-  --userspace ...` (or the full cycle from PICO OS). Once the headset stayed off after the
-  final EDL reset with stock boot and ABL already verified; a hard reset by the user brought
+- **Back to stock, only when the user asks** (PICO OS needed, a release acceptance):
+  `dev restore`, then `python -m pico4 cycle --restore-only`, or `cycle --skip-stage
+  --userspace ...` for an acceptance run that ends on stock. Once the headset stayed off after
+  the final EDL reset with stock boot and ABL already verified; a hard reset by the user brought
   PICO OS back. If PICO OS does not appear, ask the user to look at the headset rather than
   retrying anything.
 - **Windows NCM.** The Windows NCM link needs `pico4/windows_ncm.py` (UsbDk) after each stage-1

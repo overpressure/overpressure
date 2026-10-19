@@ -1,16 +1,17 @@
 # Hardware testing
 
 Three commands run the POC on a prepared headset ([device-preparation.md](device-preparation.md)).
+The development loop, `python -m pico4 dev`, is the everyday route: the headset stays in
+[development mode](#development-mode), with the engineering ABL and a dev image in the `boot`
+partition, so that each attempt only streams a userspace archive and runs the stage-2 checks.
 The acceptance runner, `python -m pico4 hwtest`, boots one instrumented stage-1 image, checks it
 and, on request, the native graphics or the SteamOS-compatible userspace up to Valve's VR
 session, then returns the headset to its original PICO OS. The acceptance cycle,
 `python -m pico4 cycle`, runs one `flash-run` unattended between staging the engineering ABL and
-restoring stock boot and stock ABL, both verified by EDL readback. The development loop,
-`python -m pico4 dev`, keeps a dev image in the `boot` partition, so that each attempt only
-streams a userspace archive and runs the stage-2 checks. Iterate with the dev loop and finish
-with one cycle. Every ADB and fastboot action names the headset's serial and every wait is
-bounded; Linux never writes the headset's storage, and device-side deadlines return the headset
-to fastboot when the host stops answering.
+restoring stock boot and stock ABL, both verified by EDL readback; it is the way back to stock,
+not a step of every task. Every ADB and fastboot action names the headset's serial and every
+wait is bounded; Linux never writes the headset's storage, and device-side deadlines return the
+headset to fastboot when the host stops answering.
 
 ## Overview
 
@@ -19,8 +20,8 @@ to fastboot when the host stops answering.
 | `hwtest preflight` | temporary files under `/data/local/tmp`, removed again | PICO OS, never left | the image's userspace binaries on the stock kernel |
 | `hwtest run` | nothing: RAM boot | the original PICO OS | acceptance where `fastboot boot` works |
 | `hwtest flash-run` | `boot`, restored afterwards | the original PICO OS | acceptance on the PICO 4 |
-| `cycle` | `abl` and `boot`, both restored | PICO OS on stock boot and stock ABL | final acceptance, unattended |
-| `dev` | `boot` until `dev restore`; `abl` with `dev stage-abl` | stage 1 or 2; PICO OS after `dev restore` | iteration |
+| `cycle` | `abl` and `boot`, both restored | PICO OS on stock boot and stock ABL | back to stock, alone or after an acceptance run; unattended |
+| `dev` | `abl` with `dev stage-abl`; `boot` with each new dev image, until `dev restore` | development mode (stage 1, stage 2 or fastboot), kept between tasks; PICO OS after `dev restore` | everyday development |
 
 On the PICO 4, `flash-run` with the engineering ABL is the route that works. The signed Neo3
 engineering ABL answers `fastboot boot` with `unknown command` after transferring the image, and
@@ -35,9 +36,11 @@ an acceptance result.
 ## Requirements
 
 - **Headset**, prepared as in [device-preparation.md](device-preparation.md): identity record,
-  verified EDL backup, unlocked bootloader, engineering ABL and Firehose loader. Commands start
-  from PICO OS with USB debugging authorized unless noted. `adb reboot edl` works from PICO OS and
-  EDL needs no buttons, so the cycle and the dev loop need nobody at the headset.
+  verified EDL backup, unlocked bootloader, engineering ABL and Firehose loader. `hwtest`,
+  `cycle` and `dev stage-abl` start from PICO OS with USB debugging authorized, `dev flash` from
+  PICO OS or development mode, the other `dev` commands from development mode. `adb reboot edl`
+  works from PICO OS and EDL needs no buttons, so the cycle and the dev loop need nobody at the
+  headset.
 - **Host**: Python 3.9+, Android platform-tools (`adb`, `fastboot`), OpenSSH (`ssh`, `ssh-keygen`)
   and, for the EDL steps of `cycle` and `dev stage-abl`, edl-ng. A USB network driver for the
   headset's NCM link and a route to 172.16.42.1; on Windows also the
@@ -75,25 +78,44 @@ settings to it.
 | `PICO4_PLATFORM_TOOLS` | empty: `adb` and `fastboot` from `PATH` | folder with `adb` and `fastboot` |
 | `PICO4_SSH`, `PICO4_SSH_KEYGEN` | `ssh`, `ssh-keygen` | OpenSSH executables |
 
-## Recommended workflow
+## Development mode
 
-Iterate in the development loop, with no flashing or restoring between attempts, then run one
-acceptance cycle:
+Between tasks the headset stays in development mode: the engineering ABL in `abl` and the dev
+image in `boot`. Every boot starts stage 1, and no step needs PICO OS. A task leaves the headset
+in this mode; nothing is restored when it ends. Enter the mode once, from PICO OS:
 
 ```sh
-python -m pico4 dev stage-abl        # once, while the stock ABL is installed
+python -m pico4 dev stage-abl        # engineering ABL through EDL
 python -m pico4 dev image
-python -m pico4 dev flash
+python -m pico4 dev flash            # dev image into boot; stage 1 starts
 python -m pico4 dev connect
-python -m pico4 dev boot             # each attempt: stream, switch, wait for stage 2
-python -m pico4 dev check            #   the runner's stage-2 checks
-python -m pico4 dev reboot           #   back to stage 1 for the next attempt
-python -m pico4 dev restore          # stock boot and PICO OS; the engineering ABL stays
-python -m pico4 cycle --skip-stage --userspace out/userspace/pico4-userspace.tar.zst
 ```
 
-A changed stage-1 image needs `dev image` and `dev flash` again. The cycle starts from PICO OS,
-hence `dev restore` before it.
+Then iterate, with no flashing or restoring between attempts:
+
+```sh
+python -m pico4 dev boot             # stream, switch, wait for stage 2
+python -m pico4 dev check            # the runner's stage-2 checks
+python -m pico4 dev reboot           # back to stage 1, also from fastboot
+```
+
+A changed stage-1 image needs `dev image` and `dev flash` again. When a device deadline has
+returned the headset to fastboot, `dev reboot` starts stage 1 without writing `boot`.
+`hwtest flash-run` and `cycle` leave the stock boot image in `boot` and so end development
+mode; `dev flash`, after the cycle also `dev stage-abl`, enters it again.
+
+### Back to stock
+
+Only when PICO OS is needed, or to verify the way back, for example before a release:
+
+```sh
+python -m pico4 dev restore          # stock boot image, then PICO OS; the engineering ABL stays
+python -m pico4 cycle --restore-only # EDL readback of boot, stock ABL, PICO OS
+```
+
+For an acceptance run that ends on stock, run
+`python -m pico4 cycle --skip-stage --userspace out/userspace/pico4-userspace.tar.zst` after
+`dev restore` instead. The cycle starts from PICO OS, hence `dev restore` before it.
 
 ## Acceptance runner
 
@@ -457,8 +479,10 @@ state select the firmware entry: `python -m pico4 match --fingerprint ... --oem-
 
 `python -m pico4 cycle [--userspace ARCHIVE] [--skip-stage] [--keep-abl | --restore-only]`
 ([pico4/cycle.py](../pico4/cycle.py)) runs the acceptance unattended and ends on stock boot and
-stock ABL. Settings come from [`.env`](#settings-for-cycle-and-dev). A full cycle with the
-userspace archive, from PICO OS back to PICO OS on stock boot and ABL, takes about 8 minutes.
+stock ABL. It takes the headset out of development mode, so tasks do not run it
+([Back to stock](#back-to-stock)). Settings come from [`.env`](#settings-for-cycle-and-dev). A
+full cycle with the userspace archive, from PICO OS back to PICO OS on stock boot and ABL, takes
+about 8 minutes.
 
 1. **Engineering ABL** (skipped with `--skip-stage`): into EDL; a read-only first session
    (`printgpt`) must report `PICO4_EDL_SERIAL`; then
@@ -508,11 +532,11 @@ keep the directory private.
 
 ## Development loop
 
-`python -m pico4 dev COMMAND` ([pico4/devloop.py](../pico4/devloop.py)) works on a headset whose
-`boot` partition holds the dev image. Each attempt reboots into stage 1, streams a userspace
-archive, switches to it and runs the runner's stage-2 checks; nothing is flashed or restored in
-between. While the dev image is in `boot`, every boot starts stage 1, never PICO OS. Settings
-come from [`.env`](#settings-for-cycle-and-dev).
+`python -m pico4 dev COMMAND` ([pico4/devloop.py](../pico4/devloop.py)) works on a headset in
+[development mode](#development-mode), whose `boot` partition holds the dev image. Each attempt
+reboots into stage 1, streams a userspace archive, switches to it and runs the runner's stage-2
+checks; nothing is flashed or restored in between. While the dev image is in `boot`, every boot
+starts stage 1, never PICO OS. Settings come from [`.env`](#settings-for-cycle-and-dev).
 
 | Command | Effect |
 | --- | --- |
@@ -523,8 +547,8 @@ come from [`.env`](#settings-for-cycle-and-dev).
 | `boot [ARCHIVE] [--push LOCAL=REMOTE]` | streams the archive (default `out/userspace/pico4-userspace.tar.zst`, manifest beside it) into `pico4-userspace receive` within 900 s, requires the hash confirmation and prints the rate; writes each `--push` file to its absolute path `REMOTE` in the received root; lowers stage 2's connection deadline; switches; waits up to 170 s for systemd as PID 1 and clears the stage-2 deadline; records the archive in `out/dev/state.json` |
 | `check` | runs the runner's stage-2 checks, from the userspace check to Valve's session, against the stage 2 that `boot` started; results in `out/dev/check-<time>/`; exit 0 only if all pass |
 | `ssh COMMAND...` | runs the words as one remote command (up to 600 s) and prints the output as text; the remote exit status is not passed on |
-| `reboot` | reboots the headset into stage 1, waits 20 s and runs `connect` |
-| `restore` | checks the backup's stock boot image against its manifest and the partitions as `flash` does, writes it to `boot` through fastboot and waits up to 300 s for PICO OS; the ABL stays engineering |
+| `reboot` | reboots the headset into stage 1: over SSH from stage 1 or 2, with `fastboot reboot` when it waits in fastboot (no write); then waits 20 s and runs `connect` |
+| `restore` | leaves development mode: checks the backup's stock boot image against its manifest and the partitions as `flash` does, writes it to `boot` through fastboot and waits up to 300 s for PICO OS; the ABL stays engineering |
 
 - `flash` and `restore` need the engineering ABL and write only `boot`. Unlike `flash-run`
   they do not compare the backup's identity record with the live headset; the serials in `.env`
@@ -532,7 +556,7 @@ come from [`.env`](#settings-for-cycle-and-dev).
 - The dev image's connection deadline is 600 s and its maximum runtime 3600 s from Linux start:
   stage 1 waits for the next attempt instead of rebooting, every boot still ends in fastboot
   within an hour, and a stage 2 that never answers returns to fastboot 180 s after the switch.
-  From fastboot, `dev flash` starts stage 1 again.
+  From fastboot, `dev reboot` starts stage 1 again.
 - Once `pico4-userspace receive` has started, a failed `boot` (for example an unconfirmed hash)
   never switches, and the next `boot` needs a `reboot` first, because `/newroot` and zram are in
   use.
@@ -570,6 +594,6 @@ and failed restores; the graphics, userspace and development-session phases, the
 failures of the NCM initialization, command timeouts and artifact preservation.
 [tests/test_headset.py](../tests/test_headset.py) covers the cycle's order and refusals (a boot
 partition that differs from the backup, another EDL device, a changed pinned image, no EDL device)
-and the dev loop's handoff, login and restore; [tests/test_windows_ncm.py](../tests/test_windows_ncm.py)
+and the dev loop's handoff, login, reboot and restore; [tests/test_windows_ncm.py](../tests/test_windows_ncm.py)
 covers the NCM helper. They do not replace a run on the headset; the QEMU tests are a separate
 userspace regression check.

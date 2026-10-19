@@ -7,10 +7,10 @@ USB cable into RAM. Stage 2 runs Valve's VR session from the Steam Frame, gamesc
 SteamVR, with a Monado driver for the PICO 4's hardware: the SteamVR environment shows in the
 lenses with 6DoF head tracking and 3DoF controllers.
 
-This is experimental work on an unlocked headset. The acceptance cycle writes the boot
-partition temporarily and ends on the stock boot image and stock bootloader, both verified by
-readback; storage stays read-only otherwise. Keep your own EDL backup
-([docs/device-preparation.md](docs/device-preparation.md)).
+This is experimental work on an unlocked headset. During development it keeps an engineering
+bootloader and a development image in its boot partition; the acceptance cycle returns it to the
+stock boot image and stock bootloader, both verified by readback. Storage stays read-only
+otherwise. Keep your own EDL backup ([docs/device-preparation.md](docs/device-preparation.md)).
 
 ## Status
 
@@ -46,14 +46,27 @@ network, controller position tracking, a standalone boot. Plan and details:
    make userspace
    ```
 
-4. **Run it on the headset**, ending on stock boot and bootloader:
+4. **Run it on the headset.** Put it into development mode once, from PICO OS; it stays there
+   between runs:
 
    ```sh
-   python -m pico4 cycle --userspace out/userspace/pico4-userspace.tar.zst
+   python -m pico4 dev stage-abl
+   python -m pico4 dev image
+   python -m pico4 dev flash
+   python -m pico4 dev connect
    ```
 
-   For development, keep a dev image on the headset and repeat `python -m pico4 dev boot` and
-   `python -m pico4 dev check` ([docs/hardware-testing.md](docs/hardware-testing.md)).
+   Then boot and check each new archive:
+
+   ```sh
+   python -m pico4 dev boot
+   python -m pico4 dev check
+   python -m pico4 dev reboot
+   ```
+
+   `python -m pico4 dev restore`, then `python -m pico4 cycle --restore-only`, return the
+   headset to stock boot, stock bootloader and PICO OS
+   ([docs/hardware-testing.md](docs/hardware-testing.md)).
 
 ## Documentation
 

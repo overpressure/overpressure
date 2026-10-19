@@ -138,7 +138,7 @@ debug packages and compression take about a minute for Monado.
 | Host tests: protocols, validators, the runner, cycle and dev loop against fakes | `python -m unittest discover -s tests` | about 6 s |
 | Stage-1 recovery policy | `bash tests/test_recovery_policy.sh` | seconds |
 | Both of the above | `make test` | seconds |
-| On the headset: the integration test | `python -m pico4 dev boot` and `dev check`; `python -m pico4 cycle` | minutes; [hardware-testing.md](hardware-testing.md) |
+| On the headset: the integration test | `python -m pico4 dev boot` and `dev check`, in development mode | minutes; [hardware-testing.md](hardware-testing.md) |
 | Optional: stage 1 on a QEMU test kernel | `tests/qemu/run-selftest.sh` (`make qemu-stage1`) | about 3 min |
 | Optional: stage 1 and the userspace on the stock-like 4.19 QEMU kernel | `tests/qemu/run-userspace.sh` (`make qemu-userspace`) | 10–20 min, often fails |
 
@@ -155,12 +155,17 @@ protocol tests run inside the package builds, because makepkg runs with `--noche
 
 ## From a change to the headset
 
+The headset stays in development mode, with the engineering ABL and the dev image in `boot`
+([hardware-testing.md](hardware-testing.md#development-mode)):
+
 1. Change the code, then build: `make userspace` (or the script above), incremental.
-2. On a headset with the dev image flashed (`python -m pico4 dev flash` once):
-   `python -m pico4 dev reboot`, `python -m pico4 dev boot`, `python -m pico4 dev check`.
-3. At a milestone: `python -m pico4 dev restore`, then
-   `python -m pico4 cycle --skip-stage --userspace out/userspace/pico4-userspace.tar.zst`,
-   which ends on stock boot and stock ABL.
+2. `python -m pico4 dev reboot`, `python -m pico4 dev boot`, `python -m pico4 dev check`.
+
+A changed stage-1 image is built with `python -m pico4 build` and written with
+`python -m pico4 dev image` and `python -m pico4 dev flash`; `dev connect` then takes the place of
+`dev reboot`. A task ends with the headset still in development mode. Returning it to stock is a
+separate step, for when PICO OS is needed
+([hardware-testing.md](hardware-testing.md#back-to-stock)).
 
 ## Windows host and WSL
 

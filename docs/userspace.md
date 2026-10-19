@@ -322,9 +322,11 @@ add `--windows-ncm-python` ([hardware-testing.md](hardware-testing.md)).
 `python -m pico4 cycle --userspace ARCHIVE` runs the same acceptance unattended: it stages the
 engineering ABL through EDL first and ends on verified stock boot and ABL.
 
-For repeated attempts, `python -m pico4 dev` keeps the stage-1 image on the boot partition and
-streams each new archive (`python -m pico4 dev boot ARCHIVE`); the device-side deadlines return
-the headset to fastboot after a failure ([development.md](development.md)).
+The everyday route is the development loop: the headset stays in development mode with the
+stage-1 image on the boot partition, and `python -m pico4 dev boot ARCHIVE` streams each new
+archive; the device-side deadlines return the headset to fastboot after a failure, and
+`python -m pico4 dev reboot` starts stage 1 again
+([hardware-testing.md](hardware-testing.md#development-mode)).
 
 ## Verified results
 

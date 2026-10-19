@@ -162,7 +162,7 @@ aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector 
 | Route | Writes | Bootloader | Commands |
 | --- | --- | --- | --- |
 | RAM boot | nothing; the next normal boot is PICO OS | one that implements `fastboot boot` | `scripts/boot-poc.ps1`, `scripts/boot-poc.sh` |
-| Boot partition | `boot`, restored from the verified backup afterwards | the engineering ABL (tested) | `python -m pico4 hwtest flash-run`, `python -m pico4 cycle`, `python -m pico4 dev flash` ([hardware-testing.md](hardware-testing.md)) |
+| Boot partition | `boot`: the dev image stays until `dev restore`; the runner and the cycle restore the backup's image after their run | the engineering ABL (tested) | `python -m pico4 hwtest flash-run`, `python -m pico4 cycle`, `python -m pico4 dev flash` ([hardware-testing.md](hardware-testing.md)) |
 
 The signed Neo3 engineering ABL used on the PICO 4 rejects `fastboot boot` with an
 unknown-command error after the image transfer, even after persistent normal and critical

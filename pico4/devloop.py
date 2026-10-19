@@ -1,10 +1,12 @@
 """Development loop on a headset whose boot partition holds the dev image.
 
-The acceptance cycle (python -m pico4 cycle) restores stock boot and ABL after every run.
-In between, the dev image stays flashed: each attempt reboots into stage 1, streams a
-userspace archive, switches to it and runs the acceptance runner's checks. The device-side
-deadlines still return the headset to fastboot. Settings come from .env
-(pico4/localconfig.py); the SSH key, images and check results live in out/dev/.
+The headset stays in development mode between tasks: the engineering ABL, and the dev image
+in boot, so every boot starts stage 1. Each attempt reboots into stage 1, streams a userspace
+archive, switches to it and runs the acceptance runner's checks; nothing is restored when a
+task ends. The device-side deadlines still return the headset to fastboot, where "dev reboot"
+picks it up. "dev restore", then "python -m pico4 cycle --restore-only", return it to stock.
+Settings come from .env (pico4/localconfig.py); the SSH key, images and check results live in
+out/dev/.
 
   python -m pico4 dev stage-abl         engineering ABL through EDL, then PICO OS
   python -m pico4 dev image             out/dev/dev-boot.img from the stage-1 image
@@ -13,8 +15,8 @@ deadlines still return the headset to fastboot. Settings come from .env
   python -m pico4 dev boot [ARCHIVE]    stream the userspace, switch, wait for stage 2
   python -m pico4 dev check             the acceptance checks on the running stage 2
   python -m pico4 dev ssh COMMAND...    run a command on the headset
-  python -m pico4 dev reboot            restart into stage 1 for the next attempt
-  python -m pico4 dev restore           stock boot image back, then PICO OS (ABL stays)
+  python -m pico4 dev reboot            restart into stage 1, also from fastboot
+  python -m pico4 dev restore           leave development mode: stock boot, then PICO OS
 """
 from __future__ import annotations
 
@@ -193,8 +195,14 @@ class Dev(Headset):
         return 0 if checks.result["status"] == "passed" else 1
 
     def reboot(self):
+        """Into stage 1 for the next attempt. A device deadline leaves the headset in fastboot;
+        boot still holds the dev image there, so a plain reboot is enough, without a flash."""
         (self.work / "state.json").unlink(missing_ok=True)
-        self.ssh("systemctl reboot 2>/dev/null || pico4-reboot", 15, check=False)
+        fastboot = self.s.tool("fastboot")
+        if self.s.fastboot_serial and self.s.fastboot_serial in self.run([fastboot, "devices"], 30, check=False):
+            self.fastboot("reboot")
+        else:
+            self.ssh("systemctl reboot 2>/dev/null || pico4-reboot", 15, check=False)
         self.clock.sleep(20)
         self.connect()
 

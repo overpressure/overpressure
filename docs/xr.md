@@ -604,12 +604,12 @@ rate, the measured rate is within 5% of the configured one, no timestamp goes ba
 within 0.5 m/s² of 9.81 and each component of the mean angular rate is below 0.05 rad/s. These
 limits are for a headset lying still.
 
-`python -m pico4 hwtest flash-run --userspace ARCHIVE …` (also inside
-`python -m pico4 cycle --userspace ARCHIVE`; [hardware-testing.md](hardware-testing.md)) checks
-an archive built with sensor data after the userspace check: it records the sensor units' status
-and `pico4-imu list accel gyro`, then requires
-`pico4-imu stream --rate 500 --seconds 10 --check`. With `pico4-monado` installed it continues,
-each client on a fresh Monado service:
+The stage-2 checks, `python -m pico4 dev check` in development mode and the same checks inside
+`python -m pico4 hwtest flash-run --userspace ARCHIVE …` and `python -m pico4 cycle --userspace
+ARCHIVE` ([hardware-testing.md](hardware-testing.md)), test an archive built with sensor data
+after the userspace check: they record the sensor units' status and `pico4-imu list accel gyro`,
+then require `pico4-imu stream --rate 500 --seconds 10 --check`. With `pico4-monado` installed
+they continue, each client on a fresh Monado service:
 
 - **`pico4-openxr-pose 10 10`.** The PICO 4 system with orientation tracking, no invalid pose after
   the first second, a tilt within 2° of the accelerometer's (from the IMU check) and a heading
