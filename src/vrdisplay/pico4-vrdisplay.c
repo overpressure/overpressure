@@ -49,6 +49,7 @@
 #include <limits.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -337,10 +338,13 @@ struct display
 	bool active; //!< Mode set and layers enabled.
 	int saved_min_pwrlevel;
 
-	pthread_t vblank_thread;
-	bool vblank_started, vblank_stop, vblank_pending;
-	uint64_t vblank_count, vblank_sequence;
+	pthread_t vblank_thread, clock_thread;
+	bool vblank_started, clock_started, vblank_stop, vblank_pending;
+	uint64_t vblank_count, vblank_sequence; //!< As the event fences and the counter see them.
 	int64_t vblank_ns;
+	int64_t phase_ns;          //!< Kernel timestamp of the newest vblank event, 0 before one.
+	uint64_t phase_sequence;   //!< Its sequence.
+	uint64_t ticked_sequence;  //!< The newest vblank the clock signalled.
 	double first_vblank, last_vblank;
 	uint64_t first_sequence, last_sequence;
 	uint64_t stat_vblanks;
@@ -868,7 +872,23 @@ kms_disable(struct display *d)
  *
  */
 
-//! Locked.
+//! Locked. Vblank @p sequence has begun: its event fences signal and the counter moves.
+static void
+vblank_tick(struct display *d, uint64_t sequence)
+{
+	if (d->vblank_count == 0 || sequence > d->vblank_sequence) {
+		d->vblank_sequence = sequence;
+	}
+	d->vblank_count++;
+	for (struct event_fence *e = d->events; e != NULL; e = e->next) {
+		if (e->vblank) {
+			e->signaled = true;
+		}
+	}
+	pthread_cond_broadcast(&d->cond);
+}
+
+//! Locked. A vblank as the kernel timestamped it: statistics and the clock's phase.
 static void
 on_vblank(struct display *d, uint64_t sequence, int64_t when_ns)
 {
@@ -880,15 +900,61 @@ on_vblank(struct display *d, uint64_t sequence, int64_t when_ns)
 	d->last_vblank = t;
 	d->last_sequence = sequence;
 	d->stat_vblanks++;
-	d->vblank_count++;
-	d->vblank_sequence = sequence;
 	d->vblank_ns = when_ns;
-	for (struct event_fence *e = d->events; e != NULL; e = e->next) {
-		if (e->vblank) {
-			e->signaled = true;
-		}
+	d->phase_ns = when_ns;
+	d->phase_sequence = sequence;
+	if (d->fake) {
+		vblank_tick(d, sequence); // the fake vblanks come from a timer already
+	} else {
+		pthread_cond_broadcast(&d->cond);
 	}
-	pthread_cond_broadcast(&d->cond);
+}
+
+/*
+ * SteamVR takes the moment a vblank event fence signals as the time of that vblank. The
+ * kernel's vblank events reach the vblank thread late whenever it waits for the lock or for
+ * the CPU (up to 120 ms seen), and catching up then signals several vblanks at once. So the
+ * fences follow a clock instead: locked to the kernel's timestamps and the refresh period,
+ * at real-time priority. Late events only correct the phase.
+ */
+#define CLOCK_HOLD_NS (250 * 1000 * 1000LL) //!< Ticks continue this long after the newest event.
+
+static void *
+clock_main(void *arg)
+{
+	struct display *d = arg;
+	struct sched_param param = {.sched_priority = 50};
+	int err = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
+	if (err != 0) {
+		LOG("vblank clock without real-time priority: %s", strerror(err));
+	}
+	pthread_mutex_lock(&d->lock);
+	while (!d->vblank_stop) {
+		int64_t now = now_ns();
+		if (d->phase_ns == 0 || now - d->phase_ns > CLOCK_HOLD_NS) {
+			// No recent kernel vblank: the display is off or starting.
+			struct timespec wait = deadline_after(PERIOD_NS);
+			pthread_cond_timedwait(&d->cond, &d->lock, &wait);
+			continue;
+		}
+		int64_t k = now >= d->phase_ns ? (now - d->phase_ns) / PERIOD_NS : 0;
+		uint64_t latest = d->phase_sequence + (uint64_t)k;
+		if (d->ticked_sequence > latest + 1) {
+			d->ticked_sequence = latest; // a new mode restarted the kernel's count
+		}
+		if (d->ticked_sequence < latest) {
+			d->ticked_sequence = latest;
+			vblank_tick(d, latest);
+			continue;
+		}
+		int64_t target = d->phase_ns + (k + 1) * PERIOD_NS;
+		pthread_mutex_unlock(&d->lock);
+		struct timespec at = {.tv_sec = target / NS_PER_S, .tv_nsec = target % NS_PER_S};
+		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &at, NULL);
+		pthread_mutex_lock(&d->lock);
+	}
+	pthread_mutex_unlock(&d->lock);
+	return NULL;
 }
 
 static void
@@ -897,7 +963,10 @@ vblank_handler(int fd, unsigned sequence, unsigned sec, unsigned usec, void *dat
 	struct display *d = data;
 	(void)fd;
 	// DRM timestamps vblank events on CLOCK_MONOTONIC.
-	on_vblank(d, sequence, (int64_t)sec * NS_PER_S + (int64_t)usec * 1000);
+	int64_t when_ns = (int64_t)sec * NS_PER_S + (int64_t)usec * 1000;
+	DBG("vblank %u at %.3f ms, delivered %.3f ms later, %.3f ms after the previous", sequence,
+	    when_ns / 1e6, (now_ns() - when_ns) / 1e6, (when_ns - d->vblank_ns) / 1e6);
+	on_vblank(d, sequence, when_ns);
 	d->vblank_pending = false;
 }
 
@@ -974,6 +1043,7 @@ vblank_start(struct display *d)
 	pthread_condattr_destroy(&attr);
 	d->vblank_stop = false;
 	d->vblank_started = pthread_create(&d->vblank_thread, NULL, vblank_main, d) == 0;
+	d->clock_started = !d->fake && pthread_create(&d->clock_thread, NULL, clock_main, d) == 0;
 }
 
 
@@ -1333,12 +1403,18 @@ present_main(void *arg)
 			pthread_cond_broadcast(&d->cond);
 			continue;
 		}
+		// File I/O without the lock: the vblank clock must not wait for it. Only this
+		// thread commits, so the image stays on screen meanwhile.
 		if (dump != NULL && sc->stats.commits == dump_frame) {
+			pthread_mutex_unlock(&d->lock);
 			sc_dump(sc, img, dump);
+			pthread_mutex_lock(&d->lock);
 		}
 		if (stats != NULL && sc->stats.last_ns - stats_ns >= STATS_EVERY_NS) {
-			sc_write_stats(sc, stats); // a running compositor's numbers so far
 			stats_ns = sc->stats.last_ns;
+			pthread_mutex_unlock(&d->lock);
+			sc_write_stats(sc, stats); // a running compositor's numbers so far
+			pthread_mutex_lock(&d->lock);
 		}
 	}
 	pthread_mutex_unlock(&d->lock);
@@ -2684,6 +2760,7 @@ register_event_fence(struct device_data *dev, bool vblank, VkFence *out)
 	e->device = dev->device;
 	e->fence = *out;
 	e->vblank = vblank;
+	DBG("event fence %p registered (vblank %d)", (void *)(uintptr_t)*out, vblank);
 	pthread_mutex_lock(&g_display.lock);
 	e->next = g_display.events;
 	g_display.events = e;
@@ -2764,7 +2841,8 @@ layer_WaitForFences(VkDevice device, uint32_t count, const VkFence *fences, VkBo
 	VkFence others[64];
 	uint32_t n = 0;
 	struct timespec deadline = deadline_after(timeout);
-	int64_t end = timeout > (uint64_t)INT64_MAX / 2 ? INT64_MAX : now_ns() + (int64_t)timeout;
+	int64_t start = now_ns();
+	int64_t end = timeout > (uint64_t)INT64_MAX / 2 ? INT64_MAX : start + (int64_t)timeout;
 	pthread_mutex_lock(&g_display.lock);
 	for (uint32_t i = 0; i < count && n < 64; i++) {
 		if (find_event(device, fences[i]) == NULL) {
@@ -2802,6 +2880,9 @@ layer_WaitForFences(VkDevice device, uint32_t count, const VkFence *fences, VkBo
 		pthread_cond_timedwait(&g_display.cond, &g_display.lock, &wait);
 	}
 	pthread_mutex_unlock(&g_display.lock);
+	DBG("vkWaitForFences: %u fences, %u events, all %u, timeout %.1f ms: %d after %.2f ms (vblank %" PRIu64 ")",
+	    count, ours, wait_all, timeout / 1e6, ret, (now_ns() - start) / 1e6,
+	    g_display.vblank_sequence);
 	return ret;
 }
 
@@ -2816,6 +2897,7 @@ layer_GetFenceStatus(VkDevice device, VkFence fence)
 		struct device_data *dev = find_device(device);
 		return dev->GetFenceStatus(device, fence);
 	}
+	DBG("vkGetFenceStatus(event %p): %d", (void *)(uintptr_t)fence, signaled);
 	return signaled ? VK_SUCCESS : VK_NOT_READY;
 }
 
@@ -2830,6 +2912,7 @@ layer_ResetFences(VkDevice device, uint32_t count, const VkFence *fences)
 		struct event_fence *e = find_event(device, fences[i]);
 		if (e != NULL) {
 			e->signaled = false;
+			DBG("vkResetFences(event %p)", (void *)(uintptr_t)fences[i]);
 		} else if (n < 64) {
 			others[n++] = fences[i];
 		}
@@ -2851,6 +2934,7 @@ layer_DestroyFence(VkDevice device, VkFence fence, const VkAllocationCallbacks *
 			struct event_fence *e = *p;
 			*p = e->next;
 			free(e);
+			DBG("vkDestroyFence(event %p)", (void *)(uintptr_t)fence);
 			break;
 		}
 	}
@@ -3124,14 +3208,20 @@ layer_DestroyInstance(VkInstance instance, const VkAllocationCallbacks *alloc)
 		 */
 		struct display *disp = &g_display;
 		pthread_mutex_lock(&disp->lock);
-		bool joining = disp->vblank_started;
+		bool joining = disp->vblank_started, clock = disp->clock_started;
 		disp->vblank_stop = true;
+		pthread_cond_broadcast(&disp->cond);
 		pthread_mutex_unlock(&disp->lock);
 		if (joining) {
 			pthread_join(disp->vblank_thread, NULL);
 		}
+		if (clock) {
+			pthread_join(disp->clock_thread, NULL);
+		}
 		pthread_mutex_lock(&disp->lock);
-		disp->vblank_started = false;
+		disp->vblank_started = disp->clock_started = false;
+		disp->phase_ns = 0;
+		disp->ticked_sequence = 0;
 		disp->vblank_pending = false;
 		kms_disable(disp);
 		if (disp->fd >= 0) {

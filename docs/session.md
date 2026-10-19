@@ -185,9 +185,14 @@ other call passes through; without the panels, the layer stays out of the way.
   in flight, exactly like Monado's KMS target. A retire fence that does not signal within
   500 ms counts as a retire timeout.
 - **Timing.** A vblank thread keeps one kernel vblank event queued: the vendor driver holds no
-  vblank reference for commits on its own, and events only come while the CRTC is active. It
-  drives `vkRegisterDisplayEventEXT` fences, `vkGetSwapchainCounterEXT` and
-  `vkWaitForPresentKHR`. A present counts as shown when its retire fence signals.
+  vblank reference for commits on its own, and events only come while the CRTC is active. The
+  events reach it late whenever it waits for the CPU or the layer's lock (up to 120 ms seen),
+  so a vblank clock at real-time priority (`SCHED_FIFO` 50) signals the
+  `vkRegisterDisplayEventEXT` fences and advances `vkGetSwapchainCounterEXT`: one tick per
+  refresh period, at the time the kernel's newest event timestamp predicts. The events only
+  correct its phase; it stops 250 ms after the last event. SteamVR takes the moment its fence
+  signals as the vblank's time. Frame dumps and statistics are written without the lock. A
+  present counts as shown (`vkWaitForPresentKHR`) when its retire fence signals.
 - **GPU clock floor.** While presenting, the layer raises the KGSL floor to 587 MHz or faster
   and restores it afterwards, as the KMS target does: under a compositor's load the stock
   governor stays at 305 MHz, where a frame takes longer than a refresh period.
@@ -333,14 +338,24 @@ to the Facet renderer with simplified, achromatic distortion shaders and draw th
 the distortion pass. With them and without the background dome (`showSkydome` off; any dome
 costs 3–4 ms per frame at the panels' resolution, whatever the render scale) a frame needed
 8.9 ms and the layer's statistics showed almost every frame at 90 Hz with no present-wait
-timeout. In the lenses the picture warped with every head movement, because the lens
-correction from `driver_monado` was not applied as before, and it froze every few seconds.
+timeout. In the lenses the picture warped with every head movement. Checked one setting at a
+time (in 3DoF, `PICO4_SLAM=0`), the Facet renderer distorts the rendered scene: SteamVR's
+dashboard, drawn in the distortion pass, stays correct and stable, while the scene does not.
+Facet builds inverse distortion coordinates from the driver's distortion
+(`CreateInverseDistortUVs`). Without the Facet renderer the dashboard cannot be drawn in the
+distortion pass (`vrcompositor` exits right after setting up its MSAA), and with both off the
+remaining settings show a correct, stable picture: 2,390 commits at 60.7/s in 30 s, 1,123 late,
+8.2 ms GPU wait per frame, 149 present-wait timeouts, no one-second wait. With the Facet
+renderer the same settings reach 87.5/s with 79 late.
 
-The freezes are SteamVR's one-second waits: `vrcompositor` logs `Aborting WaitForPresent after
-1.000000 seconds!` with a `TimeSinceLastVSync` equal to the system's uptime, while the vblank
-count beside it advances at 90 Hz. SteamVR has no time for the last vsync. The compositor keeps
-presenting during such a wait, so the layer's statistics do not show it. Each session start has
-at least one; with the Frame's settings they came every five seconds or so (47 in four minutes).
+It also froze every few seconds, in SteamVR's one-second waits: `vrcompositor` logged
+`Aborting WaitForPresent after 1.000000 seconds!` (47 in four minutes), each with a
+`TimeSinceLastVSync` equal to the system's uptime, while the vblank count beside it advanced
+at 90 Hz. The compositor keeps presenting during such a wait, so the layer's statistics did not
+show it. The layer then signalled SteamVR's vblank fences when the kernel's events reached it:
+33 of 2,649 more than 2 ms late, one 122 ms, followed by a burst of vblanks within a few
+milliseconds. With the vblank clock (above) the same settings run without a single such wait:
+3,392 commits at 87.5/s in 30 s, 79 late, 7.2 ms GPU wait per frame.
 
 `pico4-fan.service` drives the fan with PICO OS's policy ([cooling.md](cooling.md)); Qualcomm's
 `thermal-engine` does not run here, as on PICO OS, and the kernel's `step_wise` zones throttle.
@@ -465,14 +480,15 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: `pico4-valve-session-check`, 20 and 30 s | passes: startup 15–16 s, 51–54 commits/s, vblank 89.998 Hz, 12.1 ms GPU wait per frame, no fence or GPU timeout, no `mangoapp` restarts, scanned-out eye means about (10, 13, 19); headset and both controllers in SteamVR; the Monado session back afterwards; hottest zone 47–54 °C before, 86–92 °C after |
 | Headset: `pico4-valve-session-check`, 30 s, KGSL context priorities | passes: `vrcompositor` and gamescope at KGSL level 1, the CEF renderer at 8; 2,188 commits at 55.6/s, 1,259 late, 10.3 ms GPU wait per frame (longest 25.7 ms), 5.75 ms retire wait, 1,847 of 2,187 present waits over SteamVR's 15 ms; without the priorities 53.1/s, 1,486 late, 11.5 ms (35.6 ms) |
 | Headset: Valve's session with the Frame driver's compositor settings, no background dome (user, four minutes) | layer: 13,068 commits, 598 late, 8.4 ms GPU wait per frame, no present-wait timeout, hottest zone up to 69.4 °C; in the lenses the picture warped with head movement (lens correction not applied as before) and froze every few seconds: 47 of SteamVR's one-second present waits |
+| Headset: `pico4-valve-session-check`, 30 s, vblank clock | SteamVR's defaults: 54.7 commits/s, 10.6 ms GPU wait per frame, no one-second wait; the Frame driver's settings without `waitForSceneGraph`: 3,392 commits at 87.5/s, 79 late, 7.2 ms, 6 of the present waits over 15 ms, no one-second wait (16 in 30 s before the clock) |
 | Headset: Monado service | userspace check passes (session active, every listed device node accessible to `steamos`); OpenXR pose: 959–960 of 960 located, tilt 4.29° against the accelerometer's 4.28°, heading rate 0.005°/s; display client through the service (two layers, 30 s): about 2,686 frames at 89.5–89.6 Hz, 11 late, KMS target 88.4–89.6 commits/s at vblank 89.998 Hz, no fence timeout, eyes left/right correct; statistics written when the service stops, GPU floor back to the stock level 6 (305 MHz); the session user's client through the socket link: 1,348 frames at 89.74 Hz |
 | Headset: acceptance cycle with stock restore (flash-run with the archive, EDL readback of boot, stock ABL restore) | passes in about 8 minutes from PICO OS to PICO OS on stock boot and ABL, 39 s of it receiving the 801 MiB archive: userspace check with the fan service, head IMU, OpenXR pose (tilt 3.8°), Monado display client at 89.9 frames/s, display layer at 86 frames/s on a 90 Hz vblank, shared semaphores, Valve's session presenting after 15 s at 51.3 commits/s with the headset and both controllers in SteamVR (hottest zone 45.3 → 69.4 °C with the fan at 30 %; 47.1 → 85.7 °C without fan control); stock boot and ABL verified by EDL readback; PICO OS 5.13.7 boots |
 
 ## Next steps
 
-1. **Performance.** A time for the last vsync for SteamVR (the one-second freezes), then a
-   compositor frame within the 11.1 ms period with room for the vblank phase and with the lens
-   correction intact. The panels' 72 Hz mode would give 13.9 ms but needs a 90 Hz frame before
+1. **Performance.** A compositor frame within the 11.1 ms period with room for the vblank
+   phase and with the lens correction intact: the Facet renderer's distortion of the scene
+   with `driver_monado`'s lens model. The panels' 72 Hz mode would give 13.9 ms but needs a 90 Hz frame before
    the switch.
 2. **Cooling.** Measure the fan control ([cooling.md](cooling.md)) on the headset, with the
    full session for 10 minutes against an agreed limit for the hottest zone.
