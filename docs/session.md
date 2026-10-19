@@ -310,8 +310,9 @@ shows one refresh later.
 
 `pico4-fan.service` drives the fan with PICO OS's policy ([cooling.md](cooling.md)); Qualcomm's
 `thermal-engine` does not run here, as on PICO OS, and the kernel's `step_wise` zones throttle.
-The figures that follow were measured without fan control, and the session has not been
-measured with it. Valve's session took the hottest thermal zone from 47–54 °C to 86–92 °C
+With the fan at 30 %, the 30 s session check takes the hottest zone from 45 °C to 69 °C. The
+figures that follow were measured without fan control. Valve's session took the hottest thermal
+zone from 47–54 °C to 86–92 °C
 within a minute, and a few minutes of it brought the GPU to about 95 °C and the CPU clusters
 to 96–98 °C. `pico4-valve-session-check` therefore runs the session for 30 s by default and
 records the hottest zone and the fan's state before and after, and the acceptance runner lets
@@ -429,7 +430,7 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: Valve's session in the lenses (user, two minutes) | the full SteamVR environment, slightly jittery but mostly good (5,969 commits at 50/s); both controllers shown as SteamVR's generic locator, turning with the wrists, not moving in space (3DoF) |
 | Headset: `pico4-valve-session-check`, 20 and 30 s | passes: startup 15–16 s, 51–54 commits/s, vblank 89.998 Hz, 12.1 ms GPU wait per frame, no fence or GPU timeout, no `mangoapp` restarts, scanned-out eye means about (10, 13, 19); headset and both controllers in SteamVR; the Monado session back afterwards; hottest zone 47–54 °C before, 86–92 °C after |
 | Headset: Monado service | userspace check passes (session active, every listed device node accessible to `steamos`); OpenXR pose: 959–960 of 960 located, tilt 4.29° against the accelerometer's 4.28°, heading rate 0.005°/s; display client through the service (two layers, 30 s): about 2,686 frames at 89.5–89.6 Hz, 11 late, KMS target 88.4–89.6 commits/s at vblank 89.998 Hz, no fence timeout, eyes left/right correct; statistics written when the service stops, GPU floor back to the stock level 6 (305 MHz); the session user's client through the socket link: 1,348 frames at 89.74 Hz |
-| Headset: acceptance cycle with stock restore (flash-run with the archive, EDL readback of boot, stock ABL restore) | passes, 9 minutes from stage 1 to the restored stock boot (193 s of it receiving the archive): userspace check, head IMU, OpenXR pose, Monado display client, display layer 88.8 commits/s, shared semaphores, Valve's session presenting after 15 s at 51.2 commits/s with the headset and both controllers in SteamVR (hottest zone 47.1 → 85.7 °C); stock boot and ABL verified by EDL readback; PICO OS 5.13.7 boots |
+| Headset: acceptance cycle with stock restore (flash-run with the archive, EDL readback of boot, stock ABL restore) | passes in about 8 minutes from PICO OS to PICO OS on stock boot and ABL, 39 s of it receiving the 801 MiB archive: userspace check with the fan service, head IMU, OpenXR pose (tilt 3.8°), Monado display client at 89.9 frames/s, display layer at 86 frames/s on a 90 Hz vblank, shared semaphores, Valve's session presenting after 15 s at 51.3 commits/s with the headset and both controllers in SteamVR (hottest zone 45.3 → 69.4 °C with the fan at 30 %; 47.1 → 85.7 °C without fan control); stock boot and ABL verified by EDL readback; PICO OS 5.13.7 boots |
 
 ## Next steps
 

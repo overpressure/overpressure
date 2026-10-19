@@ -157,8 +157,8 @@ written data takes RAM, formats it as ext4 without a journal and mounts it at `/
 `discard`. Before PID 1 depends on the new root, its systemd must run on this kernel
 (`systemd --version` in a chroot). A second attempt needs a reboot. Stage 1's dropbear runs
 with a 4 MiB receive window (`-W 4194304` in [svc](../initramfs/usr/libexec/pico4-poc/svc)):
-with dropbear's default 24 KiB window, uploads over the USB link stop at about 4.4 MB/s. The
-transfer rate with the 4 MiB window has not been measured.
+with dropbear's default 24 KiB window, uploads over the USB link stop at about 4.4 MB/s; with
+the 4 MiB window the 801 MiB archive arrives in 39 s (21.6 MB/s).
 
 **Switch.** `pico4-userspace switch` converts the stage-1 dropbear host keys for OpenSSH, so the
 hardware runner's pinned key stays valid. It copies the test-run state (`/etc/pico4-poc`) and

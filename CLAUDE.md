@@ -18,9 +18,9 @@ section lists what comes next. Each step has its own document:
 | 5 XR hardware: IMU, Monado driver and KMS display, lenses and IPD, cameras, controllers (3DoF), Basalt 6DoF | verified with stock restore; controller positions open | [docs/xr.md](docs/xr.md) |
 | 6 Valve's VR session: gamescope + SteamVR with `driver_monado`, `pico4-vrdisplay`, shared GPU and System V semaphores | verified with stock restore; ~50 fps GPU-bound; Steam client, performance and cooling open | [docs/session.md](docs/session.md) |
 
-Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; it has not run on
-the headset yet ([docs/cooling.md](docs/cooling.md)). Build system, tests and the Windows/WSL
-environment: [docs/development.md](docs/development.md).
+Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; on the headset the
+MCU acknowledges, and longer sessions and tuning are open ([docs/cooling.md](docs/cooling.md)).
+Build system, tests and the Windows/WSL environment: [docs/development.md](docs/development.md).
 
 ## Documentation
 
@@ -124,10 +124,11 @@ passed.
   restore between attempts. `dev check` runs the acceptance runner's stage-2 checks.
 - **Deadlines.** Device-side deadlines return the headset to fastboot. A kernel panic reboots
   rather than parking in crash-dump mode (stage 1 sets `msm_poweroff.download_mode=0`).
-- **Heat.** `pico4-fan.service` drives the fan with PICO OS's policy, not yet measured on the
-  headset; Qualcomm's `thermal-engine` does not run (it is off on PICO OS too), and the kernel's
-  `step_wise` zones throttle. Without fan control Valve's session took the hottest zone from
-  about 54 °C to 92 °C within a minute. Keep GPU-heavy runs short (`pico4-valve-session-check`
+- **Heat.** `pico4-fan.service` drives the fan with PICO OS's policy: with the fan at 30 % the
+  30 s Valve session check peaks at 69 °C (86 °C without fan control). Qualcomm's
+  `thermal-engine` does not run (it is off on PICO OS too), and the kernel's `step_wise` zones
+  throttle. Without fan control a minute of Valve's session took the hottest zone from about
+  54 °C to 92 °C. Keep GPU-heavy runs short (`pico4-valve-session-check`
   runs 30 s), stop them as soon as the evidence is in, and read
   `/sys/class/thermal/thermal_zone*/temp` when in doubt.
 - **Acceptance.** Finish with one cycle: `dev restore`, then `python -m pico4 cycle --skip-stage

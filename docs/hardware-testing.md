@@ -288,8 +288,8 @@ must answer SSH with the same pinned host key (stage 1's dropbear keys are conve
 the same run identifier and SoC ID, and systemd as PID 1. `result.json` records the archive, its
 features, `receive_seconds` and `ssh_seconds`. Stage 1's dropbear runs with a 4 MiB receive window
 (`-W` in [svc](../initramfs/usr/libexec/pico4-poc/svc)): with the 24 KiB default, the upload
-stopped at about 4.4 MB/s. The rate with the larger window has not been measured; `dev boot`
-prints it.
+stopped at about 4.4 MB/s; with the 4 MiB window the 801 MiB archive arrives in 39 s
+(21.6 MB/s). `dev boot` prints the rate.
 
 Then, in this order:
 
@@ -457,7 +457,8 @@ state select the firmware entry: `python -m pico4 match --fingerprint ... --oem-
 
 `python -m pico4 cycle [--userspace ARCHIVE] [--skip-stage] [--keep-abl | --restore-only]`
 ([pico4/cycle.py](../pico4/cycle.py)) runs the acceptance unattended and ends on stock boot and
-stock ABL. Settings come from [`.env`](#settings-for-cycle-and-dev).
+stock ABL. Settings come from [`.env`](#settings-for-cycle-and-dev). A full cycle with the
+userspace archive, from PICO OS back to PICO OS on stock boot and ABL, takes about 8 minutes.
 
 1. **Engineering ABL** (skipped with `--skip-stage`): into EDL; a read-only first session
    (`printgpt`) must report `PICO4_EDL_SERIAL`; then

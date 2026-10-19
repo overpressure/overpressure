@@ -5,9 +5,11 @@ fan is not a Linux device on either system: it hangs off the GD32 MCU that also 
 and drives the backlight ([xr.md](xr.md#lens-distortion-and-ipd)), and PICO OS's
 `pxrfanservice` sets its duty over that MCU's UART. [`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan)
 runs the same policy with the same frames under stage 2: the userspace build enables its
-service, and the acceptance checks require it on the headset. Host tests cover it; it has not
-run on the headset yet. Without fan control, Valve's session took the hottest thermal zone from
-about 54 °C to 92 °C within a minute ([session.md](session.md#performance-and-heat)).
+service, and the acceptance checks require it on the headset. On the headset the MCU
+acknowledges its duty and reports the fan's speed, and Valve's 30 s session check takes the
+hottest thermal zone from 45 °C to 69 °C with the fan at 30 %. Without fan control the same
+check went from 47 °C to 86 °C, and a minute of the session from 54 °C to 92 °C
+([session.md](session.md#performance-and-heat)). Longer sessions and tuning are open.
 
 ## How PICO OS cools the PICO 4
 
@@ -197,18 +199,22 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
 | Development headset (persist backup, through `scripts/extract-sensor-data.sh`'s step) | late batch; standard PICO 4, control type 1 |
 | Host: [tests/test_fan.py](../tests/test_fan.py) | passes: frames against the stock bytes and the allowlist, replies, both tables and their hysteresis, boost and failsafe, the loop's means and timing, retries, the state file and what the checks read from it, zone selection, profile choice, the batch rule on synthetic serial numbers (the serial is never printed), the unit; one UART transaction over a pty on Linux |
 | Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | pass: the userspace check's `fan` object (active with a state; skipped only without `require_fan`; an MCU error reported, not failed) and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
+| Headset: `pico4-fan.service` in the acceptance cycle | active; the MCU answers the queries and acknowledges SetFanSpeed, no MCU error in the journal; the fan reads 0 % and 0 rpm before the daemon, then runs at 30 % from the early table (hottest mean 35–43 °C) at 4,849–4,914 rpm; Monado reads the IPD (71.99 mm) through the shared port lock |
+| Headset: Valve's session check (30 s) with the fan | hottest zone 45.3 °C before, 69.4 °C after; the fan stayed at 30 % (the early table holds 30 % up to a 70 °C mean); without fan control the same check went from 47.1 to 85.7 °C |
 | Build: [test_pico4_lens.c](../src/monado/test_pico4_lens.c) | the IPD reader gives up with `-EBUSY` after a second while another descriptor holds the port lock, and goes on once it is free |
 
 ## Next steps
 
 1. **Hardware.**
-   - Read the MCU's duty and RPM before the daemon sends anything.
    - Sweep the duty against the RPM.
    - Check the fan's response to a load step.
    - Run Valve's session for 10 minutes against an agreed limit for the hottest zone.
-2. **Stricter checks.** Once the MCU is seen to acknowledge on the headset,
-   `pico4-userspace-check` can require an acknowledged duty instead of reporting it.
-3. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
+2. **Stricter checks.** The MCU acknowledges on the headset, so `pico4-userspace-check` can
+   require an acknowledged duty instead of reporting it.
+3. **The headset's table.** The current sensor data predates `calibration/fan-profile`, so the
+   daemon runs the early table; extracting the sensor data again selects the headset's late
+   table.
+4. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
    that limit.
-4. **GetFanInfo.** Decode its reply; if it identifies the fan, the daemon can choose its table
+5. **GetFanInfo.** Decode its reply; if it identifies the fan, the daemon can choose its table
    without the backup.

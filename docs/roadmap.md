@@ -239,8 +239,9 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
   jittery; the controllers turn with the wrists but do not move in space.
 - **Heat.** Without fan control Valve's session takes the hottest thermal zone from about 54 °C
   to 92 °C within a minute. The userspace enables `pico4-fan.service`, which runs PICO OS's fan
-  policy ([cooling.md](cooling.md)); its effect on the headset is not measured yet. Session
-  checks run for 30 s.
+  policy ([cooling.md](cooling.md)): with the fan at 30 % the 30 s session check takes the
+  hottest zone from 45 °C to 69 °C, against 47 °C to 86 °C without it. Session checks run for
+  30 s.
 - **Monado service.** Outside Valve's session, the default `pico4-session.target` uses Monado's
   service as the OpenXR runtime. The two never run together, because both own the hardware;
   `/etc/pico4-poc/session.conf` selects the target.
@@ -284,17 +285,19 @@ hysteresis. It adds full speed while any sensor reads 95 °C or more, until the 
 below 90 °C, and 100 % without usable readings. It builds frames only from an allowlist
 (SetFanSpeed 0–100 % and four queries) and shares the UART with Monado's IPD read through an
 exclusive `flock`. The userspace build enables its service, and the acceptance checks require
-it on the headset and record its duty and RPM. Host tests cover it; it has not run on the
-headset. Remaining:
+it on the headset and record its duty and RPM. On the headset the MCU acknowledges its
+duty and reports the fan's speed (about 4,900 rpm at 30 %), and Valve's 30 s session check
+peaks at 69 °C instead of 86 °C. Remaining:
 
-1. **Hardware.** Read the MCU's duty and RPM before the daemon sends anything; sweep the duty
-   against the RPM; check the fan's response to a load step; run Valve's session for 10
-   minutes against an agreed limit for the hottest zone.
-2. **Stricter checks.** Once the MCU is seen to acknowledge on the headset,
-   `pico4-userspace-check` can require an acknowledged duty instead of reporting it.
-3. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
+1. **Hardware.** Sweep the duty against the RPM; check the fan's response to a load step; run
+   Valve's session for 10 minutes against an agreed limit for the hottest zone.
+2. **Stricter checks.** The MCU acknowledges on the headset, so `pico4-userspace-check` can
+   require an acknowledged duty instead of reporting it.
+3. **The headset's table.** The current sensor data predates `calibration/fan-profile`, so the
+   daemon runs the early table; extracting the sensor data again selects the late table.
+4. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
    that limit.
-4. **GetFanInfo.** Decode its reply; if it identifies the fan, the daemon can choose its table
+5. **GetFanInfo.** Decode its reply; if it identifies the fan, the daemon can choose its table
    without the backup.
 
 ### Performance
