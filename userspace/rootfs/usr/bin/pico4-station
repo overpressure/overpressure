@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Control the PICO 4 controller radio ("station", an nRF52832 on SPI) for the Linux userspace.
+
+The station relays the controllers' IMU, buttons and battery to the sensor DSP
+(SSC sensor "ble_mcu", see pico4-imu raw ble_mcu); the AP talks to it over
+/dev/spidev0.0 for control only. Frames are 40 bytes: header, target, command,
+36 payload bytes (the last two carry a sequence number), CRC-8 (Dallas/Maxim)
+over bytes 0..38. The vendor spidev driver performs the transfers on the
+station's interrupt; userspace writes and reads whole frames.
+
+Safety: the station and controller firmware can be updated over this link. This
+tool can only build the frames listed in COMMANDS (version query, camera frame
+sync, IMU stream on/off, acknowledge) and the power ioctl; it has no way to send firmware,
+bootloader or flash commands, and it never touches the boot pin.
+"""
+
+import argparse
+import fcntl
+import json
+import os
+import select
+import struct
+import sys
+import time
+
+DEVICE = "/dev/spidev0.0"
+FRAME = 40
+HEADER_SEND = 0xAA
+HEADERS_RECV = (0xBB, 0xA5)
+TARGET_STATION = 0x01
+IOCTL_POWER = 0x80046B09  # _IOW('k', 9, int): 1 = on, 0 = off
+
+# The only commands this tool builds.
+CMD_VERSION = 0x01
+CMD_CAMERA = 0x04  # tracking-camera frame sync; first payload byte selects the operation
+CMD_IMU_STREAM = 0x07
+CMD_ACK = 0xFA
+# Read-only queries the stock service sends after waking the station.
+CMD_GET_WORK_MODE, CMD_GET_CRASH, CMD_GET_WHITELIST = 0x22, 0x29, 0x30
+QUERIES = (CMD_GET_WORK_MODE, CMD_GET_CRASH, CMD_GET_WHITELIST)
+# 0x22 with a first byte of 0 *sets* the tracker work mode; 1 reads it.
+QUERY_PAYLOAD = {CMD_GET_WORK_MODE: bytes([1, 0])}
+# The station announces itself after power-on (A5 06: protocol, radio type) and
+# waits for the camera frame-rate setting before it accepts camera commands.
+CMD_STATION_FPS = 0x19
+STATION_FPS_50 = 1  # the stock configuration (sys_station_camera_fps 50)
+DEVICE_TYPE = 0      # DeviceTypeGet() on the PICO 4
+COMMANDS = (CMD_VERSION, CMD_CAMERA, CMD_IMU_STREAM, CMD_ACK, CMD_STATION_FPS) + QUERIES
+CAMERA_INIT, CAMERA_STREAM, CAMERA_SET_PARA, CAMERA_FPS = 0x01, 0x02, 0x03, 0x07
+CAMERA_OPS = (CAMERA_INIT, CAMERA_STREAM, CAMERA_SET_PARA, CAMERA_FPS)
+# Set parameters (the stock CameraSetPara): op, 8 x (u16 exposure, u8 gain) with
+# cameras 0-3 in bytes 1-12 and 16-27, a u16 at 13-14 and an event index at 15.
+CAMERA_SET_PARA_LEN = 28
+
+
+def _crc8_table():
+    table = []
+    for i in range(256):
+        c = i
+        for _ in range(8):
+            c = (c >> 1) ^ 0x8C if c & 1 else c >> 1
+        table.append(c)
+    return table
+
+
+CRC8 = _crc8_table()
+
+
+def crc8(data: bytes) -> int:
+    c = 0
+    for b in data:
+        c = CRC8[c ^ b]
+    return c
+
+
+def frame(command: int, payload: bytes = b"", seq: int = None) -> bytes:
+    """A 40-byte request; only the allowlisted commands can be built."""
+    allowed = command in COMMANDS
+    if command == CMD_CAMERA:
+        allowed = bool(payload) and payload[0] in CAMERA_OPS
+        if allowed and payload[0] == CAMERA_SET_PARA:
+            allowed = len(payload) == CAMERA_SET_PARA_LEN
+    elif command in QUERY_PAYLOAD:
+        allowed = payload == QUERY_PAYLOAD[command]
+    elif command == CMD_STATION_FPS:
+        allowed = len(payload) == 3 and payload[0] in (1, 2) and payload[2] == 1
+    if not allowed:
+        raise ValueError(f"command {command:#x} {payload[:1].hex()} is not allowed")
+    if len(payload) > 34:
+        raise ValueError("payload too long")
+    buf = bytearray(FRAME)
+    buf[0], buf[1], buf[2] = HEADER_SEND, TARGET_STATION, command
+    buf[3:3 + len(payload)] = payload
+    if seq is not None:
+        struct.pack_into("<H", buf, 37, seq & 0xFFFF)
+    buf[39] = crc8(bytes(buf[:39]))
+    return bytes(buf)
+
+
+def valid_reply(buf: bytes) -> bool:
+    return len(buf) == FRAME and buf[0] in HEADERS_RECV and crc8(buf[:39]) == buf[39]
+
+
+class Station:
+    def __init__(self, device: str = DEVICE):
+        self.fd = os.open(device, os.O_RDWR)
+        self.seq = 0
+        self.log = []
+        self.announced = False
+
+    def close(self):
+        os.close(self.fd)
+
+    def power(self, on: bool):
+        fcntl.ioctl(self.fd, IOCTL_POWER, struct.pack("i", 1 if on else 0))
+
+    def send(self, data: bytes):
+        if os.write(self.fd, data) != FRAME:
+            raise OSError("short write to the station")
+
+    def read(self, timeout: float):
+        """One valid frame or None; acknowledges replies as the stock service does."""
+        ready, _, _ = select.select([self.fd], [], [], timeout)
+        if not ready:
+            return None
+        buf = os.read(self.fd, FRAME)
+        entry = {"t": round(time.monotonic(), 4), "hex": buf.hex()}
+        self.log.append(entry)
+        if not valid_reply(buf):
+            entry["valid"] = False
+            return None
+        if not (buf[0] == 0xA5 and buf[1] == 0x01):
+            self.send(frame(CMD_ACK, buf[37:39]))
+        if buf[0] == 0xA5 and buf[1] == 0x06 and not self.announced:
+            # As the stock service: answer the announcement with the camera frame rate.
+            self.announced = True
+            self.send(frame(CMD_STATION_FPS, bytes([STATION_FPS_50, DEVICE_TYPE, 1])))
+            entry["answered"] = "station fps"
+        return buf
+
+    def collect(self, seconds: float):
+        end = time.monotonic() + seconds
+        frames = []
+        while time.monotonic() < end:
+            buf = self.read(min(0.2, max(0.0, end - time.monotonic())))
+            if buf is not None:
+                frames.append(buf)
+        return frames
+
+    def request(self, command: int, payload: bytes = b"", seconds: float = 1.0):
+        # As the stock service: only the version query carries a sequence number.
+        seq = None
+        if command == CMD_VERSION:
+            self.seq += 1
+            seq = self.seq
+        self.send(frame(command, payload, seq))
+        return self.collect(seconds)
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("listen", help="print frames the station sends")
+    p.add_argument("--seconds", type=float, default=5.0)
+    p = sub.add_parser("power", help="station power through the driver")
+    p.add_argument("state", choices=("on", "off", "cycle"))
+    sub.add_parser("version", help="query the station firmware version")
+    p = sub.add_parser("wake", help="the stock wake-up queries (version, work mode, crash info, whitelist), then listen")
+    p.add_argument("--seconds", type=float, default=20.0)
+    p = sub.add_parser("imu", help="switch the controllers' IMU stream to the sensor DSP")
+    p.add_argument("state", choices=("on", "off"))
+    p.add_argument("--controllers", default="0,1", help="comma-separated indices (0 left, 1 right)")
+    p = sub.add_parser("camera", help="tracking-camera frame sync (the cameras' FSIN pulses)")
+    p.add_argument("op", choices=("init", "on", "off", "fps", "para"))
+    p.add_argument("--camera", type=int, default=0, help="1..4, 0 for all (on/off)")
+    p.add_argument("--exposure-first-row", type=int, default=2, choices=(0, 1, 2), help="init flag (PICO OS: 2)")
+    p.add_argument("--resolution", type=int, default=0, choices=(0, 1), help="init flag")
+    p.add_argument("--fps", type=int, default=1, choices=(1, 2), help="station frame-rate setting")
+    p.add_argument("--exposure", default="200", help="para: 8 comma-separated u16 exposures (or one for all)")
+    p.add_argument("--gain", default="16", help="para: 8 comma-separated gains (or one for all)")
+    p.add_argument("--param", type=int, default=0, help="para: the u16 at bytes 13-14")
+    p.add_argument("--index", type=int, default=0, help="para: the event index at byte 15")
+    args = parser.parse_args(argv)
+
+    st = Station()
+    out = {"command": args.command}
+    try:
+        if args.command == "power":
+            if args.state == "cycle":
+                st.power(False)
+                time.sleep(0.1)
+            st.power(args.state != "off")
+            time.sleep(0.01)
+            out["frames"] = len(st.collect(1.0))
+        elif args.command == "listen":
+            out["frames"] = len(st.collect(args.seconds))
+        elif args.command == "wake":
+            out["version"] = [r.hex() for r in st.request(CMD_VERSION)]
+            for q in QUERIES:
+                out[f"query_{q:#04x}"] = [r.hex() for r in st.request(q, QUERY_PAYLOAD.get(q, b""), 0.5)]
+            out["frames"] = len(st.collect(args.seconds))
+        elif args.command == "version":
+            replies = st.request(CMD_VERSION)
+            out["replies"] = [r.hex() for r in replies]
+        elif args.command == "camera":
+            if args.op == "init":
+                payload = bytes([CAMERA_INIT, 0, args.exposure_first_row, args.resolution])
+            elif args.op == "fps":
+                payload = bytes([CAMERA_FPS, 0, args.fps])
+            elif args.op == "para":
+                exp = [int(x) for x in args.exposure.split(",")]
+                gain = [int(x) for x in args.gain.split(",")]
+                exp = exp * 8 if len(exp) == 1 else exp
+                gain = gain * 8 if len(gain) == 1 else gain
+                body = bytearray([CAMERA_SET_PARA])
+                for i in range(4):
+                    body += struct.pack("<HB", exp[i], gain[i])
+                body += struct.pack("<HB", args.param, args.index)
+                for i in range(4, 8):
+                    body += struct.pack("<HB", exp[i], gain[i])
+                payload = bytes(body)
+            else:
+                payload = bytes([CAMERA_STREAM, args.camera, 1 if args.op == "on" else 2])
+            out["replies"] = [r.hex() for r in st.request(CMD_CAMERA, payload)]
+        elif args.command == "imu":
+            for c in (int(x) for x in args.controllers.split(",")):
+                replies = st.request(CMD_IMU_STREAM, bytes([c, 1 if args.state == "on" else 0]))
+                out[f"controller{c}"] = [r.hex() for r in replies]
+    finally:
+        out["log"] = st.log[-50:]
+        st.close()
+    print(json.dumps(out, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

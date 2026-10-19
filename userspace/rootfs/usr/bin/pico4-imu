@@ -584,6 +584,59 @@ def cmd_stream(ssc: Ssc, args) -> int:
     return 1 if failures else 0
 
 
+def pb_tree(data: bytes, depth: int = 0):
+    """Best-effort protobuf decode for unknown messages: nested messages where
+    the bytes parse completely, otherwise text or hex."""
+    try:
+        fields = pb_parse(data)
+    except (IndexError, ValueError, struct.error):
+        return None
+    out = []
+    for field, wire, value in fields:
+        if wire == 2:
+            nested = pb_tree(value, depth + 1) if depth < 4 and value else None
+            if nested is not None:
+                value = nested
+            elif value and all(32 <= b < 127 for b in value):
+                value = value.decode()
+            else:
+                value = value.hex()
+        elif wire == 5:
+            value = {"f32": round(struct.unpack("<f", value)[0], 6), "u32": u32(value)}
+        elif wire == 1:
+            value = {"u64": u64(value)}
+        out.append([field, value])
+    return out
+
+
+def cmd_raw(ssc: Ssc, args) -> int:
+    """Enable one sensor and print its events, decoded generically (for sensors
+    with vendor-specific messages)."""
+    found = ssc.find(args.type)
+    if not found:
+        print(json.dumps({"status": "fail", "error": f"no {args.type} sensor"}))
+        return 1
+    suid = found[0]
+    payload = pb_float(1, args.rate) if args.msg_id == MSG_CONFIG else bytes.fromhex(args.payload)
+    counts = {}
+    try:
+        ssc.request(client_request(suid, args.msg_id, payload))
+        end = time.monotonic() + args.seconds
+        while time.monotonic() < end:  # events() ends after a second without data
+            for ev_suid, msg_id, ts, data in ssc.events(1.0):
+                if ev_suid == suid:
+                    counts[msg_id] = counts.get(msg_id, 0) + 1
+                    if counts[msg_id] <= args.max_print:
+                        print(json.dumps({"msg_id": msg_id, "ts": ts, "fields": pb_tree(data), "hex": data.hex()}),
+                              flush=True)
+                if time.monotonic() > end:
+                    break
+    finally:
+        ssc.disable(suid)
+    print(json.dumps({"type": args.type, "seconds": args.seconds, "events": counts}))
+    return 0 if counts else 1
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -595,6 +648,13 @@ def main(argv=None) -> int:
     p.add_argument("--csv")
     p.add_argument("--orientation", action="store_true")
     p.add_argument("--check", action="store_true", help="fail unless the stationary acceptance limits hold")
+    p = sub.add_parser("raw", help="enable one sensor type and print its events, decoded generically")
+    p.add_argument("type")
+    p.add_argument("--rate", type=float, default=100.0, help="Hz, for the standard config request")
+    p.add_argument("--msg-id", type=int, default=MSG_CONFIG, help="request message id (default: std config)")
+    p.add_argument("--payload", default="", help="hex payload for a non-standard request")
+    p.add_argument("--seconds", type=float, default=5.0)
+    p.add_argument("--max-print", type=int, default=20, help="events printed per message id")
     parser.add_argument("-v", "--verbose", action="store_true", help="log QMI traffic to stderr")
     args = parser.parse_args(argv)
     global VERBOSE
@@ -604,7 +664,7 @@ def main(argv=None) -> int:
     except (OSError, RuntimeError) as exc:
         print(json.dumps({"status": "fail", "error": str(exc)}))
         return 1
-    return {"list": cmd_list, "stream": cmd_stream}[args.command](ssc, args)
+    return {"list": cmd_list, "stream": cmd_stream, "raw": cmd_raw}[args.command](ssc, args)
 
 
 if __name__ == "__main__":

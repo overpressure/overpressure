@@ -475,6 +475,18 @@ p4k_vblank_handler(int fd, unsigned sequence, unsigned sec, unsigned usec, void 
 	s->last_sequence = sequence;
 	s->vblanks++;
 	kt->vblank_pending = false;
+
+	/*
+	 * Keep the pacer's frame boundaries on the panel's vblanks. On its own it
+	 * counts periods from when it was created, at an arbitrary phase: in some
+	 * runs the commits then landed just after vblank and missed a third of the
+	 * refreshes. DRM timestamps vblank events on CLOCK_MONOTONIC.
+	 */
+	int64_t vblank_ns = (int64_t)sec * U_TIME_1S_IN_NS + (int64_t)usec * U_TIME_1US_IN_NS;
+	int64_t now_ns = os_monotonic_get_ns();
+	if (vblank_ns <= now_ns && now_ns - vblank_ns < U_TIME_1S_IN_NS) {
+		u_pc_update_vblank_from_display_control(kt->upc, vblank_ns);
+	}
 }
 
 /*!

@@ -1,41 +1,78 @@
 # Monado (OpenXR runtime) with a driver for the original PICO 4 on its stock
-# kernel: head orientation from the ICM-42688 behind the sensor DSP (3DoF),
-# through the same Qualcomm Sensor Core client protocol as pico4-imu (XR.md).
+# kernel (XR.md): head orientation from the ICM-42688 behind the sensor DSP,
+# through the same Qualcomm Sensor Core client protocol as pico4-imu, and 6DoF
+# from the four OV7251 tracking cameras (Spectra CSL, frame sync from the
+# controller radio) through Monado's SLAM tracker with Basalt (pico4-basalt),
+# plus the two controllers (inputs, 3DoF) from the radio's packets.
 # Upstream Monado, pinned by commit, plus this project's driver files and a
 # patch that registers them. Built as an in-process runtime (no service yet).
 # The main compositor shows frames on the two panels through the stock msm_drm
 # KMS driver (comp_window_pico4_kms.c, the fenced path of GRAPHICS.md); the
 # null compositor serves headless clients. The acceptance clients read the head
 # pose (pico4-openxr-pose) and render frames (pico4-openxr-display) through the
-# OpenXR loader.
+# OpenXR loader; pico4-cam checks the tracking cameras on their own.
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=1
+pkgrel=2
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
 depends=(openxr vulkan-icd-loader libusb systemd-libs dbus libcap libdrm libffi libx11 libxau libxcb
-         libxdmcp wayland gcc-libs glibc)
+         libxdmcp wayland gcc-libs glibc opencv)
 makedepends=(git cmake ninja eigen vulkan-headers glslang python)
+# Loaded at runtime (VIT); without it the HMD stays on 3DoF.
+optdepends=('pico4-basalt: 6DoF head tracking')
 provides=(openxr-runtime)
 _commit=3b450e37b624f5edea366492ee2d267d673a35aa # v25.1.0
+# Spectra camera UAPI (CAF LA.UM.9.12 kona, the closest public match of the stock kernel).
+_camuapi=https://raw.githubusercontent.com/LineageOS/android_kernel_xiaomi_sm8250/f3d39dae3253e7f8bb623eb83a146088f3174148/techpack/camera/include/uapi/media
+_camheaders=(cam_cpas.h cam_defs.h cam_isp.h cam_isp_ife.h cam_isp_vfe.h cam_req_mgr.h cam_sensor.h cam_sync.h)
 source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_commit"
+        "${_camheaders[@]/#/$_camuapi/}"
         monado-pico4-driver.patch
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
-        comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c)
-# Project files; the src/xr clients are copied in by build-userspace.sh.
-sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
+        pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
+        pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
+        pico4_slam.h pico4_slam.c pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
+        test_pico4_tracking.c
+        comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c)
+# Project files are SKIP; the src/xr clients are copied in by build-userspace.sh.
+sha256sums=(SKIP
+            56161a34cf6d6d64dde3b804e34fc1b2b6654a060cae6544b95be9e577278c29
+            5d0a4271a5471fff18f772b4b5bf86163afd5ee85a82652bfbf01d73898bfabc
+            ce20049b508db7f193fbc85ca415722fc193479ca5f77a2a0150dca02bb502a5
+            0273b49789f08268f53daa21301809e3193df1c911bcb15aa18c4015ca1c7449
+            0cbaeb3cd32bdd4d8fb39acb402a1e9bf960fd4e97327dfa6158d9d7899840e7
+            891a5906ffaf4388adc07f21309b7a9bac7007efbafbb37dc7eb8387f8130941
+            7ba04fb72ef7d0fdd6abe6a044cf3586b059ae98129011086f38d30ca4fd0c6a
+            a7e0b04b5fdff083e8556442f33a1ebc2cda18152bf7d4a711e9d2549d988762
+            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
+            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
 
 prepare() {
   patch -d monado -p1 < monado-pico4-driver.patch
-  install -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c
+  install -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c \
+    pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c \
+    pico4_tcam.h pico4_tcam.c pico4_slam.h pico4_slam.c pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
+    pico4_controller.c
   install -Dm644 -t monado/src/xrt/compositor/main comp_window_pico4_kms.c
+  # PICO's kernel allows four links per session where the CAF header says two.
+  install -Dm644 -t monado/src/xrt/drivers/pico4/include/media "${_camheaders[@]}"
+  sed -i -E 's/^(#define MAX_LINKS_PER_SESSION[[:space:]]+)2$/\14/' \
+    monado/src/xrt/drivers/pico4/include/media/cam_req_mgr.h
+  grep -q '^#define MAX_LINKS_PER_SESSION[[:space:]]*4$' monado/src/xrt/drivers/pico4/include/media/cam_req_mgr.h
 }
 
 build() {
-  # The protocol test runs here because build-userspace.sh uses --nocheck.
+  # The protocol and model tests run here because build-userspace.sh uses --nocheck.
   cc -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_ssc test_pico4_ssc.c pico4_ssc.c
   ./test_pico4_ssc
+  cc -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -Imonado/src/external/cjson -o test_pico4_lens \
+    test_pico4_lens.c pico4_lens.c pico4_ipd.c monado/src/external/cjson/cjson/cJSON.c -lm
+  ./test_pico4_lens
+  cc -std=c11 -O1 -Wall -Wextra -Werror -o test_pico4_tracking test_pico4_tracking.c pico4_station.c pico4_tcam.c \
+    pico4_blemcu.c -lm
+  ./test_pico4_tracking
 
   # Only the PICO 4 driver and the simulated HMD (headless fallback).
   local off
@@ -47,18 +84,21 @@ build() {
     -DCMAKE_INSTALL_LIBDIR=lib -DXRT_BUILD_DRIVER_PICO4=ON -DXRT_BUILD_DRIVER_SIMULATED=ON $off \
     -DXRT_FEATURE_SERVICE=OFF -DXRT_MODULE_COMPOSITOR_MAIN=ON -DXRT_MODULE_COMPOSITOR_NULL=ON \
     -DXRT_FEATURE_STEAMVR_PLUGIN=OFF -DXRT_MODULE_MONADO_GUI=OFF -DXRT_BUILD_SAMPLES=OFF -DBUILD_TESTING=OFF \
-    -DXRT_HAVE_SDL2=OFF -DXRT_HAVE_OPENCV=OFF -DXRT_HAVE_LIBUVC=OFF -DXRT_HAVE_FFMPEG=OFF -DXRT_HAVE_GST=OFF \
+    -DXRT_HAVE_SDL2=OFF -DXRT_HAVE_OPENCV=ON -DXRT_FEATURE_SLAM=ON -DXRT_MODULE_MERCURY_HANDTRACKING=OFF \
+    -DXRT_HAVE_LIBUVC=OFF -DXRT_HAVE_FFMPEG=OFF -DXRT_HAVE_GST=OFF \
     -DXRT_HAVE_PERCETTO=OFF -DXRT_FEATURE_TRACING=OFF -DXRT_HAVE_OPENGL=OFF -DXRT_HAVE_OPENGLES=OFF \
     -DXRT_HAVE_EGL=OFF
   cmake --build build
 
   cc -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-pose pico4-openxr-pose.c -lopenxr_loader -lm
   cc -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-display pico4-openxr-display.c -lopenxr_loader -lvulkan
+  cc -std=c11 -O2 -Wall -Wextra -Werror -Imonado/src/xrt/drivers/pico4/include -o pico4-cam pico4-cam.c \
+    pico4_cam.c pico4_station.c -lpthread
 }
 
 package() {
   DESTDIR="$pkgdir" cmake --install build
-  install -Dm755 pico4-openxr-pose pico4-openxr-display -t "$pkgdir/usr/bin"
+  install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.
   install -dm755 "$pkgdir/etc/openxr/1"
   ln -s /usr/share/openxr/1/openxr_monado.json "$pkgdir/etc/openxr/1/active_runtime.json"

@@ -26,15 +26,40 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #ifndef XR_MND_HEADLESS_EXTENSION_NAME
 #define XR_MND_HEADLESS_EXTENSION_NAME "XR_MND_headless"
 #endif
 
+//! The JSON report; stdout itself goes to stderr while the in-process runtime runs.
+static FILE *g_report;
+
+static FILE *
+report(void)
+{
+	return g_report != NULL ? g_report : stdout;
+}
+
+/*!
+ * The runtime runs in this process and also writes to stdout (Basalt, for one).
+ * Keep the real stdout for the report and point file descriptor 1 at stderr.
+ */
+static void
+report_open(void)
+{
+	fflush(stdout);
+	int fd = dup(STDOUT_FILENO);
+	FILE *f = fd >= 0 ? fdopen(fd, "w") : NULL;
+	if (f != NULL && dup2(STDERR_FILENO, STDOUT_FILENO) >= 0) {
+		g_report = f;
+	}
+}
+
 static void
 fail(const char *what, XrResult res)
 {
-	printf("{\"schema\": 1, \"status\": \"fail\", \"error\": \"%s failed (%d)\"}\n", what, (int)res);
+	fprintf(report(), "{\"schema\": 1, \"status\": \"fail\", \"error\": \"%s failed (%d)\"}\n", what, (int)res);
 	exit(1);
 }
 
@@ -71,6 +96,7 @@ qconj(struct quat q)
 int
 main(int argc, char **argv)
 {
+	report_open();
 	double seconds = argc > 1 ? atof(argv[1]) : 5.0;
 	int interval_ms = argc > 2 ? atoi(argv[2]) : 10;
 
@@ -116,6 +142,10 @@ main(int argc, char **argv)
 	struct quat first = {0, 0, 0, 1}, last = {0, 0, 0, 1};
 	bool have_first = false;
 	double max_tilt = 0, tilt = 0, first_elapsed = 0, last_elapsed = 0;
+	// Position (6DoF): samples with a tracked position, their path and spread.
+	long pos_tracked = 0;
+	XrVector3f pos_first = {0}, pos_prev = {0}, pos_last = {0};
+	double path_m = 0, max_dist_m = 0;
 
 	for (;;) {
 		XrEventDataBuffer ev = {.type = XR_TYPE_EVENT_DATA_BUFFER};
@@ -145,6 +175,20 @@ main(int argc, char **argv)
 			valid++;
 			if (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) {
 				tracked++;
+			}
+			if (loc.locationFlags & XR_SPACE_LOCATION_POSITION_TRACKED_BIT) {
+				XrVector3f p = loc.pose.position;
+				if (pos_tracked == 0) {
+					pos_first = pos_prev = p;
+				}
+				path_m += sqrt((p.x - pos_prev.x) * (p.x - pos_prev.x) + (p.y - pos_prev.y) * (p.y - pos_prev.y) +
+				               (p.z - pos_prev.z) * (p.z - pos_prev.z));
+				double d = sqrt((p.x - pos_first.x) * (p.x - pos_first.x) +
+				                (p.y - pos_first.y) * (p.y - pos_first.y) +
+				                (p.z - pos_first.z) * (p.z - pos_first.z));
+				max_dist_m = d > max_dist_m ? d : max_dist_m;
+				pos_prev = pos_last = p;
+				pos_tracked++;
 			}
 			XrQuaternionf o = loc.pose.orientation;
 			last = (struct quat){o.x, o.y, o.z, o.w};
@@ -186,21 +230,24 @@ main(int argc, char **argv)
 	bool pass = valid > 0 && invalid_after_warmup == 0 && have_first;
 	double span = last_elapsed - first_elapsed;
 
-	printf("{\n  \"schema\": 1,\n  \"runtime\": \"%s\",\n  \"runtime_version\": \"%u.%u.%u\",\n", ip.runtimeName,
-	       XR_VERSION_MAJOR(ip.runtimeVersion), XR_VERSION_MINOR(ip.runtimeVersion),
-	       XR_VERSION_PATCH(ip.runtimeVersion));
-	printf("  \"system\": \"%s\",\n  \"orientation_tracking\": %s,\n  \"position_tracking\": %s,\n",
-	       sp.systemName, sp.trackingProperties.orientationTracking ? "true" : "false",
-	       sp.trackingProperties.positionTracking ? "true" : "false");
-	printf("  \"seconds\": %.1f,\n  \"located\": %ld,\n  \"orientation_valid\": %ld,\n  \"orientation_tracked\": %ld,\n",
-	       seconds, located, valid, tracked);
-	printf("  \"invalid_after_warmup\": %ld,\n  \"rotation_deg\": %.3f,\n  \"heading_change_deg\": %.3f,\n",
-	       invalid_after_warmup, rotation, heading);
-	printf("  \"heading_rate_deg_per_s\": %.4f,\n  \"final_tilt_from_vertical_deg\": %.3f,\n",
-	       span > 0 ? heading / span : 0.0, tilt);
-	printf("  \"max_tilt_from_vertical_deg\": %.3f,\n  \"last_orientation_xyzw\": [%.6f, %.6f, %.6f, %.6f],\n",
-	       max_tilt, last.x, last.y, last.z, last.w);
-	printf("  \"status\": \"%s\"\n}\n", pass ? "pass" : "fail");
+	fprintf(report(), "{\n  \"schema\": 1,\n  \"runtime\": \"%s\",\n  \"runtime_version\": \"%u.%u.%u\",\n", ip.runtimeName,
+	                  XR_VERSION_MAJOR(ip.runtimeVersion), XR_VERSION_MINOR(ip.runtimeVersion),
+	                  XR_VERSION_PATCH(ip.runtimeVersion));
+	fprintf(report(), "  \"system\": \"%s\",\n  \"orientation_tracking\": %s,\n  \"position_tracking\": %s,\n",
+	                  sp.systemName, sp.trackingProperties.orientationTracking ? "true" : "false",
+	                  sp.trackingProperties.positionTracking ? "true" : "false");
+	fprintf(report(), "  \"seconds\": %.1f,\n  \"located\": %ld,\n  \"orientation_valid\": %ld,\n  \"orientation_tracked\": %ld,\n",
+	                  seconds, located, valid, tracked);
+	fprintf(report(), "  \"invalid_after_warmup\": %ld,\n  \"rotation_deg\": %.3f,\n  \"heading_change_deg\": %.3f,\n",
+	                  invalid_after_warmup, rotation, heading);
+	fprintf(report(), "  \"heading_rate_deg_per_s\": %.4f,\n  \"final_tilt_from_vertical_deg\": %.3f,\n",
+	                  span > 0 ? heading / span : 0.0, tilt);
+	fprintf(report(), "  \"max_tilt_from_vertical_deg\": %.3f,\n  \"last_orientation_xyzw\": [%.6f, %.6f, %.6f, %.6f],\n",
+	                  max_tilt, last.x, last.y, last.z, last.w);
+	fprintf(report(), "  \"position_tracked\": %ld,\n  \"position_path_m\": %.4f,\n  \"position_max_distance_m\": %.4f,\n",
+	                  pos_tracked, path_m, max_dist_m);
+	fprintf(report(), "  \"last_position_m\": [%.4f, %.4f, %.4f],\n", pos_last.x, pos_last.y, pos_last.z);
+	fprintf(report(), "  \"status\": \"%s\"\n}\n", pass ? "pass" : "fail");
 
 	xrDestroySpace(stage);
 	xrDestroySpace(view);

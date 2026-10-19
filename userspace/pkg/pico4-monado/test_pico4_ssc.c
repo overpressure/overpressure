@@ -76,6 +76,9 @@ main(void)
 	EXPECT(s[0].values[0] == 1.5f && s[0].values[1] == -2.25f && s[0].values[2] == 9.75f);
 	EXPECT(s[1].ticks == 123476789 && s[1].count == 3);
 	EXPECT(s[1].values[0] == 0.5f && s[1].values[1] == 0.25f && s[1].values[2] == -0.125f);
+	// Opaque payload bytes (as ble_mcu sends them): only a length-delimited field 1 is kept.
+	EXPECT(s[0].raw_len == 0);
+	EXPECT(s[1].raw_len == 12 && s[1].raw[3] == 0x3f && s[1].raw[11] == 0xbe);
 
 	// Output space is respected.
 	EXPECT(pico4_ssc_decode_indication(golden_samples, sizeof(golden_samples), s, 1, NULL, NULL, NULL) == 1);

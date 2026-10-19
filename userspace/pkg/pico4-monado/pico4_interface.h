@@ -28,9 +28,6 @@ struct xrt_device;
  *
  * @ingroup drv_pico4
  */
-struct xrt_device *
-pico4_hmd_create(void);
-
 /*!
  * Auto-prober: creates the HMD on a PICO 4 (an SLPI with an SNS client service).
  *

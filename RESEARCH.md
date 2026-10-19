@@ -8,7 +8,8 @@ USB networking, read-only storage, diagnostics and return to stock PICO OS. See 
 [measured acceptance results](README.md#verification) and [reproduction procedure](HARDWARE-TEST.md).
 Steps 3 (native graphics, [GRAPHICS.md](GRAPHICS.md)) and 4 (a SteamOS-compatible userspace
 running on the stock kernel, [USERSPACE.md](USERSPACE.md)) followed on the same day, as did the
-first part of step 5, the head IMU ([XR.md](XR.md)). The
+first part of step 5, the head IMU ([XR.md](XR.md)). On October 18 step 5 reached display
+output, lens correction, the tracking cameras, the controllers and 6DoF head tracking. The
 research findings below retain their original date; these local results do not establish a
 compositor or Steam session in the headset, tracking or SteamVR support.
 
@@ -328,7 +329,21 @@ Suggested technical roadmap
    a single projection layer, and the scanned-out image had each eye on its own panel. Frames
    with several layers first ran at 30 Hz, which looked stuttery in the headset. Three changes
    bring them to 90 Hz as well: compressible scratch images, scratch images at panel size and
-   a GPU clock floor. Lens distortion and a Monado service are still open.
+   a GPU clock floor.
+
+   **October 18, 2026: lenses, cameras, controllers and the 6DoF pipeline.**
+   - **Lenses and IPD.** The compositor pre-distorts with the factory lens model, including the
+     chromatic aberration terms. In the lenses the lines looked straight. The IPD is read from
+     the lens motor's MCU with a single read-only command.
+   - **Tracking cameras.** The four tracking cameras run through Spectra CSL without any vendor
+     library. The controller radio provides the frame sync and the exposure: all frames
+     arrive, at 50 Hz with 17 ms latency.
+   - **Controllers.** Inputs and IMU come through the sensor DSP (`ble_mcu`). Both controllers
+     appear in OpenXR with buttons and 3DoF orientation.
+   - **6DoF.** Basalt runs inside Monado on all four cameras without blocking the 3DoF path. A
+     measured 50 cm slide read 0.52 m and returned within 2–4 cm. The step-5 archive passed the
+     acceptance cycle with stock restoration on October 19. Controller positions (IR-LED
+     tracking) and a Monado service are still open.
 6. Attempt Valve's VR session
 
    Only after tracking and graphics are operational would I attempt to bring up the Frame-style gamescope/SteamVR session. Compatibility with Valve's proprietary headset-specific components remains unproven.

@@ -363,6 +363,23 @@ decode_floats(const uint8_t *data, size_t len, float *out, int max)
 	return err ? err : n;
 }
 
+//! The first length-delimited field 1 of an event payload, as opaque bytes.
+static uint16_t
+copy_raw(const uint8_t *data, size_t len, uint8_t *out)
+{
+	const uint8_t *p = data, *end = data + len;
+	struct pb_field f;
+	int err = 0;
+	while (pb_next(&p, end, &f, &err)) {
+		if (f.field == 1 && f.wire == 2) {
+			size_t n = f.len < PICO4_SSC_RAW_MAX ? f.len : PICO4_SSC_RAW_MAX;
+			memcpy(out, f.data, n);
+			return (uint16_t)n;
+		}
+	}
+	return 0;
+}
+
 static bool
 suid_lookup_match(const uint8_t *data, size_t len, const char *data_type, struct pico4_ssc_suid *out)
 {
@@ -453,6 +470,7 @@ pico4_ssc_decode_indication(const uint8_t *packet,
 			out[n].suid = suid;
 			out[n].ticks = ts;
 			out[n].count = count;
+			out[n].raw_len = copy_raw(payload, payload_len, out[n].raw);
 			n++;
 		} else if (ev_id == MSG_SUID_EVENT && payload != NULL && out_suid_event != NULL &&
 		           suid.low == suid_lookup.low && suid.high == suid_lookup.high && suid_data_type != NULL) {

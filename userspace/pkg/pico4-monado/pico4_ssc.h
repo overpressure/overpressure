@@ -30,13 +30,21 @@ struct pico4_ssc_suid
 	uint64_t high;
 };
 
-//! One sensor sample: DSP timestamp in QTimer ticks (19.2 MHz) and up to 3 values.
+#define PICO4_SSC_RAW_MAX 200
+
+/*!
+ * One sensor sample: DSP timestamp in QTimer ticks (19.2 MHz) and up to 3
+ * values. Sensors that report opaque bytes instead (ble_mcu: the controller
+ * radio's packets) get them in @ref raw.
+ */
 struct pico4_ssc_sample
 {
 	struct pico4_ssc_suid suid;
 	uint64_t ticks;
 	float values[3];
 	int count;
+	uint8_t raw[PICO4_SSC_RAW_MAX];
+	uint16_t raw_len;
 };
 
 struct pico4_ssc;

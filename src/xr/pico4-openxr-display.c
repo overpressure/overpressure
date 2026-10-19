@@ -33,13 +33,38 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define QUAD_SIZE 512
+
+//! The JSON report; stdout itself goes to stderr while the in-process runtime runs.
+static FILE *g_report;
+
+static FILE *
+report(void)
+{
+	return g_report != NULL ? g_report : stdout;
+}
+
+/*!
+ * The runtime runs in this process and also writes to stdout (Basalt, for one).
+ * Keep the real stdout for the report and point file descriptor 1 at stderr.
+ */
+static void
+report_open(void)
+{
+	fflush(stdout);
+	int fd = dup(STDOUT_FILENO);
+	FILE *f = fd >= 0 ? fdopen(fd, "w") : NULL;
+	if (f != NULL && dup2(STDERR_FILENO, STDOUT_FILENO) >= 0) {
+		g_report = f;
+	}
+}
 
 static void
 fail(const char *what, long res)
 {
-	printf("{\"schema\": 1, \"status\": \"fail\", \"error\": \"%s failed (%ld)\"}\n", what, res);
+	fprintf(report(), "{\"schema\": 1, \"status\": \"fail\", \"error\": \"%s failed (%ld)\"}\n", what, res);
 	exit(1);
 }
 
@@ -373,6 +398,7 @@ format_name(int64_t f)
 int
 main(int argc, char **argv)
 {
+	report_open();
 	double seconds = argc > 1 ? atof(argv[1]) : 10.0;
 	bool use_quad = !(argc > 2 && strcmp(argv[2], "--projection-only") == 0);
 	if (seconds <= 0 || seconds > 3600 || argc > 3 || (argc > 2 && use_quad)) {
@@ -581,12 +607,12 @@ main(int argc, char **argv)
 	double display_hz = counted > 0 ? counted / ((last_display - first_display) / 1e9) : 0;
 	double display_rate = period > 0 ? 1.0 / period : 0;
 	bool ok = rendered > 0 && frame_hz >= 0.95 * display_rate && late <= counted / 100 + 1 && untracked == 0;
-	printf("{\"schema\": 1, \"system\": \"%s\", \"swapchain_format\": \"%s\", \"eye_size\": [%u, %u], "
-	       "\"layers\": %d, \"seconds\": %.2f, \"frames\": %u, \"rendered\": %u, \"display_period_ms\": %.3f, \"frame_hz\": %.3f, "
-	       "\"display_time_hz\": %.3f, \"late_frames\": %u, \"max_frame_interval_ms\": %.2f, \"located\": %u, "
-	       "\"untracked_after_warmup\": %u, \"status\": \"%s\"}\n",
-	       sp.systemName, format_name(format), eyes[0].width, eyes[0].height, use_quad ? 2 : 1, last_wait - start, frames, rendered,
-	       period * 1e3, frame_hz, display_hz, late, max_interval * 1e3, located, untracked, ok ? "pass" : "fail");
+	fprintf(report(), "{\"schema\": 1, \"system\": \"%s\", \"swapchain_format\": \"%s\", \"eye_size\": [%u, %u], "
+	                  "\"layers\": %d, \"seconds\": %.2f, \"frames\": %u, \"rendered\": %u, \"display_period_ms\": %.3f, \"frame_hz\": %.3f, "
+	                  "\"display_time_hz\": %.3f, \"late_frames\": %u, \"max_frame_interval_ms\": %.2f, \"located\": %u, "
+	                  "\"untracked_after_warmup\": %u, \"status\": \"%s\"}\n",
+	                  sp.systemName, format_name(format), eyes[0].width, eyes[0].height, use_quad ? 2 : 1, last_wait - start, frames, rendered,
+	                  period * 1e3, frame_hz, display_hz, late, max_interval * 1e3, located, untracked, ok ? "pass" : "fail");
 
 	for (int e = 0; e < 2; e++) {
 		xrDestroySwapchain(eyes[e].swapchain);

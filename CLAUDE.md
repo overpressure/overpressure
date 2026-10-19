@@ -14,7 +14,7 @@ measurements and reproduction steps:
 | 2 Linux shell (Alpine initramfs, USB NCM/SSH, read-only storage) | verified on hardware | [README.md](README.md), [HARDWARE-TEST.md](HARDWARE-TEST.md) |
 | 3 Native graphics (Turnip/KGSL Vulkan, fenced KMS on both panels) | verified | [GRAPHICS.md](GRAPHICS.md) |
 | 4 SteamOS-compatible userspace (Holo Core aarch64 + Steam Frame systemd 257.7) | verified | [USERSPACE.md](USERSPACE.md) |
-| 5 XR hardware: head IMU via the sensor DSP, Monado 3DoF driver, Monado display output (KMS target) | verified; Monado service, cameras, controllers, 6DoF, lens distortion open | [XR.md](XR.md) |
+| 5 XR hardware: head IMU, Monado driver and KMS display output, lens distortion + IPD, tracking cameras (Spectra CSL + station sync), controllers (inputs, 3DoF), Basalt 6DoF head tracking | verified, acceptance with stock restore 2026-10-19 (6DoF: 50 cm slide read 0.52 m); Monado service, controller positions and in-app controller checks open | [XR.md](XR.md) |
 
 Device preparation (EDL backups, engineering ABL, unlock, restore) is in [DEVICE.md](DEVICE.md).
 For new work, continue from XR.md's "Next steps". Each doc ends with an evidence table: add
@@ -34,11 +34,13 @@ the new results there, and update the status notes in README.md and RESEARCH.md.
 - `userspace/`: stage 2.
   - `packages.txt` and `pacman.conf`: the Holo preview first; Frame packages are named
     explicitly from `deckard-arch-hotfixes-release-0.3`.
-  - `rootfs/`: overlay with udev devnode rules, units and the `pico4-imu` client.
+  - `rootfs/`: overlay with udev rules, sysctl, units and the `pico4-imu` and `pico4-station` clients.
   - `pkg/`: project PKGBUILDs:
     - `pico4-turnip-kgsl`;
     - `pico4-sensors` (qrtr-ns, pd-mapper and hexagonrpcd with this project's patches);
-    - `pico4-monado` (Monado 25.1.0 + `pico4` driver and KMS compositor target).
+    - `pico4-monado` (Monado 25.1.0 + `pico4` driver: IMU, lens/IPD, cameras, station, SLAM feed,
+      controllers, plus the KMS compositor target and `pico4-cam`);
+    - `pico4-basalt` (Basalt for Monado's VIT interface, built for `armv8.2-a`).
 - `scripts/`:
   - `build-userspace.sh` and `build-graphics.sh`: root on Linux/WSL, aarch64 via QEMU user
     emulation;
@@ -81,6 +83,10 @@ Notes on these commands:
   - There is no devtmpfs; udev creates device nodes through a PROGRAM rule.
   - The QRTR name service runs in userspace.
   - FastRPC uses the downstream `adsprpc` ABI.
+  - Real-time threads (Monado's compositor) need cgroups without the `cpu` controller:
+    `CONFIG_RT_GROUP_SCHED` on cgroup v2 refuses `SCHED_FIFO` otherwise, even to root. The
+    drop-ins in `userspace/rootfs/etc/systemd` keep it off; units added later must not set
+    `CPUWeight`/`CPUQuota` or delegate `cpu`.
 - **Storage stays read-only.** Every physical block device is switched read-only in both
   stages. Nothing may write to the eMMC/UFS partitions except the explicit,
   backup-validated flash and restore paths.
@@ -91,6 +97,10 @@ Notes on these commands:
 - **SLPI restart level.** Set it to `RELATED` before any restart (`slpi-boot` does this). The
   kernel default `SYSTEM` reboots the whole headset.
 - **Never send controller/station OTA commands** when working on the controller SPI protocol.
+  The station and GD32 (IPD) modules build frames only from allowlists; keep it that way.
+- **Cameras need the station.** The OV7251s only stream while the station pulses FSIN, so each
+  capture resets it first. Only one process may own the cameras and the station at a time
+  (stop Monado clients before `pico4-cam`).
 
 ## Hardware workflow (keep it fast)
 
@@ -112,7 +122,9 @@ passed.
   `flash-run --userspace ...`, then EDL readback of boot, stock ABL restore, PICO OS check.
 - **Local helpers.** Unversioned helpers for this live in `out/dev-loop/` and
   `out/userspace-hardware-cycle.ps1`. Run project PowerShell scripts with `pwsh` (7): Windows
-  PowerShell 5.1 aborts on native stderr.
+  PowerShell 5.1 aborts on native stderr. `out/dev-loop/slamtest.sh NAME SECONDS [ENV=...]`
+  runs one OpenXR pose session with Basalt's trajectory CSVs (copy it to the device first).
+  Binary files from the device: use `ssh` directly, because `devloop.py ssh` decodes output as text.
 - **Windows NCM.** The Windows NCM link needs `tools/windows_ncm.py` (UsbDk) after each stage-1
   boot. Do not re-initialize NCM in stage 2.
 

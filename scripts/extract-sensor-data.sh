@@ -11,7 +11,9 @@
 #   sensors/sns_reg.conf                      registry layout (vendor)
 #   sensors/registry/, sns_reg_version        this headset's registry with its
 #                                             factory calibration (persist)
-#   calibration/pvr/                          factory camera/IMU calibration
+#   calibration/pvr/                          factory camera/IMU/lens calibration
+#   calibration/pxrconfig/SDK_Lens_ConfigFile.txt  stock lens configuration
+#                                             (chromatic aberration terms; system)
 #   manifest.json                             sources and sha256 of every file
 # The result is device-specific and partly proprietary: keep it private
 # (assets/ is ignored by Git). Nothing touches the headset.
@@ -62,6 +64,14 @@ echo ">> vendor: sensor config"
 dump "$work/vendor.img" /etc/sensors/config "$work"
 mv "$work/config" "$output/sensors/config"
 dump "$work/vendor.img" /etc/sensors/sns_reg_config "$output/sensors/sns_reg.conf"
+rm -f "$work/vendor.img"
+
+echo ">> system: lens configuration"
+(cd "$project" && python3 -m tools.superimg extract "$backup/lun0/super.bin" system "$work/system.img") >/dev/null
+mkdir -p "$output/calibration/pxrconfig"
+dump "$work/system.img" /system/etc/pxrconfig/config/SDK_Lens_ConfigFile.txt \
+    "$output/calibration/pxrconfig/SDK_Lens_ConfigFile.txt"
+rm -f "$work/system.img"
 
 echo ">> persist: registry and factory calibration"
 dump "$backup/lun0/persist.bin" /sensors/registry/registry "$work"

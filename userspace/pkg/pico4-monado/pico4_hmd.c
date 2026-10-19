@@ -2,18 +2,32 @@
 // SPDX-License-Identifier: BSL-1.0
 /*!
  * @file
- * @brief  PICO 4 HMD: 3DoF head orientation from the IMU behind the sensor DSP.
+ * @brief  PICO 4 HMD: head tracking from the IMU behind the sensor DSP and the tracking cameras.
  *
  * Accelerometer and gyroscope samples of the ICM-42688 come from the Qualcomm
  * Sensor Core (see pico4_ssc.c) with QTimer timestamps. They are rotated into
  * the HMD frame, fused with m_imu_3dof and pushed into a relation history in
- * the CLOCK_MONOTONIC timeline that Monado uses.
+ * the CLOCK_MONOTONIC timeline that Monado uses. With SLAM (pico4_slam.c) the
+ * raw samples also go to the visual-inertial tracker, whose 6DoF pose is used
+ * whenever it tracks; the 3DoF orientation covers the time before that.
+ *
+ * The HMD also owns the controller radio ("station", pico4_station.h): it
+ * resets it once, which makes the controllers reconnect and lets SLAM start
+ * the cameras' frame sync, and acknowledges its frames from a thread. The
+ * controllers' packets arrive through the same sensor service (the "ble_mcu"
+ * sensor) and go to the two controller devices (pico4_controller.c).
  *
  * @ingroup drv_pico4
  */
 
+#include "pico4_blemcu.h"
+#include "pico4_controller.h"
 #include "pico4_interface.h"
+#include "pico4_ipd.h"
+#include "pico4_lens.h"
+#include "pico4_slam.h"
 #include "pico4_ssc.h"
+#include "pico4_station.h"
 
 #include "xrt/xrt_defines.h"
 #include "xrt/xrt_device.h"
@@ -39,11 +53,19 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 DEBUG_GET_ONCE_LOG_OPTION(pico4_log, "PICO4_LOG", U_LOGGING_INFO)
 DEBUG_GET_ONCE_NUM_OPTION(pico4_imu_rate, "PICO4_IMU_RATE", 1000)
+DEBUG_GET_ONCE_OPTION(pico4_calibration, "PICO4_CALIBRATION_DIR", "/usr/share/qcom/pico4/calibration")
+/*!
+ * Correct chromatic aberration in the distortion pass. Off by default, as on
+ * PICO OS (sdk_chromaticStaus 0): three separate texture reads per pixel cost
+ * the layer squasher the memory bandwidth it needs for 90 Hz.
+ */
+DEBUG_GET_ONCE_BOOL_OPTION(pico4_lens_ca, "PICO4_LENS_CA", false)
 
 #define P4_TRACE(h, ...) U_LOG_XDEV_IFL_T(&h->base, h->log_level, __VA_ARGS__)
 #define P4_DEBUG(h, ...) U_LOG_XDEV_IFL_D(&h->base, h->log_level, __VA_ARGS__)
@@ -54,6 +76,8 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_imu_rate, "PICO4_IMU_RATE", 1000)
 #define QTIMER_HZ 19200000ULL
 
 //! Gyro samples ignored after enabling (the accelerometer settles), then averaged for the start pose.
+//! Accelerometer/gyroscope lookups of 3 s each before giving up (DSP still starting).
+#define PICO4_LOOKUP_ATTEMPTS 5
 #define PICO4_WARMUP_SKIP 100
 #define PICO4_WARMUP_AVERAGE 100
 
@@ -70,8 +94,15 @@ struct pico4_hmd
 	struct xrt_device base;
 
 	struct pico4_ssc *ssc;
-	struct pico4_ssc_suid accel_suid, gyro_suid;
+	struct pico4_ssc_suid accel_suid, gyro_suid, blemcu_suid;
+	bool has_blemcu;
 	struct os_thread_helper oth;
+
+	//! Controller radio, NULL if unavailable; its own thread acknowledges frames.
+	struct pico4_station *station;
+	struct os_thread_helper station_oth;
+	struct pico4_controller *controllers[2];
+	uint64_t blemcu_packets;
 
 	//! CLOCK_MONOTONIC ns minus the QTimer time in ns.
 	int64_t qtimer_offset_ns;
@@ -90,8 +121,20 @@ struct pico4_hmd
 		uint32_t n;
 	} still;
 	struct xrt_vec3 last_accel;
+	float last_accel_raw[3];
 	bool have_accel;
+
+	//! Visual-inertial tracking, NULL when unavailable.
+	struct pico4_slam *slam;
 	struct m_relation_history *relation_hist;
+
+	//! Lens model per eye from the factory data, if found.
+	struct pico4_lens lens[2];
+	struct pico4_lens_ca ca;
+	bool has_lens;
+
+	//! Lens separation read from the IPD MCU, metres.
+	double ipd_m;
 
 	// Statistics, also shown in the debug GUI.
 	uint64_t gyro_samples;
@@ -253,10 +296,23 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 		return;
 	}
 	int64_t ts = (int64_t)qtimer_to_ns(s->ticks) + h->qtimer_offset_ns;
+	if (h->has_blemcu && suid_equal(&s->suid, &h->blemcu_suid)) {
+		struct pico4_blemcu_packet p;
+		if (s->raw_len > 0 && pico4_blemcu_parse(s->raw, s->raw_len, &p)) {
+			h->blemcu_packets++;
+			for (int i = 0; i < 2; i++) {
+				if (h->controllers[i] != NULL) {
+					pico4_controller_push(h->controllers[i], &p, ts);
+				}
+			}
+		}
+		return;
+	}
 	struct xrt_vec3 v = imu_to_hmd(s->values);
 
 	if (suid_equal(&s->suid, &h->accel_suid)) {
 		h->last_accel = v;
+		memcpy(h->last_accel_raw, s->values, sizeof(h->last_accel_raw));
 		h->have_accel = true;
 		h->accel_samples++;
 		return;
@@ -266,6 +322,9 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 	}
 	h->gyro_samples++;
 	h->last_latency_ns = os_monotonic_get_ns() - ts;
+	if (h->slam != NULL) {
+		pico4_slam_push_imu(h->slam, ts, h->last_accel_raw, s->values);
+	}
 
 	update_bias(h, &v, &h->last_accel);
 	if (h->gyro_bias_valid) {
@@ -338,15 +397,68 @@ imu_thread(void *ptr)
 	return NULL;
 }
 
+static void *
+station_thread(void *ptr)
+{
+	struct pico4_hmd *h = (struct pico4_hmd *)ptr;
+
+	os_thread_helper_name(&h->station_oth, "PICO 4 station");
+	os_thread_helper_lock(&h->station_oth);
+	while (os_thread_helper_is_running_locked(&h->station_oth)) {
+		os_thread_helper_unlock(&h->station_oth);
+		if (pico4_station_poll(h->station, 100) < 0) {
+			os_nanosleep(U_TIME_1MS_IN_NS * 100);
+		}
+		os_thread_helper_lock(&h->station_oth);
+	}
+	os_thread_helper_unlock(&h->station_oth);
+	return NULL;
+}
+
+//! Reset the controller radio: the controllers reconnect and camera sync becomes possible.
+static void
+setup_station(struct pico4_hmd *h)
+{
+	int r = pico4_station_open(&h->station, NULL);
+	if (r == 0) {
+		r = pico4_station_reset(h->station);
+	}
+	if (r == 0 && (os_thread_helper_init(&h->station_oth) != 0 ||
+	               os_thread_helper_start(&h->station_oth, station_thread, h) != 0)) {
+		r = -ENOMEM;
+	}
+	if (r < 0) {
+		P4_ERROR(h, "Controller radio unavailable (%s): no controllers, no camera sync", strerror(-r));
+		pico4_station_close(h->station);
+		h->station = NULL;
+	}
+}
+
 static void
 pico4_hmd_destroy(struct xrt_device *xdev)
 {
 	struct pico4_hmd *h = pico4_hmd(xdev);
 
-	os_thread_helper_destroy(&h->oth);
+	// A failed create gets here with helpers never initialised; Monado asserts on those.
+	if (h->oth.initialized) {
+		os_thread_helper_destroy(&h->oth);
+	}
+	pico4_slam_destroy(&h->slam);
+	if (h->station_oth.initialized) {
+		os_thread_helper_destroy(&h->station_oth);
+	}
+	pico4_station_close(h->station);
+	for (int i = 0; i < 2; i++) {
+		if (h->controllers[i] != NULL) {
+			pico4_controller_release(h->controllers[i]);
+		}
+	}
 	if (h->ssc != NULL) {
 		pico4_ssc_disable(h->ssc, &h->accel_suid);
 		pico4_ssc_disable(h->ssc, &h->gyro_suid);
+		if (h->has_blemcu) {
+			pico4_ssc_disable(h->ssc, &h->blemcu_suid);
+		}
 		pico4_ssc_close(&h->ssc);
 	}
 	u_var_remove_root(h);
@@ -369,6 +481,10 @@ pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
 	}
 
 	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
+	if (h->slam != NULL && pico4_slam_get_head_pose(h->slam, at_timestamp_ns, &rel)) {
+		*out_relation = rel;
+		return XRT_SUCCESS;
+	}
 	m_relation_history_get(h->relation_hist, at_timestamp_ns, &rel);
 	if (rel.relation_flags & XRT_SPACE_RELATION_ORIENTATION_VALID_BIT) {
 		math_quat_normalize(&rel.pose.orientation);
@@ -388,12 +504,103 @@ pico4_hmd_get_visibility_mask(struct xrt_device *xdev,
 	return XRT_SUCCESS;
 }
 
+static xrt_result_t
+pico4_hmd_get_view_poses(struct xrt_device *xdev,
+                         const struct xrt_vec3 *default_eye_relation,
+                         int64_t at_timestamp_ns,
+                         enum xrt_view_type view_type,
+                         uint32_t view_count,
+                         struct xrt_space_relation *out_head_relation,
+                         struct xrt_fov *out_fovs,
+                         struct xrt_pose *out_poses)
+{
+	struct pico4_hmd *h = pico4_hmd(xdev);
+
+	// The lenses (and panels) sit where the IPD wheel put them.
+	struct xrt_vec3 eye_relation = *default_eye_relation;
+	if (h->ipd_m > 0) {
+		eye_relation = (struct xrt_vec3){(float)h->ipd_m, 0, 0};
+	}
+	return u_device_get_view_poses(xdev, &eye_relation, at_timestamp_ns, view_type, view_count,
+	                               out_head_relation, out_fovs, out_poses);
+}
+
+/*!
+ * Panel position (u, v in [0, 1], v down) to texture coordinates per colour,
+ * through the factory lens model. Past the lens circle the coordinates leave
+ * the texture quickly, which the compositor samples as black.
+ */
+static xrt_result_t
+pico4_hmd_compute_distortion(
+    struct xrt_device *xdev, uint32_t view, float u, float v, struct xrt_uv_triplet *out_result)
+{
+	struct pico4_hmd *h = pico4_hmd(xdev);
+	const struct xrt_fov *fov = &xdev->hmd->distortion.fov[view];
+	double tan_left = tan(fov->angle_left), tan_right = tan(fov->angle_right);
+	double tan_up = tan(fov->angle_up), tan_down = tan(fov->angle_down);
+	double tans[3][2];
+
+	pico4_lens_tan(&h->lens[view], &h->ca, (u - 0.5) * PICO4_LENS_EYE_M, (v - 0.5) * PICO4_LENS_EYE_M, tans);
+	struct xrt_vec2 *channels[3] = {&out_result->r, &out_result->g, &out_result->b};
+	for (int c = 0; c < 3; c++) {
+		// Tan-angles are right and down here; texture v runs down from the top edge.
+		channels[c]->x = (float)((tans[c][0] - tan_left) / (tan_right - tan_left));
+		channels[c]->y = (float)((tans[c][1] + tan_up) / (tan_up - tan_down));
+	}
+	return XRT_SUCCESS;
+}
+
+static char *
+read_text(const char *dir, const char *name)
+{
+	char path[512];
+	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	FILE *f = fopen(path, "rb");
+	if (f == NULL) {
+		return NULL;
+	}
+	char *text = NULL;
+	if (fseek(f, 0, SEEK_END) == 0) {
+		long size = ftell(f);
+		rewind(f);
+		text = size > 0 && size < (1 << 20) ? calloc(1, (size_t)size + 1) : NULL;
+		if (text != NULL && fread(text, 1, (size_t)size, f) != (size_t)size) {
+			free(text);
+			text = NULL;
+		}
+	}
+	fclose(f);
+	return text;
+}
+
+//! Factory lens data (pvr/OpticalCalibrationData.json) and the stock chromatic aberration terms.
+static void
+load_lens(struct pico4_hmd *h)
+{
+	const char *dir = debug_get_option_pico4_calibration();
+	char *optical = read_text(dir, "pvr/OpticalCalibrationData.json");
+	char *config = read_text(dir, "pxrconfig/SDK_Lens_ConfigFile.txt");
+
+	h->has_lens = optical != NULL && pico4_lens_parse_optical(optical, h->lens);
+	h->ca = (struct pico4_lens_ca){{0}};
+	if (!h->has_lens) {
+		P4_ERROR(h, "No lens data in %s: no distortion correction, provisional 104 degree field of view", dir);
+	} else if (!debug_get_bool_option_pico4_lens_ca()) {
+		P4_INFO(h, "Chromatic aberration correction off (PICO4_LENS_CA=1 turns it on)");
+	} else if (config == NULL || !pico4_lens_parse_ca(config, &h->ca)) {
+		h->ca = (struct pico4_lens_ca){{0}};
+		P4_INFO(h, "No chromatic aberration terms in %s, correcting geometry only", dir);
+	}
+	free(optical);
+	free(config);
+}
+
 //! Display description: two 2160x2160 panels side by side, as the step-3 KMS path drives them.
 static bool
 setup_display(struct pico4_hmd *h)
 {
 	const int panel = 2160;
-	// Approximate; the per-unit lens data (XR.md) replaces this with the distortion work.
+	// Without the factory lens data: approximately the stock runtime's symmetric field of view.
 	const double fov = 104.0 * (M_PI / 180.0);
 
 	h->base.hmd->blend_modes[0] = XRT_BLEND_MODE_OPAQUE;
@@ -409,15 +616,27 @@ setup_display(struct pico4_hmd *h)
 		h->base.hmd->views[eye].viewport.w_pixels = panel;
 		h->base.hmd->views[eye].viewport.h_pixels = panel;
 		h->base.hmd->views[eye].rot = u_device_rotation_ident;
-		if (!math_compute_fovs(1, 0.5, fov, 1, 0.5, fov, &h->base.hmd->distortion.fov[eye])) {
+		struct xrt_fov *f = &h->base.hmd->distortion.fov[eye];
+		if (h->has_lens) {
+			double left, right, up, down;
+			pico4_lens_fov(&h->lens[eye], &left, &right, &up, &down);
+			*f = (struct xrt_fov){(float)left, (float)right, (float)up, (float)down};
+			P4_INFO(h, "Eye %d: field of view left %.2f right %.2f up %.2f down %.2f degrees", eye,
+			        left * 180 / M_PI, right * 180 / M_PI, up * 180 / M_PI, down * 180 / M_PI);
+		} else if (!math_compute_fovs(1, 0.5, fov, 1, 0.5, fov, f)) {
 			return false;
 		}
 	}
-	u_distortion_mesh_set_none(&h->base);
+	if (h->has_lens) {
+		h->base.compute_distortion = pico4_hmd_compute_distortion;
+		u_distortion_mesh_fill_in_compute(&h->base);
+	} else {
+		u_distortion_mesh_set_none(&h->base);
+	}
 	return true;
 }
 
-struct xrt_device *
+static struct xrt_device *
 pico4_hmd_create(void)
 {
 	enum u_device_alloc_flags flags =
@@ -427,7 +646,7 @@ pico4_hmd_create(void)
 
 	h->base.update_inputs = u_device_noop_update_inputs;
 	h->base.get_tracked_pose = pico4_hmd_get_tracked_pose;
-	h->base.get_view_poses = u_device_get_view_poses;
+	h->base.get_view_poses = pico4_hmd_get_view_poses;
 	h->base.get_visibility_mask = pico4_hmd_get_visibility_mask;
 	h->base.destroy = pico4_hmd_destroy;
 	h->base.name = XRT_DEVICE_GENERIC_HMD;
@@ -440,6 +659,14 @@ pico4_hmd_create(void)
 
 	m_relation_history_create(&h->relation_hist);
 	m_imu_3dof_init(&h->fusion, M_IMU_3DOF_USE_GRAVITY_DUR_20MS);
+	load_lens(h);
+	int ipd_ret = pico4_ipd_read(PICO4_IPD_DEVICE, &h->ipd_m);
+	if (ipd_ret < 0) {
+		h->ipd_m = 0;
+		P4_INFO(h, "No IPD from the MCU (%s), using the runtime default", strerror(-ipd_ret));
+	} else {
+		P4_INFO(h, "IPD %.2f mm", h->ipd_m * 1000);
+	}
 	if (os_thread_helper_init(&h->oth) != 0 || !setup_display(h)) {
 		P4_ERROR(h, "Failed to set up the device");
 		goto fail;
@@ -450,8 +677,13 @@ pico4_hmd_create(void)
 		P4_ERROR(h, "No SNS client service (is the SLPI up and pico4-sensorspd running?): %s", strerror(-ret));
 		goto fail;
 	}
-	if (pico4_ssc_find(h->ssc, "accel", &h->accel_suid, 3000) < 0 ||
-	    pico4_ssc_find(h->ssc, "gyro", &h->gyro_suid, 3000) < 0) {
+	// Shortly after the DSP boots, lookups can come back empty for several seconds.
+	bool found = false;
+	for (int attempt = 0; attempt < PICO4_LOOKUP_ATTEMPTS && !found; attempt++) {
+		found = pico4_ssc_find(h->ssc, "accel", &h->accel_suid, 3000) == 0 &&
+		        pico4_ssc_find(h->ssc, "gyro", &h->gyro_suid, 3000) == 0;
+	}
+	if (!found) {
 		P4_ERROR(h, "The sensor service reports no accelerometer/gyroscope");
 		goto fail;
 	}
@@ -460,11 +692,29 @@ pico4_hmd_create(void)
 		goto fail;
 	}
 
+	// The controllers' packets come through the same service, when the radio is up.
+	setup_station(h);
+	if (h->station != NULL && pico4_ssc_find(h->ssc, "ble_mcu", &h->blemcu_suid, 3000) == 0) {
+		h->has_blemcu = true;
+		h->controllers[0] = pico4_controller_create(PICO4_BLEMCU_LEFT, &h->base, h->log_level);
+		h->controllers[1] = pico4_controller_create(PICO4_BLEMCU_RIGHT, &h->base, h->log_level);
+	}
+
+	// Before the IMU thread, which feeds it.
+	h->slam = pico4_slam_create(debug_get_option_pico4_calibration(), h->station, h->log_level);
+	h->base.supported.position_tracking = h->slam != NULL;
+	if (h->slam != NULL) {
+		snprintf(h->base.serial, XRT_DEVICE_NAME_LEN, "PICO 4 (SLAM)");
+	}
+
 	float rate = (float)debug_get_num_option_pico4_imu_rate();
 	if (pico4_ssc_enable(h->ssc, &h->accel_suid, rate) < 0 || pico4_ssc_enable(h->ssc, &h->gyro_suid, rate) < 0 ||
 	    os_thread_helper_start(&h->oth, imu_thread, h) != 0) {
 		P4_ERROR(h, "Failed to start the IMU stream");
 		goto fail;
+	}
+	if (h->has_blemcu && pico4_ssc_enable(h->ssc, &h->blemcu_suid, rate) < 0) {
+		P4_ERROR(h, "Failed to start the controller stream");
 	}
 	P4_INFO(h, "IMU streaming at %.0f Hz requested, QTimer offset %lld ns", rate,
 	        (long long)h->qtimer_offset_ns);
@@ -473,6 +723,7 @@ pico4_hmd_create(void)
 	u_var_add_log_level(h, &h->log_level, "log_level");
 	u_var_add_ro_u64(h, &h->gyro_samples, "gyro_samples");
 	u_var_add_ro_u64(h, &h->accel_samples, "accel_samples");
+	u_var_add_ro_u64(h, &h->blemcu_packets, "controller_packets");
 	u_var_add_ro_i64_ns(h, &h->last_latency_ns, "last_latency");
 	m_imu_3dof_add_vars(&h->fusion, h, "");
 	return &h->base;
@@ -504,8 +755,15 @@ pico4_autoprobe(struct xrt_auto_prober *xap,
 	if (xdev == NULL) {
 		return 0;
 	}
-	out_xdevs[0] = xdev;
-	return 1;
+	struct pico4_hmd *h = pico4_hmd(xdev);
+	int count = 0;
+	out_xdevs[count++] = xdev;
+	for (int i = 0; i < 2; i++) {
+		if (h->controllers[i] != NULL) {
+			out_xdevs[count++] = pico4_controller_xdev(h->controllers[i]);
+		}
+	}
+	return count;
 }
 
 static void

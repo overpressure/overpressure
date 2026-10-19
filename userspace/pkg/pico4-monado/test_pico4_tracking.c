@@ -1,0 +1,200 @@
+// Copyright 2026, PICO 4 Linux POC contributors.
+// SPDX-License-Identifier: BSL-1.0
+/*
+ * Unit test of the tracking-camera helpers with synthetic values (no device
+ * data): the station frame builder (golden frames from the Python tool that
+ * was verified on hardware, and the allowlist), the factory calibration
+ * parser, the Kannala-Brandt refit and the controller packet parser.
+ */
+
+#include "pico4_blemcu.h"
+#include "pico4_station.h"
+#include "pico4_tcam.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+static int failures;
+
+#define EXPECT(cond)                                                                                                   \
+	do {                                                                                                           \
+		if (!(cond)) {                                                                                         \
+			fprintf(stderr, "%s:%d: expected %s\n", __FILE__, __LINE__, #cond);                            \
+			failures++;                                                                                    \
+		}                                                                                                      \
+	} while (0)
+
+static void
+test_station(void)
+{
+	uint8_t f[PICO4_STATION_FRAME];
+	const uint8_t init[4] = {0x01, 0x00, 0x02, 0x00}, on[3] = {0x02, 0x00, 0x01}, fps[3] = {0x01, 0x00, 0x01};
+	const uint8_t ack[2] = {0x12, 0x34};
+
+	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, init, sizeof(init)));
+	EXPECT(f[0] == 0xAA && f[1] == 0x01 && f[2] == 0x04 && f[3] == 0x01 && f[5] == 0x02 && f[39] == 0x77);
+	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, on, sizeof(on)));
+	EXPECT(f[3] == 0x02 && f[5] == 0x01 && f[39] == 0x06);
+	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_CAMERA_FPS, fps, sizeof(fps)));
+	EXPECT(f[2] == 0x19 && f[39] == 0x00);
+	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_ACK, ack, sizeof(ack)));
+	EXPECT(f[2] == 0xFA && f[3] == 0x12 && f[4] == 0x34 && f[39] == 0x28);
+
+	// Nothing outside the allowlist: other commands, camera ops and payload shapes.
+	const uint8_t version[1] = {0};
+	const uint8_t cam_fps[3] = {0x07, 0x00, 0x01}, bad_stream[3] = {0x02, 0x00, 0x03}, short_init[2] = {0x01, 0x00};
+	const uint8_t bad_rate[3] = {0x03, 0x00, 0x01};
+	EXPECT(!pico4_station_frame(f, 0x01, version, sizeof(version)));
+	for (int cmd = 0; cmd < 256; cmd++) {
+		if (cmd != PICO4_STATION_CMD_CAMERA && cmd != PICO4_STATION_CMD_CAMERA_FPS && cmd != PICO4_STATION_CMD_ACK) {
+			EXPECT(!pico4_station_frame(f, (uint8_t)cmd, ack, sizeof(ack)));
+		}
+	}
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, cam_fps, sizeof(cam_fps)));
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, bad_stream, sizeof(bad_stream)));
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, short_init, sizeof(short_init)));
+	uint8_t para[28] = {0x03};
+	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, para, sizeof(para)));
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, para, 27));
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CAMERA_FPS, bad_rate, sizeof(bad_rate)));
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_ACK, init, sizeof(init)));
+
+	// Replies: header and CRC.
+	uint8_t reply[PICO4_STATION_FRAME] = {0xBB, 0x01, 0x04, 0x01, 0x01};
+	reply[39] = pico4_station_crc8(reply, 39);
+	EXPECT(pico4_station_valid(reply));
+	reply[10] ^= 1;
+	EXPECT(!pico4_station_valid(reply));
+}
+
+// Same structure as the factory files; made-up numbers of the same magnitude.
+static const char *yaml = "%YAML:1.0\n"
+                          "sensor_type: camera\n"
+                          "T_BS:\n"
+                          "  cols: 4\n"
+                          "  rows: 4\n"
+                          "  data: [ 0.0, 0.0, 1.0, 0.01,\n"
+                          "          1.0, 0.0, 0.0, 0.10,\n"
+                          "          0.0, 1.0, 0.0, -0.02,\n"
+                          "          0.0, 0.0, 0.0, 1.0]\n"
+                          "rate_hz: 30\n"
+                          "resolution: [640, 480]\n"
+                          "camera_model: omni\n"
+                          "intrinsics: [3.5,1050.0,1052.0,321.0,242.0] #xi fu fv pu pv\n"
+                          "distortion_model: radtan\n"
+                          "distortion_coefficients: [1.2,15.5,0.001,-0.002]";
+
+static void
+test_calibration(void)
+{
+	struct pico4_tcam_omni c;
+	struct pico4_tcam_kb4 k;
+
+	EXPECT(pico4_tcam_parse_yaml(yaml, &c));
+	EXPECT(c.width == 640 && c.height == 480);
+	EXPECT(c.xi == 3.5 && c.fu == 1050.0 && c.fv == 1052.0 && c.pu == 321.0 && c.pv == 242.0);
+	EXPECT(c.k1 == 1.2 && c.k2 == 15.5 && c.p1 == 0.001 && c.p2 == -0.002);
+	EXPECT(c.T_BS[2] == 1.0 && c.T_BS[3] == 0.01 && c.T_BS[7] == 0.10 && c.T_BS[11] == -0.02 && c.T_BS[15] == 1.0);
+
+	// Other models are refused rather than misread.
+	char other[2048];
+	snprintf(other, sizeof(other), "%s", yaml);
+	memcpy(strstr(other, "omni"), "pinh", 4);
+	EXPECT(!pico4_tcam_parse_yaml(other, &c));
+	EXPECT(pico4_tcam_parse_yaml(yaml, &c));
+
+	// The optical axis lands on the principal point in both models.
+	double axis[3] = {0, 0, 1}, uv[2];
+	EXPECT(pico4_tcam_omni_project(&c, axis, uv));
+	EXPECT(fabs(uv[0] - 321.0) < 1e-9 && fabs(uv[1] - 242.0) < 1e-9);
+
+	EXPECT(pico4_tcam_fit_kb4(&c, &k));
+	printf("KB4 fit: f %.2f %.2f, k %.4f %.4f %.4f %.4f, rms %.3f px, max %.3f px over %d rays\n", k.fx, k.fy,
+	       k.k[0], k.k[1], k.k[2], k.k[3], k.rms_px, k.max_px, k.samples);
+	EXPECT(k.cx == 321.0 && k.cy == 242.0);
+	EXPECT(k.samples > 1000);
+	EXPECT(k.rms_px < 0.5);
+	EXPECT(k.max_px < 2.0);
+
+	// Spot check off axis: 40 degrees right of the axis.
+	double p[3] = {sin(0.698), 0, cos(0.698)}, a[2], b[2];
+	EXPECT(pico4_tcam_omni_project(&c, p, a));
+	pico4_tcam_kb4_project(&k, p, b);
+	EXPECT(fabs(a[0] - b[0]) < 1.0 && fabs(a[1] - b[1]) < 1.0);
+
+	// A camera turned by 180 degrees sees a body point at the mirrored pixel.
+	struct pico4_tcam_kb4 r = k;
+	double T[16];
+	memcpy(T, c.T_BS, sizeof(T));
+	pico4_tcam_rotate_180(&r, T, c.width, c.height);
+	EXPECT(!pico4_tcam_upside_down(c.T_BS, c.T_BS));
+	EXPECT(pico4_tcam_upside_down(c.T_BS, T));
+	double body[3] = {0.3, -0.2, 1.5}, pc[3], pr[3], u0[2], u1[2];
+	for (int i = 0; i < 3; i++) {
+		// Camera coordinates: R^T (p - t), R and t from the row-major T_BS.
+		pc[i] = pr[i] = 0;
+		for (int j = 0; j < 3; j++) {
+			pc[i] += c.T_BS[j * 4 + i] * (body[j] - c.T_BS[j * 4 + 3]);
+			pr[i] += T[j * 4 + i] * (body[j] - T[j * 4 + 3]);
+		}
+	}
+	pico4_tcam_kb4_project(&k, pc, u0);
+	pico4_tcam_kb4_project(&r, pr, u1);
+	EXPECT(fabs(u1[0] - (c.width - 1 - u0[0])) < 1e-6 && fabs(u1[1] - (c.height - 1 - u0[1])) < 1e-6);
+}
+
+static void
+test_blemcu(void)
+{
+	// Same layout as the radio packets: an IMU record with a time offset (right
+	// controller), a tracker record to skip, keys and battery of the left one.
+	uint8_t pkt[200] = {0x5A, 0x01, 0x00, 0x00, 0x78, 0x56, 0x34, 0x12, 0x01, 0x00, 0x00, 0x00};
+	const uint8_t records[] = {
+	    0x17, 0x00, 0x82, 0x80, 0x07,                         // IMU, right, 1920 us earlier
+	    0xF5, 0xFF, 0xFC, 0xFF, 0x05, 0x00,                   // gyro -11 -4 5
+	    0xC7, 0x03, 0xAB, 0x00, 0x0F, 0xFF,                   // accel 967 171 -241
+	    0x0A, 0xFF, 0xA1, 0x00, 0xD0, 0x07,                   // temperature, counter, range
+	    0x06, 0x00, 0x03, 0x01, 0x02, 0x03,                   // tracker 3: ignored
+	    0x0A, 0x01, 0x01, 0x40, 0x10, 0xF0, 0x80, 0xA4, 0x15, 0x02, // keys, left
+	    0x04, 0x02, 0x01, 0x05,                               // battery, left
+	};
+	memcpy(pkt + 13, records, sizeof(records));
+	pkt[12] = sizeof(records);
+
+	struct pico4_blemcu_packet p;
+	EXPECT(pico4_blemcu_parse(pkt, sizeof(pkt), &p));
+	EXPECT(p.station_time_us == 0x112345678ULL);
+	EXPECT(p.imu_count == 1 && p.imu[0].device == PICO4_BLEMCU_RIGHT && p.imu[0].offset_us == 1920);
+	EXPECT(p.imu[0].gyro[0] == -11 && p.imu[0].gyro[1] == -4 && p.imu[0].gyro[2] == 5);
+	EXPECT(p.imu[0].accel[0] == 967 && p.imu[0].accel[1] == 171 && p.imu[0].accel[2] == -241);
+	EXPECT(p.imu[0].temperature == -246 && p.imu[0].counter == 161);
+	EXPECT(p.key_count == 1 && p.keys[0].device == PICO4_BLEMCU_LEFT);
+	EXPECT(p.keys[0].trigger == 0x40 && p.keys[0].stick_y == 0x10 && p.keys[0].stick_x == 0xF0);
+	EXPECT(p.keys[0].grip == 0x80);
+	EXPECT(p.keys[0].buttons == (PICO4_BLEMCU_BTN_TRIGGER | PICO4_BLEMCU_BTN_STICK | PICO4_BLEMCU_BTN_AX));
+	EXPECT(p.keys[0].touch == (PICO4_BLEMCU_TOUCH_TRIGGER | PICO4_BLEMCU_TOUCH_AX | PICO4_BLEMCU_TOUCH_STICK));
+	EXPECT(p.battery_count == 1 && p.battery[0].device == PICO4_BLEMCU_LEFT && p.battery[0].level == 5);
+
+	// Not a radio packet, or records running past the length.
+	pkt[0] = 0x5B;
+	EXPECT(!pico4_blemcu_parse(pkt, sizeof(pkt), &p));
+	pkt[0] = 0x5A;
+	EXPECT(!pico4_blemcu_parse(pkt, 20, &p));
+	pkt[13] = 0x30; // first record claims more bytes than there are
+	EXPECT(pico4_blemcu_parse(pkt, sizeof(pkt), &p) && p.imu_count == 0 && p.key_count == 0);
+}
+
+int
+main(void)
+{
+	test_station();
+	test_calibration();
+	test_blemcu();
+	if (failures != 0) {
+		fprintf(stderr, "%d failure(s)\n", failures);
+		return 1;
+	}
+	printf("ok\n");
+	return 0;
+}

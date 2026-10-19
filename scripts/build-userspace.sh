@@ -95,7 +95,7 @@ in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bi
 # The build environment keeps its own preview-only configuration.
 in_b pacman -Sy --noconfirm --needed base-devel git meson ninja cmake eigen openxr python-mako python-yaml python-packaging \
     glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
-    wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms
+    wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
 
 # -- 2. project packages ---------------------------------------------------------
@@ -122,7 +122,8 @@ build_package() {
 }
 build_package pico4-turnip-kgsl "$project"/src/graphics/*
 build_package pico4-sensors
-build_package pico4-monado "$project/src/xr/pico4-openxr-pose.c" "$project/src/xr/pico4-openxr-display.c"
+build_package pico4-basalt
+build_package pico4-monado "$project/src/xr/pico4-openxr-pose.c" "$project/src/xr/pico4-openxr-display.c"     "$project/src/xr/pico4-cam.c"
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
 
 # -- 3. the userspace root ------------------------------------------------------
@@ -203,6 +204,8 @@ if [[ -n "$sensor_data" ]]; then
     qcom=$T/usr/share/qcom/pico4
     mkdir -p "$qcom"
     cp -r --no-preserve=ownership "$sensor_data/sensors" "$qcom/"
+    # Factory camera/IMU/lens calibration for Monado's PICO 4 driver.
+    [[ ! -d "$sensor_data/calibration" ]] || cp -r --no-preserve=ownership "$sensor_data/calibration" "$qcom/"
     chown -R 0:0 "$qcom"
     ln -sfn /sys/devices/soc0 "$qcom/socinfo"
     sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/share/qcom/pico4 -type f -print0 | sort -z | xargs -0 sha256sum |

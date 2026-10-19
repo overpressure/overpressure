@@ -199,7 +199,9 @@ def validate_openxr_pose(value, accel_tilt_deg: float) -> None:
 
 
 DISPLAY_HZ = 90.0
-DISPLAY_SECONDS = 10
+# Long enough that the stall at session end (the compositor waits up to a few hundred
+# milliseconds on the last frame's fence, XR.md) does not dominate the commit rate.
+DISPLAY_SECONDS = 30
 DISPLAY_RATE_MARGIN = 0.95   # frames and commits per second, against the display rate
 DISPLAY_EYE_CONTRAST = 20.0  # mean red/blue difference that tells the eyes apart
 

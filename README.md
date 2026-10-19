@@ -41,7 +41,14 @@ explicit backup-validated `flash-run` test on the bootloader tested here:
 > with a PICO 4 driver also gives OpenXR clients the head orientation: 1 kHz fusion, about 1 ms
 > latency, 0.009° of rotation in 60 s on a still headset. Monado's compositor also shows OpenXR
 > frames on both panels: it uses the fenced KMS path of step 3 and holds 90 Hz, also with
-> several layers. Cameras, controllers and 6DoF are still open. See [XR.md](XR.md).
+> several layers. The frames are pre-distorted with the headset's factory lens model, which
+> the user confirmed looks straight in the lenses, and the IPD is read from the lens motor.
+> The four tracking cameras stream through Qualcomm's Spectra stack at the controller radio's
+> 50 Hz sync. Both controllers reach OpenXR with their inputs and 3DoF orientation. Basalt runs
+> 6DoF inside Monado on all four cameras: a measured 50 cm slide read 0.52 m and returned
+> within a few centimetres. The step-5 archive passed the unattended acceptance cycle with
+> stock restoration on 2026-10-19, including 30 s of OpenXR frames at 90 Hz with SLAM running.
+> See [XR.md](XR.md).
 
 ## Prerequisites
 

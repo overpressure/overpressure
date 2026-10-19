@@ -22,9 +22,30 @@ image (`backup/`, unpacked privately), the stock kernel and device tree, and rea
 > six-layer path verified in step 3. A Vulkan OpenXR client rendered 5,400 frames in 60 s at
 > 90.000 Hz with 3 late frames. The panels refreshed at 89.998 Hz, and every display fence
 > arrived. Each eye's content was on its own panel, in the scanned-out image and as seen in
-> the lenses. Frames with several layers also run at 90 Hz after three bandwidth fixes. Cameras,
-> controllers, 6DoF, lens distortion and a Monado service are still open; see
-> [next steps](#next-steps).
+> the lenses. Frames with several layers also run at 90 Hz after three bandwidth fixes.
+>
+> **Lens distortion and IPD, 2026-10-18.** The compositor pre-distorts each eye with the
+> headset's [factory lens model](#lens-distortion-and-ipd), including the stock chromatic
+> aberration terms, over a 106.7° field of view. The driver reads the IPD read-only from the lens
+> motor's MCU. In the lenses, grid lines and checkerboard edges looked straight, and the IPD
+> read 72.0 mm, which matched the wheel setting.
+>
+> **Tracking cameras, 2026-10-18.** All four OV7251s
+> [stream through Spectra CSL](#tracking-cameras) at the controller radio's 50 Hz frame sync. In
+> 30 s every camera delivered 1,500 of 1,500 frames, with 17.5 ms mean latency from start of
+> frame to delivery. The radio also sets the exposure.
+>
+> **Controllers, 2026-10-18.** The radio's controller stream reaches Linux through the sensor
+> DSP. Both [controllers](#controllers) appear in OpenXR with buttons, touch, sticks, triggers and
+> 3DoF orientation, at about 500 IMU samples and 100 input packets per second each. The inputs
+> were checked button by button with the user.
+>
+> **6DoF head tracking, 2026-10-18.** Basalt runs inside Monado on all four cameras and the head
+> IMU ([6DoF head tracking](#6dof-head-tracking)) at 25 Hz, without blocking the 3DoF path. A
+> measured 50 cm slide read 0.52 m and returned to the start within 2–4 cm. A still headset held
+> within millimetres. Walking with the headset was tracked in the right directions. A Monado
+> service, controller positions (IR-LED tracking) and a controller check inside an OpenXR app are
+> open; see [next steps](#next-steps).
 
 ## Inventory
 
@@ -137,9 +158,10 @@ runtime (`/etc/openxr/1/active_runtime.json`).
     than the correction pulls it back. The driver learns the bias in quarter-second windows in
     which gyro and accelerometer are quiet and the rate is below 0.02 rad/s. That excludes
     deliberate turns.
-- **Display description.** Two 2160×2160 views side by side (4320×2160), 90 Hz and a
-  provisional 104° field of view. There is no distortion yet; the lens data replaces this
-  later.
+- **Display description.** Two 2160×2160 views side by side (4320×2160) at 90 Hz. The field of
+  view and the distortion come from the lens data
+  ([Lens distortion and IPD](#lens-distortion-and-ipd)). Without that data the driver falls back
+  to the stock runtime's symmetric 104° and no distortion.
 
 [`pico4-openxr-pose`](src/xr/pico4-openxr-pose.c) is the acceptance client. It uses the
 OpenXR loader with `XR_MND_headless`, so it needs no graphics. It locates VIEW at the current
@@ -167,7 +189,17 @@ presents with the sequence that step 3 verified ([GRAPHICS.md](GRAPHICS.md)):
   without blocking and requests the CRTC release fence and the connector retire fence.
   - Before each commit the target waits for the renderer's queue and for the previous
     commit's retire fence. Only then can the image acquired next be off screen.
-  - Pacing uses Monado's fixed-period pacer at the HMD's 90 Hz.
+  - Pacing uses Monado's fixed-period pacer at the HMD's 90 Hz, phase-locked to the
+    timestamps of the panel's vblank events. On its own it counted frames from its creation,
+    at an arbitrary phase against the panel.
+- **Real-time threads.** Monado runs its compositor threads at real-time priority, and the
+  stock kernel only grants that outside cgroups with the `cpu` controller: with
+  `CONFIG_RT_GROUP_SCHED` on cgroup v2, `SCHED_FIFO` fails with `EPERM` there, even for root.
+  systemd enables that controller by default, for CPU accounting and through the user
+  manager: `user@.service` delegates it, and its slices set `CPUWeight`. Drop-ins in
+  `userspace/rootfs/etc/systemd` turn all three off. Without real-time threads, the
+  compositor competed with Basalt and missed 50–80 refreshes in 30 s, with
+  client-fence stalls of up to 300 ms; with them it misses 1–4.
 - **GPU clock.** While the target drives the panels, it keeps the GPU at 587 MHz or faster
   (KGSL `min_pwrlevel`; `PICO4_KMS_GPU_MIN_MHZ`, 0 turns it off). On exit it restores the
   previous floor. Under the compositor's load, the stock `msm-adreno-tz` governor stayed at
@@ -218,6 +250,190 @@ The target writes its own statistics with `PICO4_KMS_STATS=path`. With
 `PICO4_KMS_DUMP=path` it also saves one scanned-out image (commit `PICO4_KMS_DUMP_FRAME`,
 default 300) as a PPM, and records the mean colour of each eye.
 
+## Lens distortion and IPD
+
+The lens model was read out of the stock compositor (`libpxrcompositor.so`, its warp-mesh
+builder) and the configuration service that feeds it. It works like the Oculus mobile SDK's:
+
+- **Distortion.** A point on the panel, `p` metres from the lens centre, is seen at tan-angle
+  `t·s(|t|²)`, with `t = p / F` and `s` a polynomial K0…K10 in `|t|²`. `F` and the coefficients
+  come per eye from `pvr/OpticalCalibrationData.json` in `persist`. On this unit they match the
+  stock table entry for the lens model and mould cavity, so they are not measured per headset.
+- **Lens centre.** The centre is the panel centre. The panels move with the lenses, so the
+  IPD does not change the distortion. The calibrated offsets are below 0.1 mm and are ignored.
+- **Chromatic aberration.** Red and blue scale the green tan-angle by
+  `1 + CA0 + CA1·r² + CA4·r` and `1 + CA2 + CA3·r² + CA5·r`. The six terms come from the stock
+  `SDK_Lens_ConfigFile.txt` in the system partition. `extract-sensor-data.sh` copies that file
+  next to the calibration. The correction is off by default (`PICO4_LENS_CA=1` turns it on),
+  as on PICO OS, whose rule files set `sdk_chromaticStaus = 0`. With three separate texture
+  reads per pixel, the two-layer test scene dropped to 83–87 commits per second; geometry
+  alone holds 87–88.
+
+[`pico4_lens.c`](userspace/pkg/pico4-monado/pico4_lens.c) implements this, and the driver gives
+it to Monado's distortion mesh (`compute_distortion`, one UV per colour channel). The polynomial
+is only fitted inside the panel's inscribed circle and diverges in the corners. Beyond that
+circle the tan-angles therefore grow steeply, so the image ends cleanly at the edge of the
+rendered view. The field of view runs from the panel edges through the green channel: about
+±53.3° per eye here, against the stock runtime's symmetric 104°.
+
+The IPD comes from the GD32 MCU that drives the lens motor and the backlight, on `/dev/ttyHS1`
+(115200 8N1). [`pico4_ipd.c`](userspace/pkg/pico4-monado/pico4_ipd.c) sends one command,
+`A0 08 00 00 00 A8` (get position), once at start. The reply carries the lens separation in
+0.01 mm and the Hall sensor reading, told apart by range. The module cannot build any other
+frame: the MCU also takes motor moves, calibration writes and firmware. The driver passes the
+separation to Monado's view poses and falls back to Monado's default if the MCU does not answer.
+
+## Controller radio ("station")
+
+The nRF52832 on `/dev/spidev0.0` relays the controllers. It also generates the tracking
+cameras' frame sync (FSIN). PICO's `stationservice` drives it through a vendor-modified
+`spidev`: fixed 40-byte frames (`AA` to the station, `BB` replies, `A5` notifications) with a
+CRC-8. The kernel moves whole frames on the station's interrupt, so userspace only `write()`s,
+`select()`s and `read()`s.
+
+- **Data path.** Controller IMU, buttons, sticks, touch and battery do not come over SPI. The
+  station streams them to the sensor DSP, where the SLPI firmware exposes them as the SSC
+  sensor `ble_mcu`. The driver enables that sensor through the same client as the head IMU.
+  SPI is only the control plane.
+- **Bring-up.** A power cycle through the driver's power ioctl. The station then announces itself
+  (`A5 06`) and waits for the camera frame rate (`19`, 50 Hz as stock) before it accepts camera
+  commands.
+- **Safety.** The same link carries station and controller firmware updates. The C module
+  ([`pico4_station.c`](userspace/pkg/pico4-monado/pico4_station.c)) and the
+  [`pico4-station`](userspace/rootfs/usr/bin/pico4-station) tool build frames only from an
+  allowlist:
+  - acknowledge, camera frame rate, camera init/stream/exposure;
+  - in the tool also version, IMU stream and three read-only queries.
+
+  Neither can send firmware, bootloader or flash commands, and neither touches the boot pin.
+  The station reports firmware 2.96, the version PICO OS ships.
+
+## Tracking cameras
+
+The four OV7251s (640×480 mono, global shutter) only exist behind Qualcomm's Spectra camera
+stack (CSL), which has no V4L2 capture path.
+[`pico4_cam.c`](userspace/pkg/pico4-monado/pico4_cam.c) rebuilds the stock tracking pipeline
+from the public CSL headers:
+
+- **Sessions.** One CSL session per camera:
+  - the sensor through the CCI driver: probe, power, and the stock OV7251 register table,
+    including the stock per-module flip and mirror;
+  - its CSIPHY;
+  - an IFE-lite with one RDI output (raw data, no ISP firmware).
+
+  PICO's kernel allows four links per session where the public header says two; the build
+  patches the header.
+- **IFE-lite.** The RDI only produces start-of-frame events once the INIT packet enables the
+  CAMIF-lite module with a CDM register write. CamX does the same. The sensor sends RAW10, which
+  is stored as `PLAIN16_10`.
+- **Requests.** The ISP is alone on its request-manager link: the sensor follows the frame
+  sync, not requests. Each camera keeps 8 requests in flight with bubble recovery; with 6, about
+  10% of frames were lost. Buffer completion comes through `cam_sync` fences. The timestamp is
+  the start-of-frame event's boot time, which the driver converts to Monado's clock.
+- **Cached buffers.** Frames land in cached buffers, which are invalidated
+  (`CAM_REQ_MGR_CACHE_OPS`) before the CPU reads them. With uncached buffers, reading frames
+  stalled buffer delivery for about 100 ms every 10–13 frames. With cached buffers the latency
+  is a constant 16–18 ms.
+- **Kernel console.** The camera driver logs every start of frame at `KERN_INFO`. On the
+  serial console each line costs about 13 ms in interrupt context, and capture collapsed after
+  about 20 frames. `50-pico4-console.conf` keeps informational messages off the console.
+- **udev.** systemd's `60-persistent-v4l.rules` is overridden. Its `v4l_id` probe opens the ICP
+  node at boot, whose firmware load fails. That blocks PICO's CAM-HUB work queue, and every
+  later open of `cam_sync` times out.
+
+The station drives the sensors, which run in FSIN slave mode:
+
+- **Start.** Each run resets the station, then sends camera init (`04 01 00 02 00`) and stream
+  (`04 02 00 01`). All four sensors must be streaming before the station accepts them.
+  Frames arrive at 49.99 Hz.
+- **Exposure.** The sensors ignore their own exposure registers in this mode. Exposure and
+  gain go through the station's camera command `04 03`: per camera, exposure in sensor lines of
+  19.3 µs and gain in 1/16 steps. Exposure plus the 9 ms readout must fit the 20 ms period,
+  and 3,000 lines stalled the sensors. The default of about 3 ms leaves rooms nearly black.
+- **Alternating exposures.** Every other frame is a short exposure in which only the
+  controllers' IR LEDs show (mean 23–28 of 1023). PICO uses those frames for controller
+  tracking; the scene frames run at 25 Hz.
+
+Sensor slots and the factory calibration `pvr/mav0/camN` do not share numbering. Covering one
+lens at a time gave cam0 (top left as worn) = slot 0, cam1 (top right) = slot 2, cam2 (bottom
+right) = slot 1 and cam3 (bottom left) = slot 3. A point seen by both lower cameras
+triangulates with a 0 mm ray gap at 15 cm under this mapping, using the images as captured.
+Every rotated or swapped variant gives negative depths or gaps of 5–10 cm. The factory model
+(omni + radtan, Kalibr `T_BS` to the IMU frame) is refitted to Kannala-Brandt for Basalt
+([`pico4_tcam.c`](userspace/pkg/pico4-monado/pico4_tcam.c)), at 0.21–0.52 px RMS.
+
+[`pico4-cam`](src/xr/pico4-cam.c) tests the cameras on their own (`list`, `probe`,
+`capture`). It also saves a scene frame of each camera and can log per-frame brightness and
+latency.
+
+## 6DoF head tracking
+
+[`pico4_slam.c`](userspace/pkg/pico4-monado/pico4_slam.c) feeds Monado's SLAM tracker. Monado
+loads Basalt through its VIT interface (`libbasalt.so` from the
+[`pico4-basalt`](userspace/pkg/pico4-basalt/PKGBUILD) package):
+
+- **Frames.** Frames of one sync pulse are grouped by start-of-frame time, and the
+  controller-LED frames are skipped. The phase is told apart by brightness and counted through
+  dropped frames. Each frame is converted to 8 bits: black level removed, slowly adapting
+  digital gain. Sets go out in camera order with one timestamp, as Basalt requires.
+- **Auto exposure.** A slow loop sets the station exposure from the first camera's
+  brightness. It raises exposure first, up to 400 lines, then gain up to 4×.
+- **Upright images.** The lower pair is mounted 180° apart, as the calibration's relative roll
+  says. Basalt's stereo matching tracks patches between cameras and cannot follow that, so the
+  driver turns each image that is upside down relative to the first camera's. It rotates that
+  camera's calibration to match (`pico4_tcam_rotate_180`).
+- **IMU.** Raw head IMU samples (512 Hz, halved for Basalt) in the factory body frame, which
+  is the frame of the camera extrinsics.
+- **Decoupling.** Basalt's queues are bounded and block their producers when its optical flow
+  falls behind. Two feeder threads therefore stand between the driver and Basalt. One takes
+  the newest frame set (an older waiting set is dropped), the other an IMU ring buffer. Neither
+  the cameras nor the head IMU thread (3DoF, controllers) ever waits for Basalt.
+  - **Why two feeders.** One feeder for both deadlocked: a blocked frame push held back the
+    IMU samples that Basalt's estimator needed before its optical flow could take the next
+    frame.
+  - **Shutdown.** The driver stops the frames first and gives Basalt a second to work
+    through its queue before stopping it. Basalt's optical flow carries on after its
+    estimator has finished and then predicts from an invalid state, which aborted or crashed
+    the process when it was behind.
+- **Priority.** Without a config file, Basalt's TBB pool uses every core. Basalt's threads
+  and feeders therefore start at nice 19, restricted to cores 0–5, which leaves the two fastest
+  cores to the compositor and the app. They inherit both from the thread that starts them,
+  TBB workers included; `PICO4_SLAM_CPUS` (a decimal bit mask) changes the set. With the
+  compositor running, Basalt skips some sets (30–70 of 757 in 30 s).
+- **Pose.** Basalt's pose (IMU frame, z-up world) is converted to the HMD frame and Monado's
+  y-up world. While Basalt reports position, the driver uses it; otherwise the 3DoF fusion.
+
+Options: `PICO4_SLAM=0` disables 6DoF. `PICO4_SLAM_CAMS` (default `0,1,2,3`) selects the
+factory cameras, `PICO4_TCAM_SLOTS` the slot mapping. `PICO4_SLAM_UPRIGHT=0` keeps images as
+captured. `PICO4_SLAM_MAX_EXPOSURE` and `PICO4_SLAM_BRIGHTNESS` tune exposure, and
+`PICO4_SLAM_DUMP=dir` saves converted frames. Monado's `SLAM_WRITE_CSVS=1` writes Basalt's
+trajectory.
+
+Basalt is built for `armv8.2-a`, the XR2's Cortex-A77/A55 level. A `-march=native` build under
+QEMU emitted SVE instructions. OpenCV's highgui links Qt 6, so `qt6-base` is part of the image.
+
+## Controllers
+
+[`pico4_blemcu.c`](userspace/pkg/pico4-monado/pico4_blemcu.c) parses the `ble_mcu` events:
+200-byte payloads, each with a header (`5A`, version, station time in µs, records length) and
+records `[length][type][id][time offset][data]`. The id's low bits select left (1) or right (2).
+Record types:
+
+- **IMU** (type 0): gyro at 16.4 LSB per °/s, accelerometer at 1,024 LSB per g, temperature,
+  and a counter.
+- **Inputs** (type 1): trigger, stick y (255 up), stick x (255 right) and grip as bytes. One byte of buttons: home,
+  menu, A/X, B/Y, grip, stick click, trigger. One byte of touch: A/X, B/Y, stick, thumb rest,
+  trigger.
+- **Battery** (type 2).
+
+[`pico4_controller.c`](userspace/pkg/pico4-monado/pico4_controller.c) makes each controller a
+Monado device with Monado's existing PICO 4 controller profile
+(`/interaction_profiles/bytedance/pico4_controller`). Orientation comes from `m_imu_3dof`,
+levelled from gravity at start, with the IMU axes mapped to the grip (`x, -z, y`;
+`PICO4_CONTROLLER_AXES_LEFT/RIGHT` override). Positions are a placeholder: a fixed offset
+from the head, turned with its yaw. Real positions need the IR-LED tracking. Haptics are
+accepted but do nothing yet.
+
 ## Build
 
 Extract the inputs from **your own** EDL backup (as root, Linux/WSL). This needs `debugfs` and
@@ -238,7 +454,10 @@ bash scripts/build-userspace.sh /var/tmp/pico4-userspace-build "$PWD/out/userspa
 ```
 
 The `pico4-sensors` package (qrtr-ns, pd-mapper, hexagonrpcd) is built from pinned upstream
-commits plus this project's patches. The extracted data and the archive are device-specific
+commits plus this project's patches. `pico4-basalt` builds Basalt and its submodules at pinned
+commits (about an hour under QEMU). `pico4-monado` fetches the Spectra camera UAPI headers
+from a pinned public kernel tree. The sensor data also carries the lens and camera calibration
+the driver reads at run time. The extracted data and the archive are device-specific
 and partly proprietary, so keep them private.
 
 ## Run
@@ -267,6 +486,27 @@ If `pico4-monado` is installed, the runner also runs this for 10 s. It then requ
 system with orientation tracking, no invalid pose after the first second, a tilt within 2° of
 the accelerometer's (from the IMU check), and a heading drift below 0.5°/s.
 
+Monado runs inside the client, and Basalt prints its diagnostics to stdout, so both acceptance
+clients point their stdout at stderr and keep the original stdout for the JSON report alone.
+
+With the cameras and Basalt available, the HMD reports position tracking, and the client adds
+`position_tracked`, the path length, the largest distance from the start and the last
+position. A still headset should stay within centimetres; that needs a scene the lower cameras
+can see in depth, not a surface a few centimetres away.
+
+The cameras and the radio on their own (nothing else may use them at the same time):
+
+```sh
+pico4-cam list                                    # CSL nodes, slots, PHYs; powers nothing
+pico4-cam capture --frames 1500 --out /tmp/cams   # all four at 50 Hz, JSON summary, one scene frame each
+pico4-cam capture --exposure 300 --gain 32 --stats-log /tmp/frames.txt
+pico4-station version                             # station firmware version
+pico4-station listen --seconds 5                  # frames the station sends
+```
+
+`capture` resets the station, starts the frame sync and reports per camera the frames, errors,
+frame rate and timestamp monotonicity.
+
 On the panels, through Monado's main compositor and the KMS target. Nothing else may hold the
 display:
 
@@ -274,7 +514,7 @@ display:
 PICO4_KMS_STATS=/run/kms.json PICO4_KMS_DUMP=/run/frame.ppm pico4-openxr-display 10 [--projection-only]
 ```
 
-The runner then runs this for 10 s with both layers, so it exercises the layer squasher, and
+The runner then runs this for 30 s with both layers, so it exercises the layer squasher, and
 requires all of the following:
 
 - **Client.** The PICO 4 system, frames at 95% of 90 Hz or better, and at most 1% of them late.
@@ -396,27 +636,83 @@ The final archive (SHA-256 `01d98f14162d6e0816aa0f9408e223153d00dbdebab966571a40
 | Restoration | stock boot verified by EDL readback, stock ABL restored, PICO OS 5.13.7 started |
 | QEMU (same archive, no `msm_drm`, no SLPI) | self-test passed |
 
+Lens, IPD, cameras, controllers and the SLAM pipeline, development builds on the headset
+(2026-10-18):
+
+| Check | Result |
+| --- | --- |
+| Field of view from the lens data | left eye −53.32/+53.38° horizontal, +53.58/−53.12° vertical; right eye −53.49/+53.17°, +53.41/−53.25° |
+| Lens correction, seen in the lenses | grid lines and checkerboard edges straight; image steady at 90 Hz. Colour fringes not judged (each eye showed its own colour) |
+| IPD | 71.99 mm (Hall reading 888, consistent with the factory table); the wheel was at its widest, 72 mm |
+| Station | power cycle, announcement and frame-rate answer every run; firmware 2.96 |
+| Capture, 30 s, all four cameras | 1,500/1,500 frames each, 0 errors, 49.99 Hz, timestamps monotonic; start of frame to delivery 17.5 ms mean, 27.2 ms max |
+| Capture before the cached buffers | 45–67 ms mean; ~100 ms stalls every 10–13 frames |
+| Exposure through the station | scene frames mean 76 → 446 (of 1023) at 400 lines and 4× gain; LED frames 23–28 either way |
+| Slot mapping | cover test: one slot dark per covered lens; logo triangulation 0 mm ray gap at 0.14/0.16 m |
+| Controllers in OpenXR | both as `PICO 4 left/right controller`; per controller about 500 IMU samples and 100 input packets per second |
+| Controller inputs, user pressing each in turn | trigger, grip, A/B/X/Y, menu, home, stick click and touch (A/X, B/Y, stick, thumb rest) decoded as pressed |
+| Sticks, pushed right, left, up, down on both controllers | byte 2: 255, 0; byte 1: 255, 0. The first parser had x and y swapped |
+| SLAM feed, 30 s, four cameras | 744 frame sets at 25 Hz, 0–1 incomplete, 0 dropped while Basalt was busy, 0 IMU samples dropped; frame to tracker 15–23 ms |
+| SLAM accuracy, still headset, lower cameras 15 cm from a board | 1.6–4.8 m drift in 30 s: no stereo depth in this scene; not a valid accuracy test |
+| 6DoF, headset on a table in a lit room, slid 50 cm (measured) and back, twice | 0.52 m and 0.49 m measured; back at the start within 2–4 cm; vertical within 1 cm on the second slide; at rest within millimetres over 15 s |
+| 6DoF, held at head height, walking about 1 m forward/back and sideways | moves tracked in the right axes and back near the start (0.1–0.2 m); still phases within 3 cm. One run showed a 0.8 m jump while Basalt initialised in the first seconds |
+| 6DoF, headset lowered from head height onto a table | 0.75 m down, then still within millimetres for 30 s |
+| Image turn off (`PICO4_SLAM_UPRIGHT=0`), walking | tracks as well in this test; the turn stays on as the documented geometry |
+| Before the frame-phase fix | 430–720 m drift in 30 s (Basalt fed the controller-LED frames) |
+
+The step-5 archive (SHA-256 `f3b843c73903c6bd93b086eb08a5440dc1a6326d6c4593d4666f570430ee5e40`,
+464,137,714 bytes) passed the unattended acceptance cycle on 2026-10-19:
+
+| Acceptance (step-5 archive) | Result |
+| --- | --- |
+| Handoff, userspace check | received in 105 s, SSH after 123 s; systemd `running`, 0 failed units; Turnip verified 65,536 pixels |
+| `pico4-imu stream --check` | pass: 5,066 samples per stream at 511.95 Hz, 0 gaps |
+| `pico4-openxr-pose 10 10` | pass: 4 cameras + Basalt running, position tracked; tilt 2.01° vs. accelerometer 0.65°; heading 0.11°/s. The still headset faced a near surface again: 6.5 m position drift, not part of the check |
+| `pico4-openxr-display 30` (projection + quad, SLAM running) | pass: 2,698 frames at 89.996 Hz, 2 late; 2,691 commits at 88.76/s, panel 89.998 Hz, 0 retire timeouts; scanned-out eye means (60, 32, 19) left and (21, 35, 64) right; Basalt skipped 73 of 757 sets |
+| Restoration | stock boot verified by EDL readback, stock ABL restored, PICO OS 5.13.7 started |
+| QEMU (same archive, no SLPI, no `msm_drm`) | self-test passed |
+
+An earlier archive failed the same cycle (2026-10-18) on the display check alone: 83.7 commits
+per second against the required 85.5. Four causes were found in the dev loop and fixed:
+
+- **Real-time threads refused.** Monado's real-time threads were refused (see the KMS target).
+- **Chromatic aberration.** The CA correction's bandwidth; it is now opt-in.
+- **Session end.** A stall at session end weighed on a 10 s window; the check now runs 30 s.
+- **Basalt.** A deadlock and a crash at Basalt shutdown, which the investigation also turned up.
+
 Unit tests cover the protobuf/QMI encoding (Python and C), a simulated DSP (lookup,
 attributes, streaming, disable), the acceptance limits, the orientation filter, the
 super-image reader and the FastRPC ABI translation (in the hexagonrpc patch, `meson test`).
+The package build also runs the C tests of the lens model and IPD reply parser, and of the
+tracking helpers:
+- station frames against golden bytes and the allowlist;
+- the calibration parser, the Kannala-Brandt refit and the 180° turn;
+- the controller packet parser.
 
 ## Next steps
 
-1. **Monado service and session.** Monado runs in-process for now. As a service it would own
-   the display and sensors for several clients. Its socket lives in the client's
-   `XDG_RUNTIME_DIR`, and upstream ships user units that exclude root. Where the socket goes
-   depends on the session user that the gamescope/Steam session (roadmap step 6) brings.
-2. **Composition headroom.** The squasher fits 11 ms only with the GPU clock floor. Remaining
+1. **6DoF tuning.** Worn sessions with longer paths. Basalt's first seconds can jump before
+   it has initialised, so the driver could hold the 3DoF pose until Basalt has settled. Other
+   knobs: `optical_flow_image_safe_radius` for the fisheye borders, IMU noise, and a Basalt
+   config file (the VIT build runs Basalt's built-in defaults).
+   A still headset facing a surface a few centimetres away drifts by metres (no stereo depth);
+   the driver could fall back to 3DoF position while Basalt reports too few landmarks.
+2. **Controller check in an OpenXR app.** Grip orientation while worn and the bindings in a
+   real application (step 6). Haptics need a station command still to be identified; it is not
+   part of the allowlist yet.
+3. **Monado service and session.** Monado runs in-process for now. As a service it would own
+   the display, sensors, cameras and radio for several clients. Its socket lives in the
+   client's `XDG_RUNTIME_DIR`, and upstream ships user units that exclude root. Where the
+   socket goes depends on the session user that the gamescope/Steam session (roadmap step 6)
+   brings.
+4. **Controller positions.** The cameras already deliver the IR-LED frames. Constellation
+   tracking needs the LED layout of the rings, which is in the controllers' calibration or
+   PICO's encrypted tracking config, and a tracker (Monado has one for WMR controllers).
+5. **Composition headroom.** The squasher fits 11 ms only with the GPU clock floor. Remaining
    options:
    - compressed (UBWC) scanout images, using the display's compressed formats;
    - compressed client swapchain images;
-   - composing the layers directly through the distortion mesh, without scratch images, once
-     lens distortion makes the scratch images larger again;
+   - composing the layers directly through the distortion mesh, without scratch images;
+   - cheaper chromatic aberration correction (it costs 2–5% of the refreshes in the
+     two-layer scene, hence opt-in);
    - display-timing pacing from the retire fences' timestamps.
-3. **Tracking cameras.** Capture raw OV7251 frames through Spectra CSL (sensor I2C, CSIPHY,
-   CSID, IFE-lite RDI), with the `sixdof` frame-sync timestamps.
-4. **6DoF.** Run Monado's SLAM (Basalt) on camera + IMU with the factory Kalibr calibration.
-5. **Controllers.** Implement the station SPI protocol (pairing, controller IMU, buttons;
-   never the OTA commands), then IR-LED constellation tracking.
-6. **Lens calibration.** Convert `OpticalCalibrationData.json` and the lens/IPD tables into
-   distortion meshes for the compositor. That replaces the provisional 104° field of view.

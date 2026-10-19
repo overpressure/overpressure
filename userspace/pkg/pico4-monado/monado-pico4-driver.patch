@@ -329,19 +329,45 @@ index 137cf0544..45cc0bdfb 100644
   * Free all images allocated, @p init must be called before calling this
   * function, is safe to call without any image allocated.
 diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
-index bd31b3374..9cae9505b 100644
+index bd31b3374..747bbfd36 100644
 --- a/src/xrt/drivers/CMakeLists.txt
 +++ b/src/xrt/drivers/CMakeLists.txt
-@@ -249,6 +249,15 @@ if(XRT_BUILD_DRIVER_ROKID)
+@@ -249,6 +249,41 @@ if(XRT_BUILD_DRIVER_ROKID)
  	list(APPEND ENABLED_HEADSET_DRIVERS rokid)
  endif()
  
 +if(XRT_BUILD_DRIVER_PICO4)
 +	add_library(
-+		drv_pico4 STATIC pico4/pico4_hmd.c pico4/pico4_interface.h pico4/pico4_ssc.c
-+				 pico4/pico4_ssc.h
++		drv_pico4 STATIC
++		pico4/pico4_blemcu.c
++		pico4/pico4_blemcu.h
++		pico4/pico4_cam.c
++		pico4/pico4_cam.h
++		pico4/pico4_controller.c
++		pico4/pico4_controller.h
++		pico4/pico4_hmd.c
++		pico4/pico4_interface.h
++		pico4/pico4_ipd.c
++		pico4/pico4_ipd.h
++		pico4/pico4_lens.c
++		pico4/pico4_lens.h
++		pico4/pico4_slam.c
++		pico4/pico4_slam.h
++		pico4/pico4_ssc.c
++		pico4/pico4_ssc.h
++		pico4/pico4_station.c
++		pico4/pico4_station.h
++		pico4/pico4_tcam.c
++		pico4/pico4_tcam.h
 +		)
-+	target_link_libraries(drv_pico4 PRIVATE xrt-interfaces aux_util aux_os aux_math)
++	# Spectra camera UAPI headers (media/cam_*.h), placed here by the package build.
++	target_include_directories(drv_pico4 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/pico4/include)
++	target_link_libraries(
++		drv_pico4 PRIVATE xrt-interfaces aux_util aux_os aux_math xrt-external-cjson
++		)
++	if(XRT_FEATURE_SLAM)
++		target_link_libraries(drv_pico4 PRIVATE aux_tracking)
++	endif()
 +	list(APPEND ENABLED_HEADSET_DRIVERS pico4)
 +endif()
 +
