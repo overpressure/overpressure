@@ -231,6 +231,17 @@ test_meta(void)
 	EXPECT(!pico4_cam_meta_decode(NULL, sizeof(line), &m));
 }
 
+static void
+test_median(void)
+{
+	// One camera covered (dark) or saturated does not move the group's signal much.
+	const float covered[4] = {240, 3, 255, 250}, saturated[4] = {240, 1000, 255, 250}, odd[3] = {9, 1, 5};
+	EXPECT(fabsf(pico4_cam_median(covered, 4) - 245.0f) < 0.01f);
+	EXPECT(fabsf(pico4_cam_median(saturated, 4) - 252.5f) < 0.01f);
+	EXPECT(fabsf(pico4_cam_median(odd, 3) - 5.0f) < 0.01f);
+	EXPECT(pico4_cam_median(odd, 0) == 0.0f);
+}
+
 int
 main(void)
 {
@@ -238,6 +249,7 @@ main(void)
 	test_calibration();
 	test_blemcu();
 	test_meta();
+	test_median();
 	if (failures != 0) {
 		fprintf(stderr, "%d failure(s)\n", failures);
 		return 1;

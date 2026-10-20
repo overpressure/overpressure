@@ -485,8 +485,11 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
   exposure, which would put the images out of step with the IMU while the head moves. The set
   gets the mean of its cameras' times; the driver logs their spread (0.00–0.01 ms).
   `PICO4_SLAM_EXPOSURE_CENTRE=0` uses the start of frame.
-- **Auto exposure.** A slow loop sets the station exposure from the first camera's brightness
-  and the exposure that frame was taken with, every 25 sets (half a second). It starts at 300 lines and 1× gain and aims at a mean signal of
+- **Auto exposure.** A slow loop sets the station exposure from the median brightness of the
+  set's cameras and the exposure the set was taken with, every 25 sets (half a second). With the
+  first camera alone, a headset lying with that camera against fabric drove the exposure to
+  400 lines and gain 223 until the other three saturated and Basalt crept; the median ignores
+  one covered or saturated camera. The digital gain follows the same median. It starts at 300 lines and 1× gain and aims at a mean signal of
   250 above black (10-bit), changing at most 4× per step and ignoring changes within 10%. It
   raises exposure first, up to 400 lines (longer exposures smear more in motion), then gain up
   to 15.5×, the sensors' highest analog gain. Capped at 4×, a moderately lit room stayed near
@@ -845,7 +848,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    freezes the position for a moment. Basalt drifts slowly at rest (centimetres in half a
    minute). The 24 ms are fixed while SteamVR's frame intervals vary (it renders at about 52
    frames per second); a prediction that follows the actual frame timing would fit better.
-   Auto exposure follows the first camera only, so a covered first camera saturates the others.
+   Auto exposure now follows the median of the cameras; covering one camera is not tested yet.
    Other knobs: `optical_flow_image_safe_radius` for the fisheye borders and a Basalt config file
    (the VIT build runs Basalt's built-in defaults).
 2. **Controllers in applications.** In SteamVR ([session.md](session.md)) both controllers appear

@@ -126,6 +126,28 @@ pico4_cam_meta_decode(const void *line, size_t bytes, struct pico4_cam_meta *out
 	return out->phase == 1 || out->phase == 2 || out->phase == 4;
 }
 
+/*!
+ * The median of @p n signals (n <= 8): what the cameras of one set see as a group. One
+ * covered or saturated camera does not move it, unlike the mean or the first camera alone.
+ */
+static inline float
+pico4_cam_median(const float *v, int n)
+{
+	float s[8];
+	if (n <= 0) {
+		return 0.0f;
+	}
+	n = n > 8 ? 8 : n;
+	for (int i = 0; i < n; i++) {
+		int j = i;
+		for (; j > 0 && s[j - 1] > v[i]; j--) {
+			s[j] = s[j - 1];
+		}
+		s[j] = v[i];
+	}
+	return n % 2 ? s[n / 2] : 0.5f * (s[n / 2 - 1] + s[n / 2]);
+}
+
 //! Media entity found while discovering the camera devices.
 struct pico4_cam_entity
 {

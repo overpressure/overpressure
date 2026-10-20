@@ -161,6 +161,8 @@ struct pico4_slam
 		int have;
 		struct xrt_frame *frames[PICO4_TCAM_COUNT];
 		int64_t taken[PICO4_TCAM_COUNT]; //!< Middle of each frame's own exposure.
+		float signal[PICO4_TCAM_COUNT];  //!< Mean signal above black of each frame (10-bit).
+		struct pico4_cam_meta applied;   //!< The exposure the set was taken with.
 	} group;
 	uint64_t sets_pushed, sets_dropped, sets_busy, sequence;
 	//! Frames skipped by their metadata: controller-LED or other phases, undecodable metadata.
@@ -422,8 +424,8 @@ push_group(struct pico4_slam *s)
 }
 
 /*!
- * Station exposure from the mean signal of the first camera, exposure first,
- * then gain. @p applied is the exposure that signal was taken with: a command
+ * Station exposure from the signal of the scene cameras (their median), exposure
+ * first, then gain. @p applied is the exposure that signal was taken with: a command
  * still on its way does not count.
  */
 static void
@@ -510,26 +512,32 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	if (s->group.have == 0) {
 		s->group.ts = ts;
 	}
-	if (index == 0) {
-		// The first camera steers the exposure and the digital gain of the next sets.
-		float signal = sample_mean(f) - BLACK_LEVEL;
-		auto_exposure(s, signal, &meta);
-		float mean8 = signal / 4.0f;
-		float want = mean8 > 0.5f ? s->brightness / mean8 : 8.0f;
-		want = want < 1.0f ? 1.0f : want > 8.0f ? 8.0f : want;
-		s->gain += 0.05f * (want - s->gain);
-	}
 	if (s->group.frames[index] != NULL) {
 		return; // duplicate
 	}
 	s->group.frames[index] = convert(s, f, s->rotated[index]);
 	s->group.taken[index] = exposure_middle(ts, &meta);
+	s->group.signal[index] = sample_mean(f) - BLACK_LEVEL;
+	if (index == 0) {
+		s->group.applied = meta;
+	}
 	if (s->group.frames[index] == NULL) {
 		drop_group(s);
 		return;
 	}
 	s->group.have++;
 	if (s->group.have == s->cam_count) {
+		/*
+		 * The median of the cameras steers the exposure and the digital gain of the next
+		 * sets: with the first camera alone, one facing fabric close by drove the exposure up
+		 * until the other three saturated.
+		 */
+		float signal = pico4_cam_median(s->group.signal, s->cam_count);
+		auto_exposure(s, signal, &s->group.applied);
+		float mean8 = signal / 4.0f;
+		float want = mean8 > 0.5f ? s->brightness / mean8 : 8.0f;
+		want = want < 1.0f ? 1.0f : want > 8.0f ? 8.0f : want;
+		s->gain += 0.05f * (want - s->gain);
 		if (s->sequence % s->divisor == 0) {
 			push_group(s);
 		} else {
