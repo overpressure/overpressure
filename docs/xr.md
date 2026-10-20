@@ -550,8 +550,18 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
   - without a Basalt pose for 500 ms the position comes to rest and is held, untracked, and the
     orientation keeps its offset; the next pose is taken in full, and the output slides there.
 
-  The HMD hands out the pose of the requested time from the history of these states, predicted
-  from the newest with its velocities.
+  The HMD hands out the pose 24 ms later than the requested time (`PICO4_PREDICT_MS`),
+  predicted from the newest state with its velocities.
+- **Prediction.** SteamVR asks `driver_monado` for the present pose and extrapolates it to the
+  panels itself, by only about 9 ms. A latency probe measured the rest of the pipeline: the
+  driver turns the pose it hands out by 5° at known times (`PICO4_LATENCY_PROBE_MS`), and the
+  display layer finds each step in the committed images and the vblank that shows it
+  (`PICO4_VRDISPLAY_MOTION`); a reported 30°/s turn without turning shows how far SteamVR
+  extrapolates. A pose reaches the panels 33 ms after it is handed out (32.6–33.5 ms for most
+  steps), so about 24 ms went unpredicted: at 100°/s the image trailed the head by 2.4°, seen as
+  lag on turns and as the world swimming with the head's small motions. The driver predicts
+  those 24 ms from the fusion's IMU-rate state; in a blind worn A/B the user found it "almost
+  flawless" against "horrible" without (Basalt also ran away three times in the latter).
 - **Anchor.** Basalt's world is mapped onto the filter's by a heading and an offset, at first
   the identity. A pose more than 15 cm or 10° off is skipped as an outlier; when five in a row
   are, Basalt has jumped and stays there, and the anchor moves instead of the view.
@@ -750,7 +760,8 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_FUSION_POSITION_MS` | 150 | time constant pulling position and velocity to Basalt's |
 | `PICO4_FUSION_SMOOTHING_MS` | 50 | time over which a correction reaches the output |
 | `PICO4_FUSION_CSV` | unset | directory for `fusion_slam.csv` (each Basalt pose: latency, disagreement, outcome, velocity disagreement with the IMU, speed) and `fusion_pose.csv` (each pose handed out) |
-| `PICO4_PREDICT_MS` | 0 | hand out the head pose this much later than asked for (with the fusion) |
+| `PICO4_PREDICT_MS` | 24 | hand out the head pose this much later than asked for (with the fusion), to cover the pipeline SteamVR does not predict |
+| `PICO4_LATENCY_PROBE_MS` | 0 (off) | latency probe for a headset lying still: 1 s phases (with 1000) of a 5° yaw step and of a reported 30°/s turn without turning; with `PICO4_VRDISPLAY_MOTION` (session.md) |
 | `PICO4_SLAM_RESET_AFTER_S` | 0 (off) | test of the runaway path: reset Basalt once, this many seconds after the fusion started |
 | `SLAM_PREDICTION_TYPE` | 3 (gyro and acceleration) | without the fusion, Monado's prediction between Basalt's poses: 0 none, 1 pose only, 2 gyro, 4 dead reckoning |
 | `SLAM_ACCEL_DEADBAND` | 0.3 | world acceleration (m/s²) that prediction ignores |
@@ -819,6 +830,8 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Fusion against Basalt, worn | the handed-out pose matches Basalt's at a 0 ms time shift (rotation within 0.35°), no lag of its own; still, it moves 0.36 mm and 0.024° around its 200 ms average (Monado's prediction 0.21 mm and 0.013°) |
 | Staged jiggle, headset still, 4 × 27 s | Basalt 0.22–1.06 mm and 0.004–0.032° around its 200 ms average; fusion output 0.06–0.21 mm and 0.001–0.003°; SteamVR's extrapolation with the reported velocities 0.06–0.29 mm; slow drift 11–76 mm peak to peak (Basalt's) |
 | IMU noise A/B (ours against PICO OS's values), still and worn blind | Basalt with PICO OS's values: 0.49–3.02 mm jiggle against 0.10–0.29 mm, two runaways worn against none; the user found ours calmer |
+| Latency probe, headless, 13 steps | pose handed out to scanout 33.0 ms (median; 32.6–33.5 ms for most); SteamVR extrapolates a reported turn by 9.2 ms (median); 21.6 px per degree at the eye's centre |
+| Prediction 24 ms against none, worn blind A/B | user: "almost flawless" against "horrible" (Basalt ran away three times in the latter) |
 | Head pose worn, standing still | 0.035° RMS around its 200 ms average at 1.7°/s, as in Basalt: the head's own motion (0.001° on a table) |
 | Runaway handling, seven worn sessions of about a minute | Basalt within 0.55–1.51 m of the start (before: 13.6 m and 1,750 m in two of four sessions); three sessions had runaways in Basalt's first seconds, each held, reset and re-anchored; no pose above 3 m/s afterwards in five; correction size 4.6–8.0 mm (median) |
 | 6DoF, lower cameras about 15 cm from a surface | 1.6–4.8 m drift in 30 s (6.5 m in a 10 s run): no stereo depth, not an accuracy test |
@@ -827,15 +840,14 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 
 ## Next steps
 
-1. **6DoF comfort.** Worn, the image still jiggles at rest and lags on fast turns. The lag
-   builds up after the pose: SteamVR renders at about 52 frames per second and predicts for one
-   refresh and 11 ms. The jiggle is twice Monado's prediction at rest; the 3DoF fusion's
-   accelerometer tilt correction is the next suspect, with orientation from the gyro alone and
-   Basalt correcting it slowly. Basalt still runs away in its first seconds now and then; the
-   fusion holds and resets it. Auto exposure follows the first camera only, so a covered first
-   camera saturates the others. Other knobs: `optical_flow_image_safe_radius` for the fisheye
-   borders, the IMU noise, and a Basalt config file (the VIT build runs Basalt's built-in
-   defaults).
+1. **6DoF robustness.** With the 24 ms prediction the worn view is close to right. Basalt still
+   runs away now and then, mostly in its first seconds; the fusion holds and resets it, which
+   freezes the position for a moment. Basalt drifts slowly at rest (centimetres in half a
+   minute). The 24 ms are fixed while SteamVR's frame intervals vary (it renders at about 52
+   frames per second); a prediction that follows the actual frame timing would fit better.
+   Auto exposure follows the first camera only, so a covered first camera saturates the others.
+   Other knobs: `optical_flow_image_safe_radius` for the fisheye borders and a Basalt config file
+   (the VIT build runs Basalt's built-in defaults).
 2. **Controllers in applications.** In SteamVR ([session.md](session.md)) both controllers appear
    with the PICO 4 input profile and turn with the wrists while worn; they stay where the arm
    model puts them. SteamVR uses its generic bindings for this controller type; clicking in its

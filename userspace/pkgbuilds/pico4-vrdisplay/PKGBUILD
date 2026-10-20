@@ -11,7 +11,7 @@
 # Sources are this project's own files, copied in by build-userspace.sh.
 pkgname=pico4-vrdisplay
 pkgver=1
-pkgrel=1
+pkgrel=2
 arch=(aarch64)
 url="https://registry.khronos.org/vulkan/specs/latest/man/html/VK_KHR_display.html"
 license=(BSL-1.0)
@@ -25,7 +25,7 @@ build() {
   # Vulkan entry points leave many parameters unused.
   ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror -fPIC -shared -fvisibility=hidden \
     -I/usr/include/libdrm $LDFLAGS -o libVkLayer_PICO4_vrdisplay.so pico4-vrdisplay.c pico4-vrsync.c \
-    -ldrm -lpthread
+    -ldrm -lpthread -lm
   ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror -I/usr/include/libdrm $LDFLAGS -o pico4-vrdisplay-test \
     pico4-vrdisplay-test.c -lvulkan -ldrm -lpthread
   ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror $LDFLAGS -o pico4-vrsync-test pico4-vrsync-test.c -lvulkan

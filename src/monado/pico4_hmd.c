@@ -73,11 +73,21 @@ DEBUG_GET_ONCE_BOOL_OPTION(pico4_fusion, "PICO4_FUSION", true)
 DEBUG_GET_ONCE_NUM_OPTION(pico4_fusion_position_ms, "PICO4_FUSION_POSITION_MS", 150)
 DEBUG_GET_ONCE_NUM_OPTION(pico4_fusion_smoothing_ms, "PICO4_FUSION_SMOOTHING_MS", 50)
 /*!
- * Hand out the head pose this much later than asked for (fusion only). SteamVR asks
- * for the present and predicts to the photons itself, for one refresh and 11 ms;
- * running below the panels' rate, its frames reach them later than that.
+ * Hand out the head pose this much later than asked for (fusion only), predicted from the
+ * IMU-rate state. SteamVR asks for the present and extrapolates by only about 9 ms, while a
+ * pose reaches the panels 33 ms after it was handed out (latency probe, docs/xr.md); the
+ * rest showed as lag on head turns and as the world swimming with small head motion.
  */
-DEBUG_GET_ONCE_NUM_OPTION(pico4_predict_ms, "PICO4_PREDICT_MS", 0)
+DEBUG_GET_ONCE_NUM_OPTION(pico4_predict_ms, "PICO4_PREDICT_MS", 24)
+/*!
+ * Latency probe, with the fusion: periods of this many milliseconds cycle
+ * through four phases. In phase 1 the head pose handed out is turned by 5 degrees about
+ * the vertical (velocity unchanged); in phase 3 it reports a turn of 30 deg/s about the
+ * vertical without turning. The display layer's motion log shows when the step reaches
+ * the panels and how far SteamVR extrapolates the reported turn. Only for a headset
+ * lying still.
+ */
+DEBUG_GET_ONCE_NUM_OPTION(pico4_latency_probe_ms, "PICO4_LATENCY_PROBE_MS", 0)
 //! Test of the runaway path: reset the SLAM tracker once, this many seconds after the fusion started.
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_reset_after_s, "PICO4_SLAM_RESET_AFTER_S", 0)
 //! Directory for fusion_slam.csv (each SLAM pose) and fusion_pose.csv (each pose handed out).
@@ -160,6 +170,7 @@ struct pico4_hmd
 	int64_t slam_reset_ns; //!< When the SLAM tracker was last told to reset.
 	int64_t track_started_ns;
 	bool reset_tested;
+	int64_t probe_start_ns; //!< First pose query of the latency probe.
 
 	//! Lens model per eye from the factory data, if found.
 	struct pico4_lens lens[2];
@@ -623,6 +634,25 @@ pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
 		// Interpolated between IMU steps, or predicted from the newest one.
 		int64_t ahead = debug_get_num_option_pico4_predict_ms() * U_TIME_1MS_IN_NS;
 		m_relation_history_get(h->relation_hist, at_timestamp_ns + ahead, out_relation);
+		int64_t probe_ns = debug_get_num_option_pico4_latency_probe_ms() * U_TIME_1MS_IN_NS;
+		if (probe_ns > 0) {
+			if (h->probe_start_ns == 0) {
+				h->probe_start_ns = at_timestamp_ns;
+				P4_INFO(h,
+				        "latency probe: phases of %lld ns from %lld ns (CLOCK_MONOTONIC): 1 = 5 deg step, "
+				        "3 = 30 deg/s reported turn",
+				        (long long)probe_ns, (long long)at_timestamp_ns);
+			}
+			int64_t phase = ((at_timestamp_ns - h->probe_start_ns) / probe_ns) % 4;
+			if (phase == 1) {
+				const struct xrt_quat step = {0, 0.04361939f, 0, 0.99904822f}; // 5 degrees about +Y
+				struct xrt_quat q = out_relation->pose.orientation;
+				math_quat_rotate(&step, &q, &out_relation->pose.orientation);
+			} else if (phase == 3) {
+				out_relation->angular_velocity.y += 0.52359878f; // 30 deg/s about +Y
+				out_relation->relation_flags |= XRT_SPACE_RELATION_ANGULAR_VELOCITY_VALID_BIT;
+			}
+		}
 		if (h->pose_csv != NULL) {
 			const struct xrt_pose *p = &out_relation->pose;
 			const struct xrt_vec3 *v = &out_relation->linear_velocity, *w = &out_relation->angular_velocity;

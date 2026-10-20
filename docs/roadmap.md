@@ -350,10 +350,10 @@ Details: [xr.md](xr.md).
 
 Details: [xr.md](xr.md).
 
-- Worn, the image jiggles at rest and lags on fast turns. The IMU fusion follows Basalt
-  without lag of its own; the lag builds up in SteamVR's rendering at about 52 frames per
-  second. Basalt runs away now and then in its first seconds; the fusion holds the position,
-  resets Basalt and re-anchors.
+- Worn, the view is close to right since the driver predicts the 24 ms of the pipeline that
+  SteamVR leaves out (measured with a latency probe). Basalt runs away now and then in its first
+  seconds; the fusion holds the position, resets Basalt and re-anchors. Basalt drifts slowly at
+  rest.
 - Basalt can jump in its first seconds, before it has initialized (0.8 m in one walking test).
   The driver could hold the 3DoF pose until Basalt has settled.
 - A still headset facing a surface a few centimetres away drifts by metres: there is no stereo

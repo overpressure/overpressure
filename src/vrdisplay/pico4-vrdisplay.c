@@ -26,6 +26,16 @@
  *                                every ten seconds and when it is destroyed
  *   PICO4_VRDISPLAY_DUMP=path    the image of present PICO4_VRDISPLAY_DUMP_FRAME
  *                                (default 300) as PPM, downscaled by four
+ *   PICO4_VRDISPLAY_MOTION=path  per commit: commit time, the vblank it reaches
+ *                                the panels at (CLOCK_MONOTONIC ns), how far the
+ *                                image changed (mean luma difference of a sparse
+ *                                grid against the previous commit) and its
+ *                                horizontal shift in pixels (a band across the
+ *                                left eye's centre); for latency measurements
+ *                                (PICO4_LATENCY_PROBE_MS). With
+ *                                PICO4_VRDISPLAY_MOTION_BAND=1 each line also
+ *                                carries 16 bands over the left eye's height
+ *                                (512 values each, every other pixel), in hex
  *   PICO4_VRDISPLAY_GPU_MIN_MHZ  GPU clock floor while presenting (587, 0: off)
  *   PICO4_VRDISPLAY_SYNC=off     no semaphore emulation
  *   PICO4_VRDISPLAY_LOG=debug    log every display call
@@ -47,6 +57,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sched.h>
@@ -1194,6 +1205,100 @@ sc_dump(struct swapchain *sc, struct sc_image *img, const char *path)
 	LOG("dumped present %" PRIu64 " to %s", sc->stats.presents, path);
 }
 
+/*!
+ * Luma of a sparse grid over the middle of the left eye, for the motion log: a turn of
+ * the view changes it a lot, a still view hardly. Returns the samples taken.
+ */
+#define MOTION_BAND 1024 //!< Pixels of the band whose shift the motion log measures.
+#define MOTION_SEARCH 160 //!< Largest shift it looks for, pixels.
+#define MOTION_ROWS 16    //!< Bands over the eye's height in the logged form.
+#define MOTION_ROW_PX 512 //!< Values per logged band (every other pixel).
+
+/*!
+ * The horizontal shift of @p cur against @p prev in pixels (subpixel), by the best
+ * normalised correlation of the two bands' gradients.
+ */
+static double
+band_shift(const float *prev, const float *cur)
+{
+	double best = -2, best_s = 0, score[2 * MOTION_SEARCH + 1];
+	for (int s = -MOTION_SEARCH; s <= MOTION_SEARCH; s++) {
+		double sab = 0, saa = 0, sbb = 0;
+		for (int x = MOTION_SEARCH + 1; x < MOTION_BAND - MOTION_SEARCH - 1; x++) {
+			double a = prev[x + 1] - prev[x - 1], b = cur[x + s + 1] - cur[x + s - 1];
+			sab += a * b;
+			saa += a * a;
+			sbb += b * b;
+		}
+		double c = saa > 0 && sbb > 0 ? sab / sqrt(saa * sbb) : 0;
+		score[s + MOTION_SEARCH] = c;
+		if (c > best) {
+			best = c;
+			best_s = s;
+		}
+	}
+	int i = (int)best_s + MOTION_SEARCH;
+	if (i > 0 && i < 2 * MOTION_SEARCH) {
+		double l = score[i - 1], m = score[i], r = score[i + 1], den = l - 2 * m + r;
+		if (den < 0) {
+			best_s += 0.5 * (l - r) / den;
+		}
+	}
+	return best_s;
+}
+
+static unsigned
+sc_sample(struct swapchain *sc, struct sc_image *img, uint8_t *out, unsigned max, float *band, uint8_t *rows)
+{
+	if (img->dmabuf < 0) {
+		return 0;
+	}
+	void *m = mmap(NULL, img->size, PROT_READ, MAP_SHARED, img->dmabuf, 0);
+	if (m == MAP_FAILED) {
+		return 0;
+	}
+	struct dma_buf_sync sync = {.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ};
+	ioctl(img->dmabuf, DMA_BUF_IOCTL_SYNC, &sync);
+	bool bgr = sc->fourcc == DRM_FORMAT_XRGB8888;
+	unsigned n = 0;
+	for (uint32_t y = g_height / 4; y < g_height * 3 / 4 && n < max; y += 32) {
+		for (uint32_t x = g_width / 16; x < g_width * 7 / 16 && n < max; x += 32) {
+			const uint8_t *px = (const uint8_t *)m + img->offset + (size_t)y * img->pitch + (size_t)x * 4;
+			unsigned r = bgr ? px[2] : px[0], g = px[1], b = bgr ? px[0] : px[2];
+			out[n++] = (uint8_t)((r * 77 + g * 150 + b * 29) >> 8);
+		}
+	}
+	// The band: eight rows through the left eye's centre, MOTION_BAND pixels wide.
+	uint32_t x0 = g_width / 4 - MOTION_BAND / 2;
+	for (int x = 0; x < MOTION_BAND; x++) {
+		band[x] = 0;
+	}
+	for (uint32_t y = g_height / 2 - 4; y < g_height / 2 + 4; y++) {
+		const uint8_t *row = (const uint8_t *)m + img->offset + (size_t)y * img->pitch + (size_t)x0 * 4;
+		for (int x = 0; x < MOTION_BAND; x++) {
+			band[x] += (float)row[4 * x + 1]; // green
+		}
+	}
+	if (rows != NULL) {
+		// Logged bands from 10% to 90% of the height, each the mean of four rows.
+		for (int r = 0; r < MOTION_ROWS; r++) {
+			uint32_t y = g_height / 10 + (uint32_t)r * (g_height * 8 / 10) / (MOTION_ROWS - 1);
+			for (int x = 0; x < MOTION_ROW_PX; x++) {
+				unsigned sum = 0;
+				for (uint32_t dy = 0; dy < 4; dy++) {
+					sum += ((const uint8_t *)m + img->offset + (size_t)(y + dy) * img->pitch +
+					        (size_t)(x0 + 2 * x) * 4)[1];
+				}
+				rows[r * MOTION_ROW_PX + x] = (uint8_t)(sum / 4);
+			}
+		}
+	}
+	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+	ioctl(img->dmabuf, DMA_BUF_IOCTL_SYNC, &sync);
+	munmap(m, img->size);
+	return n;
+}
+
 static void
 sc_write_stats(struct swapchain *sc, const char *path)
 {
@@ -1329,6 +1434,18 @@ present_main(void *arg)
 	uint64_t dump_frame = (uint64_t)env_num("PICO4_VRDISPLAY_DUMP_FRAME", 300);
 	const char *stats = getenv("PICO4_VRDISPLAY_STATS");
 	int64_t stats_ns = now_ns();
+	const char *motion_path = getenv("PICO4_VRDISPLAY_MOTION");
+	FILE *motion = motion_path != NULL ? fopen(motion_path, "we") : NULL;
+	enum { MOTION_SAMPLES = 2048 };
+	static uint8_t samples[2][MOTION_SAMPLES];
+	static float bands[2][MOTION_BAND];
+	static uint8_t rows[MOTION_ROWS * MOTION_ROW_PX];
+	unsigned sampled = 0, which = 0;
+	bool log_band = env_num("PICO4_VRDISPLAY_MOTION_BAND", 0) != 0;
+	if (motion != NULL) {
+		setvbuf(motion, NULL, _IOLBF, 0);
+		fprintf(motion, "#commit_ns,display_ns,luma_change,sample_ms,shift_px\n");
+	}
 
 	pthread_mutex_lock(&d->lock);
 	for (;;) {
@@ -1405,6 +1522,42 @@ present_main(void *arg)
 		}
 		// File I/O without the lock: the vblank clock must not wait for it. Only this
 		// thread commits, so the image stays on screen meanwhile.
+		if (motion != NULL) {
+			// The flip happens at the first vblank after the commit.
+			int64_t commit_ns = sc->pending_ns, display_ns = d->vblank_ns;
+			while (display_ns > 0 && display_ns < commit_ns) {
+				display_ns += PERIOD_NS;
+			}
+			pthread_mutex_unlock(&d->lock);
+			int64_t t0 = now_ns();
+			unsigned n = sc_sample(sc, img, samples[which], MOTION_SAMPLES, bands[which], log_band ? rows : NULL);
+			double change = -1, shift = 0;
+			if (n > 0 && n == sampled) {
+				uint64_t sum = 0;
+				for (unsigned i = 0; i < n; i++) {
+					sum += (unsigned)abs((int)samples[which][i] - (int)samples[which ^ 1][i]);
+				}
+				change = (double)sum / n;
+				shift = band_shift(bands[which ^ 1], bands[which]);
+			}
+			sampled = n;
+			which ^= 1;
+			fprintf(motion, "%" PRId64 ",%" PRId64 ",%.2f,%.2f,%.2f", commit_ns, display_ns, change,
+			        (now_ns() - t0) / 1e6, shift);
+			if (log_band && n > 0) {
+				static const char hex[] = "0123456789abcdef";
+				static char line[2 * MOTION_ROWS * MOTION_ROW_PX + 1];
+				for (int i = 0; i < MOTION_ROWS * MOTION_ROW_PX; i++) {
+					line[2 * i] = hex[rows[i] >> 4];
+					line[2 * i + 1] = hex[rows[i] & 15];
+				}
+				line[2 * MOTION_ROWS * MOTION_ROW_PX] = '\0';
+				fputc(',', motion);
+				fputs(line, motion);
+			}
+			fputc('\n', motion);
+			pthread_mutex_lock(&d->lock);
+		}
 		if (dump != NULL && sc->stats.commits == dump_frame) {
 			pthread_mutex_unlock(&d->lock);
 			sc_dump(sc, img, dump);
@@ -1418,6 +1571,9 @@ present_main(void *arg)
 		}
 	}
 	pthread_mutex_unlock(&d->lock);
+	if (motion != NULL) {
+		fclose(motion);
+	}
 	return NULL;
 }
 
