@@ -53,7 +53,7 @@ DEBUG_GET_ONCE_BOOL_OPTION(pico4_kms, "PICO4_KMS", true)
 DEBUG_GET_ONCE_OPTION(pico4_kms_stats, "PICO4_KMS_STATS", NULL)
 DEBUG_GET_ONCE_OPTION(pico4_kms_dump, "PICO4_KMS_DUMP", NULL)
 DEBUG_GET_ONCE_NUM_OPTION(pico4_kms_dump_frame, "PICO4_KMS_DUMP_FRAME", 300)
-DEBUG_GET_ONCE_NUM_OPTION(pico4_kms_gpu_min_mhz, "PICO4_KMS_GPU_MIN_MHZ", 587)
+DEBUG_GET_ONCE_NUM_OPTION(pico4_kms_gpu_min_mhz, "PICO4_KMS_GPU_MIN_MHZ", 0)
 
 #define P4K_DEVICE "/dev/dri/card0"
 #define P4K_KGSL "/sys/class/kgsl/kgsl-3d0/"
@@ -433,15 +433,19 @@ p4k_gpu_floor(struct pico4_kms_target *kt)
 		}
 	}
 	int old = atoi(current);
-	if (level < 0 || level >= old) {
-		return; // Already at or above the floor.
+	if (level < 0) {
+		return;
 	}
-	if (!p4k_write_int(P4K_KGSL "min_pwrlevel", level)) {
+	// Restored to KGSL's default level, not to the one found (a crashed compositor's floor).
+	char stock[16];
+	int restore = p4k_read_text(P4K_KGSL "default_pwrlevel", stock, sizeof(stock)) ? atoi(stock) : old;
+	if (level < old && !p4k_write_int(P4K_KGSL "min_pwrlevel", level)) {
 		COMP_WARN(c, "pico4_kms: cannot raise the GPU clock floor: %s", strerror(errno));
 		return;
 	}
-	kt->saved_min_pwrlevel = old;
-	COMP_INFO(c, "pico4_kms: GPU power level floor %d -> %d (%" PRId64 " MHz or faster)", old, level, mhz);
+	kt->saved_min_pwrlevel = restore > level ? restore : old;
+	COMP_INFO(c, "pico4_kms: GPU power level floor %d -> %d (%" PRId64 " MHz or faster), %d afterwards", old,
+	          level < old ? level : old, mhz, kt->saved_min_pwrlevel);
 }
 
 static void

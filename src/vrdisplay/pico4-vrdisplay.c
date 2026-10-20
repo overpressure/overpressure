@@ -825,15 +825,22 @@ gpu_floor(struct display *d)
 		}
 	}
 	int old = atoi(current);
-	if (level < 0 || level >= old) {
+	if (level < 0) {
 		return;
 	}
-	if (!write_int(KGSL_DIR "min_pwrlevel", level)) {
+	/*
+	 * Restored to KGSL's default level, not to the one found: a compositor that crashed
+	 * leaves its floor behind, and the GPU would stay fast after every later session.
+	 */
+	char stock[16];
+	int restore = read_text(KGSL_DIR "default_pwrlevel", stock, sizeof(stock)) ? atoi(stock) : old;
+	if (level < old && !write_int(KGSL_DIR "min_pwrlevel", level)) {
 		LOG("cannot raise the GPU clock floor: %s", strerror(errno));
 		return;
 	}
-	d->saved_min_pwrlevel = old;
-	LOG("GPU power level floor %d -> %d (%ld MHz or faster)", old, level, mhz);
+	d->saved_min_pwrlevel = restore > level ? restore : old;
+	LOG("GPU power level floor %d -> %d (%ld MHz or faster), %d afterwards", old, level < old ? level : old, mhz,
+	    d->saved_min_pwrlevel);
 }
 
 static void

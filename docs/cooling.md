@@ -205,14 +205,16 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
 | Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | pass: the userspace check's `fan` object (active with a state; skipped only without `require_fan`; a state without an acknowledged duty or with an MCU error fails) and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
 | Headset: `pico4-userspace-check` and `dev check` | pass with the duty acknowledged (30 %, about 5,080 rpm, no MCU error); a daemon state with a SetFanSpeed error fails the check and names it |
 | Headset: `pico4-fan.service` in the acceptance cycle | active; the MCU answers the queries and acknowledges SetFanSpeed, no MCU error in the journal; the fan reads 0 % and 0 rpm before the daemon, then runs at 30 % from the early table (hottest mean 35–43 °C) at 4,849–4,914 rpm; Monado reads the IPD (71.99 mm) through the shared port lock |
+| Headset: duty against RPM (`pico4-fan sweep`, 10–100 %) | 10 and 20 %: 3,650 and 3,670 rpm (the fan's lowest speed); 30 %: 5,265; 40 %: 6,770; 50 %: 8,160; 60 %: 9,470; 70 %: 10,740; 80 %: 11,940; 90 %: 13,070; 100 %: 14,150 rpm |
+| Headset: Valve's session (SteamVR's defaults, 54 frames per second) for 10 minutes from idle, late table | hottest zone 48 → 66 °C in the first minute (the load step: the hottest mean passed 60 °C and the fan went to 30 % within it), 73–75 °C from the fifth minute with the fan at 35 % (about 6,050 rpm), peak 91.1 °C (one CPU sensor, mean 73.9 °C) after 645 s |
+| Headset: the same with `PICO4_FAN_TABLE=80:100,75:80,70:60,65:45,60:30,55:0` | fan at 45 % in the first minutes, 60 % (9,600 rpm) from the fourth; hottest zone 68–72 °C, peak 84.5 °C (mean 72.6 °C) |
 | Headset: Valve's session check (30 s) with the fan | hottest zone 45.3 °C before, 69.4 °C after; the fan stayed at 30 % (the early table holds 30 % up to a 70 °C mean); without fan control the same check went from 47.1 to 85.7 °C |
 | Build: [test_pico4_lens.c](../src/monado/test_pico4_lens.c) | the IPD reader gives up with `-EBUSY` after a second while another descriptor holds the port lock, and goes on once it is free |
 
 ## Next steps
 
-1. **Hardware.**
-   - Sweep the duty against the RPM.
-   - Check the fan's response to a load step.
-   - Run Valve's session for 10 minutes against an agreed limit for the hottest zone.
-2. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
-   that limit.
+1. **The limit and the table.** With 90 °C as the limit for the hottest zone, PICO OS's late
+   table lets Valve's GPU-heavy session reach 91 °C within 10 minutes, at a quiet 35 %; the
+   steeper table above holds it at 84.5 °C with the fan at 60 %. Which limit applies, and
+   whether the steeper, louder table becomes the default, is still to be agreed; until then it
+   goes in `/etc/pico4-poc/fan.conf`.

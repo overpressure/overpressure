@@ -291,10 +291,9 @@ it on the headset, with a duty the MCU acknowledged, and record its duty and RPM
 duty and reports the fan's speed (about 4,900 rpm at 30 %), and Valve's 30 s session check
 peaks at 69 °C instead of 86 °C. Remaining:
 
-1. **Hardware.** Sweep the duty against the RPM; check the fan's response to a load step; run
-   Valve's session for 10 minutes against an agreed limit for the hottest zone.
-2. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
-   that limit.
+1. **The limit and the table.** In 10 minutes of Valve's GPU-heavy session the late table
+   reaches 91.1 °C at 35 % fan, a steeper table 84.5 °C at 60 % ([cooling.md](cooling.md)):
+   the limit (proposed 90 °C) and the default table are to be agreed.
 
 ### Performance
 

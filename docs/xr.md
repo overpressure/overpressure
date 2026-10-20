@@ -234,10 +234,14 @@ sequence of [graphics.md](graphics.md); unfenced page flips show corrupted outpu
   not set `CPUWeight`/`CPUQuota` or delegate `cpu`. Without real-time threads the compositor
   competes with Basalt and misses 50–80 refreshes in 30 s, with client-fence stalls of up to
   300 ms; with them it misses 1–4.
-- **GPU clock.** While the target drives the panels, it keeps the GPU at 587 MHz or faster
-  through KGSL's `min_pwrlevel` (`PICO4_KMS_GPU_MIN_MHZ`, 0 turns it off) and restores the
-  previous floor (stock: power level 6, 305 MHz) on exit. Under the compositor's load the stock
-  `msm-adreno-tz` governor stays at 305 MHz.
+- **GPU clock and pacing.** The GPU runs at the stock `msm-adreno-tz` governor's clocks. The
+  compositor starts each frame a full refresh before its vblank: `pico4-monado.service` sets
+  Monado's fake pacer to 12 ms of compositor time (`U_PACING_COMP_MIN_TIME_MS`; its default 3 ms
+  plus the 4 ms present offset left 7 ms, while a two-layer frame takes 9.3–9.4 ms at the
+  governor's clocks). `PICO4_KMS_GPU_MIN_MHZ` can still set a clock floor through KGSL's
+  `min_pwrlevel`; the target then restores KGSL's default level (`default_pwrlevel`, power level
+  6, 305 MHz) on exit, as the unit does after any stop, so a crashed compositor's floor does not
+  outlive it.
 
 Monado has two composition paths:
 
@@ -269,7 +273,9 @@ into the linear images take twice as long. Measured on the headset, 10 s runs:
 | Projection + quad layer | graphics, upstream scratch images | 22–23 ms | 30 Hz |
 | Projection + quad layer | no storage use | 14.4 ms | 45 Hz |
 | Projection + quad layer | + panel-size scratch, 305 MHz | 9.1–10.3 ms | 61–65 Hz |
-| Projection + quad layer | + 587 MHz floor (final) | 8.0 ms | 90 Hz |
+| Projection + quad layer | + 587 MHz floor | 8.0 ms | 90 Hz |
+| Projection + quad layer, 30 s | governor's clocks, 3 ms compositor time | 9.4 ms | 89.2–89.6 Hz, 13–28 late |
+| Projection + quad layer, 30 s | governor's clocks, 12 ms compositor time (final) | 9.2–9.5 ms | 89.2–89.75 Hz, 9–28 late |
 
 [`pico4-openxr-display`](../src/xr/pico4-openxr-display.c) `[SECONDS] [--projection-only]` is the
 display acceptance client. It renders through `XR_KHR_vulkan_enable2`:
@@ -445,12 +451,16 @@ The station drives the sensors, which run in FSIN slave mode:
 - **Exposure.** The sensors ignore their own exposure registers in this mode. Exposure and gain
   go through the station's camera command `04 03`, laid out as the stock `CameraSetPara`: per
   camera, exposure in sensor lines of 19.3 µs and gain in 1/16 steps (16 = 1×, up to 248),
-  cameras 0–3 in bytes 1–12 and again in 16–27; the station sends no reply. Exposure plus the
+  cameras 0–3 in bytes 1–12 and a second set in 16–27; the station sends no reply. By the frames'
+  metadata the first set drives the scene frames, and the second changes neither phase: the
+  driver fills it with PICO OS's LED setting, 4 lines at gain 26, within PICO OS's LED limits
+  (10 lines, gain 32). Exposure plus the
   9 ms readout must fit the 20 ms period, about 570 lines; 3,000 lines stall the sensors. The station's default exposure, about
   3 ms, leaves rooms nearly black.
 - **Alternating exposures.** Every other frame is a short exposure in which only the
   controllers' IR LEDs show (mean 23–28 of 1023): 4 lines at gain 26 by the metadata, whatever
-  the scene exposure, as in PICO OS. PICO uses those frames for controller tracking; the scene
+  the scene exposure and whatever the command's second set holds, as in PICO OS. They stay
+  unsaturated while the scene exposure changes. PICO uses those frames for controller tracking; the scene
   frames run at 25 Hz.
 
 Covering one lens at a time darkens exactly one slot, which gives the mapping in the table
@@ -512,10 +522,20 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
   given to Basalt declares the rate the DSP delivers, 1024 Hz for the 1 kHz request (512 Hz for
   500 Hz), divided by that divisor, and ICM-42688-class noise (`PICO4_SLAM_IMU_NOISE`,
   continuous-time densities: accelerometer 0.016, gyro 0.0016; bias walk 0.001 and 0.0001);
-  Basalt estimates the biases. PICO OS's own head tracker uses 0.03, 0.005, 1e-5 and 1e-6; given
+  Basalt estimates the biases. A 28-minute static capture of the head IMU (Allan deviation)
+  measures white noise of 0.0007–0.0023 m/s²/√Hz for the accelerometer and
+  0.00004–0.00032 rad/s/√Hz for the gyro, depending on the axis, with bias instabilities at
+  8–42 s; the configured densities are about five times the worst axis, the usual margin for
+  vibration and calibration error. PICO OS's own head tracker uses 0.03, 0.005, 1e-5 and 1e-6; given
   to Basalt they made it jiggle and drift more (still and worn A/B, below).
   The driver measures the rate over 10 s and logs it once, and again as a warning when it
   strays more than 5% from the declared one.
+- **VIO settings.** Basalt runs on its built-in defaults except where
+  [pico4-vio.json](../userspace/pkgbuilds/pico4-basalt/pico4-vio.json) changes them
+  (`PICO4_SLAM_VIO_CONFIG`; pico4-basalt's `basalt-vio-config.patch` lets the tracker read the
+  file while the driver supplies the calibration): `optical_flow_image_safe_radius` is 300 px,
+  so no points are tracked in the fisheyes' dark corners (the image falls to the black level
+  beyond about 330 px from the centre). Basalt logs "Using VIO config" when it loads the file.
 - **HMD origin.** Basalt tracks the body (IMU) frame. The HMD origin between the eyes sits at
   (−0.025, 0.052, 0.04) m in the body frame (x up, y left, z back): centred between the cameras,
   a little below and behind them. It only affects how position follows head rotation.
@@ -757,7 +777,8 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_CALIBRATION_DIR` | `/usr/share/qcom/pico4/calibration` | factory lens and camera calibration |
 | `PICO4_LENS_CA` | off | chromatic aberration correction |
 | `PICO4_KMS` | on | KMS compositor target |
-| `PICO4_KMS_GPU_MIN_MHZ` | 587 | GPU clock floor while the target drives the panels; 0 leaves the governor alone |
+| `PICO4_KMS_GPU_MIN_MHZ` | 0 | GPU clock floor while the target drives the panels (587 for 587 MHz or faster); 0 leaves the governor alone |
+| `U_PACING_COMP_MIN_TIME_MS` | 12 (unit) | Monado's compositor time per frame: the frame starts this much plus 4 ms before its vblank |
 | `PICO4_KMS_STATS` | unset | JSON statistics written when the target is destroyed |
 | `PICO4_KMS_DUMP`, `PICO4_KMS_DUMP_FRAME` | unset, 300 | PPM of that commit's image, plus the eye means |
 | `XRT_COMPOSITOR_COMPUTE` | off in this build | Monado's compute composition path |
@@ -779,6 +800,7 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `SLAM_PREDICTION_TYPE` | 3 (gyro and acceleration) | without the fusion, Monado's prediction between Basalt's poses: 0 none, 1 pose only, 2 gyro, 4 dead reckoning |
 | `SLAM_ACCEL_DEADBAND` | 0.3 | world acceleration (m/s²) that prediction ignores |
 | `PICO4_SLAM_BRIGHTNESS` | 70 | mean 8-bit brightness the digital gain aims for |
+| `PICO4_SLAM_VIO_CONFIG` | `/usr/share/pico4-basalt/pico4-vio.json` | Basalt's VIO settings (a full VioConfig JSON); empty for Basalt's built-in defaults |
 | `PICO4_SLAM_IMU_NOISE` | `0.016,0.001,0.0016,0.0001` | Basalt's IMU noise model: accelerometer noise density, its bias random walk, gyro noise density, its bias random walk (continuous time) |
 | `PICO4_SLAM_CPUS` | 63 (cores 0–5) | CPUs for Basalt and its feeders, decimal bit mask; 0 = no restriction |
 | `PICO4_SLAM_DUMP` | unset | directory for PGM frames of every 500th set |
@@ -838,6 +860,10 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | SLAM pose latency, worn in Valve's session | median 112 ms, 90th percentile 157 ms; no gap in the poses |
 | Predicted pose against Basalt's, head moving | gyro prediction: rotation 15 ms and position 65 ms behind, 0.4 mm wander at rest; gyro and acceleration with the deadband: 12 ms and 31 ms, 1.5 mm |
 | 6DoF worn in Valve's session, Monado's prediction (`PICO4_FUSION=0`) | tracks, no snaps to another heading; the image lags and jumps by 2–30 cm (the extrapolation of about 150 ms amplifies the velocity noise of 25 Hz poses) |
+| Two-layer display test (30 s), GPU at the governor's clocks, 12–16 ms compositor time | 89.2–89.75 Hz, 9–28 late frames in 14 runs (median 89.5 Hz, 15.5 late), GPU 9.2–9.5 ms per frame; with the 587 MHz floor and 3 ms in the same conditions 89.5–89.6 Hz, 14–18 late, 8.5 ms: the late frames do not depend on the floor. Without Basalt (`PICO4_SLAM=0`) 89.77 Hz and 7 late in both runs; Basalt on the four small cores alone (`PICO4_SLAM_CPUS=15`) 6 and 24 late |
+| GPU floor after a crash | `vrcompositor` killed while its floor (power level 1) was raised: level 6, KGSL's default, right after; a compositor that found level 1 left behind restores 6 on exit, and Monado's unit after its stop |
+| Basalt VIO settings | Basalt logs "Using VIO config /usr/share/pico4-basalt/pico4-vio.json" when the PICO 4 driver starts SLAM |
+| Exposure phases, `pico4-cam` with each set varied (80 frames per camera) | scene frames take the first set (60–400 lines, gain 16–128); LED frames 4 lines at gain 26 with the second set at 0/0, 2/20, 4/26, 8/30 or 10/32; LED frames peak at 344–377 of 1023, no sample saturated, while scene frames saturate 14–4,650 samples per frame |
 | Metadata line, `pico4-cam` | decodes to the commanded exposure and gain (300 lines and gain 32, 120 lines and gain 16); every camera 50 scene and 50 LED frames of 100; LED frames 4 lines at gain 26; the 481st captured line continues the scene (mean row difference 8.8 against 8.4 one row up), 0 errors at 49.8 Hz |
 | Fusion, headless, headset still, 30–40 s | agrees with Basalt within 0.3–0.6 mm (median), latency images to fusion 76–92 ms (median); a forced Basalt reset (`PICO4_SLAM_RESET_AFTER_S`) restarts it without a jump; velocity disagreement with the IMU at rest: 99th percentile 0.025 m/s |
 | Fusion against Basalt, worn | the handed-out pose matches Basalt's at a 0 ms time shift (rotation within 0.35°), no lag of its own; still, it moves 0.36 mm and 0.024° around its 200 ms average (Monado's prediction 0.21 mm and 0.013°) |
@@ -869,11 +895,12 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 3. **Controller positions.** The cameras already deliver the IR-LED frames. Constellation
    tracking needs the LED layout of the rings, which is in the controllers' calibration or PICO's
    encrypted tracking config, and a tracker (Monado has one for WMR controllers).
-4. **Composition headroom.** The squasher fits the 11 ms period only with the GPU clock floor.
-   Remaining options:
+4. **Composition headroom.** The two-layer scene fits the period at the governor's clocks when
+   the compositor starts a refresh early, at the cost of a pose sampled that much earlier; with
+   Basalt running, 9–28 frames of 30 s are still late, with or without the clock floor, against
+   7 without Basalt. Options to cut the GPU time itself:
    - compressed (UBWC) scanout images, using the display's compressed formats;
    - compressed client swapchain images;
    - composing the layers directly through the distortion mesh, without scratch images;
    - cheaper chromatic aberration correction (it costs 2–5% of the refreshes in the two-layer
-     scene, hence opt-in);
-   - display-timing pacing from the retire fences' timestamps.
+     scene, hence opt-in).

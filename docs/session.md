@@ -204,8 +204,11 @@ other call passes through; without the panels, the layer stays out of the way.
   the clock signals each vblank that much early. Frame dumps and statistics are written without the lock. A
   present counts as shown (`vkWaitForPresentKHR`) when its retire fence signals.
 - **GPU clock floor.** While presenting, the layer raises the KGSL floor to 587 MHz or faster
-  and restores it afterwards, as the KMS target does: under a compositor's load the stock
-  governor stays at 305 MHz, where a frame takes longer than a refresh period.
+  (`PICO4_VRDISPLAY_GPU_MIN_MHZ`): under SteamVR's load the stock governor stays at 305 MHz,
+  where a frame takes longer than a refresh period. Afterwards it restores KGSL's default level
+  (`default_pwrlevel`), also when it found the floor already raised, and `steamvr.service` does
+  the same after every stop: a compositor that crashed cannot restore its floor, and the GPU
+  would otherwise stay at 587 MHz or faster with nothing running.
 - **DRM nodes.** gamescope needs the GPU's DRM nodes (`VK_EXT_physical_device_drm`). KGSL is
   not a DRM device, so the layer reports `msm_drm`'s: `/dev/dri/card0` and the render node
   `/dev/dri/renderD128`, which imports the GPU's dma-bufs.
