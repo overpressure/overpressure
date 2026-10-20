@@ -846,13 +846,14 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Station | power cycle, announcement and frame-rate answer every time; firmware 2.96 |
 | Capture, 30 s, all four cameras | 1,500/1,500 frames each, 0 errors, 49.99 Hz, monotonic timestamps; start of frame to delivery 17.5 ms mean, 27.2 ms max |
 | Exposure through the station | scene frames mean 76 → 446 (of 1023) at 400 lines and 4× gain; LED frames 23–28 either way |
-| Slot mapping | cover test: one slot dark per covered lens; a logo seen by the lower pair triangulates with a 0 mm ray gap at 0.14/0.16 m |
+| Slot mapping | cover test: one slot dark per covered lens; a logo seen by the lower pair triangulates with a 0 mm ray gap at 0.14/0.16 m; with the 481-line capture (metadata line removed) a pen at 0.15–0.18 m triangulates with 1–2 mm gaps |
 | Controllers in OpenXR | both as `PICO 4 left/right controller`; per controller about 500 IMU samples and 100 input packets per second |
 | Controller inputs, each pressed in turn | trigger, grip, A/B/X/Y, menu, home, stick click and touch (A/X, B/Y, stick, thumb rest) decoded as pressed |
 | Sticks pushed right, left, up, down, both controllers | x (record byte 2): 255, 0; y (byte 1): 255, 0 |
 | SLAM feed, 30 s, four cameras, no compositor | 744 frame sets at 25 Hz, 0–1 incomplete, none skipped while Basalt was busy, no IMU sample dropped; frame to tracker 15–23 ms |
-| 6DoF: headset on a table in a lit room, slid 50 cm (measured) and back, twice | 0.52 m and 0.49 m; back at the start within 2–4 cm; vertical within 1 cm on the second slide; at rest within millimetres over 15 s |
-| 6DoF: held at head height, walking about 1 m forward/back and sideways | moves tracked in the right axes and back near the start (0.1–0.2 m); still phases within 3 cm; one run jumped 0.8 m while Basalt initialised in the first seconds |
+| 6DoF: headset on a table in a lit room, slid 50 cm (measured) and back, twice | 0.50 m and 0.52 m; back at the start within 1.5 and 1.8 cm; at rest within 5–11 mm. In a dim room (exposure at its limit, gain 202–230) 0.48 m and back within 3.7 and 4.9 cm, with a 9 cm wander at rest before the first slide |
+| 6DoF worn in Valve's session: a step forward and one to the left, each back onto a floor mark | steps of 0.57 m and 0.59 m at 92° to each other; back within 3.4 and 4.4 cm of the start; no reset in 2.8 minutes; user: tracking good, no freeze or jump |
+| 6DoF: one camera covered, headset still, 40 s | exposure on the median: the others at 249, 257 and 533 above black (target 250), the covered one at 6; Basalt creeps at 0.15–0.17 m/s and the fusion holds and resets it four times. Uncovered in the same room: no reset in 65 s |
 | 6DoF: lowered from head height onto a table | 0.75 m down, then still within millimetres for 30 s |
 | 6DoF with `PICO4_SLAM_UPRIGHT=0`, walking | tracks as well in this test; the turn stays on as the documented geometry |
 | Head IMU rate in the driver, 1 kHz request | 1023.9 Hz measured, 1024 Hz declared, 512 Hz to Basalt |
@@ -884,9 +885,10 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    freezes the position for a moment. Basalt drifts slowly at rest (centimetres in half a
    minute). The 24 ms are fixed while SteamVR's frame intervals vary (it renders at about 52
    frames per second); a prediction that follows the actual frame timing would fit better.
-   Auto exposure now follows the median of the cameras; covering one camera is not tested yet.
-   Other knobs: `optical_flow_image_safe_radius` for the fisheye borders and a Basalt config file
-   (the VIT build runs Basalt's built-in defaults).
+   With one camera covered the others stay exposed, but Basalt creeps until the fusion resets
+   it: a dark or blinded camera has to be kept from Basalt. Tracking needs light; in a dim room
+   the cameras run at their exposure limit and the returns to a start point widen from about
+   2 cm to about 5 cm.
 2. **Controllers in applications.** In SteamVR ([session.md](session.md)) both controllers appear
    with the PICO 4 input profile and turn with the wrists while worn; they stay where the arm
    model puts them. SteamVR uses its generic bindings for this controller type; clicking in its

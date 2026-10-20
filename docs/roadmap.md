@@ -205,8 +205,9 @@ calibration it uses comes from the user's own backup.
   triggers, and 3DoF orientation, at about 500 IMU samples and 100 input packets per second
   each.
 - **6DoF.** Basalt runs inside Monado on all four cameras and the IMU at 25 Hz, without
-  blocking the 3DoF path. A measured 50 cm slide reads 0.52 m (0.49 m on a repeat) and returns
-  to within 2–4 cm of the start; a resting headset holds within millimetres.
+  blocking the 3DoF path. In a lit room a measured 50 cm slide reads 0.50–0.52 m and returns
+  to within 2 cm of the start; a resting headset holds within millimetres. Worn, steps of about
+  0.6 m return within 3–4 cm of a floor mark.
 - **Acceptance.** In the step's acceptance cycle, with 6DoF running, an OpenXR client renders
   2,698 frames in 30 s at 89.996 Hz (2 late), each eye on its own panel.
 
@@ -357,8 +358,10 @@ Details: [xr.md](xr.md).
 - A still headset facing a surface a few centimetres away drifts by metres: there is no stereo
   depth. The driver could fall back to the 3DoF position while Basalt reports too few
   landmarks.
-- Basalt settings: `optical_flow_image_safe_radius` for the fisheye borders, the IMU noise,
-  and a config file (the VIT build runs Basalt's built-in defaults).
+- A covered or blinded camera makes Basalt creep (0.15 m/s) although the others stay exposed;
+  such a camera has to be kept from Basalt.
+- Tracking needs light: in a dim room the cameras run at their exposure limit and the returns
+  to a start point widen to about 5 cm.
 
 ### Standalone boot
 
