@@ -350,7 +350,9 @@ Details: [xr.md](xr.md).
 
 Details: [xr.md](xr.md).
 
-- Worn sessions with longer paths.
+- Worn, the pose lags and jumps by 2–30 cm: Monado extrapolates about 150 ms from Basalt's
+  25 Hz poses. A filter in the driver that propagates the pose with the 1 kHz IMU and blends in
+  Basalt's poses as delayed corrections should replace that extrapolation.
 - Basalt can jump in its first seconds, before it has initialized (0.8 m in one walking test).
   The driver could hold the 3DoF pose until Basalt has settled.
 - A still headset facing a surface a few centimetres away drifts by metres: there is no stereo
@@ -363,7 +365,7 @@ Details: [xr.md](xr.md).
 
 Every boot depends on the PC. Stage 1 runs from the dev image in the `boot` partition (the
 engineering ABL has no RAM boot); the 840 MB userspace archive arrives over USB into zram,
-which takes about 3 minutes; and test and development runs are bounded by device-side
+which takes about 40 s; and test and development runs are bounded by device-side
 deadlines that return the headset to fastboot. A headset that boots into the session on its
 own needs the userspace stored on the headset and a boot path that keeps the read-only storage
 and stock-restoration guarantees. There is no design for this yet.

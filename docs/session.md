@@ -113,9 +113,12 @@ for the Frame's controller radio, which must never run against the PICO's statio
 (`steamvr-web-debug-portforward`, `steam-web-debug-portforward`). It masks these user units
 globally: `steamvr-v4l2cam` (the headset-view loopback camera), `steamvr-proxmicmute`
 (proximity microphone mute), `ibus-gamescope` (ibus is not installed), `steamos-scheduler` (the
-sched_ext scheduler `scx_lavd` needs Linux 6.12; stage 1 already sets `schedutil`) and
-`steamvr-logs` (its inotify module is built for the Frame's Python; SteamVR's logs stay in
-`~/.local/share/Steam/logs`).
+sched_ext scheduler `scx_lavd` needs Linux 6.12; stage 1 already sets `schedutil`).
+
+`steamvr-logs` forwards SteamVR's logs from `~/.local/share/Steam/logs` to the journal
+(identifiers `vrserver`, `vrcompositor`, `vrclient_*`). It imports `inotify_simple`, which the
+Frame's package installs for Python 3.12 only; the module is plain Python, and the build links
+it into the image's Python.
 
 gamescope runs without MangoHud's `mangoapp`, the Steam client's performance overlay: the
 Frame's MangoHud needs libraries of the Frame's private base (spdlog 1.13, fmt 10, libtracefs),
@@ -134,6 +137,7 @@ Further adaptations:
 | [`/usr/bin/displays_turn_off_drm_master`](../userspace/rootfs/usr/bin/displays_turn_off_drm_master) | does nothing | stands in for the Frame's deckard-hw-support tool, which `steamvr.service` runs after SteamVR exits (`ExecStopPost` without `-`: a missing program fails the unit); the compositor releases the display itself |
 | `/opt/steamvr/bin/linuxarm64/vrcompositor-launcher` | `cap_sys_nice=eip` | the compositor raises its priority, as SteamVR's setup does on desktops |
 | `~/.steam/steam`, `~/.steam/root` | links to `~/.local/share/Steam` | SteamVR finds its logs and the Steam folder through them; on the Frame the Steam client's `RUNSTEAM.sh` makes them |
+| [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | at most three starts in three minutes | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end |
 
 ### Monado as a service
 

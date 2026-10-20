@@ -127,6 +127,14 @@ struct pico4_hmd
 	//! Visual-inertial tracking, NULL when unavailable.
 	struct pico4_slam *slam;
 	struct m_relation_history *relation_hist;
+	/*!
+	 * While SLAM has no current pose: its newest position is held, and the 3DoF
+	 * orientation is turned into SLAM's frame by the rotation between the two
+	 * last seen together (their headings differ).
+	 */
+	struct xrt_vec3 slam_position;
+	struct xrt_quat slam_from_3dof;
+	bool have_slam_position;
 
 	//! Lens model per eye from the factory data, if found.
 	struct pico4_lens lens[2];
@@ -481,13 +489,33 @@ pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
 	}
 
 	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
+	struct xrt_space_relation imu = XRT_SPACE_RELATION_ZERO;
+	m_relation_history_get(h->relation_hist, at_timestamp_ns, &imu);
+	bool imu_valid = (imu.relation_flags & XRT_SPACE_RELATION_ORIENTATION_VALID_BIT) != 0;
+	if (imu_valid) {
+		math_quat_normalize(&imu.pose.orientation);
+	}
+
 	if (h->slam != NULL && pico4_slam_get_head_pose(h->slam, at_timestamp_ns, &rel)) {
+		h->slam_position = rel.pose.position;
+		if (imu_valid) {
+			struct xrt_quat inverse;
+			math_quat_invert(&imu.pose.orientation, &inverse);
+			math_quat_rotate(&rel.pose.orientation, &inverse, &h->slam_from_3dof);
+			math_quat_normalize(&h->slam_from_3dof);
+			h->have_slam_position = true;
+		}
 		*out_relation = rel;
 		return XRT_SUCCESS;
 	}
-	m_relation_history_get(h->relation_hist, at_timestamp_ns, &rel);
-	if (rel.relation_flags & XRT_SPACE_RELATION_ORIENTATION_VALID_BIT) {
+	rel = imu;
+	if (h->have_slam_position && imu_valid) {
+		// SLAM lost or stalled: the 3DoF orientation in SLAM's frame, at SLAM's last position.
+		math_quat_rotate(&h->slam_from_3dof, &imu.pose.orientation, &rel.pose.orientation);
 		math_quat_normalize(&rel.pose.orientation);
+		math_quat_rotate_vec3(&h->slam_from_3dof, &imu.angular_velocity, &rel.angular_velocity);
+		rel.pose.position = h->slam_position;
+		rel.relation_flags |= XRT_SPACE_RELATION_POSITION_VALID_BIT;
 	}
 	*out_relation = rel;
 	return XRT_SUCCESS;
@@ -700,14 +728,20 @@ pico4_hmd_create(void)
 		h->controllers[1] = pico4_controller_create(PICO4_BLEMCU_RIGHT, &h->base, h->log_level);
 	}
 
+	/*
+	 * The sensor DSP runs the head IMU at the next supported output data rate above
+	 * the request: 500 Hz at 512 Hz, 512 or 1000 Hz at 1024 Hz (docs/xr.md).
+	 */
+	float rate = (float)debug_get_num_option_pico4_imu_rate();
+	double delivered_hz = rate > 500.0f ? 1024.0 : 512.0;
+
 	// Before the IMU thread, which feeds it.
-	h->slam = pico4_slam_create(debug_get_option_pico4_calibration(), h->station, h->log_level);
+	h->slam = pico4_slam_create(debug_get_option_pico4_calibration(), h->station, delivered_hz, h->log_level);
 	h->base.supported.position_tracking = h->slam != NULL;
 	if (h->slam != NULL) {
 		snprintf(h->base.serial, XRT_DEVICE_NAME_LEN, "PICO 4 (SLAM)");
 	}
 
-	float rate = (float)debug_get_num_option_pico4_imu_rate();
 	if (pico4_ssc_enable(h->ssc, &h->accel_suid, rate) < 0 || pico4_ssc_enable(h->ssc, &h->gyro_suid, rate) < 0 ||
 	    os_thread_helper_start(&h->oth, imu_thread, h) != 0) {
 		P4_ERROR(h, "Failed to start the IMU stream");

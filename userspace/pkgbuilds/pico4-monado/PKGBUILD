@@ -16,7 +16,7 @@
 # tracking cameras on their own.
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=3
+pkgrel=4
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -33,6 +33,7 @@ _camheaders=(cam_cpas.h cam_defs.h cam_isp.h cam_isp_ife.h cam_isp_vfe.h cam_req
 source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_commit"
         "${_camheaders[@]/#/$_camuapi/}"
         monado-pico4-driver.patch monado-steamvr-pico4.patch monado-service-sigterm.patch
+        monado-slam-prediction.patch
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
@@ -49,6 +50,7 @@ sha256sums=(SKIP
             891a5906ffaf4388adc07f21309b7a9bac7007efbafbb37dc7eb8387f8130941
             7ba04fb72ef7d0fdd6abe6a044cf3586b059ae98129011086f38d30ca4fd0c6a
             a7e0b04b5fdff083e8556442f33a1ebc2cda18152bf7d4a711e9d2549d988762
+            SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
 
@@ -56,6 +58,7 @@ prepare() {
   patch -d monado -p1 < monado-pico4-driver.patch
   patch -d monado -p1 < monado-steamvr-pico4.patch
   patch -d monado -p1 < monado-service-sigterm.patch
+  patch -d monado -p1 < monado-slam-prediction.patch
   # PICO's kernel allows four links per session where the CAF header says two.
   install -Dm644 -t monado/src/xrt/drivers/pico4/include/media "${_camheaders[@]}"
   sed -i -E 's/^(#define MAX_LINKS_PER_SESSION[[:space:]]+)2$/\14/' \

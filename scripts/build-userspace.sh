@@ -381,11 +381,18 @@ in_t systemctl mask sddm.service dsp_service.service steamvr-program-ble.service
 # The session's user units for Frame hardware (the headset-view loopback camera,
 # proximity microphone mute), input methods (ibus is not installed), the
 # sched_ext CPU scheduler (scx_lavd needs Linux 6.12; steamos-manager offers
-# no scheduler interface here, and stage 1 already sets schedutil) and
-# SteamVR's log forwarder (its inotify module is built for the Frame's Python;
-# SteamVR's logs stay in ~/.local/share/Steam/logs).
+# no scheduler interface here, and stage 1 already sets schedutil).
 in_t systemctl --global mask steamvr-v4l2cam.service steamvr-proxmicmute.service ibus-gamescope.service \
-    steamos-scheduler.service steamvr-logs.service
+    steamos-scheduler.service
+# SteamVR's log forwarder (steamvr-logs) imports inotify_simple, which the Frame's
+# package installs for Python 3.12 only. The module is plain Python: the image's
+# Python shares it.
+python=$(readlink "$T/usr/bin/python3")
+if [[ ! -f "$T/usr/lib/python3.12/site-packages/inotify_simple.py" || ! -d "$T/usr/lib/$python/site-packages" ]]; then
+    echo "inotify_simple or $python's site-packages is missing" >&2
+    exit 1
+fi
+ln -sfn ../../python3.12/site-packages/inotify_simple.py "$T/usr/lib/$python/site-packages/inotify_simple.py"
 # gamescope's session starts MangoHud's mangoapp, the Steam client's
 # performance overlay. The Frame's MangoHud needs libraries of the Frame's
 # private base (spdlog 1.13, fmt 10, libtracefs), and without the Steam client

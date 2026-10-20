@@ -27,7 +27,7 @@
  *       "slot sof_boottime_ns mean latency_ns request" per frame (mean of a
  *       sparse grid; latency from start of frame to delivery), for example to
  *       find which slot goes dark when a lens is covered.
- *       --exposure (sensor lines, at most about 900) and --gain (16 = 1x)
+ *       --exposure (sensor lines, at most about 570) and --gain (16 = 1x)
  *       ask the station for that exposure; the saved frame is then the
  *       tenth or eleventh, after the setting took effect. Every other frame
  *       is the station's short controller-LED exposure; of two consecutive

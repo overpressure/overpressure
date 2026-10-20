@@ -76,7 +76,7 @@ DEBUG_GET_ONCE_OPTION(pico4_tcam_slots, "PICO4_TCAM_SLOTS", "0,2,1,3")
 DEBUG_GET_ONCE_BOOL_OPTION(pico4_slam_upright, "PICO4_SLAM_UPRIGHT", true)
 /*!
  * Use every Nth scene frame set (25 Hz: the station's 50 Hz alternates scene
- * and LED exposures) and IMU sample (512 Hz). Basalt's optical flow keeps up
+ * and LED exposures) and IMU sample (1024 Hz). Basalt's optical flow keeps up
  * with 25 Hz on the XR2; it does not need the full IMU rate.
  */
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_divisor, "PICO4_SLAM_DIVISOR", 1)
@@ -88,6 +88,10 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_brightness, "PICO4_SLAM_BRIGHTNESS", 70)
 //! Longest exposure in sensor lines (19.3 us each): with the 9 ms readout a frame must fit
 //! the 20 ms sync period, and longer exposures smear more when moving.
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_max_exposure, "PICO4_SLAM_MAX_EXPOSURE", 400)
+//! Frame times at the middle of the exposure rather than at the start of frame (push_group).
+DEBUG_GET_ONCE_BOOL_OPTION(pico4_slam_exposure_centre, "PICO4_SLAM_EXPOSURE_CENTRE", true)
+#define LINE_NS 19300                 //!< One sensor line of exposure.
+#define SOF_AFTER_EXPOSURE_NS 52000   //!< Start-of-frame interrupt after the exposure's end (stock).
 //! CPUs (bit mask) Basalt may use; 0 = no restriction. Default: all but cores 6 and 7.
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_cpus, "PICO4_SLAM_CPUS", 0x3f)
 
@@ -106,9 +110,13 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_cpus, "PICO4_SLAM_CPUS", 0x3f)
 //! Auto exposure: mean signal (10-bit, above black) it aims for, and its limits.
 #define AE_TARGET 250.0f
 #define AE_MIN_LINES 10u
-#define AE_MAX_GAIN 64u //!< 4x; more mostly adds noise for the optical flow
+/*!
+ * 15.5x, the sensors' highest analog gain. At 4x and 400 lines a moderately lit room
+ * stayed near black (mean 5-10 of 255) and Basalt drifted or lost track; gain adds
+ * noise but, unlike a longer exposure, no motion blur.
+ */
+#define AE_MAX_GAIN 248u
 #define AE_SETS 25        //!< Sets per adjustment (half a second).
-#define IMU_HZ 512.0 //!< What the DSP delivers for the 1 kHz request.
 #define IMU_RING 2048
 #define TRACKER_NICE 19 //!< Basalt and its feeders, below the compositor and the app (0).
 //! Time Basalt gets at shutdown to process the frame sets still queued (10 at most).
@@ -169,6 +177,11 @@ struct pico4_slam
 	int64_t last_imu_ns;
 	unsigned imu_divisor;
 	uint64_t imu_count;
+	//! The IMU rate declared to the tracker, before the divisor, and its measurement.
+	double imu_hz;
+	int64_t rate_start_ns;
+	uint64_t rate_samples;
+	bool rate_reported;
 	float gain, brightness;
 
 	//! Exposure alternation: start of the newest pulse, its phase and each phase's mean signal.
@@ -277,7 +290,7 @@ load_calibration(struct pico4_slam *s, const char *dir, const int *cams)
 	};
 	s->calib.imu.base.accel = accel;
 	s->calib.imu.base.gyro = gyro;
-	s->calib.imu.frequency = IMU_HZ / s->imu_divisor;
+	s->calib.imu.frequency = s->imu_hz / s->imu_divisor;
 	return true;
 }
 
@@ -360,10 +373,21 @@ push_group(struct pico4_slam *s)
 			xrt_frame_reference(&s->mail[i], NULL);
 		}
 	}
+	/*
+	 * Basalt needs the time the images were taken: the middle of the exposure. These
+	 * global-shutter sensors expose before the readout that the start-of-frame interrupt
+	 * marks; PICO's stock tracking takes 52 us and half the exposure off that time. Up to
+	 * 4 ms, and changing with the exposure, otherwise put the images out of step with the
+	 * IMU while the head moves.
+	 */
+	int64_t taken = s->group.ts;
+	if (debug_get_bool_option_pico4_slam_exposure_centre()) {
+		taken -= SOF_AFTER_EXPOSURE_NS + (int64_t)s->exposure_lines * LINE_NS / 2;
+	}
 	for (int i = 0; i < s->cam_count; i++) {
 		struct xrt_frame *xf = s->group.frames[i];
-		xf->timestamp = s->group.ts;
-		xf->source_timestamp = s->group.ts;
+		xf->timestamp = taken;
+		xf->source_timestamp = taken;
 		xf->source_sequence = s->sequence;
 		xf->source_id = i;
 		s->mail[i] = xf; // the reference moves to the mailbox
@@ -644,7 +668,10 @@ cam_log(void *user, enum pico4_cam_log_level level, const char *msg)
 }
 
 struct pico4_slam *
-pico4_slam_create(const char *calibration_dir, struct pico4_station *station, enum u_logging_level log_level)
+pico4_slam_create(const char *calibration_dir,
+                  struct pico4_station *station,
+                  double imu_hz,
+                  enum u_logging_level log_level)
 {
 	if (!debug_get_bool_option_pico4_slam() || station == NULL) {
 		return NULL;
@@ -652,6 +679,7 @@ pico4_slam_create(const char *calibration_dir, struct pico4_station *station, en
 	struct pico4_slam *s = U_TYPED_CALLOC(struct pico4_slam);
 	int cams[PICO4_TCAM_COUNT], slots[PICO4_TCAM_COUNT];
 	s->log_level = log_level;
+	s->imu_hz = imu_hz;
 	s->gain = 2.0f;
 	s->exposure_lines = 300;
 	s->exposure_gain = 16;
@@ -685,7 +713,18 @@ pico4_slam_create(const char *calibration_dir, struct pico4_station *station, en
 	config.cam_count = s->cam_count;
 	config.slam_calib = &s->calib;
 	config.submit_from_start = true;
-	// Basalt's threads, its TBB workers included, inherit this thread's nice value.
+	/*
+	 * Between Basalt's poses (25 Hz), predict the orientation from the gyro and the
+	 * position from Basalt's velocity plus the mean acceleration since (above
+	 * SLAM_ACCEL_DEADBAND, see monado-slam-prediction.patch): positions trailed a moving
+	 * head by 31 ms instead of 65 ms without the acceleration. The default dead reckoning
+	 * integrates the accelerometer fully: its positions strayed 50-270 mm from Basalt's.
+	 * A stalled tracker reports untracked poses after 500 ms, and the HMD falls back to
+	 * 3DoF. The environment's SLAM_PREDICTION_TYPE still overrides this.
+	 */
+	if (getenv("SLAM_PREDICTION_TYPE") == NULL) {
+		config.prediction = SLAM_PRED_ACCEL_GYRO;
+	}
 	// Basalt's threads, its TBB workers included, inherit this thread's nice value and CPU set.
 	int nice_before = thread_nice(TRACKER_NICE);
 	cpu_set_t cpus_before;
@@ -730,9 +769,36 @@ fail:
 	return NULL;
 }
 
+//! Measures the rate the IMU samples arrive at over 10 s, and reports it once or when it strays.
+static void
+measure_imu_rate(struct pico4_slam *s, int64_t timestamp_ns)
+{
+	if (s->rate_start_ns == 0 || timestamp_ns < s->rate_start_ns) {
+		s->rate_start_ns = timestamp_ns;
+		s->rate_samples = 0;
+		return;
+	}
+	s->rate_samples++;
+	int64_t span = timestamp_ns - s->rate_start_ns;
+	if (span < 10 * (int64_t)1000000000) {
+		return;
+	}
+	double hz = (double)s->rate_samples * 1e9 / (double)span;
+	bool strays = fabs(hz - s->imu_hz) > 0.05 * s->imu_hz;
+	if (!s->rate_reported || strays) {
+		U_LOG_IFL(strays ? U_LOGGING_WARN : U_LOGGING_INFO, s->log_level,
+		          "IMU at %.1f Hz measured, %.1f Hz declared; the tracker gets every %u. sample", hz,
+		          s->imu_hz, s->imu_divisor);
+		s->rate_reported = true;
+	}
+	s->rate_start_ns = timestamp_ns;
+	s->rate_samples = 0;
+}
+
 void
 pico4_slam_push_imu(struct pico4_slam *s, int64_t timestamp_ns, const float accel[3], const float gyro[3])
 {
+	measure_imu_rate(s, timestamp_ns);
 	if (s->imu_count++ % s->imu_divisor != 0) {
 		return;
 	}
@@ -833,10 +899,14 @@ pico4_slam_destroy(struct pico4_slam **ptr)
 #else // XRT_FEATURE_SLAM
 
 struct pico4_slam *
-pico4_slam_create(const char *calibration_dir, struct pico4_station *station, enum u_logging_level log_level)
+pico4_slam_create(const char *calibration_dir,
+                  struct pico4_station *station,
+                  double imu_hz,
+                  enum u_logging_level log_level)
 {
 	(void)calibration_dir;
 	(void)station;
+	(void)imu_hz;
 	(void)log_level;
 	return NULL;
 }

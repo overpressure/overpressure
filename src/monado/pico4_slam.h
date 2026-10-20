@@ -26,10 +26,14 @@ struct pico4_station;
  * tracker, the cameras and their frame sync through @p station (freshly
  * reset; borrowed, it must outlive the tracker). Returns NULL if SLAM is not
  * built in, disabled (PICO4_SLAM=0), there is no station or any part fails;
- * the caller then stays on 3DoF.
+ * the caller then stays on 3DoF. @p imu_hz is the rate the head IMU's samples
+ * arrive at (pico4_slam_push_imu), declared to the tracker.
  */
 struct pico4_slam *
-pico4_slam_create(const char *calibration_dir, struct pico4_station *station, enum u_logging_level log_level);
+pico4_slam_create(const char *calibration_dir,
+                  struct pico4_station *station,
+                  double imu_hz,
+                  enum u_logging_level log_level);
 
 /*!
  * One IMU sample in the sensor DSP's raw axes (the factory "body" frame):

@@ -91,9 +91,10 @@ int
 pico4_station_camera_start(struct pico4_station *st);
 
 /*!
- * Exposure of all cameras in sensor lines (about 19 us each; it must fit the
- * 20 ms frame period, so at most about 900) and gain (16 = 1x). In FSIN slave
- * mode the station sets the exposure; the sensors' own registers are ignored.
+ * Exposure of all cameras in sensor lines (about 19.3 us each; with the 9 ms
+ * readout it must fit the 20 ms frame period, so at most about 570) and gain
+ * (16 = 1x, up to 248). In FSIN slave mode the station sets the exposure; the
+ * sensors' own registers are ignored.
  */
 int
 pico4_station_camera_set_exposure(struct pico4_station *st, unsigned exposure_lines, unsigned gain);

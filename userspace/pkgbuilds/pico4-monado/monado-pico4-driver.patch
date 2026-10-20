@@ -62,8 +62,8 @@ index 41dfe48bc..0cf24a8db 100644
  
 +#ifdef XRT_HAVE_PICO4_KMS
 +	/*
-+	 * PICO 4: no lens distortion yet, so the scratch images map 1:1 to the
-+	 * panels. Scratch images at the scaled view size only cost bandwidth.
++	 * PICO 4: scratch images at the panels' size, which the distortion mesh
++	 * samples. Scratch images at the scaled view size only cost bandwidth.
 +	 */
 +	VkExtent2D scratch_extent = {c->xdev->hmd->views[0].display.w_pixels, c->xdev->hmd->views[0].display.h_pixels};
 +	c->r = comp_renderer_create(c, scratch_extent);

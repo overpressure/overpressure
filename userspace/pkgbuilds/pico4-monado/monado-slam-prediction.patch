@@ -1,0 +1,48 @@
+SLAM prediction: report stale poses as untracked, ignore accelerometer noise.
+
+When the SLAM system stops producing poses, prediction extrapolated from
+the last one without bound (on the PICO 4: the view kept rotating). Poses
+requested more than 500 ms after the newest SLAM pose are now untracked,
+so the device driver can fall back to its own tracking.
+
+SLAM_PRED_ACCEL_GYRO adds the mean acceleration since the newest SLAM pose to
+its velocity. At rest that is bias and gravity residue, and the time it is
+scaled by saws with every SLAM pose, so a still view shimmered. Accelerations
+are now shrunk by SLAM_ACCEL_DEADBAND (default 0.3 m/s^2), continuously.
+
+--- a/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
++++ b/src/xrt/auxiliary/tracking/t_tracker_slam.cpp
+@@ -86,6 +86,7 @@
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_submit_from_start, "SLAM_SUBMIT_FROM_START", false)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_openvr_groundtruth_device, "SLAM_OPENVR_GROUNDTRUTH_DEVICE", 0)
+ DEBUG_GET_ONCE_NUM_OPTION(slam_prediction_type, "SLAM_PREDICTION_TYPE", long(SLAM_PRED_DEAD_RECKONING))
++DEBUG_GET_ONCE_FLOAT_OPTION(slam_accel_deadband, "SLAM_ACCEL_DEADBAND", 0.3f)
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_write_csvs, "SLAM_WRITE_CSVS", false)
+ DEBUG_GET_ONCE_OPTION(slam_csv_path, "SLAM_CSV_PATH", "evaluation/")
+ DEBUG_GET_ONCE_BOOL_OPTION(slam_timing_stat, "SLAM_TIMING_STAT", true)
+@@ -831,6 +832,13 @@
+ 		return;
+ 	}
+ 
++	// A SLAM pose this old means the tracker has stopped producing poses; predicting
++	// from it runs away without bound. Report the pose as untracked instead.
++	if (when_ns - (int64_t)rel_ts > 500 * 1000 * 1000) {
++		out_relation->relation_flags = XRT_SPACE_RELATION_BITMASK_NONE;
++		return;
++	}
++
+ 	// Use only last SLAM pose without prediction if PREDICTION_NONE
+ 	if (t.pred_type == SLAM_PRED_NONE) {
+ 		*out_relation = rel;
+@@ -877,6 +885,11 @@
+ 		xrt_vec3 world_accel{};
+ 		math_quat_rotate_vec3(&rel.pose.orientation, &avg_accel, &world_accel);
+ 		world_accel += t.gravity_correction;
++		// At rest the mean acceleration is bias and gravity residue, scaled below by a time
++		// that saws with every SLAM pose: a still view shimmered. Shrink it softly.
++		float accel = m_vec3_len(world_accel);
++		float deadband = debug_get_float_option_slam_accel_deadband();
++		world_accel = accel > deadband ? world_accel * ((accel - deadband) / accel) : xrt_vec3{0, 0, 0};
+ 		double slam_to_imu_dt = time_ns_to_s(t.last_imu_ts - rel_ts);
+ 		rel.linear_velocity += world_accel * slam_to_imu_dt;
+ 	}
