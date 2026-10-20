@@ -137,7 +137,8 @@ Further adaptations:
 | [`/usr/bin/displays_turn_off_drm_master`](../userspace/rootfs/usr/bin/displays_turn_off_drm_master) | does nothing | stands in for the Frame's deckard-hw-support tool, which `steamvr.service` runs after SteamVR exits (`ExecStopPost` without `-`: a missing program fails the unit); the compositor releases the display itself |
 | `/opt/steamvr/bin/linuxarm64/vrcompositor-launcher` | `cap_sys_nice=eip` | the compositor raises its priority, as SteamVR's setup does on desktops |
 | `~/.steam/steam`, `~/.steam/root` | links to `~/.local/share/Steam` | SteamVR finds its logs and the Steam folder through them; on the Frame the Steam client's `RUNSTEAM.sh` makes them |
-| [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | at most three starts in three minutes | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end |
+| [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, then `pico4-steamvr-failed.service` | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end. Without `RestartMode=direct` the unit passes through the failed state before each restart, and `OnFailure=` would run at the first crash |
+| [`pico4-session-fallback.path`](../userspace/rootfs/usr/lib/systemd/system/pico4-session-fallback.path) and `.service` | when SteamVR has failed for good (the user unit touches `/run/pico4-session/steamvr-failed`), restart `pico4-session.service` once with Monado's target | releases the display and the tracking hardware instead of leaving gamescope without SteamVR; the override in `/run/pico4-session` is used by that one start, so a reboot or a deliberate switch uses `session.conf` again |
 
 ### Monado as a service
 
@@ -337,6 +338,30 @@ gamescope and the dashboard's web helper submit little GPU work of their own (17
 each in 30 s, against the compositor's 2,776); their cost is the overlay layers the compositor
 draws.
 
+The GPU time per frame comes from the stock kernel's KGSL tracepoints in tracefs:
+`kgsl_issueibcmds` names the context of each submission, and `adreno_cmdbatch_retired` gives its
+start and retire on the GPU's 19.2 MHz always-on counter. In 10 s of Valve's session one context
+submits steadily, the compositor's: one batch per frame of 15.7 ms (median) and a second of a few
+microseconds. Neither gamescope nor the web helper shows up in the window; the display layer
+uses no GPU. A headset lying still counts as idle, and SteamVR pauses its compositor after the
+screens' five-second standby timeout (`power.pauseCompositorOnStandby`, default on); profiles of
+a still headset turn that off. One SteamVR setting at a time, against the defaults:
+
+| Setting | Compositor GPU per frame (median) | Frames per second |
+| --- | --- | --- |
+| defaults | 15.7 ms | 53.8 |
+| `motionSmoothing` off, `enableAchromaticDistortion`, `enableScanoutScaling` or `enableLinuxVulkanAsync` | 15.7 ms | 52–54 |
+| `showSkydome` off | 12.6 ms | 58.1 |
+| `overlayRenderQuality_2` 1 | 10.8 ms | 58.3 |
+| `enableSimplifiedShaders` | 9.4 ms | 58.0 |
+| simplified shaders and overlay quality 1 | 4.7 ms | 66.0 |
+| the same without the dome | 3.3 ms | 60.2 |
+
+With both settings the GPU is idle most of the time (31% busy), and the session still runs at
+60–66 frames per second: the limit is then the presentation, where SteamVR's present waits time
+out (912 of 1,982 commits with both settings). Their look in the lenses is not judged yet; the
+Frame driver sets both, with the Facet renderer this project cannot use.
+
 The Frame driver's compositor settings (in its `frame_hmd_additional.vrsettings`, not loaded
 with that driver disabled) cut the compositor's GPU time but are not usable here. They switch
 to the Facet renderer with simplified, achromatic distortion shaders and draw the dashboard in
@@ -486,6 +511,8 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: `pico4-valve-session-check`, 30 s, KGSL context priorities | passes: `vrcompositor` and gamescope at KGSL level 1, the CEF renderer at 8; 2,188 commits at 55.6/s, 1,259 late, 10.3 ms GPU wait per frame (longest 25.7 ms), 5.75 ms retire wait, 1,847 of 2,187 present waits over SteamVR's 15 ms; without the priorities 53.1/s, 1,486 late, 11.5 ms (35.6 ms) |
 | Headset: Valve's session with the Frame driver's compositor settings, no background dome (user, four minutes) | layer: 13,068 commits, 598 late, 8.4 ms GPU wait per frame, no present-wait timeout, hottest zone up to 69.4 °C; in the lenses the picture warped with head movement (lens correction not applied as before) and froze every few seconds: 47 of SteamVR's one-second present waits |
 | Headset: `pico4-valve-session-check`, 30 s, vblank clock | SteamVR's defaults: 54.7 commits/s, 10.6 ms GPU wait per frame, no one-second wait; the Frame driver's settings without `waitForSceneGraph`: 3,392 commits at 87.5/s, 79 late, 7.2 ms, 6 of the present waits over 15 ms, no one-second wait (16 in 30 s before the clock) |
+| Headset: GPU profile, 10 s per setting (KGSL tracepoints) | compositor 15.7 ms of GPU per frame with SteamVR's defaults; simplified shaders 9.4 ms, overlay quality 1 10.8 ms, no dome 12.6 ms, both settings 4.7 ms; with both 66 frames per second, limited by the present waits |
+| Headset: forced crash loop (`vrcompositor` killed whenever it runs) | three crashes, driver starts (station resets) 34.5 s apart, then "Start request repeated too quickly"; 11 s later the session runs Monado's target, the one-time override consumed; no SteamVR start afterwards |
 | Headset: Monado service | userspace check passes (session active, every listed device node accessible to `steamos`); OpenXR pose: 959–960 of 960 located, tilt 4.29° against the accelerometer's 4.28°, heading rate 0.005°/s; display client through the service (two layers, 30 s): about 2,686 frames at 89.5–89.6 Hz, 11 late, KMS target 88.4–89.6 commits/s at vblank 89.998 Hz, no fence timeout, eyes left/right correct; statistics written when the service stops, GPU floor back to the stock level 6 (305 MHz); the session user's client through the socket link: 1,348 frames at 89.74 Hz |
 | Headset: acceptance cycle with stock restore (flash-run with the archive, EDL readback of boot, stock ABL restore) | passes in about 8 minutes from PICO OS to PICO OS on stock boot and ABL, 39 s of it receiving the 801 MiB archive: userspace check with the fan service, head IMU, OpenXR pose (tilt 3.8°), Monado display client at 89.9 frames/s, display layer at 86 frames/s on a 90 Hz vblank, shared semaphores, Valve's session presenting after 15 s at 51.3 commits/s with the headset and both controllers in SteamVR (hottest zone 45.3 → 69.4 °C with the fan at 30 %; 47.1 → 85.7 °C without fan control); stock boot and ABL verified by EDL readback; PICO OS 5.13.7 boots |
 

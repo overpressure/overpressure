@@ -1,0 +1,12 @@
+# SteamVR failed for good in Valve's session: restart the session once with Monado's
+# target, which releases the display and the tracking hardware. The override in /run
+# is used by the next start of the session only (/usr/libexec/pico4-poc/session); a
+# reboot or a deliberate restart selects /etc/pico4-poc/session.conf's target again.
+[Unit]
+Description=Fall back to Monado's session after SteamVR failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rm -f /run/pico4-session/steamvr-failed
+ExecStart=/usr/bin/sh -c 'echo PICO4_SESSION_TARGET=pico4-session.target > /run/pico4-session/override'
+ExecStart=/usr/bin/systemctl restart pico4-session.service

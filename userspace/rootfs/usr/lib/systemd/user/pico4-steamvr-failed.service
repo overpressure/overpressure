@@ -1,0 +1,8 @@
+# SteamVR failed for good (its start limit, see steamvr.service.d): tell the system
+# side, which owns the session, to fall back to Monado's (pico4-session-fallback.path).
+[Unit]
+Description=Report SteamVR's failure to the session
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/touch /run/pico4-session/steamvr-failed

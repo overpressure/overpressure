@@ -7,6 +7,8 @@
 set -euo pipefail
 target=${PICO4_SESSION_TARGET:-pico4-session.target}
 runtime=${XDG_RUNTIME_DIR:?not inside a logind session}
+# The fallback's override (pico4-session-fallback.service) applies to this start only.
+rm -f /run/pico4-session/override
 
 # logind starts the user manager with the session; wait until it listens.
 for _ in $(seq 100); do
