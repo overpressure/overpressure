@@ -36,6 +36,16 @@ first so that nothing is filed twice.
   bugs, the category: `gap`, `feature`, `limitation` or `disabled`. Link blocking issues as
   dependencies.
 
+Keeping the issues current is mandatory whenever work touches one, not a wrap-up step:
+
+- **Status.** Move an issue to "In progress" when work on it starts, and back to "To do" when
+  it is paused. "In review" means implemented with only a check left that needs the user or
+  hardware; "Done" only when every acceptance criterion has been verified. Check the states of
+  all issues the work touched before ending a task, including ones resolved on the side.
+- **Comments.** Comment as results come in: what landed (commit), what was measured, which
+  criteria are met and which are still open. A partial result keeps the issue open, with the
+  open criteria named in the comment.
+
 ## Documentation
 
 All documentation lives in `docs/`; the root README is the overview. Documents state facts:
