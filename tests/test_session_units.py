@@ -47,6 +47,48 @@ class SteamvrRestartTest(unittest.TestCase):
         self.assertTrue(flag.startswith("/run/pico4-session/"))
 
 
+class VsyncLeadTest(unittest.TestCase):
+    def test_steamvr_runs_with_the_lead(self):
+        # SteamVR starts its compositor about 4 ms before the vblank it sees.
+        dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
+        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_VSYNC_LEAD_US=6000$")
+        # The driver reads the same variable and predicts that much further.
+        hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
+        self.assertIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', hmd)
+        layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
+        self.assertIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', layer)
+
+
+class KthreadPrioritiesTest(unittest.TestCase):
+    def test_unit_raises_gpu_and_display_threads(self):
+        service = unit("usr/lib/systemd/system/pico4-kthread-priorities.service")
+        script = (ROOTFS / service["Service"]["ExecStart"].lstrip("/")).read_text(encoding="utf-8")
+        for name in ("kgsl_worker_thr", "crtc_commit:*", "crtc_event:*"):
+            self.assertIn(name, script)
+        self.assertIn('chrt -r -p "$prio"', script)
+        # Real-time threads (Monado's compositor) need the cpu controller off.
+        self.assertNotIn("CPUWeight", service["Service"])
+        self.assertNotIn("CPUQuota", service["Service"])
+        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+        self.assertIn("pico4-kthread-priorities.service", build)
+
+
+class ConsoleQuietTest(unittest.TestCase):
+    def test_only_critical_messages_on_the_headset_console(self):
+        # journald forwards errors to the kernel log; printed on the UART console with
+        # interrupts off they delayed the display interrupt.
+        service = unit("usr/lib/systemd/system/pico4-console-quiet.service")
+        self.assertEqual(service["Unit"]["ConditionPathExists"], "/sys/class/tty/ttyMSM0")
+        self.assertIn("echo 3 4 1 7 > /proc/sys/kernel/printk", service["Service"]["ExecStart"])
+        self.assertIn("systemd-sysctl.service", service["Unit"]["After"])
+        journald = (ROOTFS / "usr/lib/systemd/journald.conf.d/50-pico4.conf").read_text(encoding="utf-8")
+        level = int(re.search(r"(?m)^kernel\.printk = (\d)", (ROOTFS / "etc/sysctl.d/50-pico4-console.conf").read_text(encoding="utf-8")).group(1))
+        self.assertIn("MaxLevelKMsg=warning", journald)  # warning is 4: printed at the sysctl's level ...
+        self.assertGreater(level, 4)
+        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+        self.assertIn("pico4-console-quiet.service", build)  # ... so the unit must be enabled
+
+
 class FallbackTest(unittest.TestCase):
     def test_fallback_overrides_once(self):
         service = (ROOTFS / "usr/lib/systemd/system/pico4-session-fallback.service").read_text(encoding="utf-8")
@@ -59,6 +101,14 @@ class FallbackTest(unittest.TestCase):
                         session.index("EnvironmentFile=-/run/pico4-session/override"))
         script = (ROOTFS / "usr/libexec/pico4-poc/session").read_text(encoding="utf-8")
         self.assertIn("rm -f /run/pico4-session/override", script)
+
+    def test_new_session_resets_the_start_limit(self):
+        # The user manager outlives a session: without a reset, sessions started one after
+        # another count against SteamVR's crash-loop limit and end in the fallback.
+        script = (ROOTFS / "usr/libexec/pico4-poc/session").read_text(encoding="utf-8")
+        reset = script.index("systemctl --user reset-failed")
+        self.assertLess(reset, script.index("exec /usr/bin/start-gamescope-session"))
+        self.assertLess(reset, script.index('systemctl --user --wait start "$target"'))
 
     def test_path_unit_enabled(self):
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")

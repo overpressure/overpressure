@@ -231,6 +231,15 @@ Adaptations in the image:
 - **Enabled**: sshd, systemd-networkd, NetworkManager, the recovery, storage, log and self-test
   units, the sensor target, Monado's socket and `pico4-session.service`. The default target is
   `graphical.target`.
+- **Battery.** The stock kernel's charger and fuel gauge (PM8150B) appear as power supplies:
+  `battery` (capacity, status, voltage, current), `usb` (USB-PD, the cable), `pc_port`, `dc`
+  and `bms`. UPower reads them; it is D-Bus activated, and a drop-in turns off its
+  `PrivateUsers=` ([upower.service.d](../userspace/rootfs/usr/lib/systemd/system/upower.service.d/50-pico4.conf)),
+  which needs user namespaces the kernel lacks (status 217/USER). The kernel's `status` says
+  "Charging" whenever the charger is on; on a PC's 500 mA port the running headset still draws
+  from the battery (negative current), and UPower reports that as discharging. In Valve's
+  session the PICO 4 driver reads the same `battery` supply, and `driver_monado` passes it to
+  SteamVR as the headset's battery level and charging state, every five seconds.
 
 ## Build
 

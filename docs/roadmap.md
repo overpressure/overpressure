@@ -287,29 +287,28 @@ hysteresis. It adds full speed while any sensor reads 95 °C or more, until the 
 below 90 °C, and 100 % without usable readings. It builds frames only from an allowlist
 (SetFanSpeed 0–100 % and four queries) and shares the UART with Monado's IPD read through an
 exclusive `flock`. The userspace build enables its service, and the acceptance checks require
-it on the headset and record its duty and RPM. On the headset the MCU acknowledges its
+it on the headset, with a duty the MCU acknowledged, and record its duty and RPM. On the headset the MCU acknowledges its
 duty and reports the fan's speed (about 4,900 rpm at 30 %), and Valve's 30 s session check
 peaks at 69 °C instead of 86 °C. Remaining:
 
 1. **Hardware.** Sweep the duty against the RPM; check the fan's response to a load step; run
    Valve's session for 10 minutes against an agreed limit for the hottest zone.
-2. **Stricter checks.** The MCU acknowledges on the headset, so `pico4-userspace-check` can
-   require an acknowledged duty instead of reporting it.
-3. **The headset's table.** The current sensor data predates `calibration/fan-profile`, so the
-   daemon runs the early table; extracting the sensor data again selects the late table.
-4. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
+2. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
    that limit.
-5. **GetFanInfo.** Decode its reply; if it identifies the fan, the daemon can choose its table
-   without the backup.
 
 ### Performance
 
 Details: [session.md](session.md), [xr.md](xr.md).
 
-Valve's full session is GPU-bound at about 50 frames per second, the GPU 99 % busy at 587 MHz.
+Valve's full session is GPU-bound at about 50 frames per second: SteamVR's compositor alone
+takes 15.7 ms of GPU per frame. With simplified shaders and overlay quality 1 it takes 4.7 ms,
+and with the display layer's 6 ms vsync lead (SteamVR starts its compositor about 4 ms before
+the vblank it sees) the session runs at 88.9 frames per second.
 
-- Measure what gamescope's overlay and the dashboard's CEF renderer cost on the GPU.
-- Try the Frame's other compositor settings: simplified shaders, overlay quality.
+- Judge the two settings and the lead's prediction in the lenses; make the settings the
+  session's defaults if they look right.
+- Find why the kernel sometimes handles the display interrupt only on the 10 ms scheduler
+  tick, which makes the present waits time out for a whole session.
 - Monado's composition headroom: its layer squasher fits the 11 ms frame only with the GPU
   clock floor. Options are compressed (UBWC) scanout images in the display's compressed
   formats; compressed client swapchain images; composing the layers directly through the

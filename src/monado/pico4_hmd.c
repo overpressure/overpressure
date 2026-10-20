@@ -80,6 +80,11 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_fusion_smoothing_ms, "PICO4_FUSION_SMOOTHING_MS"
  */
 DEBUG_GET_ONCE_NUM_OPTION(pico4_predict_ms, "PICO4_PREDICT_MS", 24)
 /*!
+ * The display layer's vsync lead (pico4-vrdisplay, same variable): SteamVR sees each vblank
+ * this much early, so it predicts its poses for that much earlier. Added to the prediction.
+ */
+DEBUG_GET_ONCE_NUM_OPTION(pico4_vsync_lead_us, "PICO4_VRDISPLAY_VSYNC_LEAD_US", 0)
+/*!
  * Latency probe, with the fusion: periods of this many milliseconds cycle
  * through four phases. In phase 1 the head pose handed out is turned by 5 degrees about
  * the vertical (velocity unchanged); in phase 3 it reports a turn of 30 deg/s about the
@@ -105,6 +110,8 @@ DEBUG_GET_ONCE_OPTION(pico4_fusion_csv, "PICO4_FUSION_CSV", NULL)
 //! Gyro samples ignored after enabling (the accelerometer settles), then averaged for the start pose.
 //! Accelerometer/gyroscope lookups of 3 s each before giving up (DSP still starting).
 #define PICO4_LOOKUP_ATTEMPTS 5
+//! The headset's battery in the stock kernel's power-supply class.
+#define PICO4_BATTERY "/sys/class/power_supply/battery"
 #define PICO4_WARMUP_SKIP 100
 #define PICO4_WARMUP_AVERAGE 100
 
@@ -526,6 +533,33 @@ setup_station(struct pico4_hmd *h)
 	}
 }
 
+/*!
+ * The headset's battery, from the stock kernel's power supply (the PMIC's fuel gauge):
+ * capacity in percent and the charger's status.
+ */
+static xrt_result_t
+pico4_hmd_get_battery_status(struct xrt_device *xdev, bool *out_present, bool *out_charging, float *out_charge)
+{
+	(void)xdev;
+	char capacity[16] = {0}, status[32] = {0};
+	FILE *f = fopen(PICO4_BATTERY "/capacity", "re");
+	bool ok = f != NULL && fgets(capacity, sizeof(capacity), f) != NULL;
+	if (f != NULL) {
+		fclose(f);
+	}
+	f = fopen(PICO4_BATTERY "/status", "re");
+	if (f != NULL) {
+		if (fgets(status, sizeof(status), f) == NULL) {
+			status[0] = '\0';
+		}
+		fclose(f);
+	}
+	*out_present = ok;
+	*out_charge = ok ? (float)atoi(capacity) / 100.f : 0.f;
+	*out_charging = strncmp(status, "Charging", 8) == 0 || strncmp(status, "Full", 4) == 0;
+	return XRT_SUCCESS;
+}
+
 static void
 pico4_hmd_destroy(struct xrt_device *xdev)
 {
@@ -632,7 +666,8 @@ pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
 
 	if (h->use_track) {
 		// Interpolated between IMU steps, or predicted from the newest one.
-		int64_t ahead = debug_get_num_option_pico4_predict_ms() * U_TIME_1MS_IN_NS;
+		int64_t ahead = debug_get_num_option_pico4_predict_ms() * U_TIME_1MS_IN_NS +
+		                debug_get_num_option_pico4_vsync_lead_us() * 1000;
 		m_relation_history_get(h->relation_hist, at_timestamp_ns + ahead, out_relation);
 		int64_t probe_ns = debug_get_num_option_pico4_latency_probe_ms() * U_TIME_1MS_IN_NS;
 		if (probe_ns > 0) {
@@ -853,6 +888,7 @@ pico4_hmd_create(void)
 	h->base.get_view_poses = pico4_hmd_get_view_poses;
 	h->base.get_visibility_mask = pico4_hmd_get_visibility_mask;
 	h->base.destroy = pico4_hmd_destroy;
+	h->base.get_battery_status = pico4_hmd_get_battery_status;
 	h->base.name = XRT_DEVICE_GENERIC_HMD;
 	h->base.device_type = XRT_DEVICE_TYPE_HMD;
 	h->base.inputs[0].name = XRT_INPUT_GENERIC_HEAD_POSE;

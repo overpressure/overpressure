@@ -7,6 +7,7 @@ and events inside the QMI messages are protobuf-encoded. This tool needs no
 libraries beyond Python: it encodes the few messages it uses by hand.
 
   pico4-imu list                         sensors the DSP offers, with attributes
+  pico4-imu wait [--timeout S]           until the accelerometer and gyroscope are listed
   pico4-imu stream [--rate HZ] [--seconds S] [--csv FILE] [--orientation] [--check]
 
 `stream` prints one JSON summary; `--check` makes it exit 1 unless the
@@ -637,11 +638,41 @@ def cmd_raw(ssc: Ssc, args) -> int:
     return 0 if counts else 1
 
 
+def cmd_wait(args, connect=None, clock=time.monotonic, sleep=time.sleep) -> int:
+    """Wait until the sensor service lists the accelerometer and the gyroscope.
+
+    For about 35 s after the DSP boots it loads its registry, and lookups come back
+    empty (or the service is not there yet); a driver that probes then finds no IMU.
+    """
+    connect = connect or (lambda timeout: Ssc(timeout))
+    start = clock()
+    deadline = start + args.timeout
+    error = "not tried"
+    while True:
+        try:
+            ssc = connect(min(5.0, max(0.1, deadline - clock())))
+            try:
+                if ssc.find("accel") and ssc.find("gyro"):
+                    print(json.dumps({"status": "pass", "seconds": round(clock() - start, 1)}))
+                    return 0
+                error = "no accelerometer and gyroscope listed yet"
+            finally:
+                ssc.sock.close()
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            error = str(exc)
+        if clock() >= deadline:
+            print(json.dumps({"status": "fail", "seconds": round(clock() - start, 1), "error": error}))
+            return 1
+        sleep(1.0)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("list")
     p.add_argument("types", nargs="*", default=["accel", "gyro", "mag", "pressure", "sensor_temperature"])
+    p = sub.add_parser("wait", help="until the accelerometer and gyroscope are listed")
+    p.add_argument("--timeout", type=float, default=120.0, help="seconds")
     p = sub.add_parser("stream")
     p.add_argument("--rate", type=float, default=500.0, help="Hz; 500 runs the ICM-42688 at 512 Hz, 1000 at 1024 Hz")
     p.add_argument("--seconds", type=float, default=10.0)
@@ -659,6 +690,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     global VERBOSE
     VERBOSE = args.verbose
+    if args.command == "wait":
+        return cmd_wait(args)
     try:
         ssc = Ssc()
     except (OSError, RuntimeError) as exc:

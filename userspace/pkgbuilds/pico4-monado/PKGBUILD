@@ -16,7 +16,7 @@
 # tracking cameras on their own.
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=5
+pkgrel=6
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -33,7 +33,7 @@ _camheaders=(cam_cpas.h cam_defs.h cam_isp.h cam_isp_ife.h cam_isp_vfe.h cam_req
 source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_commit"
         "${_camheaders[@]/#/$_camuapi/}"
         monado-pico4-driver.patch monado-steamvr-pico4.patch monado-service-sigterm.patch
-        monado-slam-prediction.patch
+        monado-slam-prediction.patch monado-steamvr-battery.patch
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
@@ -55,6 +55,7 @@ sha256sums=(SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP
             SKIP
+            SKIP
             SKIP)
 
 prepare() {
@@ -62,6 +63,7 @@ prepare() {
   patch -d monado -p1 < monado-steamvr-pico4.patch
   patch -d monado -p1 < monado-service-sigterm.patch
   patch -d monado -p1 < monado-slam-prediction.patch
+  patch -d monado -p1 < monado-steamvr-battery.patch
   # PICO's kernel allows four links per session where the CAF header says two.
   install -Dm644 -t monado/src/xrt/drivers/pico4/include/media "${_camheaders[@]}"
   sed -i -E 's/^(#define MAX_LINKS_PER_SESSION[[:space:]]+)2$/\14/' \

@@ -229,7 +229,13 @@ mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/
 # "!name": dependencies on name count as satisfied, name is not installed.
 mapfile -t assumed < <(sed -n 's/^!\([^[:space:]#]*\).*/--assume-installed=\1=0/p' "$project/userspace/packages.txt")
 base=$B/base
-base_key=$(cat "$project/userspace/packages.txt" "$project/userspace/pacman.conf" | sha256sum | cut -d' ' -f1)
+# pacman copies the project repository's packages into its cache. A package rebuilt from
+# changed sources keeps its version, so a copy there would no longer match the repository
+# (a corrupt package for pacman, the wrong file for the manifest): only the repository has them.
+rm -f "$B"/var/cache/pico4-pkgs/pico4-*.pkg.tar.zst
+steamos_user=userspace/rootfs/usr/lib/sysusers.d/pico4-steamos.conf
+base_key=$(cat "$project/userspace/packages.txt" "$project/userspace/pacman.conf" "$project/$steamos_user" |
+    sha256sum | cut -d' ' -f1)
 if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null)" != "$base_key" ]]; then
     phase "installing userspace/packages.txt into a new base root"
     rm -f "$build_root/base.key"
@@ -251,6 +257,9 @@ if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null
         sync=""
     fi
     mount_api "$base"
+    # The session user exists before pacman's hooks run: steamos-customizations' tmpfiles
+    # entries name it, and the sysusers hook runs before the tmpfiles hook.
+    install -D -m 0644 "$project/$steamos_user" "$base/${steamos_user#userspace/rootfs/}"
     in_b pacman --config /etc/pico4/pacman.conf -r /base --cachedir /var/cache/pico4-pkgs \
         "-S$sync" --noconfirm --needed "${assumed[@]}" "${packages[@]}"
     unmount_below "$base" inner
@@ -344,9 +353,15 @@ if [[ -n "$sensor_data" ]]; then
 fi
 
 in_t systemd-sysusers
-# The Frame's session user (steamos-customizations-deckard refers to it).
+# The Frame's session user (steamos-customizations-deckard refers to it), from
+# pico4-steamos.conf. sysusers creates no home: it comes from /etc/skel, as with useradd -m.
 user=steamos
 in_t id "$user" >/dev/null 2>&1 || in_t useradd -m -u 1000 -U -s /bin/bash "$user"
+if [[ ! -d "$T/home/$user" ]]; then
+    in_t cp -a /etc/skel "/home/$user"
+    in_t chmod 0700 "/home/$user"   # HOME_MODE in login.defs
+    in_t chown -R "$user:$user" "/home/$user"
+fi
 in_t usermod -a -G wheel,video,render,input,audio,aid_inet,aid_net_raw,aid_bt,aid_bt_net "$user"
 in_t passwd -d root >/dev/null
 in_t passwd -d "$user" >/dev/null
@@ -359,7 +374,7 @@ rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
 in_t systemd-tmpfiles --create steamos-offload.conf
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
-    pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target \
+    pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.

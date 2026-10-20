@@ -20,6 +20,8 @@ zstd
 deckard-arch-hotfixes-release-0.3/steamos-customizations-deckard
 deckard-arch-hotfixes-release-0.3/steamos-manager
 networkmanager
+# Battery level and charging state from the stock kernel's power supply (D-Bus activated)
+upower
 
 # Session, audio and graphics stack of the Frame. The Frame's gamescope links
 # libXxf86vm without declaring it. Mesa (OpenGL for Xwayland) comes from the

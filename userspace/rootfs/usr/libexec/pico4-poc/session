@@ -16,6 +16,10 @@ for _ in $(seq 100); do
 	sleep 0.1
 done
 [ -S "$runtime/systemd/private" ] || { echo "the user manager did not start" >&2; exit 1; }
+# A new session starts with clean counters: the user manager outlives the session, and
+# SteamVR's start limit (50-pico4-restart-limit.conf) is for crash loops within one session,
+# not for sessions started one after another.
+systemctl --user reset-failed
 
 # The user's OpenXR runtime: SteamVR's first start links SteamVR here
 # (steamvr_first_init.sh); without SteamVR, the system's Monado applies.
@@ -38,7 +42,6 @@ if [ -L "$user_runtime" ] && [[ "$(readlink "$user_runtime")" == /opt/steamvr/* 
 	rm -f "$user_runtime"
 fi
 
-systemctl --user reset-failed
 trap 'systemctl --user stop "$target"' HUP INT TERM
 systemctl --user --wait start "$target" &
 wait

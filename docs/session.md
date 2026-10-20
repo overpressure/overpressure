@@ -108,7 +108,8 @@ they need.
 The build masks `sddm`, which `pico4-session.service` replaces, and the system units that need
 Frame hardware or would touch the PICO's: `dsp_service`, `steamvr-program-ble` (a firmware OTA
 for the Frame's controller radio, which must never run against the PICO's station),
-`steamvr-set-kernel-thread-priorities` (for the Frame's kernel), `steamvr-v4l2loopback`,
+`steamvr-set-kernel-thread-priorities` (for the Frame's kernel; `pico4-kthread-priorities` below
+takes its place), `steamvr-v4l2loopback`,
 `steam-video-codec-setup` (the Frame's video codec nodes) and the debug port forwards
 (`steamvr-web-debug-portforward`, `steam-web-debug-portforward`). It masks these user units
 globally: `steamvr-v4l2cam` (the headset-view loopback camera), `steamvr-proxmicmute`
@@ -135,9 +136,10 @@ Further adaptations:
 | [`steamvr.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/50-pico4.conf) | `PICO4_VRDISPLAY=1`, `PICO4_VRDISPLAY_LOGFILE=%h/.local/share/Steam/logs/pico4-vrdisplay.txt` | the display layer for the compositor, logging beside SteamVR's logs |
 | | `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` | `driver_monado` recommends the panel's render size, not Monado's default 140 % |
 | [`/usr/bin/displays_turn_off_drm_master`](../userspace/rootfs/usr/bin/displays_turn_off_drm_master) | does nothing | stands in for the Frame's deckard-hw-support tool, which `steamvr.service` runs after SteamVR exits (`ExecStopPost` without `-`: a missing program fails the unit); the compositor releases the display itself |
+| [`pico4-kthread-priorities.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-kthread-priorities.service) | the GPU dispatcher (`kgsl_worker_thr`, SCHED_FIFO 12 on the stock kernel) and the display's commit and event threads (`crtc_commit:N`, `crtc_event:N`, SCHED_FIFO 61) at SCHED_RR 99, at boot | SteamVR's render and compositor threads run at SCHED_RR 99, so on a shared CPU they would hold back their own submissions and flips; the Frame's unit does the same for its kernel's threads. The station's SPI thread (`spi0`) already runs at SCHED_FIFO 99, and the GPU's workqueues (`kgsl-events`, `kgsl-workqueue`) at nice -20, which is all a workqueue takes |
 | `/opt/steamvr/bin/linuxarm64/vrcompositor-launcher` | `cap_sys_nice=eip` | the compositor raises its priority, as SteamVR's setup does on desktops |
 | `~/.steam/steam`, `~/.steam/root` | links to `~/.local/share/Steam` | SteamVR finds its logs and the Steam folder through them; on the Frame the Steam client's `RUNSTEAM.sh` makes them |
-| [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, then `pico4-steamvr-failed.service` | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end. Without `RestartMode=direct` the unit passes through the failed state before each restart, and `OnFailure=` would run at the first crash |
+| [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, then `pico4-steamvr-failed.service`; each new session resets the counter | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end. The user manager outlives a session, so the session script resets the user units' counters (`systemctl --user reset-failed`) before it starts its target: the limit is for a crash loop within one session. Without `RestartMode=direct` the unit passes through the failed state before each restart, and `OnFailure=` would run at the first crash |
 | [`pico4-session-fallback.path`](../userspace/rootfs/usr/lib/systemd/system/pico4-session-fallback.path) and `.service` | when SteamVR has failed for good (the user unit touches `/run/pico4-session/steamvr-failed`), restart `pico4-session.service` once with Monado's target | releases the display and the tracking hardware instead of leaving gamescope without SteamVR; the override in `/run/pico4-session` is used by that one start, so a reboot or a deliberate switch uses `session.conf` again |
 
 ### Monado as a service
@@ -195,8 +197,11 @@ other call passes through; without the panels, the layer stays out of the way.
   so a vblank clock at real-time priority (`SCHED_FIFO` 50) signals the
   `vkRegisterDisplayEventEXT` fences and advances `vkGetSwapchainCounterEXT`: one tick per
   refresh period, at the time the kernel's newest event timestamp predicts. The events only
-  correct its phase; it stops 250 ms after the last event. SteamVR takes the moment its fence
-  signals as the vblank's time. Frame dumps and statistics are written without the lock. A
+  correct its phase, and refreshes are counted by time: the kernel stamps a vblank when it
+  handles the interrupt, now and then 2–3 ms late, so a later stamp moves the phase by at most
+  20 µs and an earlier one at once. It stops 250 ms after the last event. SteamVR takes the
+  moment its fence signals as the vblank's time; with a lead (`PICO4_VRDISPLAY_VSYNC_LEAD_US`)
+  the clock signals each vblank that much early. Frame dumps and statistics are written without the lock. A
   present counts as shown (`vkWaitForPresentKHR`) when its retire fence signals.
 - **GPU clock floor.** While presenting, the layer raises the KGSL floor to 587 MHz or faster
   and restores it afterwards, as the KMS target does: under a compositor's load the stock
@@ -209,8 +214,10 @@ other call passes through; without the panels, the layer stays out of the way.
 | --- | --- |
 | `PICO4_VRDISPLAY=1` | enables the layer (`PICO4_VRDISPLAY_DISABLE=1` disables it) |
 | `PICO4_VRDISPLAY_FAKE=1` or `=WxH` | no panels: a 90 Hz timer stands in for vblanks and flips, so the handshake can be tested on any Vulkan driver, such as lavapipe on a PC; `WxH` sets the display's size |
-| `PICO4_VRDISPLAY_STATS=path` | statistics as JSON per swapchain, every ten seconds and when it is destroyed: commits and their rate, late commits, vblank rate, GPU and retire-fence waits and timeouts, present waits and their timeouts, the eyes' mean colours |
+| `PICO4_VRDISPLAY_STATS=path` | statistics as JSON per swapchain, every ten seconds and when it is destroyed: commits and their rate, late commits, vblank rate, kernel vblank intervals on the 10 ms tick, GPU and retire-fence waits and timeouts, present waits and their timeouts, the eyes' mean colours |
 | `PICO4_VRDISPLAY_MOTION=path` | per commit: commit time, the vblank that shows it, the image change against the previous commit and its horizontal shift; with `PICO4_VRDISPLAY_MOTION_BAND=1` also 16 bands of the left eye in hex, for offline shift measurements (the latency probe in [xr.md](xr.md)) |
+| `PICO4_VRDISPLAY_TRACE=path` | the present timeline, written with the statistics: one line per event (kind, time, present id, argument) for queued presents, finished rendering, commits, retire fences, `vkWaitForPresentKHR` begin and end, vblank ticks, kernel vblank events and acquired images |
+| `PICO4_VRDISPLAY_VSYNC_LEAD_US` | signal vblanks (event fences and the counter) this many microseconds early; SteamVR's service sets 6000, and the PICO 4 driver adds the same to its prediction |
 | `PICO4_VRDISPLAY_DUMP=path` | present `PICO4_VRDISPLAY_DUMP_FRAME` (default 300) as a PPM, downscaled by four; this also gives the statistics each eye's mean colour |
 | `PICO4_VRDISPLAY_GPU_MIN_MHZ` | GPU clock floor while presenting (default 587; 0 leaves the governor alone) |
 | `PICO4_VRDISPLAY_SYNC=off` | no semaphore emulation |
@@ -326,6 +333,41 @@ its retire fence signals at the next vblank, so most waits time out. The loop th
 15 ms timeout plus the compositor's own work, about 55 frames per second, out of phase with the
 vblank: a mix of one- and two-refresh frames. Closing it needs a frame that fits the 11.1 ms
 period with room for the phase, or a 72 Hz mode (13.9 ms).
+
+A frame that fits is not enough on its own. The layer's present timeline
+(`PICO4_VRDISPLAY_TRACE`) shows how SteamVR schedules: after the wait it starts the next frame
+about 4 ms before the vblank it expects (its running start), and with simplified shaders and
+overlay quality 1 the compositor needs 4.7 ms from present to finished rendering. Every other
+frame missed its vblank and showed one refresh later: 60 frames per second from three
+refreshes for two frames, with most commits late. The Facet renderer reached 87.5 per second
+because it starts earlier. The layer therefore signals vblanks early: SteamVR's service sets
+a 6 ms lead, and the driver predicts 6 ms further so that the pose still matches the real
+vblank. With the defaults the lead changes nothing (the compositor's 15.7 ms do not fit any
+schedule); with the two settings, 30 s each:
+
+| Lead | Commits per second | Late | Present-wait timeouts |
+| --- | --- | --- | --- |
+| 0 | 60.7 | 1,142 | 145 |
+| 2.5 ms | 68.3 | 795 | 690 |
+| 3.5 ms | 86.4 | 113 | 130 |
+| 5 ms | 88.2 | 64 | 63 |
+| 6 ms | 88.9 | 37 | 32 |
+| 7 ms | 88.6 | 57 | 57 |
+
+The serial console must stay quiet during a session. journald copies warnings and errors into
+the kernel log for pstore, and SteamVR logs errors by the thousand while it misses frames (about
+60 per second in its GPU-heavy defaults). At the console level 5 of
+`50-pico4-console.conf` each of them was also printed on the 115200-baud UART console, and the
+kernel writes the console with interrupts off. journald then spent minutes flushing them on
+CPU7, at 100 % and the CPU's top clock, and CPU7 takes the display interrupt (`msm_drm`): the
+vblank events and retire fences came on the 10 ms scheduler tick (eight steps of 10 ms, one
+of 20 ms, the panels still at 90 Hz), presents counted as shown up to 10 ms late, and the
+present waits timed out by the hundreds for a whole session. On the headset
+`pico4-console-quiet.service` sets the console level to 3, so only critical messages reach
+the UART; the kernel log, and with it pstore, keeps everything. The layer counts the kernel's
+vblank intervals of 9.6–10.4 ms (`vblank_tick_intervals` of `vblank_intervals` in its
+statistics) and logs the state once per ten seconds when more than a quarter of the intervals
+show it.
 
 `vrcompositor` and gamescope create their queues with a raised global priority, and with
 [the Turnip patch](graphics.md#run-the-tests) their KGSL contexts run at level 1 on the highest
@@ -512,6 +554,11 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: Valve's session with the Frame driver's compositor settings, no background dome (user, four minutes) | layer: 13,068 commits, 598 late, 8.4 ms GPU wait per frame, no present-wait timeout, hottest zone up to 69.4 °C; in the lenses the picture warped with head movement (lens correction not applied as before) and froze every few seconds: 47 of SteamVR's one-second present waits |
 | Headset: `pico4-valve-session-check`, 30 s, vblank clock | SteamVR's defaults: 54.7 commits/s, 10.6 ms GPU wait per frame, no one-second wait; the Frame driver's settings without `waitForSceneGraph`: 3,392 commits at 87.5/s, 79 late, 7.2 ms, 6 of the present waits over 15 ms, no one-second wait (16 in 30 s before the clock) |
 | Headset: GPU profile, 10 s per setting (KGSL tracepoints) | compositor 15.7 ms of GPU per frame with SteamVR's defaults; simplified shaders 9.4 ms, overlay quality 1 10.8 ms, no dome 12.6 ms, both settings 4.7 ms; with both 66 frames per second, limited by the present waits |
+| Headset: present timeline (`PICO4_VRDISPLAY_TRACE`), 30 s each | SteamVR's defaults: 15.3 ms from present to finished rendering, 370 of 498 present-wait timeouts on frames still rendering; simplified shaders and overlay quality 1: 4.8 ms, every other frame missing its vblank (60.7 commits/s); the same with a 6 ms vsync lead: 88.9 commits/s, 37 late, 32 present-wait timeouts; with the defaults the lead changes nothing (53.4 and 51.6/s) |
+| Headset: a light session 20 s after Valve's GPU-heavy check, twice each | console level 5: journald at 100 % on CPU7, 1,149 and 1,156 of about 1,730 kernel vblank intervals on the 10 ms tick, 61 commits/s, 619 and 577 present-wait timeouts; with the display interrupt moved to CPUs 4–6 still 44 %. Console level 3: 0 and 2 on the tick, 89.2 and 88.9 commits/s, 11 and 18 timeouts |
+| Headset: GPU and display kernel threads at SCHED_RR 99 (`pico4-kthread-priorities`) | Valve's 30 s check, its last 10 s window: 49.3 commits/s, 325 of 461 late, longest gap 128 ms without; 51.0/s, 301 of 475, 139 ms with. Simplified shaders and overlay quality 1: 88.0-88.4 commits/s with, 88.2-88.8 without: no measurable change |
+| Headset: first Valve session after a boot, three boots in a row | the IMU listed 35.1 s after `pico4-imu-ready.service` started; each first session presented with the PICO 4 driver, no restart. A driver probing earlier finds no IMU and falls back to Monado's simulated headset, whose display SteamVR cannot find (render watchdog abort) |
+| Headset: five starts of Valve's session in 252 s, then a forced crash loop | all five present, no start limit hit; the crash loop still ends in the fallback after three starts |
 | Headset: forced crash loop (`vrcompositor` killed whenever it runs) | three crashes, driver starts (station resets) 34.5 s apart, then "Start request repeated too quickly"; 11 s later the session runs Monado's target, the one-time override consumed; no SteamVR start afterwards |
 | Headset: Monado service | userspace check passes (session active, every listed device node accessible to `steamos`); OpenXR pose: 959–960 of 960 located, tilt 4.29° against the accelerometer's 4.28°, heading rate 0.005°/s; display client through the service (two layers, 30 s): about 2,686 frames at 89.5–89.6 Hz, 11 late, KMS target 88.4–89.6 commits/s at vblank 89.998 Hz, no fence timeout, eyes left/right correct; statistics written when the service stops, GPU floor back to the stock level 6 (305 MHz); the session user's client through the socket link: 1,348 frames at 89.74 Hz |
 | Headset: acceptance cycle with stock restore (flash-run with the archive, EDL readback of boot, stock ABL restore) | passes in about 8 minutes from PICO OS to PICO OS on stock boot and ABL, 39 s of it receiving the 801 MiB archive: userspace check with the fan service, head IMU, OpenXR pose (tilt 3.8°), Monado display client at 89.9 frames/s, display layer at 86 frames/s on a 90 Hz vblank, shared semaphores, Valve's session presenting after 15 s at 51.3 commits/s with the headset and both controllers in SteamVR (hottest zone 45.3 → 69.4 °C with the fan at 30 %; 47.1 → 85.7 °C without fan control); stock boot and ABL verified by EDL readback; PICO OS 5.13.7 boots |

@@ -353,12 +353,16 @@ struct display
 	bool vblank_started, clock_started, vblank_stop, vblank_pending;
 	uint64_t vblank_count, vblank_sequence; //!< As the event fences and the counter see them.
 	int64_t vblank_ns;
-	int64_t phase_ns;          //!< Kernel timestamp of the newest vblank event, 0 before one.
+	int64_t phase_ns;          //!< The clock's vblank time (kernel timestamps), 0 before one.
 	uint64_t phase_sequence;   //!< Its sequence.
+	int64_t lead_ns;           //!< The clock signals vblanks this much before they happen.
 	uint64_t ticked_sequence;  //!< The newest vblank the clock signalled.
 	double first_vblank, last_vblank;
 	uint64_t first_sequence, last_sequence;
 	uint64_t stat_vblanks;
+	//! Kernel vblank intervals of one refresh, and those on the 10 ms scheduler tick.
+	uint64_t stat_intervals, stat_tick_intervals;
+	uint64_t logged_intervals, logged_tick_intervals;
 
 	struct event_fence *events;
 	struct swapchain *swapchains;
@@ -370,6 +374,63 @@ static struct display g_display = {
     .fd = -1,
     .saved_min_pwrlevel = -1,
 };
+
+/*
+ * The present timeline for PICO4_VRDISPLAY_TRACE=path: one line per event (kind, time in ns,
+ * present id, argument), written with the statistics. Q present queued (image index), G its
+ * rendering done (wait in us), C committed, R retire fence signalled (the present shown), W and
+ * w vkWaitForPresentKHR begins (timeout in us) and returns (VkResult), V vblank tick (sequence),
+ * A image acquired (index).
+ */
+struct trace_event
+{
+	int64_t t;
+	uint64_t id;
+	int32_t arg;
+	char kind;
+};
+enum { TRACE_EVENTS = 1 << 16 };
+static struct trace_event g_trace[TRACE_EVENTS];
+static uint64_t g_trace_n, g_trace_written;
+static bool g_trace_on;
+
+static int64_t
+now_ns(void);
+
+//! Locked.
+static void
+trace(char kind, uint64_t id, int64_t arg)
+{
+	if (!g_trace_on) {
+		return;
+	}
+	struct trace_event *e = &g_trace[g_trace_n++ % TRACE_EVENTS];
+	e->t = now_ns();
+	e->id = id;
+	e->arg = arg > INT32_MAX ? INT32_MAX : arg < INT32_MIN ? INT32_MIN : (int32_t)arg;
+	e->kind = kind;
+}
+
+//! Not locked: copies the new events under the lock, then writes them.
+static void
+trace_flush(FILE *f)
+{
+	static struct trace_event copy[TRACE_EVENTS];
+	pthread_mutex_lock(&g_display.lock);
+	uint64_t from = g_trace_written, to = g_trace_n;
+	if (to - from > TRACE_EVENTS) {
+		from = to - TRACE_EVENTS; // overwritten meanwhile
+	}
+	for (uint64_t i = from; i < to; i++) {
+		copy[i - from] = g_trace[i % TRACE_EVENTS];
+	}
+	g_trace_written = to;
+	pthread_mutex_unlock(&g_display.lock);
+	for (uint64_t i = 0; i < to - from; i++) {
+		fprintf(f, "%c,%" PRId64 ",%" PRIu64 ",%d\n", copy[i].kind, copy[i].t, copy[i].id, copy[i].arg);
+	}
+	fflush(f);
+}
 
 // Handles: the addresses of these objects.
 static int g_display_mode_tag;
@@ -883,6 +944,9 @@ kms_disable(struct display *d)
  *
  */
 
+#define CLOCK_HOLD_NS (250 * 1000 * 1000LL) //!< Ticks continue this long after the newest event.
+#define PHASE_SLEW_NS (20 * 1000LL)          //!< Most a late kernel timestamp moves the phase.
+
 //! Locked. Vblank @p sequence has begun: its event fences signal and the counter moves.
 static void
 vblank_tick(struct display *d, uint64_t sequence)
@@ -891,6 +955,7 @@ vblank_tick(struct display *d, uint64_t sequence)
 		d->vblank_sequence = sequence;
 	}
 	d->vblank_count++;
+	trace('V', 0, (int64_t)sequence);
 	for (struct event_fence *e = d->events; e != NULL; e = e->next) {
 		if (e->vblank) {
 			e->signaled = true;
@@ -908,12 +973,37 @@ on_vblank(struct display *d, uint64_t sequence, int64_t when_ns)
 		d->first_vblank = t;
 		d->first_sequence = sequence;
 	}
+	/*
+	 * In some sessions the kernel handles the display interrupt only on the 100 Hz
+	 * scheduler tick: the events of a 90 Hz panel then come 10 ms apart, every ninth 20 ms.
+	 */
+	if (d->stat_vblanks > 0 && sequence == d->last_sequence + 1) {
+		int64_t interval = when_ns - d->vblank_ns;
+		d->stat_intervals++;
+		if (interval > 9600000 && interval < 10400000) {
+			d->stat_tick_intervals++;
+		}
+	}
 	d->last_vblank = t;
 	d->last_sequence = sequence;
 	d->stat_vblanks++;
 	d->vblank_ns = when_ns;
-	d->phase_ns = when_ns;
-	d->phase_sequence = sequence;
+	trace('K', sequence, (now_ns() - when_ns) / 1000);
+	if (d->phase_ns == 0 || when_ns - d->phase_ns > CLOCK_HOLD_NS) {
+		// The first event, or the first after the display was off: the kernel's count.
+		d->phase_ns = when_ns;
+		d->phase_sequence = sequence;
+	} else {
+		/*
+		 * The kernel timestamps a vblank when it handles the interrupt: now and then
+		 * 2-3 ms late, for minutes in some sessions. A late stamp moves the phase only
+		 * by PHASE_SLEW_NS, an earlier one at once; refreshes are counted by time.
+		 */
+		int64_t n = (when_ns - d->phase_ns + PERIOD_NS / 2) / PERIOD_NS;
+		int64_t err = when_ns - (d->phase_ns + n * PERIOD_NS);
+		d->phase_ns += n * PERIOD_NS + (err > PHASE_SLEW_NS ? PHASE_SLEW_NS : err);
+		d->phase_sequence += (uint64_t)n;
+	}
 	if (d->fake) {
 		vblank_tick(d, sequence); // the fake vblanks come from a timer already
 	} else {
@@ -928,7 +1018,6 @@ on_vblank(struct display *d, uint64_t sequence, int64_t when_ns)
  * fences follow a clock instead: locked to the kernel's timestamps and the refresh period,
  * at real-time priority. Late events only correct the phase.
  */
-#define CLOCK_HOLD_NS (250 * 1000 * 1000LL) //!< Ticks continue this long after the newest event.
 
 static void *
 clock_main(void *arg)
@@ -941,7 +1030,8 @@ clock_main(void *arg)
 	}
 	pthread_mutex_lock(&d->lock);
 	while (!d->vblank_stop) {
-		int64_t now = now_ns();
+		// With a lead, each vblank is signalled lead_ns early: the clock runs that much ahead.
+		int64_t now = now_ns() + d->lead_ns;
 		if (d->phase_ns == 0 || now - d->phase_ns > CLOCK_HOLD_NS) {
 			// No recent kernel vblank: the display is off or starting.
 			struct timespec wait = deadline_after(PERIOD_NS);
@@ -958,7 +1048,7 @@ clock_main(void *arg)
 			vblank_tick(d, latest);
 			continue;
 		}
-		int64_t target = d->phase_ns + (k + 1) * PERIOD_NS;
+		int64_t target = d->phase_ns + (k + 1) * PERIOD_NS - d->lead_ns;
 		pthread_mutex_unlock(&d->lock);
 		struct timespec at = {.tv_sec = target / NS_PER_S, .tv_nsec = target % NS_PER_S};
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &at, NULL);
@@ -1053,6 +1143,12 @@ vblank_start(struct display *d)
 	pthread_cond_init(&d->cond, &attr);
 	pthread_condattr_destroy(&attr);
 	d->vblank_stop = false;
+	/*
+	 * SteamVR starts its compositor a fixed few milliseconds before the vblank it sees
+	 * (its running start); a compositor frame that needs longer misses the vblank and
+	 * shows one refresh later. A lead signals vblanks early so that the frame starts early.
+	 */
+	d->lead_ns = env_num("PICO4_VRDISPLAY_VSYNC_LEAD_US", 0) * 1000;
 	d->vblank_started = pthread_create(&d->vblank_thread, NULL, vblank_main, d) == 0;
 	d->clock_started = !d->fake && pthread_create(&d->clock_thread, NULL, clock_main, d) == 0;
 }
@@ -1321,7 +1417,8 @@ sc_write_stats(struct swapchain *sc, const char *path)
 	        ",\"retire_timeouts\":%" PRIu64 ",\"gpu_timeouts\":%" PRIu64 ",\"vblanks\":%" PRIu64
 	        ",\"vblank_hz\":%.4f,\"gpu_wait_ms\":{\"mean\":%.3f,\"max\":%.3f}"
 	        ",\"retire_wait_ms\":{\"mean\":%.3f,\"max\":%.3f},\"present_waits\":%" PRIu64
-	        ",\"present_wait_timeouts\":%" PRIu64 ",\"max_present_wait_lag\":%" PRIu64 ",\"eye_mean_rgb\":",
+	        ",\"present_wait_timeouts\":%" PRIu64 ",\"max_present_wait_lag\":%" PRIu64
+	        ",\"vblank_tick_intervals\":%" PRIu64 ",\"vblank_intervals\":%" PRIu64 ",\"eye_mean_rgb\":",
 	        d->fake ? "true" : "false", d->fake ? "fake" : d->mode.name,
 	        sc->fourcc == DRM_FORMAT_XRGB8888 ? "XRGB8888" : "XBGR8888", sc->count, s->presents, s->commits,
 	        s->commits > 1 && seconds > 0 ? (s->commits - 1) / seconds : 0.0, s->max_interval_ns / 1e6, s->late,
@@ -1330,7 +1427,8 @@ sc_write_stats(struct swapchain *sc, const char *path)
 	                                                  : 0.0,
 	        s->commits ? s->gpu_wait_ns / 1e6 / s->commits : 0.0, s->max_gpu_wait_ns / 1e6,
 	        s->retire_waits ? s->retire_wait_ns / 1e6 / s->retire_waits : 0.0, s->max_retire_wait_ns / 1e6,
-	        s->present_waits, s->present_wait_timeouts, s->max_present_wait_lag);
+	        s->present_waits, s->present_wait_timeouts, s->max_present_wait_lag, d->stat_tick_intervals,
+	        d->stat_intervals);
 	if (s->eye_mean[0][0] < 0) {
 		fprintf(f, "null}\n");
 	} else {
@@ -1340,6 +1438,13 @@ sc_write_stats(struct swapchain *sc, const char *path)
 	if (fclose(f) != 0 || rename(tmp, path) != 0) {
 		LOG("cannot write %s: %s", path, strerror(errno));
 	}
+	// The scheduler-tick state, once per statistics period in which it shows.
+	uint64_t n = d->stat_intervals - d->logged_intervals, tick = d->stat_tick_intervals - d->logged_tick_intervals;
+	if (n >= 90 && tick * 4 > n) {
+		LOG("vblank events on the 10 ms scheduler tick: %" PRIu64 " of %" PRIu64 " intervals", tick, n);
+	}
+	d->logged_intervals = d->stat_intervals;
+	d->logged_tick_intervals = d->stat_tick_intervals;
 }
 
 //! Locked. The pending commit is on screen: the image before it is free again.
@@ -1362,6 +1467,7 @@ sc_retired(struct swapchain *sc)
 	sc->shown = sc->pending;
 	sc->pending = -1;
 	sc->imgs[sc->shown].state = IMAGE_SHOWN;
+	trace('R', sc->imgs[sc->shown].present_id, sc->shown);
 	if (sc->imgs[sc->shown].present_id > sc->presented_id) {
 		sc->presented_id = sc->imgs[sc->shown].present_id;
 	}
@@ -1404,6 +1510,7 @@ sc_commit(struct swapchain *sc, uint32_t index)
 		img->state = IMAGE_PENDING;
 	}
 	sc->pending_ns = now_ns();
+	trace('C', img->present_id, (int64_t)index);
 	pthread_cond_broadcast(&d->cond);
 
 	struct sc_stats *s = &sc->stats;
@@ -1442,6 +1549,14 @@ present_main(void *arg)
 	static uint8_t rows[MOTION_ROWS * MOTION_ROW_PX];
 	unsigned sampled = 0, which = 0;
 	bool log_band = env_num("PICO4_VRDISPLAY_MOTION_BAND", 0) != 0;
+	const char *trace_path = getenv("PICO4_VRDISPLAY_TRACE");
+	FILE *trace_file = trace_path != NULL ? fopen(trace_path, "we") : NULL;
+	if (trace_file != NULL) {
+		pthread_mutex_lock(&d->lock);
+		g_trace_written = g_trace_n;
+		g_trace_on = true;
+		pthread_mutex_unlock(&d->lock);
+	}
 	if (motion != NULL) {
 		setvbuf(motion, NULL, _IOLBF, 0);
 		fprintf(motion, "#commit_ns,display_ns,luma_change,sample_ms,shift_px\n");
@@ -1504,6 +1619,7 @@ present_main(void *arg)
 		int64_t waited = now_ns() - before;
 
 		pthread_mutex_lock(&d->lock);
+		trace('G', img->present_id, waited / 1000);
 		if (ret != VK_SUCCESS) {
 			sc->stats.gpu_timeouts++;
 			LOG("GPU work of present %u did not finish: %d", index, ret);
@@ -1567,12 +1683,22 @@ present_main(void *arg)
 			stats_ns = sc->stats.last_ns;
 			pthread_mutex_unlock(&d->lock);
 			sc_write_stats(sc, stats); // a running compositor's numbers so far
+			if (trace_file != NULL) {
+				trace_flush(trace_file);
+			}
 			pthread_mutex_lock(&d->lock);
 		}
 	}
 	pthread_mutex_unlock(&d->lock);
 	if (motion != NULL) {
 		fclose(motion);
+	}
+	if (trace_file != NULL) {
+		trace_flush(trace_file);
+		pthread_mutex_lock(&d->lock);
+		g_trace_on = false;
+		pthread_mutex_unlock(&d->lock);
+		fclose(trace_file);
 	}
 	return NULL;
 }
@@ -1933,6 +2059,7 @@ sc_acquire(struct swapchain *sc, uint64_t timeout, VkSemaphore semaphore, VkFenc
 	}
 	if (index >= 0) {
 		sc->imgs[index].state = IMAGE_ACQUIRED;
+		trace('A', 0, index);
 	}
 	pthread_mutex_unlock(&d->lock);
 	if (index < 0) {
@@ -2732,6 +2859,7 @@ layer_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info)
 				                      : 0;
 				sc->queue[sc->queued++] = index;
 				sc->stats.presents++;
+				trace('Q', img->present_id, (int64_t)index);
 			} else {
 				img->state = IMAGE_FREE;
 			}
@@ -2821,6 +2949,7 @@ layer_WaitForPresentKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t pres
 	struct timespec deadline = deadline_after(timeout);
 	VkResult ret = VK_SUCCESS;
 	pthread_mutex_lock(&g_display.lock);
+	trace('W', present_id, timeout > (uint64_t)INT32_MAX * 1000 ? INT32_MAX : (int64_t)(timeout / 1000));
 	sc->stats.present_waits++;
 	uint64_t lag = present_id > sc->presented_id ? present_id - sc->presented_id : 0;
 	if (lag > sc->stats.max_present_wait_lag) {
@@ -2840,6 +2969,7 @@ layer_WaitForPresentKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t pres
 			break;
 		}
 	}
+	trace('w', present_id, ret);
 	pthread_mutex_unlock(&g_display.lock);
 	return ret;
 }

@@ -5,7 +5,8 @@
 # good, from the fallback's /run/pico4-session/override.
 [Unit]
 Description=PICO 4 user session (steamos)
-After=systemd-user-sessions.service systemd-logind.service pico4-monado.socket
+# After the head IMU is listed: SteamVR's driver_monado probes it when SteamVR starts.
+After=systemd-user-sessions.service systemd-logind.service pico4-monado.socket pico4-sensors.target
 Wants=pico4-monado.socket
 
 [Service]
