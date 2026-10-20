@@ -104,8 +104,10 @@ with HTTP range requests, and checked against the CRC-32 in the zip directory.
    * the Alpine minirootfs, checked against its published SHA-256;
    * the packages of `PACKAGES` in `pico4/image.py` with their dependencies, each verified
      through Alpine's checksum chain: APKINDEX, SHA-1 of the control segment, SHA-256 of the
-     data segment ([pico4/alpine.py](../pico4/alpine.py)). The APKINDEX comes over HTTPS; its
-     signature is not checked;
+     data segment ([pico4/alpine.py](../pico4/alpine.py)). Each APKINDEX's RSA signature is
+     verified against Alpine's aarch64 signing keys pinned in
+     [pico4/apksign.py](../pico4/apksign.py); an unsigned index, an unknown key or a bad
+     signature stops the build and drops the index from the cache;
    * kernel modules from the stock ramdisk's `lib/modules` (current firmware has none);
    * the [initramfs/](../initramfs/) overlay;
    * `pico4-reboot` from [prebuilt/aarch64/](../prebuilt/aarch64/);

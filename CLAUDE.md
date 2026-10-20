@@ -61,7 +61,7 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
   `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`),
   `userspace.py` and `graphics.py` (validators), `elfdeps.py` (ELF dependency check),
-  `windows_ncm.py`, and the boot-image, cpio, Alpine, OTA and kernel helpers.
+  `windows_ncm.py`, and the boot-image, cpio, Alpine (`apksign.py`: APKINDEX signatures), OTA and kernel helpers.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
   the f_mass_storage kernel thread and with it the USB link. `pico4-userspace receive/switch`
   hands over to stage 2.

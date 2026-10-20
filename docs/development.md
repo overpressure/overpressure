@@ -9,7 +9,7 @@ acceptance cycle, development loop) are in [hardware-testing.md](hardware-testin
 ```text
 pico4/            host tooling, a standard-library Python package: python -m pico4 COMMAND
   image.py          stage-1 boot image (build, inspect, match); firmware.json: PICO's OTA builds
-  bootimg.py, cpio.py, compress.py, alpine.py, firmware.py, payload.py, kernelinfo.py, superimg.py
+  bootimg.py, cpio.py, compress.py, alpine.py, apksign.py, firmware.py, payload.py, kernelinfo.py, superimg.py
   device.py         identity, EDL backups, engineering ABL, unlock and restore
   hardware_test.py  the bounded acceptance runner (preflight, run, flash-run)
   cycle.py          the unattended acceptance cycle that ends on stock boot and ABL

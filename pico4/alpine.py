@@ -1,6 +1,8 @@
 """Fetch Alpine Linux aarch64 packages without apk-tools.
 
 * downloads APKINDEX files and the minirootfs from the Alpine CDN (HTTPS),
+* verifies each APKINDEX's RSA signature against Alpine's pinned signing keys
+  (:mod:`pico4.apksign`),
 * resolves dependencies against the packages already in the minirootfs,
 * verifies every package through Alpine's checksum chain
   (APKINDEX "C:" -> SHA-1 of the control segment -> "datahash" SHA-256 of the
@@ -19,6 +21,7 @@ import urllib.request
 import zlib
 from dataclasses import dataclass, field
 
+from . import apksign
 from .cpio import Tree
 
 MIRROR = "https://dl-cdn.alpinelinux.org/alpine"
@@ -108,17 +111,26 @@ def _record_to_package(rec: dict[str, str], repo_url: str = "") -> Package:
 
 def load_index(cache: str, branch: str, repos: list[str], arch: str, log=print) -> Index:
     index = Index()
+    keys = apksign.alpine_keys(arch)
     for repo in repos:
         url = f"{MIRROR}/{branch}/{repo}/{arch}"
         path = _download(f"{url}/APKINDEX.tar.gz", os.path.join(cache, branch, repo, arch, "APKINDEX.tar.gz"), log)
         with open(path, "rb") as f:
             raw = f.read()
+        what = f"{branch}/{repo}/{arch}/APKINDEX.tar.gz"
+        try:
+            key = apksign.verify_index(raw, keys, what)
+        except apksign.SignatureError:
+            os.remove(path)  # never keep an unverified index in the cache
+            raise
+        log(f"  {what}: signature by {key} verified")
+        # Read APKINDEX only from the signed second stream, never from the signature stream.
+        _signature, (_control, content) = gzip_members(raw)
         text = ""
-        for _member, content in gzip_members(raw):
-            with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as tf:
-                for m in _safe_members(tf):
-                    if m.name == "APKINDEX":
-                        text = tf.extractfile(m).read().decode()
+        with tarfile.open(fileobj=io.BytesIO(content), mode="r:") as tf:
+            for m in _safe_members(tf):
+                if m.name == "APKINDEX":
+                    text = tf.extractfile(m).read().decode()
         for rec in parse_records(text):
             index.add(_record_to_package(rec, url))
     return index
