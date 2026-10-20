@@ -200,6 +200,18 @@ priority and creates every context at KGSL's default level 8. The PICO 4's KGSL 
 four ringbuffers, one per four levels (`preemption` is 1), so the patch reports four priorities
 and maps realtime, high, medium and low to levels 1, 4, 8 and 12.
 
+Three defects that the Stearlight project (Quest 2, the same Mesa 26.1.6 KGSL backend) works
+around do not need a patch here:
+
+- **Dma-buf allocations keeping their fd.** In 26.1.6 the DMA-heap and ION paths close the
+  allocation's fd after the import; the buffer keeps only its own duplicate, which freeing it
+  closes. Over two minutes of Valve's session `vrcompositor` stays at 235–237 open fds and
+  611 MiB of KGSL memory, gamescope and the dashboard's renderer just as flat.
+- **Holes and trails in the right eye** without an extra barrier before the compositor's render
+  passes. Frames dumped by the display layer show both eyes complete and alike.
+- **A cross-process timeline semaphore.** The display layer already emulates SteamVR's shared
+  timeline and binary semaphores over sync files ([session.md](session.md#shared-semaphores)).
+
 ## Verified results
 
 Original PICO 4, PICO OS 5.13.7, stock kernel `4.19.81-perf+`, tests from the stage-1 overlay:
