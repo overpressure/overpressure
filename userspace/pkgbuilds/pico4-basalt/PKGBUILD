@@ -5,7 +5,7 @@
 # default -march=native would describe the build host (QEMU), not the XR2.
 pkgname=pico4-basalt
 pkgver=2.0.1
-pkgrel=2
+pkgrel=3
 arch=(aarch64)
 url="https://gitlab.freedesktop.org/mateosss/basalt"
 license=(BSD-3-Clause)
@@ -20,9 +20,11 @@ source=("basalt::git+https://gitlab.freedesktop.org/mateosss/basalt.git#commit=$
         "eigen::git+https://gitlab.com/libeigen/eigen.git#commit=bc3b39870ecb690a623a3f49149a358b95c5781d"
         "Sophus::git+https://github.com/strasdat/Sophus.git#commit=d0b7315a0d90fc6143defa54596a3a95d9fa10ec"
         "cereal::git+https://github.com/USCiLab/cereal.git#commit=ebef1e929807629befafbb2918ea1a08c7194554"
-        basalt-realtime-input.patch)
+        basalt-realtime-input.patch basalt-vio-config.patch pico4-vio.json)
 sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
-            '8b3702d8b0c419e655783bb98249c5f670a370bbbcde95463a4b4aeb819a4600')
+            '8b3702d8b0c419e655783bb98249c5f670a370bbbcde95463a4b4aeb819a4600'
+            'e1dcff17f77d738a6cb369620da0df844e1de55a3ad1adb180cc415fa9590db3'
+            'b3ede56a7d3e83a2e32734753eaeddba1deeceb0c2f0f8c5c84d829ffee64ae1')
 
 _submodules() {
   local repo=$1
@@ -40,6 +42,8 @@ prepare() {
   _submodules basalt/thirdparty/basalt-headers thirdparty/eigen thirdparty/Sophus thirdparty/cereal
   # Bounded input queues: poses lagged 0.64 s behind their frames on the PICO 4 (docs/xr.md).
   patch -d basalt -p1 < basalt-realtime-input.patch
+  # VIO settings from PICO4_BASALT_VIO_CONFIG while the driver supplies the calibration.
+  patch -d basalt -p1 < basalt-vio-config.patch
 }
 
 build() {
@@ -53,4 +57,6 @@ build() {
 package() {
   DESTDIR="$pkgdir" cmake --install build
   install -Dm644 basalt/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  # Basalt's defaults with the PICO 4's changes (docs/xr.md), loaded by the PICO 4 driver.
+  install -Dm644 pico4-vio.json "$pkgdir/usr/share/pico4-basalt/pico4-vio.json"
 }

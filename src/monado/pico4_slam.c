@@ -102,6 +102,11 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_cpus, "PICO4_SLAM_CPUS", 0x3f)
  * walk (Basalt multiplies the densities by the square root of the IMU rate).
  */
 DEBUG_GET_ONCE_OPTION(pico4_slam_imu_noise, "PICO4_SLAM_IMU_NOISE", "0.016,0.001,0.0016,0.0001")
+/*!
+ * Basalt's VIO settings (a full VioConfig JSON: Basalt's defaults with the PICO 4's changes,
+ * docs/xr.md); empty for Basalt's built-in defaults. The calibration comes from the driver.
+ */
+DEBUG_GET_ONCE_OPTION(pico4_slam_vio_config, "PICO4_SLAM_VIO_CONFIG", "/usr/share/pico4-basalt/pico4-vio.json")
 
 #define SLAM_TRACE(s, ...) U_LOG_IFL_T(s->log_level, __VA_ARGS__)
 #define SLAM_DEBUG(s, ...) U_LOG_IFL_D(s->log_level, __VA_ARGS__)
@@ -739,6 +744,14 @@ pico4_slam_create(const char *calibration_dir,
 		return NULL;
 	}
 
+	// pico4-basalt reads it when it creates the tracker (basalt-vio-config.patch).
+	const char *vio = debug_get_option_pico4_slam_vio_config();
+	if (vio != NULL && *vio != '\0' && access(vio, R_OK) == 0) {
+		setenv("PICO4_BASALT_VIO_CONFIG", vio, 1);
+		SLAM_INFO(s, "Basalt VIO settings from %s", vio);
+	} else {
+		unsetenv("PICO4_BASALT_VIO_CONFIG");
+	}
 	struct t_slam_tracker_config config;
 	t_slam_fill_default_config(&config);
 	config.cam_count = s->cam_count;
