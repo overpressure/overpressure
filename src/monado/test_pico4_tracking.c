@@ -62,6 +62,19 @@ test_station(void)
 	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CAMERA_FPS, bad_rate, sizeof(bad_rate)));
 	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_ACK, init, sizeof(init)));
 
+	// CameraSetPara: scene setting for cameras 0-3, then (after 3 zero bytes) the LED setting.
+	const struct pico4_station_exposure scene = {300, 64}, leds = {4, 26}, long_leds = {50, 64};
+	const uint8_t golden[28] = {0x03, 0x2C, 0x01, 0x40, 0x2C, 0x01, 0x40, 0x2C, 0x01, 0x40, 0x2C, 0x01, 0x40, 0, 0, 0,
+	                            0x04, 0x00, 0x1A, 0x04, 0x00, 0x1A, 0x04, 0x00, 0x1A, 0x04, 0x00, 0x1A};
+	uint8_t built[28];
+	pico4_station_camera_para(built, scene, leds);
+	EXPECT(memcmp(built, golden, sizeof(golden)) == 0);
+	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, built, sizeof(built)));
+	// The second set stays within PICO OS's LED limits (10 lines, gain 32).
+	pico4_station_camera_para(built, scene, long_leds);
+	EXPECT(built[16] == 10 && built[17] == 0 && built[18] == 32 && built[25] == 10 && built[27] == 32);
+	EXPECT(built[1] == 0x2C && built[2] == 0x01 && built[3] == 0x40);
+
 	// Replies: header and CRC.
 	uint8_t reply[PICO4_STATION_FRAME] = {0xBB, 0x01, 0x04, 0x01, 0x01};
 	reply[39] = pico4_station_crc8(reply, 39);

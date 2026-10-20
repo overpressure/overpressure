@@ -14,7 +14,8 @@
  *   pico4-cam capture [--slots 0,1,2,3] [--frames N] [--fps 60|30] [--out DIR]
  *                     [--ring N] [--timeout MS] [--lane-assign SLOT=LANE]
  *                     [--no-station] [--no-station-reset] [--stats-log FILE]
- *                     [--exposure LINES [--gain G]] [--lines N] [--sensor-lines N]
+ *                     [--exposure LINES [--gain G]] [--led-exposure LINES [--led-gain G]]
+ *                     [--lines N] [--sensor-lines N]
  *       Streams until every selected camera delivered N frames (default 30),
  *       saves an early scene frame of each camera as DIR/camS.pgm (8 bits, the
  *       640x480 scene rows) and DIR/camS.raw16 (the whole buffer, little-endian
@@ -25,8 +26,9 @@
  *       is power-cycled first (unless --no-station-reset) and told to start
  *       once the sensors stream. It refuses unless all four sensors are on, so
  *       --slots only selects which cameras are reported. --stats-log writes
- *       "slot sof_boottime_ns mean latency_ns request phase lines gain" per
- *       frame (mean of a sparse grid; latency from start of frame to delivery;
+ *       "slot sof_boottime_ns mean latency_ns request phase lines gain peak
+ *       saturated" per frame (mean of a sparse grid; latency from start of
+ *       frame to delivery; the brightest sample and the samples at 1023;
  *       the applied exposure from the metadata line, phase 0 if it does not
  *       decode), for example to find which slot goes dark when a lens is
  *       covered. --lines and --sensor-lines (480-482) override the lines the
@@ -36,6 +38,9 @@
  *       tenth or eleventh, after the setting took effect. Every other frame
  *       is the station's short controller-LED exposure; the saved frame is a
  *       scene frame by its metadata (or the brighter of two if it has none).
+ *       --led-exposure and --led-gain (default 4 and 26, at most 10 and 32)
+ *       fill the command's second set, which leaves both phases alone: the
+ *       station keeps the LED phase at 4 lines and gain 26.
  *
  * -v and -vv (before or after the command) log progress and every ioctl to
  * stderr. Exit status 0 means success: every node found (list), every probe
@@ -77,7 +82,7 @@ usage(FILE *f)
 	      "       pico4-cam [-v|-vv] capture [--slots 0,1,2,3] [--frames N] [--fps 60|30] [--out DIR]\n"
 	      "                 [--ring N] [--timeout MS] [--lane-assign SLOT=LANE] [--no-station]\n"
 	      "                 [--no-station-reset] [--stats-log FILE] [--exposure LINES [--gain G]]\n"
-	      "                 [--lines N] [--sensor-lines N]\n",
+	      "                 [--led-exposure LINES [--led-gain G]] [--lines N] [--sensor-lines N]\n",
 	      f);
 }
 
@@ -351,6 +356,23 @@ grid_mean(const struct pico4_cam_frame *f)
 	return n > 0 ? (double)sum / (double)n : 0.0;
 }
 
+//! The brightest sample and how many reach the 10-bit maximum (saturated controller LEDs).
+static unsigned
+frame_peak(const struct pico4_cam_frame *f, unsigned *out_saturated)
+{
+	unsigned peak = 0, saturated = 0;
+	for (unsigned y = 0; y < f->height; y++) {
+		const uint8_t *line = (const uint8_t *)f->data + (size_t)y * f->stride;
+		for (unsigned x = 0; x < f->width; x++) {
+			unsigned v = sample(f, line, x);
+			peak = v > peak ? v : peak;
+			saturated += v >= 1023;
+		}
+	}
+	*out_saturated = saturated;
+	return peak;
+}
+
 static void
 log_frame(FILE *log, const struct pico4_cam_frame *f)
 {
@@ -361,9 +383,10 @@ log_frame(FILE *log, const struct pico4_cam_frame *f)
 	if (!pico4_cam_meta_decode(f->meta, f->stride, &m)) {
 		m.phase = 0;
 	}
-	fprintf(log, "%d %lld %.2f %lld %llu %u %u %u\n", f->slot, (long long)f->sof_boottime_ns, grid_mean(f),
+	unsigned saturated, peak = frame_peak(f, &saturated);
+	fprintf(log, "%d %lld %.2f %lld %llu %u %u %u %u %u\n", f->slot, (long long)f->sof_boottime_ns, grid_mean(f),
 	        now - (long long)f->sof_boottime_ns, (unsigned long long)f->request_id, m.phase, m.exposure_lines,
-	        m.gain);
+	        m.gain, peak, saturated);
 }
 
 static void
@@ -434,7 +457,7 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 {
 	const char *dir = ".";
 	FILE *stats_log = NULL;
-	unsigned long exposure = 0, gain = 16;
+	unsigned long exposure = 0, gain = 16, led_exposure = 4, led_gain = 26;
 	unsigned long frames = 30, timeout = 3000;
 	struct slot_stats st[PICO4_CAM_NUM];
 	struct pico4_cam *cam = NULL;
@@ -470,6 +493,8 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 			dir = v;
 		} else if (strcmp(a, "--exposure") == 0 && parse_uint(v, 1700, &exposure)) {
 		} else if (strcmp(a, "--gain") == 0 && parse_uint(v, 1023, &gain) && gain >= 16) {
+		} else if (strcmp(a, "--led-exposure") == 0 && parse_uint(v, 1700, &led_exposure)) {
+		} else if (strcmp(a, "--led-gain") == 0 && parse_uint(v, 1023, &led_gain)) {
 		} else if (strcmp(a, "--stats-log") == 0) {
 			if (stats_log != NULL) {
 				fclose(stats_log);
@@ -539,7 +564,9 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 			station_started = true;
 			if (exposure != 0) {
 				g_save_frame = 10;
-				pico4_station_camera_set_exposure(station, (unsigned)exposure, (unsigned)gain);
+				struct pico4_station_exposure scene = {(unsigned)exposure, (unsigned)gain};
+				struct pico4_station_exposure leds = {(unsigned)led_exposure, (unsigned)led_gain};
+				pico4_station_camera_set_exposures(station, scene, leds);
 			}
 			polling = pthread_create(&poller, NULL, station_thread, station) == 0;
 		}

@@ -99,6 +99,32 @@ pico4_station_camera_start(struct pico4_station *st);
 int
 pico4_station_camera_set_exposure(struct pico4_station *st, unsigned exposure_lines, unsigned gain);
 
+//! One exposure phase's setting: sensor lines and gain (16 = 1x).
+struct pico4_station_exposure
+{
+	unsigned lines, gain;
+};
+
+//! PICO OS's limits for controller-LED exposures: at most 10 lines, gain below 33.
+#define PICO4_STATION_LED_MAX_LINES 10
+#define PICO4_STATION_LED_MAX_GAIN 32
+
+/*!
+ * CameraSetPara's 28-byte payload (u16 lines, u8 gain per camera): the scene phase's setting
+ * for cameras 0-3 in bytes 1-12, a second set in bytes 16-27, bytes 13-15 0. By the frames'
+ * metadata the first set drives the scene phase; the second changes neither phase on this
+ * station (the LED phase stays at 4 lines, gain 26, whatever it holds). PICO OS fills it with
+ * its LED setting; here it carries @p leds, clamped to PICO OS's LED limits.
+ */
+void
+pico4_station_camera_para(uint8_t out[28], struct pico4_station_exposure scene, struct pico4_station_exposure leds);
+
+//! Both phases' exposure (see pico4_station_camera_para).
+int
+pico4_station_camera_set_exposures(struct pico4_station *st,
+                                   struct pico4_station_exposure scene,
+                                   struct pico4_station_exposure leds);
+
 //! Stop FSIN for all cameras.
 int
 pico4_station_camera_stop(struct pico4_station *st);

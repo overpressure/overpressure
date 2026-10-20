@@ -304,23 +304,47 @@ pico4_station_camera_start(struct pico4_station *st)
 	return r;
 }
 
-int
-pico4_station_camera_set_exposure(struct pico4_station *st, unsigned exposure_lines, unsigned gain)
+void
+pico4_station_camera_para(uint8_t out[CAMERA_SET_PARA_LEN], struct pico4_station_exposure scene,
+                          struct pico4_station_exposure leds)
 {
-	// As the stock CameraSetPara: 8 x (u16 exposure, u8 gain), cameras 0-3 in
-	// bytes 1-12 and 16-27 (the stock service fills both sets), u16 and event
-	// index at 13-15 left 0. The station answers nothing.
-	uint8_t p[CAMERA_SET_PARA_LEN] = {CAMERA_SET_PARA};
-	for (int i = 0; i < 8; i++) {
-		uint8_t *e = p + 1 + 3 * i + (i >= 4 ? 3 : 0);
-		e[0] = (uint8_t)(exposure_lines & 0xff);
-		e[1] = (uint8_t)(exposure_lines >> 8);
-		e[2] = (uint8_t)gain;
+	if (leds.lines > PICO4_STATION_LED_MAX_LINES) {
+		leds.lines = PICO4_STATION_LED_MAX_LINES;
 	}
+	if (leds.gain > PICO4_STATION_LED_MAX_GAIN) {
+		leds.gain = PICO4_STATION_LED_MAX_GAIN;
+	}
+	memset(out, 0, CAMERA_SET_PARA_LEN);
+	out[0] = CAMERA_SET_PARA;
+	for (int i = 0; i < 8; i++) {
+		const struct pico4_station_exposure *x = i < 4 ? &scene : &leds;
+		uint8_t *e = out + 1 + 3 * i + (i >= 4 ? 3 : 0);
+		e[0] = (uint8_t)(x->lines & 0xff);
+		e[1] = (uint8_t)(x->lines >> 8);
+		e[2] = (uint8_t)x->gain;
+	}
+}
+
+int
+pico4_station_camera_set_exposures(struct pico4_station *st,
+                                   struct pico4_station_exposure scene,
+                                   struct pico4_station_exposure leds)
+{
+	// The station answers nothing.
+	uint8_t p[CAMERA_SET_PARA_LEN];
+	pico4_station_camera_para(p, scene, leds);
 	pthread_mutex_lock(&st->lock);
 	int r = send_cmd(st, PICO4_STATION_CMD_CAMERA, p, sizeof(p));
 	pthread_mutex_unlock(&st->lock);
 	return r;
+}
+
+int
+pico4_station_camera_set_exposure(struct pico4_station *st, unsigned exposure_lines, unsigned gain)
+{
+	// The second set as PICO OS fills it: the station's own LED setting (4 lines, gain 26).
+	struct pico4_station_exposure scene = {exposure_lines, gain}, leds = {4, 26};
+	return pico4_station_camera_set_exposures(st, scene, leds);
 }
 
 int
