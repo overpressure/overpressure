@@ -601,7 +601,7 @@ setup_track(struct pico4_hmd *h)
 			setvbuf(h->slam_csv, NULL, _IOLBF, 0);
 			setvbuf(h->pose_csv, NULL, _IOLBF, 0);
 			fprintf(h->slam_csv, "#image_ns,now_ns,result,error_m,error_deg,x,y,z,innovation_mps,speed_mps\n");
-			fprintf(h->pose_csv, "#at_ns,now_ns,x,y,z,qx,qy,qz,qw,flags\n");
+			fprintf(h->pose_csv, "#at_ns,now_ns,x,y,z,qx,qy,qz,qw,flags,vx,vy,vz,wx,wy,wz\n");
 		}
 	}
 }
@@ -625,10 +625,11 @@ pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
 		m_relation_history_get(h->relation_hist, at_timestamp_ns + ahead, out_relation);
 		if (h->pose_csv != NULL) {
 			const struct xrt_pose *p = &out_relation->pose;
-			fprintf(h->pose_csv, "%lld,%lld,%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f,%d\n", (long long)at_timestamp_ns,
-			        (long long)os_monotonic_get_ns(), p->position.x, p->position.y, p->position.z,
-			        p->orientation.x, p->orientation.y, p->orientation.z, p->orientation.w,
-			        (int)out_relation->relation_flags);
+			const struct xrt_vec3 *v = &out_relation->linear_velocity, *w = &out_relation->angular_velocity;
+			fprintf(h->pose_csv, "%lld,%lld,%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
+			        (long long)at_timestamp_ns, (long long)os_monotonic_get_ns(), p->position.x, p->position.y,
+			        p->position.z, p->orientation.x, p->orientation.y, p->orientation.z, p->orientation.w,
+			        (int)out_relation->relation_flags, v->x, v->y, v->z, w->x, w->y, w->z);
 		}
 		return XRT_SUCCESS;
 	}

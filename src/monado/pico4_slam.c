@@ -96,6 +96,12 @@ DEBUG_GET_ONCE_BOOL_OPTION(pico4_slam_exposure_centre, "PICO4_SLAM_EXPOSURE_CENT
 #define SOF_AFTER_EXPOSURE_NS 52000   //!< Start-of-frame interrupt after the exposure's end (stock).
 //! CPUs (bit mask) Basalt may use; 0 = no restriction. Default: all but cores 6 and 7.
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_cpus, "PICO4_SLAM_CPUS", 0x3f)
+/*!
+ * The head IMU's noise model for Basalt, continuous-time: accelerometer noise
+ * density, accelerometer bias random walk, gyro noise density, gyro bias random
+ * walk (Basalt multiplies the densities by the square root of the IMU rate).
+ */
+DEBUG_GET_ONCE_OPTION(pico4_slam_imu_noise, "PICO4_SLAM_IMU_NOISE", "0.016,0.001,0.0016,0.0001")
 
 #define SLAM_TRACE(s, ...) U_LOG_IFL_T(s->log_level, __VA_ARGS__)
 #define SLAM_DEBUG(s, ...) U_LOG_IFL_D(s->log_level, __VA_ARGS__)
@@ -274,16 +280,23 @@ load_calibration(struct pico4_slam *s, const char *dir, const int *cams)
 		math_matrix_4x4_isometry_from_pose(&pose, &c->T_imu_cam);
 	}
 
-	// ICM-42688 class noise; Basalt estimates the biases.
+	// The noise model (PICO4_SLAM_IMU_NOISE); Basalt estimates the biases.
+	double n[4];
+	const char *spec = debug_get_option_pico4_slam_imu_noise();
+	if (sscanf(spec, "%lf,%lf,%lf,%lf", &n[0], &n[1], &n[2], &n[3]) != 4 || !(n[0] > 0 && n[1] > 0 && n[2] > 0 && n[3] > 0)) {
+		SLAM_ERROR(s, "PICO4_SLAM_IMU_NOISE must be four positive numbers, not '%s'", spec);
+		return false;
+	}
+	SLAM_INFO(s, "IMU noise: accelerometer %g (bias walk %g), gyro %g (bias walk %g)", n[0], n[1], n[2], n[3]);
 	struct t_inertial_calibration accel = {
 	    .transform = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
-	    .bias_std = {0.001, 0.001, 0.001},
-	    .noise_std = {0.016, 0.016, 0.016},
+	    .bias_std = {n[1], n[1], n[1]},
+	    .noise_std = {n[0], n[0], n[0]},
 	};
 	struct t_inertial_calibration gyro = {
 	    .transform = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
-	    .bias_std = {0.0001, 0.0001, 0.0001},
-	    .noise_std = {0.0016, 0.0016, 0.0016},
+	    .bias_std = {n[3], n[3], n[3]},
+	    .noise_std = {n[2], n[2], n[2]},
 	};
 	s->calib.imu.base.accel = accel;
 	s->calib.imu.base.gyro = gyro;

@@ -498,8 +498,10 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
 - **IMU.** Raw head IMU samples in the factory body frame, which is the frame of the camera
   extrinsics; every second sample goes to Basalt (`PICO4_SLAM_IMU_DIVISOR`). The calibration
   given to Basalt declares the rate the DSP delivers, 1024 Hz for the 1 kHz request (512 Hz for
-  500 Hz), divided by that divisor, and ICM-42688-class noise (standard deviations:
-  accelerometer 0.016, gyro 0.0016; bias walk 0.001 and 0.0001); Basalt estimates the biases.
+  500 Hz), divided by that divisor, and ICM-42688-class noise (`PICO4_SLAM_IMU_NOISE`,
+  continuous-time densities: accelerometer 0.016, gyro 0.0016; bias walk 0.001 and 0.0001);
+  Basalt estimates the biases. PICO OS's own head tracker uses 0.03, 0.005, 1e-5 and 1e-6; given
+  to Basalt they made it jiggle and drift more (still and worn A/B, below).
   The driver measures the rate over 10 s and logs it once, and again as a warning when it
   strays more than 5% from the declared one.
 - **HMD origin.** Basalt tracks the body (IMU) frame. The HMD origin between the eyes sits at
@@ -753,6 +755,7 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `SLAM_PREDICTION_TYPE` | 3 (gyro and acceleration) | without the fusion, Monado's prediction between Basalt's poses: 0 none, 1 pose only, 2 gyro, 4 dead reckoning |
 | `SLAM_ACCEL_DEADBAND` | 0.3 | world acceleration (m/s²) that prediction ignores |
 | `PICO4_SLAM_BRIGHTNESS` | 70 | mean 8-bit brightness the digital gain aims for |
+| `PICO4_SLAM_IMU_NOISE` | `0.016,0.001,0.0016,0.0001` | Basalt's IMU noise model: accelerometer noise density, its bias random walk, gyro noise density, its bias random walk (continuous time) |
 | `PICO4_SLAM_CPUS` | 63 (cores 0–5) | CPUs for Basalt and its feeders, decimal bit mask; 0 = no restriction |
 | `PICO4_SLAM_DUMP` | unset | directory for PGM frames of every 500th set |
 | `PICO4_CONTROLLER_AXES_LEFT`, `_RIGHT` | `x,-z,y` | controller IMU axes in the grip frame |
@@ -814,6 +817,9 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Metadata line, `pico4-cam` | decodes to the commanded exposure and gain (300 lines and gain 32, 120 lines and gain 16); every camera 50 scene and 50 LED frames of 100; LED frames 4 lines at gain 26; the 481st captured line continues the scene (mean row difference 8.8 against 8.4 one row up), 0 errors at 49.8 Hz |
 | Fusion, headless, headset still, 30–40 s | agrees with Basalt within 0.3–0.6 mm (median), latency images to fusion 76–92 ms (median); a forced Basalt reset (`PICO4_SLAM_RESET_AFTER_S`) restarts it without a jump; velocity disagreement with the IMU at rest: 99th percentile 0.025 m/s |
 | Fusion against Basalt, worn | the handed-out pose matches Basalt's at a 0 ms time shift (rotation within 0.35°), no lag of its own; still, it moves 0.36 mm and 0.024° around its 200 ms average (Monado's prediction 0.21 mm and 0.013°) |
+| Staged jiggle, headset still, 4 × 27 s | Basalt 0.22–1.06 mm and 0.004–0.032° around its 200 ms average; fusion output 0.06–0.21 mm and 0.001–0.003°; SteamVR's extrapolation with the reported velocities 0.06–0.29 mm; slow drift 11–76 mm peak to peak (Basalt's) |
+| IMU noise A/B (ours against PICO OS's values), still and worn blind | Basalt with PICO OS's values: 0.49–3.02 mm jiggle against 0.10–0.29 mm, two runaways worn against none; the user found ours calmer |
+| Head pose worn, standing still | 0.035° RMS around its 200 ms average at 1.7°/s, as in Basalt: the head's own motion (0.001° on a table) |
 | Runaway handling, seven worn sessions of about a minute | Basalt within 0.55–1.51 m of the start (before: 13.6 m and 1,750 m in two of four sessions); three sessions had runaways in Basalt's first seconds, each held, reset and re-anchored; no pose above 3 m/s afterwards in five; correction size 4.6–8.0 mm (median) |
 | 6DoF, lower cameras about 15 cm from a surface | 1.6–4.8 m drift in 30 s (6.5 m in a 10 s run): no stereo depth, not an accuracy test |
 | Acceptance cycle (`flash-run --userspace`, then stock restoration) | passed: archive received in 86–105 s, SSH 112–123 s after the start of the transfer; systemd `running`, 0 failed units, storage read-only, USB link unchanged, Turnip 65,536 pixels; IMU, pose and display checks as above (two layers, Basalt running); stock boot verified by EDL readback, stock ABL restored, PICO OS started |
