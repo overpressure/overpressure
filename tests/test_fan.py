@@ -397,6 +397,28 @@ class BatchTest(unittest.TestCase):
             self.assertNotIn(serial.decode(), err.getvalue())
 
 
+class FanInfoTest(unittest.TestCase):
+    # GetFanInfo replies on the headset at duties 0, 30, 45 and 60 %.
+    GOLDEN = (
+        ((0x00, 0x00, 0x00, 0, 0, 0, 0x00, 0), {"duty": 0, "rpm": 0, "running": False}),
+        ((0x1E, 0xD3, 0x12, 0, 0, 0, 0x01, 0), {"duty": 30, "rpm": 4819, "running": True}),
+        ((0x2D, 0x13, 0x1B, 0, 0, 0, 0x01, 0), {"duty": 45, "rpm": 6931, "running": True}),
+        ((0x3C, 0x0E, 0x23, 0, 0, 0, 0x01, 0), {"duty": 60, "rpm": 8974, "running": True}),
+    )
+
+    def test_golden_replies(self):
+        for payload, want in self.GOLDEN:
+            frame = fan.find_reply(fan.GET_FAN_INFO, b"\x00" + reply(*payload))
+            self.assertEqual(fan.fan_info(frame), {**want, "other": "00000000"})
+
+    def test_wrong_length(self):
+        with self.assertRaises(ValueError):
+            fan.fan_info(reply(1, 2, 3))
+
+    def test_query_stays_on_the_allowlist(self):
+        self.assertEqual(fan.request(fan.GET_FAN_INFO).hex(), "a030000000" + "90")
+
+
 class StateTest(unittest.TestCase):
     def test_fresh_state_only(self):
         with tempfile.TemporaryDirectory() as tmp:

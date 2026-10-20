@@ -125,7 +125,8 @@ def validate_check(value, require_vulkan: bool = False, require_fan: bool = Fals
     Besides systemd, /dev and the storage policy, the session user must be
     logged in with its target active, and Monado's socket must listen. The fan
     service must run wherever the lens MCU's UART exists, which require_fan
-    demands (the headset); whether the MCU acknowledges its duty is reported only.
+    demands (the headset), and the MCU must have acknowledged its duty without an
+    error since: a session must not run without cooling.
     """
     if not isinstance(value, dict) or value.get("schema") != 1:
         raise ValueError("Userspace check produced no schema-1 result")
@@ -159,8 +160,14 @@ def validate_check(value, require_vulkan: bool = False, require_fan: bool = Fals
     service = fan.get("service")
     if service not in ("active", "skipped") or (require_fan and service != "active"):
         raise ValueError(f"The fan service is not running (docs/cooling.md): {service}")
-    if service == "active" and not isinstance(fan.get("state"), dict):
-        raise ValueError("The fan daemon writes no state")
+    if service == "active":
+        state = fan.get("state")
+        if not isinstance(state, dict):
+            raise ValueError("The fan daemon writes no state")
+        if state.get("error"):
+            raise ValueError(f"The lens MCU fails the fan (docs/cooling.md): {state['error']}")
+        if type(state.get("duty")) is not int:
+            raise ValueError("The lens MCU has not acknowledged a fan duty (docs/cooling.md)")
     if require_vulkan:
         vk = value.get("vulkan") or {}
         if vk.get("status") != "passed":

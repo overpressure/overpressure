@@ -65,7 +65,7 @@ replies `79 … xor`):
 | `A0 0F 00 00 00 AF` | `79 lo hi xx` | GetFanSpeed: the duty |
 | `A0 10 00 00 00 B0` | `79 lo hi xx` | GetFanRPM: the tachometer |
 | `A0 26 00 00 00 86` | 8 bytes | one of GetGD32MCUVersion's three queries |
-| `A0 30 00 00 00 90` | 10 bytes, not decoded | GetFanInfo (`fan_info_t`) |
+| `A0 30 00 00 00 90` | `79 dd lo hi 00 00 00 rr 00 xx` | GetFanInfo (`fan_info_t`): duty `dd`, RPM `hi lo`, `rr` 1 while the fan runs; the other bytes read zero |
 | `A0 29 …` | | SetFanRPM, for the RPM tables below |
 
 Each transaction votes the port's clocks (`ioctl 0x544D`), flushes both queues, writes the
@@ -128,7 +128,8 @@ table.
 - **The table.** `PICO4_FAN_PROFILE=auto` (the default) reads the batch from
   `/usr/share/qcom/pico4/calibration/fan-profile`, one word from the private sensor data (see
   [Build](#build)). Without that file it uses "early", which runs the fan at least as fast at
-  every temperature.
+  every temperature. The MCU cannot tell: GetFanInfo reports the fan's duty, RPM and whether
+  it runs, nothing that identifies the fan or its batch. This headset's batch is late.
 - **Stopping.** The fan keeps its last duty when the service stops.
 - **Where it runs.** The unit's condition is `/sys/class/tty/ttyHS1`, present from kernel boot
   on the headset (udev creates the `/dev` node later); QEMU has none, so the unit is skipped
@@ -153,18 +154,19 @@ userspace archive, and `scripts/build-userspace.sh` enables the unit
 `calibration/fan-profile` into the sensor data: it pipes the serial number from the persist
 backup into `pico4-fan batch -`, which prints only `early` or `late`, so the serial goes no
 further. The build installs the file with the rest of the calibration. Sensor data extracted
-before this step has no `fan-profile`; the daemon then uses the early table.
+without this step has no `fan-profile`; the daemon then uses the early table.
 
 ## Checks
 
 - **`pico4-userspace-check`.** Where `/sys/class/tty/ttyHS1` exists, `pico4-fan.service` must
   be active and write its state. The result's `fan` object holds the service state and
   `pico4-fan state`: profile, duty, reason, boost, RPM, hottest sensor and mean, and the MCU
-  error if any. An MCU that does not acknowledge its duty is reported, not a failure. In QEMU
-  the section is `skipped`.
+  error if any. The MCU must have acknowledged a duty (the daemon's `duty` is the last
+  acknowledged one) and report no error; otherwise the check fails and names the MCU's error.
+  It waits up to 10 s for the first acknowledgement. In QEMU the section is `skipped`.
 - **The acceptance runner** requires the service on the headset (`validate_check` with
-  `require_fan` in [pico4/userspace.py](../pico4/userspace.py)) and keeps the `fan` object in
-  `result.json`.
+  `require_fan` in [pico4/userspace.py](../pico4/userspace.py)), rejects a state without an
+  acknowledged duty or with an MCU error, and keeps the `fan` object in `result.json`.
 - **`pico4-valve-session-check`** records the daemon's state before and after the session
   (`fan.before`, `fan.after_run`; null without a daemon), next to the hottest zone.
 
@@ -197,8 +199,11 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
 | Stock system partition: GD32 service and client | SetFanSpeed `A0 0E 00 dd 00 xx` (duty < 101, ack `79`), GetFanSpeed `0F`, GetFanRPM `10` (`79 lo hi xx`); SetFanRPM `29` and GetFanInfo `30` through the generic command path, which recomputes the checksum |
 | Live tree thermal zones | trips and cooling maps as in the table above |
 | Development headset (persist backup, through `scripts/extract-sensor-data.sh`'s step) | late batch; standard PICO 4, control type 1 |
+| Headset: `pico4-fan` with the sensor data extracted again | profile `late` from `calibration/fan-profile`; at a hottest mean of 41 °C the fan stands (the late table runs it from 55 °C) |
+| Headset: GetFanInfo at 0, 30, 45 and 60 % | `00 0000 … 00`, `1e d312 … 01`, `2d 131b … 01`, `3c 0e23 … 01`: duty, RPM (4,819, 6,931, 8,974) and running; no fan identity |
 | Host: [tests/test_fan.py](../tests/test_fan.py) | passes: frames against the stock bytes and the allowlist, replies, both tables and their hysteresis, boost and failsafe, the loop's means and timing, retries, the state file and what the checks read from it, zone selection, profile choice, the batch rule on synthetic serial numbers (the serial is never printed), the unit; one UART transaction over a pty on Linux |
-| Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | pass: the userspace check's `fan` object (active with a state; skipped only without `require_fan`; an MCU error reported, not failed) and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
+| Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | pass: the userspace check's `fan` object (active with a state; skipped only without `require_fan`; a state without an acknowledged duty or with an MCU error fails) and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
+| Headset: `pico4-userspace-check` and `dev check` | pass with the duty acknowledged (30 %, about 5,080 rpm, no MCU error); a daemon state with a SetFanSpeed error fails the check and names it |
 | Headset: `pico4-fan.service` in the acceptance cycle | active; the MCU answers the queries and acknowledges SetFanSpeed, no MCU error in the journal; the fan reads 0 % and 0 rpm before the daemon, then runs at 30 % from the early table (hottest mean 35–43 °C) at 4,849–4,914 rpm; Monado reads the IPD (71.99 mm) through the shared port lock |
 | Headset: Valve's session check (30 s) with the fan | hottest zone 45.3 °C before, 69.4 °C after; the fan stayed at 30 % (the early table holds 30 % up to a 70 °C mean); without fan control the same check went from 47.1 to 85.7 °C |
 | Build: [test_pico4_lens.c](../src/monado/test_pico4_lens.c) | the IPD reader gives up with `-EBUSY` after a second while another descriptor holds the port lock, and goes on once it is free |
@@ -209,12 +214,5 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
    - Sweep the duty against the RPM.
    - Check the fan's response to a load step.
    - Run Valve's session for 10 minutes against an agreed limit for the hottest zone.
-2. **Stricter checks.** The MCU acknowledges on the headset, so `pico4-userspace-check` can
-   require an acknowledged duty instead of reporting it.
-3. **The headset's table.** The current sensor data predates `calibration/fan-profile`, so the
-   daemon runs the early table; extracting the sensor data again selects the headset's late
-   table.
-4. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
+2. **Tuning.** Adjust the table or the boost if the stock table does not hold the session under
    that limit.
-5. **GetFanInfo.** Decode its reply; if it identifies the fan, the daemon can choose its table
-   without the backup.

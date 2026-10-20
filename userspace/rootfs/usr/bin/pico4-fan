@@ -276,6 +276,19 @@ def find_reply(command: int, data: bytes) -> Optional[bytes]:
     return None
 
 
+def fan_info(frame: bytes) -> Dict:
+    """GetFanInfo's reply (79, eight bytes, xor): the fan's state, not which fan it is.
+
+    Byte 0 is the duty, bytes 1-2 the RPM (little-endian), byte 6 is 1 while the fan
+    runs; bytes 3-5 and 7 read zero at every duty, stopped or running.
+    """
+    data = frame[1:-1]
+    if len(data) != REPLY_LENGTH[GET_FAN_INFO] - 2:
+        raise ValueError(f"GetFanInfo reply of {len(frame)} bytes")
+    return {"duty": data[0], "rpm": data[1] | data[2] << 8, "running": data[6] != 0,
+            "other": (data[3:6] + data[7:8]).hex()}
+
+
 class Uart:
     """One transaction on the MCU's UART, as gd32ipdservice does it: open, clock vote,
     flush, write the request, poll for the reply, close. An exclusive flock keeps the
@@ -629,7 +642,7 @@ def cmd_status(args) -> int:
     fan = Fan(Uart(args.device))
     for key, call in (("duty", fan.duty), ("rpm", fan.rpm),
                       ("version", lambda: fan.query(GET_MCU_VERSION)[1:-1]),
-                      ("info", lambda: fan.query(GET_FAN_INFO)[1:-1])):
+                      ("info", lambda: fan_info(fan.query(GET_FAN_INFO)))):
         try:
             value = call()
             out[key] = value.hex(" ") if isinstance(value, bytes) else value

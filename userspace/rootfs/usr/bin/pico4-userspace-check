@@ -151,19 +151,32 @@ need "Monado socket linked into the session" [ -L "/run/user/$session_uid/monado
 
 # -- the fan (docs/cooling.md) ---------------------------------------------------
 # pico4-fan.service runs where the lens MCU's UART exists (not in QEMU) and
-# writes its state every second; its duty and any MCU error are reported.
+# writes its state every second. The MCU must have acknowledged a duty and
+# answer without an error: a session must not run without cooling.
 fan_service=skipped
 fan_state=null
+fan_mcu=
 if [ -e /sys/class/tty/ttyHS1 ]; then
 	fan_service=$(systemctl is-active pico4-fan.service 2>/dev/null)
 	for _ in $(seq 10); do
 		fan_state=$(pico4-fan state 2>/dev/null)
-		grep -q '^{' <<<"$fan_state" && break
-		fan_state=null
+		if grep -q '^{' <<<"$fan_state"; then
+			# Empty once the MCU acknowledged a duty and reports no error.
+			fan_mcu=$(python3 -c 'import json, sys
+s = json.loads(sys.argv[1])
+if s.get("error"):
+    print(s["error"])
+elif not isinstance(s.get("duty"), int):
+    print("no duty acknowledged yet")' "$fan_state" 2>&1)
+			[ -z "$fan_mcu" ] && break
+		else
+			fan_state=null
+		fi
 		sleep 1
 	done
 	need "fan service active (is: $fan_service)" [ "$fan_service" = active ]
 	need "fan daemon writes its state" [ "$fan_state" != null ]
+	[ "$fan_state" = null ] || need "MCU acknowledges the fan duty ($fan_mcu)" [ -z "$fan_mcu" ]
 fi
 packages=$(pacman -Q 2>/dev/null | wc -l)
 pkg() { pacman -Q "$1" 2>/dev/null | awk '{print $2}'; }

@@ -67,9 +67,26 @@ class CheckValidationTests(unittest.TestCase):
         userspace.validate_check(value)
         with self.assertRaises(ValueError):
             userspace.validate_check(value, require_fan=True)
-        # An MCU that does not answer is reported, not a failure.
-        value["fan"] = {"service": "active", "state": {**FAN_STATE, "duty": None, "error": "SetFanSpeed 30 %: no reply"}}
-        userspace.validate_check(value, require_fan=True)
+
+    def test_fan_duty_must_be_acknowledged(self):
+        # Acknowledged: the daemon's duty is the one the MCU acknowledged, without an error since.
+        userspace.validate_check(PASSING, require_fan=True)
+        cases = (
+            # Refused: SetFanSpeed never got its 79, so there is no duty, and the error is named.
+            ({"duty": None, "error": "SetFanSpeed 30 %: no reply to 0x0e (nothing)"}, "SetFanSpeed 30 %"),
+            # Acknowledged once, but the MCU stopped answering.
+            ({"error": "GetFanRPM: no reply to 0x10 (nothing)"}, "GetFanRPM"),
+            # Missing: no reply yet and no error either (a daemon that has not sent).
+            ({"duty": None}, "not acknowledged"),
+            ({"duty": "30"}, "not acknowledged"),
+        )
+        for change, message in cases:
+            value = copy.deepcopy(PASSING)
+            value["fan"]["state"].update(change)
+            with self.assertRaisesRegex(ValueError, message):
+                userspace.validate_check(value, require_fan=True)
+            with self.assertRaisesRegex(ValueError, message):
+                userspace.validate_check(value)
 
     def test_vulkan_only_required_with_firmware(self):
         value = copy.deepcopy(PASSING)
