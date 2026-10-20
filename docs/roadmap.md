@@ -350,9 +350,10 @@ Details: [xr.md](xr.md).
 
 Details: [xr.md](xr.md).
 
-- Worn, the pose lags and jumps by 2–30 cm: Monado extrapolates about 150 ms from Basalt's
-  25 Hz poses. A filter in the driver that propagates the pose with the 1 kHz IMU and blends in
-  Basalt's poses as delayed corrections should replace that extrapolation.
+- Worn, the image jiggles at rest and lags on fast turns. The IMU fusion follows Basalt
+  without lag of its own; the lag builds up in SteamVR's rendering at about 52 frames per
+  second. Basalt runs away now and then in its first seconds; the fusion holds the position,
+  resets Basalt and re-anchors.
 - Basalt can jump in its first seconds, before it has initialized (0.8 m in one walking test).
   The driver could hold the 3DoF pose until Basalt has settled.
 - A still headset facing a surface a few centimetres away drifts by metres: there is no stereo

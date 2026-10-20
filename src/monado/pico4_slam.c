@@ -8,12 +8,13 @@
  * pulses their shared FSIN line (pico4_station.h), so all cameras expose
  * together. The station alternates two exposures: every other frame is a
  * short one in which only the controllers' infrared LEDs show (for
- * controller tracking). Those are skipped; the scene frames are told apart
- * by brightness and their place in the alternation, which survives dropped
- * frames. Frames of one pulse are grouped by their start-of-frame time,
- * converted from 10 to 8 bits (black level removed, slowly adapting digital
- * gain) and pushed to the tracker in camera order with one timestamp, as
- * Basalt requires. The station also sets the exposure (the sensors' own
+ * controller tracking). Each frame's first line is the sensor's metadata:
+ * its exposure phase and the exposure and gain it was taken with
+ * (pico4_cam_meta_decode). The LED frames are skipped by that phase. Frames
+ * of one pulse are grouped by their start-of-frame time, converted from 10 to
+ * 8 bits (black level removed, slowly adapting digital gain) and pushed to the
+ * tracker in camera order with one timestamp, as Basalt requires: the middle
+ * of their exposures. The station also sets the exposure (the sensors' own
  * registers are ignored in this mode); its default of about 3 ms leaves
  * indoor scenes nearly black, so a slow auto-exposure loop raises it.
  *
@@ -31,6 +32,7 @@
  */
 
 #include "pico4_slam.h"
+#include "pico4_fusion.h"
 
 #include "xrt/xrt_config_build.h"
 
@@ -102,9 +104,6 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_cpus, "PICO4_SLAM_CPUS", 0x3f)
 
 #define STATION_HZ 50.0
 #define SCENE_HZ (STATION_HZ / 2) //!< Every other frame is a controller-LED exposure.
-#define FRAME_NS (1000000000.0 / STATION_HZ)
-//! First-camera frames per exposure phase before the scene phase is trusted.
-#define PHASE_FRAMES 8
 //! OV7251 10-bit black level.
 #define BLACK_LEVEL 16
 //! Auto exposure: mean signal (10-bit, above black) it aims for, and its limits.
@@ -125,12 +124,11 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_cpus, "PICO4_SLAM_CPUS", 0x3f)
 //! Frames of one FSIN pulse start within this window.
 #define GROUP_WINDOW_NS (4 * U_TIME_1MS_IN_NS)
 
-/*!
- * Origin of the HMD frame (between the eyes) in the body frame (x up, y left,
- * z back): centred between the cameras, a little below and behind them.
- * Only affects how position follows head rotation.
- */
-static const struct xrt_vec3 P_BODY_HMD = {-0.025f, 0.052f, 0.04f};
+static const struct xrt_vec3 P_BODY_HMD = PICO4_HMD_IN_BODY;
+//! Basalt's world has Z up, OpenXR's Y up: -90 degrees about X.
+static const struct xrt_quat Q_XR_W = {-0.70710678f, 0, 0, 0.70710678f};
+//! The HMD axes (x right, y up, z back) in the body frame (x up, y left, z back).
+static const struct xrt_quat Q_B_H = {0, 0, -0.70710678f, 0.70710678f};
 
 struct pico4_slam
 {
@@ -156,8 +154,12 @@ struct pico4_slam
 		int64_t ts;
 		int have;
 		struct xrt_frame *frames[PICO4_TCAM_COUNT];
+		int64_t taken[PICO4_TCAM_COUNT]; //!< Middle of each frame's own exposure.
 	} group;
 	uint64_t sets_pushed, sets_dropped, sets_busy, sequence;
+	//! Frames skipped by their metadata: controller-LED or other phases, undecodable metadata.
+	uint64_t frames_leds, frames_other, frames_bad;
+	int64_t max_spread_ns; //!< Largest spread of exposure middles within a set since the last report.
 
 	//! Frame sets for the tracker, guarded by push_oth's lock.
 	struct os_thread_helper push_oth;
@@ -184,11 +186,6 @@ struct pico4_slam
 	bool rate_reported;
 	float gain, brightness;
 
-	//! Exposure alternation: start of the newest pulse, its phase and each phase's mean signal.
-	int64_t phase_ts;
-	int phase;
-	float phase_signal[2];
-	unsigned phase_frames[2];
 };
 
 //! Comma-separated indices below @p limit; returns the count, 0 on a parse error.
@@ -373,17 +370,16 @@ push_group(struct pico4_slam *s)
 			xrt_frame_reference(&s->mail[i], NULL);
 		}
 	}
-	/*
-	 * Basalt needs the time the images were taken: the middle of the exposure. These
-	 * global-shutter sensors expose before the readout that the start-of-frame interrupt
-	 * marks; PICO's stock tracking takes 52 us and half the exposure off that time. Up to
-	 * 4 ms, and changing with the exposure, otherwise put the images out of step with the
-	 * IMU while the head moves.
-	 */
-	int64_t taken = s->group.ts;
-	if (debug_get_bool_option_pico4_slam_exposure_centre()) {
-		taken -= SOF_AFTER_EXPOSURE_NS + (int64_t)s->exposure_lines * LINE_NS / 2;
+	// One time for the set, as Basalt requires: the mean of the cameras' exposure middles.
+	int64_t sum = 0, lo = INT64_MAX, hi = INT64_MIN;
+	for (int i = 0; i < s->cam_count; i++) {
+		int64_t t = s->group.taken[i];
+		sum += t - s->group.taken[0];
+		lo = t < lo ? t : lo;
+		hi = t > hi ? t : hi;
 	}
+	int64_t taken = s->group.taken[0] + sum / s->cam_count;
+	s->max_spread_ns = hi - lo > s->max_spread_ns ? hi - lo : s->max_spread_ns;
 	for (int i = 0; i < s->cam_count; i++) {
 		struct xrt_frame *xf = s->group.frames[i];
 		xf->timestamp = taken;
@@ -401,16 +397,24 @@ push_group(struct pico4_slam *s)
 		int64_t imu = __atomic_load_n(&s->last_imu_ns, __ATOMIC_RELAXED);
 		SLAM_INFO(s,
 		          "frame set %llu: frame - newest IMU %.1f ms, latency %.1f ms, exposure %u lines gain %u, "
-		          "digital gain %.1f",
+		          "digital gain %.1f; exposure middles within %.2f ms; skipped %llu LED, %llu other, "
+		          "%llu undecodable frames",
 		          (unsigned long long)s->sets_pushed, (s->group.ts - imu) / 1e6,
-		          (os_monotonic_get_ns() - s->group.ts) / 1e6, s->exposure_lines, s->exposure_gain, s->gain);
+		          (os_monotonic_get_ns() - s->group.ts) / 1e6, s->exposure_lines, s->exposure_gain, s->gain,
+		          s->max_spread_ns / 1e6, (unsigned long long)s->frames_leds, (unsigned long long)s->frames_other,
+		          (unsigned long long)s->frames_bad);
+		s->max_spread_ns = 0;
 	}
 	drop_group(s);
 }
 
-//! Station exposure from the mean signal of the first camera, exposure first, then gain.
+/*!
+ * Station exposure from the mean signal of the first camera, exposure first,
+ * then gain. @p applied is the exposure that signal was taken with: a command
+ * still on its way does not count.
+ */
 static void
-auto_exposure(struct pico4_slam *s, float signal)
+auto_exposure(struct pico4_slam *s, float signal, const struct pico4_cam_meta *applied)
 {
 	s->ae_signal += signal;
 	if (++s->ae_count < AE_SETS) {
@@ -420,7 +424,10 @@ auto_exposure(struct pico4_slam *s, float signal)
 	s->ae_signal = 0;
 	s->ae_count = 0;
 
-	float total = (float)s->exposure_lines * (float)s->exposure_gain;
+	float total = (float)applied->exposure_lines * (float)applied->gain;
+	if (total <= 0.0f) {
+		total = (float)s->exposure_lines * (float)s->exposure_gain;
+	}
 	float want = total * AE_TARGET / (mean > 1.0f ? mean : 1.0f);
 	if (want > total * 4) {
 		want = total * 4; // the response is not quite linear; approach in steps
@@ -443,21 +450,20 @@ auto_exposure(struct pico4_slam *s, float signal)
 	}
 }
 
-//! Exposure phase (0 or 1) of the pulse at @p ts, counted in sync periods from the newest pulse.
-static int
-frame_phase(struct pico4_slam *s, int64_t ts)
+/*!
+ * The middle of a frame's exposure. These global-shutter sensors expose before
+ * the readout that the start-of-frame interrupt marks; PICO's stock tracking
+ * takes 52 us and half the frame's own exposure off that time. Up to 4 ms, and
+ * changing with the exposure, otherwise put the images out of step with the IMU
+ * while the head moves.
+ */
+static int64_t
+exposure_middle(int64_t sof_ns, const struct pico4_cam_meta *m)
 {
-	if (s->phase_ts == 0) {
-		s->phase_ts = ts;
-		return s->phase;
+	if (!debug_get_bool_option_pico4_slam_exposure_centre()) {
+		return sof_ns;
 	}
-	int64_t periods = llround((double)(ts - s->phase_ts) / FRAME_NS);
-	int phase = (int)((s->phase + periods) & 1); // also right for an older pulse (periods < 0)
-	if (periods > 0) {
-		s->phase_ts = ts;
-		s->phase = phase;
-	}
-	return phase;
+	return sof_ns - SOF_AFTER_EXPOSURE_NS - (int64_t)m->exposure_lines * LINE_NS / 2;
 }
 
 static void
@@ -467,18 +473,20 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	if (index < 0 || f->sof_monotonic_ns == 0) {
 		return;
 	}
+	struct pico4_cam_meta meta;
+	if (!pico4_cam_meta_decode(f->meta, f->stride, &meta)) {
+		s->frames_bad++;
+		return;
+	}
+	if (meta.phase != PICO4_CAM_PHASE_SCENE) {
+		if (meta.phase == PICO4_CAM_PHASE_LEDS) {
+			s->frames_leds++;
+		} else {
+			s->frames_other++;
+		}
+		return; // a controller-LED exposure: fed to Basalt, it runs away
+	}
 	int64_t ts = f->sof_monotonic_ns;
-	int phase = frame_phase(s, ts);
-	float signal = -1.0f;
-	if (index == 0) {
-		signal = sample_mean(f) - BLACK_LEVEL;
-		float *avg = &s->phase_signal[phase];
-		*avg = s->phase_frames[phase]++ == 0 ? signal : *avg + 0.1f * (signal - *avg);
-	}
-	if (s->phase_frames[0] < PHASE_FRAMES || s->phase_frames[1] < PHASE_FRAMES ||
-	    s->phase_signal[phase] < s->phase_signal[phase ^ 1]) {
-		return; // a controller-LED exposure, or not known yet
-	}
 	if (s->group.have != 0 && ts > s->group.ts + GROUP_WINDOW_NS) {
 		s->sets_dropped++; // a camera missed this pulse
 		drop_group(s);
@@ -491,7 +499,8 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	}
 	if (index == 0) {
 		// The first camera steers the exposure and the digital gain of the next sets.
-		auto_exposure(s, signal);
+		float signal = sample_mean(f) - BLACK_LEVEL;
+		auto_exposure(s, signal, &meta);
 		float mean8 = signal / 4.0f;
 		float want = mean8 > 0.5f ? s->brightness / mean8 : 8.0f;
 		want = want < 1.0f ? 1.0f : want > 8.0f ? 8.0f : want;
@@ -501,6 +510,7 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 		return; // duplicate
 	}
 	s->group.frames[index] = convert(s, f, s->rotated[index]);
+	s->group.taken[index] = exposure_middle(ts, &meta);
 	if (s->group.frames[index] == NULL) {
 		drop_group(s);
 		return;
@@ -831,24 +841,46 @@ pico4_slam_get_head_pose(struct pico4_slam *s, int64_t at_ns, struct xrt_space_r
 	}
 
 	// Basalt: body (IMU) pose in a Z-up world. OpenXR: HMD pose in a Y-up world.
-	const struct xrt_quat q_xr_w = {-0.70710678f, 0, 0, 0.70710678f}; // -90 degrees about X: Z up -> Y up
-	const struct xrt_quat q_b_h = {0, 0, -0.70710678f, 0.70710678f};  // HMD axes in the body (x up, y left)
 	struct xrt_quat q;
 	struct xrt_vec3 offset, p;
 
-	math_quat_rotate(&q_xr_w, &rel.pose.orientation, &q);
-	math_quat_rotate(&q, &q_b_h, &out->pose.orientation);
+	math_quat_rotate(&Q_XR_W, &rel.pose.orientation, &q);
+	math_quat_rotate(&q, &Q_B_H, &out->pose.orientation);
 	math_quat_normalize(&out->pose.orientation);
 
 	math_quat_rotate_vec3(&rel.pose.orientation, &P_BODY_HMD, &offset);
 	p = (struct xrt_vec3){rel.pose.position.x + offset.x, rel.pose.position.y + offset.y,
 	                      rel.pose.position.z + offset.z};
-	math_quat_rotate_vec3(&q_xr_w, &p, &out->pose.position);
+	math_quat_rotate_vec3(&Q_XR_W, &p, &out->pose.position);
 
 	out->relation_flags = (enum xrt_space_relation_flags)(
 	    XRT_SPACE_RELATION_ORIENTATION_VALID_BIT | XRT_SPACE_RELATION_POSITION_VALID_BIT |
 	    XRT_SPACE_RELATION_ORIENTATION_TRACKED_BIT | XRT_SPACE_RELATION_POSITION_TRACKED_BIT);
 	return true;
+}
+
+bool
+pico4_slam_get_latest(struct pico4_slam *s, struct pico4_fusion_slam *out)
+{
+	int64_t ts;
+	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
+	if (!t_slam_get_latest_pose(s->tracker, &ts, &rel)) {
+		return false;
+	}
+	struct xrt_quat q;
+	out->ts_ns = ts;
+	math_quat_rotate(&Q_XR_W, &rel.pose.orientation, &q);
+	math_quat_rotate(&q, &Q_B_H, &out->orientation);
+	math_quat_normalize(&out->orientation);
+	math_quat_rotate_vec3(&Q_XR_W, &rel.pose.position, &out->position);
+	math_quat_rotate_vec3(&Q_XR_W, &rel.linear_velocity, &out->velocity);
+	return true;
+}
+
+void
+pico4_slam_reset(struct pico4_slam *s)
+{
+	t_slam_reset(s->tracker);
 }
 
 void
@@ -927,6 +959,20 @@ pico4_slam_get_head_pose(struct pico4_slam *s, int64_t at_ns, struct xrt_space_r
 	(void)at_ns;
 	(void)out;
 	return false;
+}
+
+bool
+pico4_slam_get_latest(struct pico4_slam *s, struct pico4_fusion_slam *out)
+{
+	(void)s;
+	(void)out;
+	return false;
+}
+
+void
+pico4_slam_reset(struct pico4_slam *s)
+{
+	(void)s;
 }
 
 void

@@ -332,7 +332,7 @@ diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
 index bd31b3374..747bbfd36 100644
 --- a/src/xrt/drivers/CMakeLists.txt
 +++ b/src/xrt/drivers/CMakeLists.txt
-@@ -249,6 +249,41 @@ if(XRT_BUILD_DRIVER_ROKID)
+@@ -249,6 +249,43 @@ if(XRT_BUILD_DRIVER_ROKID)
  	list(APPEND ENABLED_HEADSET_DRIVERS rokid)
  endif()
  
@@ -345,6 +345,8 @@ index bd31b3374..747bbfd36 100644
 +		pico4/pico4_cam.h
 +		pico4/pico4_controller.c
 +		pico4/pico4_controller.h
++		pico4/pico4_fusion.c
++		pico4/pico4_fusion.h
 +		pico4/pico4_hmd.c
 +		pico4/pico4_interface.h
 +		pico4/pico4_ipd.c

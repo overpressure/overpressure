@@ -33,8 +33,13 @@ extern "C" {
 
 #define PICO4_CAM_NUM 4      //!< OV7251 tracking cameras, CSL sensor slots 0-3.
 #define PICO4_CAM_WIDTH 640  //!< Image width in pixels.
-#define PICO4_CAM_HEIGHT 480 //!< Image height reported to callers.
-#define PICO4_CAM_LINES 480  //!< Lines the RDI writes per frame.
+#define PICO4_CAM_HEIGHT 480 //!< Scene rows reported to callers.
+/*!
+ * Lines the RDI writes per frame by default: the sensor's metadata line
+ * (pico4_cam_meta_decode) and the 480 scene rows, as PICO OS captures them.
+ */
+#define PICO4_CAM_LINES 481
+#define PICO4_CAM_SENSOR_LINES 480 //!< Default output height programmed into the sensor.
 #define PICO4_CAM_RING_MIN 4
 #define PICO4_CAM_RING_MAX 8
 #define PICO4_CAM_MAX_SLOTS 8   //!< CSL sensor slots in the device tree (0-5 used on PICO 4).
@@ -58,6 +63,8 @@ struct pico4_cam_config
 	int lane_assign[PICO4_CAM_NUM]; //!< CSIPHY data lane per slot, -1 = automatic (see pico4_cam.c).
 	bool hold_frames;             //!< Frames stay owned until pico4_cam_release(); else the next call releases.
 	bool probe_only;              //!< pico4_cam_open() stops after the sensor probes (no sessions).
+	unsigned lines;               //!< Lines the RDI writes (480-482), 0: PICO4_CAM_LINES.
+	unsigned sensor_lines;        //!< Output height programmed into the sensor, 0: PICO4_CAM_SENSOR_LINES.
 	int verbose;                  //!< Highest pico4_cam_log_level that is logged.
 	pico4_cam_log_fn log;         //!< NULL logs to stderr.
 	void *log_user;
@@ -71,14 +78,53 @@ struct pico4_cam_frame
 	int64_t sof_boottime_ns;   //!< CLOCK_BOOTTIME at the start-of-frame interrupt; 0 if no event arrived.
 	int64_t sof_monotonic_ns;  //!< The same instant on CLOCK_MONOTONIC; 0 if unknown.
 	uint32_t width;            //!< 640.
-	uint32_t height;           //!< 480.
-	uint32_t lines;            //!< Lines in the buffer (480).
+	uint32_t height;           //!< Scene rows from data on (480, fewer if the buffer is shorter).
+	uint32_t lines;            //!< Lines in the buffer, the metadata line included (481).
 	uint32_t stride;           //!< Bytes per line.
 	uint32_t bytes_per_sample; //!< 2: RAW10, LSB-aligned in 16 bits.
-	const void *data;          //!< First line; valid until the frame is released.
-	size_t size;               //!< stride * lines.
+	const void *meta;          //!< The buffer's first line: the sensor's metadata (pico4_cam_meta_decode).
+	const void *data;          //!< First scene row, after the metadata line; valid until the frame is released.
+	size_t size;               //!< stride * lines, from meta.
 	unsigned buffer;           //!< Ring index (internal, used by pico4_cam_release()).
 };
+
+/*!
+ * What the sensor applied to a frame, from its metadata line: OV7251 register
+ * values carried as 10-bit samples (shifted up by two bits). PICO OS reads the
+ * same words. The exposure phase follows the station's schedule.
+ */
+struct pico4_cam_meta
+{
+	unsigned gain;           //!< Analog gain, 16 = 1x.
+	unsigned exposure_lines; //!< Exposure in sensor lines.
+	unsigned phase;          //!< 1: scene (head tracking), 2: controller LEDs, 4: other.
+	unsigned tag;            //!< The phase register's upper bits; their meaning is not known.
+};
+
+#define PICO4_CAM_PHASE_SCENE 1u
+#define PICO4_CAM_PHASE_LEDS 2u
+
+//! Decodes a metadata line of @p bytes; false if it is too short or holds no known phase.
+static inline bool
+pico4_cam_meta_decode(const void *line, size_t bytes, struct pico4_cam_meta *out)
+{
+	const uint8_t *b = (const uint8_t *)line;
+	if (line == NULL || bytes < 83 * 2) {
+		return false;
+	}
+#define PICO4_CAM_META_WORD(i) ((unsigned)b[2 * (i)] | ((unsigned)b[2 * (i) + 1] << 8))
+	unsigned gain = PICO4_CAM_META_WORD(4), exp_hi = PICO4_CAM_META_WORD(6), exp_lo = PICO4_CAM_META_WORD(7);
+	unsigned phase = PICO4_CAM_META_WORD(82);
+#undef PICO4_CAM_META_WORD
+	if ((gain | exp_hi | exp_lo | phase) > 0x3ff) {
+		return false; // not 10-bit samples
+	}
+	out->gain = gain >> 2;
+	out->exposure_lines = ((exp_hi << 6) & 0xf00) | ((exp_lo >> 2) & 0xff);
+	out->phase = (phase >> 2) & 0xf;
+	out->tag = (phase >> 2) >> 4;
+	return out->phase == 1 || out->phase == 2 || out->phase == 4;
+}
 
 //! Media entity found while discovering the camera devices.
 struct pico4_cam_entity

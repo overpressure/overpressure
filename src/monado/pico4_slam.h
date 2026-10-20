@@ -20,6 +20,14 @@ extern "C" {
 
 struct pico4_slam;
 struct pico4_station;
+struct pico4_fusion_slam;
+
+/*!
+ * Origin of the HMD frame (between the eyes) in the body frame of the factory
+ * calibration (x up, y left, z back), metres: centred between the cameras, a
+ * little below and behind them. Only affects how position follows head rotation.
+ */
+#define PICO4_HMD_IN_BODY {-0.025f, 0.052f, 0.04f}
 
 /*!
  * Load the factory camera calibration from @p calibration_dir, start the SLAM
@@ -48,6 +56,18 @@ pico4_slam_push_imu(struct pico4_slam *s, int64_t timestamp_ns, const float acce
  */
 bool
 pico4_slam_get_head_pose(struct pico4_slam *s, int64_t at_ns, struct xrt_space_relation *out);
+
+/*!
+ * The tracker's newest pose, at the time its images were taken, in the OpenXR
+ * world (Y up): the HMD's orientation and the IMU's position and velocity (the
+ * HMD origin is PICO4_HMD_IN_BODY away). False until the tracker has a pose.
+ */
+bool
+pico4_slam_get_latest(struct pico4_slam *s, struct pico4_fusion_slam *out);
+
+//! Tells the tracker to drop its state and start a new map (after it ran away).
+void
+pico4_slam_reset(struct pico4_slam *s);
 
 void
 pico4_slam_destroy(struct pico4_slam **s);

@@ -8,8 +8,9 @@
  * Sensor Core (see pico4_ssc.c) with QTimer timestamps. They are rotated into
  * the HMD frame, fused with m_imu_3dof and pushed into a relation history in
  * the CLOCK_MONOTONIC timeline that Monado uses. With SLAM (pico4_slam.c) the
- * raw samples also go to the visual-inertial tracker, whose 6DoF pose is used
- * whenever it tracks; the 3DoF orientation covers the time before that.
+ * raw samples also go to the visual-inertial tracker. Its poses arrive about
+ * 100 ms late at 25 Hz; pico4_fusion.c keeps the head pose at the IMU's rate
+ * and corrects it with them. The 3DoF orientation covers the time before that.
  *
  * The HMD also owns the controller radio ("station", pico4_station.h): it
  * resets it once, which makes the controllers reconnect and lets SLAM start
@@ -22,6 +23,7 @@
 
 #include "pico4_blemcu.h"
 #include "pico4_controller.h"
+#include "pico4_fusion.h"
 #include "pico4_interface.h"
 #include "pico4_ipd.h"
 #include "pico4_lens.h"
@@ -66,10 +68,25 @@ DEBUG_GET_ONCE_OPTION(pico4_calibration, "PICO4_CALIBRATION_DIR", "/usr/share/qc
  * the layer squasher the memory bandwidth it needs for 90 Hz.
  */
 DEBUG_GET_ONCE_BOOL_OPTION(pico4_lens_ca, "PICO4_LENS_CA", false)
+//! Fuse the SLAM poses with the IMU (pico4_fusion.c) rather than taking Monado's prediction of them.
+DEBUG_GET_ONCE_BOOL_OPTION(pico4_fusion, "PICO4_FUSION", true)
+DEBUG_GET_ONCE_NUM_OPTION(pico4_fusion_position_ms, "PICO4_FUSION_POSITION_MS", 150)
+DEBUG_GET_ONCE_NUM_OPTION(pico4_fusion_smoothing_ms, "PICO4_FUSION_SMOOTHING_MS", 50)
+/*!
+ * Hand out the head pose this much later than asked for (fusion only). SteamVR asks
+ * for the present and predicts to the photons itself, for one refresh and 11 ms;
+ * running below the panels' rate, its frames reach them later than that.
+ */
+DEBUG_GET_ONCE_NUM_OPTION(pico4_predict_ms, "PICO4_PREDICT_MS", 0)
+//! Test of the runaway path: reset the SLAM tracker once, this many seconds after the fusion started.
+DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_reset_after_s, "PICO4_SLAM_RESET_AFTER_S", 0)
+//! Directory for fusion_slam.csv (each SLAM pose) and fusion_pose.csv (each pose handed out).
+DEBUG_GET_ONCE_OPTION(pico4_fusion_csv, "PICO4_FUSION_CSV", NULL)
 
 #define P4_TRACE(h, ...) U_LOG_XDEV_IFL_T(&h->base, h->log_level, __VA_ARGS__)
 #define P4_DEBUG(h, ...) U_LOG_XDEV_IFL_D(&h->base, h->log_level, __VA_ARGS__)
 #define P4_INFO(h, ...) U_LOG_XDEV_IFL_I(&h->base, h->log_level, __VA_ARGS__)
+#define P4_WARN(h, ...) U_LOG_XDEV_IFL_W(&h->base, h->log_level, __VA_ARGS__)
 #define P4_ERROR(h, ...) U_LOG_XDEV_IFL_E(&h->base, h->log_level, __VA_ARGS__)
 
 //! QTimer rate of the SSC timestamps; also the AP's arch counter on this SoC.
@@ -135,6 +152,14 @@ struct pico4_hmd
 	struct xrt_vec3 slam_position;
 	struct xrt_quat slam_from_3dof;
 	bool have_slam_position;
+
+	//! The head pose at the IMU's rate with the SLAM poses as corrections; used when use_track.
+	struct pico4_fusion track;
+	bool use_track;
+	FILE *slam_csv, *pose_csv;
+	int64_t slam_reset_ns; //!< When the SLAM tracker was last told to reset.
+	int64_t track_started_ns;
+	bool reset_tested;
 
 	//! Lens model per eye from the factory data, if found.
 	struct pico4_lens lens[2];
@@ -297,6 +322,45 @@ suid_equal(const struct pico4_ssc_suid *a, const struct pico4_ssc_suid *b)
 	return a->low == b->low && a->high == b->high;
 }
 
+//! A new SLAM pose for the fusion; logs what it made of it.
+static void
+track_slam_pose(struct pico4_hmd *h, const struct pico4_fusion_slam *m)
+{
+	enum pico4_fusion_result r = pico4_fusion_slam(&h->track, m);
+	int64_t now = os_monotonic_get_ns();
+	if (r == PICO4_FUSION_STARTED) {
+		h->track_started_ns = now;
+		P4_INFO(h, "6DoF: fusing SLAM poses with the IMU, the first %.0f ms after its images",
+		        (now - m->ts_ns) / 1e6);
+	} else if (r == PICO4_FUSION_RESET) {
+		P4_WARN(h, "6DoF: following SLAM after a gap, %.3f m and %.1f deg off", h->track.last_error_m,
+		        h->track.last_error_rad * 180.0f / (float)M_PI);
+	} else if (r == PICO4_FUSION_ANCHORED) {
+		P4_INFO(h, "6DoF: SLAM's world re-anchored (it jumped, or a new map after a reset)");
+	} else if (r == PICO4_FUSION_RUNAWAY) {
+		P4_WARN(h, "6DoF: SLAM ran away (%.2f m/s, its velocity %.2f m/s off the IMU's): holding the position",
+		        h->track.last_speed, h->track.last_innovation);
+	}
+	long test_s = debug_get_num_option_pico4_slam_reset_after_s();
+	if (test_s > 0 && !h->reset_tested && h->track.started && now - h->track_started_ns > test_s * U_TIME_1S_IN_NS) {
+		P4_WARN(h, "6DoF: resetting the SLAM tracker as a test (PICO4_SLAM_RESET_AFTER_S)");
+		pico4_slam_reset(h->slam);
+		h->reset_tested = true;
+	}
+	// A runaway tracker rarely recovers by itself: start a new map, again while it stays lost.
+	if (h->track.lost && now - h->slam_reset_ns > 5 * U_TIME_1S_IN_NS) {
+		P4_WARN(h, "6DoF: resetting the SLAM tracker");
+		pico4_slam_reset(h->slam);
+		pico4_fusion_tracker_reset(&h->track, now);
+		h->slam_reset_ns = now;
+	}
+	if (h->slam_csv != NULL) {
+		fprintf(h->slam_csv, "%lld,%lld,%d,%.4f,%.3f,%.4f,%.4f,%.4f,%.3f,%.3f\n", (long long)m->ts_ns,
+		        (long long)now, (int)r, h->track.last_error_m, h->track.last_error_rad * 180.0f / (float)M_PI,
+		        m->position.x, m->position.y, m->position.z, h->track.last_innovation, h->track.last_speed);
+	}
+}
+
 static void
 handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 {
@@ -360,11 +424,20 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 	m_imu_3dof_update(&h->fusion, (uint64_t)ts, &h->last_accel, &v);
 
 	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
-	rel.relation_flags = (enum xrt_space_relation_flags)(XRT_SPACE_RELATION_ORIENTATION_VALID_BIT |
-	                                                      XRT_SPACE_RELATION_ORIENTATION_TRACKED_BIT |
-	                                                      XRT_SPACE_RELATION_ANGULAR_VELOCITY_VALID_BIT);
-	rel.pose.orientation = h->fusion.rot;
-	math_quat_rotate_derivative(&h->fusion.rot, &v, &rel.angular_velocity);
+	if (h->use_track) {
+		pico4_fusion_imu(&h->track, ts, &h->fusion.rot, &v, &h->last_accel);
+		struct pico4_fusion_slam m;
+		if (pico4_slam_get_latest(h->slam, &m) && m.ts_ns > h->track.seen_ts_ns) {
+			track_slam_pose(h, &m);
+		}
+		pico4_fusion_relation(&h->track, &rel);
+	} else {
+		rel.relation_flags = (enum xrt_space_relation_flags)(XRT_SPACE_RELATION_ORIENTATION_VALID_BIT |
+		                                                      XRT_SPACE_RELATION_ORIENTATION_TRACKED_BIT |
+		                                                      XRT_SPACE_RELATION_ANGULAR_VELOCITY_VALID_BIT);
+		rel.pose.orientation = h->fusion.rot;
+		math_quat_rotate_derivative(&h->fusion.rot, &v, &rel.angular_velocity);
+	}
 	m_relation_history_push(h->relation_hist, &rel, ts);
 
 	if (h->gyro_samples % 5000 == 1 && h->log_level <= U_LOGGING_DEBUG) {
@@ -470,9 +543,67 @@ pico4_hmd_destroy(struct xrt_device *xdev)
 		pico4_ssc_close(&h->ssc);
 	}
 	u_var_remove_root(h);
+	if (h->slam_csv != NULL) {
+		fclose(h->slam_csv);
+	}
+	if (h->pose_csv != NULL) {
+		fclose(h->pose_csv);
+	}
 	m_imu_3dof_close(&h->fusion);
 	m_relation_history_destroy(&h->relation_hist);
 	u_device_free(&h->base);
+}
+
+//! The IMU-rate head pose that takes the SLAM poses as corrections (pico4_fusion.c).
+static void
+setup_track(struct pico4_hmd *h)
+{
+	if (!debug_get_bool_option_pico4_fusion()) {
+		P4_INFO(h, "6DoF from Monado's prediction of the SLAM poses (PICO4_FUSION=0)");
+		return;
+	}
+	const float hmd_in_body[3] = PICO4_HMD_IN_BODY;
+	struct pico4_fusion_config c = {
+	    .lever = imu_to_hmd(hmd_in_body),
+	    .position_s = (float)debug_get_num_option_pico4_fusion_position_ms() / 1000.0f,
+	    .velocity_s = (float)debug_get_num_option_pico4_fusion_position_ms() / 1000.0f,
+	    .orientation_s = 0.5f,
+	    .smoothing_s = (float)debug_get_num_option_pico4_fusion_smoothing_ms() / 1000.0f,
+	    .gate_m = 0.15f,
+	    .gate_rad = 10.0f * (float)M_PI / 180.0f,
+	    .persist = 5,
+	    .stale_ns = 500 * U_TIME_1MS_IN_NS,
+	    .runaway_window_ns = 500 * U_TIME_1MS_IN_NS,
+	    .runaway_mps = 0.5f,
+	    .max_speed = 4.0f,
+	    .still_mps = 0.15f,
+	    .runaway_poses = 3,
+	    .relock_poses = 5,
+	};
+	if (c.position_s <= 0.0f || c.smoothing_s <= 0.0f) {
+		P4_ERROR(h, "PICO4_FUSION_POSITION_MS and PICO4_FUSION_SMOOTHING_MS must be positive");
+		return;
+	}
+	pico4_fusion_init(&h->track, &c);
+	h->use_track = true;
+
+	const char *dir = debug_get_option_pico4_fusion_csv();
+	if (dir != NULL) {
+		char path[512];
+		snprintf(path, sizeof(path), "%s/fusion_slam.csv", dir);
+		h->slam_csv = fopen(path, "w");
+		snprintf(path, sizeof(path), "%s/fusion_pose.csv", dir);
+		h->pose_csv = fopen(path, "w");
+		if (h->slam_csv == NULL || h->pose_csv == NULL) {
+			P4_ERROR(h, "Cannot write the fusion CSVs to %s", dir);
+		} else {
+			// SteamVR may end the driver without destroying it: write each line as it comes.
+			setvbuf(h->slam_csv, NULL, _IOLBF, 0);
+			setvbuf(h->pose_csv, NULL, _IOLBF, 0);
+			fprintf(h->slam_csv, "#image_ns,now_ns,result,error_m,error_deg,x,y,z,innovation_mps,speed_mps\n");
+			fprintf(h->pose_csv, "#at_ns,now_ns,x,y,z,qx,qy,qz,qw,flags\n");
+		}
+	}
 }
 
 static xrt_result_t
@@ -486,6 +617,20 @@ pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
 	if (name != XRT_INPUT_GENERIC_HEAD_POSE) {
 		U_LOG_XDEV_UNSUPPORTED_INPUT(&h->base, h->log_level, name);
 		return XRT_ERROR_INPUT_UNSUPPORTED;
+	}
+
+	if (h->use_track) {
+		// Interpolated between IMU steps, or predicted from the newest one.
+		int64_t ahead = debug_get_num_option_pico4_predict_ms() * U_TIME_1MS_IN_NS;
+		m_relation_history_get(h->relation_hist, at_timestamp_ns + ahead, out_relation);
+		if (h->pose_csv != NULL) {
+			const struct xrt_pose *p = &out_relation->pose;
+			fprintf(h->pose_csv, "%lld,%lld,%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f,%d\n", (long long)at_timestamp_ns,
+			        (long long)os_monotonic_get_ns(), p->position.x, p->position.y, p->position.z,
+			        p->orientation.x, p->orientation.y, p->orientation.z, p->orientation.w,
+			        (int)out_relation->relation_flags);
+		}
+		return XRT_SUCCESS;
 	}
 
 	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
@@ -740,6 +885,7 @@ pico4_hmd_create(void)
 	h->base.supported.position_tracking = h->slam != NULL;
 	if (h->slam != NULL) {
 		snprintf(h->base.serial, XRT_DEVICE_NAME_LEN, "PICO 4 (SLAM)");
+		setup_track(h);
 	}
 
 	if (pico4_ssc_enable(h->ssc, &h->accel_suid, rate) < 0 || pico4_ssc_enable(h->ssc, &h->gyro_suid, rate) < 0 ||
@@ -760,6 +906,14 @@ pico4_hmd_create(void)
 	u_var_add_ro_u64(h, &h->blemcu_packets, "controller_packets");
 	u_var_add_ro_i64_ns(h, &h->last_latency_ns, "last_latency");
 	m_imu_3dof_add_vars(&h->fusion, h, "");
+	if (h->use_track) {
+		u_var_add_ro_u64(h, &h->track.corrected, "slam_corrections");
+		u_var_add_ro_u64(h, &h->track.rejected, "slam_outliers");
+		u_var_add_ro_u64(h, &h->track.resets, "slam_resets");
+		u_var_add_ro_u64(h, &h->track.anchors, "slam_anchors");
+		u_var_add_ro_u64(h, &h->track.runaways, "slam_runaways");
+		u_var_add_ro_f32(h, &h->track.last_error_m, "slam_error_m");
+	}
 	return &h->base;
 
 fail:

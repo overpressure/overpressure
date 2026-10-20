@@ -14,24 +14,28 @@
  *   pico4-cam capture [--slots 0,1,2,3] [--frames N] [--fps 60|30] [--out DIR]
  *                     [--ring N] [--timeout MS] [--lane-assign SLOT=LANE]
  *                     [--no-station] [--no-station-reset] [--stats-log FILE]
- *                     [--exposure LINES [--gain G]]
+ *                     [--exposure LINES [--gain G]] [--lines N] [--sensor-lines N]
  *       Streams until every selected camera delivered N frames (default 30),
- *       saves an early scene frame of each camera as DIR/camS.pgm (8 bits, 640x480) and
- *       DIR/camS.raw16 (640x480 little-endian 16-bit samples), and prints a
- *       JSON summary: per slot the frame count, the frame rate from
- *       start-of-frame timestamps, whether those increase, and min/mean/max
- *       sample values. The station (controller radio) triggers the frames: it
+ *       saves an early scene frame of each camera as DIR/camS.pgm (8 bits, the
+ *       640x480 scene rows) and DIR/camS.raw16 (the whole buffer, little-endian
+ *       16-bit samples: the sensor's metadata line, then the scene rows), and
+ *       prints a JSON summary: per slot the frame count, the frame rate from
+ *       start-of-frame timestamps, whether those increase, min/mean/max sample
+ *       values and the frames of each exposure phase from the metadata line. The station (controller radio) triggers the frames: it
  *       is power-cycled first (unless --no-station-reset) and told to start
  *       once the sensors stream. It refuses unless all four sensors are on, so
  *       --slots only selects which cameras are reported. --stats-log writes
- *       "slot sof_boottime_ns mean latency_ns request" per frame (mean of a
- *       sparse grid; latency from start of frame to delivery), for example to
- *       find which slot goes dark when a lens is covered.
+ *       "slot sof_boottime_ns mean latency_ns request phase lines gain" per
+ *       frame (mean of a sparse grid; latency from start of frame to delivery;
+ *       the applied exposure from the metadata line, phase 0 if it does not
+ *       decode), for example to find which slot goes dark when a lens is
+ *       covered. --lines and --sensor-lines (480-482) override the lines the
+ *       ISP writes and the height programmed into the sensor.
  *       --exposure (sensor lines, at most about 570) and --gain (16 = 1x)
  *       ask the station for that exposure; the saved frame is then the
  *       tenth or eleventh, after the setting took effect. Every other frame
- *       is the station's short controller-LED exposure; of two consecutive
- *       frames the brighter one is saved.
+ *       is the station's short controller-LED exposure; the saved frame is a
+ *       scene frame by its metadata (or the brighter of two if it has none).
  *
  * -v and -vv (before or after the command) log progress and every ioctl to
  * stderr. Exit status 0 means success: every node found (list), every probe
@@ -72,7 +76,8 @@ usage(FILE *f)
 	      "       pico4-cam [-v|-vv] probe [SLOT...]\n"
 	      "       pico4-cam [-v|-vv] capture [--slots 0,1,2,3] [--frames N] [--fps 60|30] [--out DIR]\n"
 	      "                 [--ring N] [--timeout MS] [--lane-assign SLOT=LANE] [--no-station]\n"
-	      "                 [--no-station-reset] [--stats-log FILE] [--exposure LINES [--gain G]]\n",
+	      "                 [--no-station-reset] [--stats-log FILE] [--exposure LINES [--gain G]]\n"
+	      "                 [--lines N] [--sensor-lines N]\n",
 	      f);
 }
 
@@ -251,6 +256,7 @@ struct slot_stats
 	double saved_mean;
 	char pgm[256], raw[256];
 	int save_error;
+	unsigned phases[3]; //!< Frames by metadata: scene, controller LEDs, other or undecodable.
 };
 
 static unsigned
@@ -321,7 +327,7 @@ save_frame(struct slot_stats *st, const struct pico4_cam_frame *f, const char *d
 		return -errno;
 	}
 	for (unsigned y = 0; y < f->lines; y++) {
-		fwrite((const uint8_t *)f->data + (size_t)y * f->stride, f->bytes_per_sample, f->width, raw);
+		fwrite((const uint8_t *)f->meta + (size_t)y * f->stride, f->bytes_per_sample, f->width, raw);
 	}
 	if (fclose(raw) != 0) {
 		return -errno;
@@ -351,8 +357,13 @@ log_frame(FILE *log, const struct pico4_cam_frame *f)
 	struct timespec ts;
 	clock_gettime(CLOCK_BOOTTIME, &ts);
 	long long now = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
-	fprintf(log, "%d %lld %.2f %lld %llu\n", f->slot, (long long)f->sof_boottime_ns, grid_mean(f),
-	        now - (long long)f->sof_boottime_ns, (unsigned long long)f->request_id);
+	struct pico4_cam_meta m = {0};
+	if (!pico4_cam_meta_decode(f->meta, f->stride, &m)) {
+		m.phase = 0;
+	}
+	fprintf(log, "%d %lld %.2f %lld %llu %u %u %u\n", f->slot, (long long)f->sof_boottime_ns, grid_mean(f),
+	        now - (long long)f->sof_boottime_ns, (unsigned long long)f->request_id, m.phase, m.exposure_lines,
+	        m.gain);
 }
 
 static void
@@ -361,10 +372,14 @@ on_frame(struct slot_stats *st, const struct pico4_cam_frame *f, const char *dir
 	if (st->frames == 0) {
 		st->first_request = f->request_id;
 	}
-	// The station alternates scene and controller-LED exposures: keep the brighter of two frames.
+	// The station alternates scene and controller-LED exposures; the metadata says which this is.
+	struct pico4_cam_meta m;
+	bool decoded = pico4_cam_meta_decode(f->meta, f->stride, &m);
+	st->phases[!decoded ? 2 : m.phase == PICO4_CAM_PHASE_SCENE ? 0 : m.phase == PICO4_CAM_PHASE_LEDS ? 1 : 2]++;
 	if (dir != NULL && (st->frames == g_save_frame || st->frames == g_save_frame + 1)) {
 		double mean = grid_mean(f);
-		if (st->frames == g_save_frame || mean > st->saved_mean) {
+		bool scene = decoded ? m.phase == PICO4_CAM_PHASE_SCENE : st->frames == g_save_frame || mean > st->saved_mean;
+		if (scene) {
 			st->saved_mean = mean;
 			st->save_error = save_frame(st, f, dir);
 		}
@@ -464,6 +479,11 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 				fprintf(stderr, "pico4-cam: cannot write %s: %s\n", v, strerror(errno));
 				return 1;
 			}
+		} else if (strcmp(a, "--lines") == 0 && parse_uint(v, PICO4_CAM_HEIGHT + 2, &n) && n >= PICO4_CAM_HEIGHT) {
+			cfg->lines = (unsigned)n;
+		} else if (strcmp(a, "--sensor-lines") == 0 && parse_uint(v, PICO4_CAM_HEIGHT + 2, &n) &&
+		           n >= PICO4_CAM_HEIGHT) {
+			cfg->sensor_lines = (unsigned)n;
 		} else if (strcmp(a, "--ring") == 0 && parse_uint(v, PICO4_CAM_RING_MAX, &n)) {
 			cfg->ring = (unsigned)n;
 		} else if (strcmp(a, "--timeout") == 0 && parse_uint(v, 600000, &timeout)) {
@@ -597,6 +617,8 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 			printf(", \"save_error\": ");
 			json_str(strerror(-t->save_error));
 		}
+		printf(", \"phases\": {\"scene\": %u, \"leds\": %u, \"other\": %u}", t->phases[0], t->phases[1],
+		       t->phases[2]);
 		printf(", \"csiphy\": %d, \"lane_assign\": %u}", si.phy, si.lane_assign);
 		ok = ok && t->frames >= frames && t->monotonic && t->save_error == 0;
 		first = false;

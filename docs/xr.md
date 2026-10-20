@@ -402,6 +402,12 @@ a pinned public kernel tree, the closest public match of the stock kernel):
   frames are lost. Buffer completion comes through `cam_sync` fences, each with a user payload,
   so one `poll()` covers all cameras. The timestamp is the start-of-frame event's boot time,
   which the driver converts to Monado's clock.
+- **Metadata line.** The sensor sends one embedded line before the 480 scene rows, and the RDI
+  writes 481 lines, as PICO OS captures them (640×481). The line carries register values as
+  10-bit samples (two bits up): gain in word 4, exposure in words 6 and 7, and the exposure
+  phase in word 82 (1 scene, 2 controller LEDs), read by `pico4_cam_meta_decode`. The sensor
+  stays programmed for 480 lines; with a 480-line capture the metadata took row 0 and the
+  bottom scene row was lost.
 - **Cached buffers.** Frames land in cached buffers, which are invalidated
   (`CAM_REQ_MGR_CACHE_OPS`) before the CPU reads them. With uncached buffers, reading frames
   stalls buffer delivery for about 100 ms every 10–13 frames (latency 45–67 ms mean). With cached
@@ -434,8 +440,9 @@ The station drives the sensors, which run in FSIN slave mode:
   9 ms readout must fit the 20 ms period, about 570 lines; 3,000 lines stall the sensors. The station's default exposure, about
   3 ms, leaves rooms nearly black.
 - **Alternating exposures.** Every other frame is a short exposure in which only the
-  controllers' IR LEDs show (mean 23–28 of 1023). PICO uses those frames for controller
-  tracking; the scene frames run at 25 Hz.
+  controllers' IR LEDs show (mean 23–28 of 1023): 4 lines at gain 26 by the metadata, whatever
+  the scene exposure, as in PICO OS. PICO uses those frames for controller tracking; the scene
+  frames run at 25 Hz.
 
 Covering one lens at a time darkens exactly one slot, which gives the mapping in the table
 (`PICO4_TCAM_SLOTS`, default `0,2,1,3` for cam0–cam3). Under it, a point seen by both lower
@@ -449,10 +456,13 @@ Basalt in [pico4_tcam.c](../src/monado/pico4_tcam.c), at 0.21–0.52 px RMS.
 - `list`: CSL nodes, slots, PHYs, the ISP's IOMMU handles and the media entities; powers nothing.
 - `probe [SLOT...]`: power up, read the chip ID, power down.
 - `capture`: resets the station, starts the frame sync and streams until each camera delivered
-  N frames. Saves a scene frame of each camera (8-bit PGM and 16-bit raw) and prints per camera
-  the frames, errors, frame rate from the start-of-frame timestamps, their monotonicity and the
-  sample statistics. `--stats-log FILE` logs per frame the slot, start-of-frame time, brightness,
-  latency and request; `--exposure LINES --gain G` sets the station exposure.
+  N frames. Saves a scene frame of each camera (8-bit PGM of the scene rows, and the whole buffer
+  as 16-bit raw, metadata line first) and prints per camera the frames, errors, frame rate from
+  the start-of-frame timestamps, their monotonicity, the sample statistics and the frames of
+  each exposure phase. `--stats-log FILE` logs per frame the slot, start-of-frame time,
+  brightness, latency, request, phase, exposure and gain; `--exposure LINES --gain G` sets the
+  station exposure; `--lines` and `--sensor-lines` (480–482) override the capture and sensor
+  heights.
 
 ## 6DoF head tracking
 
@@ -462,19 +472,21 @@ through its VIT interface (`libbasalt.so` from the
 pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
 
 - **Frames.** Frames of one sync pulse are grouped by start-of-frame time (within 4 ms), and the
-  controller-LED frames are skipped. The phase is told apart by the first camera's brightness
-  (trusted after 8 frames of each phase) and counted in sync periods, so it survives dropped
-  frames. Fed the LED frames as well, Basalt drifts by 430–720 m in 30 s. Each frame is converted
+  controller-LED frames are skipped by the phase in their metadata line; a frame whose line does
+  not decode is skipped too. Fed the LED frames as well, Basalt drifts by 430–720 m in 30 s.
+  Basalt gets the 480 scene rows only. Each frame is converted
   to 8 bits: black level (16 of 1023) removed, slowly adapting digital gain (1–8×, aiming at a
   mean of 70). Sets go out in camera order with one timestamp, as Basalt requires; a set that
   misses a camera is dropped.
-- **Frame time.** The set's timestamp is the middle of the exposure, as in PICO's stock
-  tracking: the start-of-frame time minus 52 µs and half the exposure. The start-of-frame
+- **Frame time.** Each frame's time is the middle of its exposure, as in PICO's stock tracking:
+  the start-of-frame time minus 52 µs and half the exposure that frame's metadata line reports
+  (not the newest one commanded, which may not have reached the sensor yet). The start-of-frame
   interrupt marks the readout after the exposure, up to 4 ms later and changing with the
-  exposure, which would put the images out of step with the IMU while the head moves.
+  exposure, which would put the images out of step with the IMU while the head moves. The set
+  gets the mean of its cameras' times; the driver logs their spread (0.00–0.01 ms).
   `PICO4_SLAM_EXPOSURE_CENTRE=0` uses the start of frame.
 - **Auto exposure.** A slow loop sets the station exposure from the first camera's brightness
-  every 25 sets (half a second). It starts at 300 lines and 1× gain and aims at a mean signal of
+  and the exposure that frame was taken with, every 25 sets (half a second). It starts at 300 lines and 1× gain and aims at a mean signal of
   250 above black (10-bit), changing at most 4× per step and ignoring changes within 10%. It
   raises exposure first, up to 400 lines (longer exposures smear more in motion), then gain up
   to 15.5×, the sensors' highest analog gain. Capped at 4×, a moderately lit room stayed near
@@ -518,22 +530,51 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
   CPU set; `PICO4_SLAM_CPUS` changes the set. With the compositor running, Basalt skips some sets
   (30–73 of 757 in 30 s).
 - **Pose.** Basalt's pose (IMU frame, z-up world) is converted to the HMD frame and Monado's y-up
-  world. While Basalt reports a tracked position, the driver uses it.
-- **Prediction.** Monado's tracker predicts from Basalt's newest pose to the requested time with
-  the gyro for the orientation and Basalt's velocity plus the mean world acceleration since that
-  pose for the position (`SLAM_PREDICTION_TYPE` 3, the driver's default).
-  `monado-slam-prediction.patch` adds two things:
-  - a soft deadband on that acceleration (`SLAM_ACCEL_DEADBAND`, 0.3 m/s²): the part below it is
-    removed, which keeps the image still while the head rests;
-  - a stale guard: a pose more than 500 ms older than the requested time is reported as
-    untracked rather than extrapolated.
+  world. `monado-slam-prediction.patch` keeps Basalt's own velocity estimate with each pose
+  (Monado took the difference of two poses 40 ms apart) and hands the driver the newest pose
+  with the time its images were taken (`t_slam_get_latest_pose`).
+- **Fusion.** Basalt's poses arrive at 25 Hz and about 100 ms after their images.
+  [pico4_fusion.c](../src/monado/pico4_fusion.c) keeps the head pose at the IMU's rate and takes
+  them as corrections:
+  - orientation: the 3DoF fusion's, turned into the filter's world by an offset that turns
+    towards Basalt's at every IMU step with a time constant of 0.5 s (mostly the heading);
+    following each Basalt pose at once made the view step 25 times a second;
+  - position and velocity of the IMU: integrated from the accelerometer, gravity removed;
+  - a Basalt pose is compared with the filter's state at the time of its images (a history of
+    one second); that state, and every later one, moves towards Basalt's position and velocity
+    with a time constant of 150 ms (`PICO4_FUSION_POSITION_MS`);
+  - the output does not jump with a correction: the correction fades in, critically damped over
+    50 ms (`PICO4_FUSION_SMOOTHING_MS`), so neither position nor velocity steps;
+  - without a Basalt pose for 500 ms the position comes to rest and is held, untracked, and the
+    orientation keeps its offset; the next pose is taken in full, and the output slides there.
 
-  Monado's default dead reckoning integrates the accelerometer fully; its positions strayed
+  The HMD hands out the pose of the requested time from the history of these states, predicted
+  from the newest with its velocities.
+- **Anchor.** Basalt's world is mapped onto the filter's by a heading and an offset, at first
+  the identity. A pose more than 15 cm or 10° off is skipped as an outlier; when five in a row
+  are, Basalt has jumped and stays there, and the anchor moves instead of the view.
+- **Runaway.** Basalt can run away: in worn sessions its position ended 13.6 m and 1,750 m from
+  the start, at up to 5 m/s, while the user stood in a room. A pose is implausible when
+  - its velocity changed over the last 0.5 s by more than 0.5 m/s beyond what the accelerometer
+    measured over the same time (a head cannot accelerate without the IMU feeling it),
+  - it moves faster than 0.15 m/s while the IMU has felt neither turning nor acceleration for
+    0.5 s (a steady creep), or
+  - it moves faster than 4 m/s.
+
+  Implausible poses are skipped; three in a row make a runaway. The filter then holds the
+  position (untracked, orientation from the 3DoF fusion), and the driver resets Basalt
+  (`t_slam_reset`, again every 5 s while it stays lost); Basalt starts a new map at its own
+  origin and heading. Poses of images taken before the reset are skipped. After five consistent
+  poses spanning the 0.5 s check, the anchor maps the new map onto the held position and
+  tracking continues from there.
+- **Without the fusion** (`PICO4_FUSION=0`), Monado's tracker predicts from Basalt's newest pose
+  with the gyro for the orientation and Basalt's velocity plus the mean world acceleration since
+  that pose for the position (`SLAM_PREDICTION_TYPE` 3). The patch adds a soft deadband on that
+  acceleration (`SLAM_ACCEL_DEADBAND`) and reports poses more than 500 ms older than the
+  requested time as untracked. Without a tracked pose the HMD takes the 3DoF orientation, turned
+  by the difference to Basalt's at the last tracked pose, and holds the last position. Monado's
+  default dead reckoning integrates the accelerometer without bound; its positions strayed
   50–270 mm from Basalt's.
-- **3DoF fallback.** Without a tracked pose the HMD takes the 3DoF fusion's orientation, turned
-  by the difference between Basalt's and the fusion's orientation at the last tracked pose, and
-  holds the last position. The view keeps its heading, rather than snapping to the fusion's,
-  which has its own yaw origin.
 
 Basalt is built for `armv8.2-a`, the XR2's Cortex-A77/A55 level; its default `-march=native`
 describes the build host, and a build under QEMU emits SVE instructions. Arch's OpenCV links its
@@ -703,8 +744,14 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_SLAM_IMU_DIVISOR` | 2 | use every Nth head IMU sample |
 | `PICO4_SLAM_MAX_EXPOSURE` | 400 | longest station exposure, sensor lines |
 | `PICO4_SLAM_EXPOSURE_CENTRE` | on | frame times at the middle of the exposure instead of the start of frame |
-| `SLAM_PREDICTION_TYPE` | 3 (gyro and acceleration) | Monado's prediction between Basalt's poses: 0 none, 1 pose only, 2 gyro, 4 dead reckoning |
-| `SLAM_ACCEL_DEADBAND` | 0.3 | world acceleration (m/s²) the prediction ignores |
+| `PICO4_FUSION` | on | the IMU-rate head pose corrected by Basalt's poses; off: Monado's prediction |
+| `PICO4_FUSION_POSITION_MS` | 150 | time constant pulling position and velocity to Basalt's |
+| `PICO4_FUSION_SMOOTHING_MS` | 50 | time over which a correction reaches the output |
+| `PICO4_FUSION_CSV` | unset | directory for `fusion_slam.csv` (each Basalt pose: latency, disagreement, outcome, velocity disagreement with the IMU, speed) and `fusion_pose.csv` (each pose handed out) |
+| `PICO4_PREDICT_MS` | 0 | hand out the head pose this much later than asked for (with the fusion) |
+| `PICO4_SLAM_RESET_AFTER_S` | 0 (off) | test of the runaway path: reset Basalt once, this many seconds after the fusion started |
+| `SLAM_PREDICTION_TYPE` | 3 (gyro and acceleration) | without the fusion, Monado's prediction between Basalt's poses: 0 none, 1 pose only, 2 gyro, 4 dead reckoning |
+| `SLAM_ACCEL_DEADBAND` | 0.3 | world acceleration (m/s²) that prediction ignores |
 | `PICO4_SLAM_BRIGHTNESS` | 70 | mean 8-bit brightness the digital gain aims for |
 | `PICO4_SLAM_CPUS` | 63 (cores 0–5) | CPUs for Basalt and its feeders, decimal bit mask; 0 = no restriction |
 | `PICO4_SLAM_DUMP` | unset | directory for PGM frames of every 500th set |
@@ -763,20 +810,26 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | SLAM pose latency, images taken to pose, headset still | 641 ms with Basalt's original queues; 81 ms with the bounded ones (62 ms with two cameras) |
 | SLAM pose latency, worn in Valve's session | median 112 ms, 90th percentile 157 ms; no gap in the poses |
 | Predicted pose against Basalt's, head moving | gyro prediction: rotation 15 ms and position 65 ms behind, 0.4 mm wander at rest; gyro and acceleration with the deadband: 12 ms and 31 ms, 1.5 mm |
-| 6DoF worn in Valve's session, moving freely | tracks, no snaps to another heading; the image lags and jumps by 2–30 cm (the extrapolation of about 150 ms amplifies the velocity noise of 25 Hz poses) |
+| 6DoF worn in Valve's session, Monado's prediction (`PICO4_FUSION=0`) | tracks, no snaps to another heading; the image lags and jumps by 2–30 cm (the extrapolation of about 150 ms amplifies the velocity noise of 25 Hz poses) |
+| Metadata line, `pico4-cam` | decodes to the commanded exposure and gain (300 lines and gain 32, 120 lines and gain 16); every camera 50 scene and 50 LED frames of 100; LED frames 4 lines at gain 26; the 481st captured line continues the scene (mean row difference 8.8 against 8.4 one row up), 0 errors at 49.8 Hz |
+| Fusion, headless, headset still, 30–40 s | agrees with Basalt within 0.3–0.6 mm (median), latency images to fusion 76–92 ms (median); a forced Basalt reset (`PICO4_SLAM_RESET_AFTER_S`) restarts it without a jump; velocity disagreement with the IMU at rest: 99th percentile 0.025 m/s |
+| Fusion against Basalt, worn | the handed-out pose matches Basalt's at a 0 ms time shift (rotation within 0.35°), no lag of its own; still, it moves 0.36 mm and 0.024° around its 200 ms average (Monado's prediction 0.21 mm and 0.013°) |
+| Runaway handling, seven worn sessions of about a minute | Basalt within 0.55–1.51 m of the start (before: 13.6 m and 1,750 m in two of four sessions); three sessions had runaways in Basalt's first seconds, each held, reset and re-anchored; no pose above 3 m/s afterwards in five; correction size 4.6–8.0 mm (median) |
 | 6DoF, lower cameras about 15 cm from a surface | 1.6–4.8 m drift in 30 s (6.5 m in a 10 s run): no stereo depth, not an accuracy test |
 | Acceptance cycle (`flash-run --userspace`, then stock restoration) | passed: archive received in 86–105 s, SSH 112–123 s after the start of the transfer; systemd `running`, 0 failed units, storage read-only, USB link unchanged, Turnip 65,536 pixels; IMU, pose and display checks as above (two layers, Basalt running); stock boot verified by EDL readback, stock ABL restored, PICO OS started |
 | QEMU, same archive (4.19 without SLPI or `msm_drm`) | self-test passed; the sensor units and Monado's PICO 4 prober stay inactive |
 
 ## Next steps
 
-1. **6DoF fusion.** Worn, the pose lags and jumps: each request extrapolates about 150 ms from
-   a 25 Hz pose. The next step is a filter in the driver that propagates the head pose with the
-   1 kHz IMU and takes Basalt's poses as delayed corrections, blended in smoothly. Basalt's first
-   seconds can jump before it has initialised, and a still headset facing a surface a few
-   centimetres away drifts by metres (no stereo depth); the filter could hold its position then.
-   Other knobs: `optical_flow_image_safe_radius` for the fisheye borders, the IMU noise, and a
-   Basalt config file (the VIT build runs Basalt's built-in defaults).
+1. **6DoF comfort.** Worn, the image still jiggles at rest and lags on fast turns. The lag
+   builds up after the pose: SteamVR renders at about 52 frames per second and predicts for one
+   refresh and 11 ms. The jiggle is twice Monado's prediction at rest; the 3DoF fusion's
+   accelerometer tilt correction is the next suspect, with orientation from the gyro alone and
+   Basalt correcting it slowly. Basalt still runs away in its first seconds now and then; the
+   fusion holds and resets it. Auto exposure follows the first camera only, so a covered first
+   camera saturates the others. Other knobs: `optical_flow_image_safe_radius` for the fisheye
+   borders, the IMU noise, and a Basalt config file (the VIT build runs Basalt's built-in
+   defaults).
 2. **Controllers in applications.** In SteamVR ([session.md](session.md)) both controllers appear
    with the PICO 4 input profile and turn with the wrists while worn; they stay where the arm
    model puts them. SteamVR uses its generic bindings for this controller type; clicking in its

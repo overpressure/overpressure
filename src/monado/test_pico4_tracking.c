@@ -4,10 +4,12 @@
  * Unit test of the tracking-camera helpers with synthetic values (no device
  * data): the station frame builder (golden frames from the Python tool that
  * was verified on hardware, and the allowlist), the factory calibration
- * parser, the Kannala-Brandt refit and the controller packet parser.
+ * parser, the Kannala-Brandt refit, the controller packet parser and the
+ * camera metadata line.
  */
 
 #include "pico4_blemcu.h"
+#include "pico4_cam.h"
 #include "pico4_station.h"
 #include "pico4_tcam.h"
 
@@ -185,12 +187,57 @@ test_blemcu(void)
 	EXPECT(pico4_blemcu_parse(pkt, sizeof(pkt), &p) && p.imu_count == 0 && p.key_count == 0);
 }
 
+//! A metadata line with gain @p gain, exposure @p lines and phase register @p phase as 10-bit samples.
+static void
+meta_line(uint8_t *line, unsigned gain, unsigned lines, unsigned phase)
+{
+	uint16_t w[PICO4_CAM_WIDTH] = {0};
+	w[4] = (uint16_t)(gain << 2);
+	w[6] = (uint16_t)(((lines >> 8) & 0xf) << 2);
+	w[7] = (uint16_t)((lines & 0xff) << 2);
+	w[82] = (uint16_t)(phase << 2);
+	for (int i = 0; i < PICO4_CAM_WIDTH; i++) {
+		line[2 * i] = (uint8_t)(w[i] & 0xff);
+		line[2 * i + 1] = (uint8_t)(w[i] >> 8);
+	}
+}
+
+static void
+test_meta(void)
+{
+	uint8_t line[2 * PICO4_CAM_WIDTH];
+	struct pico4_cam_meta m;
+
+	// Values seen on the headset: a scene frame at 300 lines and gain 32, phase register 0x51.
+	meta_line(line, 32, 300, 0x51);
+	EXPECT(line[8] == 0x80 && line[12] == 0x04 && line[14] == 0xb0 && line[164] == 0x44 && line[165] == 0x01);
+	EXPECT(pico4_cam_meta_decode(line, sizeof(line), &m));
+	EXPECT(m.gain == 32 && m.exposure_lines == 300 && m.phase == PICO4_CAM_PHASE_SCENE && m.tag == 5);
+	// A controller-LED frame: 4 lines, gain 26, phase register 0x72.
+	meta_line(line, 26, 4, 0x72);
+	EXPECT(pico4_cam_meta_decode(line, sizeof(line), &m));
+	EXPECT(m.gain == 26 && m.exposure_lines == 4 && m.phase == PICO4_CAM_PHASE_LEDS && m.tag == 7);
+	// Long exposures use the upper bits.
+	meta_line(line, 248, 570, 0x01);
+	EXPECT(pico4_cam_meta_decode(line, sizeof(line), &m) && m.exposure_lines == 570 && m.gain == 248);
+	// No known phase, a sample above 10 bits (scene data, not metadata), a short line.
+	meta_line(line, 32, 300, 0x53);
+	EXPECT(!pico4_cam_meta_decode(line, sizeof(line), &m));
+	meta_line(line, 32, 300, 0x51);
+	line[9] = 0x04; // word 4 = 0x480
+	EXPECT(!pico4_cam_meta_decode(line, sizeof(line), &m));
+	meta_line(line, 32, 300, 0x51);
+	EXPECT(!pico4_cam_meta_decode(line, 82 * 2, &m));
+	EXPECT(!pico4_cam_meta_decode(NULL, sizeof(line), &m));
+}
+
 int
 main(void)
 {
 	test_station();
 	test_calibration();
 	test_blemcu();
+	test_meta();
 	if (failures != 0) {
 		fprintf(stderr, "%d failure(s)\n", failures);
 		return 1;
