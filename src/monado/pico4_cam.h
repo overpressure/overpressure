@@ -150,6 +150,64 @@ pico4_cam_median(const float *v, int n)
 }
 
 /*!
+ * Assembly of one set of scene frames, one per camera, by start of frame: all sensors start
+ * on the same FSIN pulse, so a set's frames start within @p window_ns of its first one. A
+ * frame after that window starts the next set and drops the incomplete one (a camera missed
+ * the pulse); one before it belongs to a set already given up; a second frame of a camera
+ * in the same set is a duplicate.
+ */
+struct pico4_cam_assembly
+{
+	int64_t ts;   //!< Start of frame of the set's first frame.
+	int have;     //!< Frames in the set.
+	bool slot[8]; //!< Which cameras the set has.
+};
+
+enum pico4_cam_assembly_result
+{
+	PICO4_CAM_SET_ADDED,     //!< In the set, which still misses frames.
+	PICO4_CAM_SET_COMPLETE,  //!< In the set, which now has all @p count frames.
+	PICO4_CAM_SET_LATE,      //!< From a set already given up: skip it.
+	PICO4_CAM_SET_DUPLICATE, //!< The camera is in the set already: skip it.
+};
+
+static inline void
+pico4_cam_assembly_reset(struct pico4_cam_assembly *a)
+{
+	a->have = 0;
+	for (int i = 0; i < 8; i++) {
+		a->slot[i] = false;
+	}
+}
+
+/*!
+ * Add camera @p index's frame (start of frame @p ts) to the set of @p count cameras.
+ * @p out_dropped is set when the frame dropped an incomplete set before it.
+ */
+static inline enum pico4_cam_assembly_result
+pico4_cam_assembly_add(
+    struct pico4_cam_assembly *a, int index, int64_t ts, int64_t window_ns, int count, bool *out_dropped)
+{
+	*out_dropped = false;
+	if (a->have != 0 && ts > a->ts + window_ns) {
+		*out_dropped = true;
+		pico4_cam_assembly_reset(a);
+	}
+	if (a->have != 0 && ts < a->ts - window_ns) {
+		return PICO4_CAM_SET_LATE;
+	}
+	if (a->have == 0) {
+		a->ts = ts;
+	}
+	if (a->slot[index]) {
+		return PICO4_CAM_SET_DUPLICATE;
+	}
+	a->slot[index] = true;
+	a->have++;
+	return a->have == count ? PICO4_CAM_SET_COMPLETE : PICO4_CAM_SET_ADDED;
+}
+
+/*!
  * Frame identity across one set of scene frames. All sensors start their frames on the
  * station's FSIN pulse, so each camera's ISP frame counter keeps a fixed offset from the
  * first camera's; a frame at another offset is from another pulse. An offset that changes

@@ -256,6 +256,33 @@ test_median(void)
 }
 
 static void
+test_set_assembly(void)
+{
+	const int64_t ms = 1000000, window = 4 * ms;
+	struct pico4_cam_assembly a = {0};
+	bool dropped;
+	// Four cameras within 4 ms of the first: one complete set.
+	EXPECT(pico4_cam_assembly_add(&a, 0, 100 * ms, window, 4, &dropped) == PICO4_CAM_SET_ADDED && !dropped);
+	EXPECT(pico4_cam_assembly_add(&a, 2, 101 * ms, window, 4, &dropped) == PICO4_CAM_SET_ADDED);
+	EXPECT(pico4_cam_assembly_add(&a, 2, 102 * ms, window, 4, &dropped) == PICO4_CAM_SET_DUPLICATE);
+	EXPECT(pico4_cam_assembly_add(&a, 1, 103 * ms, window, 4, &dropped) == PICO4_CAM_SET_ADDED);
+	EXPECT(pico4_cam_assembly_add(&a, 3, 99 * ms, window, 4, &dropped) == PICO4_CAM_SET_COMPLETE && !dropped);
+	pico4_cam_assembly_reset(&a);
+	// Camera 3 misses the pulse: the next pulse's first frame drops the incomplete set and
+	// starts a new one, which camera 3 then completes.
+	EXPECT(pico4_cam_assembly_add(&a, 0, 140 * ms, window, 4, &dropped) == PICO4_CAM_SET_ADDED);
+	EXPECT(pico4_cam_assembly_add(&a, 1, 140 * ms, window, 4, &dropped) == PICO4_CAM_SET_ADDED);
+	EXPECT(pico4_cam_assembly_add(&a, 2, 141 * ms, window, 4, &dropped) == PICO4_CAM_SET_ADDED && !dropped);
+	EXPECT(pico4_cam_assembly_add(&a, 1, 180 * ms, window, 4, &dropped) == PICO4_CAM_SET_ADDED && dropped);
+	EXPECT(a.have == 1 && a.ts == 180 * ms && a.slot[1] && !a.slot[0]);
+	// A frame of the dropped pulse arriving late is skipped, not mixed into the new set.
+	EXPECT(pico4_cam_assembly_add(&a, 3, 141 * ms, window, 4, &dropped) == PICO4_CAM_SET_LATE && !dropped);
+	EXPECT(pico4_cam_assembly_add(&a, 0, 180 * ms, window, 4, &dropped) == PICO4_CAM_SET_ADDED);
+	EXPECT(pico4_cam_assembly_add(&a, 2, 181 * ms, window, 4, &dropped) == PICO4_CAM_SET_ADDED);
+	EXPECT(pico4_cam_assembly_add(&a, 3, 182 * ms, window, 4, &dropped) == PICO4_CAM_SET_COMPLETE);
+}
+
+static void
 test_set_identity(void)
 {
 	struct pico4_cam_set_check c = {0};
@@ -304,6 +331,7 @@ main(void)
 	test_blemcu();
 	test_meta();
 	test_median();
+	test_set_assembly();
 	test_set_identity();
 	if (failures != 0) {
 		fprintf(stderr, "%d failure(s)\n", failures);

@@ -163,8 +163,7 @@ struct pico4_slam
 	//! The frame set being collected.
 	struct
 	{
-		int64_t ts;
-		int have;
+		struct pico4_cam_assembly assembly; //!< Which cameras it has, by start of frame.
 		struct xrt_frame *frames[PICO4_TCAM_COUNT];
 		int64_t taken[PICO4_TCAM_COUNT]; //!< Middle of each frame's own exposure.
 		float signal[PICO4_TCAM_COUNT];  //!< Mean signal above black of each frame (10-bit).
@@ -324,7 +323,7 @@ drop_group(struct pico4_slam *s)
 	for (int i = 0; i < PICO4_TCAM_COUNT; i++) {
 		xrt_frame_reference(&s->group.frames[i], NULL);
 	}
-	s->group.have = 0;
+	pico4_cam_assembly_reset(&s->group.assembly);
 }
 
 //! Mean of a sparse grid of 10-bit samples.
@@ -426,8 +425,8 @@ push_group(struct pico4_slam *s)
 		          "frame set %llu: frame - newest IMU %.1f ms, latency %.1f ms, exposure %u lines gain %u, "
 		          "digital gain %.1f; exposure middles within %.2f ms; skipped %llu LED, %llu other, "
 		          "%llu undecodable frames; %llu incomplete and %llu inconsistent sets dropped",
-		          (unsigned long long)s->sets_pushed, (s->group.ts - imu) / 1e6,
-		          (os_monotonic_get_ns() - s->group.ts) / 1e6, s->exposure_lines, s->exposure_gain, s->gain,
+		          (unsigned long long)s->sets_pushed, (s->group.assembly.ts - imu) / 1e6,
+		          (os_monotonic_get_ns() - s->group.assembly.ts) / 1e6, s->exposure_lines, s->exposure_gain, s->gain,
 		          s->max_spread_ns / 1e6, (unsigned long long)s->frames_leds, (unsigned long long)s->frames_other,
 		          (unsigned long long)s->frames_bad, (unsigned long long)s->sets_dropped,
 		          (unsigned long long)s->sets_inconsistent);
@@ -515,18 +514,17 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 		return; // a controller-LED exposure: fed to Basalt, it runs away
 	}
 	int64_t ts = f->sof_monotonic_ns;
-	if (s->group.have != 0 && ts > s->group.ts + GROUP_WINDOW_NS) {
-		s->sets_dropped++; // a camera missed this pulse
-		drop_group(s);
+	bool dropped;
+	enum pico4_cam_assembly_result added =
+	    pico4_cam_assembly_add(&s->group.assembly, index, ts, GROUP_WINDOW_NS, s->cam_count, &dropped);
+	if (dropped) {
+		s->sets_dropped++; // a camera missed the pulse of the set before
+		for (int i = 0; i < PICO4_TCAM_COUNT; i++) {
+			xrt_frame_reference(&s->group.frames[i], NULL); // that set's frames
+		}
 	}
-	if (s->group.have != 0 && ts < s->group.ts - GROUP_WINDOW_NS) {
-		return; // late frame of a set already given up
-	}
-	if (s->group.have == 0) {
-		s->group.ts = ts;
-	}
-	if (s->group.frames[index] != NULL) {
-		return; // duplicate
+	if (added == PICO4_CAM_SET_LATE || added == PICO4_CAM_SET_DUPLICATE) {
+		return;
 	}
 	s->group.frames[index] = convert(s, f, s->rotated[index]);
 	s->group.taken[index] = exposure_middle(ts, &meta);
@@ -540,8 +538,7 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 		drop_group(s);
 		return;
 	}
-	s->group.have++;
-	if (s->group.have == s->cam_count) {
+	if (added == PICO4_CAM_SET_COMPLETE) {
 		// Four frames of one exposure pulse, or none: a mixed set would give Basalt two scenes.
 		char why[160];
 		bool consistent = pico4_cam_set_consistent(&s->identity, s->group.frame_id, s->group.meta, s->cam_count,
