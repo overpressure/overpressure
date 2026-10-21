@@ -325,7 +325,12 @@ class HarnessTests(unittest.TestCase):
                                 {"index": 1, "position": [0.09, 0.96, -0.6], "rotation": [-0.27, 0.05, 0.86]},
                                 {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]}],
                     "max_temp_c": {"before": 80.1, "after_run": 92.3},
-                    "fan": {"before": self.FAN_STATE, "after_run": {**self.FAN_STATE, "duty": 50}}}) + \
+                    "fan": {"before": self.FAN_STATE, "after_run": {**self.FAN_STATE, "duty": 50}},
+                    "performance": {"status": "failed" if self.scenario == "slow" else "passed",
+                                    "failures": ["52.0 commits/s, below 85.5"] if self.scenario == "slow" else [],
+                                    "commit_hz": 52.0 if self.scenario == "slow" else 90.0, "late_percent": 0.1,
+                                    "stalls": 0, "present_wait_timeouts": 0, "hottest_c": 61.5,
+                                    "window_seconds": 30.0, "startup": {"stalls": 2}}}) + \
                     "\nEXIT=" + ("1" if failed else "0")
             if command.startswith(("pico4-imu list", "systemctl status", "cat /run/pico4-poc/openxr",
                                    "cat /run/pico4-poc/vrdisplay.log", "cat /run/pico4-poc/vrsync.log")):
@@ -480,7 +485,7 @@ class HarnessTests(unittest.TestCase):
                 self.assertTrue((self.runner.folder / "userspace-vrdisplay-stats.json").exists())
 
     def test_semaphores_and_valve_session_are_checked_with_steamvr(self):
-        for scenario, code in (("", 0), ("vrsync", 1), ("valve", 1)):
+        for scenario, code in (("", 0), ("vrsync", 1), ("valve", 1), ("slow", 1)):
             with self.subTest(scenario or "passing"):
                 self.setUp()
                 self.enable_flash_mode()
@@ -496,6 +501,7 @@ class HarnessTests(unittest.TestCase):
                 valve = state["valve_session"]
                 self.assertEqual((valve["layer"]["target"], len(valve["devices"])), ("pico4_vrdisplay", 3))
                 self.assertEqual(valve["fan"]["after_run"]["duty"], 50)
+                self.assertEqual(valve["performance"]["status"], "failed" if scenario == "slow" else "passed")
                 self.assertEqual(state["valve_session_cooldown"], {"seconds": 0, "hottest_c": 61.2})
                 self.assertTrue((self.runner.folder / "userspace-valve-session.json").exists())
                 self.assertTrue((self.runner.folder / "userspace-valve-vrcompositor.txt").exists())

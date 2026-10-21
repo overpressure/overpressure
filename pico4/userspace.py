@@ -342,8 +342,8 @@ def validate_vr_sync(value) -> None:
 VALVE_SESSION_SECONDS = 30  # bounded: the session heats the headset quickly (docs/cooling.md)
 VALVE_SESSION_START_C = 70.0  # the hottest thermal zone before the session starts...
 VALVE_SESSION_COOLDOWN_SECONDS = 180  # ...or this long a wait for it
-# SteamVR's compositor is GPU-bound in the full session (gamescope's overlay and
-# the dashboard): about 42 frames per second on the Adreno 650 (docs/session.md).
+# Integration only needs SteamVR's compositor to present; the check's performance
+# verdict (session-performance, docs/session.md) holds it to the display rate.
 VALVE_SESSION_MIN_HZ = 0.4 * DISPLAY_HZ
 
 
@@ -355,6 +355,7 @@ def validate_valve_session(value) -> None:
     SteamVR must report the headset and both controllers, the controllers
     placed by the arm model; and the configured session must come back. The
     fan daemon's state before and after is recorded (null without the daemon).
+    The performance verdict over the run after startup must pass as well.
     """
     if not isinstance(value, dict) or value.get("schema") != 1:
         raise ValueError("Valve session check produced no schema-1 result")
@@ -393,3 +394,23 @@ def validate_valve_session(value) -> None:
     if not isinstance(fan, dict) or any(fan.get(k) is not None and not isinstance(fan.get(k), dict)
                                         for k in ("before", "after_run")):
         raise ValueError(f"The Valve session check recorded no fan state: {fan}")
+    performance = value.get("performance")
+    if not isinstance(performance, dict) or performance.get("status") not in ("passed", "failed"):
+        raise ValueError("The Valve session check gave no performance verdict")
+    if performance["status"] != "passed":
+        raise ValueError("Valve's session missed its performance limits: "
+                         + "; ".join(performance.get("failures") or ["no reason"]))
+
+
+def format_valve_performance(performance) -> str:
+    """One line for the runner's output: the verdict and what it measured."""
+    if not isinstance(performance, dict):
+        return "performance: no verdict"
+    text = f"performance: {performance.get('status')}"
+    if performance.get("commit_hz") is not None:
+        text += (f" ({performance['commit_hz']} commits/s, {performance.get('late_percent')} % late, "
+                 f"{performance.get('stalls')} stalls, {performance.get('present_wait_timeouts')} present-wait "
+                 f"timeouts, hottest {performance.get('hottest_c')} °C over {performance.get('window_seconds')} s; "
+                 f"startup stalls {(performance.get('startup') or {}).get('stalls')})")
+    failures = performance.get("failures") or []
+    return text + ("; " + "; ".join(failures) if failures else "")

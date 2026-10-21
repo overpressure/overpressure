@@ -626,7 +626,10 @@ runs Valve's session for a bounded time and returns to the configured one:
    `pico4-session.service`. A runtime drop-in for `steamvr.service` has the layer write its
    statistics and frame 300 into `/run/pico4-valve-session`; SteamVR's old logs are removed.
 2. It waits up to 180 s for the compositor's "Startup Complete" and the layer's first
-   statistics (ten seconds of frames), then lets the session run for SECONDS (default 30).
+   statistics (ten seconds of frames). SteamVR's startup still stalls the compositor a few
+   times while the dashboard starts, so the measured window begins with the first statistics
+   update (every ten seconds) that adds no stall, or after 60 s (`settle_seconds`). The
+   session then runs for SECONDS (default 30).
 3. It checks that `gamescope-session.target`, `steamvr.service` and `gamescope-session.service`
    are active, that the compositor started without an assertion and gamescope connected to it,
    that the layer wrote statistics, and that SteamVR reports the headset and both controllers
@@ -637,11 +640,29 @@ It prints one JSON object (schema 1): status and errors, the startup time, the u
 what the compositor's log shows (startup, gamescope's connection, assertions, failed present
 waits), the layer's statistics, each device's position (m) and rotation (rad), and the hottest
 zone and the fan daemon's state (`pico4-fan state`, [cooling.md](cooling.md#checks)) before
-and after. The exit status is 0 only if the check passed. On the host,
+and after. Its `status` is the integration verdict, and the exit status is 0 only if that
+passed.
+
+`performance` is a verdict of its own, from
+[`session-performance`](../userspace/rootfs/usr/libexec/pico4-poc/session-performance). It
+compares the layer's statistics at the start of the measured window with those at the end, so
+SteamVR's startup stays out of it, and holds the window to these limits:
+
+| Measure | Limit |
+| --- | --- |
+| commits per second | at least 85.5 (95 % of 90 Hz) |
+| late commits (more than 1.5 refreshes after the one before) | at most 1 % |
+| stalls (gaps between commits above 100 ms, the layer's `stalls`) | none |
+| SteamVR's present waits that ran out (`present_wait_timeouts`) | none |
+| hottest thermal zone at the end of the run | at most 80 °C |
+
+It also reports the window's length and mean GPU wait per frame, the session's longest gap, and
+the stalls during startup (`startup`), which no limit covers. On the host,
 `validate_valve_session` in [pico4/userspace.py](../pico4/userspace.py) also requires at least
-36 commits/s (40 % of 90 Hz, since the session is GPU-bound), vblanks within 1 % of 90 Hz, no
-retire or GPU timeouts, a scanned-out image that is not black, finite poses for the three
-devices, a position for each controller, and the fan record (a state or null, before and after).
+36 commits/s over the whole session, vblanks within 1 % of 90 Hz, no retire or GPU timeouts, a
+scanned-out image that is not black, finite poses for the three devices, a position for each
+controller, the fan record (a state or null, before and after), and a passed performance
+verdict. The runner prints both verdicts.
 
 ### Acceptance
 

@@ -324,6 +324,8 @@ VALVE_SESSION_PASSING = {
                 {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]}],
     "max_temp_c": {"before": 80.1, "after_run": 92.3},
     "fan": {"before": FAN_STATE, "after_run": {**FAN_STATE, "duty": 50, "rpm": 8500, "hottest_mean_c": 90.4}},
+    "performance": {"status": "passed", "failures": [], "commit_hz": 90.0, "late_percent": 0.07, "stalls": 0,
+                    "present_wait_timeouts": 0, "hottest_c": 61.5, "window_seconds": 30.0},
 }
 
 
@@ -354,6 +356,8 @@ class ValveSessionTests(unittest.TestCase):
             ("controller at the origin", {"devices": [devices[0], {**devices[1], "position": [0, 0, 0]}, devices[2]]}),
             ("no fan record", {"fan": None}),
             ("fan record not a state", {"fan": {"before": "30 %", "after_run": None}}),
+            ("no performance verdict", {"performance": None}),
+            ("performance missed", {"performance": {"status": "failed", "failures": ["52.0 commits/s"]}}),
         ]
         for name, change in cases:
             value = None if change is None else {**VALVE_SESSION_PASSING, **change}

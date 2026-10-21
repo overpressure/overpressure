@@ -4,6 +4,9 @@
 # returns to the configured session. Checks that SteamVR's compositor drives the
 # panels through the pico4-vrdisplay layer and that SteamVR tracks the headset
 # and both controllers. Prints one JSON object; exit status 0 only if it passed.
+# "status" is that integration verdict. "performance" is a verdict of its own
+# (session-performance): frame rate and pacing over the run after startup,
+# against the limits it lists.
 #
 #   pico4-valve-session-check [--seconds SECONDS]
 #
@@ -87,6 +90,22 @@ for i in $(seq 180); do
 	sleep 1
 done
 [ "$startup" -ge 0 ] || errors+=("SteamVR's compositor did not start presenting within 180 s")
+# SteamVR's startup stalls the compositor a few times while the dashboard starts.
+# The measured window starts with the first statistics update (every ten seconds) that
+# adds no stall, or after 60 s; the startup's stalls are reported on their own.
+stalls() { sed -n 's/.*"stalls":\([0-9]*\).*/\1/p' "$1" 2>/dev/null; }
+cp -p "$work/vrdisplay.json" "$work/vrdisplay-start.json" 2>/dev/null
+settle=0
+while [ "$startup" -ge 0 ] && [ "$settle" -lt 60 ]; do
+	previous=$(stat -c %Y "$work/vrdisplay-start.json" 2>/dev/null)
+	while [ "$(stat -c %Y "$work/vrdisplay.json" 2>/dev/null)" = "$previous" ] && [ "$settle" -lt 60 ]; do
+		sleep 1
+		settle=$((settle + 1))
+	done
+	before=$(stalls "$work/vrdisplay-start.json")
+	cp -p "$work/vrdisplay.json" "$work/vrdisplay-start.json" 2>/dev/null
+	[ "$(stalls "$work/vrdisplay-start.json")" != "$before" ] || break
+done
 [ "$startup" -lt 0 ] || sleep "$seconds"
 
 target_state=$(user_systemctl is-active gamescope-session.target 2>/dev/null)
@@ -111,6 +130,8 @@ devices=$(runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid
 grep -q '^\[' <<<"$devices" || devices="[]"
 temp_after=$(max_temp)
 fan_after=$(fan_state)
+performance=$(/usr/libexec/pico4-poc/session-performance "$work/vrdisplay-start.json" "$work/vrdisplay.json" "${temp_after:-nan}" 2>/dev/null)
+grep -q '^{' <<<"$performance" || performance='{"status":"failed","failures":["no performance verdict"]}'
 
 [ "$target_state" = active ] || errors+=("gamescope-session.target is $target_state")
 [ "$steamvr_state" = active ] || errors+=("steamvr.service is $steamvr_state")
@@ -132,7 +153,7 @@ status=passed
 [ ${#errors[@]} = 0 ] || status=failed
 printf '{"schema":1,"status":%s' "$(json_str "$status")"
 printf ',"errors":%s' "$(printf '%s\n' "${errors[@]+"${errors[@]}"}" | json_list)"
-printf ',"seconds":%s,"startup_seconds":%s' "$seconds" "$startup"
+printf ',"seconds":%s,"startup_seconds":%s,"settle_seconds":%s' "$seconds" "$startup" "$settle"
 printf ',"session":{"target":"gamescope-session.target","target_state":%s,"steamvr":%s,"gamescope":%s,"failed_units":%s,"restored":%s}' \
 	"$(json_str "$target_state")" "$(json_str "$steamvr_state")" "$(json_str "$gamescope_state")" \
 	"$(json_list <<<"$failed")" "$(json_str "$restored")"
@@ -140,5 +161,5 @@ printf ',"compositor":{"started":%s,"gamescope_client":%s,"asserts":%s,"present_
 	"$started" "$gamescope_client" "${asserts:-0}" "${present_wait_errors:-0}"
 printf ',"layer":%s,"devices":%s,"max_temp_c":{"before":%s,"after_run":%s}' "$stats" "$devices" \
 	"${temp_before:-null}" "${temp_after:-null}"
-printf ',"fan":{"before":%s,"after_run":%s}}\n' "$fan_before" "$fan_after"
+printf ',"fan":{"before":%s,"after_run":%s},"performance":%s}\n' "$fan_before" "$fan_after" "$performance"
 [ "$status" = passed ]

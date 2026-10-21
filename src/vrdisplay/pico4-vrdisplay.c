@@ -109,6 +109,7 @@
 #define MAX_IMAGES 4
 #define NS_PER_S 1000000000LL
 #define STATS_EVERY_NS (10 * NS_PER_S) //!< between statistics updates
+#define STALL_NS (NS_PER_S / 10)        //!< a gap between commits counted as a stall
 
 //! The display's size: the panels', or PICO4_VRDISPLAY_FAKE=WxH for tests.
 static uint32_t g_width = WIDTH, g_height = HEIGHT;
@@ -1238,7 +1239,7 @@ struct sc_image
 
 struct sc_stats
 {
-	uint64_t presents, commits, busy_retries, retire_waits, retire_timeouts, late, gpu_timeouts;
+	uint64_t presents, commits, busy_retries, retire_waits, retire_timeouts, late, stalls, gpu_timeouts;
 	uint64_t present_waits, present_wait_timeouts, max_present_wait_lag;
 	int64_t first_ns, last_ns, max_interval_ns;
 	int64_t gpu_wait_ns, max_gpu_wait_ns, retire_wait_ns, max_retire_wait_ns;
@@ -1541,7 +1542,7 @@ sc_write_stats(struct swapchain *sc, const char *path)
 	fprintf(f,
 	        "{\"target\":\"pico4_vrdisplay\",\"fake\":%s,\"mode\":\"%s\",\"format\":\"%s\",\"images\":%u"
 	        ",\"presents\":%" PRIu64 ",\"commits\":%" PRIu64 ",\"commit_hz\":%.4f,\"max_interval_ms\":%.3f"
-	        ",\"late\":%" PRIu64 ",\"busy_retries\":%" PRIu64 ",\"retire_waits\":%" PRIu64
+	        ",\"late\":%" PRIu64 ",\"stalls\":%" PRIu64 ",\"busy_retries\":%" PRIu64 ",\"retire_waits\":%" PRIu64
 	        ",\"retire_timeouts\":%" PRIu64 ",\"gpu_timeouts\":%" PRIu64 ",\"vblanks\":%" PRIu64
 	        ",\"vblank_hz\":%.4f,\"gpu_wait_ms\":{\"mean\":%.3f,\"max\":%.3f}"
 	        ",\"retire_wait_ms\":{\"mean\":%.3f,\"max\":%.3f},\"present_waits\":%" PRIu64
@@ -1550,7 +1551,7 @@ sc_write_stats(struct swapchain *sc, const char *path)
 	        d->fake ? "true" : "false", d->fake ? "fake" : d->mode.name,
 	        sc->fourcc == DRM_FORMAT_XRGB8888 ? "XRGB8888" : "XBGR8888", sc->count, s->presents, s->commits,
 	        s->commits > 1 && seconds > 0 ? (s->commits - 1) / seconds : 0.0, s->max_interval_ns / 1e6, s->late,
-	        s->busy_retries, s->retire_waits, s->retire_timeouts, s->gpu_timeouts, d->stat_vblanks,
+	        s->stalls, s->busy_retries, s->retire_waits, s->retire_timeouts, s->gpu_timeouts, d->stat_vblanks,
 	        d->stat_vblanks > 1 && vblank_seconds > 0 ? (d->last_sequence - d->first_sequence) / vblank_seconds
 	                                                  : 0.0,
 	        s->commits ? s->gpu_wait_ns / 1e6 / s->commits : 0.0, s->max_gpu_wait_ns / 1e6,
@@ -1655,6 +1656,9 @@ sc_commit(struct swapchain *sc, uint32_t index)
 		}
 		if (interval * 2 > PERIOD_NS * 3) {
 			s->late++;
+		}
+		if (interval > STALL_NS) {
+			s->stalls++;
 		}
 	} else {
 		s->first_ns = t;

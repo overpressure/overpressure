@@ -735,8 +735,11 @@ class Runner:
                                          "max_temp_c", "fan")},
             "layer": {k: layer.get(k) for k in ("target", "commits", "commit_hz", "vblank_hz", "late",
                                                 "retire_timeouts", "gpu_timeouts", "gpu_wait_ms",
-                                                "present_wait_timeouts", "eye_mean_rgb")}}
+                                                "present_wait_timeouts", "eye_mean_rgb")},
+            "performance": value.get("performance")}
         self.save()
+        print(f"   integration: {value.get('status')}; {userspace.format_valve_performance(value.get('performance'))}",
+              flush=True)
         require(code.strip() == "0", "Valve session check failed")
         userspace.validate_valve_session(value)
 

@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Performance verdict of Valve's session check (docs/session.md).
+
+  session-performance START.json END.json HOTTEST_C
+
+START and END are two snapshots of the pico4-vrdisplay layer's statistics: the
+first once SteamVR's compositor presents, the last at the end of the run. The
+layer's numbers count from the first commit, so the measured window is their
+difference and SteamVR's startup stays out of it; the startup's stalls are
+reported on their own. Prints one JSON object with "status" passed or failed
+and the limits it was held to.
+"""
+import json
+import math
+import sys
+
+DISPLAY_HZ = 90.0
+LIMITS = {
+    "commit_hz_min": 0.95 * DISPLAY_HZ,
+    "late_percent_max": 1.0,          # commits more than 1.5 refreshes after the one before
+    "stalls_max": 0,                  # gaps between commits above 100 ms
+    "present_wait_timeouts_max": 0,   # SteamVR's present waits that ran out
+    "hottest_c_max": 80.0,            # hottest thermal zone at the end of the run
+}
+
+
+def seconds(stats: dict) -> float:
+    """Time from the first to the last commit: the layer reports commits-1 over it as commit_hz."""
+    hz, commits = stats.get("commit_hz") or 0, stats.get("commits") or 0
+    return (commits - 1) / hz if hz > 0 and commits > 1 else 0.0
+
+
+def verdict(start, end, hottest_c) -> dict:
+    failures = []
+    if not isinstance(start, dict) or not isinstance(end, dict):
+        return {"status": "failed", "failures": ["the display layer wrote no statistics"], "limits": LIMITS}
+    window = seconds(end) - seconds(start)
+    commits = (end.get("commits") or 0) - (start.get("commits") or 0)
+    if window <= 0 or commits <= 0:
+        return {"status": "failed", "failures": ["no commits in the measured window"], "limits": LIMITS}
+    hz = commits / window
+    late = 100.0 * ((end.get("late") or 0) - (start.get("late") or 0)) / commits
+    stalls = (end.get("stalls") or 0) - (start.get("stalls") or 0)
+    timeouts = (end.get("present_wait_timeouts") or 0) - (start.get("present_wait_timeouts") or 0)
+    gpu = [(s.get("gpu_wait_ms") or {}).get("mean") or 0.0 for s in (start, end)]
+    gpu_mean = (gpu[1] * end["commits"] - gpu[0] * start["commits"]) / commits
+
+    if hz < LIMITS["commit_hz_min"]:
+        failures.append(f"{hz:.1f} commits/s, below {LIMITS['commit_hz_min']:.1f}")
+    if late > LIMITS["late_percent_max"]:
+        failures.append(f"{late:.2f} % late commits, above {LIMITS['late_percent_max']} %")
+    if stalls > LIMITS["stalls_max"]:
+        failures.append(f"{stalls} gaps above 100 ms")
+    if timeouts > LIMITS["present_wait_timeouts_max"]:
+        failures.append(f"{timeouts} present-wait timeouts")
+    if hottest_c is None or not math.isfinite(hottest_c):
+        failures.append("no temperature reading")
+    elif hottest_c > LIMITS["hottest_c_max"]:
+        failures.append(f"hottest zone {hottest_c:.1f} °C, above {LIMITS['hottest_c_max']} °C")
+    return {
+        "status": "failed" if failures else "passed",
+        "failures": failures,
+        "window_seconds": round(window, 2),
+        "commit_hz": round(hz, 2),
+        "late_percent": round(late, 2),
+        "stalls": stalls,
+        "present_wait_timeouts": timeouts,
+        "gpu_wait_ms_mean": round(gpu_mean, 3),
+        "hottest_c": hottest_c,
+        "startup": {"stalls": start.get("stalls"), "max_interval_ms": start.get("max_interval_ms")},
+        "max_interval_ms": end.get("max_interval_ms"),
+        "limits": LIMITS,
+    }
+
+
+def load(path: str):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def main(argv) -> int:
+    if len(argv) != 4:
+        print(__doc__.strip().splitlines()[2].strip(), file=sys.stderr)
+        return 2
+    try:
+        hottest = float(argv[3])
+    except ValueError:
+        hottest = None
+    print(json.dumps(verdict(load(argv[1]), load(argv[2]), hottest), ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
