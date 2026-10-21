@@ -26,8 +26,12 @@ while :; do
 	acknowledged=0
 	[ -e "$POC_RUN/test-authenticated" ] && acknowledged=1
 	now=$(cut -d. -f1 /proc/uptime)
+	# The host's last contact (uptime seconds), renewed by the dev loop.
+	contact=$(cat "$POC_RUN/host-contact" 2>/dev/null)
+	case "$contact" in '' | *[!0-9]*) contact=0 ;; esac
+	[ "$contact" -le "$now" ] || contact=0
 	reason=$(recovery_reason "$now" "$connect_limit" \
-		"$test_limit" "$test_mode" "$reachable" "$acknowledged")
+		"$test_limit" "$test_mode" "$reachable" "$acknowledged" "$contact")
 	if [ -z "$reason" ]; then
 		reached=0
 		[ -e "$POC_RUN/userspace-authenticated" ] && reached=1

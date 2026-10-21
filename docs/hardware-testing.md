@@ -398,7 +398,9 @@ fastboot when a deadline passes.
 - **Maximum runtime**, from Linux start: `--boot-timeout` + `--report-timeout` + 300 s, plus
   `--debug-session-seconds`, plus 2 × `--userspace-timeout` + 300 s with `--userspace`; 660 s by
   default, 2160 s with `--userspace`. 3600 s in the dev image. Nothing clears it, so it also
-  covers a host runner that died after authentication.
+  covers a host runner that died after authentication. The dev loop renews it instead: each of
+  its commands writes the uptime to `/run/pico4-poc/host-contact`, and the deadline then counts
+  from that contact ("maximum runtime: no host contact for 3600s").
 
 These deadlines apply even when the image turns off the interactive auto-reboot
 (`pico4poc.autoreboot`, [stage1.md](stage1.md)). A switch that fails before systemd runs also
@@ -556,9 +558,12 @@ starts stage 1, never PICO OS. Settings come from [`.env`](#settings-for-cycle-a
 - `flash` and `restore` need the engineering ABL and write only `boot`. Unlike `flash-run`
   they do not compare the backup's identity record with the live headset; the serials in `.env`
   and the SoC ID checked at login tie them to it.
-- The dev image's connection deadline is 600 s and its maximum runtime 3600 s from Linux start:
-  stage 1 waits for the next attempt instead of rebooting, every boot still ends in fastboot
-  within an hour, and a stage 2 that never answers returns to fastboot 180 s after the switch.
+- The dev image's connection deadline is 600 s and its maximum runtime 3600 s from the last
+  dev command (each one renews `/run/pico4-poc/host-contact`): stage 1 waits for the next
+  attempt instead of rebooting, a headset left alone returns to fastboot an hour after the last
+  command, a session in use with commands in between keeps running, and a stage 2 that never
+  answers returns to fastboot 180 s after the switch. Stage 2 takes the recovery policy from the
+  userspace archive; stage 1 renews only once its dev image has this policy.
   From fastboot, `dev reboot` starts stage 1 again.
 - Once `pico4-userspace receive` has started, a failed `boot` (for example an unconfirmed hash)
   never switches, and the next `boot` needs a `reboot` first, because `/newroot` and zram are in

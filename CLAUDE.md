@@ -157,7 +157,8 @@ passed.
   stage-1 image needs `dev image` and `dev flash` again. `dev check` runs the acceptance
   runner's stage-2 checks.
 - **Deadlines.** Device-side deadlines return the headset to fastboot; `dev reboot` starts
-  stage 1 from there without a flash. A kernel panic reboots rather than parking in crash-dump
+  stage 1 from there without a flash. The dev image's maximum runtime (an hour) counts from the
+  last `python -m pico4 dev` command, which renews it; plain `ssh` does not. A kernel panic reboots rather than parking in crash-dump
   mode (stage 1 sets `msm_poweroff.download_mode=0`).
 - **Heat.** `pico4-fan.service` drives the fan with PICO OS's policy: with the fan at 30 % the
   30 s Valve session check peaks at 69 °C (86 °C without fan control). Qualcomm's

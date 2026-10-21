@@ -36,6 +36,7 @@ ROOT = localconfig.ROOT
 WORK = ROOT / "out" / "dev"
 HOST = "172.16.42.1"
 RUN_ID = "dev-loop"
+CONTACT = "/run/pico4-poc/host-contact"  # uptime of the last command (recovery-watch)
 ARCHIVE = ROOT / "out" / "userspace" / "pico4-userspace.tar.zst"
 
 
@@ -49,7 +50,10 @@ class Dev(Headset):
         return device.read_identity(self.s.path("identity"))
 
     def ssh_argv(self, command: str) -> list:
+        """Every command renews the host contact: the dev image's maximum runtime counts from
+        the last one (recovery-watch), so it ends abandoned sessions, not ones in use."""
         known = (self.work / "known_hosts").as_posix()
+        command = f"cut -d. -f1 /proc/uptime > {CONTACT} 2>/dev/null; {command}"
         return [self.s.ssh, "-i", self.work / "id_ed25519", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
                 "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new",
                 "-o", f'UserKnownHostsFile="{known}"', "-o", f'GlobalKnownHostsFile="{known}"',

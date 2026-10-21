@@ -14,10 +14,18 @@ cd "$(dirname "$0")/.."
 [ -z "$(recovery_reason 659 210 660 1 1 1)" ]
 # A connected, authenticated but abandoned test eventually returns to fastboot.
 [ -n "$(recovery_reason 660 210 660 1 1 1)" ]
+# The dev loop's host contact renews the maximum runtime; without it the hour counts from boot.
+[ -z "$(recovery_reason 3700 600 3600 1 1 1 200)" ]
+[ -n "$(recovery_reason 3800 600 3600 1 1 1 200)" ]
+[ "$(recovery_reason 3800 600 3600 1 1 1 200)" = "maximum runtime: no host contact for 3600s" ]
+[ "$(recovery_reason 3600 600 3600 1 1 1 0)" = "hardware test exceeded 3600s" ]
+[ "$(recovery_reason 3600 600 3600 1 1 1)" = "hardware test exceeded 3600s" ]
+# Contact never cancels the connection deadline of an unauthenticated run.
+[ -n "$(recovery_reason 600 600 3600 1 1 0 590)" ]
 # Step-4 userspace: only test runs, only after a switch, until the runner reaches it.
 [ -z "$(userspace_reason 929 600 330 1 0)" ]
 [ -n "$(userspace_reason 930 600 330 1 0)" ]
 [ -z "$(userspace_reason 930 600 330 1 1)" ]
 [ -z "$(userspace_reason 930 600 330 0 0)" ]
 [ -z "$(userspace_reason 930 '' 330 1 0)" ]
-echo 'Recovery policy: 13 checks passed'
+echo 'Recovery policy: 19 checks passed'

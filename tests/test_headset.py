@@ -245,6 +245,11 @@ class DevTests(HeadsetFixture):
         saved = json.loads((self.root / "dev/state.json").read_text())
         self.assertEqual(saved["archive"], str(archive.resolve()))
 
+    def test_every_command_renews_the_host_contact(self):
+        argv = self.make().ssh_argv("pico4-valve-session-check --seconds 30")
+        self.assertEqual(argv[-1], "cut -d. -f1 /proc/uptime > /run/pico4-poc/host-contact 2>/dev/null; "
+                                   "pico4-valve-session-check --seconds 30")
+
     def test_unconfirmed_archive_never_switches(self):
         archive, _ = self.archive()
         dev = self.make({"pico4-userspace receive": "received 0000"})
