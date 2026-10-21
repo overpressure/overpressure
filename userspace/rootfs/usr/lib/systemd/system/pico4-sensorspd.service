@@ -10,7 +10,10 @@ After=pico4-slpi.service pico4-pd-mapper.service
 # EACCES. udev creates the node during coldplug (no devtmpfs on this kernel).
 ExecStartPre=/bin/sh -c 'for i in $$(seq 100); do [ -c /dev/adsprpc-smd-secure ] && exit 0; sleep 0.1; done; exit 1'
 ExecStart=/usr/bin/hexagonrpcd -f /dev/adsprpc-smd-secure -d sdsp -s -R /usr/share/qcom/pico4
-Restart=on-failure
+# When the SLPI restarts (subsystem restart, level RELATED) hexagonrpcd loses its FastRPC
+# channel and exits successfully; the restarted sensors process needs it again, and the
+# head IMU only comes back once it runs (docs/xr.md).
+Restart=always
 RestartSec=2
 
 [Install]

@@ -24,6 +24,8 @@
 
 #define SNS_CLIENT_SERVICE 0x190
 #define QRTR_CMD_NEW_SERVER 4
+#define QRTR_CMD_DEL_SERVER 5
+#define QRTR_CMD_DEL_CLIENT 6
 #define QRTR_CMD_NEW_LOOKUP 10
 
 #define QMI_REQUEST 0
@@ -497,7 +499,27 @@ now_ms(void)
 	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-//! Receive one packet from the SNS client service (control packets are skipped).
+bool
+pico4_ssc_control_gone(const uint8_t *packet, size_t len, uint32_t node, uint32_t port)
+{
+	uint32_t pkt[5];
+	if (len < sizeof(pkt)) {
+		return false;
+	}
+	memcpy(pkt, packet, sizeof(pkt)); // little-endian on the wire and on the AP
+	if (pkt[0] == QRTR_CMD_DEL_SERVER) {
+		return pkt[1] == SNS_CLIENT_SERVICE && pkt[3] == node && pkt[4] == port;
+	}
+	if (pkt[0] == QRTR_CMD_DEL_CLIENT) {
+		return pkt[1] == node && pkt[2] == port;
+	}
+	return false;
+}
+
+/*!
+ * Receive one packet from the SNS client service. Other packets are skipped, except the
+ * name service's notice that the service went away (the sensor DSP restarted): -ECONNRESET.
+ */
 static int
 recv_packet(struct pico4_ssc *ssc, uint8_t *buf, size_t cap, int timeout_ms)
 {
@@ -521,7 +543,11 @@ recv_packet(struct pico4_ssc *ssc, uint8_t *buf, size_t cap, int timeout_ms)
 		if (from.sq_node == ssc->server.sq_node && from.sq_port == ssc->server.sq_port) {
 			return (int)n;
 		}
-		// Name-service updates and anything else: not ours.
+		if (from.sq_port == QRTR_PORT_CTRL &&
+		    pico4_ssc_control_gone(buf, (size_t)n, ssc->server.sq_node, ssc->server.sq_port)) {
+			return -ECONNRESET;
+		}
+		// Other name-service updates and anything else: not ours.
 	}
 }
 

@@ -75,8 +75,19 @@ pico4_ssc_disable(struct pico4_ssc *ssc, const struct pico4_ssc_suid *suid);
  * Returns the number of samples written to @p out (at most @p max), 0 on timeout
  * or for packets without samples, or a negative errno.
  */
+/*!
+ * Samples that arrived within @p timeout_ms: their count, 0, or a negative errno.
+ * -ECONNRESET: the service went away (the sensor DSP restarted); open a new client.
+ */
 int
 pico4_ssc_read(struct pico4_ssc *ssc, int timeout_ms, struct pico4_ssc_sample *out, int max);
+
+/*!
+ * Whether a QRTR control packet from the name service reports that the SNS client
+ * service at @p node:@p port is gone (DEL_SERVER for it, or DEL_CLIENT of its port).
+ */
+bool
+pico4_ssc_control_gone(const uint8_t *packet, size_t len, uint32_t node, uint32_t port);
 
 
 /*

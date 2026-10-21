@@ -125,6 +125,8 @@ struct pico4_hmd
 	struct pico4_ssc *ssc;
 	struct pico4_ssc_suid accel_suid, gyro_suid, blemcu_suid;
 	bool has_blemcu;
+	//! The IMU stream is lost and being reconnected: the head pose is untracked meanwhile.
+	bool imu_stale;
 	struct os_thread_helper oth;
 
 	//! Controller radio, NULL if unavailable; its own thread acknowledges frames.
@@ -468,23 +470,80 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 	}
 }
 
+//! No IMU samples for this long: the stream is lost (it delivers 500-1000 per second).
+#define IMU_LOST_NS (1000 * U_TIME_1MS_IN_NS)
+
+static bool
+imu_thread_running(struct pico4_hmd *h)
+{
+	os_thread_helper_lock(&h->oth);
+	bool running = os_thread_helper_is_running_locked(&h->oth);
+	os_thread_helper_unlock(&h->oth);
+	return running;
+}
+
+/*!
+ * The IMU stream is gone, typically because the sensor DSP restarted: its service, the
+ * sensor UIDs and the QTimer mapping may all have changed. Report the head pose untracked,
+ * then open a new client, find the sensors again, map the clock and subscribe, until it
+ * works or the device goes away. The station and the cameras are not touched.
+ */
+static void
+recover_imu(struct pico4_hmd *h, float rate, const char *why)
+{
+	__atomic_store_n(&h->imu_stale, true, __ATOMIC_RELEASE);
+	P4_ERROR(h, "IMU stream lost (%s): head pose untracked until it is back", why);
+	int64_t start = os_monotonic_get_ns();
+	pico4_ssc_close(&h->ssc);
+	// Short steps, each followed by a check: a service stop must not wait for the sensor DSP.
+	for (int attempt = 1; imu_thread_running(h); attempt++) {
+		os_nanosleep(U_TIME_1S_IN_NS / 2);
+		if (pico4_ssc_open(&h->ssc, 1000) == 0 && imu_thread_running(h) &&
+		    pico4_ssc_find(h->ssc, "accel", &h->accel_suid, 1000) == 0 && imu_thread_running(h) &&
+		    pico4_ssc_find(h->ssc, "gyro", &h->gyro_suid, 1000) == 0 && calibrate_clock(h) &&
+		    pico4_ssc_enable(h->ssc, &h->accel_suid, rate) == 0 && pico4_ssc_enable(h->ssc, &h->gyro_suid, rate) == 0) {
+			if (h->has_blemcu && (pico4_ssc_find(h->ssc, "ble_mcu", &h->blemcu_suid, 1000) != 0 ||
+			                      pico4_ssc_enable(h->ssc, &h->blemcu_suid, rate) < 0)) {
+				P4_ERROR(h, "The controller stream did not come back with the IMU");
+			}
+			__atomic_store_n(&h->imu_stale, false, __ATOMIC_RELEASE);
+			P4_INFO(h, "IMU stream back after %.1f s (attempt %d), QTimer offset %lld ns",
+			        (double)(os_monotonic_get_ns() - start) / U_TIME_1S_IN_NS, attempt,
+			        (long long)h->qtimer_offset_ns);
+			return;
+		}
+		pico4_ssc_close(&h->ssc);
+	}
+}
+
 static void *
 imu_thread(void *ptr)
 {
 	struct pico4_hmd *h = (struct pico4_hmd *)ptr;
 	struct pico4_ssc_sample samples[64];
+	float rate = (float)debug_get_num_option_pico4_imu_rate();
+	int64_t last_data_ns = os_monotonic_get_ns();
 
 	os_thread_helper_name(&h->oth, "PICO 4 IMU");
 	os_thread_helper_lock(&h->oth);
 	while (os_thread_helper_is_running_locked(&h->oth)) {
 		os_thread_helper_unlock(&h->oth);
 		int n = pico4_ssc_read(h->ssc, 100, samples, (int)ARRAY_SIZE(samples));
-		if (n < 0) {
+		int64_t now = os_monotonic_get_ns();
+		if (n > 0) {
+			last_data_ns = now;
+		}
+		bool gone = n == -ECONNRESET, silent = now - last_data_ns > IMU_LOST_NS;
+		if (n < 0 && !gone && !silent) {
 			P4_ERROR(h, "Reading the sensor service failed: %s", strerror(-n));
 			os_nanosleep(U_TIME_1MS_IN_NS * 100);
 		}
 		for (int i = 0; i < n; i++) {
 			handle_sample(h, &samples[i]);
+		}
+		if (gone || silent) {
+			recover_imu(h, rate, gone ? "the sensor service went away" : "no samples for a second");
+			last_data_ns = os_monotonic_get_ns();
 		}
 		os_thread_helper_lock(&h->oth);
 	}
@@ -682,10 +741,10 @@ display_lead_ns(struct pico4_hmd *h)
 }
 
 static xrt_result_t
-pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
-                           enum xrt_input_name name,
-                           int64_t at_timestamp_ns,
-                           struct xrt_space_relation *out_relation)
+get_head_pose(struct xrt_device *xdev,
+              enum xrt_input_name name,
+              int64_t at_timestamp_ns,
+              struct xrt_space_relation *out_relation)
 {
 	struct pico4_hmd *h = pico4_hmd(xdev);
 
@@ -759,6 +818,22 @@ pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
 	}
 	*out_relation = rel;
 	return XRT_SUCCESS;
+}
+
+//! The head pose; while the IMU stream is being reconnected, the last one, untracked.
+static xrt_result_t
+pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
+                           enum xrt_input_name name,
+                           int64_t at_timestamp_ns,
+                           struct xrt_space_relation *out_relation)
+{
+	xrt_result_t ret = get_head_pose(xdev, name, at_timestamp_ns, out_relation);
+	if (ret == XRT_SUCCESS && __atomic_load_n(&pico4_hmd(xdev)->imu_stale, __ATOMIC_ACQUIRE)) {
+		out_relation->relation_flags = (enum xrt_space_relation_flags)(
+		    out_relation->relation_flags &
+		    ~(XRT_SPACE_RELATION_ORIENTATION_TRACKED_BIT | XRT_SPACE_RELATION_POSITION_TRACKED_BIT));
+	}
+	return ret;
 }
 
 static xrt_result_t

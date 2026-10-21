@@ -107,6 +107,19 @@ main(void)
 	uint8_t response[] = {0x02, 0x01, 0x00, 0x20, 0x00, 0x07, 0x00, 0x02, 0x04, 0x00, 0, 0, 0, 0};
 	EXPECT(pico4_ssc_decode_indication(response, sizeof(response), s, 4, NULL, NULL, NULL) == 0);
 
+	// The name service's notices when the sensor DSP restarts: the service at node 9 port
+	// 0x4000 is gone (DEL_SERVER for it, DEL_CLIENT of its port); other services and
+	// ports, a new server and short packets are not.
+	const uint32_t del_server[5] = {5, 0x190, 1, 9, 0x4000}, other_service[5] = {5, 0x191, 1, 9, 0x4000};
+	const uint32_t other_port[5] = {5, 0x190, 1, 9, 0x4001}, del_client[5] = {6, 9, 0x4000, 0, 0};
+	const uint32_t new_server[5] = {4, 0x190, 1, 9, 0x4000};
+	EXPECT(pico4_ssc_control_gone((const uint8_t *)del_server, 20, 9, 0x4000));
+	EXPECT(pico4_ssc_control_gone((const uint8_t *)del_client, 20, 9, 0x4000));
+	EXPECT(!pico4_ssc_control_gone((const uint8_t *)other_service, 20, 9, 0x4000));
+	EXPECT(!pico4_ssc_control_gone((const uint8_t *)other_port, 20, 9, 0x4000));
+	EXPECT(!pico4_ssc_control_gone((const uint8_t *)new_server, 20, 9, 0x4000));
+	EXPECT(!pico4_ssc_control_gone((const uint8_t *)del_server, 16, 9, 0x4000));
+
 	if (failures == 0) {
 		printf("pico4_ssc: ok\n");
 	}

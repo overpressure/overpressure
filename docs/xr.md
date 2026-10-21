@@ -124,7 +124,7 @@ Behaviour of this kernel and DSP:
 | `pico4-qrtr-ns.service` | `qrtr-ns -f` |
 | `pico4-slpi.service` | `slpi-boot`, after the name service |
 | `pico4-pd-mapper.service` | `pd-mapper /usr/lib/firmware` |
-| `pico4-sensorspd.service` | `hexagonrpcd -f /dev/adsprpc-smd-secure -d sdsp -s -R /usr/share/qcom/pico4`, once udev has created the node (no devtmpfs) |
+| `pico4-sensorspd.service` | `hexagonrpcd -f /dev/adsprpc-smd-secure -d sdsp -s -R /usr/share/qcom/pico4`, once udev has created the node (no devtmpfs); restarted whenever it ends, because it ends successfully when the DSP restarts and the restarted DSP needs it again |
 | `pico4-imu-ready.service` | `pico4-imu wait`: until the sensor service lists the accelerometer and gyroscope, at most 120 s; the target is reached after it |
 
 The DSP loads its sensor registry for about 35 s after it boots, and until then the sensor
@@ -132,6 +132,14 @@ service lists no IMU. `pico4-session.service` and `pico4-monado.service` start a
 target, so the driver (Monado's, or SteamVR's `driver_monado`) does not probe before the IMU
 is listed; a probe before that falls back to Monado's simulated headset, whose display
 SteamVR cannot find.
+
+**DSP restarts.** An SLPI subsystem restart (level `RELATED`, `/sys/kernel/boot_slpi/ssr`)
+takes the sensor service away; the name service reports it, and the driver's SSC client sees it
+as `-ECONNRESET`. A second without IMU samples counts the same. The driver then reports the head
+pose untracked (orientation still valid), and its IMU thread opens a new client, looks the
+sensors up again, maps the QTimer again and subscribes, in short steps so that a service stop
+never waits for the DSP. The station and the cameras stay as they are. The stream is back once
+the DSP has loaded its registry again, about 35 s after the restart.
 
 The units start only where `/sys/kernel/boot_slpi` and the sensor data exist: on the headset,
 with a userspace built with sensor data. Elsewhere (QEMU) their conditions skip them.
