@@ -107,6 +107,18 @@ class Headset:
         return self.run([self.s.path("edl"), "--loader", self.s.path("loader"), "--memory", "Ufs", *words],
                         timeout, log=self.folder / f"{log}.log")
 
+    def reset_to_pico_os(self, log: str) -> str:
+        """EDL reset (edl-ng's plain reset mode), then PICO OS. Once the headset stayed off after the
+        final reset, with nothing on USB, and only a hard reset by the user brought PICO OS back: the
+        cycle then stops and says so instead of retrying anything."""
+        self.edl("reset", "--mode", "Reset", log=log)
+        try:
+            return self.wait_pico_os()
+        except RuntimeError as exc:
+            where = "still in EDL" if self.edl_count() else "no ADB or EDL device"
+            raise RuntimeError(f"PICO OS did not come up after the EDL reset ({where}): hard reset needed; "
+                               "hold the power button until the headset restarts, nothing is retried") from exc
+
     def check_edl_serial(self, output: str):
         """edl-ng reports the device serial when it connects: only the configured headset may be written."""
         if not re.search(rf"Serial Number:\s*{re.escape(self.s.edl_serial)}\b", output, re.I):
@@ -128,8 +140,7 @@ class Headset:
                   "--image", self.s.path("engineering_abl"), "--sha256", self.s.engineering_abl_sha256,
                   "--readback", self.folder / "engineering-abl-readback.bin", "--execute",
                   "--confirm-device", self.s.adb_serial], 900, log=self.folder / "stage-abl.log")
-        self.edl("reset", log="reset-stage")
-        print(f"   PICO OS with engineering ABL: {self.wait_pico_os()}", flush=True)
+        print(f"   PICO OS with engineering ABL: {self.reset_to_pico_os('reset-stage')}", flush=True)
 
     def stock_boot(self) -> tuple:
         """The stock boot image of the backup and its manifest entry."""
@@ -196,8 +207,7 @@ class Cycle(Headset):
         self.run([sys.executable, "-m", "pico4", "device", "restore-abl", *self.device_args(),
                   "--readback", self.folder / "stock-abl-readback.bin", "--execute",
                   "--confirm-device", self.s.adb_serial], 900, log=self.folder / "restore-abl.log")
-        self.edl("reset", log="reset-final")
-        print(f"   final PICO OS: {self.wait_pico_os()}", flush=True)
+        print(f"   final PICO OS: {self.reset_to_pico_os('reset-final')}", flush=True)
 
 
 def main(argv=None) -> int:

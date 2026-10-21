@@ -183,6 +183,26 @@ class CycleTests(HeadsetFixture):
             self.run_cycle(self.make())
         self.assertNotIn(["fastboot", "-s", "FB1", "flash", "boot", str(stock)], self.calls)
 
+    def test_headset_that_stays_off_after_the_final_reset_needs_a_hard_reset(self):
+        c = self.make()
+        fake = self.fake
+
+        def off_after_reset(argv, timeout=60, stdin=None, check=True, log=None):
+            text = " ".join(str(a) for a in argv)
+            if "reset --mode Reset" in text:
+                self.edl = 0
+            if "getprop sys.boot_completed" in text and Path(self.folder / "reset-final.log").exists():
+                self.calls.append([str(a) for a in argv])
+                raise RuntimeError("adb: no devices/emulators found")
+            return fake(argv, timeout, stdin, check, log)
+        c.run = off_after_reset
+        with self.assertRaisesRegex(RuntimeError, r"no ADB or EDL device\): hard reset needed"):
+            self.run_cycle(c)
+        resets = [t for t in self.texts() if " reset " in t]
+        self.assertEqual(len(resets), 2)
+        self.assertTrue(all("--mode Reset" in t for t in resets))
+        self.assertEqual(self.steps()[-1], "pico-os")
+
     def test_missing_edl_device_times_out(self):
         c = cycle.Cycle(self.settings, self.folder, self.fake, self.clock, lambda: 0)
         with self.assertRaisesRegex(RuntimeError, "EDL"):

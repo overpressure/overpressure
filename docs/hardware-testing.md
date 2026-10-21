@@ -515,9 +515,12 @@ are bounded to 600 s, staging and ABL restore to 900 s, and each wait for PICO O
 | `STOPPED: <reason>` | 1 | one of the cycle's own steps failed. The cycle stops at once, never repeats a step and prints the evidence directory; the reason says where the headset is when that is known. A boot readback that differs from the backup, or an EDL device that is not `PICO4_EDL_SERIAL`, stops it in EDL with the engineering ABL in place; a changed pinned stock image stops it in fastboot. |
 
 **If PICO OS does not come back.** After the final EDL reset the headset can stay off although
-stock boot and stock ABL are already verified; the cycle then stops waiting for PICO OS. A person
-has to look at the headset: a hardware reset (power button held for more than 10 s) starts PICO
-OS. Do not retry the cycle or any EDL or fastboot step blindly.
+stock boot and stock ABL are already verified. The resets use edl-ng's plain `Reset` mode, the
+only one that restarts the device (`Off` powers it down, `Edl` returns to EDL). When PICO OS does
+not finish booting within 300 s of a reset, the cycle stops with `hard reset needed` and says
+whether the headset is still in EDL or on neither ADB nor EDL. A person has to look at the
+headset: a hardware reset (power button held for more than 10 s) starts PICO OS. Do not retry the
+cycle or any EDL or fastboot step blindly.
 
 The evidence goes to `out/cycle-<YYYYmmdd-HHMMSS>/`. The readbacks are full partition images;
 keep the directory private.
