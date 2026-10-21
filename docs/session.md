@@ -226,12 +226,12 @@ other call passes through; without the panels, the layer stays out of the way.
 | `PICO4_VRDISPLAY_TRACE=path` | the present timeline, written with the statistics: one line per event (kind, time, present id, argument) for queued presents, finished rendering, commits, retire fences, `vkWaitForPresentKHR` begin and end, vblank ticks, kernel vblank events and acquired images |
 | `PICO4_VRDISPLAY_VSYNC_LEAD_US` | signal vblanks (event fences and the counter) this many microseconds early; SteamVR's service sets 4000, and the PICO 4 driver adds the same to its prediction |
 | `PICO4_VRDISPLAY_FRAMES_AHEAD=N` | a present counts as shown once the present N before it is committed (default 0: when its retire fence signals; at most 2); `steamvr.service` sets 1, so the GPU renders the next frame while SteamVR waits for the last one |
-| `PICO4_VRDISPLAY_DUMP=path` | present `PICO4_VRDISPLAY_DUMP_FRAME` (default 300) as a PPM, downscaled by four; this also gives the statistics each eye's mean colour |
+| `PICO4_VRDISPLAY_DUMP=path` | present `PICO4_VRDISPLAY_DUMP_FRAME` (default 300) as a PPM, downscaled by four; this also gives the statistics each eye's mean colour. With compressed scanout and `PICO4_VRDISPLAY_DUMP_EVERY=N` also every N presents after it, as `path.COMMIT`, for artefacts that only show in motion |
 | `PICO4_VRDISPLAY_GPU_MIN_MHZ` | GPU clock floor while presenting (default 587; 0 leaves the governor alone) |
 | `PICO4_VRDISPLAY_SYNC=off` | no semaphore emulation |
 | `PICO4_VRDISPLAY_UBWC=1` | compressed scanout: tiled, compressed images for the application, converted at each present into compressed RGBA scanout images. The CPU cannot read compressed images: the dumped present also copies the application's image into a host-visible buffer, and the motion data are off |
 | `PICO4_VRDISPLAY_UBWC=2` | compressed scanout without the conversion (`steamvr.service` sets it): the application renders into the compressed RGBA scanout images; its image views of them and its render passes with a `PRESENT_SRC` final layout get the RGBA variant of its BGRA format, which changes the byte order in memory, not the colours |
-| `PICO4_VRDISPLAY_PASS_BARRIER=1` | a full memory barrier before every render pass of the application (`steamvr.service` sets it): without it chunks of SteamVR's overlays are missing in the right eye ([graphics.md](graphics.md)) |
+| `PICO4_VRDISPLAY_PASS_BARRIER=1` | a full memory barrier before every render pass of the application (`steamvr.service` sets it): without it chunks of SteamVR's overlays are missing in the right eye ([graphics.md](graphics.md)). The layer answers the render-pass calls by their core and extension names and calls the driver's by whichever it has: the Facet renderer uses the extension names, and a missing core entry crashed it |
 | `PICO4_VRDISPLAY_IMAGES=1` | log every image the application creates: size, mip levels, layers, samples, format, tiling, usage, flags, external memory and modifiers |
 | `PICO4_VRDISPLAY_LOG=debug` | logs every display call |
 | `PICO4_VRDISPLAY_LOGFILE=path` | appends the log there instead of stderr |
@@ -309,6 +309,16 @@ in `~/.local/share/Steam/config`) disable the drivers of the Frame and of other 
 (`driver_cv`, `driver_frame_hmd`, `driver_frame_controller`, `driver_indexhmd`,
 `driver_indexcontroller`, `driver_htc`, `driver_prism`), enable `driver_monado`, force it
 (`forcedDriver`, `activateMultipleDrivers` off, `requireHmd`) and set `enableLinuxVulkanAsync`.
+They also carry the Steam Frame's own compositor, dashboard, power and tessellation settings
+from its driver's `frame_hmd_additional.vrsettings`, which SteamVR loads only with that
+driver: the Facet renderer, the system layer drawn in the distortion pass (2x MSAA, 1400×1400),
+simplified and achromatic distortion shaders, scanout scaling, overlay quality 1, the blue dome
+background, 72 Hz as the default per-app refresh rate. The Frame is the baseline; left out are
+only its eye tracking, cameras, VR link, its CV driver and SteamOS power profiles, which the
+PICO 4 lacks. One setting differs: `pauseCompositorOnStandby` is off. The Frame tells
+SteamVR from its proximity sensor whether it is worn; `driver_monado` reports no proximity
+(its `/user/head/proximity` input has the wrong type), so SteamVR goes by head motion and, with
+the 5 s screen timeout, paused the compositor while the headset was worn and held still.
 The Frame's headset driver sets that last one in its own settings, which are not loaded with
 that driver disabled. Without it the compositor creates no compute queue and stops at an
 assertion; with it, it shares Turnip's single queue for both.
@@ -328,15 +338,30 @@ adapts `driver_monado`:
 - positions marked valid count, not only tracked ones, so the 3DoF controllers appear where
   the arm model places them;
 - inputs a controller lacks are left out instead of being missed every frame: one profile
-  serves both hands, with A/B on the right controller and X/Y on the left.
+  serves both hands, with A/B on the right controller and X/Y on the left;
+- the headset also answers `IVRDisplayComponent_003` with the exact inverse of its lens
+  function (`ComputeInverseDistortion`, from `pico4_hmd_compute_inverse_distortion`). The
+  Facet renderer builds its distortion mesh from the inverse; without it SteamVR inverts
+  `ComputeDistortion` numerically, which failed at the border of the field of view: stretched
+  triangles there flickered in magenta during head turns. The lens model is radial, so the
+  inverse is a bisection along the ray from the lens centre, also through the steep
+  continuation beyond the fitted radius.
 
 ### Performance and heat
 
-Valve's full session presents 83–90 frames per second at the GPU's 587 MHz floor (87.4–89.7 in
-10 s windows, about 85.5 over three minutes, about 1 % of the commits late); the compositor
-then keeps the GPU 97–98 % busy, 11.6 ms of GPU time per frame with the dashboard open. In
-the lenses the motion is more fluid than at 58 frames per second, but grid lines still double
-during head turns (see below).
+With the Steam Frame's compositor settings ([SteamVR configuration](#steamvr-configuration))
+Valve's session presents 90 frames per second at the GPU's 587 MHz floor: 90.0 commits/s with
+0–1 late in 10 s windows, worn 36,242 commits with 31 late. The compositor needs 7.0 ms of GPU
+time per frame (one 2x-MSAA pass over both panels with the system layer in it, resolved into
+the scanout image; clears 2.0 ms, resolve 1.2 ms), the GPU is about 72 % busy with gamescope's
+share, and 94 % of the frames reach the panels 21–22 ms after their present. The hottest zone
+stays at 55–62 °C. In the lenses (user): fluid, no doubled lines, no flicker at the borders.
+Two one-second waits remain at SteamVR's start, while the dashboard tries to start the Steam
+client.
+
+SteamVR's desktop settings, which the session ran before, are described below: 83–90 frames per
+second with the GPU 97–98 % busy, 11.6 ms per frame with the dashboard open, grid lines doubling
+during head turns.
 
 The limit was the compositor's frame loop. After each present, `vrcompositor` waits up to
 15 ms for that present to be shown (`WaitForPendingPresent`) and only then starts the next
@@ -370,8 +395,9 @@ further, so that the pose still matches the real vblank. With one frame ahead, 1
 | 4 ms | 87.4–89.7 | 1–7 |
 | 6 ms | 79.5 | 16 of 795 |
 
-`steamvr.service` sets 4 ms. Runs vary by 2–3 frames per second with the dashboard: open, it
-adds about 1.1 ms of GPU time per frame.
+With the desktop settings 4 ms was best. The Frame's path (Facet) stalls for one second now and
+then with 4 ms (8–14 of SteamVR's one-second waits in 30 s), runs 90.0 commits/s with 5 ms and
+81 with 6 ms; `steamvr.service` sets 5 ms.
 
 The serial console must stay quiet during a session. journald copies warnings and errors into
 the kernel log for pstore, and SteamVR logs errors by the thousand while it misses frames (about
@@ -418,12 +444,12 @@ a still headset turn that off. One SteamVR setting at a time, against the defaul
 | simplified shaders and overlay quality 1 | 4.7 ms | 66.0 |
 | the same without the dome | 3.3 ms | 60.2 |
 
-These figures predate compressed scanout. The simplified shaders draw nothing here: with
-`enableSimplifiedShaders` every frame is black, in the dumps and in the lenses, with linear,
-compressed and direct scanout alike, so their times measure no picture. The Frame driver sets
-them, with the Facet renderer this project cannot use.
+These figures predate compressed scanout. With the classic renderer the simplified shaders
+draw nothing: with `enableSimplifiedShaders` alone every frame is black, in the dumps and in
+the lenses, so their times measure no picture. The Frame sets them together with the Facet
+renderer, where they draw the scene.
 
-With compressed scanout, one frame ahead and the dashboard open, a frame takes 11.6 ms; the
+With the desktop settings, compressed scanout, one frame ahead and the dashboard open, a frame takes 11.6 ms; the
 clears are 3.25 ms of it. SteamVR clears its system layer to (0, 0, 0, 1) with depth 1.0, and
 the lens-distortion target to zero over one eye's half, so a clear of the compressed images'
 metadata alone, which only yields zeros, does not apply; the sky pass in the GPU's tile memory
@@ -652,7 +678,7 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: `pico4-openxr-display --sky` in Monado's session, worn, 3DoF | a grid sky redrawn every frame at 1584×1584 per eye and a world-locked quad: no doubled lines; 88.9 commits/s, 65 of 7,925 late |
 | Headset: `pico4-valve-session-check`, 20 and 30 s | passes: startup 15–16 s, 51–54 commits/s, vblank 89.998 Hz, 12.1 ms GPU wait per frame, no fence or GPU timeout, no `mangoapp` restarts, scanned-out eye means about (10, 13, 19); headset and both controllers in SteamVR; the Monado session back afterwards; hottest zone 47–54 °C before, 86–92 °C after |
 | Headset: `pico4-valve-session-check`, 30 s, KGSL context priorities | passes: `vrcompositor` and gamescope at KGSL level 1, the CEF renderer at 8; 2,188 commits at 55.6/s, 1,259 late, 10.3 ms GPU wait per frame (longest 25.7 ms), 5.75 ms retire wait, 1,847 of 2,187 present waits over SteamVR's 15 ms; without the priorities 53.1/s, 1,486 late, 11.5 ms (35.6 ms) |
-| Headset: Valve's session with the Frame driver's compositor settings, no background dome (user, four minutes) | layer: 13,068 commits, 598 late, 8.4 ms GPU wait per frame, no present-wait timeout, hottest zone up to 69.4 °C; in the lenses the picture warped with head movement (lens correction not applied as before) and froze every few seconds: 47 of SteamVR's one-second present waits |
+| Headset: Valve's session with the Frame's compositor settings, worn in 3DoF (user) | 36,242 commits, 31 late, hottest zone 62 °C; 10 s windows on the table 90.0 commits/s, 0–1 late; compositor 7.0 ms of GPU per frame at 90/s; 94 % of the frames on the panels 21–22 ms after their present; in the lenses fluid, no doubled lines, no flicker at the borders with the exact inverse and its linear continuation |
 | Headset: `pico4-valve-session-check`, 30 s, vblank clock | SteamVR's defaults: 54.7 commits/s, 10.6 ms GPU wait per frame, no one-second wait; the Frame driver's settings without `waitForSceneGraph`: 3,392 commits at 87.5/s, 79 late, 7.2 ms, 6 of the present waits over 15 ms, no one-second wait (16 in 30 s before the clock) |
 | Headset: Valve's session worn with SteamVR's defaults, 2.8 minutes (user) | 52.2 commits/s, longest gap 86 ms, 12.1 ms GPU wait per frame, no one-second wait; in the lenses no freeze, but head turns judder slightly (about 52 of 90 refreshes get a new frame); hottest zone 78.7 °C |
 | Headset: Valve's session, SteamVR's defaults without `waitForSceneGraph`, 30 s | 52.2 commits/s, longest gap 32.8 ms, 11.7 ms GPU wait per frame, no one-second wait |

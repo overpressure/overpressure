@@ -1,5 +1,6 @@
 """The session's units: SteamVR's restart limit and the fallback to Monado's session."""
 import configparser
+import json
 import re
 import unittest
 from pathlib import Path
@@ -51,7 +52,7 @@ class VsyncLeadTest(unittest.TestCase):
     def test_steamvr_runs_with_the_lead(self):
         # SteamVR starts its compositor about 4 ms before the vblank it sees.
         dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_VSYNC_LEAD_US=4000$")
+        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_VSYNC_LEAD_US=5000$")
         # The driver reads the same variable and predicts that much further.
         hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
         self.assertIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', hmd)
@@ -89,6 +90,25 @@ class CompressedScanoutTest(unittest.TestCase):
         self.assertIn('"PICO4_VRDISPLAY_PASS_BARRIER"', layer)
         for entry in ("vkCmdBeginRenderPass", "vkCmdBeginRenderPass2", "vkCmdBeginRendering"):
             self.assertIn(f'"{entry}"', layer)
+
+
+class FrameSettingsTest(unittest.TestCase):
+    def test_session_takes_the_frames_compositor_path(self):
+        # an issue: the Steam Frame's compositor settings are the baseline; they live in its
+        # driver's frame_hmd_additional.vrsettings, which SteamVR loads only with that driver.
+        settings = json.loads((ROOT / "userspace/session/steamvr.vrsettings").read_text(encoding="utf-8"))
+        steamvr = settings["steamvr"]
+        for key in ("useFacetRenderer", "renderSystemLayerInDistortPass", "enableSimplifiedShaders",
+                    "enableAchromaticDistortion", "enableScanoutScaling", "enableLinuxVulkanAsync"):
+            self.assertIs(steamvr[key], True, key)
+        self.assertEqual(steamvr["systemLayerWidth"], 1400)
+        self.assertEqual(steamvr["overlayRenderQuality_2"], 1)
+        self.assertEqual(steamvr["forcedDriver"], "monado")
+        self.assertIs(settings["driver_frame_hmd"]["enable"], False)
+        # Facet builds its mesh from the driver's exact inverse distortion.
+        patch = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-pico4.patch").read_text(encoding="utf-8")
+        self.assertIn("IVRDisplayComponent_Version3", patch)
+        self.assertIn("pico4_hmd_compute_inverse_distortion", patch)
 
 
 class KthreadPrioritiesTest(unittest.TestCase):

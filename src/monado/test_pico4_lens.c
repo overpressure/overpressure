@@ -78,6 +78,28 @@ main(void)
 	EXPECT(pico4_lens_tan(&lens[1], &ca, 0.022, 0, t));
 	EXPECT(!pico4_lens_tan(&lens[1], &ca, 0.022, 0.022, t));
 
+	// The inverse finds the panel point back for every channel inside the fitted radius, with
+	// the curved left lens and its centre offset.
+	for (int e = 0; e < 2; e++) {
+		for (int c = 0; c < 3; c++) {
+			for (double x = -0.016; x <= 0.016; x += 0.004) {
+				for (double y = -0.016; y <= 0.016; y += 0.004) {
+					double fwd[3][2], bx, by;
+					pico4_lens_tan(&lens[e], &ca, x, y, fwd);
+					EXPECT(pico4_lens_inverse(&lens[e], &ca, c, fwd[c][0], fwd[c][1], &bx, &by));
+					EXPECT(fabs(bx - x) < 1e-9 && fabs(by - y) < 1e-9);
+				}
+			}
+		}
+	}
+	// Beyond it the inverse continues linearly: further out for larger angles, and an
+	// 85-degree direction lands far outside the panel instead of just beyond its edge.
+	double ix = 0, iy = 0, jx = 0, jy = 0;
+	EXPECT(pico4_lens_inverse(&lens[1], &ca, 1, 1.0, 0, &ix, &iy) && pico4_lens_inverse(&lens[1], &ca, 1, 1.2, 0, &jx, &jy));
+	EXPECT(jx > ix && ix > 0.0235);
+	EXPECT(pico4_lens_inverse(&lens[1], &ca, 1, tan(85 * M_PI / 180), 0, &ix, &iy) && ix > 0.2);
+	EXPECT(!pico4_lens_inverse(&lens[1], &ca, 3, 0, 0, &ix, &iy));
+
 	// Field of view of the identity lens: atan(0.023 / 0.025) to each side, shifted by the centre offset.
 	double l, r, u, d;
 	pico4_lens_fov(&lens[1], &l, &r, &u, &d);

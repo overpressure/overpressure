@@ -789,6 +789,29 @@ pico4_hmd_compute_distortion(
 	return XRT_SUCCESS;
 }
 
+bool
+pico4_hmd_compute_inverse_distortion(
+    struct xrt_device *xdev, uint32_t view, uint32_t channel, float u, float v, float *out_u, float *out_v)
+{
+	// Only for this driver's HMD: the inverse of pico4_hmd_compute_distortion.
+	if (xdev == NULL || xdev->compute_distortion != pico4_hmd_compute_distortion || view > 1 || channel > 2) {
+		return false;
+	}
+	struct pico4_hmd *h = pico4_hmd(xdev);
+	const struct xrt_fov *fov = &xdev->hmd->distortion.fov[view];
+	double tan_left = tan(fov->angle_left), tan_right = tan(fov->angle_right);
+	double tan_up = tan(fov->angle_up), tan_down = tan(fov->angle_down);
+	double tx = tan_left + u * (tan_right - tan_left);
+	double ty = v * (tan_up - tan_down) - tan_up;
+	double x, y;
+	if (!pico4_lens_inverse(&h->lens[view], &h->ca, (int)channel, tx, ty, &x, &y)) {
+		return false;
+	}
+	*out_u = (float)(x / PICO4_LENS_EYE_M + 0.5);
+	*out_v = (float)(y / PICO4_LENS_EYE_M + 0.5);
+	return true;
+}
+
 static char *
 read_text(const char *dir, const char *name)
 {

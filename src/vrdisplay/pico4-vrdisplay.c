@@ -25,7 +25,9 @@
  *   PICO4_VRDISPLAY_STATS=path   presentation statistics as JSON per swapchain,
  *                                every ten seconds and when it is destroyed
  *   PICO4_VRDISPLAY_DUMP=path    the image of present PICO4_VRDISPLAY_DUMP_FRAME
- *                                (default 300) as PPM, downscaled by four
+ *                                (default 300) as PPM, downscaled by four; with
+ *                                PICO4_VRDISPLAY_DUMP_EVERY=N also every N presents
+ *                                after it, as path.COMMIT (compressed scanout)
  *   PICO4_VRDISPLAY_MOTION=path  per commit: commit time, the vblank it reaches
  *                                the panels at (CLOCK_MONOTONIC ns), how far the
  *                                image changed (mean luma difference of a sparse
@@ -1670,6 +1672,7 @@ present_main(void *arg)
 	struct device_data *dev = sc->dev;
 	const char *dump = getenv("PICO4_VRDISPLAY_DUMP");
 	uint64_t dump_frame = (uint64_t)env_num("PICO4_VRDISPLAY_DUMP_FRAME", 300);
+	uint64_t dump_every = (uint64_t)env_num("PICO4_VRDISPLAY_DUMP_EVERY", 0);
 	const char *stats = getenv("PICO4_VRDISPLAY_STATS");
 	int64_t stats_ns = now_ns();
 	const char *motion_path = getenv("PICO4_VRDISPLAY_MOTION");
@@ -1805,10 +1808,19 @@ present_main(void *arg)
 			fputc('\n', motion);
 			pthread_mutex_lock(&d->lock);
 		}
-		if (dump != NULL && (img->readback || (img->copy == VK_NULL_HANDLE && sc->stats.commits == dump_frame))) {
+		if (dump != NULL &&
+		    (img->readback || (img->copy == VK_NULL_HANDLE && !img->direct && sc->stats.commits == dump_frame))) {
 			img->readback = false;
+			// A series (PICO4_VRDISPLAY_DUMP_EVERY): each dump named after its commit.
+			char path[PATH_MAX];
+			snprintf(path, sizeof(path), "%s", dump);
+			if (dump_every > 0) {
+				snprintf(path, sizeof(path), "%s.%06" PRIu64, dump, sc->stats.commits);
+				sc->dump_present += dump_every;
+				dump_frame += dump_every;
+			}
 			pthread_mutex_unlock(&d->lock);
-			sc_dump(sc, img, dump);
+			sc_dump(sc, img, path);
 			pthread_mutex_lock(&d->lock);
 		}
 		if (stats != NULL && sc->stats.last_ns - stats_ns >= STATS_EVERY_NS) {
@@ -4085,6 +4097,17 @@ layer_CreateDevice(VkPhysicalDevice physical,
 	D(CreateImageView);
 	D(CreateRenderPass);
 	D(CreateRenderPass2);
+	// Below Vulkan 1.2/1.3 the driver has these by their extension names only, and the layer
+	// answers both names (SteamVR's Facet renderer calls the extension ones).
+	if (d->CmdBeginRenderPass2 == NULL) {
+		d->CmdBeginRenderPass2 = (PFN_vkCmdBeginRenderPass2)gdpa(*device, "vkCmdBeginRenderPass2KHR");
+	}
+	if (d->CmdBeginRendering == NULL) {
+		d->CmdBeginRendering = (PFN_vkCmdBeginRendering)gdpa(*device, "vkCmdBeginRenderingKHR");
+	}
+	if (d->CreateRenderPass2 == NULL) {
+		d->CreateRenderPass2 = (PFN_vkCreateRenderPass2)gdpa(*device, "vkCreateRenderPass2KHR");
+	}
 	D(CmdCopyImageToBuffer);
 	D(CreateBuffer);
 	D(DestroyBuffer);

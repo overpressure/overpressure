@@ -65,6 +65,24 @@ bool
 pico4_lens_tan(const struct pico4_lens *lens, const struct pico4_lens_ca *ca, double x, double y, double out[3][2]);
 
 /*!
+ * The inverse of pico4_lens_tan for one channel (0 red, 1 green, 2 blue): the panel
+ * point (metres from the panel centre, x right, y down) seen at tan-angles (tx, ty).
+ * The model is radial about the lens centre, so the point lies on the ray from the
+ * centre in the direction of (tx, ty); within the fitted radius its distance is found
+ * by bisection. Beyond it the inverse continues at its slope there rather than
+ * inverting the steep continuation of pico4_lens_tan, so directions far outside the
+ * view land far outside the panel. False for an unknown channel.
+ */
+bool
+pico4_lens_inverse(const struct pico4_lens *lens,
+                   const struct pico4_lens_ca *ca,
+                   int channel,
+                   double tx,
+                   double ty,
+                   double *out_x,
+                   double *out_y);
+
+/*!
  * Field of view of one eye in radians, from the panel edges through the green
  * channel: left and down negative, as in xrt_fov.
  */

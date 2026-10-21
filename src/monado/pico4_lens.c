@@ -128,6 +128,64 @@ pico4_lens_tan(const struct pico4_lens *lens, const struct pico4_lens_ca *ca, do
 	return outside == 1.0;
 }
 
+bool
+pico4_lens_inverse(const struct pico4_lens *lens,
+                   const struct pico4_lens_ca *ca,
+                   int channel,
+                   double tx,
+                   double ty,
+                   double *out_x,
+                   double *out_y)
+{
+	double want = sqrt(tx * tx + ty * ty);
+	if (channel < 0 || channel > 2) {
+		return false;
+	}
+	if (want == 0) {
+		*out_x = lens->cx;
+		*out_y = lens->cy;
+		return true;
+	}
+	double dx = tx / want, dy = ty / want;
+	double rf = PICO4_LENS_FIT_RADIUS_M, t[3][2];
+	pico4_lens_tan(lens, ca, lens->cx + dx * rf, lens->cy + dy * rf, t);
+	double tf = hypot(t[channel][0], t[channel][1]);
+	if (want > tf) {
+		/*
+		 * Beyond the fitted radius the forward model grows steeply so that the image ends
+		 * cleanly; inverted, that would squeeze every direction up to 90 degrees off-axis into
+		 * a band just outside the panel, and geometry drawn through the inverse (SteamVR's
+		 * Facet renderer) would leave stretched triangles along the edge instead of being
+		 * clipped. The inverse continues at the slope it has at the fitted radius instead.
+		 */
+		double rin = rf * (1 - 1e-4);
+		pico4_lens_tan(lens, ca, lens->cx + dx * rin, lens->cy + dy * rin, t);
+		double slope = (tf - hypot(t[channel][0], t[channel][1])) / (rf - rin);
+		if (!(slope > 0)) {
+			return false;
+		}
+		double r = rf + (want - tf) / slope;
+		*out_x = lens->cx + dx * r;
+		*out_y = lens->cy + dy * r;
+		return true;
+	}
+	double lo = 0, hi = rf;
+	// The tan-angle grows with the distance from the centre: 50 halvings reach far below a nanometre.
+	for (int i = 0; i < 50; i++) {
+		double mid = (lo + hi) / 2;
+		pico4_lens_tan(lens, ca, lens->cx + dx * mid, lens->cy + dy * mid, t);
+		if (hypot(t[channel][0], t[channel][1]) < want) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	double r = (lo + hi) / 2;
+	*out_x = lens->cx + dx * r;
+	*out_y = lens->cy + dy * r;
+	return true;
+}
+
 //! Green tan-angle at distance d (metres) from the lens centre along an axis.
 static double
 edge_tan(const struct pico4_lens *lens, double d)
