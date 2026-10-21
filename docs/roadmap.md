@@ -17,7 +17,7 @@ performance, controller positions and a standalone boot.
 | 3. Native graphics | Works: Turnip Vulkan on KGSL; both panels at 90 and 72 Hz through the stock KMS driver | [graphics.md](graphics.md) |
 | 4. SteamOS-compatible userspace | Works: Holo Core aarch64 with the Frame's systemd 257.7, no failed units | [userspace.md](userspace.md) |
 | 5. Native XR hardware | Works: head IMU, display, lens correction, tracking cameras, 6DoF head tracking, 3DoF controllers. Open: controller positions | [xr.md](xr.md) |
-| 6. Valve's VR session | Runs: SteamVR on both panels at about 50 fps, GPU-bound. Open: Steam client, performance, cooling | [session.md](session.md), [cooling.md](cooling.md) |
+| 6. Valve's VR session | Runs: SteamVR on both panels at about 55 fps, GPU-bound. Open: Steam client, performance, cooling | [session.md](session.md), [cooling.md](cooling.md) |
 
 Each step's document holds its design, measurements and reproduction steps.
 
@@ -268,7 +268,7 @@ and where they stand.
 | Run the ARM64 SteamOS userspace | Done: Holo Core aarch64 with the Frame's systemd 257.7 and SteamOS services, no failed units (step 4) |
 | Display a Steam-style desktop in the headset | Partly: SteamVR's environment shows in the lenses and its dashboard runs (step 6); gamescope's desktop overlays need the Steam client |
 | Full 6DoF and controllers | Partly: 6DoF head tracking and 3DoF controllers with all inputs (step 5); controller positions are open |
-| Complete standalone SteamVR experience | Not yet: SteamVR runs on the panels, GPU-bound at about 50 fps, and every boot needs the PC; the Steam client, network, cooling and a standalone boot are open |
+| Complete standalone SteamVR experience | Not yet: SteamVR runs on the panels, GPU-bound at about 55 fps, and every boot needs the PC; the Steam client, network, cooling and a standalone boot are open |
 
 ## Open work
 
@@ -300,15 +300,15 @@ peaks at 69 °C instead of 86 °C. Remaining:
 
 Details: [session.md](session.md), [xr.md](xr.md).
 
-Valve's full session is GPU-bound at about 50 frames per second: SteamVR's compositor alone
-takes 15.7 ms of GPU per frame. With simplified shaders and overlay quality 1 it takes 4.7 ms,
-and with the display layer's 6 ms vsync lead (SteamVR starts its compositor about 4 ms before
-the vblank it sees) the session runs at 88.9 frames per second.
+Valve's full session is GPU-bound at about 55 frames per second: SteamVR's compositor
+takes 12.1 ms of GPU per frame with compressed scanout (17.3 ms with linear scanout images), of
+which 6.3 ms are the system layer's chain of MSAA passes (the aurora sky alone 4.7 ms). With
+simplified shaders and overlay quality 1 it takes 4.7 ms, and with the display layer's 6 ms
+vsync lead (SteamVR starts its compositor about 4 ms before the vblank it sees) the session runs
+at 88.9 frames per second.
 
 - Judge the two settings and the lead's prediction in the lenses; make the settings the
   session's defaults if they look right.
-- Find why the kernel sometimes handles the display interrupt only on the 10 ms scheduler
-  tick, which makes the present waits time out for a whole session.
 - Monado's composition headroom: its layer squasher fits the 11 ms frame only with the GPU
   clock floor. Options are compressed (UBWC) scanout images in the display's compressed
   formats; compressed client swapchain images; composing the layers directly through the
@@ -374,5 +374,5 @@ and stock-restoration guarantees. There is no design for this yet.
 
 ### Other hardware
 
-Wi-Fi, Bluetooth, audio, battery reporting and suspend have not been brought up under the
-userspace.
+Wi-Fi, Bluetooth, audio and suspend have not been brought up under the userspace. Battery level
+and charging state reach UPower and SteamVR ([userspace.md](userspace.md)).

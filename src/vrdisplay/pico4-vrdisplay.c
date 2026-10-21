@@ -38,6 +38,15 @@
  *                                (512 values each, every other pixel), in hex
  *   PICO4_VRDISPLAY_GPU_MIN_MHZ  GPU clock floor while presenting (587, 0: off)
  *   PICO4_VRDISPLAY_SYNC=off     no semaphore emulation
+ *   PICO4_VRDISPLAY_UBWC=1       compressed (UBWC) scanout: the application renders
+ *                                into tiled, compressed images without storage
+ *                                usage, converted at present into compressed
+ *                                images the planes read; the CPU cannot read
+ *                                them: the dumped present copies the
+ *                                application's image for it, motion data are off
+ *   PICO4_VRDISPLAY_IMAGES=1     log every image the application creates (size,
+ *                                format, samples, tiling, usage, flags), to see
+ *                                which ones lose tiling or compression
  *   PICO4_VRDISPLAY_LOG=debug    log every display call
  *   PICO4_VRDISPLAY_LOGFILE=path append the log there instead of stderr
  */
@@ -241,6 +250,19 @@ struct device_data
 	PFN_vkGetDeviceQueue2 GetDeviceQueue2;
 	PFN_vkCreateImage CreateImage;
 	PFN_vkDestroyImage DestroyImage;
+	PFN_vkGetImageDrmFormatModifierPropertiesEXT GetImageDrmFormatModifierPropertiesEXT;
+	PFN_vkCreateCommandPool CreateCommandPool;
+	PFN_vkDestroyCommandPool DestroyCommandPool;
+	PFN_vkAllocateCommandBuffers AllocateCommandBuffers;
+	PFN_vkBeginCommandBuffer BeginCommandBuffer;
+	PFN_vkEndCommandBuffer EndCommandBuffer;
+	PFN_vkCmdPipelineBarrier CmdPipelineBarrier;
+	PFN_vkCmdBlitImage CmdBlitImage;
+	PFN_vkCmdCopyImageToBuffer CmdCopyImageToBuffer;
+	PFN_vkCreateBuffer CreateBuffer;
+	PFN_vkDestroyBuffer DestroyBuffer;
+	PFN_vkGetBufferMemoryRequirements GetBufferMemoryRequirements;
+	PFN_vkBindBufferMemory BindBufferMemory;
 	PFN_vkGetImageMemoryRequirements GetImageMemoryRequirements;
 	PFN_vkAllocateMemory AllocateMemory;
 	PFN_vkFreeMemory FreeMemory;
@@ -1184,6 +1206,13 @@ struct sc_image
 	int dmabuf;
 	uint32_t gem, fb;
 	VkDeviceSize offset, pitch, size;
+	uint64_t modifier; //!< DRM_FORMAT_MOD_LINEAR or, with PICO4_VRDISPLAY_UBWC, QCOM_COMPRESSED
+	// Compressed scanout only: the image the planes read, and the conversion into it.
+	VkImage scan;
+	VkDeviceMemory scan_memory;
+	VkCommandBuffer copy;
+	VkCommandBuffer copy_dump; //!< the conversion plus a copy into the readback buffer
+	bool readback;             //!< this present carries the dump's copy
 	bool mappable;
 	enum image_state state;
 	uint64_t present_id;
@@ -1205,6 +1234,11 @@ struct swapchain
 	VkFormat format;
 	uint32_t fourcc;
 	uint32_t count;
+	VkCommandPool pool; //!< compressed scanout's conversions, else VK_NULL_HANDLE
+	// Compressed scanout with PICO4_VRDISPLAY_DUMP: host-visible copy of the dumped present.
+	VkBuffer readback;
+	VkDeviceMemory readback_memory;
+	uint64_t dump_present;
 	struct sc_image imgs[MAX_IMAGES];
 
 	uint32_t queue[MAX_IMAGES]; //!< Presented image indices, oldest first.
@@ -1251,6 +1285,20 @@ format_fourcc(VkFormat format)
 	}
 }
 
+/*!
+ * Compressed scanout (PICO4_VRDISPLAY_UBWC): msm_drm's planes take Qualcomm's
+ * compressed modifier for XBGR8888 only ("XB24/5/1" in their capabilities; XR24
+ * is refused), SteamVR renders B8G8R8A8 only, and Turnip compresses no image with
+ * storage usage on this GPU. The application therefore renders into a tiled,
+ * compressed image of the layer's, without storage usage, and each present blits
+ * it into a compressed R8G8B8A8 image that the planes scan out.
+ */
+static bool
+ubwc_mode(void)
+{
+	return env_num("PICO4_VRDISPLAY_UBWC", 0) != 0 && !fake_mode();
+}
+
 //! Writes the downscaled image as PPM and keeps each eye's mean colour (debugging).
 static void
 sc_dump(struct swapchain *sc, struct sc_image *img, const char *path)
@@ -1258,7 +1306,20 @@ sc_dump(struct swapchain *sc, struct sc_image *img, const char *path)
 	struct device_data *dev = sc->dev;
 	const uint8_t *map = NULL;
 	void *vk_map = NULL;
-	if (img->dmabuf >= 0) {
+	// Compressed scanout: the present copied the application's image into the readback buffer.
+	VkDeviceSize offset = img->offset, pitch = img->pitch;
+	VkDeviceMemory mapped = img->memory;
+	if (img->modifier != DRM_FORMAT_MOD_LINEAR) {
+		if (sc->readback_memory == VK_NULL_HANDLE ||
+		    dev->MapMemory(dev->device, sc->readback_memory, 0, VK_WHOLE_SIZE, 0, &vk_map) != VK_SUCCESS) {
+			LOG("no readback of the compressed image for the dump");
+			return;
+		}
+		map = vk_map;
+		mapped = sc->readback_memory;
+		offset = 0;
+		pitch = (VkDeviceSize)g_width * 4;
+	} else if (img->dmabuf >= 0) {
 		void *m = mmap(NULL, img->size, PROT_READ, MAP_SHARED, img->dmabuf, 0);
 		map = m == MAP_FAILED ? NULL : m;
 		struct dma_buf_sync sync = {.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ};
@@ -1280,7 +1341,7 @@ sc_dump(struct swapchain *sc, struct sc_image *img, const char *path)
 	}
 	for (uint32_t y = 0; y < g_height; y += 4) {
 		for (uint32_t x = 0; x < g_width; x += 4) {
-			const uint8_t *px = map + img->offset + (size_t)y * img->pitch + (size_t)x * 4;
+			const uint8_t *px = map + offset + (size_t)y * pitch + (size_t)x * 4;
 			uint8_t rgb[3] = {bgr ? px[2] : px[0], px[1], bgr ? px[0] : px[2]};
 			for (int c = 0; c < 3; c++) {
 				sum[x / (g_width / 2)][c] += rgb[c];
@@ -1298,12 +1359,12 @@ sc_dump(struct swapchain *sc, struct sc_image *img, const char *path)
 			sc->stats.eye_mean[e][c] = sum[e][c] / (((g_width / 2) / 4) * (g_height / 4));
 		}
 	}
-	if (img->dmabuf >= 0) {
+	if (vk_map == NULL) {
 		struct dma_buf_sync sync = {.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ};
 		ioctl(img->dmabuf, DMA_BUF_IOCTL_SYNC, &sync);
 		munmap((void *)map, img->size);
 	} else {
-		dev->UnmapMemory(dev->device, img->memory);
+		dev->UnmapMemory(dev->device, mapped);
 	}
 	LOG("dumped present %" PRIu64 " to %s", sc->stats.presents, path);
 }
@@ -1353,7 +1414,7 @@ band_shift(const float *prev, const float *cur)
 static unsigned
 sc_sample(struct swapchain *sc, struct sc_image *img, uint8_t *out, unsigned max, float *band, uint8_t *rows)
 {
-	if (img->dmabuf < 0) {
+	if (img->dmabuf < 0 || img->modifier != DRM_FORMAT_MOD_LINEAR) {
 		return 0;
 	}
 	void *m = mmap(NULL, img->size, PROT_READ, MAP_SHARED, img->dmabuf, 0);
@@ -1681,7 +1742,8 @@ present_main(void *arg)
 			fputc('\n', motion);
 			pthread_mutex_lock(&d->lock);
 		}
-		if (dump != NULL && sc->stats.commits == dump_frame) {
+		if (dump != NULL && (img->readback || (img->copy == VK_NULL_HANDLE && sc->stats.commits == dump_frame))) {
+			img->readback = false;
 			pthread_mutex_unlock(&d->lock);
 			sc_dump(sc, img, dump);
 			pthread_mutex_lock(&d->lock);
@@ -1735,7 +1797,23 @@ sc_free_images(struct swapchain *sc)
 		if (img->memory != VK_NULL_HANDLE) {
 			dev->FreeMemory(dev->device, img->memory, NULL);
 		}
+		if (img->scan != VK_NULL_HANDLE) {
+			dev->DestroyImage(dev->device, img->scan, NULL);
+		}
+		if (img->scan_memory != VK_NULL_HANDLE) {
+			dev->FreeMemory(dev->device, img->scan_memory, NULL);
+		}
 		*img = (struct sc_image){.dmabuf = -1};
+	}
+	if (sc->pool != VK_NULL_HANDLE) {
+		dev->DestroyCommandPool(dev->device, sc->pool, NULL); // frees the conversions
+		sc->pool = VK_NULL_HANDLE;
+	}
+	if (sc->readback != VK_NULL_HANDLE) {
+		dev->DestroyBuffer(dev->device, sc->readback, NULL);
+		dev->FreeMemory(dev->device, sc->readback_memory, NULL);
+		sc->readback = VK_NULL_HANDLE;
+		sc->readback_memory = VK_NULL_HANDLE;
 	}
 }
 
@@ -1753,12 +1831,227 @@ memory_type(struct device_data *dev, uint32_t bits, VkMemoryPropertyFlags want, 
 	return false;
 }
 
+/*!
+ * Device-local memory for an image, dedicated, exported as a dma-buf when asked;
+ * host-visible as well in the fake display mode, for dumps.
+ */
+static VkResult
+sc_bind_memory(struct device_data *dev, VkImage image, bool export, VkDeviceMemory *memory, VkDeviceSize *size,
+               bool *mappable)
+{
+	struct display *d = &g_display;
+	VkMemoryRequirements reqs;
+	dev->GetImageMemoryRequirements(dev->device, image, &reqs);
+	uint32_t type = 0;
+	*mappable = d->fake && memory_type(dev, reqs.memoryTypeBits,
+	                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+	                                   &type);
+	if (!*mappable && !memory_type(dev, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &type)) {
+		LOG("no device-local memory type for the swapchain");
+		return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+	}
+	VkMemoryDedicatedAllocateInfo dedicated = {
+	    .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+	    .image = image,
+	};
+	VkExportMemoryAllocateInfo export_info = {
+	    .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
+	    .pNext = &dedicated,
+	    .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+	};
+	VkMemoryAllocateInfo alloc = {
+	    .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+	    .pNext = export ? (const void *)&export_info : (const void *)&dedicated,
+	    .allocationSize = reqs.size,
+	    .memoryTypeIndex = type,
+	};
+	VkResult ret = dev->AllocateMemory(dev->device, &alloc, NULL, memory);
+	if (ret == VK_SUCCESS) {
+		ret = dev->BindImageMemory(dev->device, image, *memory, 0);
+	}
+	if (ret != VK_SUCCESS) {
+		LOG("swapchain image memory: %d", ret);
+	}
+	*size = reqs.size;
+	return ret;
+}
+
+/*!
+ * Records the conversion of the application's image into the scanout image; with
+ * @p readback also a copy of the application's image into the readback buffer.
+ */
+static VkResult
+sc_record_copy(struct swapchain *sc, struct sc_image *img, VkCommandBuffer *cmd, bool readback)
+{
+	struct device_data *dev = sc->dev;
+	VkResult ret;
+	VkCommandBufferAllocateInfo alloc = {
+	    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+	    .commandPool = sc->pool,
+	    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+	    .commandBufferCount = 1,
+	};
+	ret = dev->AllocateCommandBuffers(dev->device, &alloc, cmd);
+	if (ret != VK_SUCCESS) {
+		*cmd = VK_NULL_HANDLE;
+		return ret;
+	}
+	// A command buffer made below the loader carries its device's loader dispatch.
+	*(void **)*cmd = *(void **)dev->device;
+	VkCommandBufferBeginInfo begin = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+	ret = dev->BeginCommandBuffer(*cmd, &begin);
+	if (ret != VK_SUCCESS) {
+		return ret;
+	}
+	const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+	// The present's semaphore waits order this after the application's rendering.
+	VkImageMemoryBarrier before[2] = {
+	    {
+	        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+	        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+	        .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+	        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	        .image = img->image,
+	        .subresourceRange = range,
+	    },
+	    {
+	        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+	        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+	        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	        .image = img->scan,
+	        .subresourceRange = range,
+	    },
+	};
+	dev->CmdPipelineBarrier(*cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL,
+	                        0, NULL, 2, before);
+	VkImageBlit blit = {
+	    .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+	    .srcOffsets = {{0, 0, 0}, {(int32_t)g_width, (int32_t)g_height, 1}},
+	    .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+	    .dstOffsets = {{0, 0, 0}, {(int32_t)g_width, (int32_t)g_height, 1}},
+	};
+	dev->CmdBlitImage(*cmd, img->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, img->scan,
+	                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+	if (readback) {
+		VkBufferImageCopy region = {
+		    .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+		    .imageExtent = {g_width, g_height, 1},
+		};
+		dev->CmdCopyImageToBuffer(*cmd, img->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sc->readback, 1, &region);
+		VkBufferMemoryBarrier host = {
+		    .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		    .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		    .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+		    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		    .buffer = sc->readback,
+		    .size = VK_WHOLE_SIZE,
+		};
+		dev->CmdPipelineBarrier(*cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1,
+		                        &host, 0, NULL);
+	}
+	// Back to the application's layout; the scanout image's writes made visible to the display.
+	VkImageMemoryBarrier after[2] = {
+	    {
+	        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+	        .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+	        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+	        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	        .image = img->image,
+	        .subresourceRange = range,
+	    },
+	    {
+	        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+	        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+	        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+	        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+	        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	        .image = img->scan,
+	        .subresourceRange = range,
+	    },
+	};
+	dev->CmdPipelineBarrier(*cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
+	                        NULL, 0, NULL, 2, after);
+	return dev->EndCommandBuffer(*cmd);
+}
+
+/*!
+ * Compressed scanout (see ubwc_mode): a compressed RGBA image for the planes, and
+ * the command buffer that converts the application's image into it at present.
+ */
+static VkResult
+sc_create_scan(struct swapchain *sc, struct sc_image *img)
+{
+	struct device_data *dev = sc->dev;
+	uint64_t compressed = DRM_FORMAT_MOD_QCOM_COMPRESSED;
+	VkExternalMemoryImageCreateInfo external = {
+	    .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+	    .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+	};
+	VkImageDrmFormatModifierListCreateInfoEXT modifiers = {
+	    .sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
+	    .pNext = &external,
+	    .drmFormatModifierCount = 1,
+	    .pDrmFormatModifiers = &compressed,
+	};
+	bool srgb = sc->format == VK_FORMAT_B8G8R8A8_SRGB || sc->format == VK_FORMAT_R8G8B8A8_SRGB;
+	VkImageCreateInfo info = {
+	    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+	    .pNext = &modifiers,
+	    .imageType = VK_IMAGE_TYPE_2D,
+	    .format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM,
+	    .extent = {g_width, g_height, 1},
+	    .mipLevels = 1,
+	    .arrayLayers = 1,
+	    .samples = VK_SAMPLE_COUNT_1_BIT,
+	    .tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
+	    .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+	    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+	VkResult ret = dev->CreateImage(dev->device, &info, NULL, &img->scan);
+	if (ret != VK_SUCCESS) {
+		LOG("vkCreateImage (compressed scanout): %d", ret);
+		return ret;
+	}
+	VkImageDrmFormatModifierPropertiesEXT props = {
+	    .sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT,
+	};
+	if (dev->GetImageDrmFormatModifierPropertiesEXT(dev->device, img->scan, &props) != VK_SUCCESS ||
+	    props.drmFormatModifier != compressed) {
+		LOG("the driver did not compress the scanout image (modifier 0x%" PRIx64 ")", props.drmFormatModifier);
+		return VK_ERROR_INITIALIZATION_FAILED;
+	}
+	img->modifier = compressed;
+	bool mappable;
+	ret = sc_bind_memory(dev, img->scan, true, &img->scan_memory, &img->size, &mappable);
+	if (ret != VK_SUCCESS) {
+		return ret;
+	}
+
+	ret = sc_record_copy(sc, img, &img->copy, false);
+	if (ret == VK_SUCCESS && sc->readback != VK_NULL_HANDLE) {
+		ret = sc_record_copy(sc, img, &img->copy_dump, true);
+	}
+	return ret;
+}
+
 static VkResult
 sc_create_image(struct swapchain *sc, const VkSwapchainCreateInfoKHR *info, struct sc_image *img)
 {
 	struct device_data *dev = sc->dev;
 	struct display *d = &g_display;
 	bool export = !d->fake;
+	bool ubwc = sc->pool != VK_NULL_HANDLE;
 
 	const VkImageFormatListCreateInfo *list = NULL;
 	for (const VkBaseInStructure *s = info->pNext; s != NULL; s = s->pNext) {
@@ -1776,9 +2069,14 @@ sc_create_image(struct swapchain *sc, const VkSwapchainCreateInfoKHR *info, stru
 	    .pNext = list != NULL ? &formats : NULL,
 	    .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 	};
+	/*
+	 * The application's image: the linear scanout image itself, or with compressed
+	 * scanout a tiled image of its own that stays compressed (storage usage would
+	 * rule that out on this GPU) and is converted at present.
+	 */
 	VkImageCreateInfo image_info = {
 	    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-	    .pNext = export ? (const void *)&external : (list != NULL ? (const void *)&formats : NULL),
+	    .pNext = export && !ubwc ? (const void *)&external : (list != NULL ? (const void *)&formats : NULL),
 	    .flags = (info->flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0
 	                 ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT
 	                 : 0,
@@ -1788,8 +2086,9 @@ sc_create_image(struct swapchain *sc, const VkSwapchainCreateInfoKHR *info, stru
 	    .mipLevels = 1,
 	    .arrayLayers = 1,
 	    .samples = VK_SAMPLE_COUNT_1_BIT,
-	    .tiling = VK_IMAGE_TILING_LINEAR,
-	    .usage = info->imageUsage,
+	    .tiling = ubwc ? VK_IMAGE_TILING_OPTIMAL : VK_IMAGE_TILING_LINEAR,
+	    .usage = ubwc ? (info->imageUsage & ~VK_IMAGE_USAGE_STORAGE_BIT) | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+	                  : info->imageUsage,
 	    .sharingMode = info->imageSharingMode,
 	    .queueFamilyIndexCount = info->queueFamilyIndexCount,
 	    .pQueueFamilyIndices = info->pQueueFamilyIndices,
@@ -1797,47 +2096,31 @@ sc_create_image(struct swapchain *sc, const VkSwapchainCreateInfoKHR *info, stru
 	};
 	VkResult ret = dev->CreateImage(dev->device, &image_info, NULL, &img->image);
 	if (ret != VK_SUCCESS) {
-		LOG("vkCreateImage (linear, usage 0x%x, format %d): %d", info->imageUsage, info->imageFormat, ret);
+		LOG("vkCreateImage (%s, usage 0x%x, format %d): %d", ubwc ? "tiled" : "linear", image_info.usage,
+		    info->imageFormat, ret);
 		return ret;
 	}
-	VkMemoryRequirements reqs;
-	dev->GetImageMemoryRequirements(dev->device, img->image, &reqs);
-	uint32_t type = 0;
-	img->mappable = d->fake && memory_type(dev, reqs.memoryTypeBits,
-	                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-	                                       &type);
-	if (!img->mappable && !memory_type(dev, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &type)) {
-		LOG("no device-local memory type for the swapchain");
-		return VK_ERROR_OUT_OF_DEVICE_MEMORY;
-	}
-	VkMemoryDedicatedAllocateInfo dedicated = {
-	    .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
-	    .image = img->image,
-	};
-	VkExportMemoryAllocateInfo export_info = {
-	    .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
-	    .pNext = &dedicated,
-	    .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
-	};
-	VkMemoryAllocateInfo alloc = {
-	    .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-	    .pNext = export ? (const void *)&export_info : (const void *)&dedicated,
-	    .allocationSize = reqs.size,
-	    .memoryTypeIndex = type,
-	};
-	ret = dev->AllocateMemory(dev->device, &alloc, NULL, &img->memory);
-	if (ret == VK_SUCCESS) {
-		ret = dev->BindImageMemory(dev->device, img->image, img->memory, 0);
-	}
+	ret = sc_bind_memory(dev, img->image, export && !ubwc, &img->memory, &img->size, &img->mappable);
 	if (ret != VK_SUCCESS) {
-		LOG("swapchain image memory: %d", ret);
 		return ret;
 	}
-	img->size = reqs.size;
+	img->modifier = DRM_FORMAT_MOD_LINEAR;
+	VkImage scan = img->image;
+	VkDeviceMemory scan_memory = img->memory;
+	if (ubwc) {
+		ret = sc_create_scan(sc, img);
+		if (ret != VK_SUCCESS) {
+			return ret;
+		}
+		scan = img->scan;
+		scan_memory = img->scan_memory;
+	}
 
-	VkImageSubresource sub = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT};
+	VkImageSubresource sub = {
+	    .aspectMask = ubwc ? VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT : VK_IMAGE_ASPECT_COLOR_BIT,
+	};
 	VkSubresourceLayout layout;
-	dev->GetImageSubresourceLayout(dev->device, img->image, &sub, &layout);
+	dev->GetImageSubresourceLayout(dev->device, scan, &sub, &layout);
 	img->offset = layout.offset;
 	img->pitch = layout.rowPitch;
 
@@ -1852,7 +2135,7 @@ sc_create_image(struct swapchain *sc, const VkSwapchainCreateInfoKHR *info, stru
 
 	VkMemoryGetFdInfoKHR fd_info = {
 	    .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
-	    .memory = img->memory,
+	    .memory = scan_memory,
 	    .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 	};
 	if (dev->GetMemoryFdKHR == NULL) {
@@ -1872,11 +2155,55 @@ sc_create_image(struct swapchain *sc, const VkSwapchainCreateInfoKHR *info, stru
 		return VK_ERROR_INITIALIZATION_FAILED;
 	}
 	handles[0] = img->gem;
-	if (drmModeAddFB2(d->fd, g_width, g_height, sc->fourcc, handles, pitches, offsets, &img->fb, 0) != 0) {
-		LOG("drmModeAddFB2 (pitch %u, offset %u): %s", pitches[0], offsets[0], strerror(errno));
+	// Compressed images are one plane from offset 0: the display finds the metadata in it.
+	uint64_t mods[4] = {img->modifier};
+	int added = ubwc ? drmModeAddFB2WithModifiers(d->fd, g_width, g_height, DRM_FORMAT_XBGR8888, handles, pitches,
+	                                              offsets, mods, &img->fb, DRM_MODE_FB_MODIFIERS)
+	                 : drmModeAddFB2(d->fd, g_width, g_height, sc->fourcc, handles, pitches, offsets, &img->fb, 0);
+	if (added != 0) {
+		LOG("drmModeAddFB2 (pitch %u, offset %u, modifier 0x%" PRIx64 "): %s", pitches[0], offsets[0],
+		    img->modifier, strerror(errno));
 		return VK_ERROR_INITIALIZATION_FAILED;
 	}
 	return VK_SUCCESS;
+}
+
+/*!
+ * Compressed scanout with a dump requested: a host-visible buffer the dumped
+ * present copies the application's image into (the CPU cannot read compressed images).
+ */
+static void
+sc_create_readback(struct swapchain *sc)
+{
+	struct device_data *dev = sc->dev;
+	VkBufferCreateInfo info = {
+	    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+	    .size = (VkDeviceSize)g_width * g_height * 4,
+	    .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+	    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
+	if (dev->CreateBuffer(dev->device, &info, NULL, &sc->readback) != VK_SUCCESS) {
+		sc->readback = VK_NULL_HANDLE;
+		LOG("no readback buffer for the dump");
+		return;
+	}
+	VkMemoryRequirements reqs;
+	dev->GetBufferMemoryRequirements(dev->device, sc->readback, &reqs);
+	uint32_t type = 0;
+	VkMemoryAllocateInfo alloc = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = reqs.size};
+	if (!memory_type(dev, reqs.memoryTypeBits,
+	                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &type) ||
+	    (alloc.memoryTypeIndex = type,
+	     dev->AllocateMemory(dev->device, &alloc, NULL, &sc->readback_memory) != VK_SUCCESS) ||
+	    dev->BindBufferMemory(dev->device, sc->readback, sc->readback_memory, 0) != VK_SUCCESS) {
+		LOG("no readback memory for the dump");
+		dev->DestroyBuffer(dev->device, sc->readback, NULL);
+		if (sc->readback_memory != VK_NULL_HANDLE) {
+			dev->FreeMemory(dev->device, sc->readback_memory, NULL);
+		}
+		sc->readback = VK_NULL_HANDLE;
+		sc->readback_memory = VK_NULL_HANDLE;
+	}
 }
 
 static VkResult
@@ -1925,6 +2252,19 @@ sc_create(struct device_data *dev, const VkSwapchainCreateInfoKHR *info, VkSwapc
 	}
 
 	VkResult ret = VK_SUCCESS;
+	if (ubwc_mode() && dev->GetImageDrmFormatModifierPropertiesEXT != NULL && dev->CmdBlitImage != NULL) {
+		// Turnip has one queue family, which presents.
+		VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+		ret = dev->CreateCommandPool(dev->device, &pool_info, NULL, &sc->pool);
+		if (ret != VK_SUCCESS) {
+			sc->pool = VK_NULL_HANDLE;
+			ret = VK_SUCCESS;
+			LOG("no command pool for compressed scanout; linear images");
+		} else if (getenv("PICO4_VRDISPLAY_DUMP") != NULL) {
+			sc->dump_present = (uint64_t)env_num("PICO4_VRDISPLAY_DUMP_FRAME", 300);
+			sc_create_readback(sc);
+		}
+	}
 	for (uint32_t i = 0; i < sc->count && ret == VK_SUCCESS; i++) {
 		ret = sc_create_image(sc, info, &sc->imgs[i]);
 	}
@@ -1947,8 +2287,9 @@ sc_create(struct device_data *dev, const VkSwapchainCreateInfoKHR *info, VkSwapc
 	d->swapchains = sc;
 	sc->thread_started = pthread_create(&sc->thread, NULL, present_main, sc) == 0;
 	pthread_mutex_unlock(&d->lock);
-	LOG("swapchain: %u images, format %d, usage 0x%x, flags 0x%x, present mode %d, pitch %u", sc->count,
-	    info->imageFormat, info->imageUsage, info->flags, info->presentMode, (unsigned)sc->imgs[0].pitch);
+	LOG("swapchain: %u images, format %d, usage 0x%x, flags 0x%x, present mode %d, pitch %u, modifier 0x%" PRIx64,
+	    sc->count, info->imageFormat, info->imageUsage, info->flags, info->presentMode,
+	    (unsigned)sc->imgs[0].pitch, sc->imgs[0].modifier);
 	*out = (VkSwapchainKHR)(uintptr_t)sc;
 	return VK_SUCCESS;
 }
@@ -2839,11 +3180,20 @@ layer_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info)
 			for (uint32_t w = 0; w < waits; w++) {
 				stages[w] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 			}
+			// With compressed scanout the conversion into the scanout image runs here too,
+			// for the dumped present with a copy the CPU can read.
+			VkCommandBuffer copy = img->copy;
+			if (img->copy_dump != VK_NULL_HANDLE && sc->stats.presents + 1 == sc->dump_present) {
+				copy = img->copy_dump;
+				img->readback = true;
+			}
 			VkSubmitInfo submit = {
 			    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 			    .waitSemaphoreCount = waits,
 			    .pWaitSemaphores = info->pWaitSemaphores,
 			    .pWaitDstStageMask = stages,
+			    .commandBufferCount = copy != VK_NULL_HANDLE ? 1 : 0,
+			    .pCommandBuffers = &copy,
 			};
 			dev->ResetFences(dev->device, 1, &img->fence);
 			ret = dev->QueueSubmit(queue, 1, &submit, img->fence);
@@ -3559,17 +3909,19 @@ layer_CreateDevice(VkPhysicalDevice physical,
 	    VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
 	    VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
 	    VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME,
+	    VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME, // compressed scanout only
 	};
+	size_t needed_count = sizeof(needed) / sizeof(needed[0]) - (ubwc_mode() ? 0 : 1);
 	const char *names[96];
 	VkDeviceCreateInfo with_ours = *info;
 	uint32_t count = info->enabledExtensionCount;
-	if (count + 4 <= 96) {
+	if (count + needed_count <= 96) {
 		memcpy(names, info->ppEnabledExtensionNames, count * sizeof(names[0]));
 		uint32_t n = 0;
 		inst->EnumerateDeviceExtensionProperties(physical, NULL, &n, NULL);
 		VkExtensionProperties *supported = calloc(n > 0 ? n : 1, sizeof(*supported));
 		if (supported != NULL && inst->EnumerateDeviceExtensionProperties(physical, NULL, &n, supported) == VK_SUCCESS) {
-			for (size_t i = 0; i < sizeof(needed) / sizeof(needed[0]); i++) {
+			for (size_t i = 0; i < needed_count; i++) {
 				bool have = false, offered = false;
 				for (uint32_t j = 0; j < count; j++) {
 					have = have || strcmp(names[j], needed[i]) == 0;
@@ -3621,6 +3973,19 @@ layer_CreateDevice(VkPhysicalDevice physical,
 	D(GetDeviceQueue2);
 	D(CreateImage);
 	D(DestroyImage);
+	D(GetImageDrmFormatModifierPropertiesEXT);
+	D(CreateCommandPool);
+	D(DestroyCommandPool);
+	D(AllocateCommandBuffers);
+	D(BeginCommandBuffer);
+	D(EndCommandBuffer);
+	D(CmdPipelineBarrier);
+	D(CmdBlitImage);
+	D(CmdCopyImageToBuffer);
+	D(CreateBuffer);
+	D(DestroyBuffer);
+	D(GetBufferMemoryRequirements);
+	D(BindBufferMemory);
 	D(GetImageMemoryRequirements);
 	D(AllocateMemory);
 	D(FreeMemory);
@@ -3697,9 +4062,39 @@ layer_DestroyDevice(VkDevice device, const VkAllocationCallbacks *alloc)
 	free(d);
 }
 
+static VKAPI_ATTR VkResult VKAPI_CALL
+layer_CreateImage(VkDevice device, const VkImageCreateInfo *info, const VkAllocationCallbacks *alloc,
+                  VkImage *image)
+{
+	struct device_data *d = find_device(device);
+	if (d == NULL) {
+		return VK_ERROR_DEVICE_LOST;
+	}
+	VkResult ret = d->CreateImage(device, info, alloc, image);
+	// Tiling decides whether Turnip can tile and compress (UBWC) the image; a modifier
+	// list or external memory means it is shared with another process or the display.
+	bool external = false, modifiers = false;
+	for (const VkBaseInStructure *s = info->pNext; s != NULL; s = s->pNext) {
+		external |= s->sType == VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+		modifiers |= s->sType == VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT ||
+		             s->sType == VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT;
+	}
+	LOG("image %ux%ux%u mips %u layers %u samples %u format %d tiling %s usage 0x%x flags 0x%x%s%s: %d",
+	    info->extent.width, info->extent.height, info->extent.depth, info->mipLevels, info->arrayLayers,
+	    info->samples, info->format,
+	    info->tiling == VK_IMAGE_TILING_OPTIMAL  ? "optimal"
+	    : info->tiling == VK_IMAGE_TILING_LINEAR ? "linear"
+	                                             : "modifier",
+	    info->usage, info->flags, external ? " external" : "", modifiers ? " modifiers" : "", ret);
+	return ret;
+}
+
 static PFN_vkVoidFunction
 device_function(const char *name)
 {
+	if (strcmp(name, "vkCreateImage") == 0 && env_num("PICO4_VRDISPLAY_IMAGES", 0) != 0) {
+		return (PFN_vkVoidFunction)layer_CreateImage;
+	}
 #define F(fn)                                                                                                    \
 	if (strcmp(name, "vk" #fn) == 0)                                                                         \
 		return (PFN_vkVoidFunction)layer_##fn;

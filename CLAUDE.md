@@ -16,7 +16,7 @@ section lists what comes next. Each step has its own document:
 | 3 Native graphics (Turnip/KGSL Vulkan, fenced KMS on both panels) | verified | [docs/graphics.md](docs/graphics.md) |
 | 4 SteamOS-compatible userspace (Holo Core aarch64 + Steam Frame systemd 257.7) | verified | [docs/userspace.md](docs/userspace.md) |
 | 5 XR hardware: IMU, Monado driver and KMS display, lenses and IPD, cameras, controllers (3DoF), Basalt 6DoF | verified with stock restore; controller positions open | [docs/xr.md](docs/xr.md) |
-| 6 Valve's VR session: gamescope + SteamVR with `driver_monado`, `pico4-vrdisplay`, shared GPU and System V semaphores | verified with stock restore; ~50 fps GPU-bound; Steam client, performance and cooling open | [docs/session.md](docs/session.md) |
+| 6 Valve's VR session: gamescope + SteamVR with `driver_monado`, `pico4-vrdisplay`, shared GPU and System V semaphores | verified with stock restore; ~55 fps GPU-bound; Steam client, performance and cooling open | [docs/session.md](docs/session.md) |
 
 Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; on the headset the
 MCU acknowledges, and longer sessions and tuning are open ([docs/cooling.md](docs/cooling.md)).

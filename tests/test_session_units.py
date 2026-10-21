@@ -59,6 +59,18 @@ class VsyncLeadTest(unittest.TestCase):
         self.assertIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', layer)
 
 
+class CompressedScanoutTest(unittest.TestCase):
+    def test_steamvr_scans_out_compressed(self):
+        # an issue: linear scanout images doubled the lens-distortion pass's GPU time.
+        dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
+        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_UBWC=1$")
+        layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
+        self.assertIn('"PICO4_VRDISPLAY_UBWC"', layer)
+        # The planes take the compressed modifier for XBGR8888 only; SteamVR renders BGRA.
+        self.assertIn("DRM_FORMAT_MOD_QCOM_COMPRESSED", layer)
+        self.assertIn("CmdBlitImage", layer)
+
+
 class KthreadPrioritiesTest(unittest.TestCase):
     def test_unit_raises_gpu_and_display_threads(self):
         service = unit("usr/lib/systemd/system/pico4-kthread-priorities.service")
