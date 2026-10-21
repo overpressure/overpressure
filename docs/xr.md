@@ -508,7 +508,11 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
 
 - **Frames.** Frames of one sync pulse are grouped by start-of-frame time (within 4 ms), and the
   controller-LED frames are skipped by the phase in their metadata line; a frame whose line does
-  not decode is skipped too. Fed the LED frames as well, Basalt drifts by 430–720 m in 30 s.
+  not decode is skipped too. A complete set goes on only as one exposure: the same exposure
+  lines and analog gain in all four metadata lines, and each camera's ISP frame counter at its
+  usual offset from the first camera's (the sensors share the sync pulse, so the offsets stay
+  fixed; a new offset that holds for two sets is taken over). Otherwise the set is dropped and
+  logged; the periodic report counts incomplete and inconsistent sets. Fed the LED frames as well, Basalt drifts by 430–720 m in 30 s.
   Basalt gets the 480 scene rows only. Each frame is converted
   to 8 bits: black level (16 of 1023) removed, slowly adapting digital gain (1–8×, aiming at a
   mean of 70). Sets go out in camera order with one timestamp, as Basalt requires; a set that

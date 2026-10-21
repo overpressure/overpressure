@@ -255,6 +255,47 @@ test_median(void)
 	EXPECT(pico4_cam_median(odd, 0) == 0.0f);
 }
 
+static void
+test_set_identity(void)
+{
+	struct pico4_cam_set_check c = {0};
+	struct pico4_cam_meta m[4] = {{32, 300, 1, 5}, {32, 300, 1, 5}, {32, 300, 1, 5}, {32, 300, 1, 5}};
+	char why[160];
+	// Counters started at different times; scene frames every other pulse.
+	uint64_t ids[4] = {100, 41, 7, 260};
+	EXPECT(pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && why[0] == '\0');
+	for (int i = 0; i < 4; i++) {
+		ids[i] += 2;
+	}
+	EXPECT(pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)));
+	// Camera 2's frame from the pulse before (a late frame mixed in): dropped.
+	ids[0] += 2, ids[1] += 2, ids[3] += 2;
+	EXPECT(!pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && strstr(why, "camera 2") != NULL);
+	// Next pulse in step again: accepted with the old offsets.
+	ids[0] += 2, ids[1] += 2, ids[2] += 4, ids[3] += 2;
+	EXPECT(pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && why[0] == '\0');
+	// Camera 1's counter skipped one for good: the first set is dropped, the second adopts it.
+	ids[0] += 2, ids[1] += 3, ids[2] += 2, ids[3] += 2;
+	EXPECT(!pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)));
+	for (int i = 0; i < 4; i++) {
+		ids[i] += 2;
+	}
+	EXPECT(pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && strstr(why, "adopted") != NULL);
+	for (int i = 0; i < 4; i++) {
+		ids[i] += 2;
+	}
+	EXPECT(pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && why[0] == '\0');
+	// A camera that took the station's new exposure one frame later: two exposures in one set.
+	for (int i = 0; i < 4; i++) {
+		ids[i] += 2;
+	}
+	m[3].exposure_lines = 320;
+	EXPECT(!pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && strstr(why, "camera 3 exposed 320") != NULL);
+	m[3].exposure_lines = 300;
+	m[1].gain = 48;
+	EXPECT(!pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && strstr(why, "gain 48") != NULL);
+}
+
 int
 main(void)
 {
@@ -263,6 +304,7 @@ main(void)
 	test_blemcu();
 	test_meta();
 	test_median();
+	test_set_identity();
 	if (failures != 0) {
 		fprintf(stderr, "%d failure(s)\n", failures);
 		return 1;

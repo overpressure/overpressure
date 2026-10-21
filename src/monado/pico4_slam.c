@@ -111,6 +111,7 @@ DEBUG_GET_ONCE_OPTION(pico4_slam_vio_config, "PICO4_SLAM_VIO_CONFIG", "/usr/shar
 #define SLAM_TRACE(s, ...) U_LOG_IFL_T(s->log_level, __VA_ARGS__)
 #define SLAM_DEBUG(s, ...) U_LOG_IFL_D(s->log_level, __VA_ARGS__)
 #define SLAM_INFO(s, ...) U_LOG_IFL_I(s->log_level, __VA_ARGS__)
+#define SLAM_WARN(s, ...) U_LOG_IFL_W(s->log_level, __VA_ARGS__)
 #define SLAM_ERROR(s, ...) U_LOG_IFL_E(s->log_level, __VA_ARGS__)
 
 #define STATION_HZ 50.0
@@ -168,8 +169,14 @@ struct pico4_slam
 		int64_t taken[PICO4_TCAM_COUNT]; //!< Middle of each frame's own exposure.
 		float signal[PICO4_TCAM_COUNT];  //!< Mean signal above black of each frame (10-bit).
 		struct pico4_cam_meta applied;   //!< The exposure the set was taken with.
+		uint64_t frame_id[PICO4_TCAM_COUNT];          //!< Each frame's ISP frame counter.
+		struct pico4_cam_meta meta[PICO4_TCAM_COUNT]; //!< Each frame's metadata.
 	} group;
+	//! Frame identity of the sets (pico4_cam_set_consistent).
+	struct pico4_cam_set_check identity;
 	uint64_t sets_pushed, sets_dropped, sets_busy, sequence;
+	//! Complete sets dropped because their frames differ in exposure or frame identity.
+	uint64_t sets_inconsistent;
 	//! Frames skipped by their metadata: controller-LED or other phases, undecodable metadata.
 	uint64_t frames_leds, frames_other, frames_bad;
 	int64_t max_spread_ns; //!< Largest spread of exposure middles within a set since the last report.
@@ -418,11 +425,12 @@ push_group(struct pico4_slam *s)
 		SLAM_INFO(s,
 		          "frame set %llu: frame - newest IMU %.1f ms, latency %.1f ms, exposure %u lines gain %u, "
 		          "digital gain %.1f; exposure middles within %.2f ms; skipped %llu LED, %llu other, "
-		          "%llu undecodable frames",
+		          "%llu undecodable frames; %llu incomplete and %llu inconsistent sets dropped",
 		          (unsigned long long)s->sets_pushed, (s->group.ts - imu) / 1e6,
 		          (os_monotonic_get_ns() - s->group.ts) / 1e6, s->exposure_lines, s->exposure_gain, s->gain,
 		          s->max_spread_ns / 1e6, (unsigned long long)s->frames_leds, (unsigned long long)s->frames_other,
-		          (unsigned long long)s->frames_bad);
+		          (unsigned long long)s->frames_bad, (unsigned long long)s->sets_dropped,
+		          (unsigned long long)s->sets_inconsistent);
 		s->max_spread_ns = 0;
 	}
 	drop_group(s);
@@ -523,6 +531,8 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	s->group.frames[index] = convert(s, f, s->rotated[index]);
 	s->group.taken[index] = exposure_middle(ts, &meta);
 	s->group.signal[index] = sample_mean(f) - BLACK_LEVEL;
+	s->group.frame_id[index] = f->frame_id;
+	s->group.meta[index] = meta;
 	if (index == 0) {
 		s->group.applied = meta;
 	}
@@ -532,6 +542,19 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	}
 	s->group.have++;
 	if (s->group.have == s->cam_count) {
+		// Four frames of one exposure pulse, or none: a mixed set would give Basalt two scenes.
+		char why[160];
+		bool consistent = pico4_cam_set_consistent(&s->identity, s->group.frame_id, s->group.meta, s->cam_count,
+		                                           why, sizeof(why));
+		if (!consistent) {
+			s->sets_inconsistent++;
+			SLAM_WARN(s, "frame set dropped: %s (%llu so far)", why, (unsigned long long)s->sets_inconsistent);
+			drop_group(s);
+			return;
+		}
+		if (why[0] != '\0') {
+			SLAM_INFO(s, "%s", why);
+		}
 		/*
 		 * The median of the cameras steers the exposure and the digital gain of the next
 		 * sets: with the first camera alone, one facing fabric close by drove the exposure up

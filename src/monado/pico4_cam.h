@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -146,6 +147,83 @@ pico4_cam_median(const float *v, int n)
 		s[j] = v[i];
 	}
 	return n % 2 ? s[n / 2] : 0.5f * (s[n / 2 - 1] + s[n / 2]);
+}
+
+/*!
+ * Frame identity across one set of scene frames. All sensors start their frames on the
+ * station's FSIN pulse, so each camera's ISP frame counter keeps a fixed offset from the
+ * first camera's; a frame at another offset is from another pulse. An offset that changes
+ * and then holds for PICO4_CAM_OFFSET_ADOPT sets is taken as the new one (a counter that
+ * skipped).
+ */
+#define PICO4_CAM_OFFSET_ADOPT 2
+
+struct pico4_cam_set_check
+{
+	bool have;
+	int64_t offset[8];  //!< frame_id[i] - frame_id[0] of the accepted sets.
+	int64_t pending[8]; //!< A different offset seen in the last sets...
+	int pending_sets;   //!< ...this many in a row.
+};
+
+/*!
+ * Whether @p n frames (n <= 8) form one exposure: the same exposure and analog gain in
+ * each frame's metadata, and every camera's frame counter at its usual offset. False
+ * with the reason in @p why otherwise; also @p why, with true, when a new offset is adopted.
+ */
+static inline bool
+pico4_cam_set_consistent(struct pico4_cam_set_check *c,
+                         const uint64_t *frame_id,
+                         const struct pico4_cam_meta *meta,
+                         int n,
+                         char *why,
+                         size_t why_len)
+{
+	why[0] = '\0';
+	n = n > 8 ? 8 : n;
+	for (int i = 1; i < n; i++) {
+		if (meta[i].exposure_lines != meta[0].exposure_lines || meta[i].gain != meta[0].gain) {
+			snprintf(why, why_len, "camera %d exposed %u lines at gain %u, camera 0 %u lines at gain %u", i,
+			         meta[i].exposure_lines, meta[i].gain, meta[0].exposure_lines, meta[0].gain);
+			return false;
+		}
+	}
+	int64_t offset[8];
+	int moved = -1;
+	for (int i = 0; i < n; i++) {
+		offset[i] = (int64_t)(frame_id[i] - frame_id[0]);
+		if (c->have && offset[i] != c->offset[i] && moved < 0) {
+			moved = i;
+		}
+	}
+	if (!c->have || moved < 0) {
+		for (int i = 0; i < n; i++) {
+			c->offset[i] = offset[i];
+		}
+		c->have = true;
+		c->pending_sets = 0;
+		return true;
+	}
+	bool same = c->pending_sets > 0;
+	for (int i = 0; same && i < n; i++) {
+		same = c->pending[i] == offset[i];
+	}
+	c->pending_sets = same ? c->pending_sets + 1 : 1;
+	for (int i = 0; i < n; i++) {
+		c->pending[i] = offset[i];
+	}
+	if (c->pending_sets >= PICO4_CAM_OFFSET_ADOPT) {
+		snprintf(why, why_len, "camera %d frame counter moved from offset %lld to %lld, adopted", moved,
+		         (long long)c->offset[moved], (long long)offset[moved]);
+		for (int i = 0; i < n; i++) {
+			c->offset[i] = offset[i];
+		}
+		c->pending_sets = 0;
+		return true;
+	}
+	snprintf(why, why_len, "camera %d frame %llu is at offset %lld from camera 0, not %lld", moved,
+	         (unsigned long long)frame_id[moved], (long long)offset[moved], (long long)c->offset[moved]);
+	return false;
 }
 
 //! Media entity found while discovering the camera devices.
