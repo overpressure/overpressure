@@ -225,7 +225,18 @@ other call passes through; without the panels, the layer stays out of the way.
   would otherwise stay at 587 MHz or faster with nothing running.
 - **DRM nodes.** gamescope needs the GPU's DRM nodes (`VK_EXT_physical_device_drm`). KGSL is
   not a DRM device, so the layer reports `msm_drm`'s: `/dev/dri/card0` and the render node
-  `/dev/dri/renderD128`, which imports the GPU's dma-bufs.
+  `/dev/dri/renderD128`, which imports the GPU's dma-bufs. In Valve's session two processes
+  read them, once each:
+  - `vrcompositor` uses the primary node to match the display it acquires (`card0`, the real
+    display device); its rendering stays on KGSL.
+  - gamescope opens the render node (twice) as its DRM device and its clients' main device.
+    Importing the clients' dma-bufs into its Vulkan device (Turnip on KGSL) works, since
+    dma-bufs carry no device. EGL on that node finds no GPU driver: Xwayland refuses glamor
+    on llvmpipe and draws in software, so X11 clients have no DRI3 and no GPU presentation.
+    This is a known limitation.
+  The dashboard's web helpers load the layer but use only KGSL. Monado does not load it: its
+  service has no `PICO4_VRDISPLAY=1`, and `driver_monado` runs in `vrserver`, which had no
+  Vulkan loaded (no layer mapped) during the session.
 
 | Variable | Effect |
 | --- | --- |
@@ -718,6 +729,10 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: a light session 20 s after Valve's GPU-heavy check, twice each | console level 5: journald at 100 % on CPU7, 1,149 and 1,156 of about 1,730 kernel vblank intervals on the 10 ms tick, 61 commits/s, 619 and 577 present-wait timeouts; with the display interrupt moved to CPUs 4–6 still 44 %. Console level 3: 0 and 2 on the tick, 89.2 and 88.9 commits/s, 11 and 18 timeouts |
 | Headset: GPU and display kernel threads at SCHED_RR 99 (`pico4-kthread-priorities`) | Valve's 30 s check, its last 10 s window: 49.3 commits/s, 325 of 461 late, longest gap 128 ms without; 51.0/s, 301 of 475, 139 ms with. Simplified shaders and overlay quality 1: 88.0-88.4 commits/s with, 88.2-88.8 without: no measurable change |
 | Headset: first Valve session after a boot, three boots in a row | the IMU listed 35.1 s after `pico4-imu-ready.service` started; each first session presented with the PICO 4 driver, no restart. A driver probing earlier finds no IMU and falls back to Monado's simulated headset, whose display SteamVR cannot find (render watchdog abort) |
+| Headset: `steamvr.service` stopped directly (`systemctl --user stop`), then the session started again, three rounds | each start presents after 15 s at 87–88 commits/s, no user-manager restart. The earlier failures to build the lens mesh came from SteamVR's own numerical inverse of the lens; the driver now gives it the exact inverse |
+| PC: `tests/test_vrdisplay_fake.sh` (the layer on lavapipe, fake display) | presents and retires on a working display; with the display stuck from commit 20 the retire timeouts are counted, no further present counts as shown, and the client gets `VK_ERROR_OUT_OF_DATE_KHR` after about 1 s instead of waiting |
+| Headset: present trace with the 5 ms lead, Valve's session, 30 s | 4,434 vblanks recorded at the kernel's vblank time (median −0.6 µs, 90 % within −41 to +24 µs of its stamps), their display events signalled 4.94 ms earlier; the driver reads the published 5000 µs lead; 90.0 commits/s, no stall |
+| Headset: DRM node users in Valve's session | the layer is loaded in gamescope, `vrcompositor` and two `vrwebhelper` processes; gamescope and `vrcompositor` read the DRM properties once each; gamescope holds `renderD128` open twice, `vrcompositor` `card0`; Xwayland disables glamor ("Refusing to try glamor on llvmpipe") |
 | Headset: five starts of Valve's session in 252 s, then a forced crash loop | all five present, no start limit hit; the crash loop still ends in the fallback after three starts |
 | Headset: forced crash loop (`vrcompositor` killed whenever it runs) | three crashes, driver starts (station resets) 34.5 s apart, then "Start request repeated too quickly"; 11 s later the session runs Monado's target, the one-time override consumed; no SteamVR start afterwards |
 | Headset: Monado service | userspace check passes (session active, every listed device node accessible to `steamos`); OpenXR pose: 959–960 of 960 located, tilt 4.29° against the accelerometer's 4.28°, heading rate 0.005°/s; display client through the service (two layers, 30 s): about 2,686 frames at 89.5–89.6 Hz, 11 late, KMS target 88.4–89.6 commits/s at vblank 89.998 Hz, no fence timeout, eyes left/right correct; statistics written when the service stops, GPU floor back to the stock level 6 (305 MHz); the session user's client through the socket link: 1,348 frames at 89.74 Hz |
