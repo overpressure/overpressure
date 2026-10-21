@@ -53,11 +53,14 @@ class VsyncLeadTest(unittest.TestCase):
         # SteamVR starts its compositor about 4 ms before the vblank it sees.
         dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
         self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_VSYNC_LEAD_US=5000$")
-        # The driver reads the same variable and predicts that much further.
+        # Only the layer reads the variable; it publishes the lead it applies, and
+        # the driver predicts that much further from the published value.
         hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
-        self.assertIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', hmd)
+        self.assertNotIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', hmd)
         layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
         self.assertIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', layer)
+        for source in (hmd, layer):
+            self.assertIn('"%s/pico4-vrdisplay-lead-us"', source)
 
 
 class CompressedScanoutTest(unittest.TestCase):

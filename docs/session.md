@@ -208,7 +208,13 @@ other call passes through; without the panels, the layer stays out of the way.
   handles the interrupt, now and then 2–3 ms late, so a later stamp moves the phase by at most
   20 µs and an earlier one at once. It stops 250 ms after the last event. SteamVR takes the
   moment its fence signals as the vblank's time; with a lead (`PICO4_VRDISPLAY_VSYNC_LEAD_US`)
-  the clock signals each vblank that much early. Frame dumps and statistics are written without the lock. A
+  the clock signals each vblank that much early. The lead is the layer's alone: the process
+  that drives the display publishes the lead it applies in
+  `$XDG_RUNTIME_DIR/pico4-vrdisplay-lead-us` (microseconds; removed when the display goes),
+  and the PICO 4 driver in SteamVR reads it and predicts its poses that much further, for the
+  real vblank (0 without the file). The present trace records each vblank at the time the
+  clock predicts for the kernel's event and the early signal as an event of its own. Frame
+  dumps and statistics are written without the lock. A
   present counts as shown (`vkWaitForPresentKHR`) when its retire fence signals, or with
   `PICO4_VRDISPLAY_FRAMES_AHEAD=N` once the present N before it is committed.
 - **GPU clock floor.** While presenting, the layer raises the KGSL floor to 587 MHz or faster
@@ -227,8 +233,8 @@ other call passes through; without the panels, the layer stays out of the way.
 | `PICO4_VRDISPLAY_FAKE=1` or `=WxH` | no panels: a 90 Hz timer stands in for vblanks and flips, so the handshake can be tested on any Vulkan driver, such as lavapipe on a PC; `WxH` sets the display's size; `PICO4_VRDISPLAY_FAKE_STUCK=N` stops retiring flips from commit N on (a stuck display) |
 | `PICO4_VRDISPLAY_STATS=path` | statistics as JSON per swapchain, every ten seconds and when it is destroyed: commits and their rate, late commits, vblank rate, kernel vblank intervals on the 10 ms tick, GPU and retire-fence waits and timeouts, present waits and their timeouts, the eyes' mean colours |
 | `PICO4_VRDISPLAY_MOTION=path` | per commit: commit time, the vblank that shows it, the image change against the previous commit and its horizontal shift; with `PICO4_VRDISPLAY_MOTION_BAND=1` also 16 bands of the left eye in hex, for offline shift measurements (the latency probe in [xr.md](xr.md)); reads the linear scanout images, so it needs `PICO4_VRDISPLAY_UBWC=0` |
-| `PICO4_VRDISPLAY_TRACE=path` | the present timeline, written with the statistics: one line per event (kind, time, present id, argument) for queued presents, finished rendering, commits, retire fences, `vkWaitForPresentKHR` begin and end, vblank ticks, kernel vblank events and acquired images |
-| `PICO4_VRDISPLAY_VSYNC_LEAD_US` | signal vblanks (event fences and the counter) this many microseconds early; SteamVR's service sets 4000, and the PICO 4 driver adds the same to its prediction |
+| `PICO4_VRDISPLAY_TRACE=path` | the present timeline, written with the statistics: one line per event (kind, time, present id, argument) for queued presents, finished rendering, commits, retire fences, `vkWaitForPresentKHR` begin and end, vblanks at the kernel's time, their early signal, kernel vblank events and acquired images |
+| `PICO4_VRDISPLAY_VSYNC_LEAD_US` | signal vblanks (event fences and the counter) this many microseconds early; SteamVR's service sets 5000. The layer publishes the lead it applies, and the PICO 4 driver adds that to its prediction |
 | `PICO4_VRDISPLAY_FRAMES_AHEAD=N` | a present counts as shown once the present N before it is committed (default 0: when its retire fence signals; at most 2); `steamvr.service` sets 1, so the GPU renders the next frame while SteamVR waits for the last one |
 | `PICO4_VRDISPLAY_DUMP=path` | present `PICO4_VRDISPLAY_DUMP_FRAME` (default 300) as a PPM, downscaled by four; this also gives the statistics each eye's mean colour. With compressed scanout and `PICO4_VRDISPLAY_DUMP_EVERY=N` also every N presents after it, as `path.COMMIT`, for artefacts that only show in motion |
 | `PICO4_VRDISPLAY_GPU_MIN_MHZ` | GPU clock floor while presenting (default 587; 0 leaves the governor alone) |

@@ -423,8 +423,10 @@ static struct display g_display = {
  * present id, argument), written with the statistics. Q present queued (image index), G its
  * rendering done (wait in us), C committed, R retire fence signalled (the present shown), S a
  * later present counted as shown at a commit (PICO4_VRDISPLAY_FRAMES_AHEAD), W and w
- * vkWaitForPresentKHR begins (timeout in us) and returns (VkResult), V vblank tick (sequence),
- * K kernel vblank event (its delay in us), A image acquired (index).
+ * vkWaitForPresentKHR begins (timeout in us) and returns (VkResult), V vblank (sequence) at the
+ * time the clock predicts for the kernel's event, E the display events and counter for it signalled
+ * (sequence, the lead in us), K kernel vblank event (its delay in us), A image acquired (index).
+ * Lines are in the order of recording, so a V with a lead comes before its time.
  */
 struct trace_event
 {
@@ -441,18 +443,25 @@ static bool g_trace_on;
 static int64_t
 now_ns(void);
 
-//! Locked.
+//! Locked. An event at time @p t (CLOCK_MONOTONIC ns).
 static void
-trace(char kind, uint64_t id, int64_t arg)
+trace_at(char kind, int64_t t, uint64_t id, int64_t arg)
 {
 	if (!g_trace_on) {
 		return;
 	}
 	struct trace_event *e = &g_trace[g_trace_n++ % TRACE_EVENTS];
-	e->t = now_ns();
+	e->t = t;
 	e->id = id;
 	e->arg = arg > INT32_MAX ? INT32_MAX : arg < INT32_MIN ? INT32_MIN : (int32_t)arg;
 	e->kind = kind;
+}
+
+//! Locked. An event now.
+static void
+trace(char kind, uint64_t id, int64_t arg)
+{
+	trace_at(kind, now_ns(), id, arg);
 }
 
 //! Not locked: copies the new events under the lock, then writes them.
@@ -1006,7 +1015,12 @@ vblank_tick(struct display *d, uint64_t sequence)
 		d->vblank_sequence = sequence;
 	}
 	d->vblank_count++;
-	trace('V', 0, (int64_t)sequence);
+	// The trace keeps the real vblank: the clock's phase, not the early signal.
+	int64_t when = d->fake || d->phase_ns == 0
+	                   ? now_ns()
+	                   : d->phase_ns + (int64_t)(sequence - d->phase_sequence) * PERIOD_NS;
+	trace_at('V', when, 0, (int64_t)sequence);
+	trace('E', sequence, d->lead_ns / 1000);
 	for (struct event_fence *e = d->events; e != NULL; e = e->next) {
 		if (e->vblank) {
 			e->signaled = true;
@@ -1182,6 +1196,41 @@ vblank_main(void *arg)
 }
 
 //! Locked.
+/*
+ * The lead is this layer's alone (PICO4_VRDISPLAY_VSYNC_LEAD_US). It publishes the lead it
+ * applies in $XDG_RUNTIME_DIR/pico4-vrdisplay-lead-us (microseconds), so that the head-mounted
+ * display's driver predicts poses for the real vblank rather than the early signal; -1 removes
+ * the file when the display goes. Every process of SteamVR's service loads this layer, but only
+ * the one that drives the display publishes, so only that one removes the file again.
+ */
+static void
+lead_publish(int64_t lead_ns)
+{
+	static bool published;
+	const char *dir = getenv("XDG_RUNTIME_DIR");
+	if (dir == NULL || (lead_ns < 0 && !published)) {
+		return;
+	}
+	char path[PATH_MAX], tmp[PATH_MAX + 4];
+	snprintf(path, sizeof(path), "%s/pico4-vrdisplay-lead-us", dir);
+	if (lead_ns < 0) {
+		unlink(path);
+		published = false;
+		return;
+	}
+	published = true;
+	snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+	FILE *f = fopen(tmp, "we");
+	if (f == NULL) {
+		LOG("cannot write %s: %s", tmp, strerror(errno));
+		return;
+	}
+	fprintf(f, "%lld\n", (long long)(lead_ns / 1000));
+	if (fclose(f) != 0 || rename(tmp, path) != 0) {
+		LOG("cannot write %s: %s", path, strerror(errno));
+	}
+}
+
 static void
 vblank_start(struct display *d)
 {
@@ -1200,6 +1249,7 @@ vblank_start(struct display *d)
 	 * shows one refresh later. A lead signals vblanks early so that the frame starts early.
 	 */
 	d->lead_ns = env_num("PICO4_VRDISPLAY_VSYNC_LEAD_US", 0) * 1000;
+	lead_publish(d->lead_ns);
 	d->vblank_started = pthread_create(&d->vblank_thread, NULL, vblank_main, d) == 0;
 	d->clock_started = !d->fake && pthread_create(&d->clock_thread, NULL, clock_main, d) == 0;
 }
@@ -4008,6 +4058,7 @@ layer_DestroyInstance(VkInstance instance, const VkAllocationCallbacks *alloc)
 		if (clock) {
 			pthread_join(disp->clock_thread, NULL);
 		}
+		lead_publish(-1);
 		pthread_mutex_lock(&disp->lock);
 		disp->vblank_started = disp->clock_started = false;
 		disp->phase_ns = 0;

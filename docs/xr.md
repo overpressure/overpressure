@@ -591,8 +591,9 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
     orientation keeps its offset; the next pose is taken in full, and the output slides there.
 
   The HMD hands out the pose 24 ms later than the requested time (`PICO4_PREDICT_MS`), plus
-  the display layer's vsync lead (`PICO4_VRDISPLAY_VSYNC_LEAD_US`, 4 ms in Valve's session),
-  predicted from the newest state with its velocities.
+  the display layer's vsync lead (5 ms in Valve's session), which the layer publishes in
+  `$XDG_RUNTIME_DIR/pico4-vrdisplay-lead-us` ([session.md](session.md)), predicted from the
+  newest state with its velocities.
 - **Prediction.** SteamVR asks `driver_monado` for the present pose and extrapolates it to the
   panels itself, by only about 9 ms. A latency probe measured the rest of the pipeline: the
   driver turns the pose it hands out by 5° at known times (`PICO4_LATENCY_PROBE_MS`), and the
@@ -802,7 +803,7 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_FUSION_POSITION_MS` | 150 | time constant pulling position and velocity to Basalt's |
 | `PICO4_FUSION_SMOOTHING_MS` | 50 | time over which a correction reaches the output |
 | `PICO4_FUSION_CSV` | unset | directory for `fusion_slam.csv` (each Basalt pose: latency, disagreement, outcome, velocity disagreement with the IMU, speed) and `fusion_pose.csv` (each pose handed out) |
-| `PICO4_PREDICT_MS` | 24 | hand out the head pose this much later than asked for (with the fusion), to cover the pipeline SteamVR does not predict; the display layer's `PICO4_VRDISPLAY_VSYNC_LEAD_US` is added |
+| `PICO4_PREDICT_MS` | 24 | hand out the head pose this much later than asked for (with the fusion), to cover the pipeline SteamVR does not predict; the vsync lead the display layer publishes is added |
 | `PICO4_LATENCY_PROBE_MS` | 0 (off) | latency probe for a headset lying still: 1 s phases (with 1000) of a 5° yaw step and of a reported 30°/s turn without turning; with `PICO4_VRDISPLAY_MOTION` and linear scanout (`PICO4_VRDISPLAY_UBWC=0`, session.md) |
 | `PICO4_SLAM_RESET_AFTER_S` | 0 (off) | test of the runaway path: reset Basalt once, this many seconds after the fusion started |
 | `SLAM_PREDICTION_TYPE` | 3 (gyro and acceleration) | without the fusion, Monado's prediction between Basalt's poses: 0 none, 1 pose only, 2 gyro, 4 dead reckoning |

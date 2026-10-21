@@ -80,11 +80,6 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_fusion_smoothing_ms, "PICO4_FUSION_SMOOTHING_MS"
  */
 DEBUG_GET_ONCE_NUM_OPTION(pico4_predict_ms, "PICO4_PREDICT_MS", 24)
 /*!
- * The display layer's vsync lead (pico4-vrdisplay, same variable): SteamVR sees each vblank
- * this much early, so it predicts its poses for that much earlier. Added to the prediction.
- */
-DEBUG_GET_ONCE_NUM_OPTION(pico4_vsync_lead_us, "PICO4_VRDISPLAY_VSYNC_LEAD_US", 0)
-/*!
  * Latency probe, with the fusion: periods of this many milliseconds cycle
  * through four phases. In phase 1 the head pose handed out is turned by 5 degrees about
  * the vertical (velocity unchanged); in phase 3 it reports a turn of 30 deg/s about the
@@ -178,6 +173,7 @@ struct pico4_hmd
 	int64_t track_started_ns;
 	bool reset_tested;
 	int64_t probe_start_ns; //!< First pose query of the latency probe.
+	int64_t lead_ns, lead_read_ns; //!< The display layer's vsync lead, and when it was read.
 
 	//! Lens model per eye from the factory data, if found.
 	struct pico4_lens lens[2];
@@ -651,6 +647,40 @@ setup_track(struct pico4_hmd *h)
 	}
 }
 
+/*!
+ * The display layer's vsync lead: pico4-vrdisplay signals each vblank this much early and
+ * publishes the lead it applies in $XDG_RUNTIME_DIR/pico4-vrdisplay-lead-us (microseconds).
+ * SteamVR takes the early signal for the vblank and predicts its poses for that much
+ * earlier, so the lead is added to the prediction; 0 without the layer (Monado's own
+ * compositor). Read at most once a second.
+ */
+static int64_t
+display_lead_ns(struct pico4_hmd *h)
+{
+	int64_t now = (int64_t)os_monotonic_get_ns();
+	int64_t lead = __atomic_load_n(&h->lead_ns, __ATOMIC_RELAXED);
+	if (now - __atomic_load_n(&h->lead_read_ns, __ATOMIC_RELAXED) < U_TIME_1S_IN_NS) {
+		return lead;
+	}
+	__atomic_store_n(&h->lead_read_ns, now, __ATOMIC_RELAXED);
+	char path[512];
+	const char *dir = getenv("XDG_RUNTIME_DIR");
+	long long us = 0;
+	snprintf(path, sizeof(path), "%s/pico4-vrdisplay-lead-us", dir != NULL ? dir : "/run");
+	FILE *f = fopen(path, "re");
+	if (f != NULL) {
+		if (fscanf(f, "%lld", &us) != 1 || us < 0 || us > 20000) {
+			us = 0;
+		}
+		fclose(f);
+	}
+	if (us * 1000 != lead) {
+		P4_INFO(h, "Display lead %lld us (pico4-vrdisplay): poses predicted that much further", us);
+		__atomic_store_n(&h->lead_ns, us * 1000, __ATOMIC_RELAXED);
+	}
+	return us * 1000;
+}
+
 static xrt_result_t
 pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
                            enum xrt_input_name name,
@@ -666,8 +696,7 @@ pico4_hmd_get_tracked_pose(struct xrt_device *xdev,
 
 	if (h->use_track) {
 		// Interpolated between IMU steps, or predicted from the newest one.
-		int64_t ahead = debug_get_num_option_pico4_predict_ms() * U_TIME_1MS_IN_NS +
-		                debug_get_num_option_pico4_vsync_lead_us() * 1000;
+		int64_t ahead = debug_get_num_option_pico4_predict_ms() * U_TIME_1MS_IN_NS + display_lead_ns(h);
 		m_relation_history_get(h->relation_hist, at_timestamp_ns + ahead, out_relation);
 		int64_t probe_ns = debug_get_num_option_pico4_latency_probe_ms() * U_TIME_1MS_IN_NS;
 		if (probe_ns > 0) {
