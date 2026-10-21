@@ -46,7 +46,7 @@ static const struct pico4_ssc_suid suid_lookup = {0xABABABABABABABABULL, 0xABABA
 struct pico4_ssc
 {
 	int fd;
-	struct sockaddr_qrtr server;
+	uint32_t node, port; //!< The SNS client service.
 	uint16_t txn;
 };
 
@@ -491,6 +491,52 @@ pico4_ssc_decode_indication(const uint8_t *packet,
  *
  */
 
+//! QRTR datagrams (the default transport).
+static int
+qrtr_open(uint32_t *out_node)
+{
+	int fd = socket(AF_QIPCRTR, SOCK_DGRAM, 0);
+	if (fd < 0) {
+		return -errno;
+	}
+	struct sockaddr_qrtr local;
+	socklen_t local_len = sizeof(local);
+	if (getsockname(fd, (struct sockaddr *)&local, &local_len) < 0) {
+		int err = -errno;
+		close(fd);
+		return err;
+	}
+	*out_node = local.sq_node;
+	return fd;
+}
+
+static long
+qrtr_send(int fd, const void *buf, size_t len, uint32_t node, uint32_t port)
+{
+	struct sockaddr_qrtr to = {AF_QIPCRTR, node, port};
+	return sendto(fd, buf, len, 0, (struct sockaddr *)&to, sizeof(to));
+}
+
+static long
+qrtr_recv(int fd, void *buf, size_t cap, uint32_t *out_node, uint32_t *out_port)
+{
+	struct sockaddr_qrtr from = {0};
+	socklen_t from_len = sizeof(from);
+	ssize_t n = recvfrom(fd, buf, cap, 0, (struct sockaddr *)&from, &from_len);
+	*out_node = from.sq_node;
+	*out_port = from.sq_port;
+	return n;
+}
+
+static const struct pico4_ssc_transport qrtr = {qrtr_open, qrtr_send, qrtr_recv};
+static const struct pico4_ssc_transport *transport = &qrtr;
+
+void
+pico4_ssc_set_transport(const struct pico4_ssc_transport *t)
+{
+	transport = t != NULL ? t : &qrtr;
+}
+
 static int64_t
 now_ms(void)
 {
@@ -534,17 +580,15 @@ recv_packet(struct pico4_ssc *ssc, uint8_t *buf, size_t cap, int timeout_ms)
 		if (ret == 0) {
 			return 0;
 		}
-		struct sockaddr_qrtr from;
-		socklen_t from_len = sizeof(from);
-		ssize_t n = recvfrom(ssc->fd, buf, cap, 0, (struct sockaddr *)&from, &from_len);
+		uint32_t node, port;
+		ssize_t n = transport->recv(ssc->fd, buf, cap, &node, &port);
 		if (n < 0) {
 			return -errno;
 		}
-		if (from.sq_node == ssc->server.sq_node && from.sq_port == ssc->server.sq_port) {
+		if (node == ssc->node && port == ssc->port) {
 			return (int)n;
 		}
-		if (from.sq_port == QRTR_PORT_CTRL &&
-		    pico4_ssc_control_gone(buf, (size_t)n, ssc->server.sq_node, ssc->server.sq_port)) {
+		if (port == QRTR_PORT_CTRL && pico4_ssc_control_gone(buf, (size_t)n, ssc->node, ssc->port)) {
 			return -ECONNRESET;
 		}
 		// Other name-service updates and anything else: not ours.
@@ -558,24 +602,16 @@ pico4_ssc_open(struct pico4_ssc **out_ssc, int timeout_ms)
 	if (ssc == NULL) {
 		return -ENOMEM;
 	}
-	ssc->fd = socket(AF_QIPCRTR, SOCK_DGRAM, 0);
+	uint32_t local_node = 0;
+	ssc->fd = transport->open(&local_node);
 	if (ssc->fd < 0) {
-		int err = -errno;
+		int err = ssc->fd;
 		free(ssc);
 		return err;
 	}
 
-	struct sockaddr_qrtr local;
-	socklen_t local_len = sizeof(local);
-	if (getsockname(ssc->fd, (struct sockaddr *)&local, &local_len) < 0) {
-		int err = -errno;
-		pico4_ssc_close(&ssc);
-		return err;
-	}
-
 	uint32_t lookup[5] = {QRTR_CMD_NEW_LOOKUP, SNS_CLIENT_SERVICE, 0, 0, 0};
-	struct sockaddr_qrtr ns = {AF_QIPCRTR, local.sq_node, QRTR_PORT_CTRL};
-	if (sendto(ssc->fd, lookup, sizeof(lookup), 0, (struct sockaddr *)&ns, sizeof(ns)) < 0) {
+	if (transport->send(ssc->fd, lookup, sizeof(lookup), local_node, QRTR_PORT_CTRL) < 0) {
 		int err = -errno;
 		pico4_ssc_close(&ssc);
 		return err;
@@ -587,15 +623,14 @@ pico4_ssc_open(struct pico4_ssc **out_ssc, int timeout_ms)
 		if (poll(&pfd, 1, (int)(deadline - now_ms())) <= 0) {
 			break;
 		}
-		uint32_t pkt[8];
-		ssize_t n = recv(ssc->fd, pkt, sizeof(pkt), 0);
+		uint32_t pkt[8], node, port;
+		ssize_t n = transport->recv(ssc->fd, pkt, sizeof(pkt), &node, &port);
 		if (n < 20) {
 			continue;
 		}
 		if (pkt[0] == QRTR_CMD_NEW_SERVER && pkt[1] == SNS_CLIENT_SERVICE && (pkt[3] || pkt[4])) {
-			ssc->server.sq_family = AF_QIPCRTR;
-			ssc->server.sq_node = pkt[3];
-			ssc->server.sq_port = pkt[4];
+			ssc->node = pkt[3];
+			ssc->port = pkt[4];
 			*out_ssc = ssc;
 			return 0;
 		}
@@ -628,7 +663,7 @@ send_request(struct pico4_ssc *ssc, const struct pico4_ssc_suid *suid, uint32_t 
 	if (request_len == 0 || frame_len == 0) {
 		return -EOVERFLOW;
 	}
-	if (sendto(ssc->fd, frame, frame_len, 0, (struct sockaddr *)&ssc->server, sizeof(ssc->server)) < 0) {
+	if (transport->send(ssc->fd, frame, frame_len, ssc->node, ssc->port) < 0) {
 		return -errno;
 	}
 	return 0;
@@ -683,6 +718,27 @@ int
 pico4_ssc_disable(struct pico4_ssc *ssc, const struct pico4_ssc_suid *suid)
 {
 	return send_request(ssc, suid, MSG_DISABLE, NULL, 0);
+}
+
+int
+pico4_ssc_subscribe(struct pico4_ssc **out_ssc,
+                    const char *const *data_types,
+                    struct pico4_ssc_suid *out_suids,
+                    int count,
+                    float rate_hz,
+                    int timeout_ms)
+{
+	int ret = pico4_ssc_open(out_ssc, timeout_ms);
+	for (int i = 0; ret == 0 && i < count; i++) {
+		ret = pico4_ssc_find(*out_ssc, data_types[i], &out_suids[i], timeout_ms);
+	}
+	for (int i = 0; ret == 0 && i < count; i++) {
+		ret = pico4_ssc_enable(*out_ssc, &out_suids[i], rate_hz);
+	}
+	if (ret < 0) {
+		pico4_ssc_close(out_ssc);
+	}
+	return ret;
 }
 
 int

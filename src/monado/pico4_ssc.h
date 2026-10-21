@@ -71,6 +71,36 @@ int
 pico4_ssc_disable(struct pico4_ssc *ssc, const struct pico4_ssc_suid *suid);
 
 /*!
+ * A new client with @p count sensors found by data type and streaming at @p rate_hz: open,
+ * look each up (their UIDs in @p out_suids), then enable them. Each step waits at most
+ * @p timeout_ms. 0, or a negative errno with nothing left open. After the sensor DSP
+ * restarts, the service, its port and the UIDs can all be new.
+ */
+int
+pico4_ssc_subscribe(struct pico4_ssc **out_ssc,
+                    const char *const *data_types,
+                    struct pico4_ssc_suid *out_suids,
+                    int count,
+                    float rate_hz,
+                    int timeout_ms);
+
+/*!
+ * How the client reaches the service: QRTR datagram sockets, or a fake service in the
+ * tests. open returns a pollable fd (or a negative errno) and the local node; send and
+ * recv address peers by node and port (QRTR_PORT_CTRL: the name service).
+ */
+struct pico4_ssc_transport
+{
+	int (*open)(uint32_t *out_node);
+	long (*send)(int fd, const void *buf, size_t len, uint32_t node, uint32_t port);
+	long (*recv)(int fd, void *buf, size_t cap, uint32_t *out_node, uint32_t *out_port);
+};
+
+//! Replace the transport for the clients opened afterwards; NULL restores QRTR (tests only).
+void
+pico4_ssc_set_transport(const struct pico4_ssc_transport *transport);
+
+/*!
  * Wait up to @p timeout_ms for one QMI packet and decode the sensor samples in it.
  * Returns the number of samples written to @p out (at most @p max), 0 on timeout
  * or for packets without samples, or a negative errno.

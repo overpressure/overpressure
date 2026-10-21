@@ -495,13 +495,14 @@ recover_imu(struct pico4_hmd *h, float rate, const char *why)
 	P4_ERROR(h, "IMU stream lost (%s): head pose untracked until it is back", why);
 	int64_t start = os_monotonic_get_ns();
 	pico4_ssc_close(&h->ssc);
-	// Short steps, each followed by a check: a service stop must not wait for the sensor DSP.
+	// Steps of a second at most: a service stop must not wait long for the sensor DSP.
+	static const char *const types[2] = {"accel", "gyro"};
+	struct pico4_ssc_suid suids[2];
 	for (int attempt = 1; imu_thread_running(h); attempt++) {
 		os_nanosleep(U_TIME_1S_IN_NS / 2);
-		if (pico4_ssc_open(&h->ssc, 1000) == 0 && imu_thread_running(h) &&
-		    pico4_ssc_find(h->ssc, "accel", &h->accel_suid, 1000) == 0 && imu_thread_running(h) &&
-		    pico4_ssc_find(h->ssc, "gyro", &h->gyro_suid, 1000) == 0 && calibrate_clock(h) &&
-		    pico4_ssc_enable(h->ssc, &h->accel_suid, rate) == 0 && pico4_ssc_enable(h->ssc, &h->gyro_suid, rate) == 0) {
+		if (pico4_ssc_subscribe(&h->ssc, types, suids, 2, rate, 1000) == 0 && calibrate_clock(h)) {
+			h->accel_suid = suids[0];
+			h->gyro_suid = suids[1];
 			if (h->has_blemcu && (pico4_ssc_find(h->ssc, "ble_mcu", &h->blemcu_suid, 1000) != 0 ||
 			                      pico4_ssc_enable(h->ssc, &h->blemcu_suid, rate) < 0)) {
 				P4_ERROR(h, "The controller stream did not come back with the IMU");
