@@ -31,6 +31,7 @@
 #include "util/u_pacing.h"
 
 #include "main/comp_window.h"
+#include "pico4_retire.h"
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -517,20 +518,44 @@ p4k_poll_vblank(struct pico4_kms_target *kt)
 	}
 }
 
-//! Wait until the previous commit is on screen, which also frees the image before it.
+//! Release and retire fences of the commit in flight.
 static void
+p4k_close_fences(struct pico4_kms_target *kt)
+{
+	if (kt->retire_fd >= 0) {
+		close(kt->retire_fd);
+	}
+	if (kt->release_fd >= 0) {
+		close(kt->release_fd);
+	}
+	kt->retire_fd = kt->release_fd = -1;
+}
+
+/*!
+ * Wait until the previous commit is on screen, which also frees the image before it.
+ * A flip that has not retired after a second leaves the display stuck: false, and
+ * the fences stay open, so the image is never taken for a retired one.
+ */
+static bool
 p4k_wait_retired(struct pico4_kms_target *kt)
 {
 	if (kt->retire_fd < 0) {
-		return;
+		return true;
 	}
 	struct pollfd p = {.fd = kt->retire_fd, .events = POLLIN};
 	if (poll(&p, 1, 0) == 0) {
 		int64_t before_ns = os_monotonic_get_ns();
+		uint64_t timeouts = 0;
 		kt->stats.retire_waits++;
-		if (poll(&p, 1, 500) == 0) {
-			kt->stats.retire_timeouts++;
-			COMP_ERROR(kt->base.c, "pico4_kms: retire fence not signalled after 500 ms");
+		int ret = pico4_retire_wait(kt->retire_fd, 500, 1000, &timeouts);
+		kt->stats.retire_timeouts += timeouts;
+		if (ret < 0) {
+			COMP_ERROR(kt->base.c, "pico4_kms: display stuck: no flip retired for 1000 ms (%s)", strerror(-ret));
+			return false;
+		}
+		if (timeouts > 0) {
+			COMP_ERROR(kt->base.c, "pico4_kms: retire fence signalled only after %lld ms",
+			           (long long)((int64_t)os_monotonic_get_ns() - before_ns) / 1000000);
 		}
 		int64_t waited_ns = os_monotonic_get_ns() - before_ns;
 		kt->stats.retire_wait_ns += waited_ns;
@@ -538,9 +563,8 @@ p4k_wait_retired(struct pico4_kms_target *kt)
 			kt->stats.max_retire_wait_ns = waited_ns;
 		}
 	}
-	close(kt->retire_fd);
-	close(kt->release_fd);
-	kt->retire_fd = kt->release_fd = -1;
+	p4k_close_fences(kt);
+	return true;
 }
 
 static bool
@@ -619,6 +643,7 @@ p4k_disable(struct pico4_kms_target *kt)
 	if (!kt->active) {
 		return;
 	}
+	// Bounded: a stuck flip is ended by switching the display off, then its fences go.
 	p4k_wait_retired(kt);
 	drmModeAtomicReq *req = drmModeAtomicAlloc();
 	bool ok = req != NULL;
@@ -633,6 +658,7 @@ p4k_disable(struct pico4_kms_target *kt)
 		COMP_ERROR(kt->base.c, "pico4_kms: disabling the display failed: %s", strerror(errno));
 	}
 	drmModeAtomicFree(req);
+	p4k_close_fences(kt);
 	kt->active = false;
 	kt->shown = -1;
 }
@@ -1047,8 +1073,7 @@ target_present(struct comp_target *ct,
 	}
 
 	p4k_poll_vblank(kt);
-	p4k_wait_retired(kt);
-	if (!p4k_commit(kt, index)) {
+	if (!p4k_wait_retired(kt) || !p4k_commit(kt, index)) {
 		return VK_ERROR_SURFACE_LOST_KHR;
 	}
 	p4k_poll_vblank(kt);

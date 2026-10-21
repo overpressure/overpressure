@@ -39,7 +39,8 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
         pico4_slam.h pico4_slam.c pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
-        comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c)
+        comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
+        pico4_retire.h test_pico4_retire.c)
 # Project files (src/monado, src/xr) are SKIP: build-userspace.sh copies them in.
 sha256sums=(SKIP
             56161a34cf6d6d64dde3b804e34fc1b2b6654a060cae6544b95be9e577278c29
@@ -56,7 +57,8 @@ sha256sums=(SKIP
             SKIP
             SKIP
             SKIP
-            SKIP)
+            SKIP
+            SKIP SKIP)
 
 prepare() {
   patch -d monado -p1 < monado-pico4-driver.patch
@@ -79,7 +81,7 @@ build() {
     pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c \
     pico4_tcam.h pico4_tcam.c pico4_slam.h pico4_slam.c pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
     pico4_controller.c pico4_fusion.h pico4_fusion.c
-  install -C -Dm644 -t monado/src/xrt/compositor/main comp_window_pico4_kms.c
+  install -C -Dm644 -t monado/src/xrt/compositor/main comp_window_pico4_kms.c pico4_retire.h
 
   # The protocol and model tests run here because build-userspace.sh uses --nocheck.
   ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_ssc test_pico4_ssc.c pico4_ssc.c
@@ -93,6 +95,8 @@ build() {
   ${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -Imonado/src/xrt/include -o test_pico4_fusion test_pico4_fusion.c \
     pico4_fusion.c -lm
   ./test_pico4_fusion
+  ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_retire test_pico4_retire.c -lpthread
+  ./test_pico4_retire
 
   # Configured once per build tree; ninja reruns CMake when its inputs change.
   if [[ ! -f build/build.ninja ]]; then

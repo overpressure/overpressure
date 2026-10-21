@@ -21,7 +21,9 @@
  *   PICO4_VRDISPLAY=1            enables the layer (implicit layer manifest)
  *   PICO4_VRDISPLAY_FAKE=1       no panels: a 90 Hz timer stands in for vblanks
  *                                and flips, to test the handshake on any driver;
- *                                =WxH also sets the display's size
+ *                                =WxH also sets the display's size;
+ *                                PICO4_VRDISPLAY_FAKE_STUCK=N stops retiring
+ *                                flips from commit N on (a stuck display)
  *   PICO4_VRDISPLAY_STATS=path   presentation statistics as JSON per swapchain,
  *                                every ten seconds and when it is destroyed
  *   PICO4_VRDISPLAY_DUMP=path    the image of present PICO4_VRDISPLAY_DUMP_FRAME
@@ -110,6 +112,8 @@
 #define NS_PER_S 1000000000LL
 #define STATS_EVERY_NS (10 * NS_PER_S) //!< between statistics updates
 #define STALL_NS (NS_PER_S / 10)        //!< a gap between commits counted as a stall
+#define RETIRE_REPORT_NS (NS_PER_S / 2) //!< a flip not retired by then counts as a retire timeout
+#define RETIRE_LOST_NS NS_PER_S          //!< a flip not retired by then loses the surface
 
 //! The display's size: the panels', or PICO4_VRDISPLAY_FAKE=WxH for tests.
 static uint32_t g_width = WIDTH, g_height = HEIGHT;
@@ -1268,6 +1272,7 @@ struct swapchain
 	int pending, shown; //!< Image indices, -1 if none.
 	int release_fd, retire_fd;
 	int64_t pending_ns;
+	int64_t retire_report_ns; //!< after pending_ns: the next retire timeout to count
 	uint64_t presented_id;
 	uint64_t ahead; //!< PICO4_VRDISPLAY_FRAMES_AHEAD
 	struct sc_stats stats;
@@ -1613,10 +1618,14 @@ sc_commit(struct swapchain *sc, uint32_t index)
 	bool modeset = !d->active;
 
 	if (d->fake) {
-		// A timer one refresh away stands in for the retire fence.
+		// A timer one refresh away stands in for the retire fence; from commit
+		// PICO4_VRDISPLAY_FAKE_STUCK on it never fires (a stuck display, for tests).
 		retire = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
 		struct itimerspec its = {.it_value = {0, PERIOD_NS}};
-		timerfd_settime(retire, 0, &its, NULL);
+		int64_t stuck = env_num("PICO4_VRDISPLAY_FAKE_STUCK", 0);
+		if (stuck <= 0 || sc->stats.commits + 1 < (uint64_t)stuck) {
+			timerfd_settime(retire, 0, &its, NULL);
+		}
 		d->active = true;
 		modeset = false;
 	} else if (!kms_commit(d, img->fb, &release, &retire, &sc->stats.busy_retries)) {
@@ -1636,6 +1645,7 @@ sc_commit(struct swapchain *sc, uint32_t index)
 		sc->pending = (int)index;
 		sc->release_fd = release;
 		sc->retire_fd = retire;
+		sc->retire_report_ns = RETIRE_REPORT_NS;
 		img->state = IMAGE_PENDING;
 		// Frames ahead: the presents after this one count as shown already.
 		if (sc->ahead > 0 && img->present_id + sc->ahead > sc->presented_id) {
@@ -1702,35 +1712,51 @@ present_main(void *arg)
 
 	pthread_mutex_lock(&d->lock);
 	for (;;) {
-		if (sc->stop && sc->queued == 0 && sc->retire_fd < 0) {
+		// A lost display may never retire its flip: destroying the swapchain stops waiting.
+		if (sc->stop && (sc->lost || (sc->queued == 0 && sc->retire_fd < 0))) {
 			break;
 		}
 		if (sc->retire_fd >= 0) {
 			// One flip in flight: wait for it (or for news) before the next.
 			struct pollfd p[2] = {{.fd = sc->wake, .events = POLLIN}, {.fd = sc->retire_fd, .events = POLLIN}};
 			int64_t before = now_ns();
+			int64_t next = sc->pending_ns + (sc->lost ? RETIRE_LOST_NS * 4 : sc->retire_report_ns);
 			pthread_mutex_unlock(&d->lock);
-			int n = poll(p, 2, 500);
+			poll(p, 2, next > before ? (int)((next - before + 999999) / 1000000) : 0);
 			uint64_t drain;
 			if (p[0].revents & POLLIN) {
 				(void)!read(sc->wake, &drain, sizeof(drain));
 			}
 			pthread_mutex_lock(&d->lock);
-			if (n == 0 || (p[1].revents & (POLLIN | POLLERR | POLLHUP)) != 0) {
-				if (n == 0) {
+			if ((p[1].revents & (POLLIN | POLLERR | POLLHUP)) == 0) {
+				/*
+				 * Not retired: the previous image may still be scanned out, so it stays
+				 * owned; a timeout is never a presented frame. After RETIRE_LOST_NS the
+				 * surface is lost, which ends the runtime's acquires, presents and
+				 * present waits instead of letting them wait for good.
+				 */
+				int64_t age = now_ns() - sc->pending_ns;
+				if (!sc->lost && age >= sc->retire_report_ns) {
 					sc->stats.retire_timeouts++;
-					LOG("retire fence not signalled after 500 ms");
+					sc->retire_report_ns += RETIRE_REPORT_NS;
+					LOG("retire fence not signalled after %" PRId64 " ms; the image stays in use", age / 1000000);
 				}
-				int64_t waited = now_ns() - before;
-				if (sc->queued > 0) {
-					sc->stats.retire_waits++;
-					sc->stats.retire_wait_ns += waited;
-					if (waited > sc->stats.max_retire_wait_ns) {
-						sc->stats.max_retire_wait_ns = waited;
-					}
+				if (!sc->lost && age >= RETIRE_LOST_NS) {
+					sc->lost = true;
+					LOG("display stuck: no flip retired for %" PRId64 " ms, surface lost", age / 1000000);
+					pthread_cond_broadcast(&d->cond);
 				}
-				sc_retired(sc);
+				continue;
 			}
+			int64_t waited = now_ns() - before;
+			if (sc->queued > 0) {
+				sc->stats.retire_waits++;
+				sc->stats.retire_wait_ns += waited;
+				if (waited > sc->stats.max_retire_wait_ns) {
+					sc->stats.max_retire_wait_ns = waited;
+				}
+			}
+			sc_retired(sc);
 			continue;
 		}
 		if (sc->queued == 0) {
@@ -2435,6 +2461,13 @@ sc_destroy(struct swapchain *sc)
 	// Nothing may scan out an image that is about to go away.
 	if (sc->shown >= 0 || sc->pending >= 0) {
 		kms_disable(d);
+	}
+	// A lost display's last flip may never have retired.
+	if (sc->release_fd >= 0) {
+		close(sc->release_fd);
+	}
+	if (sc->retire_fd >= 0) {
+		close(sc->retire_fd);
 	}
 	pthread_mutex_unlock(&d->lock);
 	LOG("swapchain destroyed after %" PRIu64 " commits", sc->stats.commits);

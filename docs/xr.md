@@ -216,8 +216,11 @@ sequence of [graphics.md](graphics.md); unfenced page flips show corrupted outpu
   layers without blocking (retried up to 20 times on `EBUSY`) and requests the CRTC release fence
   (`output_fence`) and the connector retire fence (`RETIRE_FENCE`).
   - Before each commit the target waits for the renderer's queue and for the previous commit's
-    retire fence (500 ms timeout, counted in the statistics). Only then can the image acquired
-    next be off screen.
+    retire fence. Only then can the image acquired next be off screen. Each 500 ms without the
+    signal counts as a retire timeout in the statistics; after a second the display is taken as
+    stuck: the present fails with `VK_ERROR_SURFACE_LOST_KHR` and the fences stay open, so the
+    image is never taken for a retired one ([pico4_retire.h](../src/monado/pico4_retire.h),
+    tested with fake fences). Turning the display off ends the wait for good.
   - One vblank event stays queued, because this vendor driver holds no vblank reference for
     commits on its own.
   - Pacing uses Monado's fixed-period pacer at the HMD's 90 Hz, phase-locked to the timestamps

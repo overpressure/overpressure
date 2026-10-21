@@ -189,8 +189,12 @@ other call passes through; without the panels, the layer stays out of the way.
   size, imported as XRGB8888 or XBGR8888 framebuffers; FIFO only. A present waits for the
   frame's semaphores (a wait longer than 2 s counts as a GPU timeout), then a present thread
   commits the image atomically to the six layers with the release and retire fences, one flip
-  in flight, exactly like Monado's KMS target. A retire fence that does not signal within
-  500 ms counts as a retire timeout. `steamvr.service` sets `PICO4_VRDISPLAY_UBWC=2`, which
+  in flight, exactly like Monado's KMS target. A flip counts as shown only when its retire
+  fence signals: until then the image before it may still be scanned out and stays in use.
+  Each 500 ms without the signal counts as a retire timeout; after a second the display is
+  taken as stuck and the surface as lost, so acquires, presents and present waits return
+  `VK_ERROR_OUT_OF_DATE_KHR` instead of waiting for good, and destroying the swapchain turns
+  the display off before its images go. `steamvr.service` sets `PICO4_VRDISPLAY_UBWC=2`, which
   compresses the scanout (see [Performance and heat](#performance-and-heat)): the application
   renders straight into compressed RGBA images imported with Qualcomm's compressed modifier;
   its views of them and its presenting render passes get the RGBA variant of its BGRA format.
@@ -220,7 +224,7 @@ other call passes through; without the panels, the layer stays out of the way.
 | Variable | Effect |
 | --- | --- |
 | `PICO4_VRDISPLAY=1` | enables the layer (`PICO4_VRDISPLAY_DISABLE=1` disables it) |
-| `PICO4_VRDISPLAY_FAKE=1` or `=WxH` | no panels: a 90 Hz timer stands in for vblanks and flips, so the handshake can be tested on any Vulkan driver, such as lavapipe on a PC; `WxH` sets the display's size |
+| `PICO4_VRDISPLAY_FAKE=1` or `=WxH` | no panels: a 90 Hz timer stands in for vblanks and flips, so the handshake can be tested on any Vulkan driver, such as lavapipe on a PC; `WxH` sets the display's size; `PICO4_VRDISPLAY_FAKE_STUCK=N` stops retiring flips from commit N on (a stuck display) |
 | `PICO4_VRDISPLAY_STATS=path` | statistics as JSON per swapchain, every ten seconds and when it is destroyed: commits and their rate, late commits, vblank rate, kernel vblank intervals on the 10 ms tick, GPU and retire-fence waits and timeouts, present waits and their timeouts, the eyes' mean colours |
 | `PICO4_VRDISPLAY_MOTION=path` | per commit: commit time, the vblank that shows it, the image change against the previous commit and its horizontal shift; with `PICO4_VRDISPLAY_MOTION_BAND=1` also 16 bands of the left eye in hex, for offline shift measurements (the latency probe in [xr.md](xr.md)); reads the linear scanout images, so it needs `PICO4_VRDISPLAY_UBWC=0` |
 | `PICO4_VRDISPLAY_TRACE=path` | the present timeline, written with the statistics: one line per event (kind, time, present id, argument) for queued presents, finished rendering, commits, retire fences, `vkWaitForPresentKHR` begin and end, vblank ticks, kernel vblank events and acquired images |

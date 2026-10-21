@@ -73,7 +73,7 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
   clients, `vrdisplay/`, `sysvsem/`, `reboot/`). Recipes list them as `SKIP`; the build copies
   them in.
 - `scripts/`: `build-userspace.sh`, `build-graphics.sh`, `extract-sensor-data.sh`, boot and
-  preflight helpers. `tests/`: unittest suites, `test_recovery_policy.sh`, `tests/qemu/`.
+  preflight helpers. `tests/`: unittest suites, `test_recovery_policy.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`.
 - Private and generated, ignored: `backup/` (identity `backup/device.json`, EDL backups),
   `assets/`, `cache/`, `out/` (`out/dev/` for the dev loop, `out/cycle-*/` evidence), `.env`.
 
@@ -82,6 +82,7 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
 ```sh
 python -m unittest discover -s tests                     # host tests, ~6 s, no hardware
 bash tests/test_recovery_policy.sh                       # stage-1 recovery policy
+bash tests/test_vrdisplay_fake.sh                        # display layer on lavapipe (WSL; VULKAN_INCLUDE=...)
 python -m pico4 build --firmware 5.13.7-global-seko      # stage-1 image -> out/
 # Linux/WSL as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
 scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
