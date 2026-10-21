@@ -277,7 +277,7 @@ into the linear images take twice as long. Measured on the headset, 10 s runs:
 | Projection + quad layer, 30 s | governor's clocks, 3 ms compositor time | 9.4 ms | 89.2–89.6 Hz, 13–28 late |
 | Projection + quad layer, 30 s | governor's clocks, 12 ms compositor time (final) | 9.2–9.5 ms | 89.2–89.75 Hz, 9–28 late |
 
-[`pico4-openxr-display`](../src/xr/pico4-openxr-display.c) `[SECONDS] [--projection-only]` is the
+[`pico4-openxr-display`](../src/xr/pico4-openxr-display.c) `[SECONDS] [--projection-only] [--sky]` is the
 display acceptance client. It renders through `XR_KHR_vulkan_enable2`:
 
 - **Projection layer.** A dim grid with a large L (left eye, red) or R (right eye, blue).
@@ -285,6 +285,11 @@ display acceptance client. It renders through `XR_KHR_vulkan_enable2`:
   the head turns. `--projection-only` leaves it out.
 - **Content.** Static: each swapchain image is filled once by a buffer copy, so the frame loop
   measures the runtime, not the client.
+- **Sky (`--sky`).** Instead of the static pattern, a grid sky fixed in LOCAL space (lines every
+  15 degrees, the horizon brighter) drawn every frame for the pose the runtime predicts, at
+  1584×1584 per eye like SteamVR's applications. It shows whether lines stay single while the
+  head turns ([session.md](session.md#performance-and-heat)). The lines are clear rectangles
+  in a render pass, merged along each line because the driver draws each rectangle on its own.
 - **Report.** The frame rate, the display period, late frames (an interval above 1.5 periods) and
   tracking, all after the first second. Exit status 0 needs frames at 95% of the display rate or
   better, at most 1% of them late, and tracked orientation.
@@ -583,7 +588,7 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
     orientation keeps its offset; the next pose is taken in full, and the output slides there.
 
   The HMD hands out the pose 24 ms later than the requested time (`PICO4_PREDICT_MS`), plus
-  the display layer's vsync lead (`PICO4_VRDISPLAY_VSYNC_LEAD_US`, 6 ms in Valve's session),
+  the display layer's vsync lead (`PICO4_VRDISPLAY_VSYNC_LEAD_US`, 4 ms in Valve's session),
   predicted from the newest state with its velocities.
 - **Prediction.** SteamVR asks `driver_monado` for the present pose and extrapolates it to the
   panels itself, by only about 9 ms. A latency probe measured the rest of the pipeline: the
@@ -746,7 +751,7 @@ find the socket in their own runtime directory):
 
 ```sh
 XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-pose 10 10
-XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-display 10 [--projection-only]
+XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-display 10 [--projection-only] [--sky]
 systemctl stop pico4-monado.service; cat /run/pico4-monado/kms.json
 ```
 

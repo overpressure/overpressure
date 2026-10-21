@@ -43,7 +43,13 @@
  *                                usage, converted at present into compressed
  *                                images the planes read; the CPU cannot read
  *                                them: the dumped present copies the
- *                                application's image for it, motion data are off
+ *                                application's image for it, motion data are off;
+ *                                =2 the application renders into the compressed
+ *                                images the planes read (R8G8B8A8 views), no conversion
+ *   PICO4_VRDISPLAY_FRAMES_AHEAD=N  presents count as shown once the present N before
+ *                                them is committed (0: when shown; at most 2): SteamVR,
+ *                                which waits for each present to be shown before it
+ *                                starts the next frame, keeps the GPU busy meanwhile
  *   PICO4_VRDISPLAY_PASS_BARRIER=1  a full memory barrier before every render pass
  *                                (missing overlay parts in the right eye without)
  *   PICO4_VRDISPLAY_IMAGES=1     log every image the application creates (size,
@@ -263,6 +269,9 @@ struct device_data
 	PFN_vkCmdBeginRenderPass CmdBeginRenderPass;
 	PFN_vkCmdBeginRenderPass2 CmdBeginRenderPass2;
 	PFN_vkCmdBeginRendering CmdBeginRendering;
+	PFN_vkCreateImageView CreateImageView;
+	PFN_vkCreateRenderPass CreateRenderPass;
+	PFN_vkCreateRenderPass2 CreateRenderPass2;
 	PFN_vkCmdCopyImageToBuffer CmdCopyImageToBuffer;
 	PFN_vkCreateBuffer CreateBuffer;
 	PFN_vkDestroyBuffer DestroyBuffer;
@@ -405,9 +414,10 @@ static struct display g_display = {
 /*
  * The present timeline for PICO4_VRDISPLAY_TRACE=path: one line per event (kind, time in ns,
  * present id, argument), written with the statistics. Q present queued (image index), G its
- * rendering done (wait in us), C committed, R retire fence signalled (the present shown), W and
- * w vkWaitForPresentKHR begins (timeout in us) and returns (VkResult), V vblank tick (sequence),
- * A image acquired (index).
+ * rendering done (wait in us), C committed, R retire fence signalled (the present shown), S a
+ * later present counted as shown at a commit (PICO4_VRDISPLAY_FRAMES_AHEAD), W and w
+ * vkWaitForPresentKHR begins (timeout in us) and returns (VkResult), V vblank tick (sequence),
+ * K kernel vblank event (its delay in us), A image acquired (index).
  */
 struct trace_event
 {
@@ -1218,6 +1228,7 @@ struct sc_image
 	VkCommandBuffer copy;
 	VkCommandBuffer copy_dump; //!< the conversion plus a copy into the readback buffer
 	bool readback;             //!< this present carries the dump's copy
+	bool direct;               //!< the application renders into the scanout image (image == scan)
 	bool mappable;
 	enum image_state state;
 	uint64_t present_id;
@@ -1255,6 +1266,7 @@ struct swapchain
 	int release_fd, retire_fd;
 	int64_t pending_ns;
 	uint64_t presented_id;
+	uint64_t ahead; //!< PICO4_VRDISPLAY_FRAMES_AHEAD
 	struct sc_stats stats;
 };
 
@@ -1297,11 +1309,52 @@ format_fourcc(VkFormat format)
  * storage usage on this GPU. The application therefore renders into a tiled,
  * compressed image of the layer's, without storage usage, and each present blits
  * it into a compressed R8G8B8A8 image that the planes scan out.
+ *
+ * With PICO4_VRDISPLAY_UBWC=2 the application renders into the scanout images
+ * themselves: its image views of them and the render passes that present (final
+ * layout PRESENT_SRC) take the R8G8B8A8 variant of its B8G8R8A8 format. The
+ * shaders write the same colours; only the byte order in memory changes, to the
+ * one the planes read, and the conversion goes.
  */
 static bool
 ubwc_mode(void)
 {
 	return env_num("PICO4_VRDISPLAY_UBWC", 0) != 0 && !fake_mode();
+}
+
+static bool
+direct_mode(void)
+{
+	return env_num("PICO4_VRDISPLAY_UBWC", 0) == 2 && !fake_mode();
+}
+
+//! The R8G8B8A8 format with @p format's encoding, or @p format if it is no B8G8R8A8 format.
+static VkFormat
+rgba_variant(VkFormat format)
+{
+	switch (format) {
+	case VK_FORMAT_B8G8R8A8_UNORM: return VK_FORMAT_R8G8B8A8_UNORM;
+	case VK_FORMAT_B8G8R8A8_SRGB: return VK_FORMAT_R8G8B8A8_SRGB;
+	default: return format;
+	}
+}
+
+//! Whether @p image is a scanout image an application renders into directly.
+static bool
+is_direct_image(VkImage image)
+{
+	bool found = false;
+	pthread_mutex_lock(&g_display.lock);
+	for (struct swapchain *s = g_display.swapchains; s != NULL && !found; s = s->next) {
+		for (uint32_t i = 0; i < s->count; i++) {
+			if (s->imgs[i].direct && s->imgs[i].image == image) {
+				found = true;
+				break;
+			}
+		}
+	}
+	pthread_mutex_unlock(&g_display.lock);
+	return found;
 }
 
 //! Writes the downscaled image as PPM and keeps each eye's mean colour (debugging).
@@ -1339,7 +1392,7 @@ sc_dump(struct swapchain *sc, struct sc_image *img, const char *path)
 		return;
 	}
 	FILE *f = fopen(path, "wbe");
-	bool bgr = sc->fourcc == DRM_FORMAT_XRGB8888;
+	bool bgr = sc->fourcc == DRM_FORMAT_XRGB8888 && !img->direct; // direct: the planes' R8G8B8A8
 	double sum[2][3] = {{0}};
 	if (f != NULL) {
 		fprintf(f, "P6\n%u %u\n255\n", g_width / 4, g_height / 4);
@@ -1581,6 +1634,11 @@ sc_commit(struct swapchain *sc, uint32_t index)
 		sc->release_fd = release;
 		sc->retire_fd = retire;
 		img->state = IMAGE_PENDING;
+		// Frames ahead: the presents after this one count as shown already.
+		if (sc->ahead > 0 && img->present_id + sc->ahead > sc->presented_id) {
+			sc->presented_id = img->present_id + sc->ahead;
+			trace('S', sc->presented_id, (int64_t)index);
+		}
 	}
 	sc->pending_ns = now_ns();
 	trace('C', img->present_id, (int64_t)index);
@@ -1796,7 +1854,7 @@ sc_free_images(struct swapchain *sc)
 		if (img->fence != VK_NULL_HANDLE) {
 			dev->DestroyFence(dev->device, img->fence, NULL);
 		}
-		if (img->image != VK_NULL_HANDLE) {
+		if (img->image != VK_NULL_HANDLE && img->image != img->scan) {
 			dev->DestroyImage(dev->device, img->image, NULL);
 		}
 		if (img->memory != VK_NULL_HANDLE) {
@@ -1909,6 +1967,8 @@ sc_record_copy(struct swapchain *sc, struct sc_image *img, VkCommandBuffer *cmd,
 		return ret;
 	}
 	const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+	// Direct: no conversion, only the readback of the image the application rendered into.
+	uint32_t images = img->direct ? 1 : 2;
 	// The present's semaphore waits order this after the application's rendering.
 	VkImageMemoryBarrier before[2] = {
 	    {
@@ -1933,15 +1993,17 @@ sc_record_copy(struct swapchain *sc, struct sc_image *img, VkCommandBuffer *cmd,
 	    },
 	};
 	dev->CmdPipelineBarrier(*cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL,
-	                        0, NULL, 2, before);
-	VkImageBlit blit = {
-	    .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-	    .srcOffsets = {{0, 0, 0}, {(int32_t)g_width, (int32_t)g_height, 1}},
-	    .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-	    .dstOffsets = {{0, 0, 0}, {(int32_t)g_width, (int32_t)g_height, 1}},
-	};
-	dev->CmdBlitImage(*cmd, img->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, img->scan,
-	                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+	                        0, NULL, images, before);
+	if (!img->direct) {
+		VkImageBlit blit = {
+		    .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+		    .srcOffsets = {{0, 0, 0}, {(int32_t)g_width, (int32_t)g_height, 1}},
+		    .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+		    .dstOffsets = {{0, 0, 0}, {(int32_t)g_width, (int32_t)g_height, 1}},
+		};
+		dev->CmdBlitImage(*cmd, img->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, img->scan,
+		                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+	}
 	if (readback) {
 		VkBufferImageCopy region = {
 		    .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
@@ -1985,21 +2047,36 @@ sc_record_copy(struct swapchain *sc, struct sc_image *img, VkCommandBuffer *cmd,
 	    },
 	};
 	dev->CmdPipelineBarrier(*cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
-	                        NULL, 0, NULL, 2, after);
+	                        NULL, 0, NULL, images, after);
 	return dev->EndCommandBuffer(*cmd);
 }
 
 /*!
  * Compressed scanout (see ubwc_mode): a compressed RGBA image for the planes, and
- * the command buffer that converts the application's image into it at present.
+ * the command buffer that converts the application's image into it at present. With
+ * @p info (direct mode) the application renders into the image itself instead, with
+ * the usage and view formats of its swapchain.
  */
 static VkResult
-sc_create_scan(struct swapchain *sc, struct sc_image *img)
+sc_create_scan(struct swapchain *sc, struct sc_image *img, const VkSwapchainCreateInfoKHR *info)
 {
 	struct device_data *dev = sc->dev;
 	uint64_t compressed = DRM_FORMAT_MOD_QCOM_COMPRESSED;
+	VkFormat views[8];
+	VkImageFormatListCreateInfo formats = {.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
+	for (const VkBaseInStructure *s = info != NULL ? info->pNext : NULL; s != NULL; s = s->pNext) {
+		const VkImageFormatListCreateInfo *list = (const VkImageFormatListCreateInfo *)s;
+		if (s->sType == VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO && list->viewFormatCount <= 8) {
+			for (uint32_t i = 0; i < list->viewFormatCount; i++) {
+				views[i] = rgba_variant(list->pViewFormats[i]);
+			}
+			formats.viewFormatCount = list->viewFormatCount;
+			formats.pViewFormats = views;
+		}
+	}
 	VkExternalMemoryImageCreateInfo external = {
 	    .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+	    .pNext = formats.viewFormatCount > 0 ? &formats : NULL,
 	    .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 	};
 	VkImageDrmFormatModifierListCreateInfoEXT modifiers = {
@@ -2009,9 +2086,12 @@ sc_create_scan(struct swapchain *sc, struct sc_image *img)
 	    .pDrmFormatModifiers = &compressed,
 	};
 	bool srgb = sc->format == VK_FORMAT_B8G8R8A8_SRGB || sc->format == VK_FORMAT_R8G8B8A8_SRGB;
-	VkImageCreateInfo info = {
+	VkImageCreateInfo image_info = {
 	    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 	    .pNext = &modifiers,
+	    .flags = info != NULL && (info->flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0
+	                 ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT
+	                 : 0,
 	    .imageType = VK_IMAGE_TYPE_2D,
 	    .format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM,
 	    .extent = {g_width, g_height, 1},
@@ -2019,11 +2099,13 @@ sc_create_scan(struct swapchain *sc, struct sc_image *img)
 	    .arrayLayers = 1,
 	    .samples = VK_SAMPLE_COUNT_1_BIT,
 	    .tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
-	    .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+	    // Storage usage would rule out compression; SteamVR asks for it without using it.
+	    .usage = info != NULL ? (info->imageUsage & ~VK_IMAGE_USAGE_STORAGE_BIT) | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+	                          : VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 	    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 	};
-	VkResult ret = dev->CreateImage(dev->device, &info, NULL, &img->scan);
+	VkResult ret = dev->CreateImage(dev->device, &image_info, NULL, &img->scan);
 	if (ret != VK_SUCCESS) {
 		LOG("vkCreateImage (compressed scanout): %d", ret);
 		return ret;
@@ -2043,7 +2125,12 @@ sc_create_scan(struct swapchain *sc, struct sc_image *img)
 		return ret;
 	}
 
-	ret = sc_record_copy(sc, img, &img->copy, false);
+	if (info != NULL) {
+		img->direct = true;
+		img->image = img->scan;
+	} else {
+		ret = sc_record_copy(sc, img, &img->copy, false);
+	}
 	if (ret == VK_SUCCESS && sc->readback != VK_NULL_HANDLE) {
 		ret = sc_record_copy(sc, img, &img->copy_dump, true);
 	}
@@ -2099,21 +2186,25 @@ sc_create_image(struct swapchain *sc, const VkSwapchainCreateInfoKHR *info, stru
 	    .pQueueFamilyIndices = info->pQueueFamilyIndices,
 	    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 	};
-	VkResult ret = dev->CreateImage(dev->device, &image_info, NULL, &img->image);
-	if (ret != VK_SUCCESS) {
-		LOG("vkCreateImage (%s, usage 0x%x, format %d): %d", ubwc ? "tiled" : "linear", image_info.usage,
-		    info->imageFormat, ret);
-		return ret;
-	}
-	ret = sc_bind_memory(dev, img->image, export && !ubwc, &img->memory, &img->size, &img->mappable);
-	if (ret != VK_SUCCESS) {
-		return ret;
+	bool direct = ubwc && direct_mode();
+	VkResult ret = VK_SUCCESS;
+	if (!direct) {
+		ret = dev->CreateImage(dev->device, &image_info, NULL, &img->image);
+		if (ret != VK_SUCCESS) {
+			LOG("vkCreateImage (%s, usage 0x%x, format %d): %d", ubwc ? "tiled" : "linear", image_info.usage,
+			    info->imageFormat, ret);
+			return ret;
+		}
+		ret = sc_bind_memory(dev, img->image, export && !ubwc, &img->memory, &img->size, &img->mappable);
+		if (ret != VK_SUCCESS) {
+			return ret;
+		}
 	}
 	img->modifier = DRM_FORMAT_MOD_LINEAR;
 	VkImage scan = img->image;
 	VkDeviceMemory scan_memory = img->memory;
 	if (ubwc) {
-		ret = sc_create_scan(sc, img);
+		ret = sc_create_scan(sc, img, direct ? info : NULL);
 		if (ret != VK_SUCCESS) {
 			return ret;
 		}
@@ -2234,6 +2325,8 @@ sc_create(struct device_data *dev, const VkSwapchainCreateInfoKHR *info, VkSwapc
 	}
 	sc->pending = sc->shown = -1;
 	sc->release_fd = sc->retire_fd = -1;
+	long ahead = env_num("PICO4_VRDISPLAY_FRAMES_AHEAD", 0);
+	sc->ahead = ahead > 0 ? (uint64_t)(ahead < 2 ? ahead : 2) : 0;
 	sc->stats.eye_mean[0][0] = -1;
 	sc->wake = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 	for (uint32_t i = 0; i < MAX_IMAGES; i++) {
@@ -3989,6 +4082,9 @@ layer_CreateDevice(VkPhysicalDevice physical,
 	D(CmdBeginRenderPass);
 	D(CmdBeginRenderPass2);
 	D(CmdBeginRendering);
+	D(CreateImageView);
+	D(CreateRenderPass);
+	D(CreateRenderPass2);
 	D(CmdCopyImageToBuffer);
 	D(CreateBuffer);
 	D(DestroyBuffer);
@@ -4139,11 +4235,86 @@ layer_CmdBeginRendering(VkCommandBuffer cmd, const VkRenderingInfo *info)
 	d->CmdBeginRendering(cmd, info);
 }
 
+/*
+ * Direct compressed scanout (see direct_mode): the application's views of the scanout
+ * images and its presenting render passes get the R8G8B8A8 variant of its format.
+ */
+static VKAPI_ATTR VkResult VKAPI_CALL
+layer_CreateImageView(VkDevice device, const VkImageViewCreateInfo *info, const VkAllocationCallbacks *alloc,
+                      VkImageView *view)
+{
+	struct device_data *d = find_device(device);
+	if (!is_direct_image(info->image)) {
+		return d->CreateImageView(device, info, alloc, view);
+	}
+	VkImageViewCreateInfo rgba = *info;
+	rgba.format = rgba_variant(info->format);
+	return d->CreateImageView(device, &rgba, alloc, view);
+}
+
+//! Whether an attachment with @p format and @p final_layout is a presented swapchain image.
+static bool
+presented_bgra(VkFormat format, VkImageLayout final_layout)
+{
+	return final_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR && rgba_variant(format) != format;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL
+layer_CreateRenderPass(VkDevice device, const VkRenderPassCreateInfo *info, const VkAllocationCallbacks *alloc,
+                       VkRenderPass *pass)
+{
+	struct device_data *d = find_device(device);
+	VkAttachmentDescription attachments[16];
+	if (info->attachmentCount > 16) {
+		return d->CreateRenderPass(device, info, alloc, pass);
+	}
+	VkRenderPassCreateInfo copy = *info;
+	for (uint32_t i = 0; i < info->attachmentCount; i++) {
+		attachments[i] = info->pAttachments[i];
+		if (presented_bgra(attachments[i].format, attachments[i].finalLayout)) {
+			attachments[i].format = rgba_variant(attachments[i].format);
+		}
+	}
+	copy.pAttachments = attachments;
+	return d->CreateRenderPass(device, &copy, alloc, pass);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL
+layer_CreateRenderPass2(VkDevice device, const VkRenderPassCreateInfo2 *info, const VkAllocationCallbacks *alloc,
+                        VkRenderPass *pass)
+{
+	struct device_data *d = find_device(device);
+	VkAttachmentDescription2 attachments[16];
+	if (info->attachmentCount > 16) {
+		return d->CreateRenderPass2(device, info, alloc, pass);
+	}
+	VkRenderPassCreateInfo2 copy = *info;
+	for (uint32_t i = 0; i < info->attachmentCount; i++) {
+		attachments[i] = info->pAttachments[i];
+		if (presented_bgra(attachments[i].format, attachments[i].finalLayout)) {
+			attachments[i].format = rgba_variant(attachments[i].format);
+		}
+	}
+	copy.pAttachments = attachments;
+	return d->CreateRenderPass2(device, &copy, alloc, pass);
+}
+
 static PFN_vkVoidFunction
 device_function(const char *name)
 {
 	if (strcmp(name, "vkCreateImage") == 0 && env_num("PICO4_VRDISPLAY_IMAGES", 0) != 0) {
 		return (PFN_vkVoidFunction)layer_CreateImage;
+	}
+	if (direct_mode()) {
+		if (strcmp(name, "vkCreateImageView") == 0) {
+			return (PFN_vkVoidFunction)layer_CreateImageView;
+		}
+		if (strcmp(name, "vkCreateRenderPass") == 0) {
+			return (PFN_vkVoidFunction)layer_CreateRenderPass;
+		}
+		if (strcmp(name, "vkCreateRenderPass2") == 0 || strcmp(name, "vkCreateRenderPass2KHR") == 0) {
+			return (PFN_vkVoidFunction)layer_CreateRenderPass2;
+		}
 	}
 	if (env_num("PICO4_VRDISPLAY_PASS_BARRIER", 0) != 0) {
 		if (strcmp(name, "vkCmdBeginRenderPass") == 0) {

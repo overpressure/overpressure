@@ -115,7 +115,7 @@ build() {
   cmake --build build
 
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-pose pico4-openxr-pose.c -lopenxr_loader -lm
-  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-display pico4-openxr-display.c -lopenxr_loader -lvulkan
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-display pico4-openxr-display.c -lopenxr_loader -lvulkan -lm
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -Imonado/src/xrt/drivers/pico4/include -o pico4-cam pico4-cam.c \
     pico4_cam.c pico4_station.c -lpthread
 }

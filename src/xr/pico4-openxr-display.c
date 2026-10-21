@@ -3,7 +3,7 @@
  * pico4-openxr-display: render through OpenXR (Vulkan) for a while and print a
  * JSON summary of the frame loop.
  *
- *   pico4-openxr-display [SECONDS] [--projection-only]
+ *   pico4-openxr-display [SECONDS] [--projection-only] [--sky]
  *
  * Each eye gets a projection layer with a dim grid and a large L or R in its
  * own colour (left red, right blue), so eye routing is visible; a quad layer
@@ -12,6 +12,12 @@
  * --projection-only, the single-layer case runtimes optimise). The content is
  * static: each swapchain image is filled once by a buffer copy (nothing here
  * depends on shaders), so the frame loop measures the runtime, not the client.
+ *
+ * With --sky the projection layer is drawn every frame instead, for the pose the
+ * runtime predicts: a sky of grid lines every 15 degrees of azimuth and elevation,
+ * fixed in LOCAL space, the horizon brighter. Like SteamVR's own grid it shows
+ * whether lines stay single while the head turns. The lines are clear rectangles
+ * in a render pass, still without shaders of the client's own.
  *
  * The summary reports the system, the swapchain format, frames, the runtime's
  * display period, the rate xrWaitFrame returned at, late frames (an interval
@@ -28,6 +34,7 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -112,6 +119,12 @@ struct target
 	bool filled[8];
 	VkBuffer buffer;
 	VkDeviceMemory memory;
+	// --sky: drawn every frame.
+	VkRenderPass pass;
+	VkImageView views[8];
+	VkFramebuffer framebuffers[8];
+	VkCommandBuffer cmds[8];
+	VkFence fences[8]; //!< signalled when the image's last drawing finished
 };
 
 //! Pixel in swapchain byte order.
@@ -293,6 +306,265 @@ upload(struct gpu *g, struct target *t)
 	CHECK(xrReleaseSwapchainImage(t->swapchain, &release));
 }
 
+//! --sky: a render pass that clears to the sky colour, and a framebuffer per swapchain image.
+static void
+sky_setup(struct gpu *g, struct target *t, VkFormat format)
+{
+	VkAttachmentDescription color = {
+	    .format = format,
+	    .samples = VK_SAMPLE_COUNT_1_BIT,
+	    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+	    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+	    .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+	    .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+	    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	    .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // as OpenXR takes the image back
+	};
+	VkAttachmentReference ref = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+	VkSubpassDescription sub = {
+	    .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+	    .colorAttachmentCount = 1,
+	    .pColorAttachments = &ref,
+	};
+	VkRenderPassCreateInfo rpi = {
+	    .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+	    .attachmentCount = 1,
+	    .pAttachments = &color,
+	    .subpassCount = 1,
+	    .pSubpasses = &sub,
+	};
+	VK_CHECK(vkCreateRenderPass(g->device, &rpi, NULL, &t->pass));
+	for (uint32_t i = 0; i < t->count; i++) {
+		VkImageViewCreateInfo vi = {
+		    .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		    .image = t->images[i],
+		    .viewType = VK_IMAGE_VIEW_TYPE_2D,
+		    .format = format,
+		    .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+		};
+		VK_CHECK(vkCreateImageView(g->device, &vi, NULL, &t->views[i]));
+		VkFramebufferCreateInfo fi = {
+		    .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+		    .renderPass = t->pass,
+		    .attachmentCount = 1,
+		    .pAttachments = &t->views[i],
+		    .width = t->width,
+		    .height = t->height,
+		    .layers = 1,
+		};
+		VK_CHECK(vkCreateFramebuffer(g->device, &fi, NULL, &t->framebuffers[i]));
+		VkCommandBufferAllocateInfo cai = {
+		    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		    .commandPool = g->pool,
+		    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		    .commandBufferCount = 1,
+		};
+		VK_CHECK(vkAllocateCommandBuffers(g->device, &cai, &t->cmds[i]));
+		VkFenceCreateInfo fci = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+		VK_CHECK(vkCreateFence(g->device, &fci, NULL, &t->fences[i]));
+	}
+}
+
+//! @p v rotated by the inverse of unit quaternion @p q: a LOCAL direction in view space.
+static void
+to_view(XrQuaternionf q, const float v[3], float out[3])
+{
+	float x = -q.x, y = -q.y, z = -q.z, w = q.w;
+	float tx = 2 * (y * v[2] - z * v[1]), ty = 2 * (z * v[0] - x * v[2]), tz = 2 * (x * v[1] - y * v[0]);
+	out[0] = v[0] + w * tx + (y * tz - z * ty);
+	out[1] = v[1] + w * ty + (z * tx - x * tz);
+	out[2] = v[2] + w * tz + (x * ty - y * tx);
+}
+
+//! One eye's view for the sky: orientation, the tangents of its field of view, image size.
+struct sky_view
+{
+	XrQuaternionf q;
+	float l, r, u, d, w, h;
+};
+
+//! Pixel position of LOCAL unit direction @p dir in the view; false behind it or far outside.
+static bool
+project(const struct sky_view *s, const float dir[3], float *px, float *py)
+{
+	float v[3];
+	to_view(s->q, dir, v);
+	if (v[2] > -0.05f) {
+		return false;
+	}
+	float tx = v[0] / -v[2], ty = v[1] / -v[2];
+	*px = (tx - s->l) / (s->r - s->l) * s->w;
+	*py = (s->u - ty) / (s->u - s->d) * s->h;
+	return *px > -64 && *px < s->w + 64 && *py > -64 && *py < s->h + 64;
+}
+
+//! LOCAL unit direction of azimuth @p az and elevation @p el (degrees); -Z ahead, +Y up.
+static void
+direction(float az, float el, float out[3])
+{
+	float a = az * (float)M_PI / 180, e = el * (float)M_PI / 180;
+	out[0] = cosf(e) * sinf(a);
+	out[1] = sinf(e);
+	out[2] = -cosf(e) * cosf(a);
+}
+
+enum { MERIDIANS = 24, MERIDIAN_STEPS = 81, PARALLELS = 11, PARALLEL_STEPS = 181 };
+
+enum { SKY_RECTS = 16384 };
+
+//! Adds the box (lx,ly)-(hx,hy) of a run of a line, widened across it to the line width.
+static void
+sky_rect(VkClearRect *rects, uint32_t *n, uint32_t w, uint32_t h, float lx, float ly, float hx, float hy, float width)
+{
+	if (hx - lx < hy - ly) {
+		lx -= width / 2, hx += width / 2;
+	} else {
+		ly -= width / 2, hy += width / 2;
+	}
+	int32_t ax = (int32_t)fmaxf(lx, 0), ay = (int32_t)fmaxf(ly, 0);
+	int32_t bx = (int32_t)fminf(ceilf(hx), (float)w), by = (int32_t)fminf(ceilf(hy), (float)h);
+	if (bx <= ax || by <= ay || *n >= SKY_RECTS) {
+		return;
+	}
+	rects[(*n)++] = (VkClearRect){{{ax, ay}, {(uint32_t)(bx - ax), (uint32_t)(by - ay)}}, 0, 1};
+}
+
+/*!
+ * A polyline as few clear rectangles as possible: points join the current run while the
+ * run's box stays narrow across (1.5 line widths; the line may be off by that much),
+ * because every rectangle costs the driver a draw of its own.
+ */
+struct sky_run
+{
+	bool open;
+	float lx, ly, hx, hy; //!< the run's box
+	float x, y;           //!< its last point
+};
+
+static void
+sky_point(struct sky_run *run, VkClearRect *rects, uint32_t *n, uint32_t w, uint32_t h, bool on, float x, float y,
+          float width)
+{
+	if (run->open) {
+		float lx = fminf(run->lx, x), hx = fmaxf(run->hx, x), ly = fminf(run->ly, y), hy = fmaxf(run->hy, y);
+		if (on && fminf(hx - lx, hy - ly) <= 1.5f * width) {
+			*run = (struct sky_run){true, lx, ly, hx, hy, x, y};
+			return;
+		}
+		sky_rect(rects, n, w, h, run->lx, run->ly, run->hx, run->hy, width);
+	}
+	if (!on) {
+		run->open = false;
+	} else if (run->open) {
+		// The line bends: a new run from the last point.
+		*run = (struct sky_run){true, fminf(run->x, x), fminf(run->y, y), fmaxf(run->x, x), fmaxf(run->y, y), x, y};
+	} else {
+		*run = (struct sky_run){true, x, y, x, y, x, y};
+	}
+}
+
+//! The sky for @p view into the next image of @p t: grid lines every 15 degrees, horizon brighter.
+static void
+sky_draw(struct gpu *g, struct target *t, const XrView *view, int eye)
+{
+	static VkClearRect lines[SKY_RECTS], horizon[SKY_RECTS / 4];
+	// Meridians every 15 degrees from 80 below to 80 above the horizon, parallels every 15
+	// degrees, both in 2-degree steps: directions computed once.
+	static float meridians[MERIDIANS][MERIDIAN_STEPS][3], parallels[PARALLELS][PARALLEL_STEPS][3];
+	static bool tables;
+	if (!tables) {
+		for (int m = 0; m < MERIDIANS; m++) {
+			for (int i = 0; i < MERIDIAN_STEPS; i++) {
+				direction(15.0f * m, -80.0f + 2 * i, meridians[m][i]);
+			}
+		}
+		for (int p = 0; p < PARALLELS; p++) {
+			for (int i = 0; i < PARALLEL_STEPS; i++) {
+				direction(2.0f * i, -75.0f + 15 * p, parallels[p][i]);
+			}
+		}
+		tables = true;
+	}
+	struct sky_view s = {
+	    .q = view->pose.orientation,
+	    .l = tanf(view->fov.angleLeft),
+	    .r = tanf(view->fov.angleRight),
+	    .u = tanf(view->fov.angleUp),
+	    .d = tanf(view->fov.angleDown),
+	    .w = (float)t->width,
+	    .h = (float)t->height,
+	};
+	uint32_t n = 0, nh = 0;
+	float width = t->width / 500.0f + 2;
+	for (int m = 0; m < MERIDIANS; m++) {
+		struct sky_run run = {0};
+		float x = 0, y = 0;
+		for (int i = 0; i < MERIDIAN_STEPS; i++) {
+			bool on = project(&s, meridians[m][i], &x, &y);
+			sky_point(&run, lines, &n, t->width, t->height, on, x, y, width);
+		}
+		sky_point(&run, lines, &n, t->width, t->height, false, x, y, width);
+	}
+	for (int p = 0; p < PARALLELS; p++) {
+		struct sky_run run = {0};
+		float x = 0, y = 0;
+		bool is_horizon = p == PARALLELS / 2;
+		VkClearRect *rects = is_horizon ? horizon : lines;
+		uint32_t *count = is_horizon ? &nh : &n;
+		float lw = is_horizon ? 2 * width : width;
+		for (int i = 0; i < PARALLEL_STEPS; i++) {
+			bool on = project(&s, parallels[p][i], &x, &y);
+			sky_point(&run, rects, count, t->width, t->height, on, x, y, lw);
+		}
+		sky_point(&run, rects, count, t->width, t->height, false, x, y, lw);
+	}
+
+	uint32_t index;
+	XrSwapchainImageAcquireInfo acquire = {.type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+	CHECK(xrAcquireSwapchainImage(t->swapchain, &acquire, &index));
+	XrSwapchainImageWaitInfo wait = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_INFINITE_DURATION};
+	CHECK(xrWaitSwapchainImage(t->swapchain, &wait));
+	VkCommandBufferBeginInfo begin = {
+	    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+	    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+	// The image's previous drawing is long finished; the runtime orders this one by the queue.
+	VkCommandBuffer cmd = t->cmds[index];
+	VK_CHECK(vkWaitForFences(g->device, 1, &t->fences[index], VK_TRUE, UINT64_MAX));
+	VK_CHECK(vkResetCommandBuffer(cmd, 0));
+	VK_CHECK(vkBeginCommandBuffer(cmd, &begin));
+	// Night blue, tinted towards each eye's colour as in the static pattern.
+	VkClearValue sky = {.color = {.float32 = {eye ? 0.01f : 0.03f, 0.02f, eye ? 0.06f : 0.04f, 1}}};
+	VkRenderPassBeginInfo rbi = {
+	    .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+	    .renderPass = t->pass,
+	    .framebuffer = t->framebuffers[index],
+	    .renderArea = {{0, 0}, {t->width, t->height}},
+	    .clearValueCount = 1,
+	    .pClearValues = &sky,
+	};
+	vkCmdBeginRenderPass(cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+	VkClearAttachment grey = {VK_IMAGE_ASPECT_COLOR_BIT, 0, {.color = {.float32 = {0.35f, 0.35f, 0.4f, 1}}}};
+	VkClearAttachment white = {VK_IMAGE_ASPECT_COLOR_BIT, 0, {.color = {.float32 = {0.9f, 0.9f, 0.9f, 1}}}};
+	if (n > 0) {
+		vkCmdClearAttachments(cmd, 1, &grey, n, lines);
+	}
+	if (nh > 0) {
+		vkCmdClearAttachments(cmd, 1, &white, nh, horizon);
+	}
+	vkCmdEndRenderPass(cmd);
+	VK_CHECK(vkEndCommandBuffer(cmd));
+	VkSubmitInfo submit = {
+	    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+	    .commandBufferCount = 1,
+	    .pCommandBuffers = &cmd,
+	};
+	VK_CHECK(vkResetFences(g->device, 1, &t->fences[index]));
+	VK_CHECK(vkQueueSubmit(g->queue, 1, &submit, t->fences[index]));
+	XrSwapchainImageReleaseInfo release = {.type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+	CHECK(xrReleaseSwapchainImage(t->swapchain, &release));
+}
+
 static void
 create_gpu(XrInstance instance, XrSystemId system, struct gpu *g)
 {
@@ -400,9 +672,18 @@ main(int argc, char **argv)
 {
 	report_open();
 	double seconds = argc > 1 ? atof(argv[1]) : 10.0;
-	bool use_quad = !(argc > 2 && strcmp(argv[2], "--projection-only") == 0);
-	if (seconds <= 0 || seconds > 3600 || argc > 3 || (argc > 2 && use_quad)) {
-		fprintf(stderr, "usage: pico4-openxr-display [SECONDS] [--projection-only]\n");
+	bool use_quad = true, use_sky = false, usage = seconds <= 0 || seconds > 3600;
+	for (int i = 2; i < argc; i++) {
+		if (strcmp(argv[i], "--projection-only") == 0) {
+			use_quad = false;
+		} else if (strcmp(argv[i], "--sky") == 0) {
+			use_sky = true;
+		} else {
+			usage = true;
+		}
+	}
+	if (usage) {
+		fprintf(stderr, "usage: pico4-openxr-display [SECONDS] [--projection-only] [--sky]\n");
 		return 2;
 	}
 
@@ -468,9 +749,15 @@ main(int argc, char **argv)
 
 	struct target eyes[2] = {{0}}, quad = {0};
 	for (int e = 0; e < 2; e++) {
-		create_target(session, &g, format, config[e].recommendedImageRectWidth, config[e].recommendedImageRectHeight,
-		              &eyes[e]);
-		fill_eye(map(&g, &eyes[e]), eyes[e].width, eyes[e].height, e, bgra);
+		// The sky at SteamVR's application size on this headset, so that drawing it fits a refresh.
+		uint32_t w = use_sky ? 1584 : config[e].recommendedImageRectWidth;
+		uint32_t h = use_sky ? 1584 : config[e].recommendedImageRectHeight;
+		create_target(session, &g, format, w, h, &eyes[e]);
+		if (use_sky) {
+			sky_setup(&g, &eyes[e], (VkFormat)format);
+		} else {
+			fill_eye(map(&g, &eyes[e]), eyes[e].width, eyes[e].height, e, bgra);
+		}
 	}
 	create_target(session, &g, format, QUAD_SIZE, QUAD_SIZE, &quad);
 	fill_quad(map(&g, &quad), bgra);
@@ -571,7 +858,11 @@ main(int argc, char **argv)
 				untracked++;
 			}
 			for (int e = 0; e < 2; e++) {
-				upload(&g, &eyes[e]);
+				if (use_sky) {
+					sky_draw(&g, &eyes[e], &views[e], e);
+				} else {
+					upload(&g, &eyes[e]);
+				}
 				pv[e] = (XrCompositionLayerProjectionView){
 				    .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
 				    .pose = views[e].pose,

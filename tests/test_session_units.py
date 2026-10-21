@@ -51,7 +51,7 @@ class VsyncLeadTest(unittest.TestCase):
     def test_steamvr_runs_with_the_lead(self):
         # SteamVR starts its compositor about 4 ms before the vblank it sees.
         dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_VSYNC_LEAD_US=6000$")
+        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_VSYNC_LEAD_US=4000$")
         # The driver reads the same variable and predicts that much further.
         hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
         self.assertIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', hmd)
@@ -63,12 +63,23 @@ class CompressedScanoutTest(unittest.TestCase):
     def test_steamvr_scans_out_compressed(self):
         # an issue: linear scanout images doubled the lens-distortion pass's GPU time.
         dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_UBWC=1$")
+        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_UBWC=2$")
         layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
         self.assertIn('"PICO4_VRDISPLAY_UBWC"', layer)
-        # The planes take the compressed modifier for XBGR8888 only; SteamVR renders BGRA.
+        # The planes take the compressed modifier for XBGR8888 only; SteamVR renders BGRA:
+        # mode 2 gives its views and presenting render passes the RGBA format instead.
         self.assertIn("DRM_FORMAT_MOD_QCOM_COMPRESSED", layer)
-        self.assertIn("CmdBlitImage", layer)
+        for entry in ("vkCreateImageView", "vkCreateRenderPass", "vkCreateRenderPass2"):
+            self.assertIn(f'"{entry}"', layer)
+        self.assertIn("VK_IMAGE_LAYOUT_PRESENT_SRC_KHR", layer)
+
+    def test_steamvr_keeps_one_frame_ahead(self):
+        # an issue: SteamVR waits for each present to be shown before it starts the next
+        # frame; without a frame ahead the GPU idles a third of the time (about 58 fps).
+        dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
+        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_FRAMES_AHEAD=1$")
+        layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
+        self.assertIn('"PICO4_VRDISPLAY_FRAMES_AHEAD"', layer)
 
     def test_steamvr_runs_with_render_pass_barriers(self):
         # an issue: without them chunks of the overlay are missing in the right eye.
