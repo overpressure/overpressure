@@ -44,6 +44,8 @@
  *                                images the planes read; the CPU cannot read
  *                                them: the dumped present copies the
  *                                application's image for it, motion data are off
+ *   PICO4_VRDISPLAY_PASS_BARRIER=1  a full memory barrier before every render pass
+ *                                (missing overlay parts in the right eye without)
  *   PICO4_VRDISPLAY_IMAGES=1     log every image the application creates (size,
  *                                format, samples, tiling, usage, flags), to see
  *                                which ones lose tiling or compression
@@ -258,6 +260,9 @@ struct device_data
 	PFN_vkEndCommandBuffer EndCommandBuffer;
 	PFN_vkCmdPipelineBarrier CmdPipelineBarrier;
 	PFN_vkCmdBlitImage CmdBlitImage;
+	PFN_vkCmdBeginRenderPass CmdBeginRenderPass;
+	PFN_vkCmdBeginRenderPass2 CmdBeginRenderPass2;
+	PFN_vkCmdBeginRendering CmdBeginRendering;
 	PFN_vkCmdCopyImageToBuffer CmdCopyImageToBuffer;
 	PFN_vkCreateBuffer CreateBuffer;
 	PFN_vkDestroyBuffer DestroyBuffer;
@@ -3981,6 +3986,9 @@ layer_CreateDevice(VkPhysicalDevice physical,
 	D(EndCommandBuffer);
 	D(CmdPipelineBarrier);
 	D(CmdBlitImage);
+	D(CmdBeginRenderPass);
+	D(CmdBeginRenderPass2);
+	D(CmdBeginRendering);
 	D(CmdCopyImageToBuffer);
 	D(CreateBuffer);
 	D(DestroyBuffer);
@@ -4089,11 +4097,64 @@ layer_CreateImage(VkDevice device, const VkImageCreateInfo *info, const VkAlloca
 	return ret;
 }
 
+/*
+ * PICO4_VRDISPLAY_PASS_BARRIER: a full memory barrier before every render pass. Without
+ * one, chunks of SteamVR's overlays are missing in the right eye on this Turnip build (seen
+ * in the lenses, blind comparison): a pass reads what an earlier one wrote before those
+ * writes are visible. Which pass is not narrowed down; the barrier costs no measurable rate.
+ */
+static void
+pass_barrier(struct device_data *d, VkCommandBuffer cmd)
+{
+	VkMemoryBarrier barrier = {
+	    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+	    .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+	    .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+	};
+	d->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1,
+	                      &barrier, 0, NULL, 0, NULL);
+}
+
+static VKAPI_ATTR void VKAPI_CALL
+layer_CmdBeginRenderPass(VkCommandBuffer cmd, const VkRenderPassBeginInfo *info, VkSubpassContents contents)
+{
+	struct device_data *d = find_device(cmd);
+	pass_barrier(d, cmd);
+	d->CmdBeginRenderPass(cmd, info, contents);
+}
+
+static VKAPI_ATTR void VKAPI_CALL
+layer_CmdBeginRenderPass2(VkCommandBuffer cmd, const VkRenderPassBeginInfo *info, const VkSubpassBeginInfo *sub)
+{
+	struct device_data *d = find_device(cmd);
+	pass_barrier(d, cmd);
+	d->CmdBeginRenderPass2(cmd, info, sub);
+}
+
+static VKAPI_ATTR void VKAPI_CALL
+layer_CmdBeginRendering(VkCommandBuffer cmd, const VkRenderingInfo *info)
+{
+	struct device_data *d = find_device(cmd);
+	pass_barrier(d, cmd);
+	d->CmdBeginRendering(cmd, info);
+}
+
 static PFN_vkVoidFunction
 device_function(const char *name)
 {
 	if (strcmp(name, "vkCreateImage") == 0 && env_num("PICO4_VRDISPLAY_IMAGES", 0) != 0) {
 		return (PFN_vkVoidFunction)layer_CreateImage;
+	}
+	if (env_num("PICO4_VRDISPLAY_PASS_BARRIER", 0) != 0) {
+		if (strcmp(name, "vkCmdBeginRenderPass") == 0) {
+			return (PFN_vkVoidFunction)layer_CmdBeginRenderPass;
+		}
+		if (strcmp(name, "vkCmdBeginRenderPass2") == 0 || strcmp(name, "vkCmdBeginRenderPass2KHR") == 0) {
+			return (PFN_vkVoidFunction)layer_CmdBeginRenderPass2;
+		}
+		if (strcmp(name, "vkCmdBeginRendering") == 0 || strcmp(name, "vkCmdBeginRenderingKHR") == 0) {
+			return (PFN_vkVoidFunction)layer_CmdBeginRendering;
+		}
 	}
 #define F(fn)                                                                                                    \
 	if (strcmp(name, "vk" #fn) == 0)                                                                         \

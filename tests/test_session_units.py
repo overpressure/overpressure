@@ -70,6 +70,15 @@ class CompressedScanoutTest(unittest.TestCase):
         self.assertIn("DRM_FORMAT_MOD_QCOM_COMPRESSED", layer)
         self.assertIn("CmdBlitImage", layer)
 
+    def test_steamvr_runs_with_render_pass_barriers(self):
+        # an issue: without them chunks of the overlay are missing in the right eye.
+        dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
+        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_PASS_BARRIER=1$")
+        layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
+        self.assertIn('"PICO4_VRDISPLAY_PASS_BARRIER"', layer)
+        for entry in ("vkCmdBeginRenderPass", "vkCmdBeginRenderPass2", "vkCmdBeginRendering"):
+            self.assertIn(f'"{entry}"', layer)
+
 
 class KthreadPrioritiesTest(unittest.TestCase):
     def test_unit_raises_gpu_and_display_threads(self):

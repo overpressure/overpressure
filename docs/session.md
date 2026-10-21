@@ -228,6 +228,7 @@ other call passes through; without the panels, the layer stays out of the way.
 | `PICO4_VRDISPLAY_GPU_MIN_MHZ` | GPU clock floor while presenting (default 587; 0 leaves the governor alone) |
 | `PICO4_VRDISPLAY_SYNC=off` | no semaphore emulation |
 | `PICO4_VRDISPLAY_UBWC=1` | compressed scanout (`steamvr.service` sets it): tiled, compressed images for the application, converted at each present into compressed RGBA scanout images. The CPU cannot read compressed images: the dumped present also copies the application's image into a host-visible buffer, and the motion data are off |
+| `PICO4_VRDISPLAY_PASS_BARRIER=1` | a full memory barrier before every render pass of the application (`steamvr.service` sets it): without it chunks of SteamVR's overlays are missing in the right eye ([graphics.md](graphics.md)) |
 | `PICO4_VRDISPLAY_IMAGES=1` | log every image the application creates: size, mip levels, layers, samples, format, tiling, usage, flags, external memory and modifiers |
 | `PICO4_VRDISPLAY_LOG=debug` | logs every display call |
 | `PICO4_VRDISPLAY_LOGFILE=path` | appends the log there instead of stderr |
@@ -411,6 +412,14 @@ With both settings the GPU is idle most of the time (31% busy), and the session 
 60–66 frames per second: the limit is then the presentation, where SteamVR's present waits time
 out (912 of 1,982 commits with both settings). Their look in the lenses is not judged yet; the
 Frame driver sets both, with the Facet renderer this project cannot use.
+
+SteamVR sizes its render targets from a GPU budget: `vrcompositor` logs "GPU speed override on
+platform: 450" (MP/s) for this build, against the 839 MP/s the driver recommends (2 × 2160² at
+90 Hz), and scales to 0.54 of the area: 1584×1584 per eye for applications and 1580×1580 for its
+own system layer (sky, grid, dashboard and overlays). `supersampleManualOverride` with
+`supersampleScale` 1.0 gives applications the native 2160×2160; the system layer stays at
+1580×1580, also with `GpuSpeed.gpuSpeedHorsepower` 840 or `overlayRenderQuality_2` 4, and the
+empty scene keeps its rate (57.5 commits/s worn). The session runs SteamVR's automatic scale.
 
 Inside the compositor's frame, Turnip's own trace (`MESA_GPU_TRACES=print`,
 `MESA_GPU_TRACEFILE=path` in SteamVR's environment) times every render pass on the GPU and

@@ -200,17 +200,25 @@ priority and creates every context at KGSL's default level 8. The PICO 4's KGSL 
 four ringbuffers, one per four levels (`preemption` is 1), so the patch reports four priorities
 and maps realtime, high, medium and low to levels 1, 4, 8 and 12.
 
-Three defects that the Stearlight project (Quest 2, the same Mesa 26.1.6 KGSL backend) works
-around do not need a patch here:
+The Stearlight project (Quest 2, the same Mesa 26.1.6 KGSL backend) works around three
+defects. One applies here:
 
-- **Dma-buf allocations keeping their fd.** In 26.1.6 the DMA-heap and ION paths close the
-  allocation's fd after the import; the buffer keeps only its own duplicate, which freeing it
-  closes. Over two minutes of Valve's session `vrcompositor` stays at 235–237 open fds and
-  611 MiB of KGSL memory, gamescope and the dashboard's renderer just as flat.
-- **Holes and trails in the right eye** without an extra barrier before the compositor's render
-  passes. Frames dumped by the display layer show both eyes complete and alike.
-- **A cross-process timeline semaphore.** The display layer already emulates SteamVR's shared
-  timeline and binary semaphores over sync files ([session.md](session.md#shared-semaphores)).
+- **Holes in the right eye.** Without an extra memory barrier before the compositor's render
+  passes, chunks of SteamVR's overlays are missing in the right eye while the left is
+  complete. A single frame dumped by the display layer, downscaled by four, did not show it;
+  in the lenses it is plain with one eye closed. `steamvr.service` sets
+  `PICO4_VRDISPLAY_PASS_BARRIER=1`, and the display layer then records a full memory barrier
+  (all writes to all reads and writes) before every render pass of SteamVR's processes. In a
+  blind comparison the overlay was complete in both eyes with it and the whole picture looked
+  better; the rate stayed the same (57.5 against 58.0 commits/s, GPU wait 10.2 against
+  9.9 ms). Which pass reads too early is not narrowed down.
+- **Dma-buf allocations keeping their fd** do not occur: in 26.1.6 the DMA-heap and ION paths
+  close the allocation's fd after the import; the buffer keeps only its own duplicate, which
+  freeing it closes. Over two minutes of Valve's session `vrcompositor` stays at 235–237 open
+  fds and 611 MiB of KGSL memory, gamescope and the dashboard's renderer just as flat.
+- **A cross-process timeline semaphore** is not needed: the display layer already emulates
+  SteamVR's shared timeline and binary semaphores over sync files
+  ([session.md](session.md#shared-semaphores)).
 
 ## Verified results
 
