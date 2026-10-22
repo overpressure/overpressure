@@ -25,9 +25,9 @@ libraries (ffmpeg, freerdp) need older library versions than the preview provide
 configuration that prefers the Frame repository cannot resolve. The preview therefore resolves
 everything, and [packages.txt](../userspace/packages.txt) names each Frame package explicitly
 (`deckard-arch-hotfixes-release-0.3/<name>`). A line `!name` makes dependencies on `name` count
-as satisfied without installing it: the Steam client (`deckard-steam-rel`, `deckard-steam`),
-which needs a network and a Steam login, and `sddm`, which `pico4-session.service` replaces
-([session.md](session.md)). The Frame's gamescope links `libXxf86vm` without declaring it, so
+as satisfied without installing it: `sddm`, which `pico4-session.service` replaces
+([session.md](session.md)). The Steam client is installed with the libraries it needs but does
+not declare ([session.md](session.md#the-steam-client)). The Frame's gamescope links `libXxf86vm` without declaring it, so
 the list names that library too. The build checks that the Frame's programs find their
 libraries ([Build](#build)).
 
@@ -503,4 +503,4 @@ networks (34 seen, strongest 94 %). Joining a network is not yet verified.
 - In QEMU, `serial-getty@ttyAMA0` times out waiting for its device and is skipped; the emulated
   boot is slow (`multi-user.target` about 170 s after the switch). The headset has no serial
   console; the stage-2 logs are the journal and the kernel log.
-- The Steam client is not installed: it needs a network and a Steam login.
+- The Steam client starts with Valve's session; signing in is not verified yet ([session.md](session.md#the-steam-client)).

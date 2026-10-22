@@ -24,7 +24,7 @@ userspace/        stage 2: the SteamOS-compatible userspace
   rootfs/           the PICO 4 adaptation layer (units, udev rules, PAM, session, device tools, checks)
   session/          the session user's SteamVR configuration
   pkgbuilds/        the project's packages: pico4-turnip-kgsl, pico4-sensors, pico4-basalt,
-                    pico4-monado, pico4-vrdisplay, pico4-sysvsem
+                    pico4-monado, pico4-vrdisplay, pico4-sysvsem, pico4-gtk2
 src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's PICO 4 driver and
                   KMS target), xr/ (OpenXR test clients), vrdisplay/ (SteamVR's display layer),
                   sysvsem/ (System V semaphores), reboot/ (pico4-reboot)
@@ -69,6 +69,7 @@ Clean package builds on a 12-core i7-12700KF (20 threads) under WSL2:
 | pico4-monado | 4.6–8.3 min | 2.8 min |
 | pico4-sensors | 1.6 min | 1.0 min |
 | pico4-vrdisplay, pico4-sysvsem | 45 s | 21–25 s |
+| pico4-gtk2 (GTK 2.24.33, libraries and modules; Autotools under QEMU) | – | 14 min |
 
 A Raspberry Pi 5 (four Cortex-A76 cores) compiles at about the speed of this host's emulation,
 so it would not shorten builds. Machines that would, if the host's native compilers are not

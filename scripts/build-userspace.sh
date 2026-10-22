@@ -140,7 +140,9 @@ sync=""
 [[ $refresh == 1 || -z "$(ls "$B"/var/lib/pacman/sync/*.db 2>/dev/null)" ]] && sync=y
 in_b pacman "-S$sync" --noconfirm --needed base-devel git meson ninja cmake eigen openxr python-mako python-yaml \
     python-packaging glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
-    wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache
+    wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache \
+    glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage \
+    shared-mime-info gtk-update-icon-cache hicolor-icon-theme
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
 builder=$(in_b id -u builder):$(in_b id -g builder)
 # Emulated compilers: ccache (in the builder's home, kept between builds) saves repeats.
@@ -222,6 +224,7 @@ build_package pico4-sensors
 build_package pico4-basalt
 build_package pico4-vrdisplay "$project"/src/vrdisplay/*
 build_package pico4-sysvsem "$project"/src/sysvsem/*
+build_package pico4-gtk2
 build_package pico4-monado "$project"/src/monado/* "$project"/src/xr/*
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
 if [[ -n $llvm ]]; then

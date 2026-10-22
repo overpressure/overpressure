@@ -70,11 +70,18 @@ jq
 at-spi2-core
 xorg-xhost
 xorg-xrdb
-# "!name" satisfies dependencies on name without installing it. The Steam
-# client (2.5 GB unpacked) cannot sign in without a network and a Steam login,
-# which the POC has neither of yet; pico4-session.service replaces sddm.
-!deckard-steam-rel
-!deckard-steam
+# The Steam client: a 671 MiB bundle; steam.service's steam-health-check unpacks
+# it into the home directory on its first start (2.5 GB), as on the Frame. Its
+# libraries need what the package does not declare: GTK 2 (steamui.so; without
+# it the updated client exits at once; built from source, no aarch64 package
+# carries it) and IBus (steamwebhelper).
+deckard-steam-rel
+pico4/pico4-gtk2
+deckard-arch-hotfixes-release-0.3/libibus
+# The client polls processes with lsof.
+lsof
+# "!name" satisfies dependencies on name without installing it:
+# pico4-session.service replaces sddm.
 !sddm
 
 # Diagnostics (mtools: the stage-2 USB log drive)

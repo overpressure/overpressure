@@ -9,8 +9,8 @@ supplies the headset (6DoF) and both controllers (3DoF) from the PICO 4 driver o
 cannot provide, are implemented in userspace. Outside Valve's session, Monado runs as a
 socket-activated system service. The session is verified on the headset, including an
 acceptance cycle with stock restore. It is GPU-bound at 42–54 frames per second, the fan
-control ([cooling.md](cooling.md)) has not been measured with it, and the Steam client is not
-set up (no network, no Steam login).
+control ([cooling.md](cooling.md)) has not been measured with it, and the Steam client starts
+with it but is not signed in yet.
 Valve's packages come from the Frame's public repository ([userspace.md](userspace.md)); the
 build output stays private.
 
@@ -49,7 +49,7 @@ system: dsp_service, steamvr-program-ble (controller radio firmware), deckard-fp
 | Semaphores shared between processes (DRM syncobjs on `msm`) | the same layer emulates them over sync files ([below](#shared-semaphores)) |
 | System V semaphores (SteamVR's process locks) | `pico4-sysvsem`, a preloaded library ([below](#system-v-semaphores)) |
 | `driver_frame_hmd`'s SteamVR settings | `enableLinuxVulkanAsync` in the session user's `steamvr.vrsettings` ([below](#steamvr-configuration)) |
-| Steam client | not installed: it needs a network and a Steam login |
+| Steam client | the same package and unit; unpacked, updated and started with the session ([below](#the-steam-client)) |
 | — | Monado as a system service: the OpenXR runtime outside Valve's session |
 
 ### The session
@@ -95,9 +95,9 @@ client no `VK_KHR_external_memory_fd`. The KGSL `min_pwrlevel` is writable for `
 From the Frame's repository the build installs SteamVR (`deckard-steamvr-rel`) and the session
 package (`deckard-steamvr-session`), with `jq` for its `steamvr` script, `at-spi2-core` (the
 dashboard's CEF renderer, `vrwebhelper`, links ATK and AT-SPI), and `xorg-xhost` and
-`xorg-xrdb` (`gamescope-onready` runs them before it reports the session ready). The Steam
-client (`deckard-steam-rel`, `deckard-steam`; 2.5 GB unpacked) and `sddm` count as installed
-for dependency resolution only (`!name` in [packages.txt](../userspace/packages.txt)).
+`xorg-xrdb` (`gamescope-onready` runs them before it reports the session ready), and the Steam
+client ([below](#the-steam-client)). `sddm` counts as installed for dependency resolution only
+(`!name` in [packages.txt](../userspace/packages.txt)).
 SteamVR's Frame-only parts are not extracted (`NoExtract` in
 [pacman.conf](../userspace/pacman.conf)): the tracking driver, the Frame controller driver, the
 controller radio's firmware and programming scripts, other headsets' drivers, the Android and
@@ -110,7 +110,7 @@ Frame hardware or would touch the PICO's: `dsp_service`, `steamvr-program-ble` (
 for the Frame's controller radio, which must never run against the PICO's station),
 `steamvr-set-kernel-thread-priorities` (for the Frame's kernel; `pico4-kthread-priorities` below
 takes its place), `steamvr-v4l2loopback`,
-`steam-video-codec-setup` (the Frame's video codec nodes) and the debug port forwards
+`steam-video-codec-setup` (the Frame's video codec nodes, from the client's package) and the debug port forwards
 (`steamvr-web-debug-portforward`, `steam-web-debug-portforward`). It masks these user units
 globally: `steamvr-v4l2cam` (the headset-view loopback camera), `steamvr-proxmicmute`
 (proximity microphone mute), `ibus-gamescope` (ibus is not installed), `steamos-scheduler` (the
@@ -141,6 +141,40 @@ Further adaptations:
 | `~/.steam/steam`, `~/.steam/root` | links to `~/.local/share/Steam` | SteamVR finds its logs and the Steam folder through them; on the Frame the Steam client's `RUNSTEAM.sh` makes them |
 | [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, then `pico4-steamvr-failed.service`; each new session resets the counter | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end. The user manager outlives a session, so the session script resets the user units' counters (`systemctl --user reset-failed`) before it starts its target: the limit is for a crash loop within one session. Without `RestartMode=direct` the unit passes through the failed state before each restart, and `OnFailure=` would run at the first crash |
 | [`pico4-session-fallback.path`](../userspace/rootfs/usr/lib/systemd/system/pico4-session-fallback.path) and `.service` | when SteamVR has failed for good (the user unit touches `/run/pico4-session/steamvr-failed`), restart `pico4-session.service` once with Monado's target | releases the display and the tracking hardware instead of leaving gamescope without SteamVR; the override in `/run/pico4-session` is used by that one start, so a reboot or a deliberate switch uses `session.conf` again |
+
+### The Steam client
+
+The Frame's client package (`deckard-steam-rel`, a native aarch64 client) installs the client
+only as a 671 MiB bundle, `/usr/lib/steam/steam.tar.zst`, with Valve's `steam.service` and its
+scripts. `gamescope-session.target` wants `steam.service`, so the client starts with Valve's
+session:
+
+- **First start.** The unit's `steam-health-check --track-started` finds no
+  `~/.local/share/Steam/.install-complete` and "repairs": it unpacks the bundle there (2.5 GB,
+  on the data partition of the installed system) and sets the sentinel. `select_steam.sh` and
+  `RUNSTEAM.sh` then run `steamrtarm64/steam -deckard -gamepadui -steamdeck -steamos3
+  -vrgamepadui` from that folder; its UI is a SteamVR overlay through gamescope.
+- **Update.** The bundle is older than the current client of its beta branch
+  (`linux_arm64_beta_…`), so the first start downloads about 650 MB, installs it and restarts
+  (exit status 42). Extraction and the session's start load every core: at full clocks the
+  hottest CPU mean reaches 86–89 °C within 15–35 s, with the big cores at 1.48/1.52 GHz it stays
+  below 90 °C. The update is a one-time cost per client release.
+- **Libraries the package does not declare.** The current client needs GTK 2
+  (`libgtk-x11-2.0.so.0` for `steamui.so` and `vgui2_s.so`; without it the updated client exits
+  with status 255 at once) and IBus (`libibus-1.0.so.5` for `steamwebhelper`). The Frame's
+  repository has `libibus`; no aarch64 repository has GTK 2, so the build makes `pico4-gtk2`
+  from GTK 2.24.33's release tarball (libraries and modules only). `gtk2-compat` in Holo's
+  `extra` ships only pkg-config files. The client polls processes with `lsof`. Its FFmpeg
+  wrappers need FFmpeg 7, which the image does not have (opencv needs Holo's FFmpeg 8): video in
+  the client is open.
+- **Repair loop.** The health check counts a start that ends within 5 s, or with an error
+  within two minutes, as a failure; after five in a row it unpacks the bundle again, which undoes
+  any update. A client that fails at once therefore alternates between the bundle, an update
+  and five failures.
+- **Not installed.** `atomupd-daemon` and `steamos-atomupd-client`, SteamOS's updater for the
+  Frame's own system images, which must never run here; the client logs that `atomupd-manager`
+  is missing. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
+  packaged for arm64; the client disables it.
 
 ### Monado as a service
 
@@ -761,8 +795,8 @@ userspace check, the head IMU and Monado's pose and display clients, they run
    the switch.
 2. **Cooling.** Measure the fan control ([cooling.md](cooling.md)) on the headset, with the
    full session for 10 minutes against an agreed limit for the hottest zone.
-3. **The Steam client.** A network (Wi-Fi or USB) and a Steam login; gamescope's desktop
-   overlays need the client.
+3. **The Steam client.** It updates and starts with the session; signing in, the library and
+   gamescope's overlays of Steam's apps are not verified yet; video needs FFmpeg 7.
 4. **Controller positions.** IR-LED tracking, as for Monado ([xr.md](xr.md)); until then the
    controllers are 3DoF, placed by the arm model.
 5. **Dashboard input.** Not verified: SteamVR loads its generic bindings for the PICO 4
