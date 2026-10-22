@@ -321,8 +321,9 @@ Details: [session.md](session.md), [userspace.md](userspace.md).
 
 - The Steam client (2.5 GB unpacked) is not in the image; it only satisfies package
   dependencies. It needs a network and a Steam login.
-- The headset's only network is the USB link to one PC, without gateway or DNS. A network for
-  Steam can come over Wi-Fi, which is not brought up, or over USB.
+- The headset reaches the internet over the USB link when the PC shares its connection
+  ([userspace.md](userspace.md#internet-over-usb)). Wi-Fi comes up and scans
+  ([userspace.md](userspace.md#wi-fi)); joining a network is unverified.
 - Without the client, gamescope has no Steam or desktop apps to show as SteamVR overlays.
   MangoHud's `mangoapp`, the client's performance overlay, is left out: the Frame's build
   needs libraries of the Frame's private base.
@@ -373,5 +374,6 @@ and stock-restoration guarantees. There is no design for this yet.
 
 ### Other hardware
 
-Wi-Fi, Bluetooth, audio and suspend have not been brought up under the userspace. Battery level
-and charging state reach UPower and SteamVR ([userspace.md](userspace.md)).
+Wi-Fi comes up and scans ([userspace.md](userspace.md#wi-fi)). Bluetooth, audio and suspend have
+not been brought up under the userspace. Battery level and charging state reach UPower and
+SteamVR ([userspace.md](userspace.md)).

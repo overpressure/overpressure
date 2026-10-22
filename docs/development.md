@@ -84,13 +84,15 @@ LLVM's archiver in every build system).
 ```sh
 # Linux or WSL, as root (make userspace does the same with the defaults below):
 scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
-    --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7
+    --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
+    --wlan assets/wlan-5.13.7
 ```
 
 | Option | Effect |
 | --- | --- |
 | `--gpu-firmware DIR` | `a650_*` GPU firmware from your own backup; without it Vulkan cannot start |
 | `--sensor-data DIR` | sensor DSP firmware, registry and calibration from `scripts/extract-sensor-data.sh` |
+| `--wlan DIR` | Wi-Fi driver module, firmware, configuration and MAC file from `scripts/extract-wlan.sh` |
 | `--refresh` | download current package databases and reinstall the base root |
 | `--clean` | rebuild the project packages from scratch |
 | `--emulated-cc` | compile under QEMU with the environment's GCC |

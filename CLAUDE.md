@@ -86,7 +86,8 @@ bash tests/test_vrdisplay_fake.sh                        # display layer on lava
 python -m pico4 build --firmware 5.13.7-global-seko      # stage-1 image -> out/
 # Linux/WSL as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
 scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
-    --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7
+    --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
+    --wlan assets/wlan-5.13.7
 # The headset, which stays in development mode (settings from .env); the integration test:
 python -m pico4 dev boot && python -m pico4 dev check    # iterate on the flashed dev image
 python -m pico4 dev reboot                               # next attempt; also from fastboot
@@ -127,8 +128,9 @@ python -m pico4 cycle --restore-only                     # verified stock boot a
   readback. The way back to stock (`dev restore`, `cycle --restore-only`) must keep working,
   but tasks do not end on stock: the headset stays in development mode. Ask the user before the
   first flash or EDL action in a new conversation.
-- **SLPI restart level.** Set it to `RELATED` before any restart (`slpi-boot` does this). The
-  kernel default `SYSTEM` reboots the whole headset.
+- **SLPI and WLAN restart level.** Set it to `RELATED` before any restart or start of the
+  firmware (`slpi-boot` and `pico4-wlan.service` do this). The kernel default `SYSTEM` reboots
+  the whole headset.
 - **Never send controller/station OTA commands** when working on the controller SPI protocol.
   The station and GD32 (IPD, fan) modules build frames only from allowlists; keep it that way.
 - **Cameras need the station.** The OV7251s only stream while the station pulses FSIN, so each

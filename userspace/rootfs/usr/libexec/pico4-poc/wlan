@@ -1,0 +1,39 @@
+#!/bin/bash
+# Wi-Fi bring-up as PICO OS does it (docs/userspace.md#wi-fi): start the QCA6390's cold-boot
+# calibration (fs_ready), then load the stock signed qcacld-3.0 module, which waits for it and
+# brings up wlan0 and p2p0. The firmware needs its second control client first
+# (pico4-wlfw-client.service). A firmware crash restarts only the WLAN subsystem: at the kernel's
+# default restart level it would reboot the headset. The driver is never unloaded; "stop" tells
+# it the system goes down, as PICO OS does on shutdown.
+#
+#   wlan start|stop
+set -euo pipefail
+
+MODULE=/usr/lib/pico4-wlan/qca_cld3_qca6390.ko
+CNSS=/sys/devices/platform/soc/b0000000.qcom,cnss-qca6390
+
+subsystem() {
+	local d
+	for d in /sys/bus/msm_subsys/devices/*; do
+		[ "$(cat "$d/name" 2>/dev/null)" = wlan ] && { echo "$d"; return 0; }
+	done
+	return 1
+}
+
+case "${1:-}" in
+start)
+	d=$(subsystem) || { echo "wlan: no WLAN subsystem; not starting" >&2; exit 1; }
+	echo RELATED > "$d/restart_level"
+	# Missing files fail at once, as with Android's ueventd, instead of waiting for a user helper.
+	echo 1 > /proc/sys/kernel/firmware_config/ignore_sysfs_fallback
+	echo 1 > "$CNSS/fs_ready"
+	grep -q '^wlan ' /proc/modules || insmod "$MODULE"
+	;;
+stop)
+	[ ! -w /sys/kernel/shutdown_wlan/shutdown ] || echo 1 > /sys/kernel/shutdown_wlan/shutdown
+	;;
+*)
+	echo "usage: $0 start|stop" >&2
+	exit 2
+	;;
+esac

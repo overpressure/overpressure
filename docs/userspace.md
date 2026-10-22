@@ -111,7 +111,8 @@ Other kernel behaviour the userspace must respect:
   [`pico4-android-net.conf`](../userspace/rootfs/usr/lib/sysusers.d/pico4-android-net.conf)
   creates the group IDs the kernel checks: `aid_bt` (3001), `aid_bt_net` (3002), `aid_inet`
   (3003) and `aid_net_raw` (3004). The session user `steamos` (UID 1000, as on the Frame) is a
-  member of all four.
+  member of all four. systemd-networkd and -resolved hold `CAP_NET_RAW`; `systemd-timesyncd`
+  does not and gets `aid_inet` from a drop-in.
 - **`RT_GROUP_SCHED`**: on cgroup v2 the kernel refuses `SCHED_FIFO` and `SCHED_RR` in any cgroup
   where the `cpu` controller is enabled, even to root, and Monado's compositor needs real-time
   threads. The drop-ins in [userspace/rootfs/etc/systemd/](../userspace/rootfs/etc/systemd/)
@@ -337,6 +338,80 @@ archive; the device-side deadlines return the headset to fastboot after a failur
 `python -m pico4 dev reboot` starts stage 1 again
 ([hardware-testing.md](hardware-testing.md#development-mode)).
 
+## Internet over USB
+
+The PC can share its internet with the headset over the USB cable. On the headset,
+[`pico4-usb-internet.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-usb-internet.service)
+adds the PC's end of the link (`pico4poc.host_ip=`, 172.16.42.2 by default) to stage 1's network
+file as default gateway and DNS server, at route metric 2048, below NetworkManager's Wi-Fi and
+Ethernet routes. Without sharing on the PC that route leads nowhere. `systemd-timesyncd` sets the
+clock once a time server answers. The headset has no working real-time clock and starts at the
+image's build date, and HTTPS needs the right time.
+
+On Windows, internet connection sharing (ICS) shares one connection with the headset's link (the
+"UsbNcm Host Device" adapter). By default ICS renumbers the shared adapter to 192.168.137.1. Its
+`ScopeAddress` setting keeps the adapter at 172.16.42.2 instead, so SSH and the dev tools keep
+working, and ICS answers DNS there. In an elevated PowerShell 7, with the headset booted and its
+link up:
+
+```sh
+pwsh -File scripts/windows-share-internet.ps1            # shares the adapter with the default route
+pwsh -File scripts/windows-share-internet.ps1 -Off       # turns sharing off, restores 192.168.137.1
+```
+
+[`windows-share-internet.ps1`](../scripts/windows-share-internet.ps1) turns off any sharing that
+is already on (ICS shares one connection per PC), sets `ScopeAddress` and enables sharing from the
+adapter with the PC's default route (or `-Internet NAME`) to the headset's link. Sharing survives
+the headset's reboots and the NCM initialization. ICS's DNS proxy does not answer EDNS0, so
+`systemd-resolved` waits about 30 s after boot before it falls back to plain UDP; lookups are
+quick after that.
+
+## Wi-Fi
+
+The Wi-Fi chip is a QCA6390 (v2.0) on PCIe, run by the stock kernel's built-in cnss2 and PICO OS's
+own driver module, qcacld-3.0 (`qca_cld3_qca6390.ko`, module `wlan`). The module is signed with
+the stock kernel's build key, so the kernel loads it as it is. It must stay byte for byte as
+extracted, because its signature is appended. [`scripts/extract-wlan.sh`](../scripts/extract-wlan.sh)
+reads from the user's own backup, checking the module and the MAC file without printing the
+addresses:
+
+| File | From | Purpose |
+| --- | --- | --- |
+| `modules/qca_cld3_qca6390.ko` | vendor | the driver |
+| `firmware/qca6390/amss20.bin`, `m3.bin`, `bdwlan*` | modem | chip firmware and board data, requested by cnss2 |
+| `firmware/wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini` | vendor | the driver's configuration |
+| `firmware/wlan/qca_cld/qca6390/wlan_mac.bin` | persist | this headset's MAC addresses, read by the driver |
+
+`build-userspace.sh --wlan DIR` installs the firmware under `/usr/lib/firmware` and the module
+in `/usr/lib/pico4-wlan`. The bring-up follows PICO OS, plus one rule of our own, the restart level:
+
+1. [`pico4-wlfw-client.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-wlfw-client.service)
+   starts [`pico4-wlfw-client`](../userspace/rootfs/usr/bin/pico4-wlfw-client).
+2. [`pico4-wlan.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-wlan.service) sets the
+   `wlan` subsystem's restart level to `RELATED`. At the kernel's default, `SYSTEM`, a firmware
+   crash would reboot the headset.
+3. It writes `fs_ready`, which starts the chip's cold-boot calibration.
+4. It loads the module, which waits for the calibration and brings up `wlan0` and `p2p0`.
+5. On stop it writes `/sys/kernel/shutdown_wlan/shutdown`, as PICO OS does; the driver is never
+   unloaded.
+
+The PICO 4's device tree sets `cnss-daemon-support`. The kernel then tells the firmware that two
+control clients exist, and the firmware holds back its memory request, and with it "FW ready",
+until the second has registered. On PICO OS that is `cnss-daemon`. `pico4-wlfw-client`
+reimplements only its part in the firmware's control service (WLFW, QMI service 0x45), from the
+message tables compiled into it:
+
+- an indication registration for FW ready, calibration download and update and FW memory ready,
+  with the daemon's client id;
+- on "FW memory ready", the capability request and a calibration report without calibration
+  files.
+
+The firmware then calibrates, restarts once and comes up. Calibration data is not kept, since
+storage is read-only, so every boot calibrates cold. A link file
+([`10-pico4-wlan.link`](../userspace/rootfs/usr/lib/systemd/network/10-pico4-wlan.link)) keeps the
+kernel's interface names. NetworkManager manages `wlan0` with `wpa_supplicant`; its connections
+live in RAM and are gone after a reboot.
+
 ## Verified results
 
 ### QEMU: stage 1 and the userspace on a stock-like 4.19 kernel
@@ -403,6 +478,15 @@ The errors in the stage-2 journal are the stock kernel's own early-boot messages
 probes, display PLL debugfs) and the missing Frame modules and sysctls below. The archives with
 the XR stack and Valve's session pass the same acceptance with stock restoration
 ([xr.md](xr.md), [session.md](session.md)).
+
+With internet shared over USB from a Windows 11 PC on Wi-Fi, the headset resolves
+store.steampowered.com through the PC and an HTTPS request to it answers 200 in 0.5 s. The clock
+is set about 32 s after boot, once `systemd-resolved` has fallen back from EDNS0. SSH and the
+recovery deadlines (on uptime) are unaffected by the eight-month clock jump.
+
+Wi-Fi comes up by itself in 41 s, in parallel with the rest of the boot: registration, FW memory
+ready, calibration, the firmware's restart and `wlan0`. NetworkManager scans 2.4 and 5 GHz
+networks (34 seen, strongest 94 %). Joining a network is not yet verified.
 
 ### Limits and known messages
 

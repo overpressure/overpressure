@@ -1,0 +1,13 @@
+# The WLAN firmware's second control client, PICO OS's cnss-daemon role (docs/userspace.md#wi-fi).
+# Ready once its service lookup is out, before pico4-wlan.service starts the firmware.
+[Unit]
+Description=WLAN firmware control client
+Requires=pico4-qrtr-ns.service
+After=pico4-qrtr-ns.service
+ConditionPathExists=/usr/lib/pico4-wlan/qca_cld3_qca6390.ko
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/pico4-wlfw-client
+Restart=always
+RestartSec=1

@@ -9,6 +9,9 @@
 #   --sensor-data DIR   sensor DSP firmware, registry, config and calibration extracted
 #                       from YOUR OWN backup by scripts/extract-sensor-data.sh (docs/xr.md).
 #                       Without it the head IMU stack stays inactive.
+#   --wlan DIR          Wi-Fi driver module, firmware, configuration and MAC addresses
+#                       extracted from YOUR OWN backup by scripts/extract-wlan.sh
+#                       (docs/userspace.md). Without it Wi-Fi stays off.
 #   --refresh           download the current package databases and reinstall the base
 #                       root; without it every build installs the same package versions
 #   --clean             rebuild the project packages from scratch
@@ -40,11 +43,12 @@ source_dir=$(cd "$(dirname "$0")/.." && pwd)
 build_root=${1:?specify an isolated Linux-filesystem build directory}
 output=${2:?specify an output directory}
 shift 2
-firmware="" sensor_data="" refresh=0 clean=0 emulated_cc=0
+firmware="" sensor_data="" wlan="" refresh=0 clean=0 emulated_cc=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --gpu-firmware) firmware=$(realpath "${2:?}"); shift 2 ;;
     --sensor-data) sensor_data=$(realpath "${2:?}"); shift 2 ;;
+    --wlan) wlan=$(realpath "${2:?}"); shift 2 ;;
     --refresh) refresh=1; shift ;;
     --clean) clean=1; shift ;;
     --emulated-cc) emulated_cc=1; shift ;;
@@ -333,6 +337,23 @@ if [[ -n "$firmware" ]]; then
     done
     firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
+# Wi-Fi: the QCA6390's firmware and board data and the driver's configuration and MAC file,
+# where the kernel's firmware loader looks, and the stock signed driver module, loaded by path
+# (pico4-wlan.service). The module is installed byte for byte: its signature is appended.
+wlan_json="[]"
+if [[ -n "$wlan" ]]; then
+    for f in modules/qca_cld3_qca6390.ko firmware/qca6390/amss20.bin firmware/qca6390/m3.bin \
+        firmware/wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini firmware/wlan/qca_cld/qca6390/wlan_mac.bin; do
+        [[ -s "$wlan/$f" ]] || { echo "missing $wlan/$f (see scripts/extract-wlan.sh)" >&2; exit 1; }
+    done
+    mkdir -p "$T/usr/lib/firmware" "$T/usr/lib/pico4-wlan"
+    cp -r --no-preserve=ownership "$wlan/firmware/." "$T/usr/lib/firmware/"
+    install -m 0644 "$wlan/modules/qca_cld3_qca6390.ko" "$T/usr/lib/pico4-wlan/"
+    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/wlan" "$T/usr/lib/pico4-wlan"
+    wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 usr/lib/firmware/wlan usr/lib/pico4-wlan -type f -print0 |
+        sort -z | xargs -0 sha256sum |
+        python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
+fi
 # Sensor DSP: firmware for the kernel's PIL loader, protection-domain maps for
 # pd-mapper, and the tree hexagonrpcd serves to the sensors process (-R).
 sensor_json="[]"
@@ -384,7 +405,8 @@ in_t systemd-tmpfiles --create steamos-offload.conf
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
-    pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path
+    pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path \
+    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
@@ -467,9 +489,10 @@ tar --numeric-owner --xattrs --xattrs-include=security.capability --sort=name -C
 mv "$archive.part" "$archive"
 installed_bytes=$(du -sb --apparent-size "$T" | cut -f1)
 cleanup
-python3 - "$archive" "$build_root" "$holo_url" "$holo_sha256" "$installed_bytes" "$firmware_json" "$sensor_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
+python3 - "$archive" "$build_root" "$holo_url" "$holo_sha256" "$installed_bytes" "$firmware_json" "$sensor_json" \
+    "$wlan_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
 import hashlib, json, os, sys, datetime
-archive, root, holo_url, holo_sha, installed, firmware, sensors = sys.argv[1:8]
+archive, root, holo_url, holo_sha, installed, firmware, sensors, wlan = sys.argv[1:9]
 def lines(name):
     with open(os.path.join(root, name)) as f:
         return [l.split() for l in f if l.strip()]
@@ -488,6 +511,7 @@ print(json.dumps({
     "package_files": {n.lstrip("./"): s for s, n in lines("package-hashes.txt")},
     "gpu_firmware": json.loads(firmware),
     "sensor_data": json.loads(sensors),
+    "wlan": json.loads(wlan),
 }, indent=1, sort_keys=True))
 EOF
 phase "done: $archive ($(du -h "$archive" | cut -f1), installed $((installed_bytes >> 20)) MiB)"
