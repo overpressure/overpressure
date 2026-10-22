@@ -79,6 +79,20 @@ Runner::push_frames(int64_t t_ns, const std::array<ImageView, kCameras> &images)
 	wake_.notify_all();
 }
 
+void
+Runner::set_unit(Hand hand, const UnitCalibration &unit)
+{
+	{
+		std::lock_guard<std::mutex> g(lock_);
+		if (stop_) {
+			return;
+		}
+		unit_[hand] = unit;
+		unit_pending_[hand] = true;
+	}
+	wake_.notify_all();
+}
+
 OutputPose
 Runner::pose_at(Hand hand, int64_t t_ns) const
 {
@@ -138,6 +152,21 @@ Runner::run()
 {
 	std::unique_lock<std::mutex> l(lock_);
 	while (!stop_) {
+		if (unit_pending_[0] || unit_pending_[1]) {
+			bool apply[2] = {unit_pending_[0], unit_pending_[1]};
+			UnitCalibration units[2] = {unit_[0], unit_[1]};
+			unit_pending_[0] = unit_pending_[1] = false;
+			busy_ = true;
+			l.unlock();
+			for (int h = 0; h < 2; h++) {
+				if (apply[h]) {
+					tracker_.set_unit((Hand)h, units[h]);
+				}
+			}
+			l.lock();
+			busy_ = false;
+			continue;
+		}
 		if (!pending_ && imu_.empty()) {
 			idle_.notify_all();
 			wake_.wait(l);

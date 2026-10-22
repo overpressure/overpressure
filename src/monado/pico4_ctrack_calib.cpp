@@ -10,6 +10,7 @@
 
 #include "pico4_tcam.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -133,6 +134,70 @@ load_lever_arms(const std::string &path, std::array<Vec3, 2> &lever, std::string
 			return false;
 		}
 		lever[h] = Vec3(v[0], v[1], v[2]);
+	}
+	return true;
+}
+
+namespace {
+
+//! Float @p i of the record (little-endian), counting from the start of chunk 1.
+float
+record_float(const uint8_t chunks[12][32], int i)
+{
+	const uint8_t *b = &chunks[i / 8][(i % 8) * 4];
+	uint32_t u = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+	float f;
+	std::memcpy(&f, &u, sizeof(f));
+	return f;
+}
+
+} // namespace
+
+bool
+parse_station_calibration(const uint8_t chunks[12][32], UnitCalibration &unit, std::string &error)
+{
+	const int kImu = 0, kLedFloats = 3 * 8, kImuIr = 11 * 8;
+	if (!(std::fabs(record_float(chunks, kImuIr + 3) - 1.0) < 1e-8) || !(std::fabs(record_float(chunks, kImu)) >= 1e-8)) {
+		error = "calibration record not prepared (imu_IR[3] != 1 or imu[0] == 0)";
+		return false;
+	}
+	double g[12], a[12];
+	for (int i = 0; i < 12; i++) {
+		g[i] = record_float(chunks, kImu + i);
+		a[i] = record_float(chunks, kImu + 12 + i);
+	}
+	unit.imu_valid = g[0] != 0.0 && a[0] != 0.0 && unit.imu.load(g, a);
+
+	unit.leds_valid = true;
+	for (int k = 0; k < kLeds; k++) {
+		for (int c = 0; c < 3; c++) {
+			const double v = record_float(chunks, kLedFloats + 3 * k + c);
+			unit.leds_valid = unit.leds_valid && std::isfinite(v) && v <= 100.0;
+			unit.leds[k][c] = v;
+		}
+	}
+	if (!unit.imu_valid || !unit.leds_valid) {
+		error = std::string("calibration record rejected:") + (unit.imu_valid ? "" : " IMU") + (unit.leds_valid ? "" : " LEDs");
+		return false;
+	}
+	return true;
+}
+
+bool
+load_bias_table(const std::string &path, std::array<Vec3, 100> &table, std::string &error)
+{
+	std::string text;
+	if (!read_text(path, text)) {
+		error = "cannot read " + path;
+		return false;
+	}
+	std::vector<double> v;
+	if (!numbers_after(text, 0, 300, v)) {
+		error = path + ": not 100 lines of three numbers";
+		return false;
+	}
+	for (int i = 0; i < 100; i++) {
+		table[i] = Vec3(v[3 * i], v[3 * i + 1], v[3 * i + 2]);
 	}
 	return true;
 }

@@ -396,10 +396,30 @@ frames only from an allowlist:
 | `29`, `30` | none | crash info, whitelist (read-only queries of the stock wake-up) | – | yes |
 | `01` to `02`/`03` | play (`01`, or all zero to stop), amplitude, u16 duration in ms | controller vibration, as PICO OS's OpenXR haptics | yes | – |
 | `07` to `02`/`03` | as `01`, then u16 frequency (40–500 Hz) | controller vibration with a frequency | yes | – |
+| `02` to `02`/`03` | exactly one byte, the chunk index 1–12 | the controller's calibration record (read-only, as PICO OS on every connect) | yes | yes |
+| `03` to `02`/`03` | none | the controller's info (read-only; PICO OS sends it, these controllers do not answer) | – | yes |
 
 Neither can send firmware, bootloader or flash commands, and neither touches the boot pin. The C
 module's unit test checks its frames against golden bytes from the hardware-verified Python tool
 (the vibration frames against the layout above) and that every other command is refused.
+
+**Controller connections and calibration.** The station reports each controller's connection,
+as PICO OS's station service reads it:
+
+- `A5 03`, hand in byte 2 (1 left, 2 right): the controller disconnected (switched off, out of
+  range).
+- `A5 02`, hand in byte 2, repeated a few times: it connected. Bytes 3–8 hold the software
+  version, byte 9 the status (low four bits: 1 connected, 2 connected but invalid), bytes 10–11
+  the hardware, bytes 13–29 the serial and bytes 30–35 the radio address. The serial names the
+  controller's gyro bias table that PICO OS keeps in persist (`pvr/<serial>.txt`). The station
+  power cycle at the driver's start makes both controllers connect again.
+- The calibration record comes in 12 chunks of 32 bytes (`02` above). The reply `BB`, target,
+  `02` echoes the index in byte 3 (`FF`: not ready, ask again after 50 ms; `EE`: error) with the
+  data in bytes 4–35. Chunks 1–3 hold the IMU calibration (gyro and accelerometer: a 3 × 3 matrix
+  row-major, then the bias; 24 little-endian floats), chunks 4–11 the 20 LED positions (metres,
+  in the nominal LED model's frame), chunk 12 `imu_IR` (seven floats; the record counts as
+  prepared when its fourth is 1 and the first IMU float is not 0). The controllers answer every
+  request, also after PICO OS's 100 ms wait, so a reader skips late replies for another chunk.
 
 ## Tracking cameras
 
@@ -726,9 +746,19 @@ points in metres, between 1.5 and 9.8 cm from the model's origin, the left ring 
 mirrored in y, and one unit normal per LED. [`pico4/ledmodel.py`](../pico4/ledmodel.py) reads
 both by their addresses in the 5.13.7 library and refuses anything that is not such a ring;
 `extract-sensor-data.sh` writes them to `calibration/controllers/led-models.json`, installed with
-the rest of the calibration. They are vendor data and stay out of the repository. PICO OS
-replaces them with each controller's own coordinates from the station's calibration, which a
-backup does not contain; the tracker uses the nominal models.
+the rest of the calibration. They are vendor data and stay out of the repository.
+
+On every controller connect, as PICO OS does, the driver's station thread reads that
+controller's calibration record from the station ([Controller radio](#controller-radio-station))
+and hands it to the tracker with the serial from the connect notification:
+
+- the IMU calibration (gyro and accelerometer matrices and biases, applied to the raw samples);
+- the controller's own 20 LED positions, which replace the nominal ones (normals and the
+  identification table stay);
+- its temperature-binned gyro bias table, `calibration/pvr/<serial>.txt` from persist, read
+  only (PICO OS also writes it back).
+
+Left and right are read separately. The serial is not logged.
 
 The tracker (`src/monado/pico4_ctrack_*`, C++17 with Eigen) reimplements the approach of that
 library:
@@ -1033,6 +1063,9 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Controller IMU rate | about 865 radio packets and 495 samples per second per hand with the head IMU streaming, for 30 s and in Monado's service; with `ble_mcu` alone about 90 a few minutes after the DSP started, whatever rate is requested |
 | Controller IMU rate, both controllers held and moved (median 234–260 °/s), 30 s | 494 and 499 samples per second per hand, 492–500 in every second; longest interval 4 ms |
 | Controller gyro scale: the right controller turned like a key, three turns of about 90° between pauses, against the optical tracker | gyro rotation 0.993–1.003 times the optical rotation at 8.192 LSB per °/s, after subtracting the gyro's bias (about 1.5 °/s, from the controller lying still) |
+| Controller samples, recordings of about 60,000 per hand (still, and moved) | no duplicate, backward or future-stamped sample; single samples lost now and then (4–9 per 30 s) |
+| Controller calibration records from the station, both controllers | 12 chunks each; gyro and accelerometer matrices within 0.4 % of identity, gyro biases up to 0.016 rad/s, LED positions 0.3 mm (mean) and 0.6 mm (largest) from the nominal models; the serial of each connect notification names one of the two bias tables in persist (9 and 8 temperature bins) |
+| Controllers worn in Valve's session (120 s): both held, the left switched off for 10 s and on again | both tracked with their own calibration; the left disconnected, held its place while off (user) and connected again, with its record re-read in 48 ms and tracking at once; event time minus station time 0.00–0.99 µs in every 30 s window, across the reconnect and under the session's load |
 | Acceptance cycle (`flash-run --userspace`, then stock restoration) | passed: archive received in 86–105 s, SSH 112–123 s after the start of the transfer; systemd `running`, 0 failed units, storage read-only, USB link unchanged, Turnip 65,536 pixels; IMU, pose and display checks as above (two layers, Basalt running); stock boot verified by EDL readback, stock ABL restored, PICO OS started |
 | QEMU, same archive (4.19 without SLPI or `msm_drm`) | self-test passed; the sensor units and Monado's PICO 4 prober stay inactive |
 

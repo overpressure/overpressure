@@ -144,6 +144,22 @@ test_station_vibrate(void)
 	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_MOTOR, motor, sizeof(motor)));
 	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_MOTOR_EVENT, event, sizeof(event)));
 
+	// The calibration query: golden frames from pico4-station (controller_query_frame).
+	const uint8_t calib_left[4] = {0xAA, 0x02, 0x02, 0x01}, calib_right[4] = {0xAA, 0x03, 0x02, 0x0C};
+	EXPECT(pico4_station_calibration_query(f, PICO4_STATION_HAND_LEFT, 1));
+	EXPECT(frame_is(f, calib_left, sizeof(calib_left), 0x62));
+	EXPECT(pico4_station_calibration_query(f, PICO4_STATION_HAND_RIGHT, 12));
+	EXPECT(frame_is(f, calib_right, sizeof(calib_right), 0xC4));
+	// Refused: chunk 0 or beyond 12, another target, and command 02 to the station.
+	memset(f, 0x5A, sizeof(f));
+	EXPECT(!pico4_station_calibration_query(f, PICO4_STATION_HAND_LEFT, 0));
+	EXPECT(!pico4_station_calibration_query(f, PICO4_STATION_HAND_LEFT, 13));
+	EXPECT(!pico4_station_calibration_query(f, PICO4_STATION_HAND_RIGHT, 257));
+	EXPECT(!pico4_station_calibration_query(f, (enum pico4_station_hand)3, 1));
+	EXPECT(f[0] == 0x5A && f[39] == 0x5A);
+	const uint8_t chunk[1] = {1};
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CALIBRATION, chunk, sizeof(chunk)));
+
 	// OpenXR mapping: XR_MIN_HAPTIC_DURATION is 500 ms, at least 10 ms, level = amplitude × 255.
 	unsigned level = 99, ms = 99;
 	pico4_station_haptic_map(1.0f, -1, &level, &ms);
@@ -284,6 +300,33 @@ test_blemcu(void)
 	EXPECT(!pico4_blemcu_parse(pkt, 20, &p));
 	pkt[13] = 0x30; // first record claims more bytes than there are
 	EXPECT(pico4_blemcu_parse(pkt, sizeof(pkt), &p) && p.imu_count == 0 && p.key_count == 0);
+}
+
+static void
+test_station_connection(void)
+{
+	// A connect notification with the layout the station sends (A5 02), made-up contents.
+	uint8_t f[PICO4_STATION_FRAME] = {0xA5, 0x02, 0x02, 'P', 'R', '0', '3', '2', '6', 0x11, '0', '3', 0x06};
+	memcpy(f + 13, "TESTSERIAL0000001", 17);
+	f[39] = pico4_station_crc8(f, 39);
+	enum pico4_station_hand hand = 0;
+	struct pico4_station_controller c;
+	EXPECT(pico4_station_parse_connection(f, &hand, &c) == 1);
+	EXPECT(hand == PICO4_STATION_HAND_RIGHT && c.connected);
+	EXPECT(strcmp(c.software, "PR0326") == 0 && strcmp(c.serial, "TESTSERIAL0000001") == 0);
+
+	// Connected but invalid (status 2) is no connection; a disconnect names the hand.
+	f[9] = 0x12;
+	EXPECT(pico4_station_parse_connection(f, &hand, &c) == -1);
+	const uint8_t off[4] = {0xA5, 0x03, 0x01, 0x05};
+	memset(f, 0, sizeof(f));
+	memcpy(f, off, sizeof(off));
+	EXPECT(pico4_station_parse_connection(f, &hand, &c) == 0 && hand == PICO4_STATION_HAND_LEFT);
+	f[2] = 3;
+	EXPECT(pico4_station_parse_connection(f, &hand, &c) == -1);
+	f[0] = 0xBB;
+	f[2] = 1;
+	EXPECT(pico4_station_parse_connection(f, &hand, &c) == -1);
 }
 
 static void
@@ -444,6 +487,7 @@ main(void)
 {
 	test_station();
 	test_station_vibrate();
+	test_station_connection();
 	test_calibration();
 	test_blemcu();
 	test_blemcu_order();

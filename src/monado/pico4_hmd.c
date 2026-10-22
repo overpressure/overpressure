@@ -136,6 +136,17 @@ struct pico4_hmd
 	struct pico4_controller *controllers[2];
 	uint64_t blemcu_packets;
 	uint64_t blemcu_future; //!< Controller IMU samples stamped after their arrival, dropped.
+	/*!
+	 * The ble_mcu event time minus the packet's station time (both QTimer), over the packets since
+	 * the last log line: the controller samples are timed from the event time (station thread
+	 * logs nothing of it; the IMU thread logs every 30 s).
+	 */
+	int64_t blemcu_clock_min_ns, blemcu_clock_max_ns;
+	uint64_t blemcu_clock_n;
+	int64_t blemcu_clock_log_ns;
+	//! Station thread: per hand, connected, and the connection whose unit data went to the tracker.
+	bool controller_connected[2];
+	uint32_t unit_connects[2];
 	//! Controller tracking from the LED exposures, NULL if unavailable.
 	struct pico4_ctrack *ctrack;
 
@@ -381,6 +392,31 @@ track_slam_pose(struct pico4_hmd *h, const struct pico4_fusion_slam *m)
 	}
 }
 
+/*!
+ * The controller packets' event time against their station time: PICO OS times the
+ * samples from the station time, the driver from the event time, which agree while this stays
+ * within a microsecond. Logged every 30 s as the range since the last line.
+ */
+static void
+log_blemcu_clock(struct pico4_hmd *h, int64_t diff_ns, int64_t now_ns)
+{
+	if (h->blemcu_clock_n == 0 || diff_ns < h->blemcu_clock_min_ns) {
+		h->blemcu_clock_min_ns = diff_ns;
+	}
+	if (h->blemcu_clock_n == 0 || diff_ns > h->blemcu_clock_max_ns) {
+		h->blemcu_clock_max_ns = diff_ns;
+	}
+	h->blemcu_clock_n++;
+	if (h->blemcu_clock_log_ns == 0) {
+		h->blemcu_clock_log_ns = now_ns;
+	} else if (now_ns - h->blemcu_clock_log_ns >= 30 * (int64_t)U_TIME_1S_IN_NS) {
+		P4_INFO(h, "Controller packets: event time minus station time %.2f..%.2f us over %llu packets",
+		        h->blemcu_clock_min_ns / 1e3, h->blemcu_clock_max_ns / 1e3, (unsigned long long)h->blemcu_clock_n);
+		h->blemcu_clock_n = 0;
+		h->blemcu_clock_log_ns = now_ns;
+	}
+}
+
 static void
 handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 {
@@ -393,6 +429,7 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 		if (s->raw_len > 0 && pico4_blemcu_parse(s->raw, s->raw_len, &p)) {
 			h->blemcu_packets++;
 			h->blemcu_future += (uint64_t)pico4_blemcu_drop_future(&p, ts, (int64_t)os_monotonic_get_ns());
+			log_blemcu_clock(h, (int64_t)qtimer_to_ns(s->ticks) - (int64_t)p.station_time_us * 1000, ts);
 			for (int i = 0; i < 2; i++) {
 				if (h->controllers[i] != NULL) {
 					pico4_controller_push(h->controllers[i], &p, ts);
@@ -560,6 +597,41 @@ imu_thread(void *ptr)
 	return NULL;
 }
 
+/*!
+ * Controller connections, as PICO OS's station service handles them: on each connect, the
+ * controller's calibration record from the station and its serial go to the tracker.
+ */
+static void
+handle_connections(struct pico4_hmd *h)
+{
+	for (int i = 0; i < 2; i++) {
+		const enum pico4_station_hand hand = i == 0 ? PICO4_STATION_HAND_LEFT : PICO4_STATION_HAND_RIGHT;
+		const char *name = i == 0 ? "left" : "right";
+		struct pico4_station_controller c;
+		pico4_station_get_controller(h->station, hand, &c);
+		if (c.connected != h->controller_connected[i]) {
+			h->controller_connected[i] = c.connected;
+			if (c.connected) {
+				P4_INFO(h, "Controller %s connected (software %s)", name, c.software);
+			} else {
+				P4_INFO(h, "Controller %s disconnected", name);
+			}
+		}
+		struct pico4_ctrack *ctrack = __atomic_load_n(&h->ctrack, __ATOMIC_ACQUIRE);
+		if (!c.connected || c.connects == h->unit_connects[i] || ctrack == NULL) {
+			continue;
+		}
+		h->unit_connects[i] = c.connects;
+		uint8_t chunks[PICO4_STATION_CALIBRATION_CHUNKS][PICO4_STATION_CALIBRATION_CHUNK];
+		int r = pico4_station_get_calibration(h->station, hand, chunks);
+		if (r < 0) {
+			P4_WARN(h, "Controller %s: calibration record unavailable (%s)", name, strerror(-r));
+		}
+		pico4_ctrack_set_unit(ctrack, i == 0 ? PICO4_BLEMCU_LEFT : PICO4_BLEMCU_RIGHT,
+		                      r < 0 ? NULL : (const uint8_t(*)[32])chunks, c.serial);
+	}
+}
+
 static void *
 station_thread(void *ptr)
 {
@@ -572,6 +644,7 @@ station_thread(void *ptr)
 		if (pico4_station_poll(h->station, 100) < 0) {
 			os_nanosleep(U_TIME_1MS_IN_NS * 100);
 		}
+		handle_connections(h);
 		os_thread_helper_lock(&h->station_oth);
 	}
 	os_thread_helper_unlock(&h->station_oth);
@@ -1097,7 +1170,10 @@ pico4_hmd_create(void)
 	setup_station(h);
 	if (h->station != NULL && pico4_ssc_find(h->ssc, "ble_mcu", &h->blemcu_suid, 3000) == 0) {
 		h->has_blemcu = true;
-		h->ctrack = pico4_ctrack_create(debug_get_option_pico4_calibration(), ctrack_head, h, h->log_level);
+		// The station thread hands each controller's unit data to it once it exists.
+		__atomic_store_n(&h->ctrack,
+		                 pico4_ctrack_create(debug_get_option_pico4_calibration(), ctrack_head, h, h->log_level),
+		                 __ATOMIC_RELEASE);
 		h->controllers[0] = pico4_controller_create(PICO4_BLEMCU_LEFT, &h->base, h->ctrack, h->station, h->log_level);
 		h->controllers[1] = pico4_controller_create(PICO4_BLEMCU_RIGHT, &h->base, h->ctrack, h->station, h->log_level);
 	}

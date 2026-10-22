@@ -8,11 +8,14 @@
  * through tracking to loss and reset, and the 3DoF fallback through a long optical loss.
  */
 
+#include "pico4_ctrack_calib.hpp"
 #include "pico4_ctrack_imu.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <string>
 #include <vector>
 
 using namespace pico4::ctrack;
@@ -200,6 +203,88 @@ test_calibration()
 	EXPECT(valid && rate);
 	EXPECT(std::abs(rc.b_gyro.z() - 0.03) < 1e-6);
 	EXPECT(!parse_calibration_record(rec, 60, rc, valid, rate));
+}
+
+//! Float @p i of a station record, little-endian, as the controller sends it.
+static void
+put_float(uint8_t chunks[12][32], int i, float v)
+{
+	uint32_t u;
+	std::memcpy(&u, &v, sizeof(u));
+	uint8_t *b = &chunks[i / 8][(i % 8) * 4];
+	for (int k = 0; k < 4; k++) {
+		b[k] = uint8_t(u >> (8 * k));
+	}
+}
+
+static void
+test_station_record()
+{
+	// A made-up record in the station's layout: IMU block, 20 LEDs, imu_IR (identity).
+	uint8_t chunks[12][32] = {};
+	const float gyro[12] = {1.01f, 0, 0, 0, 0.99f, 0, 0, 0, 1, 0.01f, -0.02f, 0.005f};
+	const float acc[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0.05f, 0, 0.1f};
+	for (int i = 0; i < 12; i++) {
+		put_float(chunks, i, gyro[i]);
+		put_float(chunks, 12 + i, acc[i]);
+	}
+	for (int k = 0; k < 20; k++) {
+		put_float(chunks, 24 + 3 * k, 0.001f * k);
+		put_float(chunks, 25 + 3 * k, -0.002f * k);
+		put_float(chunks, 26 + 3 * k, 0.03f);
+	}
+	put_float(chunks, 88 + 3, 1.0f);
+
+	UnitCalibration u;
+	std::string error;
+	EXPECT(parse_station_calibration(chunks, u, error));
+	EXPECT(u.imu_valid && u.leds_valid && !u.bias_valid);
+	EXPECT(std::abs(u.imu.M_gyro(0, 0) - 1.01) < 1e-6 && std::abs(u.imu.b_gyro.y() + 0.02) < 1e-6);
+	EXPECT(std::abs(u.imu.b_accel.z() - 0.1) < 1e-6);
+	EXPECT((u.leds[19] - Vec3(0.019, -0.038, 0.03)).norm() < 1e-6);
+
+	// Not prepared: imu_IR's fourth float is not 1, or the first IMU float is 0.
+	uint8_t bad[12][32];
+	std::memcpy(bad, chunks, sizeof(bad));
+	put_float(bad, 91, 0.0f);
+	UnitCalibration v;
+	EXPECT(!parse_station_calibration(bad, v, error) && !v.imu_valid && !v.leds_valid);
+	std::memcpy(bad, chunks, sizeof(bad));
+	put_float(bad, 0, 0.0f);
+	EXPECT(!parse_station_calibration(bad, v, error));
+	// An IMU element above 2 (IMUCalib's check) or a LED coordinate above 100 (updateLedPos's).
+	std::memcpy(bad, chunks, sizeof(bad));
+	put_float(bad, 13, 2.5f);
+	EXPECT(!parse_station_calibration(bad, v, error) && !v.imu_valid);
+	std::memcpy(bad, chunks, sizeof(bad));
+	put_float(bad, 30, 150.0f);
+	EXPECT(!parse_station_calibration(bad, v, error) && !v.leds_valid);
+}
+
+static void
+test_bias_table()
+{
+	std::string path = "test_pico4_bias.txt";
+	FILE *f = fopen(path.c_str(), "w");
+	EXPECT(f != nullptr);
+	if (f == nullptr) {
+		return;
+	}
+	for (int i = 0; i < 100; i++) {
+		fprintf(f, "%f %f %f\n", i == 25 ? 0.01 : 0.0, i == 25 ? -0.02 : 0.0, i == 25 ? 0.003 : 0.0);
+	}
+	fclose(f);
+	std::array<Vec3, 100> table;
+	std::string error;
+	EXPECT(load_bias_table(path, table, error));
+	EXPECT((table[25] - Vec3(0.01, -0.02, 0.003)).norm() < 1e-9 && table[24].isZero());
+
+	f = fopen(path.c_str(), "w");
+	fputs("0 0 0\n0 0\n", f);
+	fclose(f);
+	EXPECT(!load_bias_table(path, table, error));
+	remove(path.c_str());
+	EXPECT(!load_bias_table(path, table, error));
 }
 
 static void
@@ -934,6 +1019,8 @@ main()
 {
 	test_butterworth();
 	test_calibration();
+	test_station_record();
+	test_bias_table();
 	test_smoother();
 	test_orientation_tilt_and_rotation();
 	test_orientation_bias();

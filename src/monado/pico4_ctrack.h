@@ -56,6 +56,16 @@ bool
 pico4_ctrack_get_aim(struct pico4_ctrack *t, int device, int64_t at_ns, struct xrt_space_relation *out);
 
 /*!
+ * A controller's per-unit data, as PICO OS loads it on each connect: its calibration record from
+ * the station (@p chunks, pico4_station_get_calibration; NULL if the fetch failed) gives the IMU
+ * calibration and the LED positions, and @p serial (from the connect notification) picks its gyro
+ * bias table, <calibration dir>/pvr/<serial>.txt. @p device is PICO4_BLEMCU_LEFT or _RIGHT.
+ * Logs what was applied; parts that are missing or rejected keep their previous values.
+ */
+void
+pico4_ctrack_set_unit(struct pico4_ctrack *t, int device, const uint8_t (*chunks)[32], const char *serial);
+
+/*!
  * Stop solving: no more head-pose callbacks once this returns. Pushes are ignored afterwards and
  * the last poses stay readable until pico4_ctrack_destroy().
  */

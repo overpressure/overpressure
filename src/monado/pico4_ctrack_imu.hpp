@@ -558,6 +558,14 @@ public:
 		calib_ = calib;
 	}
 
+	//! The controller's temperature-binned gyro bias table, for both 3DoF filters (spec 03 3/5).
+	void
+	set_bias_table(const std::array<Vec3, 100> &table)
+	{
+		oc_a_.set_bias_table(table);
+		oc_b_.set_bias_table(table);
+	}
+
 	/*!
 	 * One controller IMU sample (spec 03 3/2-3/3, 4/3). @p T_WH_at_sample is the head pose
 	 * interpolated to the sample time (spec 03 1/4); without it the head pose of the last frame

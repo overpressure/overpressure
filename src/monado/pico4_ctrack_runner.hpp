@@ -70,6 +70,10 @@ public:
 	void
 	push_frames(int64_t t_ns, const std::array<ImageView, kCameras> &images);
 
+	//! A controller's per-unit data; the tracker's thread applies it before its next work.
+	void
+	set_unit(Hand hand, const UnitCalibration &unit);
+
 	//! The published pose of a hand extrapolated to @p t_ns.
 	OutputPose
 	pose_at(Hand hand, int64_t t_ns) const;
@@ -100,6 +104,8 @@ private:
 	std::condition_variable wake_, idle_;
 	bool stop_ = false, busy_ = false;
 	std::deque<Queued> imu_;
+	bool unit_pending_[2] = {false, false};
+	UnitCalibration unit_[2];
 	int64_t newest_imu_[2] = {INT64_MIN, INT64_MIN};
 	bool pending_ = false;
 	int64_t pending_t_ = 0;

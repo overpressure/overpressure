@@ -11,8 +11,10 @@ station's interrupt; userspace writes and reads whole frames.
 
 Safety: the station and controller firmware can be updated over this link. This
 tool can only build the frames listed in COMMANDS (version query, camera frame
-sync, IMU stream on/off, acknowledge) and the power ioctl; it has no way to send firmware,
-bootloader or flash commands, and it never touches the boot pin.
+sync, IMU stream on/off, acknowledge), the controller motor, the two read-only
+controller queries PICO OS sends on every connect (info, calibration) and the
+power ioctl; it has no way to send firmware, bootloader or flash commands, and it
+never touches the boot pin.
 """
 
 import argparse
@@ -57,6 +59,17 @@ CAMERA_SET_PARA_LEN = 28
 TARGET_CONTROLLER = {"left": 0x02, "right": 0x03}
 CMD_MOTOR = 0x01
 MOTOR_SCALE_PERCENT = 75  # PICO OS's default ctrl_motor_vibration_amplitude (0x72000)
+# Read-only controller queries, as PICO OS's station service sends them on every connect.
+# Info (UpdateControllerConnectStatus 0x6a438): no payload; the reply carries the status
+# (byte 9), software (3-8), hardware (10-11), serial (13-29) and radio address (30-35).
+# Calibration (CalibrationData::GetCalibrationFromStation 0x9eeb4): one byte, the chunk
+# index 1-12; the reply echoes it in byte 3 (0xFF not ready, 0xEE error) with 32 bytes of
+# the record in bytes 4-35.
+CMD_CONTROLLER_CALIBRATION = 0x02
+CMD_CONTROLLER_INFO = 0x03
+CALIBRATION_CHUNKS = 12  # the 20-LED layout: 3 IMU, 8 LED, 1 imu_IR
+CALIBRATION_NOT_READY, CALIBRATION_ERROR = 0xFF, 0xEE
+CALIBRATION_TRIES = 30
 
 
 def _crc8_table():
@@ -115,6 +128,42 @@ def motor_frame(hand: str, level: int, duration_ms: int) -> bytes:
     buf[3:7] = payload
     buf[39] = crc8(bytes(buf[:39]))
     return bytes(buf)
+
+
+def controller_query_frame(hand: str, command: int, payload: bytes = b"") -> bytes:
+    """One of the two read-only controller queries, with exactly the payload PICO OS sends."""
+    allowed = hand in TARGET_CONTROLLER and (
+        (command == CMD_CONTROLLER_INFO and payload == b"")
+        or (command == CMD_CONTROLLER_CALIBRATION and len(payload) == 1
+            and 1 <= payload[0] <= CALIBRATION_CHUNKS))
+    if not allowed:
+        raise ValueError(f"controller command {command:#x} {payload.hex()} is not allowed")
+    buf = bytearray(FRAME)
+    buf[0], buf[1], buf[2] = HEADER_SEND, TARGET_CONTROLLER[hand], command
+    buf[3:3 + len(payload)] = payload
+    buf[39] = crc8(bytes(buf[:39]))
+    return bytes(buf)
+
+
+def parse_controller_info(buf: bytes) -> dict:
+    """The fields of an info reply (BB, target, 03), as the station service reads them."""
+    return {
+        "status": buf[9] & 0x0F,  # 1 connected, 2 connected but invalid
+        "connect_type": buf[9] >> 4,
+        "software": buf[3:9].split(b"\0")[0].decode("ascii", "replace"),
+        "hardware": buf[10:12].hex(),
+        "serial": buf[13:30].split(b"\0")[0].decode("ascii", "replace"),
+        "address": buf[30:36].hex(":"),  # in frame order
+    }
+
+
+def calibration_floats(chunks: dict) -> dict:
+    """The record's blocks from chunks 1-12 (32 bytes each), as little-endian floats."""
+    def floats(data: bytes):
+        return list(struct.unpack(f"<{len(data) // 4}f", data))
+    imu = b"".join(chunks[i] for i in (1, 2, 3))
+    leds = b"".join(chunks[i] for i in range(4, CALIBRATION_CHUNKS))
+    return {"imu": floats(imu), "leds": floats(leds), "imu_ir": floats(chunks[CALIBRATION_CHUNKS])}
 
 
 def valid_reply(buf: bytes) -> bool:
@@ -176,6 +225,51 @@ class Station:
         self.send(frame(command, payload, seq))
         return self.collect(seconds)
 
+    def drain(self):
+        """Read (and acknowledge) what is already queued, so late replies cannot be taken for new ones."""
+        while self.read(0.0) is not None:
+            pass
+
+    def controller_reply(self, hand: str, command: int, payload: bytes, seconds: float, index: int = None):
+        """Send a controller query and return its reply (BB, target, command), or None.
+
+        Calibration replies for another chunk (late answers to an earlier request) are skipped.
+        """
+        self.drain()
+        self.send(controller_query_frame(hand, command, payload))
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            buf = self.read(max(0.0, end - time.monotonic()))
+            if buf is None or buf[0] != 0xBB or buf[1] != TARGET_CONTROLLER[hand] or buf[2] != command:
+                continue
+            if index is not None and buf[3] not in (index, CALIBRATION_NOT_READY, CALIBRATION_ERROR):
+                continue
+            return buf
+        return None
+
+    def controller_info(self, hand: str):
+        buf = self.controller_reply(hand, CMD_CONTROLLER_INFO, b"", 0.5)
+        return None if buf is None else parse_controller_info(buf)
+
+    def controller_calibration(self, hand: str) -> dict:
+        """Chunks 1-12 as the station service fetches them: retry a chunk that is not ready."""
+        chunks = {}
+        for index in range(1, CALIBRATION_CHUNKS + 1):
+            for _ in range(CALIBRATION_TRIES):
+                buf = self.controller_reply(hand, CMD_CONTROLLER_CALIBRATION, bytes([index]), 0.1, index)
+                if buf is None:
+                    continue
+                if buf[3] == CALIBRATION_ERROR:
+                    raise OSError(f"controller {hand}: calibration error at chunk {index}")
+                if buf[3] == CALIBRATION_NOT_READY:
+                    time.sleep(0.05)
+                    continue
+                chunks[index] = bytes(buf[4:36])
+                break
+            else:
+                raise OSError(f"controller {hand}: no calibration chunk {index}")
+        return chunks
+
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -205,6 +299,11 @@ def main(argv=None) -> int:
     p.add_argument("hand", choices=("left", "right"))
     p.add_argument("--level", type=int, default=255, help="0-255, scaled to PICO OS's default 75 %%")
     p.add_argument("--ms", type=int, default=300, help="duration; the controller stops by itself")
+    p = sub.add_parser("info", help="a controller's status, versions, serial and radio address")
+    p.add_argument("hand", choices=("left", "right"))
+    p = sub.add_parser("calibration", help="a controller's calibration record (IMU, LEDs) from the station")
+    p.add_argument("hand", choices=("left", "right"))
+    p.add_argument("--raw", help="also write the 12 chunks (32 bytes each) to this file")
     args = parser.parse_args(argv)
 
     st = Station()
@@ -252,6 +351,18 @@ def main(argv=None) -> int:
             st.send(data)
             out["sent"] = data.hex()
             out["frames"] = len(st.collect(0.5))
+        elif args.command == "info":
+            out["info"] = st.controller_info(args.hand)
+        elif args.command == "calibration":
+            try:
+                chunks = st.controller_calibration(args.hand)
+            except OSError as e:
+                out["error"] = str(e)
+            else:
+                out["calibration"] = calibration_floats(chunks)
+                if args.raw:
+                    with open(args.raw, "wb") as f:
+                        f.write(b"".join(chunks[i] for i in sorted(chunks)))
         elif args.command == "imu":
             for c in (int(x) for x in args.controllers.split(",")):
                 replies = st.request(CMD_IMU_STREAM, bytes([c, 1 if args.state == "on" else 0]))

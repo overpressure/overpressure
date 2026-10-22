@@ -81,6 +81,22 @@ Tracker::add_imu(Hand hand, const ImuSample &sample, const Pose *T_WH_at_sample)
 	hands_[hand].fusion.add_imu(sample, T_WH_at_sample);
 }
 
+void
+Tracker::set_unit(Hand hand, const UnitCalibration &unit)
+{
+	HandState &h = hands_[hand];
+	if (unit.imu_valid) {
+		h.fusion.set_calibration(unit.imu);
+	}
+	if (unit.leds_valid) {
+		// updateLedPos: the positions only (spec 03 6/1).
+		models_[hand].position = unit.leds;
+	}
+	if (unit.bias_valid) {
+		h.fusion.set_bias_table(unit.bias);
+	}
+}
+
 OutputPose
 Tracker::pose_at(Hand hand, int64_t t_ns) const
 {

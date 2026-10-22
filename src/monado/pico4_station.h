@@ -15,9 +15,10 @@
  * Safety: the station and controller firmware can be updated over this link.
  * This module builds only the frames in pico4_station_frame()'s allowlist
  * (acknowledge, camera frame rate, camera init/stream/exposure), the two
- * vibration frames to a controller (pico4_station_vibrate()) and the power
- * ioctl; it has no way to send firmware, bootloader or flash commands and never
- * touches the boot pin.
+ * vibration frames to a controller (pico4_station_vibrate()), the read-only
+ * calibration query (pico4_station_calibration_query()) and the power ioctl; it
+ * has no way to send firmware, bootloader or flash commands and never touches
+ * the boot pin.
  *
  * @ingroup drv_pico4
  */
@@ -50,6 +51,8 @@ enum pico4_station_cmd
 	PICO4_STATION_CMD_MOTOR = 0x01,
 	//! To a controller only: [play, amplitude, u16 duration ms, u16 frequency Hz].
 	PICO4_STATION_CMD_MOTOR_EVENT = 0x07,
+	//! To a controller only, read-only: [chunk index 1-12] of its calibration record.
+	PICO4_STATION_CMD_CALIBRATION = 0x02,
 };
 
 //! CRC-8, reflected polynomial 0x8C, initial value 0.
@@ -119,6 +122,44 @@ pico4_station_vibrate(uint8_t out[PICO4_STATION_FRAME],
  */
 void
 pico4_station_haptic_map(float amplitude, int64_t duration_ns, unsigned *out_level, unsigned *out_duration_ms);
+
+//! The calibration record's chunks for the 20-LED layout: 1-3 IMU, 4-11 LEDs, 12 imu_IR.
+#define PICO4_STATION_CALIBRATION_CHUNKS 12
+#define PICO4_STATION_CALIBRATION_CHUNK 32
+#define PICO4_STATION_SERIAL_LEN 17
+
+/*!
+ * Build the query for chunk @p index (1-12) of a controller's calibration record, as PICO OS's
+ * station service asks for it on every connect (CalibrationData::GetCalibrationFromStation
+ * 0x9eeb4): command 02 to the controller, the index as the only payload byte. The reply (BB,
+ * target, 02) echoes the index in byte 3 (0xFF: not ready yet, 0xEE: error) and carries 32
+ * bytes of the record in bytes 4-35. False, building nothing, for another hand or index.
+ */
+bool
+pico4_station_calibration_query(uint8_t out[PICO4_STATION_FRAME], enum pico4_station_hand hand, unsigned index);
+
+//! A controller's connection as the station reports it.
+struct pico4_station_controller
+{
+	bool connected;
+	//! Connections so far: the station repeats each connect notification, which counts once.
+	uint32_t connects;
+	char software[7];
+	char serial[PICO4_STATION_SERIAL_LEN + 1]; //!< Picks PICO OS's per-controller files.
+};
+
+/*!
+ * A controller's connect (A5 02) or disconnect (A5 03) notification: byte 2 is the hand. A connect
+ * carries the software version in bytes 3-8, the status in byte 9 (low four bits: 1 connected,
+ * 2 connected but invalid), the hardware in 10-11, the serial in 13-29 and the radio address in
+ * 30-35, the layout of PICO OS's connect data (StationService::MCUCallBackDataProcess 0x6cc70).
+ * Returns 1 for a valid connect (@p info filled: connected, software, serial), 0 for a
+ * disconnect, -1 for anything else.
+ */
+int
+pico4_station_parse_connection(const uint8_t f[PICO4_STATION_FRAME],
+                               enum pico4_station_hand *hand,
+                               struct pico4_station_controller *info);
 
 struct pico4_station;
 
@@ -211,6 +252,23 @@ pico4_station_camera_stop(struct pico4_station *st);
  */
 int
 pico4_station_motor(struct pico4_station *st, enum pico4_station_hand hand, unsigned level, unsigned duration_ms);
+
+//! A controller's connection state from the notifications read so far.
+void
+pico4_station_get_controller(struct pico4_station *st,
+                             enum pico4_station_hand hand,
+                             struct pico4_station_controller *out);
+
+/*!
+ * Fetch a controller's calibration record, chunk by chunk as PICO OS does: up to 30 tries per
+ * chunk with 100 ms for the reply, 50 ms after a "not ready". Late replies for another chunk
+ * are skipped. Holds the station for the whole fetch (normally well under a second). Returns 0,
+ * -EIO on the controller's error reply, -ETIMEDOUT, or another negative errno.
+ */
+int
+pico4_station_get_calibration(struct pico4_station *st,
+                              enum pico4_station_hand hand,
+                              uint8_t out[PICO4_STATION_CALIBRATION_CHUNKS][PICO4_STATION_CALIBRATION_CHUNK]);
 
 #ifdef __cplusplus
 }

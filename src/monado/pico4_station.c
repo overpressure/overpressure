@@ -31,7 +31,15 @@
 #define MOTOR_LEN 4       //!< SetMotor's payload (packetSendData at 0x72070).
 #define MOTOR_EVENT_LEN 6 //!< SetVCMotorEvent's payload (0x72294).
 #define NOTIFY_STREAM 0x01   //!< A5 01: streamed data, not acknowledged.
+#define NOTIFY_CONNECT 0x02  //!< A5 02: a controller connected (repeated a few times).
+#define NOTIFY_DISCONNECT 0x03 //!< A5 03: a controller disconnected.
 #define NOTIFY_ANNOUNCE 0x06 //!< A5 06: the station announces itself after power-on.
+#define CONNECT_OK 0x01      //!< Status (byte 9, low four bits) of a valid connection.
+#define CALIBRATION_NOT_READY 0xFF
+#define CALIBRATION_ERROR 0xEE
+#define CALIBRATION_TRIES 30     //!< GetCalibrationFromStation 0x9f158.
+#define CALIBRATION_WAIT_MS 100  //!< waitForDataCommon(100) at 0x9f124.
+#define CALIBRATION_RETRY_MS 50  //!< usleep(50000) after a "not ready", 0x9f0e4.
 #define IOCTL_POWER 0x80046B09 //!< _IOW('k', 9, int): 1 on, 0 off.
 
 #define CAMERA_INIT 0x01
@@ -56,6 +64,11 @@ struct pico4_station
 	int camera_op, camera_status;
 	//! CameraSetPara's event index of the last command (0-9).
 	unsigned para_index;
+	//! Connection state per hand (index hand - 1).
+	struct pico4_station_controller controllers[2];
+	//! The last calibration reply: target, echoed index, data.
+	int calib_target, calib_index;
+	uint8_t calib_data[PICO4_STATION_CALIBRATION_CHUNK];
 };
 
 uint8_t
@@ -89,7 +102,7 @@ allowed(uint8_t cmd, const uint8_t *p, size_t n)
 	}
 }
 
-//! Frames to a controller: only the two motor commands, play flag 0 or 1.
+//! Frames to a controller: the two motor commands (play flag 0 or 1) and the calibration query.
 static bool
 allowed_controller(uint8_t target, uint8_t cmd, const uint8_t *p, size_t n)
 {
@@ -99,6 +112,7 @@ allowed_controller(uint8_t target, uint8_t cmd, const uint8_t *p, size_t n)
 	switch (cmd) {
 	case PICO4_STATION_CMD_MOTOR: return n == MOTOR_LEN && p[0] <= 1;
 	case PICO4_STATION_CMD_MOTOR_EVENT: return n == MOTOR_EVENT_LEN && p[0] <= 1;
+	case PICO4_STATION_CMD_CALIBRATION: return n == 1 && p[0] >= 1 && p[0] <= PICO4_STATION_CALIBRATION_CHUNKS;
 	default: return false;
 	}
 }
@@ -168,6 +182,55 @@ pico4_station_vibrate(uint8_t out[PICO4_STATION_FRAME],
 	}
 	build(out, target, cmd, p, n);
 	return true;
+}
+
+bool
+pico4_station_calibration_query(uint8_t out[PICO4_STATION_FRAME], enum pico4_station_hand hand, unsigned index)
+{
+	if ((hand != PICO4_STATION_HAND_LEFT && hand != PICO4_STATION_HAND_RIGHT) || index > 255) {
+		return false;
+	}
+	const uint8_t target = hand == PICO4_STATION_HAND_LEFT ? TARGET_LEFT : TARGET_RIGHT;
+	const uint8_t p[1] = {(uint8_t)index};
+	if (!allowed_controller(target, PICO4_STATION_CMD_CALIBRATION, p, 1)) {
+		return false;
+	}
+	build(out, target, PICO4_STATION_CMD_CALIBRATION, p, 1);
+	return true;
+}
+
+//! Bytes [from, to) as a string up to the first NUL, printable ASCII only.
+static void
+copy_text(char *out, size_t size, const uint8_t *f, int from, int to)
+{
+	size_t n = 0;
+	for (int i = from; i < to && n + 1 < size && f[i] != 0; i++) {
+		out[n++] = (f[i] >= 0x20 && f[i] < 0x7f) ? (char)f[i] : '?';
+	}
+	out[n] = '\0';
+}
+
+int
+pico4_station_parse_connection(const uint8_t f[PICO4_STATION_FRAME],
+                               enum pico4_station_hand *hand,
+                               struct pico4_station_controller *info)
+{
+	if (f[0] != HEADER_NOTIFY || (f[1] != NOTIFY_CONNECT && f[1] != NOTIFY_DISCONNECT) ||
+	    (f[2] != PICO4_STATION_HAND_LEFT && f[2] != PICO4_STATION_HAND_RIGHT)) {
+		return -1;
+	}
+	*hand = (enum pico4_station_hand)f[2];
+	if (f[1] == NOTIFY_DISCONNECT) {
+		return 0;
+	}
+	if ((f[9] & 0x0f) != CONNECT_OK) {
+		return -1;
+	}
+	memset(info, 0, sizeof(*info));
+	info->connected = true;
+	copy_text(info->software, sizeof(info->software), f, 3, 9);
+	copy_text(info->serial, sizeof(info->serial), f, 13, 13 + PICO4_STATION_SERIAL_LEN);
+	return 1;
 }
 
 void
@@ -253,6 +316,27 @@ read_one(struct pico4_station *st, int timeout_ms)
 		st->camera_op = f[3];
 		st->camera_status = f[4];
 	}
+	if (f[0] == HEADER_REPLY && (f[1] == TARGET_LEFT || f[1] == TARGET_RIGHT) &&
+	    f[2] == PICO4_STATION_CMD_CALIBRATION) {
+		st->calib_target = f[1];
+		st->calib_index = f[3];
+		memcpy(st->calib_data, f + 4, sizeof(st->calib_data));
+	}
+	enum pico4_station_hand hand;
+	struct pico4_station_controller info;
+	int c = pico4_station_parse_connection(f, &hand, &info);
+	if (c >= 0) {
+		struct pico4_station_controller *s = &st->controllers[hand - 1];
+		if (c == 0) {
+			s->connected = false;
+		} else {
+			if (!s->connected) {
+				s->connects++;
+			}
+			info.connects = s->connects;
+			*s = info;
+		}
+	}
 	return 1;
 }
 
@@ -299,6 +383,8 @@ reset_locked(struct pico4_station *st)
 	}
 	usleep(100 * 1000);
 	st->announced = false;
+	// The controllers reconnect after the power cycle, each with a connect notification.
+	st->controllers[0].connected = st->controllers[1].connected = false;
 	if ((r = power(st, 1)) < 0) {
 		return r;
 	}
@@ -466,6 +552,74 @@ pico4_station_camera_stop(struct pico4_station *st)
 	const uint8_t off[3] = {CAMERA_STREAM, CAMERA_ALL, CAMERA_OFF};
 	pthread_mutex_lock(&st->lock);
 	int r = camera_cmd(st, off, sizeof(off), 1000);
+	pthread_mutex_unlock(&st->lock);
+	return r;
+}
+
+void
+pico4_station_get_controller(struct pico4_station *st,
+                             enum pico4_station_hand hand,
+                             struct pico4_station_controller *out)
+{
+	memset(out, 0, sizeof(*out));
+	if (hand != PICO4_STATION_HAND_LEFT && hand != PICO4_STATION_HAND_RIGHT) {
+		return;
+	}
+	pthread_mutex_lock(&st->lock);
+	*out = st->controllers[hand - 1];
+	pthread_mutex_unlock(&st->lock);
+}
+
+//! One chunk: the reply's data, or a negative errno (-EIO error reply, -ETIMEDOUT).
+static int
+calibration_chunk(struct pico4_station *st, const uint8_t query[PICO4_STATION_FRAME], unsigned index, uint8_t *out)
+{
+	for (int attempt = 0; attempt < CALIBRATION_TRIES; attempt++) {
+		int r;
+		st->calib_index = -1;
+		ssize_t w = write(st->fd, query, PICO4_STATION_FRAME);
+		if (w != PICO4_STATION_FRAME) {
+			return w < 0 ? -errno : -EIO;
+		}
+		for (int64_t end = now_ms() + CALIBRATION_WAIT_MS; now_ms() < end;) {
+			if ((r = read_one(st, (int)(end - now_ms()))) < 0) {
+				return r;
+			}
+			if (st->calib_target != query[1] || st->calib_index < 0) {
+				continue;
+			}
+			if (st->calib_index == CALIBRATION_ERROR) {
+				return -EIO;
+			}
+			if (st->calib_index == CALIBRATION_NOT_READY) {
+				usleep(CALIBRATION_RETRY_MS * 1000);
+				break;
+			}
+			if (st->calib_index == (int)index) {
+				memcpy(out, st->calib_data, PICO4_STATION_CALIBRATION_CHUNK);
+				return 0;
+			}
+			st->calib_index = -1; // a late reply for an earlier chunk
+		}
+	}
+	return -ETIMEDOUT;
+}
+
+int
+pico4_station_get_calibration(struct pico4_station *st,
+                              enum pico4_station_hand hand,
+                              uint8_t out[PICO4_STATION_CALIBRATION_CHUNKS][PICO4_STATION_CALIBRATION_CHUNK])
+{
+	int r = 0;
+	pthread_mutex_lock(&st->lock);
+	for (unsigned i = 1; i <= PICO4_STATION_CALIBRATION_CHUNKS && r == 0; i++) {
+		uint8_t q[PICO4_STATION_FRAME];
+		if (!pico4_station_calibration_query(q, hand, i)) {
+			r = -EINVAL;
+			break;
+		}
+		r = calibration_chunk(st, q, i, out[i - 1]);
+	}
 	pthread_mutex_unlock(&st->lock);
 	return r;
 }

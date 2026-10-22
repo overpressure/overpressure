@@ -43,6 +43,21 @@ struct HandFrameStats
 	Pose T_WM;                 //!< optical pose of the frame (valid if method >= 0)
 };
 
+/*!
+ * One controller's per-unit data, as PICO OS loads it on connect (alg_controller_init_calibPara,
+ * spec 03 3/5, 6/1): the IMU calibration, the LED positions that replace the model's (normals and
+ * the identification table stay), the gyro bias table named by the controller's serial.
+ */
+struct UnitCalibration
+{
+	bool imu_valid = false;
+	ImuCalib imu;
+	bool leds_valid = false;
+	std::array<Vec3, kLeds> leds{};
+	bool bias_valid = false;
+	std::array<Vec3, 100> bias{};
+};
+
 class Tracker
 {
 public:
@@ -56,6 +71,10 @@ public:
 	//! One controller IMU sample; samples up to an image time must arrive before its frame set.
 	void
 	add_imu(Hand hand, const ImuSample &sample, const Pose *T_WH_at_sample = nullptr);
+
+	//! A controller's per-unit data; only the valid parts are applied.
+	void
+	set_unit(Hand hand, const UnitCalibration &unit);
 
 	/*!
 	 * One frame set: the four tracking-camera images of the LED exposure (640x480, 8 bit, in

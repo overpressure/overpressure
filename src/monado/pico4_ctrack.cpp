@@ -24,10 +24,12 @@
 #include "util/u_debug.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <memory>
+#include <string>
 
 DEBUG_GET_ONCE_BOOL_OPTION(pico4_ctrack, "PICO4_CTRACK", true)
 //! Directory to save the LED images of the 300th frame set as PGM (diagnostics).
@@ -71,6 +73,7 @@ struct pico4_ctrack
 	std::unique_ptr<Runner> runner;
 	uint64_t pushed; //!< frame sets, for the status line every 10 s
 	FILE *trace;      //!< PICO4_CTRACK_TRACE, written on the tracker's thread only
+	std::string dir;  //!< the calibration directory (bias tables in pvr/)
 };
 
 namespace {
@@ -161,7 +164,7 @@ pico4_ctrack_create(const char *calibration_dir, pico4_ctrack_head_fn head, void
 		U_LOG_IFL_E(log_level, "Controller tracking off: %s", error.c_str());
 		return nullptr;
 	}
-	auto *t = new pico4_ctrack{log_level, head, user, lever, nullptr, 0, nullptr};
+	auto *t = new pico4_ctrack{log_level, head, user, lever, nullptr, 0, nullptr, dir};
 	const char *trace = debug_get_option_pico4_ctrack_trace();
 	if (trace != nullptr && (t->trace = fopen(trace, "w")) != nullptr) {
 		fputs("now_ns,frame_ns,hand,head_x,head_y,head_z,head_qw,head_qx,head_qy,head_qz,has_body,tracked_before,"
@@ -263,6 +266,45 @@ pico4_ctrack_get_aim(struct pico4_ctrack *t, int device, int64_t at_ns, struct x
 	    XRT_SPACE_RELATION_ORIENTATION_TRACKED_BIT | XRT_SPACE_RELATION_LINEAR_VELOCITY_VALID_BIT |
 	    XRT_SPACE_RELATION_ANGULAR_VELOCITY_VALID_BIT | (o.is_3dof ? 0 : XRT_SPACE_RELATION_POSITION_TRACKED_BIT));
 	return true;
+}
+
+extern "C" void
+pico4_ctrack_set_unit(struct pico4_ctrack *t, int device, const uint8_t (*chunks)[32], const char *serial)
+{
+	if (t == nullptr || (device != PICO4_BLEMCU_LEFT && device != PICO4_BLEMCU_RIGHT)) {
+		return;
+	}
+	const char *name = device == PICO4_BLEMCU_LEFT ? "left" : "right";
+	UnitCalibration unit;
+	std::string error, applied;
+	if (chunks == nullptr) {
+		U_LOG_IFL_W(t->log_level, "Controller %s: no calibration record from the station", name);
+	} else if (!parse_station_calibration(chunks, unit, error)) {
+		U_LOG_IFL_W(t->log_level, "Controller %s: %s", name, error.c_str());
+	} else {
+		applied = "IMU calibration and LED positions from the station";
+	}
+
+	// The serial names PICO OS's file; it never appears in the log.
+	std::string sn = serial != nullptr ? serial : "";
+	bool plain = !sn.empty() && sn.size() <= 32 &&
+	             std::all_of(sn.begin(), sn.end(), [](char c) { return std::isalnum((unsigned char)c) != 0; });
+	if (!plain) {
+		U_LOG_IFL_W(t->log_level, "Controller %s: no serial, no gyro bias table", name);
+	} else if (!load_bias_table(t->dir + "/pvr/" + sn + ".txt", unit.bias, error)) {
+		U_LOG_IFL_W(t->log_level, "Controller %s: no gyro bias table for its serial", name);
+	} else {
+		unit.bias_valid = true;
+		int bins = 0;
+		for (const Vec3 &b : unit.bias) {
+			bins += !b.isZero() && b.norm() <= 0.15;
+		}
+		applied += std::string(applied.empty() ? "" : ", ") + "gyro bias table (" + std::to_string(bins) + " bins)";
+	}
+	if (!applied.empty()) {
+		U_LOG_IFL_I(t->log_level, "Controller %s: %s", name, applied.c_str());
+	}
+	t->runner->set_unit(device == PICO4_BLEMCU_LEFT ? kLeft : kRight, unit);
 }
 
 extern "C" void
