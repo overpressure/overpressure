@@ -4,7 +4,8 @@ Stage 1 is a standard Android boot image for the original PICO 4 (A8110, *phoeni
 PICO kernel (`4.19.81-perf+`) and device trees byte for byte, with the ramdisk replaced by
 Alpine Linux 3.24 (aarch64) and the project's init from [initramfs/](../initramfs/). Over the
 USB-C cable it offers a network link with SSH, telnet and a status web page, and a read-only USB
-drive with the boot logs. Every disk and partition of the headset is read-only while it runs.
+drive with the boot logs. Every disk and partition of the headset is read-only while it runs,
+except what the installed system's tools write on purpose ([install.md](install.md)).
 Stage 1 runs on the tested headset (original PICO 4, PICO OS 5.13.7), returns to fastboot by
 itself when no PC uses it, and hands PID 1 over to the SteamOS-compatible userspace of stage 2
 ([userspace.md](userspace.md)).
@@ -377,6 +378,8 @@ Options for the test harnesses:
 | --- | --- |
 | `pico4poc.selftest=1` | the QEMU self-test ([QEMU self-test](#qemu-self-test)); with `pico4poc.selftest_hostdelay=N` the PC side stays silent for N s, with `pico4poc.selftest_poweroff=0` the VM stays on afterwards. The hardware runner refuses images with `selftest` |
 | `pico4poc.userspace_payload=PART:BYTES:SHA256`, `pico4poc.userspace_selftest=1` | the QEMU userspace test: stage 1 receives the archive from a partition and switches to it ([userspace.md](userspace.md)) |
+| `pico4poc.root=installed` (with `pico4poc.autoreboot=0`) | the install boot image: mount the installed system from `super` and `userdata` and switch to it; on failure, reboot into recovery ([install.md](install.md)) |
+| `pico4poc.part=recovery` | the dev image written to `recovery` (the maintenance stage 1), so the dev loop can tell which partition started it |
 | `pico4poc.test_run=ID` | set by the hardware runner in its per-run image |
 
 Do not add a bare `earlycon` (without a value). According to PICO's published kernel source
@@ -393,6 +396,8 @@ anything is logged.
 | `pico4-mount-ro PART [DIR]` | mount a stock partition read-only, by default on `/mnt/PART`: ext4 with `noload` (no journal replay), f2fs with `norecovery`, vfat. The dynamic partitions inside `super` are not handled |
 | `pico4-reboot [bootloader\|recovery\|poweroff]` | reboot into a mode; without argument, a normal reboot. `-r STRING` passes any other reboot reason; unknown words are refused. Aliases: `fastboot-mode`, `android` |
 | `pico4-userspace receive\|switch\|status` | stage-2 handoff: unpack the userspace archive from stdin into an ext4 file system on `/dev/zram0` and check that its systemd runs on this kernel, then hand PID 1 to it ([userspace.md](userspace.md)) |
+| `pico4-userspace installed` | the installed system instead: `super` read-only as the new root, `userdata` at `/data` with `/etc`, `/var`, `/home` and `/root` on it ([install.md](install.md)) |
+| `pico4-install write\|format-data\|wipe\|bootmode\|status` | the installer of the maintenance stage 1: the only writer of `boot`, `super`, `userdata`, `metadata` and `misc`'s bootloader message, each against the backup's size and read back ([install.md](install.md)) |
 | `drm_info`, `modetest`, `evtest`, `i2cdetect`, `gpioinfo`, `tinymix`, `lsusb`, `lspci`, `lsblk`, `dtc`, `dmsetup`, `strace`, `htop` | exploration tools |
 
 `pico4-probe` reads procfs, sysfs and device-tree data only. It skips debugfs GPIO and clock

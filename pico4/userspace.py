@@ -141,7 +141,10 @@ def validate_check(value, require_vulkan: bool = False, require_fan: bool = Fals
     if dev.get("fstype") != "tmpfs" or dev.get("missing_nodes") or not dev.get("udev_devices"):
         raise ValueError("/dev is incomplete")
     storage = value.get("storage") or {}
-    if storage.get("writable_block_devices") or not str(storage.get("root", "")).startswith("/dev/zram"):
+    # The installed system's root is super, read-only; the check verified it and lists every
+    # writable partition except userdata, the data partition.
+    if storage.get("writable_block_devices") or not (
+            str(storage.get("root", "")).startswith("/dev/zram") or storage.get("installed") is True):
         raise ValueError("Storage policy violated: physical block devices must stay read-only")
     link = (value.get("usb_link") or {}).get("status", "absent")
     if link not in ("unchanged", "absent"):

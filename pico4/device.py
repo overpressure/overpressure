@@ -180,6 +180,17 @@ def validate_native_dump(folder: Path, luns: list[int], include_userdata: bool) 
                 raise ValueError(f"Incomplete dump for LUN {lun}: {name}")
 
 
+def partition_size(backup: Path, label: str) -> int:
+    """A partition's size from the backup's rawprogram maps (also for userdata, which a backup
+    need not contain): exactly one partition of that name across all LUNs."""
+    sizes = [int(row.attrib["num_partition_sectors"]) * int(row.attrib["SECTOR_SIZE_IN_BYTES"])
+             for xml in sorted(backup.glob("lun*/rawprogram*.xml"))
+             for row in ET.parse(xml).getroot().findall("program") if row.get("label") == label]
+    if len(sizes) != 1 or sizes[0] <= 0:
+        raise ValueError(f"the backup's partition maps hold {len(sizes)} partitions named {label}")
+    return sizes[0]
+
+
 def confirm(args, identity: dict) -> None:
     if args.execute and args.confirm_device != identity["serial"]:
         raise ValueError("Execution requires --confirm-device matching the saved ADB serial")

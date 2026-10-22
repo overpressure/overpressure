@@ -142,14 +142,18 @@ class Headset:
                   "--confirm-device", self.s.adb_serial], 900, log=self.folder / "stage-abl.log")
         print(f"   PICO OS with engineering ABL: {self.reset_to_pico_os('reset-stage')}", flush=True)
 
-    def stock_boot(self) -> tuple:
-        """The stock boot image of the backup and its manifest entry."""
+    def stock_partition(self, name: str) -> tuple:
+        """A partition's image in the backup and its manifest entry."""
         backup = self.s.path("backup")
         manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
-        names = [n for n in manifest["files"] if Path(n).stem == "boot" and Path(n).suffix in (".bin", ".img")]
+        names = [n for n in manifest["files"] if Path(n).stem == name and Path(n).suffix in (".bin", ".img")]
         if len(names) != 1:
-            raise ValueError("the backup must hold exactly one boot partition image")
+            raise ValueError(f"the backup must hold exactly one {name} partition image")
         return backup / names[0], manifest["files"][names[0]]
+
+    def stock_boot(self) -> tuple:
+        """The stock boot image of the backup and its manifest entry."""
+        return self.stock_partition("boot")
 
 
 class Cycle(Headset):

@@ -1,0 +1,159 @@
+#!/bin/sh
+# Install the Linux system on the headset, from the maintenance stage 1 in recovery
+# (docs/stage1.md#installed-system). The only partitions it writes:
+#
+#   pico4-install write boot|super --size BYTES --bytes N --sha256 HEX [--zstd] < IMAGE
+#       write an image to the start of boot (the installed boot image) or super (the system
+#       image). The partition must be BYTES large (the PC passes the backup's size), the image
+#       at most that; the stream's SHA-256 must match, and the written bytes are read back.
+#   pico4-install format-data --size BYTES
+#       a new ext4 file system "pico4-data" on userdata (BYTES as the backup has it)
+#   pico4-install wipe userdata|metadata --size BYTES
+#       zero the first 64 MiB, the way back to PICO OS: both are "formattable" in its fstab,
+#       so it makes new file systems (and encryption keys) on its next boot
+#   pico4-install bootmode recovery|normal
+#       the bootloader message in misc: "boot-recovery" keeps every boot in this maintenance
+#       stage 1, as the ABL's "fastboot reboot recovery" sets it; "normal" clears it (all zero,
+#       as the backup's misc), so the next boot starts boot's image
+#   pico4-install status
+#
+# Each partition is made writable for its write only and read-only again afterwards.
+. /usr/libexec/pico4-poc/lib.sh
+set -o pipefail
+
+STATE=$POC_RUN/install
+BCB_BYTES=2048 # Android's struct bootloader_message
+die() { log "install: $*"; echo "pico4-install: $*" >&2; exit 1; }
+
+# The block device of a partition, checked against the size the PC expects.
+partition() {
+	local name=$1 size=$2 dev
+	dev=$(readlink -f "/dev/block/by-name/$name" 2>/dev/null)
+	[ -b "$dev" ] || die "no partition $name"
+	[ "$(blockdev --getsize64 "$dev")" = "$size" ] || die "$name is not $size bytes"
+	echo "$dev"
+}
+
+writable() { blockdev --setrw "$1" || die "could not make $1 writable"; }
+readonly_again() { blockdev --setro "$1" || log "install: could not set $1 read-only"; }
+
+write() {
+	local name=$1 size="" bytes="" sha="" zstd=0 dev got back
+	shift
+	case "$name" in boot | super) ;; *) die "write refuses $name (boot or super only)" ;; esac
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--size) size=$2; shift ;;
+		--bytes) bytes=$2; shift ;;
+		--sha256) sha=$2; shift ;;
+		--zstd) zstd=1 ;;
+		*) die "unknown option $1" ;;
+		esac
+		shift
+	done
+	[ -n "$size" ] && [ -n "$bytes" ] && [ ${#sha} = 64 ] || die "write needs --size, --bytes and --sha256"
+	[ "$bytes" -gt 0 ] && [ "$bytes" -le "$size" ] || die "the image ($bytes bytes) does not fit $name"
+	dev=$(partition "$name" "$size")
+	mkdir -p "$STATE"
+	rm -f "$STATE/fifo" "$STATE/sha256"
+	mkfifo "$STATE/fifo"
+	sha256sum < "$STATE/fifo" | cut -d' ' -f1 > "$STATE/sha256" &
+	local hasher=$!
+	writable "$dev"
+	log "install: writing $bytes bytes to $name ($dev)"
+	if [ $zstd = 1 ]; then zstd -dc; else cat; fi | head -c "$bytes" | tee "$STATE/fifo" |
+		dd of="$dev" bs=4M conv=fsync 2> "$STATE/dd.log"
+	local rc=$?
+	wait "$hasher"
+	sync
+	readonly_again "$dev"
+	got=$(cat "$STATE/sha256")
+	rm -f "$STATE/fifo"
+	[ $rc = 0 ] || die "writing $name failed ($(tail -n 2 "$STATE/dd.log" | tr '\n' ' '))"
+	[ "$got" = "$sha" ] || die "the stream's sha256 $got does not match $sha ($name now holds it)"
+	echo 3 > /proc/sys/vm/drop_caches
+	back=$(head -c "$bytes" "$dev" | sha256sum | cut -d' ' -f1)
+	[ "$back" = "$sha" ] || die "readback of $name differs: $back"
+	log "install: $name holds $sha"
+	echo "written $name $sha"
+}
+
+format_data() {
+	local size="" dev
+	[ "$1" = --size ] && size=$2
+	[ -n "$size" ] || die "format-data needs --size"
+	dev=$(partition userdata "$size")
+	command -v mkfs.ext4 >/dev/null || die "mkfs.ext4 missing from this image"
+	writable "$dev"
+	log "install: formatting userdata ($dev) as pico4-data"
+	# e2fsprogs >= 1.47 enables features this 4.19 kernel cannot mount.
+	mkfs.ext4 -q -F -L pico4-data -O ^orphan_file,^metadata_csum_seed "$dev"
+	local rc=$?
+	sync
+	readonly_again "$dev"
+	[ $rc = 0 ] || die "mkfs.ext4 failed"
+	[ "$(ext_label "$dev")" = pico4-data ] || die "userdata has no pico4-data file system after formatting"
+	echo "formatted userdata"
+}
+
+wipe() {
+	local name=$1 size="" dev mib=64
+	case "$name" in userdata | metadata) ;; *) die "wipe refuses $name (userdata or metadata only)" ;; esac
+	[ "$2" = --size ] && size=$3
+	[ -n "$size" ] || die "wipe needs --size"
+	dev=$(partition "$name" "$size")
+	[ "$size" -ge $((mib << 20)) ] || mib=$((size >> 20))
+	writable "$dev"
+	dd if=/dev/zero of="$dev" bs=1M count="$mib" conv=fsync 2>/dev/null
+	local rc=$?
+	sync
+	readonly_again "$dev"
+	[ $rc = 0 ] || die "wiping $name failed"
+	echo 3 > /proc/sys/vm/drop_caches
+	[ "$(head -c $((mib << 20)) "$dev" | tr -d '\000' | head -c 1 | wc -c)" = 0 ] || die "readback of $name is not zero"
+	log "install: wiped the first $mib MiB of $name"
+	echo "wiped $name"
+}
+
+bootmode() {
+	local dev want got
+	dev=$(readlink -f /dev/block/by-name/misc 2>/dev/null)
+	[ -b "$dev" ] || die "no misc partition"
+	mkdir -p "$STATE"
+	case "$1" in
+	recovery) { printf 'boot-recovery'; head -c $((BCB_BYTES - 13)) /dev/zero; } > "$STATE/bcb" ;;
+	normal) head -c $BCB_BYTES /dev/zero > "$STATE/bcb" ;;
+	*) die "bootmode recovery|normal" ;;
+	esac
+	want=$(sha256sum < "$STATE/bcb" | cut -d' ' -f1)
+	writable "$dev"
+	dd if="$STATE/bcb" of="$dev" bs=$BCB_BYTES count=1 conv=fsync,notrunc 2>/dev/null
+	local rc=$?
+	sync
+	readonly_again "$dev"
+	[ $rc = 0 ] || die "writing misc failed"
+	echo 3 > /proc/sys/vm/drop_caches
+	got=$(head -c $BCB_BYTES "$dev" | sha256sum | cut -d' ' -f1)
+	[ "$got" = "$want" ] || die "readback of misc differs"
+	log "install: boot mode $1"
+	echo "bootmode $1"
+}
+
+status() {
+	local cmd label
+	cmd=$(head -c 32 /dev/block/by-name/misc 2>/dev/null | tr -d '\000')
+	echo "bootmode: ${cmd:-normal}"
+	label=$(ext_label /dev/block/by-name/super 2>/dev/null)
+	echo "system: ${label:-none}"
+	label=$(ext_label /dev/block/by-name/userdata 2>/dev/null)
+	echo "data: ${label:-none}"
+}
+
+case "${1:-}" in
+write) shift; write "$@" ;;
+format-data) shift; format_data "$@" ;;
+wipe) shift; wipe "$@" ;;
+bootmode) bootmode "$2" ;;
+status) status ;;
+*) sed -n '2,23s/^# \{0,1\}//p' "$0"; exit 2 ;;
+esac

@@ -172,6 +172,12 @@ A changed stage-1 image is built with `python -m pico4 build` and written with
 separate step, for when PICO OS is needed
 ([hardware-testing.md](hardware-testing.md#back-to-stock)).
 
+With the system installed ([install.md](install.md)), the dev image lives in `recovery` as the
+maintenance stage 1: `python -m pico4 dev recovery` enters it (and it stays until `dev normal`),
+where `dev boot`, `dev reboot` and `dev check` work as above. A new system image goes in with
+`scripts/build-system-image.sh` (as root) and `python -m pico4 dev install`, which starts the
+installed system; `python -m pico4 dev installed` reconnects to it after a reboot.
+
 ## Windows host and WSL
 
 - `wsl -u root -- bash -c '... $VAR ...'` expands `$VAR` before bash runs, even inside single

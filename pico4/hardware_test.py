@@ -52,16 +52,25 @@ def validate_storage(output: str) -> None:
     require(all(r[2] == "1" for r in physical), "Storage protection failed: writable disk or partition")
 
 
-def validate_mounts(output: str) -> None:
+def validate_mounts(output: str, installed: bool = False) -> None:
     rows = [row.split() for row in output.splitlines()]
     require(rows and all(len(r) == 6 for r in rows), "Invalid mount inventory")
     roots = [r for r in rows if r[1] == "/"]
+    writable = [r for r in rows if r[0].startswith("/dev/") and not r[0].startswith("/dev/zram")
+                and "rw" in r[3].split(",")]
+    if installed:
+        # The installed system: its image read-only; writable only the data partition, the device
+        # at /data, wherever it is bound (/var, /home, SteamOS's offload binds of /srv, /var/log...).
+        require(roots and all(r[0].startswith("/dev/") and "ro" in r[3].split(",") for r in roots),
+                "The installed system's root is not mounted read-only")
+        data = {r[0] for r in writable if r[1] == "/data"}
+        require(len(data) == 1 and {r[0] for r in writable} == data,
+                "A device-backed filesystem other than the data partition is mounted writable")
+        return
     # The step-4 userspace runs from ext4 on zram: compressed RAM, not storage.
     require(roots and all(r[2] in ("rootfs", "tmpfs", "ramfs") or r[0].startswith("/dev/zram")
                           for r in roots), "Root filesystem is not RAM-backed")
-    for row in rows:
-        if row[0].startswith("/dev/") and not row[0].startswith("/dev/zram"):
-            require("rw" not in row[3].split(","), "A device-backed filesystem is mounted writable")
+    require(not writable, "A device-backed filesystem is mounted writable")
 
 
 def validate_report(data: bytes, run_id: str) -> None:
@@ -407,7 +416,7 @@ class Runner:
         validate_storage(storage)
         mounts = self.ssh("cat /proc/mounts")
         (self.folder / f"mounts{suffix}.txt").write_text(mounts + "\n", encoding="utf-8")
-        validate_mounts(mounts)
+        validate_mounts(mounts, getattr(self, "installed", False))
         if self.flash_mode:
             size = (self.folder / "test-boot.img").stat().st_size
             output = self.ssh(f"head -c {size} /dev/block/by-name/boot | sha256sum")
@@ -514,6 +523,7 @@ class Runner:
 
     def userspace_checks(self, state):
         """Everything checked in a running stage 2, in the order each feature builds on the last."""
+        self.installed = bool(state.get("installed"))
         output = self.ssh("pico4-userspace-check --wait 240; echo EXIT=$?", 300)
         report, _, code = output.rpartition("EXIT=")
         (self.folder / "userspace-check.json").write_text(report.strip() + "\n", encoding="utf-8")

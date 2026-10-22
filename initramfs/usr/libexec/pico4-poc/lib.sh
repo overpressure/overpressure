@@ -106,3 +106,10 @@ wait_for() {
 		i=$((i + 1))
 	done
 }
+
+# ext_label DEVICE: the volume name of an ext2/3/4 file system, from its superblock (this
+# image has no e2label); fails without one. Magic 0xEF53 at 1080, the name at 1144 (16 bytes).
+ext_label() {
+	[ "$(dd if="$1" bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')" = 53ef ] || return 1
+	dd if="$1" bs=1 skip=1144 count=16 2>/dev/null | tr -d '\000'
+}

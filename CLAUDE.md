@@ -18,6 +18,10 @@ section lists what comes next. Each step has its own document:
 | 5 XR hardware: IMU, Monado driver and KMS display, lenses and IPD, cameras, controllers (3DoF), Basalt 6DoF | verified with stock restore; controller positions open | [docs/xr.md](docs/xr.md) |
 | 6 Valve's VR session: gamescope + SteamVR with `driver_monado`, `pico4-vrdisplay`, shared GPU and System V semaphores | verified with stock restore; 90 fps on the Frame's compositor path; Steam client, performance and cooling open | [docs/session.md](docs/session.md) |
 
+Installed system: the system image read-only in `super`, data in `userdata`, the maintenance
+stage 1 in `recovery`, following PICO OS's layout; installed, starts without the PC, persistent
+across reboots and updates; the way back is open ([docs/install.md](docs/install.md)).
+Powering off with the USB cable attached restarts the headset; a short power press powers off.
 Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; on the headset the
 MCU acknowledges, and longer sessions and tuning are open ([docs/cooling.md](docs/cooling.md)).
 Build system, tests and the Windows/WSL environment: [docs/development.md](docs/development.md).
@@ -61,7 +65,8 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
   `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`),
   `userspace.py` and `graphics.py` (validators), `elfdeps.py` (ELF dependency check),
-  `windows_ncm.py`, and the boot-image, cpio, Alpine (`apksign.py`: APKINDEX signatures), OTA and kernel helpers.
+  `windows_ncm.py`, `avb.py` (AVB footers), `sparse.py` (fastboot sparse images), and the boot-image, cpio,
+  Alpine (`apksign.py`: APKINDEX signatures), OTA and kernel helpers.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
   the f_mass_storage kernel thread and with it the USB link. `pico4-userspace receive/switch`
   hands over to stage 2.
@@ -72,7 +77,7 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
 - `src/`: the project's C sources (`graphics/`, `monado/` driver and KMS target, `xr/` OpenXR
   clients, `vrdisplay/`, `sysvsem/`, `reboot/`). Recipes list them as `SKIP`; the build copies
   them in.
-- `scripts/`: `build-userspace.sh`, `build-graphics.sh`, `extract-sensor-data.sh`, boot and
+- `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-graphics.sh`, `extract-sensor-data.sh`, boot and
   preflight helpers. `tests/`: unittest suites, `test_recovery_policy.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`.
 - Private and generated, ignored: `backup/` (identity `backup/device.json`, EDL backups),
   `assets/`, `cache/`, `out/` (`out/dev/` for the dev loop, `out/cycle-*/` evidence), `.env`.
@@ -91,6 +96,10 @@ scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
 # The headset, which stays in development mode (settings from .env); the integration test:
 python -m pico4 dev boot && python -m pico4 dev check    # iterate on the flashed dev image
 python -m pico4 dev reboot                               # next attempt; also from fastboot
+# The installed system (docs/install.md): image as root, then from the maintenance stage 1:
+scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
+python -m pico4 dev recovery && python -m pico4 dev install   # boot, super, data; starts it
+python -m pico4 dev installed && python -m pico4 dev check    # reconnect after a reboot; check
 # Back to stock only when the user asks: python -m pico4 dev restore, then
 python -m pico4 cycle --restore-only                     # verified stock boot and ABL, PICO OS
 ```
@@ -119,9 +128,13 @@ python -m pico4 cycle --restore-only                     # verified stock boot a
     `CONFIG_RT_GROUP_SCHED` on cgroup v2 refuses `SCHED_FIFO` otherwise, even to root. The
     drop-ins in `userspace/rootfs/etc/systemd` keep it off; units added later must not set
     `CPUWeight`/`CPUQuota` or delegate `cpu`.
-- **Storage stays read-only.** Every physical block device is switched read-only in both
-  stages. Nothing may write to the eMMC/UFS partitions except the explicit,
-  backup-validated flash and restore paths.
+- **Storage stays read-only, except the installed system's data.** Every physical block device
+  is switched read-only in both stages; only the installed system's data partition (userdata,
+  ext4 `pico4-data`) is mounted writable. Partitions are written only through the explicit,
+  backup-validated paths: `dev flash` (boot, recovery), `pico4-install` in the maintenance
+  stage 1 (boot, super, formatting userdata, wiping userdata and metadata, misc's bootloader
+  message), `dev restore`/`dev restore-partition` and the EDL tools. `recovery` and `misc`
+  must never be written by anything else: the ABL checks recovery's AVB chain on every boot.
 - **Hardware actions need a recoverable path.** Boot flashing goes through
   `python -m pico4 hwtest flash-run`, `python -m pico4 cycle`, `python -m pico4 dev flash` or the
   documented fastboot sequence. Check every write against the backup hash and verify it by
@@ -143,10 +156,17 @@ The user wants no unnecessary flashes, reboots or waits, and no re-running of ch
 passed.
 
 - **Development mode.** The headset stays in development mode between tasks and
-  conversations: the engineering ABL in `abl` and the dev image in `boot`, so every boot starts
-  stage 1. Tasks do not restore stock boot, stock ABL or PICO OS, and do not run the cycle to
-  prove the restoration. `hwtest flash-run` and `cycle` leave stock boot in `boot`, so they end
-  development mode.
+  conversations: the engineering ABL in `abl`, the dev image as the maintenance stage 1 in
+  `recovery`, and the installed system (install boot image in `boot`, system in `super`, data
+  in `userdata`). `dev recovery` keeps every boot in the maintenance stage 1 until `dev normal`
+  (misc's bootloader message). Tasks do not restore stock boot, stock ABL or PICO OS, and do not
+  run the cycle to prove the restoration. `hwtest flash-run` and `cycle` leave stock boot in
+  `boot`, so they end development mode; with the system installed they cannot start PICO OS
+  (its system is gone): use `dev restore` first.
+- **Recovery and AVB.** `recovery` is a chained AVB partition that the ABL checks on every boot:
+  write it only as the whole-partition image `dev image` builds (stock vbmeta kept), never a
+  plain boot image, or every boot ends in fastboot. Large raw fastboot downloads crash the ABL;
+  `dev flash`/`dev restore-partition` send big images sparse.
 - **Entering development mode** (from PICO OS): `dev stage-abl`, `dev image`, `dev flash`,
   `dev connect`. It runs unattended: `adb reboot edl` works from PICO OS, and EDL needs no
   buttons. `.env` holds the headset's serials and the paths of its backup, loader and
@@ -156,9 +176,10 @@ passed.
   boot also needs the per-session `fastboot oem <token> unlock` authorization, which the tools
   derive from the identity.
 - **Iterate in stage 2.** Repeat `dev reboot`, `dev boot [ARCHIVE] [--push LOCAL=REMOTE]`,
-  `dev check`, `dev ssh CMD`; no flash or restore between attempts or tasks. Only a changed
-  stage-1 image needs `dev image` and `dev flash` again. `dev check` runs the acceptance
-  runner's stage-2 checks.
+  `dev check`, `dev ssh CMD` in the maintenance stage 1 (`dev recovery`); no flash or restore
+  between attempts or tasks. A changed stage-1 image needs `dev image`, `dev flash recovery` and
+  (for the installed boot) `dev install` again. `dev check` runs the acceptance runner's
+  stage-2 checks, also on the installed system after `dev installed`.
 - **Deadlines.** Device-side deadlines return the headset to fastboot; `dev reboot` starts
   stage 1 from there without a flash. The dev image's maximum runtime (an hour) counts from the
   last `python -m pico4 dev` command, which renews it; plain `ssh` does not. A kernel panic reboots rather than parking in crash-dump
@@ -177,7 +198,8 @@ passed.
   PICO OS back. If PICO OS does not appear, ask the user to look at the headset rather than
   retrying anything.
 - **Windows NCM.** The Windows NCM link needs `pico4/windows_ncm.py` (UsbDk) after each stage-1
-  boot (`dev connect` and the runner do it). Do not re-initialize NCM in stage 2.
+  boot (`dev connect`, `dev installed` and the runner do it). Re-initializing a working link in
+  stage 2 disturbs it; `dev installed` repeats it at most once a minute while SSH times out.
 - Binary files from the device: use `ssh` directly; `dev ssh` decodes output as text.
 
 ## Environment quirks (Windows host + WSL)

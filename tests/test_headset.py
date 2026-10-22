@@ -278,6 +278,131 @@ class DevTests(HeadsetFixture):
                 dev.flash()
             self.assertNotIn("flash-boot", self.steps())
 
+    def test_recovery_gets_the_same_checks_and_is_started(self):
+        backup = Path(self.settings.backup)
+        (backup / "lun0").mkdir()
+        recovery = b"stock recovery partition"
+        (backup / "lun0/recovery.bin").write_bytes(recovery)
+        manifest = json.loads((backup / "manifest.json").read_text())
+        manifest["files"]["lun0/recovery.bin"] = {"size": len(recovery), "sha256": hashlib.sha256(recovery).hexdigest()}
+        (backup / "manifest.json").write_text(json.dumps(manifest))
+        self.partitions = [("boot", len(self.boot)), ("recovery", len(recovery))]
+        image = self.root / "dev/dev-recovery.img"
+        image.parent.mkdir(exist_ok=True)
+        image.write_bytes(b"dev image")
+        self.make().flash("recovery")
+        flash = self.calls.index(["fastboot", "-s", "FB1", "flash", "recovery", str(image)])
+        self.assertIn("unlock", self.texts()[flash - 1])
+        self.assertEqual(self.calls[flash + 1], ["fastboot", "-s", "FB1", "reboot", "recovery"])
+        # The backup's size counts, not the boot partition's.
+        self.calls.clear()
+        self.partitions = [("boot", len(self.boot)), ("recovery", 4096)]
+        with self.assertRaisesRegex(RuntimeError, "recovery partition"):
+            self.make().flash("recovery")
+        self.assertFalse(any(" flash recovery " in t for t in self.texts()))
+        # Any other partition is refused before fastboot is asked anything.
+        with self.assertRaisesRegex(ValueError, "not a boot image partition"):
+            self.make().check_boot_partition(image, "super")
+
+    def test_connect_reads_back_the_partition_that_started(self):
+        dev = self.make({"cat /etc/pico4-poc/test-run": "dev-loop\n1234567", "cat /proc/cmdline":
+                         "console=x pico4poc.part=recovery", "sha256sum": "e" * 64 + "  -"})
+        (self.root / "dev/dev-recovery.img").write_bytes(b"dev image")
+        (self.root / "dev/dev-image.json").write_text(json.dumps({"boot_sha256": "f" * 64, "recovery_sha256": "e" * 64}))
+        dev.connect()
+        self.assertTrue(any("/dev/block/by-name/recovery | sha256sum" in t for t in self.texts()))
+        self.assertFalse(any("/dev/block/by-name/boot | sha256sum" in t for t in self.texts()))
+
+    def install_setup(self, cmdline="console=x pico4poc.part=recovery", data="none", held=None):
+        backup = Path(self.settings.backup)
+        (backup / "lun0").mkdir(exist_ok=True)
+        rows = "".join(f'<program label="{n}" num_partition_sectors="{s}" SECTOR_SIZE_IN_BYTES="4096" '
+                       f'physical_partition_number="0" filename="{n}.bin"/>'
+                       for n, s in (("boot", 24576), ("super", 2097152), ("userdata", 27804115)))
+        (backup / "lun0/rawprogram0.xml").write_text(f"<data>{rows}</data>")
+        dev_dir = self.root / "dev"
+        dev_dir.mkdir(exist_ok=True)
+        (dev_dir / "install-boot.img").write_bytes(b"install boot")
+        system = self.root / "pico4-system.img"
+        system.write_bytes(b"system image")
+        boot_sha = hashlib.sha256(b"install boot").hexdigest()
+        system_sha = hashlib.sha256(b"system image").hexdigest()
+        responses = {f"by-name/{name} | sha256sum": f"{sha}  -" for name, sha in
+                     (("boot", boot_sha), ("super", system_sha)) if name in (held or ())}
+        dev = self.make({**responses, "cat /etc/pico4-poc/test-run": "dev-loop\n1234567", "cat /proc/cmdline": cmdline,
+                         "pico4-install write boot": f"written boot {boot_sha}",
+                         "pico4-install write super": f"written super {system_sha}",
+                         "pico4-install status": f"bootmode: boot-recovery\nsystem: pico4-system\ndata: {data}",
+                         "pico4-install format-data": "formatted userdata",
+                         "pico4-install bootmode normal": "bootmode normal",
+                         "cat /proc/1/comm /etc/pico4-poc/install-id": "systemd\ndev-loop\n1234567"})
+        return dev, system
+
+    def test_install_writes_boot_and_super_formats_new_data_and_starts_it(self):
+        dev, system = self.install_setup()
+        dev.install(system)
+        steps = [t for t in self.texts() if "pico4-install" in t or t.endswith("pico4-reboot")]
+        self.assertEqual([s.split("; ")[-1].split(" --")[0] for s in steps],
+                         ["pico4-install write boot", "pico4-install write super", "pico4-install status",
+                          "pico4-install format-data", "pico4-install bootmode normal", "pico4-reboot"])
+        # Sizes from the backup's partition maps, not from the headset.
+        self.assertIn("--size 100663296 --bytes 12 ", steps[0])
+        self.assertIn(f"--size {2097152 * 4096} ", steps[1])
+        self.assertIn(f"--size {27804115 * 4096}", steps[3])
+
+    def test_install_skips_a_partition_that_holds_its_image(self):
+        dev, system = self.install_setup(data="pico4-data", held=("super",))
+        dev.install(system)
+        self.assertTrue(any("pico4-install write boot" in t for t in self.texts()))
+        self.assertFalse(any("pico4-install write super" in t for t in self.texts()))
+
+    def test_install_keeps_existing_data(self):
+        dev, system = self.install_setup(data="pico4-data")
+        dev.install(system)
+        self.assertFalse(any("format-data" in t for t in self.texts()))
+
+    def test_install_runs_only_from_the_maintenance_stage_1(self):
+        dev, system = self.install_setup(cmdline="console=x")
+        with self.assertRaisesRegex(RuntimeError, "maintenance stage 1"):
+            dev.install(system)
+        self.assertFalse(any("pico4-install" in t for t in self.texts()))
+
+    def test_restore_after_an_install_brings_back_system_boot_recovery_and_fresh_data(self):
+        backup = Path(self.settings.backup)
+        dev, _ = self.install_setup()
+        manifest = json.loads((backup / "manifest.json").read_text())
+        for name in ("super", "recovery"):
+            data = f"stock {name}".encode().ljust(8192, b"\0")
+            (backup / f"lun0/{name}.bin").write_bytes(data)
+            manifest["files"][f"lun0/{name}.bin"] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        (backup / "manifest.json").write_text(json.dumps(manifest))
+        rows = (backup / "lun0/rawprogram0.xml").read_text().replace(
+            "</data>", '<program label="metadata" num_partition_sectors="4096" SECTOR_SIZE_IN_BYTES="4096" '
+                       'physical_partition_number="0" filename="metadata.bin"/>'
+                       '<program label="recovery" num_partition_sectors="2" SECTOR_SIZE_IN_BYTES="4096" '
+                       'physical_partition_number="0" filename="recovery.bin"/></data>')
+        (backup / "lun0/rawprogram0.xml").write_text(rows)
+        self.partitions = [("boot", len(self.boot)), ("recovery", 8192)]
+        shas = {n: hashlib.sha256(d).hexdigest() for n, d in
+                (("super", b"stock super".ljust(8192, b"\0")), ("boot", self.boot))}
+        dev = self.make({"cat /etc/pico4-poc/test-run": "dev-loop\n1234567",
+                         "cat /proc/cmdline": "console=x pico4poc.part=recovery",
+                         "pico4-install write super": f"written super {shas['super']}",
+                         "pico4-install write boot": f"written boot {shas['boot']}",
+                         "pico4-install wipe userdata": "wiped userdata",
+                         "pico4-install wipe metadata": "wiped metadata",
+                         "pico4-install bootmode normal": "bootmode normal"})
+        (self.root / "dev/installed.json").write_text("{}")
+        dev.restore()
+        steps = [t.split("; ")[-1].split(" --")[0] for t in self.texts()
+                 if "pico4-install" in t or " flash " in t]
+        self.assertEqual(steps[:5], ["pico4-install write super", "pico4-install write boot",
+                                     "pico4-install wipe userdata", "pico4-install wipe metadata",
+                                     "pico4-install bootmode normal"])
+        self.assertTrue(steps[5].endswith(" flash recovery " + str(self.root / "dev/restore-recovery.simg")))
+        self.assertIn(f"--size {4096 * 4096}", next(t for t in self.texts() if "wipe metadata" in t))
+        self.assertFalse((self.root / "dev/installed.json").exists())
+
     def test_connect_verifies_the_flashed_dev_image(self):
         dev = self.make({"cat /etc/pico4-poc/test-run": "dev-loop\n1234567", "sha256sum": "f" * 64 + "  -"})
         (self.root / "dev/dev-boot.img").write_bytes(b"dev image")

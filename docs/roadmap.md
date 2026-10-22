@@ -365,12 +365,17 @@ Details: [xr.md](xr.md).
 
 ### Standalone boot
 
-Every boot depends on the PC. Stage 1 runs from the dev image in the `boot` partition (the
-engineering ABL has no RAM boot); the 840 MB userspace archive arrives over USB into zram,
-which takes about 40 s; and test and development runs are bounded by device-side
-deadlines that return the headset to fastboot. A headset that boots into the session on its
-own needs the userspace stored on the headset and a boot path that keeps the read-only storage
-and stock-restoration guarantees. There is no design for this yet.
+The system can be installed ([install.md](install.md)), following PICO OS's layout: stage 1 in
+`boot` mounts the system image from `super` read-only and the data from `userdata`, without
+deadlines; the maintenance stage 1 in `recovery` keeps the development loop (USB boots into
+RAM) and does installs. Installed, the system starts without the PC and reaches `running`
+with no failed units, and data in `/home`, `/var`, `/etc` and `/root` survives reboots and
+system updates. Open:
+
+1. **The way back.** `dev restore` for an installed system (stock `super`, `boot`, `recovery`,
+   wiped data) is not yet verified on the headset.
+2. **Feedback and power.** The lenses stay dark while the system starts; a short press of the
+   power button powers off, and a power-off with the cable attached starts the headset again.
 
 ### Other hardware
 

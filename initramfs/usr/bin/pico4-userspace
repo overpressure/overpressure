@@ -7,6 +7,10 @@
 #       unpack the archive (scripts/build-userspace.sh) into an ext4 file
 #       system on /dev/zram0, mounted at /newroot, and check that its systemd
 #       runs on this kernel
+#   pico4-userspace installed
+#       the installed system instead: super read-only at /newroot, userdata
+#       (pico4-data) at /newroot/data, with /etc as an overlay and /var, /home
+#       and /root on the data (pico4-install)
 #   pico4-userspace switch
 #       carry over SSH identity, test-run state and USB network settings, then
 #       let pico4-init hand PID 1 to systemd (the SSH session is closed)
@@ -81,10 +85,64 @@ receive() {
 	echo "received $got"
 }
 
+#   The system image (super) is read-only and replaced whole by an update; the data partition
+# keeps what changes: /etc's changes (an overlay), /var, /home and /root. On the first boot, and
+# for /var/lib/pacman after each new system image, they start as the image has them.
+installed() {
+	local system data image dir
+	system=$(readlink -f /dev/block/by-name/super 2>/dev/null)
+	data=$(readlink -f /dev/block/by-name/userdata 2>/dev/null)
+	[ -b "$system" ] && [ -b "$data" ] || die "super or userdata missing"
+	grep -q " $NEW " /proc/mounts && die "$NEW is already mounted"
+	[ "$(ext_label "$system" 2>/dev/null)" = pico4-system ] || die "super holds no pico4-system image"
+	[ "$(ext_label "$data" 2>/dev/null)" = pico4-data ] || die "userdata holds no pico4-data file system"
+	mkdir -p "$STATE" "$NEW"
+	rm -f "$STATE"/*
+	mount -t ext4 -o ro,noatime "$system" "$NEW" || die "mounting the system image failed"
+	[ -d "$NEW/data" ] || die "the system image has no /data"
+	# The 4.19 kernel keeps a partition's read-only flag apart from its disk's.
+	blockdev --setrw "$data" || die "could not make userdata writable"
+	mount -t ext4 -o noatime "$data" "$NEW/data" || die "mounting the data partition failed"
+	image=$(cat "$NEW/usr/share/pico4-poc/system-image" 2>/dev/null)
+	if [ ! -e "$NEW/data/.pico4-initialized" ]; then
+		log "userspace: first boot of the installed system: data from the image"
+		for dir in var root home; do
+			mkdir -p "$NEW/data/$dir"
+			cp -a "$NEW/$dir/." "$NEW/data/$dir/" || die "copying /$dir"
+		done
+		mkdir -p "$NEW/data/etc/upper" "$NEW/data/etc/work"
+		touch "$NEW/data/.pico4-initialized"
+	elif [ "$(cat "$NEW/data/.pico4-system-image" 2>/dev/null)" != "$image" ]; then
+		# A new system image: its package database replaces the old one.
+		log "userspace: new system image: package database from the image"
+		rm -rf "$NEW/data/var/lib/pacman"
+		cp -a "$NEW/var/lib/pacman" "$NEW/data/var/lib/" || die "copying the package database"
+	fi
+	echo "$image" > "$NEW/data/.pico4-system-image"
+	mount -t overlay overlay -o "lowerdir=$NEW/etc,upperdir=$NEW/data/etc/upper,workdir=$NEW/data/etc/work" \
+		"$NEW/etc" || die "mounting the /etc overlay failed"
+	for dir in var root home; do
+		mount --bind "$NEW/data/$dir" "$NEW/$dir" || die "mounting /$dir"
+	done
+	[ -x "$NEW/usr/lib/systemd/systemd" ] || die "no systemd in the system image"
+	chroot "$NEW" /usr/lib/systemd/systemd --version > "$STATE/systemd-version" 2>&1 ||
+		die "the system's systemd does not run here: $(head -n 2 "$STATE/systemd-version")"
+	cp "$NEW/usr/share/pico4-poc/userspace-archive.sha256" "$STATE/archive.sha256" 2>/dev/null ||
+		echo "$image" > "$STATE/archive.sha256"
+	touch "$STATE/received"
+	log "userspace: installed system ${image:-unknown} mounted, data $(df -k "$NEW/data" | awk 'NR==2 {print int($3/1048576)}') of" \
+		"$(df -k "$NEW/data" | awk 'NR==2 {print int($2/1048576)}') GiB used, $(head -n 1 "$STATE/systemd-version")"
+	echo "installed $image"
+}
+
 # Convert the stage-1 dropbear host keys, so the hardware runner's pinned
 # known_hosts entry stays valid after the switch.
 host_keys() {
 	local k t
+	# An installed system keeps its own keys (in the /etc overlay) from its first boot on.
+	if grep -q " $NEW/data " /proc/mounts && [ -s "$NEW/etc/ssh/ssh_host_ed25519_key" ]; then
+		return 0
+	fi
 	mkdir -p "$NEW/etc/ssh"
 	for t in ed25519 ecdsa rsa; do
 		k=/etc/dropbear/dropbear_${t}_host_key
@@ -160,6 +218,7 @@ switch() {
 
 case "${1:-}" in
 receive) shift; receive "$@" ;;
+installed) installed ;;
 switch) switch ;;
 status)
 	for f in received ready archive.sha256; do
@@ -167,5 +226,5 @@ status)
 	done
 	grep " $NEW " /proc/mounts
 	;;
-*) sed -n '2,18s/^# \{0,1\}//p' "$0"; exit 2 ;;
+*) sed -n '2,22s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

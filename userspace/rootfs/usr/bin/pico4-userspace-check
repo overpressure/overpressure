@@ -79,8 +79,27 @@ writable=$(
 	done
 )
 root_src=$(findmnt -no SOURCE /)
-need "every physical block device read-only" [ -z "$writable" ]
-need "root filesystem in RAM (zram)" sh -c "case '$root_src' in /dev/zram*) exit 0;; esac; exit 1"
+# The partition of a GPT name (stage 2 has no /dev/block/by-name links).
+part_dev() {
+	local d
+	for d in /sys/class/block/*; do
+		grep -qx "PARTNAME=$1" "$d/uevent" 2>/dev/null && echo "/dev/${d##*/}"
+	done
+}
+installed=false
+system_dev=$(part_dev super)
+data_dev=$(part_dev userdata)
+if [ -n "$system_dev" ] && [ "$root_src" = "$system_dev" ]; then
+	# The installed system: the image in super read-only, data on userdata, the only writable partition.
+	installed=true
+	writable=$(grep -vx "${data_dev##*/}" <<<"$writable")
+	need "every physical block device but userdata read-only" [ -z "$writable" ]
+	need "system image mounted read-only" sh -c "findmnt -no OPTIONS / | grep -q '^ro,'"
+	need "data on userdata" [ "$(findmnt -no SOURCE /data)" = "$data_dev" ]
+else
+	need "every physical block device read-only" [ -z "$writable" ]
+	need "root filesystem in RAM (zram)" sh -c "case '$root_src' in /dev/zram*) exit 0;; esac; exit 1"
+fi
 
 # -- services and SteamOS userspace -------------------------------------------
 seats=$(loginctl list-seats --no-legend 2>/dev/null | awk '{print $1}')
@@ -211,7 +230,8 @@ printf ',"systemd":{"pid1":%s,"version":%s,"state":%s,"failed_units":%s,"tainted
 	"$(json_list <<<"$failed")" "$(json_str "$taint")"
 printf ',"dev":{"fstype":%s,"missing_nodes":%s,"udev_devices":%s}' \
 	"$(json_str "$dev_fs")" "$(json_list <<<"$missing_nodes")" "${udev_devices:-0}"
-printf ',"storage":{"root":%s,"writable_block_devices":%s}' "$(json_str "$root_src")" "$(json_list <<<"$writable")"
+printf ',"storage":{"root":%s,"installed":%s,"writable_block_devices":%s}' "$(json_str "$root_src")" "$installed" \
+	"$(json_list <<<"$writable")"
 printf ',"usb_link":{"status":%s,"now":%s}' "$(json_str "$link_status")" "$(json_str "$link_now")"
 printf ',"seats":%s,"packages":%s' "$(json_list <<<"$seats")" "${packages:-0}"
 printf ',"session":{"user":%s,"user_state":%s,"service":%s,"target":%s,"target_state":%s,"failed_units":%s' \

@@ -106,6 +106,8 @@ class CheckValidationTests(unittest.TestCase):
             lambda v: v["dev"].update(fstype="devtmpfs"),
             lambda v: v["storage"].update(writable_block_devices=["sda"]),
             lambda v: v["storage"].update(root="/dev/sda5"),
+            lambda v: v["storage"].update(root="/dev/sda7", installed=False),
+            lambda v: v["storage"].update(root="/dev/sda7", installed=True, writable_block_devices=["sda4"]),
             lambda v: v.update(seats=[]),
             lambda v: v.update(schema=2),
             lambda v: v["session"].update(user_state="lingering"),
@@ -135,6 +137,20 @@ class CheckValidationTests(unittest.TestCase):
 class MountPolicyTests(unittest.TestCase):
     def test_zram_root_counts_as_ram(self):
         hw.validate_mounts("/dev/zram0 / ext4 rw,noatime,discard 0 0\ntmpfs /run tmpfs rw 0 0")
+
+    def test_installed_system_writes_only_its_data_partition(self):
+        mounts = ("/dev/sda7 / ext4 ro,noatime 0 0\n/dev/sda16 /data ext4 rw,noatime 0 0\n"
+                  "overlay /etc overlay rw,relatime 0 0\n/dev/sda16 /var ext4 rw,noatime 0 0\n"
+                  "/dev/sda16 /home ext4 rw,noatime 0 0\ntmpfs /run tmpfs rw 0 0")
+        hw.validate_mounts(mounts, installed=True)
+        hw.validate_mounts(mounts + "\n/dev/sda16 /var/log ext4 rw,noatime 0 0", installed=True)
+        for bad in (mounts.replace("/ ext4 ro", "/ ext4 rw"),
+                    mounts + "\n/dev/sda5 /mnt ext4 rw 0 0",
+                    mounts.replace("/dev/sda16 /data ext4 rw,noatime 0 0\n", "")):
+            with self.assertRaises(ValueError):
+                hw.validate_mounts(bad, installed=True)
+        with self.assertRaises(ValueError):
+            hw.validate_mounts(mounts)
 
     def test_storage_stays_protected_in_stage_two(self):
         for value in ("/dev/zram0 / ext4 rw 0 0\n/dev/sda5 /mnt ext4 rw 0 0", "/dev/sda5 / ext4 rw 0 0"):

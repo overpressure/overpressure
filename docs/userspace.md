@@ -303,7 +303,9 @@ checks:
 
 - systemd 257 as PID 1, state `running`, no failed units;
 - `/dev` on tmpfs with a node for every kernel device and a populated udev database;
-- every physical block device read-only, the root on zram;
+- every physical block device read-only, the root on zram; or, on the installed system, the
+  root read-only from `super`, `/data` on `userdata`, the only writable partition
+  ([install.md](install.md));
 - D-Bus, logind's seat0, sshd and the Android network groups;
 - the USB link unchanged (interface, MAC, address, link up), no stage-1 process left, the
   mass-storage thread alive;
@@ -336,7 +338,9 @@ The everyday route is the development loop: the headset stays in development mod
 stage-1 image on the boot partition, and `python -m pico4 dev boot ARCHIVE` streams each new
 archive; the device-side deadlines return the headset to fastboot after a failure, and
 `python -m pico4 dev reboot` starts stage 1 again
-([hardware-testing.md](hardware-testing.md#development-mode)).
+([hardware-testing.md](hardware-testing.md#development-mode)). Installed on the headset, the same
+archive becomes a read-only system image in `super` with its data in `userdata`
+([install.md](install.md)).
 
 ## Internet over USB
 

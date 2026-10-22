@@ -15,6 +15,11 @@ if [ ! -e "$POC_RUN/userspace/ready" ]; then
 	exec /usr/libexec/pico4-poc/pico4-init
 fi
 fail() {
+	if [ "$(poc_arg root "")" = installed ]; then
+		log "userspace: switch failed: $*; rebooting into recovery"
+		sync
+		exec pico4-reboot recovery
+	fi
 	log "userspace: switch failed: $*; rebooting to fastboot"
 	sync
 	exec pico4-reboot bootloader
