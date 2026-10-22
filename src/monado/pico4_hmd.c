@@ -135,6 +135,7 @@ struct pico4_hmd
 	struct os_thread_helper station_oth;
 	struct pico4_controller *controllers[2];
 	uint64_t blemcu_packets;
+	uint64_t blemcu_future; //!< Controller IMU samples stamped after their arrival, dropped.
 	//! Controller tracking from the LED exposures, NULL if unavailable.
 	struct pico4_ctrack *ctrack;
 
@@ -391,6 +392,7 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 		struct pico4_blemcu_packet p;
 		if (s->raw_len > 0 && pico4_blemcu_parse(s->raw, s->raw_len, &p)) {
 			h->blemcu_packets++;
+			h->blemcu_future += (uint64_t)pico4_blemcu_drop_future(&p, ts, (int64_t)os_monotonic_get_ns());
 			for (int i = 0; i < 2; i++) {
 				if (h->controllers[i] != NULL) {
 					pico4_controller_push(h->controllers[i], &p, ts);
@@ -1132,6 +1134,7 @@ pico4_hmd_create(void)
 	u_var_add_ro_u64(h, &h->gyro_samples, "gyro_samples");
 	u_var_add_ro_u64(h, &h->accel_samples, "accel_samples");
 	u_var_add_ro_u64(h, &h->blemcu_packets, "controller_packets");
+	u_var_add_ro_u64(h, &h->blemcu_future, "controller_samples_from_the_future");
 	u_var_add_ro_i64_ns(h, &h->last_latency_ns, "last_latency");
 	m_imu_3dof_add_vars(&h->fusion, h, "");
 	if (h->use_track) {

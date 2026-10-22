@@ -286,6 +286,36 @@ test_blemcu(void)
 	EXPECT(pico4_blemcu_parse(pkt, sizeof(pkt), &p) && p.imu_count == 0 && p.key_count == 0);
 }
 
+static void
+test_blemcu_order(void)
+{
+	// Samples stamped at or after "now" are dropped, the others keep their order.
+	struct pico4_blemcu_packet p = {0};
+	const uint32_t offsets[] = {4000, 0, 2000};
+	for (int i = 0; i < 3; i++) {
+		p.imu[i].device = PICO4_BLEMCU_RIGHT;
+		p.imu[i].offset_us = offsets[i];
+	}
+	p.imu_count = 3;
+	EXPECT(pico4_blemcu_drop_future(&p, 10000000, 10000000) == 1);
+	EXPECT(p.imu_count == 2 && p.imu[0].offset_us == 4000 && p.imu[1].offset_us == 2000);
+	EXPECT(pico4_blemcu_drop_future(&p, 10000000, 7000000) == 1 && p.imu_count == 1);
+	EXPECT(pico4_blemcu_drop_future(&p, 10000000, 20000000) == 0 && p.imu_count == 1);
+
+	// Duplicates and backward steps are rejected and counted.
+	struct pico4_blemcu_order o = {0};
+	EXPECT(!pico4_blemcu_order_fresh(&o, 1000));
+	EXPECT(pico4_blemcu_order_accept(&o, 1000000));
+	EXPECT(!pico4_blemcu_order_accept(&o, 1000000));
+	EXPECT(!pico4_blemcu_order_accept(&o, 998000));
+	EXPECT(pico4_blemcu_order_accept(&o, 1002000));
+	EXPECT(o.newest_ns == 1002000 && o.rejected == 2);
+
+	// Fresh until the newest sample is 0.2 s old.
+	EXPECT(pico4_blemcu_order_fresh(&o, 1002000 + PICO4_BLEMCU_STALE_NS - 1));
+	EXPECT(!pico4_blemcu_order_fresh(&o, 1002000 + PICO4_BLEMCU_STALE_NS));
+}
+
 //! A metadata line with gain @p gain, exposure @p lines and phase register @p phase as 10-bit samples.
 static void
 meta_line(uint8_t *line, unsigned gain, unsigned lines, unsigned phase)
@@ -416,6 +446,7 @@ main(void)
 	test_station_vibrate();
 	test_calibration();
 	test_blemcu();
+	test_blemcu_order();
 	test_meta();
 	test_median();
 	test_set_assembly();

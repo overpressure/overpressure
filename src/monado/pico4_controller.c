@@ -100,6 +100,7 @@ struct pico4_controller
 
 	struct pico4_blemcu_keys keys;
 	int64_t keys_ns;
+	struct pico4_blemcu_order order; //!< The 3DoF orientation's samples.
 	uint64_t imu_samples, key_packets;
 	uint64_t vibrations; //!< Motor frames sent; guarded by lock.
 };
@@ -186,6 +187,11 @@ level_from_gravity(const struct xrt_vec3 *a)
 static void
 push_imu(struct pico4_controller *c, const struct pico4_blemcu_imu *imu, int64_t ts)
 {
+	// The 3DoF filter integrates from one sample to the next: a duplicate or backward step
+	// would turn it by nothing or backwards. The tracker gets them and starts over, as stock.
+	if (!pico4_blemcu_order_accept(&c->order, ts)) {
+		return;
+	}
 	struct xrt_vec3 accel = to_aim(c, imu->accel, GRAVITY / PICO4_BLEMCU_ACCEL_LSB_PER_G);
 	struct xrt_vec3 gyro = to_aim(c, imu->gyro, (M_PI / 180.0) / PICO4_BLEMCU_GYRO_LSB_PER_DPS);
 	c->imu_samples++;
@@ -257,7 +263,8 @@ static void
 pico4_controller_destroy(struct xrt_device *xdev)
 {
 	struct pico4_controller *c = pico4_controller(xdev);
-	C_INFO(c, "%llu IMU samples, %llu key packets, %llu vibration frames", (unsigned long long)c->imu_samples,
+	C_INFO(c, "%llu IMU samples (%llu out of order), %llu key packets, %llu vibration frames",
+	       (unsigned long long)c->imu_samples, (unsigned long long)c->order.rejected,
 	       (unsigned long long)c->key_packets, (unsigned long long)c->vibrations);
 	unref(c);
 }
@@ -300,7 +307,19 @@ static void
 placeholder_pose(struct pico4_controller *c, int64_t at_timestamp_ns, struct xrt_space_relation *out)
 {
 	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
-	m_relation_history_get(c->history, at_timestamp_ns, &rel);
+	os_mutex_lock(&c->lock);
+	struct pico4_blemcu_order order = c->order;
+	os_mutex_unlock(&c->lock);
+	if (pico4_blemcu_order_fresh(&order, at_timestamp_ns)) {
+		m_relation_history_get(c->history, at_timestamp_ns, &rel);
+	} else if (order.newest_ns != 0) {
+		// The controller stopped sending: hold its last orientation instead of extrapolating
+		// the last turn, untracked.
+		m_relation_history_get(c->history, order.newest_ns, &rel);
+		rel.relation_flags = (enum xrt_space_relation_flags)(rel.relation_flags &
+		                                                      XRT_SPACE_RELATION_ORIENTATION_VALID_BIT);
+		rel.angular_velocity = (struct xrt_vec3){0, 0, 0};
+	}
 	if (!(rel.relation_flags & XRT_SPACE_RELATION_ORIENTATION_VALID_BIT)) {
 		rel.pose.orientation = (struct xrt_quat)XRT_QUAT_IDENTITY;
 	}

@@ -677,7 +677,13 @@ Other types belong to trackers and diagnostics.
 (`PICO 4 left/right controller`) with Monado's existing PICO 4 controller profile
 (`/interaction_profiles/bytedance/pico4_controller`): A/B or X/Y click and touch, menu, system,
 trigger click, value and touch, thumbstick click, touch and axes, squeeze click and value, grip
-and aim poses. IMU samples are timed by the SSC event time minus the record's offset. While the
+and aim poses. IMU samples are timed by the SSC event time minus the record's offset; the SSC
+event time equals the packet's station time to within its microsecond truncation, so this is PICO
+OS's timing. As in PICO OS's controller service, samples stamped at or after their arrival are
+dropped; the controller tracker starts over on a backward step or a gap above 35 ms, as stock,
+while the 3DoF orientation below skips duplicates and backward steps. When a controller's newest
+sample is 0.2 s old (switched off, out of range), its 3DoF orientation holds, untracked, instead
+of extrapolating the last turn. While the
 controller tracker (below) has placed a controller, its pose comes from there: position tracked
 while the tracker's output is 6DoF, and valid but not tracked while it holds the position (lying
 still, or briefly unseen), which PICO OS publishes the same way. Before the first fix the
@@ -1006,6 +1012,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Staged jiggle, headset still, 4 × 27 s | Basalt 0.22–1.06 mm and 0.004–0.032° around its 200 ms average; fusion output 0.06–0.21 mm and 0.001–0.003°; SteamVR's extrapolation with the reported velocities 0.06–0.29 mm; slow drift 11–76 mm peak to peak (Basalt's) |
 | IMU noise A/B (ours against PICO OS's values), still and worn blind | Basalt with PICO OS's values: 0.49–3.02 mm jiggle against 0.10–0.29 mm, two runaways worn against none; the user found ours calmer |
 | Latency probe, headless, 13 steps | pose handed out to scanout 33.0 ms (median; 32.6–33.5 ms for most); SteamVR extrapolates a reported turn by 9.2 ms (median); 21.6 px per degree at the eye's centre |
+| Latency probe in Valve's session check with the published 5 ms display lead (linear scanout, 74 commits/s), 36 phase changes | pose handed out to scanout 32.2–32.6 ms (medians of step on, step off and reported turn); 24 at 30.5–34.2 ms, 9 one frame earlier (19.3–22.1 ms), 3 later; SteamVR extrapolates a reported turn by 10.4 ms; 22.0 px per degree |
 | Prediction 24 ms against none, worn blind A/B | user: "almost flawless" against "horrible" (Basalt ran away three times in the latter) |
 | Head pose worn, standing still | 0.035° RMS around its 200 ms average at 1.7°/s, as in Basalt: the head's own motion (0.001° on a table) |
 | Runaway handling, seven worn sessions of about a minute | Basalt within 0.55–1.51 m of the start (before: 13.6 m and 1,750 m in two of four sessions); three sessions had runaways in Basalt's first seconds, each held, reset and re-anchored; no pose above 3 m/s afterwards in five; correction size 4.6–8.0 mm (median) |
@@ -1024,6 +1031,8 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Controller tracker, replay: held and moved, 30 s, controller IMU at 90 events per second (recorded without the head IMU) | left tracked in 79 % and right in 54 % of the frame sets; median residual 0.83–0.89 px |
 | Controller tracker, replay: both controllers lying about 1 m ahead | no acquisition: the identification-table fits (0.05 px) lie at 0.99 m, outside PICO OS's range box (\|z\| < 0.8 m) |
 | Controller IMU rate | about 865 radio packets and 495 samples per second per hand with the head IMU streaming, for 30 s and in Monado's service; with `ble_mcu` alone about 90 a few minutes after the DSP started, whatever rate is requested |
+| Controller IMU rate, both controllers held and moved (median 234–260 °/s), 30 s | 494 and 499 samples per second per hand, 492–500 in every second; longest interval 4 ms |
+| Controller gyro scale: the right controller turned like a key, three turns of about 90° between pauses, against the optical tracker | gyro rotation 0.993–1.003 times the optical rotation at 8.192 LSB per °/s, after subtracting the gyro's bias (about 1.5 °/s, from the controller lying still) |
 | Acceptance cycle (`flash-run --userspace`, then stock restoration) | passed: archive received in 86–105 s, SSH 112–123 s after the start of the transfer; systemd `running`, 0 failed units, storage read-only, USB link unchanged, Turnip 65,536 pixels; IMU, pose and display checks as above (two layers, Basalt running); stock boot verified by EDL readback, stock ABL restored, PICO OS started |
 | QEMU, same archive (4.19 without SLPI or `msm_drm`) | self-test passed; the sensor units and Monado's PICO 4 prober stay inactive |
 

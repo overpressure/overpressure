@@ -101,9 +101,39 @@ struct pico4_blemcu_packet
 	} battery[2];
 };
 
+/*!
+ * A controller's newest IMU sample is this old: the controller has stopped sending (switched
+ * off, out of range). PICO OS's tracker starts over when its newest sample is older than an
+ * image by 0.2 s.
+ */
+#define PICO4_BLEMCU_STALE_NS 200000000LL
+
+//! A controller's newest IMU sample time, for order and freshness.
+struct pico4_blemcu_order
+{
+	int64_t newest_ns; //!< 0 before the first sample.
+	uint64_t rejected; //!< Duplicates and backward steps.
+};
+
 //! Parse one ble_mcu payload; false if it is not a controller-radio packet.
 bool
 pico4_blemcu_parse(const uint8_t *data, size_t size, struct pico4_blemcu_packet *out);
+
+/*!
+ * Drop the IMU samples stamped at or after @p now_ns, as PICO OS's controller service does
+ * ("[TS-ERROR]"): a sample is the packet's time @p packet_ns minus its offset. Returns how
+ * many were dropped.
+ */
+int
+pico4_blemcu_drop_future(struct pico4_blemcu_packet *p, int64_t packet_ns, int64_t now_ns);
+
+//! True if a sample at @p ts_ns is newer than the newest so far, which it then becomes.
+bool
+pico4_blemcu_order_accept(struct pico4_blemcu_order *o, int64_t ts_ns);
+
+//! True while the newest sample is less than PICO4_BLEMCU_STALE_NS older than @p at_ns.
+bool
+pico4_blemcu_order_fresh(const struct pico4_blemcu_order *o, int64_t at_ns);
 
 #ifdef __cplusplus
 }

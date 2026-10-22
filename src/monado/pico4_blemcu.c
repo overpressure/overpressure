@@ -85,3 +85,34 @@ pico4_blemcu_parse(const uint8_t *data, size_t size, struct pico4_blemcu_packet 
 	}
 	return true;
 }
+
+int
+pico4_blemcu_drop_future(struct pico4_blemcu_packet *p, int64_t packet_ns, int64_t now_ns)
+{
+	int kept = 0;
+	for (int i = 0; i < p->imu_count; i++) {
+		if (packet_ns - (int64_t)p->imu[i].offset_us * 1000 < now_ns) {
+			p->imu[kept++] = p->imu[i];
+		}
+	}
+	int dropped = p->imu_count - kept;
+	p->imu_count = kept;
+	return dropped;
+}
+
+bool
+pico4_blemcu_order_accept(struct pico4_blemcu_order *o, int64_t ts_ns)
+{
+	if (o->newest_ns != 0 && ts_ns <= o->newest_ns) {
+		o->rejected++;
+		return false;
+	}
+	o->newest_ns = ts_ns;
+	return true;
+}
+
+bool
+pico4_blemcu_order_fresh(const struct pico4_blemcu_order *o, int64_t at_ns)
+{
+	return o->newest_ns != 0 && at_ns - o->newest_ns < PICO4_BLEMCU_STALE_NS;
+}
