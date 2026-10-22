@@ -52,6 +52,11 @@ CAMERA_OPS = (CAMERA_INIT, CAMERA_STREAM, CAMERA_SET_PARA, CAMERA_FPS)
 # Set parameters (the stock CameraSetPara): op, 8 x (u16 exposure, u8 gain) with
 # cameras 0-3 in bytes 1-12 and 16-27, a u16 at 13-14 and an event index at 15.
 CAMERA_SET_PARA_LEN = 28
+# The one controller command: the motor (stationservice SetMotor 0x71eb4), to target 2 (left)
+# or 3 (right): play, amplitude, u16 duration in ms. Level 0 sends the all-zero stop.
+TARGET_CONTROLLER = {"left": 0x02, "right": 0x03}
+CMD_MOTOR = 0x01
+MOTOR_SCALE_PERCENT = 75  # PICO OS's default ctrl_motor_vibration_amplitude (0x72000)
 
 
 def _crc8_table():
@@ -94,6 +99,20 @@ def frame(command: int, payload: bytes = b"", seq: int = None) -> bytes:
     buf[3:3 + len(payload)] = payload
     if seq is not None:
         struct.pack_into("<H", buf, 37, seq & 0xFFFF)
+    buf[39] = crc8(bytes(buf[:39]))
+    return bytes(buf)
+
+
+def motor_frame(hand: str, level: int, duration_ms: int) -> bytes:
+    """A vibration request for one controller (as pico4_station_vibrate() without frequency)."""
+    if hand not in TARGET_CONTROLLER or not 0 <= level <= 255 or not 0 <= duration_ms <= 0xFFFF:
+        raise ValueError("hand left|right, level 0-255, duration 0-65535 ms")
+    payload = bytes(4)
+    if level:
+        payload = struct.pack("<BBH", 1, min(level * MOTOR_SCALE_PERCENT // 100, 255), duration_ms)
+    buf = bytearray(FRAME)
+    buf[0], buf[1], buf[2] = HEADER_SEND, TARGET_CONTROLLER[hand], CMD_MOTOR
+    buf[3:7] = payload
     buf[39] = crc8(bytes(buf[:39]))
     return bytes(buf)
 
@@ -179,8 +198,13 @@ def main(argv=None) -> int:
     p.add_argument("--fps", type=int, default=1, choices=(1, 2), help="station frame-rate setting")
     p.add_argument("--exposure", default="200", help="para: 8 comma-separated u16 exposures (or one for all)")
     p.add_argument("--gain", default="16", help="para: 8 comma-separated gains (or one for all)")
-    p.add_argument("--param", type=int, default=0, help="para: the u16 at bytes 13-14")
+    p.add_argument("--param", type=int, default=52,
+                   help="para: the u16 at bytes 13-14 (PICO OS: 52 at 50 Hz; 0 brightens the LED frames)")
     p.add_argument("--index", type=int, default=0, help="para: the event index at byte 15")
+    p = sub.add_parser("vibrate", help="vibrate a controller (level 0 stops)")
+    p.add_argument("hand", choices=("left", "right"))
+    p.add_argument("--level", type=int, default=255, help="0-255, scaled to PICO OS's default 75 %%")
+    p.add_argument("--ms", type=int, default=300, help="duration; the controller stops by itself")
     args = parser.parse_args(argv)
 
     st = Station()
@@ -223,6 +247,11 @@ def main(argv=None) -> int:
             else:
                 payload = bytes([CAMERA_STREAM, args.camera, 1 if args.op == "on" else 2])
             out["replies"] = [r.hex() for r in st.request(CMD_CAMERA, payload)]
+        elif args.command == "vibrate":
+            data = motor_frame(args.hand, args.level, args.ms)
+            st.send(data)
+            out["sent"] = data.hex()
+            out["frames"] = len(st.collect(0.5))
         elif args.command == "imu":
             for c in (int(x) for x in args.controllers.split(",")):
                 replies = st.request(CMD_IMU_STREAM, bytes([c, 1 if args.state == "on" else 0]))

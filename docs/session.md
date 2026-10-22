@@ -355,7 +355,10 @@ adapts `driver_monado`:
 
 - the render target is one eye's size (2160×2160): OpenVR asks for one eye, and Monado's
   screen spans both eyes on the side-by-side panels;
-- the controllers' pose is the PICO 4 grip pose (unpatched, it asked them for a head pose);
+- the controllers' pose is the PICO 4 aim pose (unpatched, it asked them for a head pose), the
+  frame of their render models;
+- the controllers are drawn with PICO OS's own models, `{monado}pico4_controller_left` and
+  `_right` ([xr.md](xr.md#controllers)), and get a haptic output (`/output/haptic`);
 - positions marked valid count, not only tracked ones, so the 3DoF controllers appear where
   the arm model places them;
 - inputs a controller lacks are left out instead of being missed every frame: one profile
@@ -367,6 +370,18 @@ adapts `driver_monado`:
   triangles there flickered in magenta during head turns. The lens model is radial, so the
   inverse is a bisection along the ray from the lens centre, also through the steep
   continuation beyond the fitted radius.
+
+SteamVR's dashboard has default bindings only for controller types it knows, and Monado's
+generated profile for the PICO 4 controller names none, so SteamVR fell back to its generic
+ones, which point with a `/pose/tip` this controller lacks. The package installs
+[`pico4-vrcompositor-bindings.json`](../userspace/pkgbuilds/pico4-monado/pico4-vrcompositor-bindings.json)
+as the profile's `default_bindings` for `openvr.component.vrcompositor`: the PICO button
+(right) or the menu button (left) toggles the dashboard and holding the PICO button recenters;
+the aim pose is the laser, the trigger clicks, the grip goes back and the joystick scrolls.
+Both buttons reach SteamVR's system UI (`[Dashboard] [ToggleDashboard]` in
+`vrwebhelper_systemui.txt`), but it hides the dashboard again at once: this SteamVR's dashboard
+is the unified one, whose content comes from the Steam client's VR UI (`vrgamepadui`), and the
+Steam client does not run in the session.
 
 ### Performance and heat
 

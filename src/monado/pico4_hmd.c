@@ -23,6 +23,7 @@
 
 #include "pico4_blemcu.h"
 #include "pico4_controller.h"
+#include "pico4_ctrack.h"
 #include "pico4_fusion.h"
 #include "pico4_interface.h"
 #include "pico4_ipd.h"
@@ -134,6 +135,8 @@ struct pico4_hmd
 	struct os_thread_helper station_oth;
 	struct pico4_controller *controllers[2];
 	uint64_t blemcu_packets;
+	//! Controller tracking from the LED exposures, NULL if unavailable.
+	struct pico4_ctrack *ctrack;
 
 	//! CLOCK_MONOTONIC ns minus the QTimer time in ns.
 	int64_t qtimer_offset_ns;
@@ -364,7 +367,7 @@ track_slam_pose(struct pico4_hmd *h, const struct pico4_fusion_slam *m)
 		h->reset_tested = true;
 	}
 	// A runaway tracker rarely recovers by itself: start a new map, again while it stays lost.
-	if (h->track.lost && now - h->slam_reset_ns > 5 * U_TIME_1S_IN_NS) {
+	if (h->track.lost && now - h->slam_reset_ns > 5 * (int64_t)U_TIME_1S_IN_NS) {
 		P4_WARN(h, "6DoF: resetting the SLAM tracker");
 		pico4_slam_reset(h->slam);
 		pico4_fusion_tracker_reset(&h->track, now);
@@ -392,6 +395,9 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 				if (h->controllers[i] != NULL) {
 					pico4_controller_push(h->controllers[i], &p, ts);
 				}
+			}
+			if (h->ctrack != NULL) {
+				pico4_ctrack_push_packet(h->ctrack, &p, ts);
 			}
 		}
 		return;
@@ -625,16 +631,21 @@ pico4_hmd_destroy(struct xrt_device *xdev)
 	if (h->oth.initialized) {
 		os_thread_helper_destroy(&h->oth);
 	}
+	// Its thread asks for head poses, SLAM's included; SLAM's camera thread still pushes to it.
+	pico4_ctrack_stop(h->ctrack);
 	pico4_slam_destroy(&h->slam);
 	if (h->station_oth.initialized) {
 		os_thread_helper_destroy(&h->station_oth);
 	}
-	pico4_station_close(h->station);
+	// The controllers let go of the station (haptics) before it closes.
 	for (int i = 0; i < 2; i++) {
 		if (h->controllers[i] != NULL) {
 			pico4_controller_release(h->controllers[i]);
 		}
 	}
+	pico4_station_close(h->station);
+	// No frames (SLAM) or packets (IMU thread) any more, and the controllers let go of it.
+	pico4_ctrack_destroy(&h->ctrack);
 	if (h->ssc != NULL) {
 		pico4_ssc_disable(h->ssc, &h->accel_suid);
 		pico4_ssc_disable(h->ssc, &h->gyro_suid);
@@ -819,6 +830,26 @@ get_head_pose(struct xrt_device *xdev,
 	}
 	*out_relation = rel;
 	return XRT_SUCCESS;
+}
+
+/*!
+ * The head pose at an LED exposure for the controller tracker (its own thread): the HMD's track
+ * without the display lead it adds for applications, or SLAM's pose, or the 3DoF orientation.
+ */
+static bool
+ctrack_head(void *user, int64_t at_ns, struct xrt_pose *out)
+{
+	struct pico4_hmd *h = user;
+	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
+	if (h->use_track || h->slam == NULL || !pico4_slam_get_head_pose(h->slam, at_ns, &rel)) {
+		m_relation_history_get(h->relation_hist, at_ns, &rel);
+	}
+	if (!(rel.relation_flags & XRT_SPACE_RELATION_ORIENTATION_VALID_BIT)) {
+		return false;
+	}
+	*out = rel.pose;
+	math_quat_normalize(&out->orientation);
+	return true;
 }
 
 //! The head pose; while the IMU stream is being reconnected, the last one, untracked.
@@ -1064,8 +1095,9 @@ pico4_hmd_create(void)
 	setup_station(h);
 	if (h->station != NULL && pico4_ssc_find(h->ssc, "ble_mcu", &h->blemcu_suid, 3000) == 0) {
 		h->has_blemcu = true;
-		h->controllers[0] = pico4_controller_create(PICO4_BLEMCU_LEFT, &h->base, h->log_level);
-		h->controllers[1] = pico4_controller_create(PICO4_BLEMCU_RIGHT, &h->base, h->log_level);
+		h->ctrack = pico4_ctrack_create(debug_get_option_pico4_calibration(), ctrack_head, h, h->log_level);
+		h->controllers[0] = pico4_controller_create(PICO4_BLEMCU_LEFT, &h->base, h->ctrack, h->station, h->log_level);
+		h->controllers[1] = pico4_controller_create(PICO4_BLEMCU_RIGHT, &h->base, h->ctrack, h->station, h->log_level);
 	}
 
 	/*
@@ -1076,7 +1108,8 @@ pico4_hmd_create(void)
 	double delivered_hz = rate > 500.0f ? 1024.0 : 512.0;
 
 	// Before the IMU thread, which feeds it.
-	h->slam = pico4_slam_create(debug_get_option_pico4_calibration(), h->station, delivered_hz, h->log_level);
+	h->slam =
+	    pico4_slam_create(debug_get_option_pico4_calibration(), h->station, delivered_hz, h->ctrack, h->log_level);
 	h->base.supported.position_tracking = h->slam != NULL;
 	if (h->slam != NULL) {
 		snprintf(h->base.serial, XRT_DEVICE_NAME_LEN, "PICO 4 (SLAM)");

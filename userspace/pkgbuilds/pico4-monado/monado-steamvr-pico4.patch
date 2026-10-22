@@ -1,6 +1,6 @@
 --- a/src/external/openvr_includes/openvr_driver.h
 +++ b/src/external/openvr_includes/openvr_driver.h
-@@ -2740,9 +2740,14 @@
+@@ -2740,9 +2740,14 @@ namespace vr
  		* the upper left of that eye's viewport and 1,1 in the lower right of that eye's viewport. */
  		virtual DistortionCoordinates_t ComputeDistortion( EVREye eEye, float fU, float fV ) = 0;
  
@@ -18,7 +18,7 @@
  }
 --- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
 +++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
-@@ -42,6 +42,13 @@
+@@ -42,6 +42,13 @@ extern "C" {
  }
  #include "math/m_vec3.h"
  
@@ -32,7 +32,7 @@
  #if defined(__GNUC__)
  #pragma GCC diagnostic push
  #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
-@@ -121,7 +128,8 @@
+@@ -121,7 +128,8 @@ apply_pose(struct xrt_space_relation *rel, vr::DriverPose_t *m_pose)
  		m_pose->poseIsValid = false;
  	}
  
@@ -42,7 +42,18 @@
  		copy_vec3(&rel->pose.position, m_pose->vecPosition);
  	} else {
  	}
-@@ -436,6 +444,17 @@
+@@ -410,6 +418,10 @@ public:
+ 				m_render_model = "oculus_cv1_controller_right";
+ 			}
+ 			break;
++		case XRT_DEVICE_PICO4_CONTROLLER:
++			// PICO OS's own controller models, extracted at build time (pico4/controllermodel.py).
++			m_render_model = hand == XRT_HAND_LEFT ? "{monado}pico4_controller_left" : "{monado}pico4_controller_right";
++			break;
+ 		case XRT_DEVICE_VIVE_WAND: m_render_model = "vr_controller_vive_1_5"; break;
+ 		case XRT_DEVICE_VIVE_TRACKER_GEN1:
+ 		case XRT_DEVICE_VIVE_TRACKER_GEN2:
+@@ -436,6 +448,17 @@ public:
  	{
  		enum xrt_input_type monado_input_type = XRT_GET_INPUT_TYPE(monado_input_name);
  
@@ -60,16 +71,26 @@
  		SteamVRDriverControlInput in;
  
  		in.monado_input_type = monado_input_type;
-@@ -873,6 +892,8 @@
+@@ -623,6 +646,9 @@ public:
+ 			AddOutputControl(XRT_OUTPUT_NAME_PSMV_RUMBLE_VIBRATION, "/output/haptic");
+ 		} break;
+ 
++		case XRT_DEVICE_PICO4_CONTROLLER: {
++			AddOutputControl(XRT_OUTPUT_NAME_PICO4_HAPTIC, "/output/haptic");
++		} break;
+ 		case XRT_DEVICE_TOUCH_CONTROLLER: break;    // TODO
+ 		case XRT_DEVICE_WMR_CONTROLLER: break;      // TODO
+ 		case XRT_DEVICE_XBOX_CONTROLLER: break;     // TODO
+@@ -873,6 +899,8 @@ public:
  			grip_name = XRT_INPUT_TOUCH_GRIP_POSE;
  		} else if (m_xdev->name == XRT_DEVICE_SIMPLE_CONTROLLER) {
  			grip_name = XRT_INPUT_SIMPLE_GRIP_POSE;
 +		} else if (m_xdev->name == XRT_DEVICE_PICO4_CONTROLLER) {
-+			grip_name = XRT_INPUT_PICO4_GRIP_POSE;
++			grip_name = XRT_INPUT_PICO4_AIM_POSE; // its render model's frame is the aim frame
  		} else {
  			ovrd_log("Unhandled device name %u\n", m_xdev->name);
  			grip_name = XRT_INPUT_GENERIC_HEAD_POSE; // ???
-@@ -1139,6 +1160,7 @@
+@@ -1139,6 +1167,7 @@ public:
  	virtual void GetEyeOutputViewport(vr::EVREye eEye, uint32_t *pnX, uint32_t *pnY, uint32_t *pnWidth, uint32_t *pnHeight);
  	virtual void GetProjectionRaw(vr::EVREye eEye, float *pfLeft, float *pfRight, float *pfTop, float *pfBottom);
  	virtual vr::DistortionCoordinates_t ComputeDistortion(vr::EVREye eEye, float fU, float fV);
@@ -77,7 +98,7 @@
  
  	// clang-format on
  
-@@ -1263,7 +1285,8 @@
+@@ -1263,7 +1292,8 @@ void *
  CDeviceDriver_Monado::GetComponent(const char *pchComponentNameAndVersion)
  {
  	// clang-format off
@@ -87,7 +108,7 @@
  		return (vr::IVRDisplayComponent *)this;
  	}
  	// clang-format on
-@@ -1381,8 +1404,9 @@
+@@ -1381,8 +1411,9 @@ CDeviceDriver_Monado::GetRecommendedRenderTargetSize(uint32_t *pnWidth, uint32_t
  
  
  
@@ -99,7 +120,7 @@
  
  	ovrd_log("Render Target Size: %dx%d (%fx)\n", *pnWidth, *pnHeight, fscale);
  }
-@@ -1410,6 +1434,30 @@
+@@ -1410,6 +1441,30 @@ CDeviceDriver_Monado::GetProjectionRaw(vr::EVREye eEye, float *pfLeft, float *pf
  	ovrd_log("Projection Raw: L%f R%f T%f B%f\n", *pfLeft, *pfRight, *pfTop, *pfBottom);
  }
  
@@ -130,3 +151,14 @@
  vr::DistortionCoordinates_t
  CDeviceDriver_Monado::ComputeDistortion(vr::EVREye eEye, float fU, float fV)
  {
+@@ -1607,7 +1662,9 @@ CServerDriver_Monado::HandleHapticEvent(vr::VREvent_t *event)
+ 		return;
+ 	}
+ 
+-	struct xrt_output_value out;
++	// The type tells drivers what the value holds; unset, a driver checking it refuses the vibration.
++	struct xrt_output_value out = {};
++	out.type = XRT_OUTPUT_VALUE_TYPE_VIBRATION;
+ 	out.vibration.amplitude = amp;
+ 	if (duration > 0.00001) {
+ 		out.vibration.duration_ns = (time_duration_ns)(duration * 1000.f * 1000.f * 1000.f);

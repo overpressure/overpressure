@@ -15,7 +15,7 @@
  *                     [--ring N] [--timeout MS] [--lane-assign SLOT=LANE]
  *                     [--no-station] [--no-station-reset] [--stats-log FILE]
  *                     [--exposure LINES [--gain G]] [--led-exposure LINES [--led-gain G]]
- *                     [--lines N] [--sensor-lines N]
+ *                     [--lines N] [--sensor-lines N] [--record-leds FILE] [--record-imu FILE]
  *       Streams until every selected camera delivered N frames (default 30),
  *       saves an early scene frame of each camera as DIR/camS.pgm (8 bits, the
  *       640x480 scene rows) and DIR/camS.raw16 (the whole buffer, little-endian
@@ -41,6 +41,23 @@
  *       --led-exposure and --led-gain (default 4 and 26, at most 10 and 32)
  *       fill the command's second set, which leaves both phases alone: the
  *       station keeps the LED phase at 4 lines and gain 26.
+ *       --record-leds appends every controller-LED exposure of the selected
+ *       cameras to FILE, for the controller tracking work: per frame a 48-byte
+ *       header ("P4LF", version 1, slot, the ISP frame counter, start of frame
+ *       on CLOCK_BOOTTIME and CLOCK_MONOTONIC in ns, the applied exposure lines
+ *       and gain, width, height; little-endian) and the scene rows as 8 bits
+ *       (the 10-bit samples shifted right by two).
+ *       --record-imu appends the controllers' radio packets (the sensor
+ *       service's ble_mcu events, with their IMU and input records) and the
+ *       head IMU to FILE: records of an 8-byte header ("P4L", kind I, H or C,
+ *       version 1, a pad byte, the length that follows as u16), I = the event's
+ *       QTimer ticks (u64) and the raw packet, H = a head IMU event's QTimer
+ *       ticks (u64), the sensor (u8: 0 accelerometer, 1 gyroscope) and its three
+ *       values (float, m/s^2 or rad/s, raw axes = the factory body frame), C
+ *       every 100 ms = a CLOCK_MONOTONIC time in ns and the QTimer at that
+ *       moment (u64 each), to put both on one clock. The head IMU runs at 1 kHz
+ *       as in the driver: without another sensor streaming, the sensor DSP slows
+ *       ble_mcu to about 90 events per second a few minutes after it started.
  *
  * -v and -vv (before or after the command) log progress and every ioctl to
  * stderr. Exit status 0 means success: every node found (list), every probe
@@ -51,6 +68,7 @@
 #define _GNU_SOURCE // sigaction, mkdir under -std=c11
 
 #include "pico4_cam.h"
+#include "pico4_ssc.h"
 #include "pico4_station.h"
 
 #include <errno.h>
@@ -82,7 +100,8 @@ usage(FILE *f)
 	      "       pico4-cam [-v|-vv] capture [--slots 0,1,2,3] [--frames N] [--fps 60|30] [--out DIR]\n"
 	      "                 [--ring N] [--timeout MS] [--lane-assign SLOT=LANE] [--no-station]\n"
 	      "                 [--no-station-reset] [--stats-log FILE] [--exposure LINES [--gain G]]\n"
-	      "                 [--led-exposure LINES [--led-gain G]] [--lines N] [--sensor-lines N]\n",
+	      "                 [--led-exposure LINES [--led-gain G]] [--lines N] [--sensor-lines N]\n"
+	      "                 [--record-leds FILE] [--record-imu FILE]\n",
 	      f);
 }
 
@@ -389,6 +408,37 @@ log_frame(FILE *log, const struct pico4_cam_frame *f)
 	        m.gain, peak, saturated);
 }
 
+//! One controller-LED exposure for --record-leds (format in the header comment); false on a write error.
+static bool
+record_led_frame(FILE *out, const struct pico4_cam_frame *f, const struct pico4_cam_meta *m)
+{
+	uint8_t head[48] = {'P', '4', 'L', 'F', 1, (uint8_t)f->slot};
+	uint64_t id = f->frame_id, boot = (uint64_t)f->sof_boottime_ns, mono = (uint64_t)f->sof_monotonic_ns;
+	uint16_t lines = (uint16_t)m->exposure_lines, gain = (uint16_t)m->gain;
+	uint16_t width = (uint16_t)f->width, height = (uint16_t)f->height;
+	memcpy(head + 8, &id, 8);
+	memcpy(head + 16, &boot, 8);
+	memcpy(head + 24, &mono, 8);
+	memcpy(head + 32, &lines, 2);
+	memcpy(head + 34, &gain, 2);
+	memcpy(head + 36, &width, 2);
+	memcpy(head + 38, &height, 2);
+	if (fwrite(head, sizeof(head), 1, out) != 1) {
+		return false;
+	}
+	uint8_t row[PICO4_CAM_WIDTH];
+	for (unsigned y = 0; y < f->height; y++) {
+		const uint8_t *line = (const uint8_t *)f->data + (size_t)y * f->stride;
+		for (unsigned x = 0; x < f->width && x < PICO4_CAM_WIDTH; x++) {
+			row[x] = (uint8_t)(sample(f, line, x) >> 2);
+		}
+		if (fwrite(row, 1, f->width, out) != f->width) {
+			return false;
+		}
+	}
+	return true;
+}
+
 static void
 on_frame(struct slot_stats *st, const struct pico4_cam_frame *f, const char *dir)
 {
@@ -440,6 +490,123 @@ parse_lane_assign(const char *s, struct pico4_cam_config *cfg)
 	return true;
 }
 
+//! The AP's counter, the QTimer that also stamps the sensor service's events (aarch64 only).
+static uint64_t
+qtimer_ticks(void)
+{
+#if defined(__aarch64__)
+	uint64_t value;
+	__asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(value)::"memory");
+	return value;
+#else
+	return 0;
+#endif
+}
+
+//! Appends one --record-imu record: "P4LI", "P4LH" or "P4LC", version 1, a pad byte, the length of what follows (u16).
+static bool
+record_imu_item(FILE *out, char kind, const void *data, uint16_t len)
+{
+	uint8_t head[8] = {'P', '4', 'L', (uint8_t)kind, 1, 0};
+	memcpy(head + 6, &len, 2);
+	return fwrite(head, sizeof(head), 1, out) == 1 && (len == 0 || fwrite(data, len, 1, out) == 1);
+}
+
+struct imu_recorder
+{
+	FILE *out;
+	int error; //!< 0, or the negative errno that ended the recording.
+	uint64_t packets;
+};
+
+static bool
+suid_is(const struct pico4_ssc_sample *s, const struct pico4_ssc_suid *suid)
+{
+	return s->suid.low == suid->low && s->suid.high == suid->high;
+}
+
+/*!
+ * --record-imu: the controllers' ble_mcu packets and the head IMU through the sensor
+ * service, while the station runs. Each packet record (I) holds its event time in QTimer
+ * ticks (u64) and the raw packet; each head record (H) its event time, the sensor and its
+ * three values; every 100 ms a clock record (C) holds a CLOCK_MONOTONIC time in ns and the
+ * QTimer read between two such readings (u64 each, the pair with the shortest window).
+ */
+static void *
+imu_record_thread(void *arg)
+{
+	struct imu_recorder *rec = arg;
+	struct pico4_ssc *ssc = NULL;
+	// ble_mcu, accel, gyro: the head IMU keeps the DSP from slowing ble_mcu down.
+	struct pico4_ssc_suid suids[3];
+	static const char *const types[3] = {"ble_mcu", "accel", "gyro"};
+	int r = -ETIMEDOUT;
+	// The station's controllers show up in the sensor service once it runs.
+	for (int attempt = 0; attempt < 10 && !g_station_stop && r < 0; attempt++) {
+		r = pico4_ssc_subscribe(&ssc, types, suids, 3, 1000.0f, 1000);
+	}
+	if (r < 0) {
+		rec->error = r;
+		return NULL;
+	}
+	struct pico4_ssc_sample samples[32];
+	struct timespec last_clock = {0};
+	while (!g_station_stop && rec->error == 0) {
+		struct timespec now;
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if ((now.tv_sec - last_clock.tv_sec) * 1000000000LL + (now.tv_nsec - last_clock.tv_nsec) > 100000000LL) {
+			uint64_t pair[2] = {0, 0};
+			int64_t best = INT64_MAX;
+			for (int i = 0; i < 8; i++) {
+				struct timespec a, b;
+				clock_gettime(CLOCK_MONOTONIC, &a);
+				uint64_t ticks = qtimer_ticks();
+				clock_gettime(CLOCK_MONOTONIC, &b);
+				int64_t ta = a.tv_sec * 1000000000LL + a.tv_nsec, tb = b.tv_sec * 1000000000LL + b.tv_nsec;
+				if (tb - ta < best) {
+					best = tb - ta;
+					pair[0] = (uint64_t)(ta + (tb - ta) / 2);
+					pair[1] = ticks;
+				}
+			}
+			if (!record_imu_item(rec->out, 'C', pair, sizeof(pair))) {
+				rec->error = -EIO;
+			}
+			last_clock = now;
+		}
+		int n = pico4_ssc_read(ssc, 100, samples, (int)(sizeof(samples) / sizeof(samples[0])));
+		if (n < 0) {
+			rec->error = n;
+			break;
+		}
+		for (int i = 0; i < n && rec->error == 0; i++) {
+			const struct pico4_ssc_sample *s = &samples[i];
+			if (suid_is(s, &suids[0])) {
+				uint8_t item[8 + PICO4_SSC_RAW_MAX];
+				memcpy(item, &s->ticks, 8);
+				memcpy(item + 8, s->raw, s->raw_len);
+				if (!record_imu_item(rec->out, 'I', item, (uint16_t)(8 + s->raw_len))) {
+					rec->error = -EIO;
+				}
+				rec->packets++;
+			} else if ((suid_is(s, &suids[1]) || suid_is(s, &suids[2])) && s->count >= 3) {
+				uint8_t item[8 + 1 + 12];
+				memcpy(item, &s->ticks, 8);
+				item[8] = suid_is(s, &suids[1]) ? 0 : 1;
+				memcpy(item + 9, s->values, 12);
+				if (!record_imu_item(rec->out, 'H', item, sizeof(item))) {
+					rec->error = -EIO;
+				}
+			}
+		}
+	}
+	for (int i = 0; i < 3; i++) {
+		pico4_ssc_disable(ssc, &suids[i]);
+	}
+	pico4_ssc_close(&ssc);
+	return NULL;
+}
+
 //! Acknowledges the station's frames while the capture runs.
 static void *
 station_thread(void *arg)
@@ -456,7 +623,10 @@ static int
 cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 {
 	const char *dir = ".";
-	FILE *stats_log = NULL;
+	FILE *stats_log = NULL, *led_record = NULL;
+	struct imu_recorder imu = {0};
+	pthread_t imu_thread;
+	bool imu_running = false;
 	unsigned long exposure = 0, gain = 16, led_exposure = 4, led_gain = 26;
 	unsigned long frames = 30, timeout = 3000;
 	struct slot_stats st[PICO4_CAM_NUM];
@@ -501,6 +671,24 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 			}
 			stats_log = fopen(v, "we");
 			if (stats_log == NULL) {
+				fprintf(stderr, "pico4-cam: cannot write %s: %s\n", v, strerror(errno));
+				return 1;
+			}
+		} else if (strcmp(a, "--record-imu") == 0) {
+			if (imu.out != NULL) {
+				fclose(imu.out);
+			}
+			imu.out = fopen(v, "we");
+			if (imu.out == NULL) {
+				fprintf(stderr, "pico4-cam: cannot write %s: %s\n", v, strerror(errno));
+				return 1;
+			}
+		} else if (strcmp(a, "--record-leds") == 0) {
+			if (led_record != NULL) {
+				fclose(led_record);
+			}
+			led_record = fopen(v, "we");
+			if (led_record == NULL) {
 				fprintf(stderr, "pico4-cam: cannot write %s: %s\n", v, strerror(errno));
 				return 1;
 			}
@@ -569,6 +757,7 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 				pico4_station_camera_set_exposures(station, scene, leds);
 			}
 			polling = pthread_create(&poller, NULL, station_thread, station) == 0;
+			imu_running = imu.out != NULL && pthread_create(&imu_thread, NULL, imu_record_thread, &imu) == 0;
 		}
 	}
 	while (r == 0 && !g_stop) {
@@ -594,15 +783,24 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 			if (stats_log != NULL) {
 				log_frame(stats_log, &f);
 			}
+			struct pico4_cam_meta m;
+			if (led_record != NULL && pico4_cam_meta_decode(f.meta, f.stride, &m) &&
+			    m.phase == PICO4_CAM_PHASE_LEDS && !record_led_frame(led_record, &f, &m)) {
+				error = "writing the LED record failed";
+				r = -EIO;
+			}
 		}
 	}
 	if (g_stop && error == NULL) {
 		error = "interrupted";
 	}
 
+	g_station_stop = 1;
 	if (polling) {
-		g_station_stop = 1;
 		pthread_join(poller, NULL);
+	}
+	if (imu_running) {
+		pthread_join(imu_thread, NULL);
 	}
 	if (station_started) {
 		pico4_station_camera_stop(station);
@@ -651,7 +849,18 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 		first = false;
 	}
 	ok = ok && error == NULL;
-	printf("\n  ],\n  \"error\": ");
+	printf("\n  ],\n");
+	if (imu.out != NULL) {
+		printf("  \"imu_packets\": %llu,\n  \"imu_error\": ", (unsigned long long)imu.packets);
+		if (imu.error != 0 || !imu_running) {
+			json_str(imu_running ? strerror(-imu.error) : "not started");
+		} else {
+			printf("null");
+		}
+		printf(",\n");
+		ok = ok && imu_running && imu.error == 0 && imu.packets > 0;
+	}
+	printf("  \"error\": ");
 	if (error != NULL) {
 		json_str(error);
 	} else {
@@ -663,6 +872,12 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 	pico4_station_close(station);
 	if (stats_log != NULL) {
 		fclose(stats_log);
+	}
+	if (led_record != NULL && fclose(led_record) != 0) {
+		ok = false;
+	}
+	if (imu.out != NULL && fclose(imu.out) != 0) {
+		ok = false;
 	}
 	return ok ? 0 : 1;
 }

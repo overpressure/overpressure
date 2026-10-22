@@ -211,7 +211,7 @@ calibration it uses comes from the user's own backup.
 - **Acceptance.** In the step's acceptance cycle, with 6DoF running, an OpenXR client renders
   2,698 frames in 30 s at 89.996 Hz (2 late), each eye on its own panel.
 
-**Open.** Controller positions and haptics, 6DoF robustness and composition headroom; see
+**Open.** The SteamVR dashboard (needs the Steam client), 6DoF robustness and composition headroom; see
 [Open work](#open-work).
 
 ### 6. Valve's VR session
@@ -333,16 +333,16 @@ Details: [session.md](session.md), [userspace.md](userspace.md).
 
 Details: [xr.md](xr.md).
 
-- **Positions.** Constellation tracking of the controllers' IR LEDs. The cameras already
-  deliver the LED frames: every other frame is a short exposure in which only the LEDs show.
-  Still needed are the LED layout of the tracking rings, which is in the controllers'
-  calibration or in PICO's encrypted tracking configuration, and a tracker (Monado has one for
-  WMR controllers). Until then Monado places the controllers at a fixed offset from the head,
-  and SteamVR shows them where its arm model puts them.
-- **Haptics.** Accepted but without effect: the station command is not identified and is not
-  in the station allowlist. Firmware and OTA commands stay excluded from it.
-- **SteamVR.** SteamVR uses its generic bindings for this controller type; clicking in its
-  dashboard is unchecked.
+- **Positions.** Constellation tracking of the controllers' IR LEDs: a reimplementation of PICO
+  OS's controller tracking, with the LED rings read from the headset's own firmware, runs in the
+  driver on the LED exposures and the controller IMU. Worn in Valve's session, both controllers
+  follow the hands (a 30 cm move, crossing hands, out of view and back); a controller that lies
+  still from the start with a still headset can stay unacquired (as with PICO OS's rules).
+- **Models.** SteamVR draws PICO OS's own controller models, read from the headset's firmware.
+- **Haptics.** Vibration goes to the addressed controller through the station's motor command,
+  the only controller command in the allowlist; firmware and OTA commands stay excluded.
+- **SteamVR.** The dashboard bindings reach SteamVR's system UI, but its dashboard needs the
+  Steam client, which the session does not run yet.
 
 ### Head tracking
 

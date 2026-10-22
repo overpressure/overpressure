@@ -3,7 +3,8 @@
 /*
  * Unit test of the tracking-camera helpers with synthetic values (no device
  * data): the station frame builder (golden frames from the Python tool that
- * was verified on hardware, and the allowlist), the factory calibration
+ * was verified on hardware, and the allowlist), the vibration frames (golden
+ * frames from the documented layout), the factory calibration
  * parser, the Kannala-Brandt refit, the controller packet parser and the
  * camera metadata line.
  */
@@ -62,16 +63,20 @@ test_station(void)
 	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CAMERA_FPS, bad_rate, sizeof(bad_rate)));
 	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_ACK, init, sizeof(init)));
 
-	// CameraSetPara: scene setting for cameras 0-3, then (after 3 zero bytes) the LED setting.
+	// CameraSetPara: scene setting for cameras 0-3, PICO OS's 50 Hz value (52) and the event
+	// index, then the LED setting.
 	const struct pico4_station_exposure scene = {300, 64}, leds = {4, 26}, long_leds = {50, 64};
-	const uint8_t golden[28] = {0x03, 0x2C, 0x01, 0x40, 0x2C, 0x01, 0x40, 0x2C, 0x01, 0x40, 0x2C, 0x01, 0x40, 0, 0, 0,
+	const uint8_t golden[28] = {0x03, 0x2C, 0x01, 0x40, 0x2C, 0x01, 0x40, 0x2C, 0x01, 0x40, 0x2C, 0x01, 0x40, 0x34, 0, 7,
 	                            0x04, 0x00, 0x1A, 0x04, 0x00, 0x1A, 0x04, 0x00, 0x1A, 0x04, 0x00, 0x1A};
 	uint8_t built[28];
-	pico4_station_camera_para(built, scene, leds);
+	pico4_station_camera_para(built, scene, leds, 7);
 	EXPECT(memcmp(built, golden, sizeof(golden)) == 0);
 	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, built, sizeof(built)));
+	// The event index counts 0-9.
+	pico4_station_camera_para(built, scene, leds, 13);
+	EXPECT(built[15] == 3);
 	// The second set stays within PICO OS's LED limits (10 lines, gain 32).
-	pico4_station_camera_para(built, scene, long_leds);
+	pico4_station_camera_para(built, scene, long_leds, 0);
 	EXPECT(built[16] == 10 && built[17] == 0 && built[18] == 32 && built[25] == 10 && built[27] == 32);
 	EXPECT(built[1] == 0x2C && built[2] == 0x01 && built[3] == 0x40);
 
@@ -81,6 +86,80 @@ test_station(void)
 	EXPECT(pico4_station_valid(reply));
 	reply[10] ^= 1;
 	EXPECT(!pico4_station_valid(reply));
+}
+
+//! A whole frame: AA, target, command, payload, zeros, CRC at byte 39.
+static bool
+frame_is(const uint8_t f[PICO4_STATION_FRAME], const uint8_t *head, size_t n, uint8_t crc)
+{
+	for (size_t i = n; i < 39; i++) {
+		if (f[i] != 0) {
+			return false;
+		}
+	}
+	return memcmp(f, head, n) == 0 && f[39] == crc;
+}
+
+static void
+test_station_vibrate(void)
+{
+	uint8_t f[PICO4_STATION_FRAME];
+
+	// Plain motor command to the left controller: play, 200 × 50 % = 100, 300 ms.
+	const uint8_t left[7] = {0xAA, 0x02, 0x01, 0x01, 0x64, 0x2C, 0x01};
+	EXPECT(pico4_station_vibrate(f, PICO4_STATION_HAND_LEFT, 200, 50, 300, 0));
+	EXPECT(frame_is(f, left, sizeof(left), 0x81));
+
+	// Motor event to the right controller: full level, 1000 ms, 160 Hz.
+	const uint8_t right[9] = {0xAA, 0x03, 0x07, 0x01, 0xFF, 0xE8, 0x03, 0xA0, 0x00};
+	EXPECT(pico4_station_vibrate(f, PICO4_STATION_HAND_RIGHT, 255, 100, 1000, 160));
+	EXPECT(frame_is(f, right, sizeof(right), 0xF3));
+
+	// Level 0 stops: an all-zero payload, whatever else was asked.
+	const uint8_t stop_left[3] = {0xAA, 0x02, 0x01}, stop_right[3] = {0xAA, 0x03, 0x07};
+	EXPECT(pico4_station_vibrate(f, PICO4_STATION_HAND_LEFT, 0, 75, 500, 0));
+	EXPECT(frame_is(f, stop_left, sizeof(stop_left), 0x14));
+	EXPECT(pico4_station_vibrate(f, PICO4_STATION_HAND_RIGHT, 0, 75, 500, 160));
+	EXPECT(frame_is(f, stop_right, sizeof(stop_right), 0xF4));
+
+	// Clamps: level 255, amplitude 255, duration u16, frequency 40-500 Hz.
+	const uint8_t clamped[9] = {0xAA, 0x03, 0x07, 0x01, 0xFF, 0xFF, 0xFF, 0xF4, 0x01};
+	EXPECT(pico4_station_vibrate(f, PICO4_STATION_HAND_RIGHT, 1000, 100, 70000, 900));
+	EXPECT(frame_is(f, clamped, sizeof(clamped), 0xF5));
+	EXPECT(pico4_station_vibrate(f, PICO4_STATION_HAND_LEFT, 10, 100, 20, 5));
+	EXPECT(f[2] == 0x07 && f[4] == 10 && f[7] == 40 && f[8] == 0);
+	// The amplitude truncates: 3 × 75 / 100 = 2; 1 × 50 / 100 = 0 still plays, as PICO OS does.
+	EXPECT(pico4_station_vibrate(f, PICO4_STATION_HAND_LEFT, 3, 75, 20, 0) && f[3] == 1 && f[4] == 2);
+	EXPECT(pico4_station_vibrate(f, PICO4_STATION_HAND_LEFT, 1, 50, 20, 0) && f[3] == 1 && f[4] == 0);
+
+	// Refused: other targets and a scale above 100 %; nothing is written.
+	memset(f, 0x5A, sizeof(f));
+	EXPECT(!pico4_station_vibrate(f, (enum pico4_station_hand)0, 100, 50, 100, 0));
+	EXPECT(!pico4_station_vibrate(f, (enum pico4_station_hand)3, 100, 50, 100, 0));
+	EXPECT(!pico4_station_vibrate(f, PICO4_STATION_HAND_LEFT, 100, 101, 100, 0));
+	EXPECT(f[0] == 0x5A && f[39] == 0x5A);
+
+	// To the station, 01 (firmware version) and 07 (IMU stream) stay refused.
+	const uint8_t motor[4] = {0x01, 0x64, 0x2C, 0x01}, event[6] = {0x01, 0x64, 0x2C, 0x01, 0xA0, 0x00};
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_MOTOR, motor, sizeof(motor)));
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_MOTOR_EVENT, event, sizeof(event)));
+
+	// OpenXR mapping: XR_MIN_HAPTIC_DURATION is 500 ms, at least 10 ms, level = amplitude × 255.
+	unsigned level = 99, ms = 99;
+	pico4_station_haptic_map(1.0f, -1, &level, &ms);
+	EXPECT(level == 255 && ms == 500);
+	pico4_station_haptic_map(0.25f, 123456789, &level, &ms);
+	EXPECT(level == 63 && ms == 123);
+	pico4_station_haptic_map(0.5f, 2500000, &level, &ms);
+	EXPECT(level == 127 && ms == 10);
+	pico4_station_haptic_map(0.5f, 999999, &level, &ms); // under 1 ms: stop
+	EXPECT(level == 0 && ms == 0);
+	pico4_station_haptic_map(0.0f, 1000000000, &level, &ms);
+	EXPECT(level == 0 && ms == 0);
+	pico4_station_haptic_map(NAN, 1000000000, &level, &ms);
+	EXPECT(level == 0 && ms == 0);
+	pico4_station_haptic_map(2.0f, INT64_MAX, &level, &ms); // XR_INFINITE_DURATION
+	EXPECT(level == 255 && ms == 65535);
 }
 
 // Same structure as the factory files; made-up numbers of the same magnitude.
@@ -190,6 +269,13 @@ test_blemcu(void)
 	EXPECT(p.keys[0].buttons == (PICO4_BLEMCU_BTN_TRIGGER | PICO4_BLEMCU_BTN_STICK | PICO4_BLEMCU_BTN_AX));
 	EXPECT(p.keys[0].touch == (PICO4_BLEMCU_TOUCH_TRIGGER | PICO4_BLEMCU_TOUCH_AX | PICO4_BLEMCU_TOUCH_STICK));
 	EXPECT(p.battery_count == 1 && p.battery[0].device == PICO4_BLEMCU_LEFT && p.battery[0].level == 5);
+
+	// Scales as PICO OS derives them: 2000 deg/s and 16 g over 32768, both doubled for the
+	// PICO 4's controllers. A raw gyro of 8192 is 1000 deg/s, an accelerometer of 1024 1 g.
+	EXPECT(fabs(PICO4_BLEMCU_GYRO_LSB_PER_DPS - 32768.0 / (2 * 2000.0)) < 1e-12);
+	EXPECT(fabs(PICO4_BLEMCU_ACCEL_LSB_PER_G - 32768.0 / (2 * 16.0)) < 1e-12);
+	EXPECT(fabs(8192 / PICO4_BLEMCU_GYRO_LSB_PER_DPS - 1000.0) < 1e-9);
+	EXPECT(fabs(1024 / PICO4_BLEMCU_ACCEL_LSB_PER_G - 1.0) < 1e-12);
 
 	// Not a radio packet, or records running past the length.
 	pkt[0] = 0x5B;
@@ -327,6 +413,7 @@ int
 main(void)
 {
 	test_station();
+	test_station_vibrate();
 	test_calibration();
 	test_blemcu();
 	test_meta();

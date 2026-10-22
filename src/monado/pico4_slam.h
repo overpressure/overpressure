@@ -21,6 +21,7 @@ extern "C" {
 struct pico4_slam;
 struct pico4_station;
 struct pico4_fusion_slam;
+struct pico4_ctrack;
 
 /*!
  * Origin of the HMD frame (between the eyes) in the body frame of the factory
@@ -35,12 +36,14 @@ struct pico4_fusion_slam;
  * reset; borrowed, it must outlive the tracker). Returns NULL if SLAM is not
  * built in, disabled (PICO4_SLAM=0), there is no station or any part fails;
  * the caller then stays on 3DoF. @p imu_hz is the rate the head IMU's samples
- * arrive at (pico4_slam_push_imu), declared to the tracker.
+ * arrive at (pico4_slam_push_imu), declared to the tracker. The controller-LED
+ * exposures go to @p ctrack (borrowed, may be NULL; it must outlive the tracker).
  */
 struct pico4_slam *
 pico4_slam_create(const char *calibration_dir,
                   struct pico4_station *station,
                   double imu_hz,
+                  struct pico4_ctrack *ctrack,
                   enum u_logging_level log_level);
 
 /*!

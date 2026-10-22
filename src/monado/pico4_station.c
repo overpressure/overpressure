@@ -26,6 +26,10 @@
 #define HEADER_REPLY 0xBB
 #define HEADER_NOTIFY 0xA5
 #define TARGET_STATION 0x01
+#define TARGET_LEFT 0x02  //!< Controller targets: StationService::SetMotor 0x72054.
+#define TARGET_RIGHT 0x03
+#define MOTOR_LEN 4       //!< SetMotor's payload (packetSendData at 0x72070).
+#define MOTOR_EVENT_LEN 6 //!< SetVCMotorEvent's payload (0x72294).
 #define NOTIFY_STREAM 0x01   //!< A5 01: streamed data, not acknowledged.
 #define NOTIFY_ANNOUNCE 0x06 //!< A5 06: the station announces itself after power-on.
 #define IOCTL_POWER 0x80046B09 //!< _IOW('k', 9, int): 1 on, 0 off.
@@ -50,6 +54,8 @@ struct pico4_station
 	bool announced;
 	//! The last reply to a camera command: op, status.
 	int camera_op, camera_status;
+	//! CameraSetPara's event index of the last command (0-9).
+	unsigned para_index;
 };
 
 uint8_t
@@ -83,19 +89,106 @@ allowed(uint8_t cmd, const uint8_t *p, size_t n)
 	}
 }
 
+//! Frames to a controller: only the two motor commands, play flag 0 or 1.
+static bool
+allowed_controller(uint8_t target, uint8_t cmd, const uint8_t *p, size_t n)
+{
+	if (target != TARGET_LEFT && target != TARGET_RIGHT) {
+		return false;
+	}
+	switch (cmd) {
+	case PICO4_STATION_CMD_MOTOR: return n == MOTOR_LEN && p[0] <= 1;
+	case PICO4_STATION_CMD_MOTOR_EVENT: return n == MOTOR_EVENT_LEN && p[0] <= 1;
+	default: return false;
+	}
+}
+
+static void
+build(uint8_t out[PICO4_STATION_FRAME], uint8_t target, uint8_t cmd, const uint8_t *payload, size_t size)
+{
+	memset(out, 0, PICO4_STATION_FRAME);
+	out[0] = HEADER_SEND;
+	out[1] = target;
+	out[2] = cmd;
+	memcpy(out + 3, payload, size);
+	out[39] = pico4_station_crc8(out, 39);
+}
+
 bool
 pico4_station_frame(uint8_t out[PICO4_STATION_FRAME], uint8_t cmd, const uint8_t *payload, size_t size)
 {
 	if (!allowed(cmd, payload, size)) {
 		return false;
 	}
-	memset(out, 0, PICO4_STATION_FRAME);
-	out[0] = HEADER_SEND;
-	out[1] = TARGET_STATION;
-	out[2] = cmd;
-	memcpy(out + 3, payload, size);
-	out[39] = pico4_station_crc8(out, 39);
+	build(out, TARGET_STATION, cmd, payload, size);
 	return true;
+}
+
+bool
+pico4_station_vibrate(uint8_t out[PICO4_STATION_FRAME],
+                      enum pico4_station_hand hand,
+                      unsigned level,
+                      unsigned scale_percent,
+                      unsigned duration_ms,
+                      unsigned frequency_hz)
+{
+	if ((hand != PICO4_STATION_HAND_LEFT && hand != PICO4_STATION_HAND_RIGHT) || scale_percent > 100) {
+		return false;
+	}
+	const uint8_t target = hand == PICO4_STATION_HAND_LEFT ? TARGET_LEFT : TARGET_RIGHT;
+	const uint8_t cmd = frequency_hz == 0 ? PICO4_STATION_CMD_MOTOR : PICO4_STATION_CMD_MOTOR_EVENT;
+	const size_t n = cmd == PICO4_STATION_CMD_MOTOR ? MOTOR_LEN : MOTOR_EVENT_LEN;
+	uint8_t p[MOTOR_EVENT_LEN] = {0};
+
+	// Level 0 stops: the whole payload stays zero (SetMotor 0x72050, SetVCMotorEvent 0x72244).
+	if (level != 0) {
+		if (level > 255) { // StationClient 0x37518
+			level = 255;
+		}
+		unsigned amplitude = level * scale_percent / 100; // 0x72000..0x7202c
+		if (duration_ms > 0xFFFF) {
+			duration_ms = 0xFFFF;
+		}
+		if (frequency_hz < PICO4_STATION_MOTOR_MIN_HZ) { // StationClient 0x37594..0x375ac
+			frequency_hz = PICO4_STATION_MOTOR_MIN_HZ;
+		} else if (frequency_hz > PICO4_STATION_MOTOR_MAX_HZ) {
+			frequency_hz = PICO4_STATION_MOTOR_MAX_HZ;
+		}
+		p[0] = 1;
+		p[1] = (uint8_t)(amplitude < 255 ? amplitude : 255);
+		p[2] = (uint8_t)(duration_ms & 0xff);
+		p[3] = (uint8_t)(duration_ms >> 8);
+		if (cmd == PICO4_STATION_CMD_MOTOR_EVENT) { // 0x72238..0x7223c
+			p[4] = (uint8_t)(frequency_hz & 0xff);
+			p[5] = (uint8_t)(frequency_hz >> 8);
+		}
+	}
+	if (!allowed_controller(target, cmd, p, n)) {
+		return false;
+	}
+	build(out, target, cmd, p, n);
+	return true;
+}
+
+void
+pico4_station_haptic_map(float amplitude, int64_t duration_ns, unsigned *out_level, unsigned *out_duration_ms)
+{
+	int64_t ms = duration_ns == -1 ? 500 : duration_ns / 1000000; // set_output 0xa9d5c..0xa9da8
+	if (!(amplitude > 0.0f) || ms == 0) {                          // also NaN
+		*out_level = 0;
+		*out_duration_ms = 0;
+		return;
+	}
+	if (amplitude > 1.0f) {
+		amplitude = 1.0f;
+	}
+	if (ms < 10) { // SetPhyControllerVibrate 0x28d68..0x28d7c, also negative
+		ms = 10;
+	} else if (ms > 0xFFFF) {
+		ms = 0xFFFF;
+	}
+	*out_level = (unsigned)(amplitude * 255.0f); // 0x28d94..0x28da4
+	*out_duration_ms = (unsigned)ms;
 }
 
 bool
@@ -305,8 +398,10 @@ pico4_station_camera_start(struct pico4_station *st)
 }
 
 void
-pico4_station_camera_para(uint8_t out[CAMERA_SET_PARA_LEN], struct pico4_station_exposure scene,
-                          struct pico4_station_exposure leds)
+pico4_station_camera_para(uint8_t out[CAMERA_SET_PARA_LEN],
+                          struct pico4_station_exposure scene,
+                          struct pico4_station_exposure leds,
+                          unsigned index)
 {
 	if (leds.lines > PICO4_STATION_LED_MAX_LINES) {
 		leds.lines = PICO4_STATION_LED_MAX_LINES;
@@ -323,6 +418,9 @@ pico4_station_camera_para(uint8_t out[CAMERA_SET_PARA_LEN], struct pico4_station
 		e[1] = (uint8_t)(x->lines >> 8);
 		e[2] = (uint8_t)x->gain;
 	}
+	out[13] = (uint8_t)(PICO4_STATION_PARA_SYNC_50HZ & 0xff);
+	out[14] = (uint8_t)(PICO4_STATION_PARA_SYNC_50HZ >> 8);
+	out[15] = (uint8_t)(index % 10);
 }
 
 int
@@ -332,8 +430,9 @@ pico4_station_camera_set_exposures(struct pico4_station *st,
 {
 	// The station answers nothing.
 	uint8_t p[CAMERA_SET_PARA_LEN];
-	pico4_station_camera_para(p, scene, leds);
 	pthread_mutex_lock(&st->lock);
+	st->para_index = (st->para_index + 1) % 10; // counted before each command, as PICO OS does
+	pico4_station_camera_para(p, scene, leds, st->para_index);
 	int r = send_cmd(st, PICO4_STATION_CMD_CAMERA, p, sizeof(p));
 	pthread_mutex_unlock(&st->lock);
 	return r;
@@ -345,6 +444,20 @@ pico4_station_camera_set_exposure(struct pico4_station *st, unsigned exposure_li
 	// The second set as PICO OS fills it: the station's own LED setting (4 lines, gain 26).
 	struct pico4_station_exposure scene = {exposure_lines, gain}, leds = {4, 26};
 	return pico4_station_camera_set_exposures(st, scene, leds);
+}
+
+int
+pico4_station_motor(struct pico4_station *st, enum pico4_station_hand hand, unsigned level, unsigned duration_ms)
+{
+	uint8_t f[PICO4_STATION_FRAME];
+	if (!pico4_station_vibrate(f, hand, level, PICO4_STATION_MOTOR_SCALE_PERCENT, duration_ms, 0)) {
+		return -EINVAL;
+	}
+	pthread_mutex_lock(&st->lock);
+	ssize_t w = write(st->fd, f, sizeof(f));
+	int r = w < 0 ? -errno : w == (ssize_t)sizeof(f) ? 0 : -EIO;
+	pthread_mutex_unlock(&st->lock);
+	return r;
 }
 
 int

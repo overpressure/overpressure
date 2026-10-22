@@ -152,7 +152,9 @@ takes 10–20 minutes and often stops with "Failed to start up manager" when tho
 generators past their limit; one vCPU instead of two avoids the stalls but takes twice as long.
 
 New behaviour gets host tests with fakes for hardware and golden data for protocols; the C
-protocol tests run inside the package builds, because makepkg runs with `--nocheck`.
+protocol tests and the controller tracker's C++ tests (`test_pico4_ctrack_*`: solvers,
+acquisition, blobs, IMU fusion, the engine and its thread on synthetic data) run inside the
+package builds, because makepkg runs with `--nocheck`.
 
 ## From a change to the headset
 

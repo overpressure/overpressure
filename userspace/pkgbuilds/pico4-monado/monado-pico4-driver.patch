@@ -332,7 +332,7 @@ diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
 index bd31b3374..747bbfd36 100644
 --- a/src/xrt/drivers/CMakeLists.txt
 +++ b/src/xrt/drivers/CMakeLists.txt
-@@ -249,6 +249,43 @@ if(XRT_BUILD_DRIVER_ROKID)
+@@ -249,6 +249,64 @@ if(XRT_BUILD_DRIVER_ROKID)
  	list(APPEND ENABLED_HEADSET_DRIVERS rokid)
  endif()
  
@@ -345,6 +345,25 @@ index bd31b3374..747bbfd36 100644
 +		pico4/pico4_cam.h
 +		pico4/pico4_controller.c
 +		pico4/pico4_controller.h
++		pico4/pico4_ctrack.cpp
++		pico4/pico4_ctrack.h
++		pico4/pico4_ctrack_blob.cpp
++		pico4/pico4_ctrack_blob.hpp
++		pico4/pico4_ctrack_calib.cpp
++		pico4/pico4_ctrack_calib.hpp
++		pico4/pico4_ctrack_engine.cpp
++		pico4/pico4_ctrack_engine.hpp
++		pico4/pico4_ctrack_imu.cpp
++		pico4/pico4_ctrack_imu.hpp
++		pico4/pico4_ctrack_init.cpp
++		pico4/pico4_ctrack_init.hpp
++		pico4/pico4_ctrack_model.cpp
++		pico4/pico4_ctrack_model.hpp
++		pico4/pico4_ctrack_runner.cpp
++		pico4/pico4_ctrack_runner.hpp
++		pico4/pico4_ctrack_solve.cpp
++		pico4/pico4_ctrack_solve.hpp
++		pico4/pico4_ctrack_types.hpp
 +		pico4/pico4_fusion.c
 +		pico4/pico4_fusion.h
 +		pico4/pico4_hmd.c
@@ -364,8 +383,10 @@ index bd31b3374..747bbfd36 100644
 +		)
 +	# Spectra camera UAPI headers (media/cam_*.h), placed here by the package build.
 +	target_include_directories(drv_pico4 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/pico4/include)
++	# PICO OS's controller tracker is built without fused multiply-adds; round alike.
++	target_compile_options(drv_pico4 PRIVATE -ffp-contract=off)
 +	target_link_libraries(
-+		drv_pico4 PRIVATE xrt-interfaces aux_util aux_os aux_math xrt-external-cjson
++		drv_pico4 PRIVATE xrt-interfaces aux_util aux_os aux_math xrt-external-cjson Eigen3::Eigen
 +		)
 +	if(XRT_FEATURE_SLAM)
 +		target_link_libraries(drv_pico4 PRIVATE aux_tracking)

@@ -13,10 +13,11 @@
 # path of docs/graphics.md); the null compositor serves headless clients. The
 # acceptance clients read the head pose (pico4-openxr-pose) and render frames
 # (pico4-openxr-display) through the OpenXR loader; pico4-cam checks the
-# tracking cameras on their own.
+# tracking cameras on their own; pico4-ctrack-replay runs the controller LED
+# tracker over pico4-cam's recordings.
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=6
+pkgrel=8
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -40,7 +41,16 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_slam.h pico4_slam.c pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
         comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
-        pico4_retire.h test_pico4_retire.c)
+        pico4_retire.h test_pico4_retire.c
+        pico4_ctrack_types.hpp pico4_ctrack_model.hpp pico4_ctrack_model.cpp pico4_ctrack_solve.hpp
+        pico4_ctrack_solve.cpp pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp
+        pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp pico4_ctrack_imu.cpp pico4_ctrack_engine.hpp
+        pico4_ctrack_engine.cpp test_pico4_ctrack_solve.cpp test_pico4_ctrack_init.cpp
+        test_pico4_ctrack_blob.cpp test_pico4_ctrack_imu.cpp test_pico4_ctrack_engine.cpp
+        pico4-ctrack-replay.cpp pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_calib.hpp pico4_ctrack_calib.cpp
+        pico4_ctrack_runner.hpp pico4_ctrack_runner.cpp test_pico4_ctrack_runner.cpp test_pico4_ctrack_world.hpp
+        pico4_aimgrip.h test_pico4_aimgrip.c
+        pico4-vrcompositor-bindings.json)
 # Project files (src/monado, src/xr) are SKIP: build-userspace.sh copies them in.
 sha256sums=(SKIP
             56161a34cf6d6d64dde3b804e34fc1b2b6654a060cae6544b95be9e577278c29
@@ -58,7 +68,11 @@ sha256sums=(SKIP
             SKIP
             SKIP
             SKIP
-            SKIP SKIP)
+            SKIP SKIP
+            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
+            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
+            SKIP SKIP
+            3d9c5b9fa11ee4c9589fa15093d4f3bde89ea708b5835038dbd441ef08338123)
 
 prepare() {
   patch -d monado -p1 < monado-pico4-driver.patch
@@ -80,7 +94,11 @@ build() {
   install -C -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c \
     pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c \
     pico4_tcam.h pico4_tcam.c pico4_slam.h pico4_slam.c pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
-    pico4_controller.c pico4_fusion.h pico4_fusion.c
+    pico4_controller.c pico4_fusion.h pico4_fusion.c pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_types.hpp \
+    pico4_ctrack_model.hpp pico4_ctrack_model.cpp pico4_ctrack_solve.hpp pico4_ctrack_solve.cpp \
+    pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp \
+    pico4_ctrack_imu.cpp pico4_ctrack_engine.hpp pico4_ctrack_engine.cpp pico4_ctrack_runner.hpp \
+    pico4_ctrack_runner.cpp pico4_ctrack_calib.hpp pico4_ctrack_calib.cpp pico4_aimgrip.h
   install -C -Dm644 -t monado/src/xrt/compositor/main comp_window_pico4_kms.c pico4_retire.h
 
   # The protocol and model tests run here because build-userspace.sh uses --nocheck.
@@ -89,6 +107,9 @@ build() {
   ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -Imonado/src/external/cjson -o test_pico4_lens \
     test_pico4_lens.c pico4_lens.c pico4_ipd.c monado/src/external/cjson/cjson/cJSON.c -lm
   ./test_pico4_lens
+  ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -Imonado/src/xrt/include -Imonado/src/external/cjson \
+    -o test_pico4_aimgrip test_pico4_aimgrip.c monado/src/external/cjson/cjson/cJSON.c -lm
+  ./test_pico4_aimgrip
   ${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -o test_pico4_tracking test_pico4_tracking.c pico4_station.c pico4_tcam.c \
     pico4_blemcu.c -lm
   ./test_pico4_tracking
@@ -97,6 +118,19 @@ build() {
   ./test_pico4_fusion
   ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_retire test_pico4_retire.c -lpthread
   ./test_pico4_retire
+  # The controller tracker (C++17, Eigen), compiled once for its tests and the replay tool.
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -c pico4_tcam.c pico4_blemcu.c
+  local ctrack=(model solve init blob imu engine runner calib) objs=(pico4_tcam.o) m t
+  for m in "${ctrack[@]}"; do
+    ${CXX:-c++} -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Werror -isystem /usr/include/eigen3 -c -o ctrack_$m.o \
+      pico4_ctrack_$m.cpp
+    objs+=(ctrack_$m.o)
+  done
+  for t in solve init blob imu engine runner; do
+    ${CXX:-c++} -std=c++17 -O1 -Wall -Wextra -Werror -isystem /usr/include/eigen3 -o test_pico4_ctrack_$t \
+      test_pico4_ctrack_$t.cpp "${objs[@]}" -lpthread
+    ./test_pico4_ctrack_$t
+  done
 
   # Configured once per build tree; ninja reruns CMake when its inputs change.
   if [[ ! -f build/build.ninja ]]; then
@@ -121,7 +155,9 @@ build() {
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-pose pico4-openxr-pose.c -lopenxr_loader -lm
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-display pico4-openxr-display.c -lopenxr_loader -lvulkan -lm
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -Imonado/src/xrt/drivers/pico4/include -o pico4-cam pico4-cam.c \
-    pico4_cam.c pico4_station.c -lpthread
+    pico4_cam.c pico4_station.c pico4_ssc.c -lpthread
+  ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -isystem /usr/include/eigen3 -o pico4-ctrack-replay \
+    pico4-ctrack-replay.cpp "${objs[@]}" pico4_blemcu.o -lpthread -lm
 }
 
 package() {
@@ -134,7 +170,19 @@ package() {
   # The service units are the project's (userspace/rootfs): upstream's user
   # units would start a second Monado per user.
   rm -rf "$pkgdir/usr/lib/systemd"
-  install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam -t "$pkgdir/usr/bin"
+  # SteamVR's dashboard has no default bindings for this controller type: the profile names ours.
+  local input="$pkgdir/usr/share/steamvr-monado/resources/input"
+  install -Dm644 pico4-vrcompositor-bindings.json "$input/pico4_vrcompositor_bindings.json"
+  python3 - "$input/bytedance_pico4_controller_profile.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    profile = json.load(f)
+profile["default_bindings"] = [
+    {"app_key": "openvr.component.vrcompositor", "binding_url": "pico4_vrcompositor_bindings.json"}]
+with open(sys.argv[1], "w") as f:
+    json.dump(profile, f, indent=2)
+PY
+  install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.
   install -dm755 "$pkgdir/etc/openxr/1"
   ln -s /usr/share/openxr/1/openxr_monado.json "$pkgdir/etc/openxr/1/active_runtime.json"

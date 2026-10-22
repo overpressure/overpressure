@@ -10,7 +10,9 @@
  * short one in which only the controllers' infrared LEDs show (for
  * controller tracking). Each frame's first line is the sensor's metadata:
  * its exposure phase and the exposure and gain it was taken with
- * (pico4_cam_meta_decode). The LED frames are skipped by that phase. Frames
+ * (pico4_cam_meta_decode). The LED frames are kept out of the tracker by that
+ * phase and go, as sets of the four cameras, to the controller tracker
+ * (pico4_ctrack.h) when there is one. Frames
  * of one pulse are grouped by their start-of-frame time, converted from 10 to
  * 8 bits (black level removed, slowly adapting digital gain) and pushed to the
  * tracker in camera order with one timestamp, as Basalt requires: the middle
@@ -39,6 +41,7 @@
 #ifdef XRT_FEATURE_SLAM
 
 #include "pico4_cam.h"
+#include "pico4_ctrack.h"
 #include "pico4_station.h"
 #include "pico4_tcam.h"
 
@@ -178,6 +181,17 @@ struct pico4_slam
 	uint64_t sets_inconsistent;
 	//! Frames skipped by their metadata: controller-LED or other phases, undecodable metadata.
 	uint64_t frames_leds, frames_other, frames_bad;
+
+	//! The controller tracker (borrowed) and the LED exposure set being collected for it.
+	struct pico4_ctrack *ctrack;
+	int factory_of_slot[PICO4_CAM_NUM]; //!< Factory camera of each sensor slot, -1 if none.
+	struct
+	{
+		struct pico4_cam_assembly assembly;
+		uint8_t *images[PICO4_TCAM_COUNT]; //!< 640x480, factory camera order.
+		int64_t taken[PICO4_TCAM_COUNT];
+	} leds;
+	uint64_t led_sets, led_sets_dropped;
 	int64_t max_spread_ns; //!< Largest spread of exposure middles within a set since the last report.
 
 	//! Frame sets for the tracker, guarded by push_oth's lock.
@@ -493,11 +507,51 @@ exposure_middle(int64_t sof_ns, const struct pico4_cam_meta *m)
 	return sof_ns - SOF_AFTER_EXPOSURE_NS - (int64_t)m->exposure_lines * LINE_NS / 2;
 }
 
+/*!
+ * A controller-LED exposure for the controller tracker: the four cameras of one pulse, in
+ * factory order, 10 -> 8 bits by dropping the two lowest bits as pico4-cam --record-leds stores
+ * them (the tracker's blob thresholds are for these), at the mean of their exposure middles.
+ */
+static void
+handle_led_frame(struct pico4_slam *s, const struct pico4_cam_frame *f, const struct pico4_cam_meta *meta)
+{
+	int k = s->factory_of_slot[f->slot];
+	if (s->ctrack == NULL || k < 0 || f->width != 640 || f->height != 480) {
+		return;
+	}
+	bool dropped;
+	enum pico4_cam_assembly_result added =
+	    pico4_cam_assembly_add(&s->leds.assembly, k, f->sof_monotonic_ns, GROUP_WINDOW_NS, PICO4_TCAM_COUNT, &dropped);
+	if (dropped) {
+		s->led_sets_dropped++;
+	}
+	if (added == PICO4_CAM_SET_LATE || added == PICO4_CAM_SET_DUPLICATE) {
+		return;
+	}
+	uint8_t *out = s->leds.images[k];
+	for (uint32_t y = 0; y < f->height; y++) {
+		const uint16_t *in = (const uint16_t *)((const uint8_t *)f->data + (size_t)y * f->stride);
+		for (uint32_t x = 0; x < f->width; x++) {
+			out[(size_t)y * f->width + x] = (uint8_t)((in[x] & 0x3ff) >> 2);
+		}
+	}
+	s->leds.taken[k] = exposure_middle(f->sof_monotonic_ns, meta);
+	if (added == PICO4_CAM_SET_COMPLETE) {
+		int64_t sum = 0;
+		for (int i = 0; i < PICO4_TCAM_COUNT; i++) {
+			sum += s->leds.taken[i] - s->leds.taken[0];
+		}
+		pico4_ctrack_push_frames(s->ctrack, s->leds.taken[0] + sum / PICO4_TCAM_COUNT,
+		                         (const uint8_t *const *)s->leds.images, 640);
+		s->led_sets++;
+		pico4_cam_assembly_reset(&s->leds.assembly);
+	}
+}
+
 static void
 handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 {
-	int index = s->index_of_slot[f->slot];
-	if (index < 0 || f->sof_monotonic_ns == 0) {
+	if (f->sof_monotonic_ns == 0) {
 		return;
 	}
 	struct pico4_cam_meta meta;
@@ -508,10 +562,15 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	if (meta.phase != PICO4_CAM_PHASE_SCENE) {
 		if (meta.phase == PICO4_CAM_PHASE_LEDS) {
 			s->frames_leds++;
+			handle_led_frame(s, f, &meta);
 		} else {
 			s->frames_other++;
 		}
 		return; // a controller-LED exposure: fed to Basalt, it runs away
+	}
+	int index = s->index_of_slot[f->slot];
+	if (index < 0) {
+		return;
 	}
 	int64_t ts = f->sof_monotonic_ns;
 	bool dropped;
@@ -727,6 +786,7 @@ struct pico4_slam *
 pico4_slam_create(const char *calibration_dir,
                   struct pico4_station *station,
                   double imu_hz,
+                  struct pico4_ctrack *ctrack,
                   enum u_logging_level log_level)
 {
 	if (!debug_get_bool_option_pico4_slam() || station == NULL) {
@@ -735,6 +795,7 @@ pico4_slam_create(const char *calibration_dir,
 	struct pico4_slam *s = U_TYPED_CALLOC(struct pico4_slam);
 	int cams[PICO4_TCAM_COUNT], slots[PICO4_TCAM_COUNT];
 	s->log_level = log_level;
+	s->ctrack = ctrack;
 	s->imu_hz = imu_hz;
 	s->gain = 2.0f;
 	s->exposure_lines = 300;
@@ -755,9 +816,13 @@ pico4_slam_create(const char *calibration_dir,
 	}
 	for (int i = 0; i < PICO4_CAM_NUM; i++) {
 		s->index_of_slot[i] = -1;
+		s->factory_of_slot[i] = -1;
 	}
 	for (int i = 0; i < s->cam_count; i++) {
 		s->index_of_slot[slots[cams[i]]] = i;
+	}
+	for (int k = 0; k < PICO4_TCAM_COUNT; k++) {
+		s->factory_of_slot[slots[k]] = k;
 	}
 	if (!load_calibration(s, calibration_dir, cams)) {
 		free(s);
@@ -804,6 +869,9 @@ pico4_slam_create(const char *calibration_dir,
 	}
 
 	s->station = station;
+	for (int k = 0; s->ctrack != NULL && k < PICO4_TCAM_COUNT; k++) {
+		s->leds.images[k] = U_TYPED_ARRAY_CALLOC(uint8_t, 640 * 480);
+	}
 	int r;
 	struct pico4_cam_config cc;
 	pico4_cam_config_init(&cc);
@@ -975,9 +1043,13 @@ pico4_slam_destroy(struct pico4_slam **ptr)
 	xrt_frame_context_destroy_nodes(&s->xfctx);
 	SLAM_INFO(s,
 	          "SLAM: %llu frame sets, %llu incomplete, %llu skipped while the tracker was busy, "
-	          "%llu IMU samples dropped",
+	          "%llu IMU samples dropped; %llu LED sets to the controller tracker, %llu incomplete",
 	          (unsigned long long)s->sets_pushed, (unsigned long long)s->sets_dropped,
-	          (unsigned long long)s->sets_busy, (unsigned long long)s->imu_overflow);
+	          (unsigned long long)s->sets_busy, (unsigned long long)s->imu_overflow,
+	          (unsigned long long)s->led_sets, (unsigned long long)s->led_sets_dropped);
+	for (int k = 0; k < PICO4_TCAM_COUNT; k++) {
+		free(s->leds.images[k]);
+	}
 	free(s);
 	*ptr = NULL;
 }
@@ -988,11 +1060,13 @@ struct pico4_slam *
 pico4_slam_create(const char *calibration_dir,
                   struct pico4_station *station,
                   double imu_hz,
+                  struct pico4_ctrack *ctrack,
                   enum u_logging_level log_level)
 {
 	(void)calibration_dir;
 	(void)station;
 	(void)imu_hz;
+	(void)ctrack;
 	(void)log_level;
 	return NULL;
 }

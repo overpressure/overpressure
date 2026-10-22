@@ -5,8 +5,8 @@ with free software only. The head IMU streams through the sensor DSP. Monado 25.
 project's `pico4` driver gives OpenXR clients the head pose (3DoF fusion at 1 kHz, 6DoF from
 Basalt on the four tracking cameras), shows their frames on both panels through the stock KMS
 driver with the factory lens model and the IPD read from the lens motor, and provides both
-controllers with inputs and 3DoF orientation. Controller positions (IR-LED tracking) and haptics
-are open. Monado runs as a system service ([session.md](session.md#monado-as-a-service)); SteamVR
+controllers with inputs, their 6DoF pose from PICO OS's LED tracking (reimplemented), PICO OS's
+own render models and vibration. Monado runs as a system service ([session.md](session.md#monado-as-a-service)); SteamVR
 uses the same driver through `driver_monado`. The inventory comes from the stock image, kernel and
 device tree and from read-only `adb shell` observation of PICO OS; no vendor files are part of
 this repository.
@@ -361,7 +361,8 @@ moves whole frames on the station's interrupt, so userspace only `write()`s, `se
 `read()`s.
 
 - **Frames.** 40 bytes: header (`AA` to the station, `BB` replies, `A5` notifications), target
-  (`01`, the station) or notification type, command, payload (bytes 37–38 carry a sequence
+  (`01` the station, `02` the left and `03` the right controller; a command byte means different
+  things per target) or notification type, command, payload (bytes 37–38 carry a sequence
   number), and a CRC-8 (Dallas/Maxim: reflected polynomial `0x8C`, initial value 0) over bytes
   0–38.
 - **Acknowledgements.** As the stock service does, every frame from the station except stream
@@ -387,16 +388,18 @@ frames only from an allowlist:
 | `19` | `01` (50 Hz) or `02`, device type, `01` | answer to the announcement | yes | yes |
 | `04` | `01 00 02 00` (exposure-first-row flag 2 as on PICO OS, resolution 0) | camera init | yes | yes |
 | `04` | `02`, camera (0 all, 1–4), `01` on / `02` off | camera stream | yes | yes |
-| `04` | 28 bytes: `03`, 8 × (u16 exposure, u8 gain) in bytes 1–12 and 16–27, a u16 and an event index in 13–15 ([cameras](#tracking-cameras)) | camera exposure and gain | yes | yes |
+| `04` | 28 bytes: `03`, 8 × (u16 exposure, u8 gain) in bytes 1–12 and 16–27, 52 (u16) and an event index in 13–15 ([cameras](#tracking-cameras)) | camera exposure and gain | yes | yes |
 | `04` | `07 00`, rate | camera frame rate | – | yes |
 | `01` | none (sequence number in bytes 37–38) | firmware version | – | yes |
 | `07` | controller, `01` on / `00` off | controllers' IMU stream to the DSP | – | yes |
 | `22` | exactly `01 00` (reads; a first byte of 0 would set the tracker work mode) | work mode | – | yes |
 | `29`, `30` | none | crash info, whitelist (read-only queries of the stock wake-up) | – | yes |
+| `01` to `02`/`03` | play (`01`, or all zero to stop), amplitude, u16 duration in ms | controller vibration, as PICO OS's OpenXR haptics | yes | – |
+| `07` to `02`/`03` | as `01`, then u16 frequency (40–500 Hz) | controller vibration with a frequency | yes | – |
 
 Neither can send firmware, bootloader or flash commands, and neither touches the boot pin. The C
 module's unit test checks its frames against golden bytes from the hardware-verified Python tool
-and that every other command is refused.
+(the vibration frames against the layout above) and that every other command is refused.
 
 ## Tracking cameras
 
@@ -470,7 +473,11 @@ The station drives the sensors, which run in FSIN slave mode:
   cameras 0–3 in bytes 1–12 and a second set in 16–27; the station sends no reply. By the frames'
   metadata the first set drives the scene frames, and the second changes neither phase: the
   driver fills it with PICO OS's LED setting, 4 lines at gain 26, within PICO OS's LED limits
-  (10 lines, gain 32). Exposure plus the
+  (10 lines, gain 32). Bytes 13–14 carry 52, the value PICO OS's tracking service sends at a
+  50 Hz camera rate (160 at other rates), and byte 15 an event index that PICO OS counts 0–9,
+  one per command. Once any such command has gone out, the controllers' LEDs show about 27 times
+  more saturated samples in the LED exposures than before the first one (the same 4 lines at
+  gain 26 by the metadata), whatever the command holds. Exposure plus the
   9 ms readout must fit the 20 ms period, about 570 lines; 3,000 lines stall the sensors. The station's default exposure, about
   3 ms, leaves rooms nearly black.
 - **Alternating exposures.** Every other frame is a short exposure in which only the
@@ -656,7 +663,7 @@ records (byte 12), then records `[length][type][id][time offset][data]`. The id'
 name the device (1 left controller, 2 right, 3–5 trackers); bit 7 adds a time offset before the
 data (2 bytes, 4 with bit 6), in µs before the packet's station time. Record types:
 
-- **IMU** (type 0): gyro (3 × int16) at 16.4 LSB per °/s (±2000°/s), accelerometer (3 × int16)
+- **IMU** (type 0): gyro (3 × int16) at 8.192 LSB per °/s (±4000°/s), accelerometer (3 × int16)
   at 1,024 LSB per g, temperature (raw / 132.48 + 25 °C) and a 16-bit counter.
 - **Inputs** (type 1): trigger, stick y (255 up), stick x (255 right) and grip as bytes, in that
   order (sticks centred at 128). One byte of buttons: home (bit 0), menu, A/X, B/Y, grip, stick
@@ -670,12 +677,113 @@ Other types belong to trackers and diagnostics.
 (`PICO 4 left/right controller`) with Monado's existing PICO 4 controller profile
 (`/interaction_profiles/bytedance/pico4_controller`): A/B or X/Y click and touch, menu, system,
 trigger click, value and touch, thumbstick click, touch and axes, squeeze click and value, grip
-and aim poses. IMU samples are timed by the SSC event time minus the record's offset.
-Orientation comes from `m_imu_3dof`, levelled from the mean gravity of the first 100 samples,
-with the IMU axes mapped to the grip frame (x right, y up, z back along the handle) as `x,-z,y`.
-Positions are a placeholder: 0.18 m to the side, 0.35 m below and 0.30 m in front of the head,
-turned with its heading. Real positions need the IR-LED tracking. Haptics are accepted but do
-nothing.
+and aim poses. IMU samples are timed by the SSC event time minus the record's offset. While the
+controller tracker (below) has placed a controller, its pose comes from there: position tracked
+while the tracker's output is 6DoF, and valid but not tracked while it holds the position (lying
+still, or briefly unseen), which PICO OS publishes the same way. Before the first fix the
+orientation comes from `m_imu_3dof`, levelled from the mean gravity of the first 100 samples,
+with the IMU axes mapped to the aim frame (x right, y up, z back) as `x,-z,y`,
+and the position is a placeholder: 0.18 m to the side, 0.35 m below and 0.30 m in front of the
+head, turned with its heading. The controllers share the HMD's tracking origin, so Monado's
+builders give head and controllers one offset. A vibration request (amplitude, duration) goes
+out as one motor frame (command `01`, below) per request, mapped as PICO OS maps OpenXR haptics:
+level = amplitude × 255, the duration in whole milliseconds and at least 10 ms, Monado's minimum
+duration as 500 ms, 0 ms as a stop, and PICO OS's default strength of 75 %. The controller ends
+the vibration itself.
+
+Either pose is the aim pose: PICO OS publishes the tracked pose as the aim and derives the grip as
+aim × T, where T is a position and a quaternion (w, x, y, z) per hand, left block first, that its
+tracking service takes from `sys_tracking_aim_to_grip_transform` or, without that key, from
+built-in values (a turn of about 34° about x and about 5 cm of lever arm on this firmware).
+[`pico4/aimgrip.py`](../pico4/aimgrip.py) reads the built-in values from the 5.13.7
+`libpvrtrackingservice.so`, `extract-sensor-data.sh` writes them to
+`calibration/controllers/aim-to-grip.json`, and the driver composes the grip pose the same way,
+adding ω × lever arm to its linear velocity; without the file the grip pose is the aim pose. The
+SteamVR driver reports the aim pose as the controller's pose, the frame of the render models.
+
+The render models are PICO OS's own: `/system/pre_resource/data/misc/user/controller/Neo3Phx/`
+holds a textured OBJ per hand (`60.obj` left, `61.obj` right, in centimetres) whose origin and
+axes are the published aim pose: with no transform, PICO OS's LED rings, turned into the aim
+frame and less the lever arm, lie within 1.5 mm of the surface.
+[`pico4/controllermodel.py`](../pico4/controllermodel.py) converts them into SteamVR render
+models (triangulated OBJ in metres, material, texture, and components for the aim and, from
+`aim-to-grip.json`, the grip), `extract-sensor-data.sh` writes them to `rendermodels/`, and the
+image build copies them to `/usr/share/steamvr-monado/resources/rendermodels/`, where SteamVR
+finds `{monado}pico4_controller_left` and `_right`.
+
+### Controller tracking
+
+Each controller carries a ring of 20 infrared LEDs, which light in the station's short controller
+exposure, every other camera frame (4 lines at gain 26). PICO OS's controller tracking library
+(`/system/lib64/libpico_controller_tracking.pxr.so`) holds a nominal model of each ring: 20
+points in metres, between 1.5 and 9.8 cm from the model's origin, the left ring the right one
+mirrored in y, and one unit normal per LED. [`pico4/ledmodel.py`](../pico4/ledmodel.py) reads
+both by their addresses in the 5.13.7 library and refuses anything that is not such a ring;
+`extract-sensor-data.sh` writes them to `calibration/controllers/led-models.json`, installed with
+the rest of the calibration. They are vendor data and stay out of the repository. PICO OS
+replaces them with each controller's own coordinates from the station's calibration, which a
+backup does not contain; the tracker uses the nominal models.
+
+The tracker (`src/monado/pico4_ctrack_*`, C++17 with Eigen) reimplements the approach of that
+library:
+
+- **Frames.** A world with +x up, the headset body frame of the factory calibration, and the
+  LED-model frame, which is also the controller IMU's frame after the fixed axis remap
+  (x, y, z) → (−z, −x, y). There is no IMU-to-LED transform and no IMU-to-camera delay.
+- **Blobs.** A SimpleBlobDetector-like detector: a fixed or adaptive (11 × 11 mean + 30)
+  threshold, outer contours, polygon moments, area and circularity filters. Tracking detects in
+  a window around the predicted LEDs; acquisition detects in the whole image at > 70 and clusters
+  the blobs.
+- **Acquisition** from one camera, cameras in a fixed order per hand:
+  - five or more blobs: an LED-triple search with the IMU's rotation, extended to all blobs by
+    EPnP; failing that, a geometric hash of 5-LED patterns, generated from the left model by the
+    rule PICO OS's table was built with (identical to the table it ships);
+  - three or four blobs: P3P with the IMU's rotation.
+
+  Every result passes PICO OS's plausibility checks: brightness and footprint against the
+  distance, the other cameras, and a range box around the head (|x|, |y| < 1.2 m, |z| < 0.8 m).
+  Three consecutive acquisitions start tracking.
+- **Tracking.** The facing LEDs, projected with the IMU's prediction, are associated with the
+  blobs by shift hypotheses. A robust Levenberg-Marquardt fit over all four cameras follows, with
+  a soft prior on the IMU's rotation; two to four LEDs give the translation alone. A failed frame
+  re-acquires in the same frame.
+- **Fusion.** A 15-state error-state filter: optical poses correct position and yaw behind
+  chi-square and box gates; tilt comes from the IMU. The output is predicted 41 ms ahead of the
+  newest IMU sample. A hand is lost after 1.2 s still or 3 s moving without optical updates, and
+  on any gap of more than 35 ms between IMU samples.
+
+In the driver, `pico4_slam.c` collects the LED exposures of the four cameras as sets. It converts
+them to 8 bits by dropping the two lowest bits, as `pico4-cam capture --record-leds` stores them,
+and hands them to the tracker's thread. That thread waits up to 60 ms for the IMU samples up to a
+set's exposure time and takes the head pose at that time from the HMD's own track. The aim pose
+is the LED-model frame turned like the 3DoF axis mapping, offset by PICO OS's lever arm of
+about 2 cm, which its client adds in that frame after prediction.
+[`pico4/leverarm.py`](../pico4/leverarm.py) reads it from the 5.13.7
+`libpico_controller_tracking.client.so` and `extract-sensor-data.sh` writes it to
+`calibration/controllers/lever-arm.json`; without it, or without the LED models, the tracker stays
+off. `PICO4_CTRACK=0` turns the tracker off; `PICO4_CTRACK_TRACE=FILE` writes one CSV row per hand
+after every update: the last frame set's acquisition and tracking result and the published pose.
+
+The controller IMU arrives at about 500 samples per second per hand only while another sensor
+streams too. With `ble_mcu` alone, the sensor DSP drops it to about 90 events per second, whatever
+rate is requested, a few minutes after the DSP started. Then gaps of up to 0.1 s trip the 35 ms
+rule about once a second. The driver always streams the head IMU at 1 kHz, and
+`pico4-cam --record-imu` records the head IMU along with the controllers for the same reason.
+
+PICO OS sends exposure commands all the time, so its tracker sees the LEDs as they are after the
+first such command (see the tracking cameras): at 0.7 m neighbouring LEDs merge into one blob and
+the centroids move by up to 1 px against the frames before any command. Its station service sets
+no LED level for the controllers: the LED gear it derives from the user's body height (station
+command `2F`) goes only to the body trackers (devices 3–5), and its controller LED command (`1B`)
+has no caller in the tracking service.
+
+`pico4-ctrack-replay` runs the tracker over a pair of recordings, `pico4-cam capture
+--record-leds LEDS --record-imu IMU`. It prints per-hand counts (JSON) and with `--trace` a CSV
+line per frame set. The head is taken as still, its up direction the mean of the recorded head
+accelerometer; `--head-up` gives it instead, and `--estimate-head-up` measures it from frames
+where a controller lies still (for recordings without the head IMU). `--max-imu-gap` replaces
+the 35 ms limit, `--delay left|right S` holds one hand back, and `--skip S` drops the first frame
+sets while the IMU runs.
 
 ## Build
 
@@ -695,6 +803,10 @@ bash scripts/extract-sensor-data.sh backup/stock assets/sensor-data-5.13.7
 | `sensors/registry/`, `sns_reg_version` | this headset's registry with its factory calibration (persist) |
 | `calibration/pvr/` | factory camera, IMU and lens calibration (persist) |
 | `calibration/pxrconfig/SDK_Lens_ConfigFile.txt` | stock lens configuration with the chromatic aberration terms (system) |
+| `calibration/controllers/led-models.json` | the nominal LED rings of both controllers, read from PICO OS's controller tracking library (system; see Controllers) |
+| `calibration/controllers/aim-to-grip.json` | the grip pose of each controller in its aim frame, read from PICO OS's tracking service (system; see Controllers) |
+| `calibration/controllers/lever-arm.json` | the lever arm PICO OS adds to each aim pose, read from its controller tracking client (system; see Controller tracking) |
+| `rendermodels/pico4_controller_*/` | SteamVR render models of both controllers, converted from PICO OS's controller models (system; see Controllers) |
 | `calibration/fan-profile` | `early` or `late`: the production batch that selects the fan's table, from the serial number, which is not kept (persist; [cooling.md](cooling.md)) |
 | `manifest.json` | sources and SHA-256 of every file |
 
@@ -898,6 +1010,20 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Head pose worn, standing still | 0.035° RMS around its 200 ms average at 1.7°/s, as in Basalt: the head's own motion (0.001° on a table) |
 | Runaway handling, seven worn sessions of about a minute | Basalt within 0.55–1.51 m of the start (before: 13.6 m and 1,750 m in two of four sessions); three sessions had runaways in Basalt's first seconds, each held, reset and re-anchored; no pose above 3 m/s afterwards in five; correction size 4.6–8.0 mm (median) |
 | 6DoF, lower cameras about 15 cm from a surface | 1.6–4.8 m drift in 30 s (6.5 m in a 10 s run): no stereo depth, not an accuracy test |
+| Controller tracker on the headset (`pico4-ctrack-replay`), both controllers lying 0.71–0.73 m ahead, 30 s, LEDs before any exposure command | both acquired from the identification table in the third frame set and tracked in 747 of 750 frame sets, no loss; 20–23 LEDs per set, median residual 0.62–0.77 px; after 10 s of settling the optical pose stays within 1.9 mm and 0.9° (20–30 s: 1.4 mm and 0.3°); 2.7 s for 250 frame sets with file reading (under 11 ms per set) |
+| Controller tracker in Monado's service, same controllers, after exposure commands | every LED set solved (1,842 of 1,849; 7 before the first head pose), no IMU wait timed out; the right controller tracked with 21–24 LEDs at 0.66–0.76 px; the left not acquired: its identification-table fits miss stock's limits by 12–46° of tilt with the brighter, merging LEDs (the replay of a recording with exposure commands shows the same) |
+| Controllers in SteamVR (Valve's 30 s session check), same controllers | the tracked right controller 0.77 m from the headset and 0.30 m below it, against the tracker's 0.76 m and 0.27 m before the 2 cm lever arm; the unacquired left at the placeholder, 0.35 m below and 0.35 m out |
+| Controllers worn in Valve's session: lying on the table while the head turns and nods | both acquired within about 9 s of the head moving; the right one at one world position for 53 s; the left tracked while lifted about 25 cm |
+| Controllers worn: the right one slid 30 cm along a ruler, three times there and back | 30.4, 32.5, 33.3, 31.1, 32.0 and 31.6 cm (mean 31.8 cm) |
+| Controllers worn: hands crossed three times | the models change sides with the hands and back; no swap, no jump |
+| Controllers worn: lowered into the lap out of view for about 10 s, then raised | none closer than 0.49 m to the head; while lost, orientation steps 0.03 rad (median) and position steps under 1 cm, except the arm model following a turning controller (up to 1.6 cm); re-acquired when raised |
+| Controllers worn, held still in front | the tracker's output within 0.2–0.4 mm and 0.06° (RMS about a 0.25 s mean), SteamVR's poses within 0.2–0.3 mm above 10 Hz; with PICO OS's render models no jiggle is visible (user) |
+| Controller render models in SteamVR | both loaded from `{monado}pico4_controller_left/right`; at the hands and turned like the real controllers (user) |
+| Controller vibration, station command `01` (`pico4-station vibrate`) | 1 s at level 255 (75 %) felt on the addressed controller, left and right; 300 ms not noticed |
+| Vibration from SteamVR (`vrcmd --spamhaptics`, left controller) | 376 requests, 376 motor frames to the left controller, none to the right |
+| Controller tracker, replay: held and moved, 30 s, controller IMU at 90 events per second (recorded without the head IMU) | left tracked in 79 % and right in 54 % of the frame sets; median residual 0.83–0.89 px |
+| Controller tracker, replay: both controllers lying about 1 m ahead | no acquisition: the identification-table fits (0.05 px) lie at 0.99 m, outside PICO OS's range box (\|z\| < 0.8 m) |
+| Controller IMU rate | about 865 radio packets and 495 samples per second per hand with the head IMU streaming, for 30 s and in Monado's service; with `ble_mcu` alone about 90 a few minutes after the DSP started, whatever rate is requested |
 | Acceptance cycle (`flash-run --userspace`, then stock restoration) | passed: archive received in 86–105 s, SSH 112–123 s after the start of the transfer; systemd `running`, 0 failed units, storage read-only, USB link unchanged, Turnip 65,536 pixels; IMU, pose and display checks as above (two layers, Basalt running); stock boot verified by EDL readback, stock ABL restored, PICO OS started |
 | QEMU, same archive (4.19 without SLPI or `msm_drm`) | self-test passed; the sensor units and Monado's PICO 4 prober stay inactive |
 
@@ -912,14 +1038,16 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    it: a dark or blinded camera has to be kept from Basalt. Tracking needs light; in a dim room
    the cameras run at their exposure limit and the returns to a start point widen from about
    2 cm to about 5 cm.
-2. **Controllers in applications.** In SteamVR ([session.md](session.md)) both controllers appear
-   with the PICO 4 input profile and turn with the wrists while worn; they stay where the arm
-   model puts them. SteamVR uses its generic bindings for this controller type; clicking in its
-   dashboard is unchecked. Haptics need a station command that is not identified; it is not in
-   the allowlist.
-3. **Controller positions.** The cameras already deliver the IR-LED frames. Constellation
-   tracking needs the LED layout of the rings, which is in the controllers' calibration or PICO's
-   encrypted tracking config, and a tracker (Monado has one for WMR controllers).
+2. **Controllers in applications.** SteamVR's dashboard toggles but stays hidden without the
+   Steam client ([session.md](session.md)), so the laser, clicking and the grip frame are
+   unchecked in it. A vibration strong enough to feel has not yet come from a SteamVR
+   application: SteamVR's own test pulses are 2.5 % strong.
+3. **Controller positions.** The tracker runs in the driver. A controller that lies still from
+   the start is acquired only through the identification table, as on PICO OS: the table path
+   trims the blob cluster to five, and with the LEDs as bright as in the session the five of a
+   controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
+   unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
+   which needs the Steam client in the session.
 4. **Composition headroom.** The two-layer scene fits the period at the governor's clocks when
    the compositor starts a refresh early, at the cost of a pose sampled that much earlier; with
    Basalt running, 9–28 frames of 30 s are still late, with or without the clock floor, against

@@ -38,8 +38,12 @@ extern "C" {
 
 //! Accelerometer: 1024 LSB per g (the controllers' 32 g range).
 #define PICO4_BLEMCU_ACCEL_LSB_PER_G 1024.0
-//! Gyroscope at its reported 2000 deg/s range: 16.4 LSB per deg/s.
-#define PICO4_BLEMCU_GYRO_LSB_PER_DPS 16.4
+/*!
+ * Gyroscope: 8.192 LSB per deg/s (4000 deg/s range). PICO OS scales gyro and accelerometer
+ * together (2000 deg/s and 16 g over 32768) and doubles both for the PICO 4's controllers;
+ * the accelerometer above is the doubled scale too.
+ */
+#define PICO4_BLEMCU_GYRO_LSB_PER_DPS 8.192
 
 //! Key bits (data byte 4).
 enum pico4_blemcu_button

@@ -347,8 +347,17 @@ if [[ -n "$sensor_data" ]]; then
     # Factory camera/IMU/lens calibration for Monado's PICO 4 driver.
     [[ ! -d "$sensor_data/calibration" ]] || cp -r --no-preserve=ownership "$sensor_data/calibration" "$qcom/"
     chown -R 0:0 "$qcom"
+    # The controllers' render models, where SteamVR finds the Monado driver's resources ({monado}name).
+    models=$T/usr/share/steamvr-monado/resources/rendermodels
+    if [[ -d "$sensor_data/rendermodels" ]]; then
+        mkdir -p "$models"
+        cp -r --no-preserve=ownership "$sensor_data"/rendermodels/* "$models/"
+        chown -R 0:0 "$models"
+    fi
     ln -sfn /sys/devices/soc0 "$qcom/socinfo"
-    sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/share/qcom/pico4 -type f -print0 | sort -z | xargs -0 sha256sum |
+    sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/share/qcom/pico4 \
+        $( [[ -d usr/share/steamvr-monado/resources/rendermodels ]] && echo usr/share/steamvr-monado/resources/rendermodels ) \
+        -type f -print0 | sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
 

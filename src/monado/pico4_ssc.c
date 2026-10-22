@@ -6,6 +6,10 @@
  * @ingroup drv_pico4
  */
 
+#ifndef _GNU_SOURCE // Monado and the tests define it on the command line
+#define _GNU_SOURCE // clock_gettime, poll and QRTR sockets under -std=c11 (pico4-cam)
+#endif
+
 #include "pico4_ssc.h"
 
 #include <errno.h>

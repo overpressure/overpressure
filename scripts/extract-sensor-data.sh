@@ -14,6 +14,14 @@
 #   calibration/pvr/                          factory camera/IMU/lens calibration
 #   calibration/pxrconfig/SDK_Lens_ConfigFile.txt  stock lens configuration
 #                                             (chromatic aberration terms; system)
+#   calibration/controllers/led-models.json   nominal LED rings of both controllers
+#                                             (controller tracking library; system)
+#   calibration/controllers/aim-to-grip.json  grip pose of each controller in its aim
+#                                             frame (tracking service; system)
+#   calibration/controllers/lever-arm.json    lever arm PICO OS adds to each aim pose
+#                                             (controller tracking client; system)
+#   rendermodels/pico4_controller_*/          SteamVR render models of both controllers
+#                                             (PICO OS's controller models; system)
 #   calibration/fan-profile                   early or late: the production batch that
 #                                             selects the fan table (from the serial
 #                                             number in persist, which is not kept)
@@ -69,12 +77,24 @@ mv "$work/config" "$output/sensors/config"
 dump "$work/vendor.img" /etc/sensors/sns_reg_config "$output/sensors/sns_reg.conf"
 rm -f "$work/vendor.img"
 
-echo ">> system: lens configuration"
+echo ">> system: lens configuration, controller LED models, aim-to-grip transforms, lever arms, controller models"
 (cd "$project" && python3 -m pico4.superimg extract "$backup/lun0/super.bin" system "$work/system.img") >/dev/null
 mkdir -p "$output/calibration/pxrconfig"
 dump "$work/system.img" /system/etc/pxrconfig/config/SDK_Lens_ConfigFile.txt \
     "$output/calibration/pxrconfig/SDK_Lens_ConfigFile.txt"
-rm -f "$work/system.img"
+dump "$work/system.img" /system/lib64/libpico_controller_tracking.pxr.so "$work/libpico_controller_tracking.pxr.so"
+(cd "$project" && python3 -m pico4.ledmodel "$work/libpico_controller_tracking.pxr.so" "$output/calibration/controllers/led-models.json")
+dump "$work/system.img" /system/lib64/libpvrtrackingservice.so "$work/libpvrtrackingservice.so"
+(cd "$project" && python3 -m pico4.aimgrip "$work/libpvrtrackingservice.so" "$output/calibration/controllers/aim-to-grip.json")
+dump "$work/system.img" /system/lib64/libpico_controller_tracking.client.so "$work/libpico_controller_tracking.client.so"
+(cd "$project" && python3 -m pico4.leverarm "$work/libpico_controller_tracking.client.so" \
+    "$output/calibration/controllers/lever-arm.json")
+dump "$work/system.img" /system/pre_resource/data/misc/user/controller/Neo3Phx "$work/models"
+controllers=$output/calibration/controllers
+(cd "$project" && python3 -m pico4.controllermodel "$work/models/Neo3Phx" "$output/rendermodels" \
+    --aim-to-grip "$controllers/aim-to-grip.json" --check "$controllers/led-models.json" "$controllers/lever-arm.json")
+rm -rf "$work/system.img" "$work/libpico_controller_tracking.pxr.so" "$work/libpvrtrackingservice.so" \
+    "$work/libpico_controller_tracking.client.so" "$work/models"
 
 echo ">> persist: registry and factory calibration"
 dump "$backup/lun0/persist.bin" /sensors/registry/registry "$work"
