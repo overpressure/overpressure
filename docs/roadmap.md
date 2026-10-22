@@ -292,9 +292,9 @@ it on the headset, with a duty the MCU acknowledged, and record its duty and RPM
 duty and reports the fan's speed (about 4,900 rpm at 30 %), and Valve's 30 s session check
 peaks at 69 °C instead of 86 °C. Remaining:
 
-1. **The limit and the table.** In 10 minutes of Valve's GPU-heavy session the late table
-   reaches 91.1 °C at 35 % fan, a steeper table 84.5 °C at 60 % ([cooling.md](cooling.md)):
-   the limit (proposed 90 °C) and the default table are to be agreed.
+1. **Longer sessions.** The hottest-zone limit is 90 °C. PICO OS's early table, the default,
+   holds 10 minutes of Valve's session at 90 fps at a hottest CPU/GPU mean of 65.6–72.1 °C with
+   the fan at 45 % ([cooling.md](cooling.md)); longer sessions and games are unmeasured.
 
 ### Performance
 

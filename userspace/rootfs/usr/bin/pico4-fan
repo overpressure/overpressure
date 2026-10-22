@@ -16,9 +16,11 @@ bytes before. PICO OS's pxrfanservice sets the duty with SetFanSpeed (0x0E,
 - an unchanged duty is sent again every 10 s.
 
 PICO OS has two tables for the PICO 4 and picks one by the production batch in
-the serial number ("early" and "late" here). This daemon adds one thing: full
-speed while any of those sensors reads 95 °C or more, until the hottest mean is
-below 90 °C again.
+the serial number ("early" and "late" here). This daemon runs the early table by
+default on every headset: Valve's GPU-bound session heats the headset more than
+PICO OS's own apps, and the late table's 35-50 % let it pass 90 °C. `auto` picks
+by batch as PICO OS does. It adds one thing: full speed while any of those
+sensors reads 95 °C or more, until the hottest mean is below 90 °C again.
 
 Safety: the MCU also takes lens-motor moves, calibration writes and firmware
 updates. This tool builds only the queries in QUERIES and SetFanSpeed with a
@@ -42,6 +44,8 @@ THERMAL = Path("/sys/class/thermal")
 STATE = Path("/run/pico4-fan/state.json")
 # The headset's batch ("early" or "late"), from the private sensor data.
 PROFILE_FILE = Path("/usr/share/qcom/pico4/calibration/fan-profile")
+#: PICO OS's early table on every headset (see the module docstring); auto follows the batch.
+DEFAULT_PROFILE = "early"
 
 # GD32 frames.
 REQUEST, REPLY = 0xA0, 0x79
@@ -510,7 +514,7 @@ def resolve_profile(name: Optional[str], table: Optional[str],
     """(profile, table, where the choice came from)."""
     if table:
         return "custom", Table.parse(table), "configured"
-    name = (name or "auto").strip()
+    name = (name or DEFAULT_PROFILE).strip()
     if name != "auto":
         if name not in PROFILES:
             raise ValueError(f"unknown profile {name!r} (early, late or auto)")
@@ -696,7 +700,7 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="the control loop (pico4-fan.service)")
     run.add_argument("--profile", default=os.environ.get("PICO4_FAN_PROFILE"),
-                     help="early, late or auto (default; the batch file, else early)")
+                     help="early (default), late, or auto (the batch file, else early)")
     run.add_argument("--table", default=os.environ.get("PICO4_FAN_TABLE"),
                      help="threshold °C:duty %%, hottest first, e.g. 90:50,85:45,80.5:40,72:35,60:30,55:0")
     run.add_argument("--boost", default=os.environ.get("PICO4_FAN_BOOST"),

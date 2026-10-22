@@ -55,7 +55,7 @@ class VerdictTests(unittest.TestCase):
             ("late", stats(commits=3512, seconds=40.0, late=60, stalls=2), 61.5, "late"),
             ("stall", stats(commits=3512, seconds=40.0, late=9, stalls=3), 61.5, "above 100 ms"),
             ("timeouts", stats(commits=3512, seconds=40.0, late=9, stalls=2, timeouts=4), 61.5, "present-wait"),
-            ("heat", END, 83.0, "hottest zone"),
+            ("heat", END, 90.5, "hottest zone"),
             ("no temperature", END, None, "temperature"),
         ]
         for name, end, hottest, words in cases:
@@ -85,8 +85,10 @@ class VerdictTests(unittest.TestCase):
         line = userspace.format_valve_performance(perf.verdict(START, END, 61.5))
         self.assertTrue(line.startswith("performance: passed (90.0 commits/s"), line)
         self.assertIn("startup stalls 2", line)
-        failed = userspace.format_valve_performance(perf.verdict(START, END, 83.0))
-        self.assertIn("hottest zone 83.0", failed)
+        failed = userspace.format_valve_performance(perf.verdict(START, END, 90.5))
+        self.assertIn("hottest zone 90.5", failed)
+        # The agreed limit: up to 90 °C passes.
+        self.assertEqual(perf.verdict(START, END, 90.0)["status"], "passed")
         self.assertEqual(userspace.format_valve_performance(None), "performance: no verdict")
 
 

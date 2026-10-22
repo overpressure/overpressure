@@ -447,8 +447,12 @@ class ProfileTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             batch = Path(tmp) / "fan-profile"
             self.assertEqual(fan.resolve_profile(None, None, batch)[:2], ("early", EARLY))
+            self.assertEqual(fan.resolve_profile("auto", None, batch)[:2], ("early", EARLY))
             batch.write_text("late\n")
+            # The early table is the default whatever the batch; auto follows the batch.
+            self.assertEqual(fan.resolve_profile(None, None, batch)[:2], ("early", EARLY))
             self.assertEqual(fan.resolve_profile("auto", None, batch)[:2], ("late", LATE))
+            self.assertEqual(fan.resolve_profile("late", None, batch)[:2], ("late", LATE))
             self.assertEqual(fan.resolve_profile("early", None, batch)[:2], ("early", EARLY))
             self.assertEqual(fan.resolve_profile("late", "90:60,80:30", batch)[0], "custom")
             with self.assertRaises(ValueError):

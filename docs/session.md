@@ -690,7 +690,7 @@ SteamVR's startup stays out of it, and holds the window to these limits:
 | late commits (more than 1.5 refreshes after the one before) | at most 1 % |
 | stalls (gaps between commits above 100 ms, the layer's `stalls`) | none |
 | SteamVR's present waits that ran out (`present_wait_timeouts`) | none |
-| hottest thermal zone at the end of the run | at most 80 °C |
+| hottest thermal zone at the end of the run | at most 90 °C, the agreed limit ([cooling.md](cooling.md)) |
 
 It also reports the window's length and mean GPU wait per frame, the session's longest gap, and
 the stalls during startup (`startup`), which no limit covers. On the host,

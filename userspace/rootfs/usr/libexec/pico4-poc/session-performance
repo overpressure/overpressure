@@ -21,7 +21,7 @@ LIMITS = {
     "late_percent_max": 1.0,          # commits more than 1.5 refreshes after the one before
     "stalls_max": 0,                  # gaps between commits above 100 ms
     "present_wait_timeouts_max": 0,   # SteamVR's present waits that ran out
-    "hottest_c_max": 80.0,            # hottest thermal zone at the end of the run
+    "hottest_c_max": 90.0,            # hottest thermal zone at the end of the run (docs/cooling.md)
 }
 
 
