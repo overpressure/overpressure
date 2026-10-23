@@ -56,7 +56,6 @@
 #include "util/u_frame.h"
 #include "util/u_misc.h"
 
-#include <dirent.h>
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -637,12 +636,6 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
  * threads run below the compositor and the IMU thread: without a config file
  * its TBB pool takes every core, and at equal priority the compositor missed
  * frames.
- *
- * Going back down needs CAP_SYS_NICE (Monado's service runs as root) or a
- * soft RLIMIT_NICE that allows it. vrserver has neither capability nor soft
- * limit, but its hard limit is the session's (28, nice -8), so the soft limit
- * is raised as far as needed: the caller, and the head IMU thread started
- * after it, stayed at nice 19 in SteamVR otherwise.
  */
 static int
 thread_nice(int value)
@@ -653,32 +646,8 @@ thread_nice(int value)
 	if (errno != 0) {
 		before = 0;
 	}
-	if (setpriority(PRIO_PROCESS, tid, value) != 0 && (errno == EACCES || errno == EPERM)) {
-		struct rlimit lim;
-		rlim_t need = (rlim_t)(20 - value);
-		if (getrlimit(RLIMIT_NICE, &lim) == 0 && lim.rlim_cur < need &&
-		    (lim.rlim_max == RLIM_INFINITY || lim.rlim_max >= need)) {
-			lim.rlim_cur = need;
-			if (setrlimit(RLIMIT_NICE, &lim) == 0) {
-				setpriority(PRIO_PROCESS, tid, value);
-			}
-		}
-	}
+	setpriority(PRIO_PROCESS, tid, value); // lowering it back needs CAP_SYS_NICE (root here)
 	return before;
-}
-
-//! The CPUs in PICO4_SLAM_CPUS (a bit mask); false for an empty mask (no restriction).
-static bool
-tracker_set(cpu_set_t *set)
-{
-	unsigned long mask = (unsigned long)debug_get_num_option_pico4_slam_cpus();
-	CPU_ZERO(set);
-	for (int cpu = 0; cpu < (int)(8 * sizeof(mask)) && cpu < CPU_SETSIZE; cpu++) {
-		if (mask & (1ul << cpu)) {
-			CPU_SET(cpu, set);
-		}
-	}
-	return CPU_COUNT(set) > 0;
 }
 
 /*!
@@ -690,44 +659,19 @@ tracker_set(cpu_set_t *set)
 static bool
 tracker_cpus(cpu_set_t *before)
 {
+	unsigned long mask = (unsigned long)debug_get_num_option_pico4_slam_cpus();
 	cpu_set_t set;
-	if (!tracker_set(&set) || sched_getaffinity(0, sizeof(*before), before) != 0) {
+	CPU_ZERO(&set);
+	for (int cpu = 0; cpu < (int)(8 * sizeof(mask)) && cpu < CPU_SETSIZE; cpu++) {
+		if (mask & (1ul << cpu)) {
+			CPU_SET(cpu, &set);
+		}
+	}
+	if (mask == 0 || sched_getaffinity(0, sizeof(*before), before) != 0) {
 		return false;
 	}
 	CPU_AND(&set, &set, before);
 	return CPU_COUNT(&set) > 0 && sched_setaffinity(0, sizeof(set), &set) == 0;
-}
-
-/*!
- * Gives the tracker's CPU set to every thread of the process at the tracker's
- * nice value. oneTBB starts its workers on demand with the process's CPU set,
- * not their creator's, and they keep only the nice value: in vrserver 8 of
- * Basalt's 19 workers ran on all eight cores. Called every few seconds from
- * the camera thread.
- */
-static void
-pin_tracker_threads(void)
-{
-	cpu_set_t set;
-	DIR *dir = tracker_set(&set) ? opendir("/proc/self/task") : NULL;
-	if (dir == NULL) {
-		return;
-	}
-	struct dirent *e;
-	while ((e = readdir(dir)) != NULL) {
-		pid_t tid = (pid_t)atoi(e->d_name);
-		if (tid <= 0) {
-			continue;
-		}
-		errno = 0;
-		int nice = getpriority(PRIO_PROCESS, (id_t)tid);
-		cpu_set_t now;
-		if (errno == 0 && nice == TRACKER_NICE && sched_getaffinity(tid, sizeof(now), &now) == 0 &&
-		    !CPU_EQUAL(&now, &set)) {
-			sched_setaffinity(tid, sizeof(set), &set);
-		}
-	}
-	closedir(dir);
 }
 
 //! Feeds frame sets to the tracker; may block on it.
@@ -802,17 +746,10 @@ camera_thread(void *ptr)
 	uint64_t timeouts = 0;
 	bool failed = false;
 
-	int64_t pinned_ns = 0;
-
 	os_thread_helper_name(&s->oth, "PICO 4 cameras");
 	os_thread_helper_lock(&s->oth);
 	while (os_thread_helper_is_running_locked(&s->oth)) {
 		os_thread_helper_unlock(&s->oth);
-		int64_t now = os_monotonic_get_ns();
-		if (now - pinned_ns > 2 * (int64_t)U_TIME_1S_IN_NS) {
-			pin_tracker_threads();
-			pinned_ns = now;
-		}
 		int r = pico4_cam_next(s->cam, &f, 200);
 		if (r == 0) {
 			handle_frame(s, &f);
@@ -1065,16 +1002,7 @@ pico4_slam_get_latest(struct pico4_slam *s, struct pico4_fusion_slam *out)
 void
 pico4_slam_reset(struct pico4_slam *s)
 {
-	// As at creation: the threads Basalt starts for its new map inherit the tracker's nice
-	// value and CPU set from the caller, which keeps its own (the fusion's thread).
-	int nice_before = thread_nice(TRACKER_NICE);
-	cpu_set_t cpus_before;
-	bool pinned = tracker_cpus(&cpus_before);
 	t_slam_reset(s->tracker);
-	if (pinned) {
-		sched_setaffinity(0, sizeof(cpus_before), &cpus_before);
-	}
-	thread_nice(nice_before);
 }
 
 void

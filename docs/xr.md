@@ -612,18 +612,9 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
 - **Priority.** Without a config file, Basalt's TBB pool uses every core. Basalt's threads and
   feeders therefore start at nice 19, restricted to cores 0–5 (the XR2's four small and two of
   its big cores), which leaves the two fastest cores to the compositor and the app. They inherit
-  both from the thread that starts them, and TBB sizes its pool from that CPU set;
-  `PICO4_SLAM_CPUS` changes the set. The driver creates and resets Basalt with the tracker's
-  nice value and CPU set on the calling thread and then restores the caller's own. Going back
-  down needs CAP_SYS_NICE, or a soft `RLIMIT_NICE` that allows it: vrserver has neither, but
-  its hard limit is the session's (28), so the driver raises the soft limit as far as needed.
-  Otherwise the setup thread stayed at nice 19 in SteamVR, and with it every thread started
-  after it, the head IMU thread included. oneTBB starts its workers on demand with the
-  process's CPU set, not their creator's, so the camera thread gives the tracker's set to every
-  nice-19 thread of the process every two seconds. In Valve's session all 19 of Basalt's busy
-  threads then stay on cores 0–5, after a reset too (before, 8 to 12 of them ran on all eight
-  cores), and the head IMU and camera threads run at nice 0. With the compositor running,
-  Basalt skips some sets (30–73 of 757 in 30 s).
+  both from the thread that starts them, TBB workers included, and TBB sizes its pool from that
+  CPU set; `PICO4_SLAM_CPUS` changes the set. With the compositor running, Basalt skips some sets
+  (30–73 of 757 in 30 s).
 - **Pose.** Basalt's pose (IMU frame, z-up world) is converted to the HMD frame and Monado's y-up
   world. `monado-slam-prediction.patch` keeps Basalt's own velocity estimate with each pose
   (Monado took the difference of two poses 40 ms apart) and hands the driver the newest pose
@@ -1041,7 +1032,6 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | 6DoF: headset on a table in a lit room, slid 50 cm (measured) and back, twice | 0.50 m and 0.52 m; back at the start within 1.5 and 1.8 cm; at rest within 5–11 mm. In a dim room (exposure at its limit, gain 202–230) 0.48 m and back within 3.7 and 4.9 cm, with a 9 cm wander at rest before the first slide |
 | 6DoF worn in Valve's session: a step forward and one to the left, each back onto a floor mark | steps of 0.57 m and 0.59 m at 92° to each other; back within 3.4 and 4.4 cm of the start; no reset in 2.8 minutes; user: tracking good, no freeze or jump |
 | 6DoF: one camera covered, headset still, 40 s | exposure on the median: the others at 249, 257 and 533 above black (target 250), the covered one at 6; Basalt creeps at 0.15–0.17 m/s and the fusion holds and resets it four times. Uncovered in the same room: no reset in 65 s |
-| Basalt's threads in Valve's session, headset still in a dim view (exposure at its 400-line limit), 60 s each, two rounds | runaways with the tracker's threads pinned and the caller's nice restored: 6 and 5 (with a forced reset 7 and 5), against 9 and 11 before; all of Basalt's threads on cores 0–5, the head IMU thread at nice 0; Valve's 30 s check 90.0 commits/s, 0.0 % late |
 | 6DoF: lowered from head height onto a table | 0.75 m down, then still within millimetres for 30 s |
 | 6DoF with `PICO4_SLAM_UPRIGHT=0`, walking | tracks as well in this test; the turn stays on as the documented geometry |
 | Head IMU rate in the driver, 1 kHz request | 1023.9 Hz measured, 1024 Hz declared, 512 Hz to Basalt |
