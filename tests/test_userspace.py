@@ -152,6 +152,17 @@ class MountPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             hw.validate_mounts(mounts)
 
+    def test_installed_data_partition_must_be_writable(self):
+        mounts = "/dev/sda7 / ext4 ro,noatime 0 0\n/dev/sda16 /data ext4 rw,noatime 0 0"
+        self.assertEqual(hw.data_device(mounts), "sda16")
+        hw.validate_storage("BLOCK sda 1\nBLOCK sda7 1\nBLOCK sda16 0\nBLOCK loop0 0", "sda16")
+        for bad in ("BLOCK sda 1\nBLOCK sda7 1\nBLOCK sda16 1",  # writeback would fail
+                    "BLOCK sda 1\nBLOCK sda7 0\nBLOCK sda16 0"):  # another partition writable
+            with self.assertRaises(ValueError):
+                hw.validate_storage(bad, "sda16")
+        with self.assertRaises(ValueError):
+            hw.validate_storage("BLOCK sda 1\nBLOCK sda16 0")  # not installed: all read-only
+
     def test_storage_stays_protected_in_stage_two(self):
         for value in ("/dev/zram0 / ext4 rw 0 0\n/dev/sda5 /mnt ext4 rw 0 0", "/dev/sda5 / ext4 rw 0 0"):
             with self.assertRaises(ValueError):

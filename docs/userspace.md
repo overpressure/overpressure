@@ -186,7 +186,11 @@ stage-1 init.
 Guarantees carried into stage 2:
 
 - **Storage**: `pico4-storage-ro.service` and the udev helper keep every physical disk and
-  partition read-only (`pico4poc.rw=1` disables this, as in stage 1). There are no fstab
+  partition read-only (`pico4poc.rw=1` disables this, as in stage 1). The one exception is the
+  installed system's data partition (`userdata` with the `pico4-data` file system, booted with
+  `pico4poc.root=installed`), which stage 1 made writable and mounted: switched read-only under
+  the mounted file system, its writeback fails and the data is lost
+  ([install.md](install.md)). `pico4-userspace-check` requires it to be writable. There are no fstab
   entries, the GPT auto-generator is disabled, and `systemd-repart` and `systemd-boot-update`
   are masked.
 - **Recovery**: `pico4-recovery-watch.service` runs the same script and policy as stage 1

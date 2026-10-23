@@ -43,13 +43,29 @@ def validate_preflight(output: str) -> None:
             "Preflight failed or did not produce a complete result")
 
 
-def validate_storage(output: str) -> None:
+def validate_storage(output: str, data: str = "") -> None:
+    """Every physical block device read-only; on the installed system its data partition
+    (@p data, e.g. sda16) is the one exception and must be writable: read-only under the
+    mounted file system, its writeback fails and the data is lost."""
     rows = [line.split() for line in output.splitlines()]
     require(rows and all(len(r) == 3 and r[0] == "BLOCK" and r[2] in ("0", "1") for r in rows),
             "Storage protection failed: missing or invalid block-device inventory")
     physical = [r for r in rows if not r[1].startswith(("loop", "ram", "zram", "nbd"))]
     require(physical, "No physical storage detected")
-    require(all(r[2] == "1" for r in physical), "Storage protection failed: writable disk or partition")
+    require(all(r[2] == "1" for r in physical if r[1] != data),
+            "Storage protection failed: writable disk or partition")
+    if data:
+        require([r[2] for r in physical if r[1] == data] == ["0"],
+                "The installed system's data partition is not writable")
+
+
+def data_device(mounts: str) -> str:
+    """The block device (sda16) mounted at /data, or empty."""
+    for row in mounts.splitlines():
+        fields = row.split()
+        if len(fields) >= 2 and fields[1] == "/data" and fields[0].startswith("/dev/"):
+            return fields[0][len("/dev/"):]
+    return ""
 
 
 def validate_mounts(output: str, installed: bool = False) -> None:
@@ -413,10 +429,11 @@ class Runner:
         storage = self.ssh("for d in /sys/class/block/*; do [ -e \"$d\" ] || continue; "
                            "printf 'BLOCK %s %s\\n' \"${d##*/}\" \"$(cat \"$d/ro\")\"; done")
         (self.folder / f"storage{suffix}.txt").write_text(storage + "\n", encoding="utf-8")
-        validate_storage(storage)
         mounts = self.ssh("cat /proc/mounts")
         (self.folder / f"mounts{suffix}.txt").write_text(mounts + "\n", encoding="utf-8")
-        validate_mounts(mounts, getattr(self, "installed", False))
+        installed = getattr(self, "installed", False)
+        validate_mounts(mounts, installed)
+        validate_storage(storage, data_device(mounts) if installed else "")
         if self.flash_mode:
             size = (self.folder / "test-boot.img").stat().st_size
             output = self.ssh(f"head -c {size} /dev/block/by-name/boot | sha256sum")

@@ -94,6 +94,8 @@ if [ -n "$system_dev" ] && [ "$root_src" = "$system_dev" ]; then
 	installed=true
 	writable=$(grep -vx "${data_dev##*/}" <<<"$writable")
 	need "every physical block device but userdata read-only" [ -z "$writable" ]
+	# Read-only under the mounted file system, its writeback fails and data is lost.
+	need "userdata writable" [ "$(cat "/sys/class/block/${data_dev##*/}/ro" 2>/dev/null)" = 0 ]
 	need "system image mounted read-only" sh -c "findmnt -no OPTIONS / | grep -q '^ro,'"
 	need "data on userdata" [ "$(findmnt -no SOURCE /data)" = "$data_dev" ]
 else
