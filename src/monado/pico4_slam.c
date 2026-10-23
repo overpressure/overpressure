@@ -56,7 +56,6 @@
 #include "util/u_frame.h"
 #include "util/u_misc.h"
 
-#include <dirent.h>
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -633,15 +632,22 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 }
 
 /*!
- * Set the calling thread's nice value. Basalt's threads run below the
- * compositor and the IMU thread: without a config file its TBB pool takes
- * every core, and at equal priority the compositor missed frames. Only raising
- * it is allowed without CAP_SYS_NICE, so the threads that take it keep it.
+ * Set the calling thread's nice value; returns the previous one. Basalt's
+ * threads run below the compositor and the IMU thread: without a config file
+ * its TBB pool takes every core, and at equal priority the compositor missed
+ * frames.
  */
-static void
+static int
 thread_nice(int value)
 {
-	setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), value);
+	id_t tid = (id_t)syscall(SYS_gettid);
+	errno = 0;
+	int before = getpriority(PRIO_PROCESS, tid);
+	if (errno != 0) {
+		before = 0;
+	}
+	setpriority(PRIO_PROCESS, tid, value); // lowering it back needs CAP_SYS_NICE (root here)
+	return before;
 }
 
 /*!
@@ -649,8 +655,6 @@ thread_nice(int value)
  * default cores 0-5: the XR2's four small and two of its big cores), saving
  * the previous set. TBB sizes its pool from the CPU set it starts on, so
  * Basalt then leaves the two fastest cores to the compositor and the app.
- * The threads that feed the tracker keep the set for good: Basalt also works
- * in the pushing threads, and a pool started there takes their set.
  */
 static bool
 tracker_cpus(cpu_set_t *before)
@@ -670,99 +674,14 @@ tracker_cpus(cpu_set_t *before)
 	return CPU_COUNT(&set) > 0 && sched_setaffinity(0, sizeof(set), &set) == 0;
 }
 
-/*!
- * Gives the calling thread's CPU set to every thread of the process at the
- * tracker's nice value. oneTBB's workers keep the nice value they inherit
- * but not the CPU set: in vrserver 7 of Basalt's workers ran on all eight
- * cores (154 % CPU), much of it on the two fastest. Called from a thread
- * that has the tracker's set, now and then, as TBB starts workers on demand.
- */
-static void
-pin_tracker_threads(void)
-{
-	cpu_set_t set;
-	if (sched_getaffinity(0, sizeof(set), &set) != 0) {
-		return;
-	}
-	DIR *dir = opendir("/proc/self/task");
-	if (dir == NULL) {
-		return;
-	}
-	struct dirent *e;
-	while ((e = readdir(dir)) != NULL) {
-		pid_t tid = (pid_t)atoi(e->d_name);
-		char path[64], stat[512];
-		snprintf(path, sizeof(path), "/proc/self/task/%d/stat", (int)tid);
-		FILE *f = tid > 0 ? fopen(path, "re") : NULL;
-		if (f == NULL) {
-			continue;
-		}
-		size_t n = fread(stat, 1, sizeof(stat) - 1, f);
-		fclose(f);
-		stat[n] = '\0';
-		// After the name in parentheses: state is field 3, nice field 19.
-		const char *p = strrchr(stat, ')');
-		int nice = 0;
-		if (p == NULL || sscanf(p + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %*u %*u %*d %*d %*d %d",
-		                        &nice) != 1 || nice != TRACKER_NICE) {
-			continue;
-		}
-		cpu_set_t now;
-		if (sched_getaffinity(tid, sizeof(now), &now) == 0 && !CPU_EQUAL(&now, &set)) {
-			sched_setaffinity(tid, sizeof(set), &set);
-		}
-	}
-	closedir(dir);
-}
-
-struct tracker_call
-{
-	void (*fn)(void *);
-	void *arg;
-};
-
-static void *
-tracker_call_main(void *ptr)
-{
-	struct tracker_call *c = ptr;
-	cpu_set_t all;
-	thread_nice(TRACKER_NICE);
-	tracker_cpus(&all);
-	c->fn(c->arg);
-	return NULL;
-}
-
-/*!
- * Runs @p fn on a thread of its own with the tracker's nice value and CPU set,
- * and waits for it. Basalt's threads, its TBB workers included, inherit both
- * from the thread that creates or resets it. Changing the caller instead left
- * it at nice 19 in vrserver (going back down needs CAP_SYS_NICE), and so the
- * head IMU thread started after it; a reset from that thread then started
- * Basalt's new workers on all eight cores (183 % of vrserver's 326 % CPU,
- * much of it on the two fastest).
- */
-static void
-in_tracker_context(void (*fn)(void *), void *arg)
-{
-	struct tracker_call c = {fn, arg};
-	pthread_t t;
-	if (pthread_create(&t, NULL, tracker_call_main, &c) != 0) {
-		fn(arg);
-		return;
-	}
-	pthread_join(t, NULL);
-}
-
 //! Feeds frame sets to the tracker; may block on it.
 static void *
 push_thread(void *ptr)
 {
 	struct pico4_slam *s = ptr;
 	struct xrt_frame *frames[PICO4_TCAM_COUNT] = {0};
-	cpu_set_t all;
 
 	thread_nice(TRACKER_NICE);
-	tracker_cpus(&all);
 	os_thread_helper_name(&s->push_oth, "PICO 4 SLAM frames");
 	os_thread_helper_lock(&s->push_oth);
 	while (os_thread_helper_is_running_locked(&s->push_oth)) {
@@ -793,10 +712,8 @@ imu_push_thread(void *ptr)
 {
 	struct pico4_slam *s = ptr;
 	struct xrt_imu_sample imu[IMU_RING];
-	cpu_set_t all;
 
 	thread_nice(TRACKER_NICE);
-	tracker_cpus(&all);
 	os_thread_helper_name(&s->imu_oth, "PICO 4 SLAM IMU");
 	os_thread_helper_lock(&s->imu_oth);
 	while (os_thread_helper_is_running_locked(&s->imu_oth)) {
@@ -828,19 +745,11 @@ camera_thread(void *ptr)
 	struct pico4_cam_frame f;
 	uint64_t timeouts = 0;
 	bool failed = false;
-	cpu_set_t all;
-	int64_t pinned_ns = 0;
 
-	tracker_cpus(&all);
 	os_thread_helper_name(&s->oth, "PICO 4 cameras");
 	os_thread_helper_lock(&s->oth);
 	while (os_thread_helper_is_running_locked(&s->oth)) {
 		os_thread_helper_unlock(&s->oth);
-		int64_t now = os_monotonic_get_ns();
-		if (now - pinned_ns >= (int64_t)U_TIME_1S_IN_NS) {
-			pin_tracker_threads();
-			pinned_ns = now;
-		}
 		int r = pico4_cam_next(s->cam, &f, 200);
 		if (r == 0) {
 			handle_frame(s, &f);
@@ -871,30 +780,6 @@ cam_log(void *user, enum pico4_cam_log_level level, const char *msg)
 	} else {
 		SLAM_DEBUG(s, "%s", msg);
 	}
-}
-
-struct start_call
-{
-	struct pico4_slam *s;
-	struct t_slam_tracker_config *config;
-	bool started;
-};
-
-//! In the tracker's context: creates and starts Basalt.
-static void
-start_tracker(void *ptr)
-{
-	struct start_call *c = ptr;
-	c->started = t_slam_create(&c->s->xfctx, c->config, &c->s->tracker, &c->s->sinks) == 0 &&
-	             t_slam_start(c->s->tracker) == 0;
-}
-
-//! In the tracker's context: a new map.
-static void
-reset_tracker(void *ptr)
-{
-	struct pico4_slam *s = ptr;
-	t_slam_reset(s->tracker);
 }
 
 struct pico4_slam *
@@ -969,9 +854,16 @@ pico4_slam_create(const char *calibration_dir,
 	if (getenv("SLAM_PREDICTION_TYPE") == NULL) {
 		config.prediction = SLAM_PRED_ACCEL_GYRO;
 	}
-	struct start_call start = {.s = s, .config = &config};
-	in_tracker_context(start_tracker, &start);
-	if (!start.started) {
+	// Basalt's threads, its TBB workers included, inherit this thread's nice value and CPU set.
+	int nice_before = thread_nice(TRACKER_NICE);
+	cpu_set_t cpus_before;
+	bool pinned = tracker_cpus(&cpus_before);
+	bool started = t_slam_create(&s->xfctx, &config, &s->tracker, &s->sinks) == 0 && t_slam_start(s->tracker) == 0;
+	if (pinned) {
+		sched_setaffinity(0, sizeof(cpus_before), &cpus_before);
+	}
+	thread_nice(nice_before);
+	if (!started) {
 		SLAM_ERROR(s, "Could not start the SLAM tracker (is Basalt's libbasalt.so installed?)");
 		goto fail;
 	}
@@ -1110,7 +1002,7 @@ pico4_slam_get_latest(struct pico4_slam *s, struct pico4_fusion_slam *out)
 void
 pico4_slam_reset(struct pico4_slam *s)
 {
-	in_tracker_context(reset_tracker, s);
+	t_slam_reset(s->tracker);
 }
 
 void

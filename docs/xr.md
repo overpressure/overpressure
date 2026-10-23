@@ -605,14 +605,11 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
     estimator has finished and then predicts from an invalid state, which aborts (in Sophus) or
     crashes the process when the optical flow lags behind.
 - **Priority.** Without a config file, Basalt's TBB pool uses every core. Basalt's threads and
-  feeders therefore run at nice 19, restricted to cores 0–5 (the XR2's four small and two of
-  its big cores), which leaves the two fastest cores to the compositor and the app;
-  `PICO4_SLAM_CPUS` changes the set. Basalt is created and reset on a short-lived thread with
-  that nice value and CPU set, so its threads inherit both and the driver's own threads (the head
-  IMU's among them) keep theirs: going back from nice 19 needs `CAP_SYS_NICE`, which `vrserver`
-  lacks. oneTBB's workers keep the nice value they inherit but not the CPU set, so the camera
-  thread gives the set to every nice-19 thread of the process once a second. With the compositor
-  running, Basalt skips some sets (30–73 of 757 in 30 s).
+  feeders therefore start at nice 19, restricted to cores 0–5 (the XR2's four small and two of
+  its big cores), which leaves the two fastest cores to the compositor and the app. They inherit
+  both from the thread that starts them, TBB workers included, and TBB sizes its pool from that
+  CPU set; `PICO4_SLAM_CPUS` changes the set. With the compositor running, Basalt skips some sets
+  (30–73 of 757 in 30 s).
 - **Pose.** Basalt's pose (IMU frame, z-up world) is converted to the HMD frame and Monado's y-up
   world. `monado-slam-prediction.patch` keeps Basalt's own velocity estimate with each pose
   (Monado took the difference of two poses 40 ms apart) and hands the driver the newest pose
