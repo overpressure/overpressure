@@ -1557,6 +1557,34 @@ vrsync_WaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo *info, uint64_t
 			nanosleep(&ts, NULL);
 		}
 	}
+	// A slow wait on an emulated semaphore: what it waited for and who was to signal it.
+	int64_t waited = now_ns() - start;
+	if (ret == VK_TIMEOUT || waited > 250 * NS_PER_MS) {
+		for (uint32_t i = 0; i < n; i++) {
+			if (maps[i] == NULL) {
+				continue;
+			}
+			struct shared *s = maps[i]->s;
+			lock_shared(s);
+			uint64_t reached = s->value;
+			unsigned pending = 0;
+			int32_t first = 0;
+			uint64_t first_value = 0;
+			for (unsigned k = 0; k < POINTS; k++) {
+				if (s->points[k].value != 0) {
+					if (pending++ == 0 || s->points[k].value < first_value) {
+						first = s->points[k].pid;
+						first_value = s->points[k].value;
+					}
+				}
+			}
+			unlock_shared(s);
+			LOG("vkWaitSemaphores: %s after %.0f ms (timeout %.0f ms): value %" PRIu64 " of %p, reached %" PRIu64
+			    ", %u signal operations pending, the first (%" PRIu64 ") held by %d",
+			    ret == VK_TIMEOUT ? "timed out" : "done", waited / 1e6, timeout / 1e6, info->pValues[i],
+			    (void *)info->pSemaphores[i], reached, pending, first_value, first);
+		}
+	}
 	for (uint32_t i = 0; i < n; i++) {
 		map_unref(maps[i]);
 	}
