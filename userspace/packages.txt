@@ -36,6 +36,8 @@ pipewire-pulse
 wireplumber
 vulkan-icd-loader
 vulkan-tools
+# GL test clients (glxgears, glxinfo, eglinfo): X11 presentation in gamescope (docs/session.md)
+mesa-utils
 
 # Project-built: Turnip with the KGSL backend and the step-3 graphics tests
 pico4/pico4-turnip-kgsl
@@ -78,6 +80,9 @@ xorg-xrdb
 deckard-steam-rel
 pico4/pico4-gtk2
 deckard-arch-hotfixes-release-0.3/libibus
+# The session's input method: Valve's ibus-gamescope unit runs ibus-daemon, which
+# takes the text of Steam's on-screen keyboard to the apps.
+deckard-arch-hotfixes-release-0.3/ibus
 # The client polls processes with lsof.
 lsof
 # "!name" satisfies dependencies on name without installing it:

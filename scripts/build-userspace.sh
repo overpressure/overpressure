@@ -430,11 +430,10 @@ in_t systemctl mask sddm.service dsp_service.service steamvr-program-ble.service
     steamvr-web-debug-portforward.service steam-video-codec-setup.service \
     steam-web-debug-portforward.service
 # The session's user units for Frame hardware (the headset-view loopback camera,
-# proximity microphone mute), input methods (ibus is not installed), the
-# sched_ext CPU scheduler (scx_lavd needs Linux 6.12; steamos-manager offers
-# no scheduler interface here, and stage 1 already sets schedutil).
-in_t systemctl --global mask steamvr-v4l2cam.service steamvr-proxmicmute.service ibus-gamescope.service \
-    steamos-scheduler.service
+# proximity microphone mute) and the sched_ext CPU scheduler (scx_lavd needs
+# Linux 6.12; steamos-manager offers no scheduler interface here, and stage 1
+# already sets schedutil).
+in_t systemctl --global mask steamvr-v4l2cam.service steamvr-proxmicmute.service steamos-scheduler.service
 # SteamVR's log forwarder (steamvr-logs) imports inotify_simple, which the Frame's
 # package installs for Python 3.12 only. The module is plain Python: the image's
 # Python shares it.
