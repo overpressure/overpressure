@@ -272,6 +272,20 @@ other call passes through; without the panels, the layer stays out of the way.
   (`default_pwrlevel`), also when it found the floor already raised, and `steamvr.service` does
   the same after every stop: a compositor that crashed cannot restore its floor, and the GPU
   would otherwise stay at 587 MHz or faster with nothing running.
+- **Panels off when idle.** SteamVR's standby stops presenting, but it never asks for the
+  display's power (`vkDisplayPowerControlEXT`), and the panels would show the last frame at the
+  587 MHz floor. After 5 s without a present (`PICO4_VRDISPLAY_IDLE_OFF_MS`) the layer turns
+  the panels off as PICO OS's compositor does with the screen: planes off and the CRTC inactive,
+  which powers the panels and their backlight down, and the GPU floor back to KGSL's default.
+  The next present sets the mode again (the panels are on after about 460 ms, as at the start),
+  raises the floor and shows its frame. The kernel's vblank events stop with the CRTC; the
+  layer's vblank clock goes on from its last phase meanwhile, so that SteamVR's waits keep their
+  timing, and on the first event afterwards follows the kernel again while its count goes on by
+  time: the counter SteamVR reads never goes back. A power-off request
+  (`vkDisplayPowerControlEXT` off or suspend) turns the panels off the same way. The session
+  keeps `pauseCompositorOnStandby` off (see [SteamVR configuration](#steamvr-configuration)), so
+  SteamVR only stops presenting, and the panels only go off, once the headset reports whether
+  it is worn.
 - **DRM nodes.** gamescope needs the GPU's DRM nodes (`VK_EXT_physical_device_drm`). KGSL is
   not a DRM device, so the layer reports `msm_drm`'s: `/dev/dri/card0` and the render node
   `/dev/dri/renderD128`, which imports the GPU's dma-bufs. In Valve's session two processes
@@ -299,6 +313,7 @@ other call passes through; without the panels, the layer stays out of the way.
 | `PICO4_VRDISPLAY_FRAMES_AHEAD=N` | a present counts as shown once the present N before it is committed (default 0: when its retire fence signals; at most 2); `steamvr.service` sets 1, so the GPU renders the next frame while SteamVR waits for the last one |
 | `PICO4_VRDISPLAY_DUMP=path` | present `PICO4_VRDISPLAY_DUMP_FRAME` (default 300) as a PPM, downscaled by four; this also gives the statistics each eye's mean colour. With compressed scanout and `PICO4_VRDISPLAY_DUMP_EVERY=N` also every N presents after it, as `path.COMMIT`, for artefacts that only show in motion |
 | `PICO4_VRDISPLAY_GPU_MIN_MHZ` | GPU clock floor while presenting (default 587; 0 leaves the governor alone) |
+| `PICO4_VRDISPLAY_IDLE_OFF_MS` | panels off after this long without a present (default 5000; 0 never) |
 | `PICO4_VRDISPLAY_SYNC=off` | no semaphore emulation; `force`: emulation even where the driver shares semaphores |
 | `PICO4_VRDISPLAY_SYNC_FAULT=export,import,spares` | test only: the semaphore emulation pretends these failures ([below](#shared-semaphores)) |
 | `PICO4_VRDISPLAY_UBWC=1` | compressed scanout: tiled, compressed images for the application, converted at each present into compressed RGBA scanout images. The CPU cannot read compressed images: the dumped present also copies the application's image into a host-visible buffer, and the motion data are off |
@@ -860,6 +875,8 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: present trace with counter reads, Valve's session | before each of SteamVR's one-second waits: one present wait returned just after a counter tick, the next 8.8–10.2 ms later and 0.8–1.8 ms before the following tick, then 25 reads of the same count |
 | Headset: Valve's session with the vblank time and the present waits held for an unread count | five 30 s checks in a row: 89.94–90.0 commits/s, 0.0–0.15 % late, no stall in the window, no one-second wait; twelve more starts with 25 s each: none |
 | Headset: Valve's 20 s check with the frame dump copying rows first, two runs | 90.0 and 89.97 commits/s, 0.06 % late; the startup's largest gap 46 and 77 ms (125–165 ms in every check before); eye means measured |
+| Headset: `pico4-vrdisplay-test` with five 8 s pauses (`--pauses 5`) | each pause: panels off after 5 s without a present (backlight powered down), GPU floor back to the default level, the vblank counter going on at 90 Hz (720 counts in 8 s); each next present: panels on after 459-473 ms, floor raised again; 87.3 frames/s between the pauses, 2 late, no stall |
+| Headset: Valve's session with `pauseCompositorOnStandby` on, headset lying still, orientation only (`PICO4_SLAM=0`) | SteamVR enters standby after about 15 s and stops presenting; 5 s later the panels go off, the GPU drops to 305 MHz at its default floor, and the hottest zone falls from 40 to 30 °C in 100 s. With 6DoF the tracker's runaways count as motion, and SteamVR does not enter standby |
 | Headset: Valve's session with `mangoapp` (60 s) | one `mangoapp` process throughout (before, without its library, 15,077 restarts a minute); gamescope's queue to it in `pico4-sysvmsg`, its messages received by `mangoapp`; MangoHud warns about two Steam settings it does not know (`no_display`, `nis_steam_sharpness`) |
 | Headset: X11 test clients in gamescope's Xwayland (the environment of `steam.service`) | `glxinfo`: direct rendering on `zink Vulkan 1.3(Turnip Adreno (TM) 650)`, OpenGL 4.6; `glxgears` synchronized to the refresh at 88.9–89.8 FPS; `vkcube` (xcb) 900 frames in 10.1 s, 88.8 FPS; no llvmpipe or glamor failure in Xwayland's log; `ibus-gamescope` active |
 | Headset: `pico4-vrsync-test` with injected faults (`PICO4_VRDISPLAY_SYNC_FAULT`) | `export` and `import` pass every check, waiting for the submission or on the CPU instead; `spares` fails the submission (`vkQueueSubmit` returns an error) without any value counting as reached |

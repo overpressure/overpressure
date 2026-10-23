@@ -11,6 +11,8 @@
 #    layer must count retire timeouts, never treat one as a presented frame,
 #    and lose the surface (VK_ERROR_OUT_OF_DATE_KHR) within a bounded time
 #    instead of leaving the client waiting.
+# 3. Pauses longer than PICO4_VRDISPLAY_IDLE_OFF_MS turn the display off; the
+#    vblank counter goes on, and the next presents turn it on again.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 inc=${VULKAN_INCLUDE:-/usr/include}
@@ -30,13 +32,18 @@ cc=${CC:-cc}
 sed "s|/usr/lib/libVkLayer_PICO4_vrdisplay.so|$work/libVkLayer_PICO4_vrdisplay.so|" \
 	src/vrdisplay/VkLayer_PICO4_vrdisplay.json > "$work/VkLayer_PICO4_vrdisplay.json"
 
-run() { # run NAME [ENV=VALUE...]: the test client on a small fake display, bounded to 30 s
-	local name=$1
+run() { # run NAME [ENV=VALUE...] [-- ARGS...]: the test client on a small fake display, bounded to 30 s
+	local name=$1 envs=()
 	shift
+	while [ $# -gt 0 ] && [ "$1" != -- ]; do
+		envs+=("$1")
+		shift
+	done
+	[ $# -eq 0 ] || shift
 	env VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd" VK_LAYER_PATH="$work" \
 		VK_INSTANCE_LAYERS=VK_LAYER_PICO4_vrdisplay PICO4_VRDISPLAY=1 PICO4_VRDISPLAY_FAKE=256x128 \
-		PICO4_VRDISPLAY_STATS="$work/$name.stats.json" PICO4_VRDISPLAY_LOGFILE="$work/$name.log" "$@" \
-		timeout 30 "$work/pico4-vrdisplay-test" 3 --min-hz 0 > "$work/$name.json" 2> "$work/$name.err" || true
+		PICO4_VRDISPLAY_STATS="$work/$name.stats.json" PICO4_VRDISPLAY_LOGFILE="$work/$name.log" "${envs[@]}" \
+		timeout 30 "$work/pico4-vrdisplay-test" 3 --min-hz 0 "$@" > "$work/$name.json" 2> "$work/$name.err" || true
 }
 field() { sed -n "s/.*\"$2\":\([0-9.-]*\).*/\1/p" "$work/$1"; }
 fail() { echo "FAIL: $*"; for f in "$work"/*.json "$work"/*.err "$work"/*.log; do [ -s "$f" ] && { echo "== $f"; tail -n 20 "$f"; }; done; exit 1; }
@@ -58,4 +65,11 @@ commits=$(field stuck.stats.json commits)
 [ "$commits" -le 21 ] || fail "$commits commits after the display stopped retiring flips at 20"
 [ "$(field stuck.stats.json retire_timeouts)" -ge 1 ] || fail "no retire timeout counted"
 grep -q "surface lost" "$work/stuck.log" "$work/stuck.err" 2>/dev/null || fail "no 'surface lost' in the layer's log"
-echo "pico4-vrdisplay fake display: 2 scenarios passed (stuck display lost after ${elapsed} s)"
+
+# 3. Idle like SteamVR's standby: two pauses longer than the idle limit turn the panels off,
+#    the vblank counter goes on meanwhile, and the next presents turn them on again.
+run idle PICO4_VRDISPLAY_IDLE_OFF_MS=400 -- --pauses 2 --pause-s 1.2
+grep -q '"status":"pass"' "$work/idle.json" || fail "presenting after the idle pauses failed"
+grep -q '"pauses_ok":2' "$work/idle.json" || fail "the vblank counter stopped while the panels were off"
+[ "$(field idle.stats.json sleeps)" = 2 ] || fail "the panels did not go off twice"
+echo "pico4-vrdisplay fake display: 3 scenarios passed (stuck display lost after ${elapsed} s)"

@@ -41,6 +41,9 @@
  *                                carries 16 bands over the left eye's height
  *                                (512 values each, every other pixel), in hex
  *   PICO4_VRDISPLAY_GPU_MIN_MHZ  GPU clock floor while presenting (587, 0: off)
+ *   PICO4_VRDISPLAY_IDLE_OFF_MS  panels off after this long without a present (5000,
+ *                                0: never), as in SteamVR's standby; the next present
+ *                                turns them on again
  *   PICO4_VRDISPLAY_SYNC=off     no semaphore emulation
  *   PICO4_VRDISPLAY_UBWC=1       compressed (UBWC) scanout: the application renders
  *                                into tiled, compressed images without storage
@@ -390,6 +393,7 @@ struct display
 	uint32_t release_property, retire_property;
 	bool xrgb, xbgr;
 	bool active; //!< Mode set and layers enabled.
+	bool asleep; //!< Panels off for idleness or a power-off request; the next present wakes them.
 	int saved_min_pwrlevel;
 
 	pthread_t vblank_thread, clock_thread;
@@ -941,6 +945,7 @@ kms_commit(struct display *d, uint32_t fb, int *out_release, int *out_retire, ui
 		ok = drmModeAtomicAddProperty(req, d->planes[i], d->fb_property[i], fb) >= 0;
 	}
 	int ret = -1;
+	int64_t before = now_ns();
 	if (ok) {
 		uint32_t flags = modeset ? DRM_MODE_ATOMIC_ALLOW_MODESET : DRM_MODE_ATOMIC_NONBLOCK;
 		for (int attempt = 0; attempt < 20; attempt++) {
@@ -968,10 +973,11 @@ kms_commit(struct display *d, uint32_t fb, int *out_release, int *out_retire, ui
 	*out_release = modeset ? -1 : (int)release_fd;
 	*out_retire = modeset ? -1 : (int)retire_fd;
 	if (modeset) {
-		LOG("%s active", d->mode.name);
+		LOG("%s active%s after %" PRId64 " ms", d->mode.name, d->asleep ? " again" : "", (now_ns() - before) / 1000000);
 		gpu_floor(d);
 	}
 	d->active = true;
+	d->asleep = false;
 	return true;
 }
 
@@ -1058,10 +1064,18 @@ on_vblank(struct display *d, uint64_t sequence, int64_t when_ns)
 	d->stat_vblanks++;
 	d->vblank_ns = when_ns;
 	trace('K', sequence, (now_ns() - when_ns) / 1000);
-	if (d->phase_ns == 0 || when_ns - d->phase_ns > CLOCK_HOLD_NS) {
-		// The first event, or the first after the display was off: the kernel's count.
+	if (d->phase_ns == 0) {
+		// The first event: the kernel's count.
 		d->phase_ns = when_ns;
 		d->phase_sequence = sequence;
+	} else if (when_ns - d->phase_ns > CLOCK_HOLD_NS) {
+		/*
+		 * The first after the display was off: the phase follows the kernel again, the count
+		 * goes on by time, as the clock counted while the panels slept. The kernel's own count
+		 * may restart with the mode, and SteamVR's counter must not go back.
+		 */
+		d->phase_sequence += (uint64_t)((when_ns - d->phase_ns + PERIOD_NS / 2) / PERIOD_NS);
+		d->phase_ns = when_ns;
 	} else {
 		/*
 		 * The kernel timestamps a vblank when it handles the interrupt: now and then
@@ -1101,8 +1115,8 @@ clock_main(void *arg)
 	while (!d->vblank_stop) {
 		// With a lead, each vblank is signalled lead_ns early: the clock runs that much ahead.
 		int64_t now = now_ns() + d->lead_ns;
-		if (d->phase_ns == 0 || now - d->phase_ns > CLOCK_HOLD_NS) {
-			// No recent kernel vblank: the display is off or starting.
+		if (d->phase_ns == 0 || (!d->asleep && now - d->phase_ns > CLOCK_HOLD_NS)) {
+			// No recent kernel vblank: the display is off or starting (asleep, it goes on).
 			struct timespec wait = deadline_after(PERIOD_NS);
 			pthread_cond_timedwait(&d->cond, &d->lock, &wait);
 			continue;
@@ -1297,7 +1311,7 @@ struct sc_image
 
 struct sc_stats
 {
-	uint64_t presents, commits, busy_retries, retire_waits, retire_timeouts, late, stalls, gpu_timeouts;
+	uint64_t presents, commits, busy_retries, retire_waits, retire_timeouts, late, stalls, gpu_timeouts, sleeps;
 	uint64_t present_waits, present_wait_timeouts, max_present_wait_lag;
 	int64_t first_ns, last_ns, max_interval_ns;
 	int64_t gpu_wait_ns, max_gpu_wait_ns, retire_wait_ns, max_retire_wait_ns;
@@ -1610,7 +1624,8 @@ sc_write_stats(struct swapchain *sc, const char *path)
 	fprintf(f,
 	        "{\"target\":\"pico4_vrdisplay\",\"fake\":%s,\"mode\":\"%s\",\"format\":\"%s\",\"images\":%u"
 	        ",\"presents\":%" PRIu64 ",\"commits\":%" PRIu64 ",\"commit_hz\":%.4f,\"max_interval_ms\":%.3f"
-	        ",\"late\":%" PRIu64 ",\"stalls\":%" PRIu64 ",\"busy_retries\":%" PRIu64 ",\"retire_waits\":%" PRIu64
+	        ",\"late\":%" PRIu64 ",\"stalls\":%" PRIu64 ",\"sleeps\":%" PRIu64 ",\"busy_retries\":%" PRIu64
+	        ",\"retire_waits\":%" PRIu64
 	        ",\"retire_timeouts\":%" PRIu64 ",\"gpu_timeouts\":%" PRIu64 ",\"vblanks\":%" PRIu64
 	        ",\"vblank_hz\":%.4f,\"gpu_wait_ms\":{\"mean\":%.3f,\"max\":%.3f}"
 	        ",\"retire_wait_ms\":{\"mean\":%.3f,\"max\":%.3f},\"present_waits\":%" PRIu64
@@ -1619,7 +1634,7 @@ sc_write_stats(struct swapchain *sc, const char *path)
 	        d->fake ? "true" : "false", d->fake ? "fake" : d->mode.name,
 	        sc->fourcc == DRM_FORMAT_XRGB8888 ? "XRGB8888" : "XBGR8888", sc->count, s->presents, s->commits,
 	        s->commits > 1 && seconds > 0 ? (s->commits - 1) / seconds : 0.0, s->max_interval_ns / 1e6, s->late,
-	        s->stalls, s->busy_retries, s->retire_waits, s->retire_timeouts, s->gpu_timeouts, d->stat_vblanks,
+	        s->stalls, s->sleeps, s->busy_retries, s->retire_waits, s->retire_timeouts, s->gpu_timeouts, d->stat_vblanks,
 	        d->stat_vblanks > 1 && vblank_seconds > 0 ? (d->last_sequence - d->first_sequence) / vblank_seconds
 	                                                  : 0.0,
 	        s->commits ? s->gpu_wait_ns / 1e6 / s->commits : 0.0, s->max_gpu_wait_ns / 1e6,
@@ -1679,6 +1694,7 @@ sc_commit(struct swapchain *sc, uint32_t index)
 	struct sc_image *img = &sc->imgs[index];
 	int release = -1, retire = -1;
 	bool modeset = !d->active;
+	bool woke = d->asleep;
 
 	if (d->fake) {
 		// A timer one refresh away stands in for the retire fence; from commit
@@ -1690,6 +1706,7 @@ sc_commit(struct swapchain *sc, uint32_t index)
 			timerfd_settime(retire, 0, &its, NULL);
 		}
 		d->active = true;
+		d->asleep = false;
 		modeset = false;
 	} else if (!kms_commit(d, img->fb, &release, &retire, &sc->stats.busy_retries)) {
 		return false;
@@ -1722,7 +1739,7 @@ sc_commit(struct swapchain *sc, uint32_t index)
 
 	struct sc_stats *s = &sc->stats;
 	int64_t t = sc->pending_ns;
-	if (s->commits > 0) {
+	if (s->commits > 0 && !woke) { // the time asleep is no late frame
 		int64_t interval = t - s->last_ns;
 		if (interval > s->max_interval_ns) {
 			s->max_interval_ns = interval;
@@ -1739,6 +1756,54 @@ sc_commit(struct swapchain *sc, uint32_t index)
 	s->last_ns = t;
 	s->commits++;
 	return true;
+}
+
+/*!
+ * Locked. Panels off until the next present, as PICO OS's compositor waits with the screen off:
+ * no scanout, no backlight, the GPU floor released. SteamVR's standby only stops presenting;
+ * it never asks for the display's power (vkDisplayPowerControlEXT). The vblank clock goes on
+ * from its last phase meanwhile, so that SteamVR's waits for vblanks keep their timing.
+ */
+static void
+display_sleep(struct display *d, struct swapchain *sc, const char *why)
+{
+	if (!d->active) {
+		return;
+	}
+	LOG("panels off: %s", why);
+	kms_disable(d);
+	d->asleep = true;
+	if (sc != NULL) {
+		// Nothing is scanned out any more: the image on screen is free again.
+		if (sc->shown >= 0) {
+			sc->imgs[sc->shown].state = IMAGE_FREE;
+			sc->shown = -1;
+		}
+		sc->stats.sleeps++;
+	}
+	pthread_cond_broadcast(&d->cond);
+}
+
+//! Locked. Panels off once no present came for PICO4_VRDISPLAY_IDLE_OFF_MS; the poll timeout until then.
+static int
+idle_check(struct display *d, struct swapchain *sc)
+{
+	static int64_t idle_ns = -1;
+	if (idle_ns < 0) {
+		idle_ns = env_num("PICO4_VRDISPLAY_IDLE_OFF_MS", 5000) * 1000000LL;
+	}
+	if (idle_ns <= 0 || !d->active || sc->stats.commits == 0 || sc->retire_fd >= 0) {
+		return 1000;
+	}
+	int64_t idle = now_ns() - sc->pending_ns;
+	if (idle >= idle_ns) {
+		char why[64];
+		snprintf(why, sizeof(why), "no present for %" PRId64 " ms", idle / 1000000);
+		display_sleep(d, sc, why);
+		return 1000;
+	}
+	int64_t left_ms = (idle_ns - idle + 999999) / 1000000;
+	return left_ms < 1000 ? (int)left_ms : 1000;
 }
 
 static void *
@@ -1823,9 +1888,10 @@ present_main(void *arg)
 			continue;
 		}
 		if (sc->queued == 0) {
+			int timeout = idle_check(d, sc);
 			pthread_mutex_unlock(&d->lock);
 			struct pollfd p = {.fd = sc->wake, .events = POLLIN};
-			poll(&p, 1, 1000);
+			poll(&p, 1, timeout);
 			uint64_t drain;
 			if (p.revents & POLLIN) {
 				(void)!read(sc->wake, &drain, sizeof(drain));
@@ -3690,8 +3756,13 @@ layer_DisplayPowerControlEXT(VkDevice device, VkDisplayKHR display, const VkDisp
 		struct device_data *dev = find_device(device);
 		return dev->DisplayPowerControlEXT(device, display, info);
 	}
-	// The panels stay on while presenting; SteamVR's standby only dims its content.
-	LOG("vkDisplayPowerControlEXT(%d): ignored", info->powerState);
+	// Off and suspend turn the panels off until the next present; on needs no action.
+	if (info->powerState == VK_DISPLAY_POWER_STATE_OFF_EXT ||
+	    info->powerState == VK_DISPLAY_POWER_STATE_SUSPEND_EXT) {
+		pthread_mutex_lock(&g_display.lock);
+		display_sleep(&g_display, g_display.swapchains, "power-off request");
+		pthread_mutex_unlock(&g_display.lock);
+	}
 	return VK_SUCCESS;
 }
 

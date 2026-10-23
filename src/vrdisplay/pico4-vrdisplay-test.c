@@ -3,7 +3,7 @@
  * pico4-vrdisplay-test: drive a Vulkan direct-mode display the way SteamVR's
  * compositor does, and print a JSON summary (docs/session.md).
  *
- *   PICO4_VRDISPLAY=1 pico4-vrdisplay-test [SECONDS] [--min-hz HZ]
+ *   PICO4_VRDISPLAY=1 pico4-vrdisplay-test [SECONDS] [--min-hz HZ] [--pauses N [--pause-s S]]
  *
  * Finds the display through VK_KHR_display, acquires it with the DRM fd
  * (VK_EXT_acquire_drm_display) as vrcompositor does, creates a display-plane
@@ -15,6 +15,12 @@
  * set), the counter advances at HZ or faster and events arrive at 90% of the
  * mode's rate (the watcher re-arms between events and can miss one); 0 skips
  * the rate checks.
+ * With --pauses it stops presenting N times for S seconds (default 7), longer
+ * than the layer's idle limit (PICO4_VRDISPLAY_IDLE_OFF_MS), as SteamVR's standby
+ * does: the panels go off and the next present turns them on. Each pause passes
+ * if the vblank counter went on meanwhile (at 90% of the rate or more) and never
+ * back; SECONDS counts the presenting time only, and the frame rate leaves out
+ * the second after each pause, while the panels power up.
  * Without /dev/dri/card0 (or with PICO4_VRDISPLAY_FAKE=1) it skips the DRM
  * acquire.
  */
@@ -119,10 +125,15 @@ has_device_extension(VkPhysicalDevice pd, const char *name)
 int
 main(int argc, char **argv)
 {
-	double seconds = 10, min_hz = 85.5;
+	double seconds = 10, min_hz = 85.5, pause_s = 7;
+	int pauses = 0;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--min-hz") == 0 && i + 1 < argc) {
 			min_hz = atof(argv[++i]);
+		} else if (strcmp(argv[i], "--pauses") == 0 && i + 1 < argc) {
+			pauses = atoi(argv[++i]);
+		} else if (strcmp(argv[i], "--pause-s") == 0 && i + 1 < argc) {
+			pause_s = atof(argv[++i]);
 		} else {
 			seconds = atof(argv[i]);
 		}
@@ -148,9 +159,12 @@ main(int argc, char **argv)
 	uint32_t image_count = 0, frames = 0, late = 0;
 	uint64_t counter_start = 0, counter_end = 0;
 	double frame_hz = 0, vblank_hz = 0, event_hz = 0, elapsed = 0;
-	double first_present = 0, last_present = 0, counter_start_s = 0, counter_end_s = 0;
+	double counter_start_s = 0, counter_end_s = 0;
 	double stamped_age_ms = 0;
 	bool stamped_ok = false;
+	int pauses_done = 0, pauses_ok = 0;
+	double paused = 0, settle_until = 0, counted_s = 0;
+	uint32_t counted = 0;
 	int drm_fd = -1;
 
 	const char *instance_extensions[] = {
@@ -451,9 +465,28 @@ main(int argc, char **argv)
 		watching = pthread_create(&watcher, NULL, vblank_main, &watch) == 0;
 	}
 
-	double start = now_s(), previous = start;
-	bool counted = false;
-	while (now_s() - start < seconds) {
+	double start = now_s(), previous = start, segment = start;
+	bool counter_read = false, resumed = false;
+	while (now_s() - start - paused < seconds) {
+		if (pauses_done < pauses && now_s() - segment >= seconds / (pauses + 1)) {
+			// Idle like SteamVR's standby; the counter must go on, and never back.
+			uint64_t before = 0, after = 0;
+			bool read = get_counter != NULL &&
+			            get_counter(device, swapchain, VK_SURFACE_COUNTER_VBLANK_BIT_EXT, &before) == VK_SUCCESS;
+			struct timespec rest = {(time_t)pause_s, (long)((pause_s - (time_t)pause_s) * 1e9)};
+			nanosleep(&rest, NULL);
+			read = read && get_counter(device, swapchain, VK_SURFACE_COUNTER_VBLANK_BIT_EXT, &after) == VK_SUCCESS;
+			if (get_counter == NULL || (read && after > before && after - before >= 0.9 * pause_s * hz)) {
+				pauses_ok++;
+			}
+			fprintf(stderr, "pause %d: counter %" PRIu64 " -> %" PRIu64 " in %.1f s\n", pauses_done + 1, before, after,
+			        pause_s);
+			pauses_done++;
+			paused += pause_s;
+			segment = now_s();
+			settle_until = segment + 1.0;
+			resumed = true;
+		}
 		uint32_t slot = frames % FRAMES_IN_FLIGHT;
 		CHECK(vkWaitForFences(device, 1, &in_flight[slot], VK_TRUE, 2000000000ull));
 		uint32_t index;
@@ -481,18 +514,20 @@ main(int argc, char **argv)
 		};
 		CHECK(vkQueuePresentKHR(queue, &present));
 		double t = now_s();
-		if (frames > 0 && (t - previous) * hz > 1.5) {
-			late++;
+		if (frames > 0 && !resumed && t >= settle_until) {
+			if ((t - previous) * hz > 1.5) {
+				late++;
+			}
+			counted++;
+			counted_s += t - previous;
 		}
-		if (frames == 0) {
-			first_present = t;
-		}
-		previous = last_present = t;
+		resumed = false;
+		previous = t;
 		frames++;
-		if (get_counter != NULL && !counted && get_counter(device, swapchain, VK_SURFACE_COUNTER_VBLANK_BIT_EXT,
+		if (get_counter != NULL && !counter_read && get_counter(device, swapchain, VK_SURFACE_COUNTER_VBLANK_BIT_EXT,
 		                                                   &counter_start) == VK_SUCCESS) {
 			counter_start_s = now_s();
-			counted = true;
+			counter_read = true;
 		}
 	}
 	elapsed = now_s() - start;
@@ -507,10 +542,10 @@ main(int argc, char **argv)
 		stamped_age_ms = (now_s() - stamped[1] / 1e9) * 1e3;
 		stamped_ok = stamped[0] >= counter_end && stamped_age_ms > -20.0 && stamped_age_ms < 3000.0 / hz;
 	}
-	if (frames > 1 && last_present > first_present) {
-		frame_hz = (frames - 1) / (last_present - first_present);
+	if (counted > 0 && counted_s > 0) {
+		frame_hz = counted / counted_s;
 	}
-	if (counted && counter_end_s > counter_start_s && counter_end > counter_start) {
+	if (counter_read && counter_end_s > counter_start_s && counter_end > counter_start) {
 		vblank_hz = (counter_end - counter_start) / (counter_end_s - counter_start_s);
 	}
 
@@ -550,22 +585,23 @@ out:
 		close(drm_fd);
 	}
 
-	bool pass = g_error[0] == '\0' && frames > 0 && (min_hz <= 0 || frame_hz >= min_hz) &&
+	bool pass = g_error[0] == '\0' && frames > 0 && (min_hz <= 0 || frame_hz >= min_hz) && pauses_ok == pauses &&
 	            (!display_control || ((min_hz <= 0 || (vblank_hz >= min_hz && event_hz >= 0.9 * hz)) &&
 	                                  counter_end > counter_start && stamped_ok));
 	if (g_error[0] == '\0' && !pass) {
 		snprintf(g_error, sizeof(g_error),
 		         "frames %.2f Hz, vblanks %.2f Hz, events %.2f Hz, counter %" PRIu64 " -> %" PRIu64
-		         ", vblank time %.3f ms old",
-		         frame_hz, vblank_hz, event_hz, counter_start, counter_end, stamped_age_ms);
+		         ", vblank time %.3f ms old, %d of %d pauses with the counter going on",
+		         frame_hz, vblank_hz, event_hz, counter_start, counter_end, stamped_age_ms, pauses_ok, pauses);
 	}
 	printf("{\"schema\":1,\"status\":\"%s\",\"display\":\"%s\",\"mode\":\"%s\",\"acquire\":\"%s\","
 	       "\"format\":%d,\"images\":%u,\"seconds\":%.3f,\"frames\":%u,\"frame_hz\":%.3f,\"late_frames\":%u,"
 	       "\"display_control\":%s,\"vblank_events\":%" PRIu64 ",\"vblank_timeouts\":%" PRIu64
-	       ",\"event_hz\":%.3f,\"vblank_hz\":%.3f,\"counter\":[%" PRIu64 ",%" PRIu64 "],\"vblank_age_ms\":%.3f",
+	       ",\"event_hz\":%.3f,\"vblank_hz\":%.3f,\"counter\":[%" PRIu64 ",%" PRIu64 "],\"vblank_age_ms\":%.3f"
+	       ",\"pauses\":%d,\"pauses_ok\":%d",
 	       pass ? "pass" : "fail", display_name, mode_text, acquire, format, image_count, elapsed, frames, frame_hz,
 	       late, display_control ? "true" : "false", watch.events, watch.timeouts, event_hz, vblank_hz,
-	       counter_start, counter_end, stamped_age_ms);
+	       counter_start, counter_end, stamped_age_ms, pauses, pauses_ok);
 	if (!pass) {
 		printf(",\"error\":\"%s\"", g_error);
 	}
