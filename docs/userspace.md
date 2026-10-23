@@ -418,7 +418,12 @@ The firmware then calibrates, restarts once and comes up. Calibration data is no
 storage is read-only, so every boot calibrates cold. A link file
 ([`10-pico4-wlan.link`](../userspace/rootfs/usr/lib/systemd/network/10-pico4-wlan.link)) keeps the
 kernel's interface names. NetworkManager manages `wlan0` with `wpa_supplicant`; its connections
-live in RAM and are gone after a reboot.
+live in RAM and are gone after a reboot. The Steam client switches NetworkManager to the Frame's
+iwd backend through steamos-manager (`99-valve-wifi-backend.conf` in `/etc`). iwd cannot run on
+the stock kernel, which lacks the AF_ALG crypto sockets (`CONFIG_CRYPTO_USER_API_*`), and with
+that backend `wlan0` stayed "unavailable" and listed no network.
+[`99-zz-pico4-wifi-backend.conf`](../userspace/rootfs/etc/NetworkManager/conf.d/99-zz-pico4-wifi-backend.conf)
+sorts after Valve's file and keeps `wpa_supplicant`.
 
 ## Audio
 
