@@ -553,8 +553,11 @@ class Runner:
             except (ValueError, OSError) as exc:  # evidence is best effort, the check decides
                 (self.folder / f"userspace-{name}.txt").write_text(f"unavailable: {exc}\n", encoding="utf-8")
         value = json.loads(report)
-        state["check"] = {k: value.get(k) for k in ("status", "errors", "systemd", "versions", "vulkan", "fan")}
+        state["check"] = {k: value.get(k) for k in ("status", "errors", "systemd", "versions", "vulkan", "fan", "power")}
+        state["warnings"] = userspace.power_warnings(value.get("power"))
         self.save()
+        for warning in state["warnings"]:
+            print(f"   warning: {warning}", flush=True)
         require(code.strip() == "0", "Userspace check failed")
         userspace.validate_check(value, require_vulkan=state["gpu_firmware"], require_fan=True)
         # The storage and identity guarantees of stage 1 must hold in stage 2.

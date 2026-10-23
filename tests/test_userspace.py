@@ -56,6 +56,35 @@ class KernelCompatTests(unittest.TestCase):
             userspace.kernel_compat({}, VERSION)
 
 
+class PowerWarningTests(unittest.TestCase):
+    """an issue: a tethered headset that drains its battery is reported, never failed."""
+
+    def power(self, port, status, input_ma=1250, online=True):
+        return {"usb_online": online, "port": port, "input_ma": input_ma, "usb_mv": 4846,
+                "battery": {"status": status, "capacity": 15, "current_ma": 0}}
+
+    def test_charging_port_keeps_up(self):
+        self.assertEqual(userspace.power_warnings(self.power("USB_CDP", "Charging")), [])
+        self.assertEqual(userspace.power_warnings(self.power("USB_CDP", "Full")), [])
+
+    def test_discharge_while_tethered_warns(self):
+        (warning,) = userspace.power_warnings(self.power("USB", "Discharging", 490))
+        self.assertIn("discharges while tethered at 15 %", warning)
+        self.assertIn("USB port, 490 mA input", warning)
+
+    def test_standard_port_warns_before_it_drains(self):
+        (warning,) = userspace.power_warnings(self.power("USB", "Charging", 490))
+        self.assertIn("standard USB port", warning)
+
+    def test_untethered_or_unknown_is_quiet(self):
+        self.assertEqual(userspace.power_warnings(self.power("USB", "Discharging", online=False)), [])
+        self.assertEqual(userspace.power_warnings(None), [])
+        # A check without the section (older images) still validates.
+        value = copy.deepcopy(PASSING)
+        value.pop("power", None)
+        userspace.validate_check(value)
+
+
 class CheckValidationTests(unittest.TestCase):
     def test_passing_check(self):
         userspace.validate_check(PASSING, require_vulkan=True, require_fan=True)

@@ -179,6 +179,21 @@ where `dev boot`, `dev reboot` and `dev check` work as above. A new system image
 `scripts/build-system-image.sh` (as root) and `python -m pico4 dev install`, which starts the
 installed system; `python -m pico4 dev installed` reconnects to it after a reboot.
 
+### Power while tethered
+
+Tethered work needs a charging USB port (CDP) or a wall charger. The headset's charger sets its
+input by BC1.2 detection, also through a USB-C to USB-A adapter. Type-C's "high current" is the
+adapter's pull-up resistor, which the charger rightly ignores.
+
+| Port | Charger input | Battery during the session |
+| --- | --- | --- |
+| Standard port (`real_type` `USB`) | 0.49 A at 4.74 V, about 2.3 W | drains, 0.29–0.78 A |
+| Charging downstream port (`USB_CDP`) | settles at 1.25–1.5 A, about 6–7 W | charges, about +0.7 A |
+
+`pico4-userspace-check` reports the charger's port type and input limit and the battery's state
+(`power`), and `dev check` prints a warning on a standard port or when the battery discharges
+while tethered (`power_warnings` in [pico4/userspace.py](../pico4/userspace.py)).
+
 ## Windows host and WSL
 
 - `wsl -u root -- bash -c '... $VAR ...'` expands `$VAR` before bash runs, even inside single

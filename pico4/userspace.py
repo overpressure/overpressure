@@ -178,6 +178,29 @@ def validate_check(value, require_vulkan: bool = False, require_fan: bool = Fals
         validate_vulkan(vk.get("result"))
 
 
+def power_warnings(power) -> list:
+    """Warnings for the charger state pico4-userspace-check reports; they fail nothing.
+
+    The charger limits its input by BC1.2 detection: a standard port (SDP, real_type USB)
+    gives it about 0.5 A at 4.7 V, less than a session draws, so a tethered headset drains
+    its battery there; a charging port (CDP) or a wall charger keeps up (docs/development.md).
+    """
+    if not isinstance(power, dict) or not power.get("usb_online"):
+        return []
+    port, input_ma = power.get("port") or "unknown", power.get("input_ma")
+    supply = f"{port} port, {input_ma} mA input" if isinstance(input_ma, int) else f"{port} port"
+    battery = power.get("battery") or {}
+    warnings = []
+    if battery.get("status") == "Discharging":
+        level = battery.get("capacity")
+        at = f" at {level} %" if isinstance(level, int) else ""
+        warnings.append(f"the battery discharges while tethered{at} ({supply}): use a charging port or a wall charger")
+    elif port == "USB":
+        warnings.append(f"standard USB port ({supply}): the charger cannot keep up with a session; "
+                        "use a charging port or a wall charger")
+    return warnings
+
+
 IMU_RATE_HZ = 500.0  # requested; the SSC runs the ICM-42688 at 512 Hz for it
 
 
