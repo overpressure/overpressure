@@ -715,7 +715,9 @@ builders give head and controllers one offset. A vibration request (amplitude, d
 out as one motor frame (command `01`, below) per request, mapped as PICO OS maps OpenXR haptics:
 level = amplitude × 255, the duration in whole milliseconds and at least 10 ms, Monado's minimum
 duration as 500 ms, 0 ms as a stop, and PICO OS's default strength of 75 %. The controller ends
-the vibration itself.
+the vibration itself. SteamVR's pulses without a duration (its hover feedback, 0 s at amplitude
+0.1–0.2) are single short pulses: the SteamVR driver sends them as 10 ms, the motor's shortest,
+not as Monado's minimum duration, which would buzz for half a second at every hover.
 
 Either pose is the aim pose: PICO OS publishes the tracked pose as the aim and derives the grip as
 aim × T, where T is a position and a quaternion (w, x, y, z) per hand, left block first, that its

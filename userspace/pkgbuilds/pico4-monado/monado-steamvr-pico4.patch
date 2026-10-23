@@ -151,10 +151,10 @@
  vr::DistortionCoordinates_t
  CDeviceDriver_Monado::ComputeDistortion(vr::EVREye eEye, float fU, float fV)
  {
-@@ -1607,7 +1662,9 @@ CServerDriver_Monado::HandleHapticEvent(vr::VREvent_t *event)
+@@ -1607,10 +1662,14 @@ CServerDriver_Monado::HandleHapticEvent(vr::VREvent_t *event)
  		return;
  	}
- 
+
 -	struct xrt_output_value out;
 +	// The type tells drivers what the value holds; unset, a driver checking it refuses the vibration.
 +	struct xrt_output_value out = {};
@@ -162,3 +162,9 @@
  	out.vibration.amplitude = amp;
  	if (duration > 0.00001) {
  		out.vibration.duration_ns = (time_duration_ns)(duration * 1000.f * 1000.f * 1000.f);
+ 	} else {
+-		out.vibration.duration_ns = XRT_MIN_HAPTIC_DURATION;
++		// SteamVR's pulses without a duration (its hover feedback) are single short pulses, not
++		// OpenXR's minimum duration, which PICO OS plays for 500 ms: the motor's shortest, 10 ms.
++		out.vibration.duration_ns = 10 * 1000 * 1000;
+ 	}
