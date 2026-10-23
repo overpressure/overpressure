@@ -124,8 +124,8 @@ grep -q '^{' <<<"$stats" || stats=null
 devices=$(runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid" \
 	timeout 3 /opt/steamvr/bin/linuxarm64/vrcmd --pollposes 2>/dev/null |
 	awk -F, 'NF == 7 && $1 ~ /^[0-9]+$/ {
-			# vrcmd now and then prints a line with an empty value: not valid JSON.
-			for (i = 2; i <= 7; i++) if ($i !~ /^ *-?[0-9][0-9.eE+-]*$/) next
+			# vrcmd now and then prints a line with an empty or cut value ("3."): not valid JSON.
+			for (i = 2; i <= 7; i++) if ($i !~ /^ *-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$/) next
 			last[$1] = $0}
 		END {printf "["; n = 0; for (i = 0; i < 16; i++) if (i in last) {split(last[i], v, ",");
 			printf "%s{\"index\":%d,\"position\":[%s,%s,%s],\"rotation\":[%s,%s,%s]}", n++ ? "," : "",
