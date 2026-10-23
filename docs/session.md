@@ -522,8 +522,14 @@ Here two things differed:
 
 The waits fell on the startup and on the Steam client's activity: 2–6 in every start, now and
 then one or two in a measured window. The vblank time alone changed nothing (4, 4 and 0 waits
-in three starts against 2, 4 and 3). With both changes, 17 starts in a row had none; every
-session check still shows one gap of 125–165 ms during its startup.
+in three starts against 2, 4 and 3). With both changes, 17 starts in a row had none.
+
+The session check's frame dump (`PICO4_VRDISPLAY_DUMP`, present 300, about 3.5 s into the
+compositor's frames) runs on the layer's commit thread. Reading the uncached image in place,
+every fourth pixel, took 130–140 ms: one gap of 125–165 ms in every check's startup, between
+commits 300 and 301 in the present trace. The dump now copies each sampled row into cached
+memory in one go. The startup's largest gaps left, 40–77 ms, are SteamVR's: its present
+waits return in time, and its next present follows 40–60 ms later while the dashboard starts.
 
 The serial console must stay quiet during a session. journald copies warnings and errors into
 the kernel log for pstore, and SteamVR logs errors by the thousand while it misses frames (about
@@ -840,7 +846,8 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: DRM node users in Valve's session | the layer is loaded in gamescope, `vrcompositor` and two `vrwebhelper` processes; gamescope and `vrcompositor` read the DRM properties once each; gamescope holds `renderD128` open twice, `vrcompositor` `card0`; with zink (`MESA_LOADER_DRIVER_OVERRIDE=zink`) Xwayland and the Steam client run OpenGL on the KGSL Turnip ([graphics.md](graphics.md#opengl)) |
 | Headset: Valve's 30 s check with the Steam client and its UI on the GPU, installed system | 90.0 commits/s, 0.0–0.07 % late, no stall in the window in six of nine runs; the others 84.0–87.0 commits/s with one or two of SteamVR's one-second waits; 2–6 such waits during startup in every run. Before zink, with the client crashing in a loop, 83.8 commits/s and two waits |
 | Headset: present trace with counter reads, Valve's session | before each of SteamVR's one-second waits: one present wait returned just after a counter tick, the next 8.8–10.2 ms later and 0.8–1.8 ms before the following tick, then 25 reads of the same count |
-| Headset: Valve's session with the vblank time and the present waits held for an unread count | five 30 s checks in a row: 89.94–90.0 commits/s, 0.0–0.15 % late, no stall in the window, no one-second wait; twelve more starts with 25 s each: none; one gap of 125–150 ms in each check's startup |
+| Headset: Valve's session with the vblank time and the present waits held for an unread count | five 30 s checks in a row: 89.94–90.0 commits/s, 0.0–0.15 % late, no stall in the window, no one-second wait; twelve more starts with 25 s each: none |
+| Headset: Valve's 20 s check with the frame dump copying rows first, two runs | 90.0 and 89.97 commits/s, 0.06 % late; the startup's largest gap 46 and 77 ms (125–165 ms in every check before); eye means measured |
 | Headset: X11 test clients in gamescope's Xwayland (the environment of `steam.service`) | `glxinfo`: direct rendering on `zink Vulkan 1.3(Turnip Adreno (TM) 650)`, OpenGL 4.6; `glxgears` synchronized to the refresh at 88.9–89.8 FPS; `vkcube` (xcb) 900 frames in 10.1 s, 88.8 FPS; no llvmpipe or glamor failure in Xwayland's log; `ibus-gamescope` active |
 | Headset: `pico4-vrsync-test` with injected faults (`PICO4_VRDISPLAY_SYNC_FAULT`) | `export` and `import` pass every check, waiting for the submission or on the CPU instead; `spares` fails the submission (`vkQueueSubmit` returns an error) without any value counting as reached |
 | Headset: SteamVR stopped with the session, two rounds | each stop clean ("Stopped SteamVR Launcher"), no fallback, Valve's failure tracker empty; before, every stop failed the unit (`vrstartup -shutdown` exit 255) |

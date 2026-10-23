@@ -1460,9 +1460,16 @@ sc_dump(struct swapchain *sc, struct sc_image *img, const char *path)
 	if (f != NULL) {
 		fprintf(f, "P6\n%u %u\n255\n", g_width / 4, g_height / 4);
 	}
-	for (uint32_t y = 0; y < g_height; y += 4) {
+	/*
+	 * The image is uncached: reading every fourth pixel in place took 130-140 ms on the
+	 * commit thread, a gap in every session check's startup. Each sampled row is
+	 * copied in one go into cached memory first.
+	 */
+	uint8_t *row = malloc((size_t)g_width * 4);
+	for (uint32_t y = 0; row != NULL && y < g_height; y += 4) {
+		memcpy(row, map + offset + (size_t)y * pitch, (size_t)g_width * 4);
 		for (uint32_t x = 0; x < g_width; x += 4) {
-			const uint8_t *px = map + offset + (size_t)y * pitch + (size_t)x * 4;
+			const uint8_t *px = row + (size_t)x * 4;
 			uint8_t rgb[3] = {bgr ? px[2] : px[0], px[1], bgr ? px[0] : px[2]};
 			for (int c = 0; c < 3; c++) {
 				sum[x / (g_width / 2)][c] += rgb[c];
@@ -1472,6 +1479,7 @@ sc_dump(struct swapchain *sc, struct sc_image *img, const char *path)
 			}
 		}
 	}
+	free(row);
 	if (f != NULL) {
 		fclose(f);
 	}
