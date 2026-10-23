@@ -139,6 +139,7 @@ struct device
 	PFN_vkWaitSemaphores WaitSemaphores;
 	PFN_vkSignalSemaphore SignalSemaphore;
 	PFN_vkGetSemaphoreCounterValue GetSemaphoreCounterValue;
+	PFN_vkDeviceWaitIdle DeviceWaitIdle;
 	struct spare *spares; //!< under g_lock
 	unsigned nspares;
 };
@@ -197,6 +198,34 @@ static int
 dup_cloexec(int fd)
 {
 	return fcntl(fd, F_DUPFD_CLOEXEC, 3);
+}
+
+//! Waits for a sync file without a time limit and closes it.
+static void
+wait_fence(int fd)
+{
+	struct pollfd p = {fd, POLLIN, 0};
+	while (poll(&p, 1, -1) < 0 && errno == EINTR) {
+	}
+	close(fd);
+}
+
+/*!
+ * Test-only fault injection: PICO4_VRDISPLAY_SYNC_FAULT names failures to pretend,
+ * comma-separated: "export" (sync-file exports fail), "import" (fence imports fail),
+ * "spares" (no binary semaphore is free).
+ */
+static bool
+fault(const char *name)
+{
+	const char *env = getenv("PICO4_VRDISPLAY_SYNC_FAULT");
+	size_t n = strlen(name);
+	for (const char *p = env; p != NULL && (p = strstr(p, name)) != NULL; p += n) {
+		if ((p == env || p[-1] == ',') && (p[n] == '\0' || p[n] == ',')) {
+			return true;
+		}
+	}
+	return false;
 }
 
 static struct device *
@@ -573,7 +602,15 @@ server(void *arg)
 				continue;
 			}
 			struct fence *f = of[k];
-			reach_now(f->map->s, f->value);
+			if (fds[k].revents & POLLNVAL) {
+				// Not a sync file any more: nothing proves the work done.
+				LOG("the fence of value %" PRIu64 " is no valid file; it does not count as reached", f->value);
+			} else {
+				if (fds[k].revents & POLLERR) {
+					LOG("the fence of value %" PRIu64 " signalled with an error", f->value);
+				}
+				reach_now(f->map->s, f->value);
+			}
 			pthread_mutex_lock(&g_lock);
 			for (struct fence **p = &g_fences; *p != NULL; p = &(*p)->next) {
 				if (*p == f) {
@@ -668,9 +705,7 @@ publish(struct mapping *m, uint64_t value, int fd)
 		free(f);
 		if (fd >= 0) {
 			// The fence cannot be handed out: wait for it here instead.
-			struct pollfd p = {fd, POLLIN, 0};
-			poll(&p, 1, 1000);
-			close(fd);
+			wait_fence(fd);
 		}
 		reach_now(s, value);
 		return;
@@ -845,6 +880,9 @@ resolve(struct mapping *m, uint64_t target, int *fd)
 static struct spare *
 spare_get(struct device *d)
 {
+	if (fault("spares")) {
+		return NULL;
+	}
 	pthread_mutex_lock(&g_lock);
 	for (struct spare *sp = d->spares; sp != NULL; sp = sp->next) {
 		if (!sp->used && (sp->busy < 0 || signalled(sp->busy))) {
@@ -880,6 +918,19 @@ spare_get(struct device *d)
 	return sp;
 }
 
+//! A spare, waiting for one in flight to finish if all are (WAIT_FOR_SIGNAL_NS at most).
+static struct spare *
+spare_wait(struct device *d)
+{
+	int64_t deadline = now_ns() + WAIT_FOR_SIGNAL_NS;
+	struct spare *sp;
+	while ((sp = spare_get(d)) == NULL && now_ns() < deadline) {
+		struct timespec ms = {0, NS_PER_MS};
+		nanosleep(&ms, NULL);
+	}
+	return sp;
+}
+
 static void
 spare_put(struct spare *sp)
 {
@@ -888,12 +939,34 @@ spare_put(struct spare *sp)
 	pthread_mutex_unlock(&g_lock);
 }
 
-static int
-export_sync_file(struct device *d, struct spare *sp)
+/*!
+ * The sync file of a submitted binary semaphore's signal. On success `*fd` is -1
+ * when the semaphore has signalled already; a failure proves nothing.
+ */
+static VkResult
+export_sync_file(struct device *d, struct spare *sp, int *fd)
 {
+	*fd = -1;
+	if (fault("export")) {
+		return VK_ERROR_OUT_OF_HOST_MEMORY;
+	}
 	VkSemaphoreGetFdInfoKHR info = {VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR, NULL, sp->handle, SYNC_FD};
-	int fd = -1;
-	return d->GetSemaphoreFdKHR(d->device, &info, &fd) == VK_SUCCESS ? fd : -1;
+	VkResult r = d->GetSemaphoreFdKHR(d->device, &info, fd);
+	if (r != VK_SUCCESS) {
+		*fd = -1;
+	}
+	return r;
+}
+
+//! Waits until a submission has finished: its fence if there is one, else the whole device.
+static void
+wait_submission(struct device *d, int done)
+{
+	if (done >= 0) {
+		wait_fence(dup_cloexec(done));
+	} else if (d->DeviceWaitIdle != NULL) {
+		d->DeviceWaitIdle(d->device);
+	}
 }
 
 //! A semaphore operation of a batch, whichever submit command it came from.
@@ -1015,9 +1088,10 @@ plan_batch(struct device *d, struct plan *p, uint32_t b, const struct op *waits,
 		                                     VK_SEMAPHORE_IMPORT_TEMPORARY_BIT,
 		                                     SYNC_FD,
 		                                     fd};
-		if (sp == NULL || d->ImportSemaphoreFdKHR(d->device, &import) != VK_SUCCESS) {
-			LOG("cannot import a fence; not waiting for value %" PRIu64, waits[i].value);
-			close(fd);
+		if (sp == NULL || fault("import") || d->ImportSemaphoreFdKHR(d->device, &import) != VK_SUCCESS) {
+			// The GPU cannot wait for it: the submission waits here until the fence signals.
+			LOG("cannot import a fence; waiting for value %" PRIu64 " before the submission", waits[i].value);
+			wait_fence(fd);
 			if (sp != NULL) {
 				spare_put(sp);
 			}
@@ -1032,23 +1106,23 @@ plan_batch(struct device *d, struct plan *p, uint32_t b, const struct op *waits,
 			sg[ns++] = signals[i];
 			continue;
 		}
+		if (p->signal_spare[b] == NULL) {
+			struct spare *sp = spare_wait(d);
+			if (sp == NULL) {
+				// Nothing could tell other processes when the work is done: fail before submitting.
+				LOG("no binary semaphore free for a signal operation; the submission fails");
+				map_unref(m);
+				return false;
+			}
+			p->signal_spare[b] = sp;
+			p->used[p->nused++] = sp;
+			sg[ns++] = (struct op){sp->handle, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, signals[i].device_index};
+		}
 		uint64_t value = signals[i].value;
 		if (m->s->type == VK_SEMAPHORE_TYPE_BINARY) {
 			lock_shared(m->s);
 			value = ++m->s->signals;
 			unlock_shared(m->s);
-		}
-		if (p->signal_spare[b] == NULL) {
-			struct spare *sp = spare_get(d);
-			if (sp == NULL) {
-				LOG("no binary semaphore for a signal operation; value %" PRIu64 " counts as reached", value);
-				reach_now(m->s, value);
-				map_unref(m);
-				continue;
-			}
-			p->signal_spare[b] = sp;
-			p->used[p->nused++] = sp;
-			sg[ns++] = (struct op){sp->handle, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, signals[i].device_index};
 		}
 		p->pubs[p->npubs++] = (struct publication){m, value, b};
 	}
@@ -1066,12 +1140,22 @@ static void
 plan_finish(struct device *d, struct plan *p, bool submitted)
 {
 	int done = -1;
+	bool done_known = false;
 	if (submitted) {
+		done_known = p->done != NULL && export_sync_file(d, p->done, &done) == VK_SUCCESS;
+		bool waited = false;
 		for (uint32_t b = 0; b < p->count; b++) {
 			if (p->signal_spare[b] == NULL) {
 				continue;
 			}
-			int fd = export_sync_file(d, p->signal_spare[b]);
+			int fd = -1;
+			VkResult r = export_sync_file(d, p->signal_spare[b], &fd);
+			if (r != VK_SUCCESS && !waited) {
+				// No fence to hand out: the values count as reached once the submission has finished.
+				LOG("cannot export a signal operation's fence (%d); waiting for the submission", (int)r);
+				wait_submission(d, done_known ? done : -1);
+				waited = true;
+			}
 			for (unsigned i = 0; i < p->npubs; i++) {
 				if (p->pubs[i].batch == b) {
 					publish(p->pubs[i].map, p->pubs[i].value, fd >= 0 ? dup_cloexec(fd) : -1);
@@ -1081,8 +1165,9 @@ plan_finish(struct device *d, struct plan *p, bool submitted)
 				close(fd);
 			}
 		}
-		if (p->done != NULL) {
-			done = export_sync_file(d, p->done);
+		if (!done_known && !waited && p->nused > 0) {
+			// The binary semaphores cannot be reused before the submission has finished.
+			wait_submission(d, -1);
 		}
 	}
 	pthread_mutex_lock(&g_lock);
@@ -1608,13 +1693,15 @@ can_emulate(struct instance *in, VkPhysicalDevice physical)
 	    (env != NULL && strcmp(env, "off") == 0)) {
 		return false;
 	}
+	// "force": emulate even where the driver shares semaphores itself (host tests on lavapipe).
+	bool force = env != NULL && strcmp(env, "force") == 0;
 	VkSemaphoreTypeCreateInfo timeline = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, NULL,
 	                                      VK_SEMAPHORE_TYPE_TIMELINE, 0};
 	VkPhysicalDeviceExternalSemaphoreInfo query = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
 	                                               &timeline, OPAQUE_FD};
 	VkExternalSemaphoreProperties props = {VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES, NULL, 0, 0, 0};
 	in->GetPhysicalDeviceExternalSemaphoreProperties(physical, &query, &props);
-	if (props.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT) {
+	if (!force && (props.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT)) {
 		return false; // the driver shares semaphores itself
 	}
 	query.pNext = NULL;
@@ -1706,6 +1793,7 @@ vrsync_device_created(VkPhysicalDevice physical, VkDevice device, PFN_vkGetDevic
 	d->SignalSemaphore = (PFN_vkSignalSemaphore)either(device, gdpa, "vkSignalSemaphore", "vkSignalSemaphoreKHR");
 	d->GetSemaphoreCounterValue = (PFN_vkGetSemaphoreCounterValue)either(
 	    device, gdpa, "vkGetSemaphoreCounterValue", "vkGetSemaphoreCounterValueKHR");
+	d->DeviceWaitIdle = (PFN_vkDeviceWaitIdle)gdpa(device, "vkDeviceWaitIdle");
 	d->emulate = d->GetSemaphoreFdKHR != NULL && d->ImportSemaphoreFdKHR != NULL &&
 	             can_emulate(find_instance(physical), physical);
 	pthread_mutex_lock(&g_lock);
