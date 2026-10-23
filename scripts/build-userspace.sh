@@ -414,10 +414,12 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
 # (steamos-bootconf), which do not exist here, and then fails. The Frame's
-# USB gadget units would take the controller from the POC's NCM link.
+# USB gadget units would take the controller from the POC's NCM link. The kernel
+# console's getty (the generator adds it for console=ttyMSM0) waits 90 s for a
+# device unit that never appears and holds the graphical target back that long.
 in_t systemctl mask systemd-firstboot.service systemd-pstore.service systemd-oomd.service \
     systemd-oomd.socket systemd-boot-update.service systemd-repart.service steamos-dump-info.service \
-    usb-gadget.target usb-ncm-gadget@.service usb-ncm-dnsmasq@.service
+    usb-gadget.target usb-ncm-gadget@.service usb-ncm-dnsmasq@.service serial-getty@ttyMSM0.service
 # Valve's VR session (docs/session.md): no display manager (pico4-session.service
 # starts the session), and none of the Frame-only system units: the controller
 # radio programmer (a firmware OTA for the Frame's nRF, never to run here),
