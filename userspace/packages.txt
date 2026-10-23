@@ -84,6 +84,9 @@ xorg-xrdb
 # carries it) and IBus (steamwebhelper).
 deckard-steam-rel
 pico4/pico4-gtk2
+# Project-built: MangoHud's mangoapp, the client's performance overlay that gamescope
+# starts; the Frame's build needs libraries of the Frame's private base
+pico4/pico4-mangohud
 deckard-arch-hotfixes-release-0.3/libibus
 # The session's input method: Valve's ibus-gamescope unit runs ibus-daemon, which
 # takes the text of Steam's on-screen keyboard to the apps.

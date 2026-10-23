@@ -330,8 +330,9 @@ Details: [session.md](session.md), [userspace.md](userspace.md).
 - The headset reaches the internet over the USB link when the PC shares its connection
   ([userspace.md](userspace.md#internet-over-usb)). Wi-Fi comes up and scans
   ([userspace.md](userspace.md#wi-fi)); joining a network is unverified.
-- MangoHud's `mangoapp`, the client's performance overlay, is left out: the Frame's build
-  needs libraries of the Frame's private base. The client's video module uses the FFmpeg 8 it
+- MangoHud's `mangoapp`, the client's performance overlay, runs (built against the image's
+  libraries, its frame timings through the System V message queues of `pico4-sysvsem`); the
+  overlay in the headset is unverified. The client's video module uses the FFmpeg 8 it
   brings itself; playback is unverified.
 - The client will meet the kernel limits of step 4: no namespaces for Steam Linux Runtime's
   containers, no `binfmt_misc` for FEX, no `hidraw` for Steam Input.

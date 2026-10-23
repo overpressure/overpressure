@@ -146,7 +146,7 @@ in_b pacman "-S$sync" --noconfirm --needed base-devel git meson ninja cmake eige
     python-packaging glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
     wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache \
     glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage \
-    shared-mime-info gtk-update-icon-cache hicolor-icon-theme
+    shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
 builder=$(in_b id -u builder):$(in_b id -g builder)
 # Emulated compilers: ccache (in the builder's home, kept between builds) saves repeats.
@@ -229,6 +229,7 @@ build_package pico4-basalt
 build_package pico4-vrdisplay "$project"/src/vrdisplay/*
 build_package pico4-sysvsem "$project"/src/sysvsem/*
 build_package pico4-gtk2
+build_package pico4-mangohud
 build_package pico4-monado "$project"/src/monado/* "$project"/src/xr/*
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
 if [[ -n $llvm ]]; then
@@ -467,13 +468,9 @@ if [[ ! -f "$T/usr/lib/python3.12/site-packages/inotify_simple.py" || ! -d "$T/u
 fi
 ln -sfn ../../python3.12/site-packages/inotify_simple.py "$T/usr/lib/$python/site-packages/inotify_simple.py"
 # gamescope's session starts MangoHud's mangoapp, the Steam client's
-# performance overlay. The Frame's MangoHud needs libraries of the Frame's
-# private base (spdlog 1.13, fmt 10, libtracefs), and without the Steam client
-# the overlay has nothing to show: the session runs without it instead of
-# restarting the missing program in a loop.
-sed -i '/^[[:space:]]*--mangoapp$/d' "$T/usr/lib/steamos/gamescope-session"
-if grep -q -- '--mangoapp' "$T/usr/lib/steamos/gamescope-session"; then
-    echo "gamescope-session still starts mangoapp" >&2
+# performance overlay (pico4-mangohud).
+if ! grep -q -- '--mangoapp' "$T/usr/lib/steamos/gamescope-session" || [[ ! -x "$T/usr/bin/mangoapp" ]]; then
+    echo "gamescope-session does not start mangoapp, or mangoapp is missing" >&2
     exit 1
 fi
 # SteamVR's headset driver is Monado's plugin (driver_monado, pico4-monado);

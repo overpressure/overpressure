@@ -73,7 +73,8 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
 - `userspace/`: stage 2. `packages.txt` and `pacman.conf` (the Holo preview first; Frame
   packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
   layer), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-turnip-kgsl, pico4-sensors,
-  pico4-basalt, pico4-monado, pico4-vrdisplay, pico4-sysvsem, pico4-gtk2 for the Steam client).
+  pico4-basalt, pico4-monado, pico4-vrdisplay, pico4-sysvsem, pico4-gtk2 for the Steam client,
+  pico4-mangohud).
 - `src/`: the project's C sources (`graphics/`, `monado/` driver and KMS target, `xr/` OpenXR
   clients, `vrdisplay/`, `sysvsem/`, `reboot/`). Recipes list them as `SKIP`; the build copies
   them in.

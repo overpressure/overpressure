@@ -122,11 +122,13 @@ Linux 6.12; stage 1 already sets `schedutil`). The session's input method, `ibus
 Frame's package installs for Python 3.12 only; the module is plain Python, and the build links
 it into the image's Python.
 
-gamescope runs without MangoHud's `mangoapp`, the Steam client's performance overlay: the
-Frame's MangoHud needs libraries of the Frame's private base (spdlog 1.13, fmt 10, libtracefs),
-and the overlay has nothing to show without the Steam client. The build removes the
-`--mangoapp` option from `/usr/lib/steamos/gamescope-session`, which would otherwise restart the
-missing program in a loop, and fails if the option is still there.
+gamescope's session starts MangoHud's `mangoapp`, the Steam client's performance overlay
+(`pico4-mangohud`). The Frame's MangoHud links libraries of the Frame's private base (spdlog 1.13,
+fmt 10, libtracefs); the image builds upstream's MangoHud 0.8.4 from its release archive with its
+bundled subprojects (spdlog among them) against the image's libraries, without NVIDIA support.
+The build fails if `gamescope-session` does not start `mangoapp` or the program is missing:
+gamescope's reaper restarts a `mangoapp` that cannot start without end (15,077 times in a minute
+without its `libglfw`).
 
 Further adaptations:
 
@@ -365,7 +367,7 @@ checks a GPU wait for the other process's GPU signal (by GPU timestamps), host w
 other process's signals, a host signal, a wait submitted before its signal, and a submission
 whose second batch waits for its first batch's signal.
 
-### System V semaphores
+### System V semaphores and message queues
 
 The stock kernel has no `CONFIG_SYSVIPC`. SteamVR's processes take their named locks (such as
 `Global\VRBootstrapper`, which keeps a second SteamVR from starting) with
@@ -386,6 +388,15 @@ created once, taken with `SEM_UNDO`, refused to a second taker with `IPC_NOWAIT`
 its holder exits or is killed) and runs in the package build, because the userspace build
 calls `makepkg --nocheck`. `PICO4_SYSVSEM_TABLE` names another table file for tests; privileged
 programs ignore it.
+
+gamescope hands MangoHud's `mangoapp` its frame timings through a message queue (`msgget`,
+`msgsnd` without waiting; `mangoapp` waits in `msgrcv`). The same library implements
+`msgget`/`msgsnd`/`msgrcv`/`msgctl` ([pico4-sysvmsg.c](../src/sysvsem/pico4-sysvmsg.c)) on
+`/dev/shm/pico4-sysvmsg`, with the kernel's default limits: 32 queues, messages of up to 8192
+bytes, 16,384 bytes per queue, receiving by type as the kernel does. An existing table is opened
+without `O_CREAT`, which `fs.protected_regular` refuses on another user's file in `/dev/shm`.
+[Its test](../src/sysvsem/test_pico4_sysvmsg.c) passes against the kernel's own queues too (on
+the build host).
 
 ### SteamVR configuration
 
@@ -703,6 +714,7 @@ The session's parts are packages of the userspace archive, which `scripts/build-
 | --- | --- | --- |
 | `pico4-vrdisplay` | [src/vrdisplay](../src/vrdisplay), [PKGBUILD](../userspace/pkgbuilds/pico4-vrdisplay/PKGBUILD) | `libVkLayer_PICO4_vrdisplay.so` with its implicit layer manifest, `pico4-vrdisplay-test`, `pico4-vrsync-test` |
 | `pico4-sysvsem` | [src/sysvsem](../src/sysvsem), [PKGBUILD](../userspace/pkgbuilds/pico4-sysvsem/PKGBUILD) | `libpico4-sysvsem.so` |
+| `pico4-mangohud` | MangoHud 0.8.4 (pinned release archive), [PKGBUILD](../userspace/pkgbuilds/pico4-mangohud/PKGBUILD) | `mangoapp`, `mangohud`, `mangohudctl`, the MangoHud layer |
 | `pico4-monado` | [PKGBUILD](../userspace/pkgbuilds/pico4-monado/PKGBUILD) and patches, [src/monado](../src/monado) | `monado-service`, the OpenXR runtime, `driver_monado` |
 | `deckard-steamvr-rel`, `deckard-steamvr-session` | the Frame's repository | SteamVR in `/opt/steamvr`; the session's scripts and user units |
 
@@ -848,6 +860,7 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: present trace with counter reads, Valve's session | before each of SteamVR's one-second waits: one present wait returned just after a counter tick, the next 8.8–10.2 ms later and 0.8–1.8 ms before the following tick, then 25 reads of the same count |
 | Headset: Valve's session with the vblank time and the present waits held for an unread count | five 30 s checks in a row: 89.94–90.0 commits/s, 0.0–0.15 % late, no stall in the window, no one-second wait; twelve more starts with 25 s each: none |
 | Headset: Valve's 20 s check with the frame dump copying rows first, two runs | 90.0 and 89.97 commits/s, 0.06 % late; the startup's largest gap 46 and 77 ms (125–165 ms in every check before); eye means measured |
+| Headset: Valve's session with `mangoapp` (60 s) | one `mangoapp` process throughout (before, without its library, 15,077 restarts a minute); gamescope's queue to it in `pico4-sysvmsg`, its messages received by `mangoapp`; MangoHud warns about two Steam settings it does not know (`no_display`, `nis_steam_sharpness`) |
 | Headset: X11 test clients in gamescope's Xwayland (the environment of `steam.service`) | `glxinfo`: direct rendering on `zink Vulkan 1.3(Turnip Adreno (TM) 650)`, OpenGL 4.6; `glxgears` synchronized to the refresh at 88.9–89.8 FPS; `vkcube` (xcb) 900 frames in 10.1 s, 88.8 FPS; no llvmpipe or glamor failure in Xwayland's log; `ibus-gamescope` active |
 | Headset: `pico4-vrsync-test` with injected faults (`PICO4_VRDISPLAY_SYNC_FAULT`) | `export` and `import` pass every check, waiting for the submission or on the CPU instead; `spares` fails the submission (`vkQueueSubmit` returns an error) without any value counting as reached |
 | Headset: SteamVR stopped with the session, two rounds | each stop clean ("Stopped SteamVR Launcher"), no fallback, Valve's failure tracker empty; before, every stop failed the unit (`vrstartup -shutdown` exit 255) |
