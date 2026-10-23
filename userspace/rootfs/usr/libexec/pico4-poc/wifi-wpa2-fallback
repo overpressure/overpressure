@@ -1,0 +1,38 @@
+#!/bin/bash
+# Saved Wi-Fi networks that offer WPA2 connect with WPA2 (docs/userspace.md#wi-fi).
+#
+# The Steam client saves a network whose access points offer WPA3 as WPA3-only (key-mgmt sae).
+# PICO OS's driver connects in firmware, and NetworkManager hands wpa_supplicant open
+# authentication for every network; with the SAE key management the driver refuses that connect
+# (EINVAL), so the network never comes up. Most networks also offer WPA2 (WPA2/WPA3 transition
+# mode): for those the profile switches to WPA2 with the same passphrase, and NetworkManager
+# connects. A WPA3-only network stays as it is.
+set -euo pipefail
+
+# The networks in the last scan that offer WPA2-PSK, one SSID per line. The flags come first:
+# they contain no colon, while an SSID may.
+wpa2_ssids() {
+	nmcli --escape no -t -f RSN-FLAGS,WPA-FLAGS,SSID dev wifi list --rescan no 2>/dev/null |
+		awk -F: '$1 ~ /(^| )psk( |$)/ || $2 ~ /(^| )psk( |$)/ {sub(/^[^:]*:[^:]*:/, ""); print}'
+}
+
+offered=$(wpa2_ssids)
+if [ -z "$offered" ]; then
+	# No scan results yet (Wi-Fi comes up about 40 s into the boot): scan first.
+	nmcli dev wifi rescan >/dev/null 2>&1 || true
+	sleep 5
+	offered=$(wpa2_ssids)
+fi
+nmcli -g UUID,TYPE con show | while IFS=: read -r uuid type; do
+	[ "$type" = 802-11-wireless ] || continue
+	[ "$(nmcli -g 802-11-wireless-security.key-mgmt con show "$uuid")" = sae ] || continue
+	ssid=$(nmcli -g 802-11-wireless.ssid con show "$uuid")
+	if ! grep -qxF -- "$ssid" <<<"$offered"; then
+		echo "$uuid: WPA3-only as far as the last scan shows; left as it is"
+		continue
+	fi
+	nmcli con mod "$uuid" 802-11-wireless-security.key-mgmt wpa-psk
+	echo "$uuid: switched from WPA3 (SAE) to WPA2 (PSK); the network offers both"
+	# The activation the client asked for has failed already: start it again.
+	nmcli --wait 0 con up "$uuid" >/dev/null 2>&1 || true
+done

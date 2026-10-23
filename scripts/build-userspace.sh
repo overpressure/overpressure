@@ -435,7 +435,7 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path \
-    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target
+    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-wifi-wpa2-fallback.path pico4-audio.target
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration

@@ -329,7 +329,8 @@ Details: [session.md](session.md), [userspace.md](userspace.md).
   overlays.
 - The headset reaches the internet over the USB link when the PC shares its connection
   ([userspace.md](userspace.md#internet-over-usb)). Wi-Fi comes up and scans
-  ([userspace.md](userspace.md#wi-fi)); joining a network is unverified.
+  ([userspace.md](userspace.md#wi-fi)) and joins WPA2 networks (WPA2/WPA3 networks as WPA2);
+  WPA3-only networks do not work.
 - MangoHud's `mangoapp`, the client's performance overlay, runs (built against the image's
   libraries, its frame timings through the System V message queues of `pico4-sysvsem`); the
   overlay in the headset is unverified. The client's video module uses the FFmpeg 8 it
@@ -386,7 +387,7 @@ system updates. Open:
 
 ### Other hardware
 
-Wi-Fi comes up and scans ([userspace.md](userspace.md#wi-fi)). Audio works: the speakers and
+Wi-Fi joins WPA2 networks ([userspace.md](userspace.md#wi-fi)). Audio works: the speakers and
 the microphone are PipeWire's default sink and source, and playback runs without xruns under
 Valve's session ([userspace.md](userspace.md#audio)); open are a listening check of SteamVR's
 sounds, a spoken microphone check in the headset, and a listening comparison of PICO OS's

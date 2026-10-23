@@ -425,6 +425,16 @@ that backend `wlan0` stayed "unavailable" and listed no network.
 [`99-zz-pico4-wifi-backend.conf`](../userspace/rootfs/etc/NetworkManager/conf.d/99-zz-pico4-wifi-backend.conf)
 sorts after Valve's file and keeps `wpa_supplicant`.
 
+The driver connects in firmware, and NetworkManager hands `wpa_supplicant` open authentication
+for every network. With WPA3's SAE key management the driver refuses that connect request
+(`EINVAL`) before any authentication, so WPA3 does not work. The Steam client saves networks
+whose access points offer WPA3 as WPA3-only (`key-mgmt sae`), and joining them through Steam
+failed. Most networks also offer WPA2 (WPA2/WPA3 transition mode): a path unit
+([`pico4-wifi-wpa2-fallback.path`](../userspace/rootfs/usr/lib/systemd/system/pico4-wifi-wpa2-fallback.path))
+watches the saved networks, switches such a profile to WPA2 with the same passphrase and
+connects it ([`wifi-wpa2-fallback`](../userspace/rootfs/usr/libexec/pico4-poc/wifi-wpa2-fallback)).
+A WPA3-only network stays unsupported.
+
 ## Audio
 
 The sound card is Qualcomm's `kona-mtp-snd-card`, the audio DSP (ADSP) running its front ends.
@@ -625,7 +635,8 @@ recovery deadlines (on uptime) are unaffected by the eight-month clock jump.
 
 Wi-Fi comes up by itself in 41 s, in parallel with the rest of the boot: registration, FW memory
 ready, calibration, the firmware's restart and `wlan0`. NetworkManager scans 2.4 and 5 GHz
-networks (34 seen, strongest 94 %). Joining a network is not yet verified.
+networks (34 seen, strongest 94 %). A WPA2/WPA3 network saved by the Steam client joins as WPA2:
+an address by DHCP, HTTPS to the Steam store, 21 MB/s download.
 
 ### Limits and known messages
 
