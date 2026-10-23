@@ -1,0 +1,17 @@
+[Unit]
+Description=FastRPC file server for the ADSP's audio process (audiopd)
+ConditionPathExists=/usr/share/qcom/pico4-audio
+Requires=pico4-adsp.service
+After=pico4-adsp.service pico4-pd-mapper.service
+
+[Service]
+# PICO OS starts the audio process as "adsprpcd audiopd": the static process audiopd from the
+# ADSP's image, then the file server it loads its configuration through. The driver marks the
+# channel secure: the plain adsprpc-smd node gets EACCES.
+ExecStartPre=/bin/sh -c 'for i in $$(seq 100); do [ -c /dev/adsprpc-smd-secure ] && exit 0; sleep 0.1; done; exit 1'
+ExecStart=/usr/bin/hexagonrpcd -f /dev/adsprpc-smd-secure -d adsp -P audiopd -R /usr/share/qcom/pico4-audio
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=pico4-audio.target

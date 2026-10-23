@@ -7,6 +7,11 @@
 
 ACTION=="remove", ENV{DEVNAME}=="?*", RUN+="/usr/libexec/pico4-poc/devnode remove"
 ACTION=="remove", GOTO="pico4_devnodes_end"
+# The sound card has 40-odd PCMs; the system uses MultiMedia1 (PCM 0) only. The others get no
+# node: PipeWire probes every PCM it can open, and opening the capture side of the hostless MI2S
+# PCM dereferences NULL in the stock kernel's ASoC core (docs/userspace.md#audio).
+# Matched by path: during the card's registration its id attribute is not always readable yet.
+SUBSYSTEM=="sound", KERNEL=="pcmC*D*", DEVPATH=="*:qcom,q6core-audio:sound/sound/card*", KERNEL!="pcmC*D0[pc]", GOTO="pico4_devnodes_end"
 ENV{DEVNAME}=="?*", ENV{MAJOR}=="?*", PROGRAM="/usr/libexec/pico4-poc/devnode add"
 LABEL="pico4_devnodes_end"
 

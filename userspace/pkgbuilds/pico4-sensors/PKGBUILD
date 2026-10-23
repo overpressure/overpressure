@@ -7,8 +7,10 @@
 #   pd-mapper    QMI service locator for protection domains. Patched to read
 #                .jsn files from named directories (no remoteproc sysfs here).
 #   hexagonrpcd  FastRPC file server the sensors process loads its registry and
-#                config through. Patched for the downstream adsprpc ioctl ABI and
-#                to serve the registry's version file.
+#                config through. Patched for the downstream adsprpc ioctl ABI, to
+#                serve the registry's version file, to start the ADSP's static
+#                audio process (-P audiopd), as PICO OS's "adsprpcd audiopd" does,
+#                and to answer ftell, which that process reads its files with.
 # Sources are pinned by commit; the patches are this project's own.
 pkgname=pico4-sensors
 pkgver=0.1
@@ -27,7 +29,7 @@ source=("qrtr::git+https://github.com/linux-msm/qrtr.git#commit=$_qrtr"
         hexagonrpc-vendor-kernel.patch
         pd-mapper-jsn-dirs.patch)
 sha256sums=(SKIP SKIP SKIP
-            'ed4850a71c05eec2ded64c4f7873e527801ab001914c3d97a3a206af6dd7439d'
+            '63a32050f86ca0a4392aece7445abc483f74c50025a515598934f4bedd447f6e'
             '6de989aaa80ca73bd53ba3a7c6192e7f8eba577e222dc95541cb8dc29e903dd3')
 
 prepare() {

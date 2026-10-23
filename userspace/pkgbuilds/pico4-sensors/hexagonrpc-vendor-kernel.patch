@@ -1,5 +1,64 @@
+diff --git a/.editorconfig b/.editorconfig
+old mode 100644
+new mode 100755
+diff --git a/.github/workflows/build.yaml b/.github/workflows/build.yaml
+old mode 100644
+new mode 100755
+diff --git a/Android.bp b/Android.bp
+old mode 100644
+new mode 100755
+diff --git a/COPYING b/COPYING
+old mode 100644
+new mode 100755
+diff --git a/README.md b/README.md
+old mode 100644
+new mode 100755
+diff --git a/chrecd/Android.bp b/chrecd/Android.bp
+old mode 100644
+new mode 100755
+diff --git a/chrecd/interface/chre_slpi.c b/chrecd/interface/chre_slpi.c
+old mode 100644
+new mode 100755
+diff --git a/chrecd/interface/chre_slpi.h b/chrecd/interface/chre_slpi.h
+old mode 100644
+new mode 100755
+diff --git a/chrecd/main.c b/chrecd/main.c
+old mode 100644
+new mode 100755
+diff --git a/chrecd/meson.build b/chrecd/meson.build
+old mode 100644
+new mode 100755
+diff --git a/data/Android.bp b/data/Android.bp
+old mode 100644
+new mode 100755
+diff --git a/data/hexagonrpcd-adsp-rootpd.rc b/data/hexagonrpcd-adsp-rootpd.rc
+old mode 100644
+new mode 100755
+diff --git a/data/hexagonrpcd-adsp-rootpd.service.in b/data/hexagonrpcd-adsp-rootpd.service.in
+old mode 100644
+new mode 100755
+diff --git a/data/hexagonrpcd-adsp-sensorspd.rc b/data/hexagonrpcd-adsp-sensorspd.rc
+old mode 100644
+new mode 100755
+diff --git a/data/hexagonrpcd-adsp-sensorspd.service.in b/data/hexagonrpcd-adsp-sensorspd.service.in
+old mode 100644
+new mode 100755
+diff --git a/data/hexagonrpcd-sdsp.rc b/data/hexagonrpcd-sdsp.rc
+old mode 100644
+new mode 100755
+diff --git a/data/hexagonrpcd-sdsp.service.in b/data/hexagonrpcd-sdsp.service.in
+old mode 100644
+new mode 100755
+diff --git a/data/meson.build b/data/meson.build
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/Android.bp b/hexagonrpcd/Android.bp
+old mode 100644
+new mode 100755
 diff --git a/hexagonrpcd/apps_mem.c b/hexagonrpcd/apps_mem.c
-index 1477f0b..f3d7fe7 100644
+old mode 100644
+new mode 100755
+index 1477f0b..f3d7fe7
 --- a/hexagonrpcd/apps_mem.c
 +++ b/hexagonrpcd/apps_mem.c
 @@ -24,6 +24,7 @@
@@ -22,8 +81,272 @@ index 1477f0b..f3d7fe7 100644
  	if (ret) {
  		fprintf(stderr, "Memory map failed: %s\n",
  			hexagonrpc_strerror(ret));
+diff --git a/hexagonrpcd/apps_mem.h b/hexagonrpcd/apps_mem.h
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/apps_std.c b/hexagonrpcd/apps_std.c
+old mode 100644
+new mode 100755
+index 7172bf0..e1eba3f
+--- a/hexagonrpcd/apps_std.c
++++ b/hexagonrpcd/apps_std.c
+@@ -120,6 +120,34 @@ static uint32_t apps_std_fread(void *data,
+ 	return 0;
+ }
+ 
++static uint32_t apps_std_ftell(void *data,
++			       const struct fastrpc_io_buffer *inbufs,
++			       struct fastrpc_io_buffer *outbufs)
++{
++	struct apps_std_ctx *ctx = data;
++	const struct {
++		uint32_t fd;
++	} *first_in = inbufs[0].p;
++	struct {
++		uint32_t pos;
++	} *first_out = outbufs[0].p;
++	off_t ret;
++
++	ret = hexagonfs_tell(ctx->fds, first_in->fd);
++	if (ret < 0) {
++		fprintf(stderr, "Could not tell stream position: %s\n", strerror(-ret));
++		return AEE_EFAILED;
++	}
++
++#ifdef HEXAGONRPC_VERBOSE
++	printf("tell(%u) -> %ld\n", first_in->fd, (long) ret);
++#endif
++
++	first_out->pos = ret;
++
++	return 0;
++}
++
+ static uint32_t apps_std_fseek(void *data,
+ 			       const struct fastrpc_io_buffer *inbufs,
+ 			       struct fastrpc_io_buffer *outbufs)
+@@ -423,7 +451,10 @@ static const struct fastrpc_function_impl apps_std_procs[] = {
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+ 	{ .def = NULL, .impl = NULL, },
+-	{ .def = NULL, .impl = NULL, },
++	{
++		.def = &apps_std_ftell_def,
++		.impl = apps_std_ftell,
++	},
+ 	{
+ 		.def = &apps_std_fseek_def,
+ 		.impl = apps_std_fseek,
+diff --git a/hexagonrpcd/apps_std.h b/hexagonrpcd/apps_std.h
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/hexagonfs.c b/hexagonrpcd/hexagonfs.c
+old mode 100644
+new mode 100755
+index bd9f353..b55d1cf
+--- a/hexagonrpcd/hexagonfs.c
++++ b/hexagonrpcd/hexagonfs.c
+@@ -227,6 +227,24 @@ int hexagonfs_lseek(struct hexagonfs_fd **fds, int fileno, off_t off, int whence
+ 	return fd->ops->seek(fd, off, whence);
+ }
+ 
++/* The current offset, or a negative error code. */
++off_t hexagonfs_tell(struct hexagonfs_fd **fds, int fileno)
++{
++	struct hexagonfs_fd *fd;
++
++	if (fileno < 0 || fileno >= HEXAGONFS_MAX_FD)
++		return -EBADF;
++
++	fd = fds[fileno];
++	if (fd == NULL)
++		return -EBADF;
++
++	if (fd->ops->tell == NULL)
++		return -ENOSYS;
++
++	return fd->ops->tell(fd);
++}
++
+ ssize_t hexagonfs_read(struct hexagonfs_fd **fds, int fileno, size_t size, void *ptr)
+ {
+ 	struct hexagonfs_fd *fd;
+diff --git a/hexagonrpcd/hexagonfs.h b/hexagonrpcd/hexagonfs.h
+old mode 100644
+new mode 100755
+index 7682604..cb9b21b
+--- a/hexagonrpcd/hexagonfs.h
++++ b/hexagonrpcd/hexagonfs.h
+@@ -42,6 +42,7 @@ struct hexagonfs_file_ops {
+ 	ssize_t (*read)(struct hexagonfs_fd *fd, size_t size, void *ptr);
+ 	int (*stat)(struct hexagonfs_fd *fd, struct stat *stats);
+ 	int (*seek)(struct hexagonfs_fd *fd, off_t off, int whence);
++	off_t (*tell)(struct hexagonfs_fd *fd);
+ };
+ 
+ struct hexagonfs_dirent {
+@@ -75,6 +76,7 @@ int hexagonfs_close(struct hexagonfs_fd **fds, int fileno);
+ 
+ int hexagonfs_fstat(struct hexagonfs_fd **fds, int fileno, struct stat *stats);
+ int hexagonfs_lseek(struct hexagonfs_fd **fds, int fileno, off_t pos, int whence);
++off_t hexagonfs_tell(struct hexagonfs_fd **fds, int fileno);
+ int hexagonfs_readdir(struct hexagonfs_fd **fds, int fileno, size_t size, char *name);
+ ssize_t hexagonfs_read(struct hexagonfs_fd **fds, int fileno, size_t size, void *ptr);
+ 
+diff --git a/hexagonrpcd/hexagonfs_mapped.c b/hexagonrpcd/hexagonfs_mapped.c
+old mode 100644
+new mode 100755
+index fd28c8c..e063fef
+--- a/hexagonrpcd/hexagonfs_mapped.c
++++ b/hexagonrpcd/hexagonfs_mapped.c
+@@ -179,6 +179,18 @@ static int mapped_seek(struct hexagonfs_fd *fd, off_t off, int whence)
+ 	return 0;
+ }
+ 
++static off_t mapped_tell(struct hexagonfs_fd *fd)
++{
++	struct mapped_ctx *ctx = fd->data;
++	off_t ret;
++
++	ret = lseek(ctx->fd, 0, SEEK_CUR);
++	if (ret == -1)
++		return -errno;
++
++	return ret;
++}
++
+ static int mapped_stat(struct hexagonfs_fd *fd, struct stat *stats)
+ {
+ 	struct mapped_ctx *ctx = fd->data;
+@@ -272,6 +284,14 @@ static int mapped_or_empty_seek(struct hexagonfs_fd *fd, off_t off, int whence)
+ 		return 0;
+ }
+ 
++static off_t mapped_or_empty_tell(struct hexagonfs_fd *fd)
++{
++	if (fd->data)
++		return mapped_tell(fd);
++	else
++		return 0;
++}
++
+ static int mapped_or_empty_stat(struct hexagonfs_fd *fd, struct stat *stats)
+ {
+ 	if (fd->data) {
+@@ -330,6 +350,7 @@ struct hexagonfs_file_ops hexagonfs_mapped_ops = {
+ 	.readdir = mapped_readdir,
+ 	.seek = mapped_seek,
+ 	.stat = mapped_stat,
++	.tell = mapped_tell,
+ };
+ 
+ struct hexagonfs_file_ops hexagonfs_mapped_or_empty_ops = {
+@@ -340,6 +361,7 @@ struct hexagonfs_file_ops hexagonfs_mapped_or_empty_ops = {
+ 	.readdir = mapped_or_empty_readdir,
+ 	.seek = mapped_or_empty_seek,
+ 	.stat = mapped_or_empty_stat,
++	.tell = mapped_or_empty_tell,
+ };
+ 
+ struct hexagonfs_file_ops hexagonfs_mapped_sysfs_ops = {
+@@ -350,4 +372,5 @@ struct hexagonfs_file_ops hexagonfs_mapped_sysfs_ops = {
+ 	.readdir = mapped_readdir,
+ 	.seek = mapped_seek,
+ 	.stat = mapped_sysfs_stat,
++	.tell = mapped_tell,
+ };
+diff --git a/hexagonrpcd/hexagonfs_plat_subtype_name.c b/hexagonrpcd/hexagonfs_plat_subtype_name.c
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/hexagonfs_virt_dir.c b/hexagonrpcd/hexagonfs_virt_dir.c
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/hexagonrpcd.1 b/hexagonrpcd/hexagonrpcd.1
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/interface/adsp_default_listener.c b/hexagonrpcd/interface/adsp_default_listener.c
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/interface/adsp_default_listener.h b/hexagonrpcd/interface/adsp_default_listener.h
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/interface/adsp_listener.c b/hexagonrpcd/interface/adsp_listener.c
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/interface/adsp_listener.h b/hexagonrpcd/interface/adsp_listener.h
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/interface/apps_mem.c b/hexagonrpcd/interface/apps_mem.c
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/interface/apps_mem.h b/hexagonrpcd/interface/apps_mem.h
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/interface/apps_std.c b/hexagonrpcd/interface/apps_std.c
+old mode 100644
+new mode 100755
+index 67b3ace..d3dcd08
+--- a/hexagonrpcd/interface/apps_std.c
++++ b/hexagonrpcd/interface/apps_std.c
+@@ -75,6 +75,19 @@ const struct hrpc_method_def_interp4 apps_std_fread_def = {
+ 	.inner_types = NULL,
+ };
+ 
++static struct hrpc_arg_def_interp4 apps_std_ftell_args[] = {
++	{ HRPC_ARG_WORD, sizeof(uint32_t) },
++	{ HRPC_ARG_OUT_BLOB, sizeof(uint32_t) },
++};
++
++const struct hrpc_method_def_interp4 apps_std_ftell_def = {
++	.msg_id = 8,
++	.n_args = HRPC_ARRAY_SIZE(apps_std_ftell_args),
++	.args = apps_std_ftell_args,
++	.n_inner_types = 0,
++	.inner_types = NULL,
++};
++
+ static struct hrpc_arg_def_interp4 apps_std_fseek_args[] = {
+ 	{ HRPC_ARG_WORD, sizeof(uint32_t) },
+ 	{ HRPC_ARG_WORD, sizeof(uint32_t) },
+diff --git a/hexagonrpcd/interface/apps_std.h b/hexagonrpcd/interface/apps_std.h
+old mode 100644
+new mode 100755
+index b80a1ca..63d0319
+--- a/hexagonrpcd/interface/apps_std.h
++++ b/hexagonrpcd/interface/apps_std.h
+@@ -28,6 +28,7 @@ extern struct hrpc_method_def_interp4 apps_std_freopen_def;
+ extern struct hrpc_method_def_interp4 apps_std_fflush_def;
+ extern struct hrpc_method_def_interp4 apps_std_fclose_def;
+ extern struct hrpc_method_def_interp4 apps_std_fread_def;
++extern struct hrpc_method_def_interp4 apps_std_ftell_def;
+ extern struct hrpc_method_def_interp4 apps_std_fseek_def;
+ extern struct hrpc_method_def_interp4 apps_std_fopen_with_env_def;
+ extern struct hrpc_method_def_interp4 apps_std_opendir_def;
+diff --git a/hexagonrpcd/iobuffer.c b/hexagonrpcd/iobuffer.c
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/iobuffer.h b/hexagonrpcd/iobuffer.h
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/listener.c b/hexagonrpcd/listener.c
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/listener.h b/hexagonrpcd/listener.h
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/localctl.c b/hexagonrpcd/localctl.c
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/localctl.h b/hexagonrpcd/localctl.h
+old mode 100644
+new mode 100755
+diff --git a/hexagonrpcd/meson.build b/hexagonrpcd/meson.build
+old mode 100644
+new mode 100755
 diff --git a/hexagonrpcd/rpcd.c b/hexagonrpcd/rpcd.c
-index 600237b..724391a 100644
+old mode 100644
+new mode 100755
+index 600237b..59fbbc6
 --- a/hexagonrpcd/rpcd.c
 +++ b/hexagonrpcd/rpcd.c
 @@ -21,6 +21,7 @@
@@ -34,7 +357,42 @@ index 600237b..724391a 100644
  #include <libhexagonrpc/error.h>
  #include <libhexagonrpc/handle.h>
  #include <libhexagonrpc/interface/remotectl.h>
-@@ -417,7 +418,19 @@ int main(int argc, char* argv[])
+@@ -76,6 +77,7 @@ static void print_usage(const char *argv0)
+ 	       "\t-d DSP\t\tDSP name (default: "")\n"
+ 	       "\t-f DEVICE\tFastRPC device node to attach to\n"
+ 	       "\t-p PROGRAM\tRun client program with shared file descriptor\n"
++	       "\t-P NAME\t\tStart the static pd NAME (adsprpc-smd nodes only)\n"
+ 	       "\t-R DIR\t\tRoot directory of served files (default: /usr/share/qcom/)\n"
+ 	       "\t-s\t\tAttach to sensorspd\n"
+ 	       "\t-h\t\tPrint help and exit\n");
+@@ -350,6 +352,7 @@ int main(int argc, char* argv[])
+ 	const char *device_dir = "/usr/share/qcom/";
+ 	const char *dsp = "";
+ 	const char *create_shell = NULL;
++	const char *static_pd = NULL;
+ 	const char *guessed_device_dir;
+ 	const char **progs;
+ 	pid_t *pids;
+@@ -373,7 +376,7 @@ int main(int argc, char* argv[])
+ 	if (guessed_device_dir != NULL)
+ 		device_dir = guessed_device_dir;
+ 
+-	while ((opt = getopt(argc, argv, "c:d:f:p:R:sh")) != -1) {
++	while ((opt = getopt(argc, argv, "c:d:f:p:P:R:sh")) != -1) {
+ 		switch (opt) {
+ 			case 'c':
+ 				create_shell = optarg;
+@@ -388,6 +391,9 @@ int main(int argc, char* argv[])
+ 				progs[n_progs] = optarg;
+ 				n_progs++;
+ 				break;
++			case 'P':
++				static_pd = optarg;
++				break;
+ 			case 'R':
+ 				device_dir = optarg;
+ 				break;
+@@ -417,7 +423,26 @@ int main(int argc, char* argv[])
  		goto err_free_pids;
  	}
  
@@ -48,15 +406,24 @@ index 600237b..724391a 100644
 +			fprintf(stderr, "Creating a pd is not supported on %s\n", fastrpc_node);
 +			goto err_close_dev;
 +		}
-+		ret = hexagonrpc_downstream_attach(fd,
-+			hexagonrpc_downstream_domain(*dsp ? dsp : (attach_sns ? "sdsp" : "adsp")),
-+			attach_sns);
++		if (static_pd != NULL)
++			ret = hexagonrpc_downstream_create_static(fd,
++				hexagonrpc_downstream_domain(*dsp ? dsp : "adsp"), static_pd);
++		else
++			ret = hexagonrpc_downstream_attach(fd,
++				hexagonrpc_downstream_domain(*dsp ? dsp : (attach_sns ? "sdsp" : "adsp")),
++				attach_sns);
++	} else if (static_pd != NULL) {
++		fprintf(stderr, "Static pds need an adsprpc-smd node\n");
++		goto err_close_dev;
 +	} else if (attach_sns)
  		ret = ioctl(fd, FASTRPC_IOCTL_INIT_ATTACH_SNS, NULL);
  	else if (create_shell != NULL)
  		ret = create_shell_pd(fd, create_shell);
 diff --git a/hexagonrpcd/rpcd_builder.c b/hexagonrpcd/rpcd_builder.c
-index d374958..bd166e8 100644
+old mode 100644
+new mode 100755
+index d374958..bd166e8
 --- a/hexagonrpcd/rpcd_builder.c
 +++ b/hexagonrpcd/rpcd_builder.c
 @@ -31,6 +31,7 @@
@@ -108,12 +475,18 @@ index d374958..bd166e8 100644
  					)
  				)
  		      );
+diff --git a/hexagonrpcd/rpcd_builder.h b/hexagonrpcd/rpcd_builder.h
+old mode 100644
+new mode 100755
+diff --git a/include/Android.bp b/include/Android.bp
+old mode 100644
+new mode 100755
 diff --git a/include/libhexagonrpc/downstream.h b/include/libhexagonrpc/downstream.h
-new file mode 100644
-index 0000000..f86cc08
+new file mode 100755
+index 0000000..88d9f32
 --- /dev/null
 +++ b/include/libhexagonrpc/downstream.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,45 @@
 +/*
 + * Downstream (msm-4.x "adsprpc") FastRPC ioctl translation
 + *
@@ -141,6 +514,12 @@ index 0000000..f86cc08
 + */
 +int hexagonrpc_downstream_attach(int fd, int domain, bool sensors);
 +
++/*
++ * Select the DSP channel and start the static process name (such as
++ * "audiopd") from the DSP's own image, as the vendor library does.
++ */
++int hexagonrpc_downstream_create_static(int fd, int domain, const char *name);
++
 +bool hexagonrpc_is_downstream(int fd);
 +
 +/* args: one upstream-format entry per buffer/handle described by sc. */
@@ -153,19 +532,38 @@ index 0000000..f86cc08
 +void hexagonrpc_downstream_set_ioctl(long (*fn)(int, unsigned long, void *));
 +
 +#endif
+diff --git a/include/libhexagonrpc/error.h b/include/libhexagonrpc/error.h
+old mode 100644
+new mode 100755
+diff --git a/include/libhexagonrpc/handle.h b/include/libhexagonrpc/handle.h
+old mode 100644
+new mode 100755
+diff --git a/include/libhexagonrpc/hexagonrpc.h b/include/libhexagonrpc/hexagonrpc.h
+old mode 100644
+new mode 100755
+diff --git a/include/libhexagonrpc/interface/remotectl.h b/include/libhexagonrpc/interface/remotectl.h
+old mode 100644
+new mode 100755
+diff --git a/include/libhexagonrpc/session.h b/include/libhexagonrpc/session.h
+old mode 100644
+new mode 100755
+diff --git a/libhexagonrpc/Android.bp b/libhexagonrpc/Android.bp
+old mode 100644
+new mode 100755
 diff --git a/libhexagonrpc/downstream.c b/libhexagonrpc/downstream.c
-new file mode 100644
-index 0000000..9eab34a
+new file mode 100755
+index 0000000..3734753
 --- /dev/null
 +++ b/libhexagonrpc/downstream.c
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,279 @@
 +/*
 + * Downstream (msm-4.x "adsprpc") FastRPC ioctl translation
 + *
 + * Android vendor kernels expose FastRPC as /dev/adsprpc-smd with an older
 + * ioctl ABI than the upstream misc/fastrpc.h driver: the DSP is selected with
 + * FASTRPC_IOCTL_GETINFO after open(), a process attaches with
-+ * FASTRPC_IOCTL_INIT_ATTRS, and invocations pass 16-byte remote_arg entries
++ * FASTRPC_IOCTL_INIT_ATTRS (or starts a static process with
++ * FASTRPC_IOCTL_INIT), and invocations pass 16-byte remote_arg entries
 + * instead of 24-byte fastrpc_invoke_args. The remote protocol on the DSP is
 + * the same, so only the ioctl layer is translated here.
 + *
@@ -245,11 +643,16 @@ index 0000000..9eab34a
 +#define DS_IOCTL_INVOKE		_IOWR('R', 1, struct ds_ioctl_invoke)
 +#define DS_IOCTL_MMAP		_IOWR('R', 2, struct ds_ioctl_mmap)
 +#define DS_IOCTL_INVOKE_FD	_IOWR('R', 4, struct ds_ioctl_invoke_fd)
++#define DS_IOCTL_INIT		_IOWR('R', 6, struct ds_ioctl_init)
 +#define DS_IOCTL_GETINFO	_IOWR('R', 8, uint32_t)
 +#define DS_IOCTL_INIT_ATTRS	_IOWR('R', 10, struct ds_ioctl_init_attrs)
 +
 +#define DS_INIT_ATTACH		0
++#define DS_INIT_CREATE_STATIC	2
 +#define DS_INIT_ATTACH_SENSORS	3
++
++/* The remote heap the vendor library donates to a static process. */
++#define DS_STATIC_HEAP		0x200000
 +
 +#define DS_MAX_FDS 64
 +
@@ -332,6 +735,41 @@ index 0000000..9eab34a
 +	return 0;
 +}
 +
++/*
++ * A static process (audiopd) is part of the DSP image: the kernel spawns it
++ * by name and backs it with a remote heap. The vendor library uses the plain
++ * INIT ioctl for it, with the other fields left zero.
++ */
++int hexagonrpc_downstream_create_static(int fd, int domain, const char *name)
++{
++	struct ds_ioctl_init init;
++	uint32_t info;
++	long ret;
++
++	if (domain < 0 || name == NULL || !*name || ds_n_fds >= DS_MAX_FDS) {
++		errno = EINVAL;
++		return -1;
++	}
++
++	info = (uint32_t) domain;
++	ret = ds_call(fd, DS_IOCTL_GETINFO, &info);
++	if (ret)
++		return (int) ret;
++
++	memset(&init, 0, sizeof(init));
++	init.flags = DS_INIT_CREATE_STATIC;
++	init.file = (uintptr_t) name;
++	init.filelen = strlen(name) + 1;
++	init.memlen = DS_STATIC_HEAP;
++
++	ret = ds_call(fd, DS_IOCTL_INIT, &init);
++	if (ret)
++		return (int) ret;
++
++	ds_fds[ds_n_fds++] = fd;
++	return 0;
++}
++
 +int hexagonrpc_downstream_invoke(int fd, uint32_t handle, uint32_t sc,
 +				 const struct fastrpc_invoke_args *args)
 +{
@@ -397,8 +835,16 @@ index 0000000..9eab34a
 +	req->vaddrout = mmap.vaddrout;
 +	return 0;
 +}
+diff --git a/libhexagonrpc/error.c b/libhexagonrpc/error.c
+old mode 100644
+new mode 100755
+diff --git a/libhexagonrpc/handle.c b/libhexagonrpc/handle.c
+old mode 100644
+new mode 100755
 diff --git a/libhexagonrpc/hexagonrpc.c b/libhexagonrpc/hexagonrpc.c
-index c4665f8..e5c92eb 100644
+old mode 100644
+new mode 100755
+index c4665f8..e5c92eb
 --- a/libhexagonrpc/hexagonrpc.c
 +++ b/libhexagonrpc/hexagonrpc.c
 @@ -29,6 +29,7 @@
@@ -422,8 +868,13 @@ index c4665f8..e5c92eb 100644
  	if (ret)
  		goto err;
  
+diff --git a/libhexagonrpc/interface/remotectl.c b/libhexagonrpc/interface/remotectl.c
+old mode 100644
+new mode 100755
 diff --git a/libhexagonrpc/meson.build b/libhexagonrpc/meson.build
-index 6811853..816b2d9 100644
+old mode 100644
+new mode 100755
+index 6811853..816b2d9
 --- a/libhexagonrpc/meson.build
 +++ b/libhexagonrpc/meson.build
 @@ -1,6 +1,7 @@
@@ -434,8 +885,19 @@ index 6811853..816b2d9 100644
    'hexagonrpc.c',
    'interface/remotectl.c',
    'session.c',
+diff --git a/libhexagonrpc/session.c b/libhexagonrpc/session.c
+old mode 100644
+new mode 100755
+diff --git a/meson.build b/meson.build
+old mode 100644
+new mode 100755
+diff --git a/meson.options b/meson.options
+old mode 100644
+new mode 100755
 diff --git a/tests/meson.build b/tests/meson.build
-index 70fd8ee..bceca9d 100644
+old mode 100644
+new mode 100755
+index 70fd8ee..bceca9d
 --- a/tests/meson.build
 +++ b/tests/meson.build
 @@ -26,6 +26,7 @@ test_hexagonfs = executable('test_hexagonfs',
@@ -458,12 +920,15 @@ index 70fd8ee..bceca9d 100644
 +  include_directories : include,
 +)
 +test('downstream', test_downstream)
+diff --git a/tests/sample_file.txt b/tests/sample_file.txt
+old mode 100644
+new mode 100755
 diff --git a/tests/test_downstream.c b/tests/test_downstream.c
-new file mode 100644
-index 0000000..65b9a94
+new file mode 100755
+index 0000000..6369fc3
 --- /dev/null
 +++ b/tests/test_downstream.c
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,178 @@
 +/*
 + * Tests for the downstream (adsprpc) FastRPC ioctl translation
 + *
@@ -495,12 +960,18 @@ index 0000000..65b9a94
 +	int32_t filefd; uint64_t mem; uint32_t memlen; int32_t memfd;
 +	int32_t attrs; uint32_t siglen;
 +};
++struct ds_init {
++	uint32_t flags; uint32_t pad0; uint64_t file; uint32_t filelen;
++	int32_t filefd; uint64_t mem; uint32_t memlen; int32_t memfd;
++};
 +struct ds_mmap { int32_t fd; uint32_t flags; uint64_t vaddrin; uint64_t size; uint64_t vaddrout; };
 +
 +static unsigned long calls[8];
 +static int n_calls;
 +static uint32_t getinfo_domain;
 +static struct ds_init_attrs last_init;
++static struct ds_init last_static;
++static char last_static_name[16];
 +static struct ds_invoke last_invoke;
 +static struct ds_arg last_args[4];
 +static int last_fds[4];
@@ -517,6 +988,10 @@ index 0000000..65b9a94
 +		*(uint32_t *) arg = 1;
 +	} else if (req == _IOWR('R', 10, struct ds_init_attrs)) {
 +		memcpy(&last_init, arg, sizeof(last_init));
++	} else if (req == _IOWR('R', 6, struct ds_init)) {
++		memcpy(&last_static, arg, sizeof(last_static));
++		strncpy(last_static_name, (const char *) (uintptr_t) last_static.file,
++			sizeof(last_static_name) - 1);
 +	} else if (req == _IOWR('R', 1, struct ds_invoke)) {
 +		memcpy(&last_invoke, arg, sizeof(last_invoke));
 +		memcpy(last_args, (void *) (uintptr_t) last_invoke.pra, sizeof(last_args));
@@ -548,6 +1023,7 @@ index 0000000..65b9a94
 +	/* The kernel ABI this translates to: sizes are part of the ioctl numbers. */
 +	assert(sizeof(struct ds_invoke) == 16);
 +	assert(sizeof(struct ds_init_attrs) == 48);
++	assert(sizeof(struct ds_init) == 40);
 +	assert(sizeof(struct ds_mmap) == 32);
 +
 +	hexagonrpc_downstream_set_ioctl(fake_ioctl);
@@ -608,10 +1084,55 @@ index 0000000..65b9a94
 +	assert(last_mmap.fd == -1 && last_mmap.flags == 0x1000 && last_mmap.size == 0x200000);
 +	assert(req.vaddrout == 0x12345000);
 +
-+	/* No invalid domains. */
++	/* A static process: channel first, then INIT by name with a 2 MiB heap. */
++	n_calls = 0;
++	ret = hexagonrpc_downstream_create_static(11, 0, "audiopd");
++	assert(ret == 0);
++	assert(n_calls == 2);
++	assert(calls[0] == _IOWR('R', 8, uint32_t));
++	assert(calls[1] == _IOWR('R', 6, struct ds_init));
++	assert(getinfo_domain == 0);
++	assert(last_static.flags == 2);
++	assert(!strcmp(last_static_name, "audiopd") && last_static.filelen == 8);
++	assert(last_static.filefd == 0 && last_static.mem == 0 && last_static.memfd == 0);
++	assert(last_static.memlen == 0x200000);
++	assert(hexagonrpc_is_downstream(11));
++
++	/* No invalid domains or names. */
 +	assert(hexagonrpc_downstream_attach(9, -1, false) != 0);
++	assert(hexagonrpc_downstream_create_static(9, 0, "") != 0);
++	assert(hexagonrpc_downstream_create_static(9, -1, "audiopd") != 0);
 +	assert(!hexagonrpc_is_downstream(9));
 +
 +	printf("downstream: ok\n");
 +	return 0;
 +}
+diff --git a/tests/test_hexagonfs.c b/tests/test_hexagonfs.c
+old mode 100644
+new mode 100755
+index 38e767d..6b5ad90
+--- a/tests/test_hexagonfs.c
++++ b/tests/test_hexagonfs.c
+@@ -73,6 +73,10 @@ static int test_mapped_seq_read(const char *path)
+ 	if (memcmp(buf1, buf2, 27))
+ 		return 1;
+ 
++	/* The position after 6 bytes, a seek and 27 more. */
++	if (hexagonfs_mapped_ops.tell(&file) != 819 + 27)
++		return 1;
++
+ 	hexagonfs_mapped_ops.close(file.data);
+ 
+ 	close(fd);
+diff --git a/tests/test_hexagonrpc.c b/tests/test_hexagonrpc.c
+old mode 100644
+new mode 100755
+diff --git a/tests/test_iobuffer.c b/tests/test_iobuffer.c
+old mode 100644
+new mode 100755
+diff --git a/tools/meson.build b/tools/meson.build
+old mode 100644
+new mode 100755
+diff --git a/tools/sscregistrygen.c b/tools/sscregistrygen.c
+old mode 100644
+new mode 100755

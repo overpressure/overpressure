@@ -22,7 +22,7 @@ them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL bac
 | 1 Recoverable device | EDL backups, engineering ABL, unlock and stock restore |
 | 2 Linux shell | stock kernel + Alpine ramdisk, SSH and HTTP over USB, read-only storage, return to PICO OS |
 | 3 Native graphics | Turnip (Vulkan) on KGSL; both 2160 x 2160 panels at 90 and 72 Hz through the stock KMS driver |
-| 4 SteamOS-compatible userspace | Holo Core aarch64 with the Steam Frame's systemd 257.7 and SteamOS services, from RAM or installed (read-only system, 104 GiB of data) |
+| 4 SteamOS-compatible userspace | Holo Core aarch64 with the Steam Frame's systemd 257.7 and SteamOS services, from RAM or installed (read-only system, 104 GiB of data); speakers and microphone through PipeWire |
 | 5 XR hardware | head IMU, Monado with KMS output, lens correction and IPD, four tracking cameras, Basalt 6DoF, controllers (inputs, 3DoF) |
 | 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path |
 

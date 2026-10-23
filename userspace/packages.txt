@@ -34,6 +34,11 @@ xorg-xwayland
 pipewire
 pipewire-pulse
 wireplumber
+# Real-time priority for PipeWire's audio threads, as on SteamOS: with a session bus PipeWire
+# asks RTKit and stays at normal priority without it, and sounds break up under the session's load
+rtkit
+# amixer, aplay, arecord, alsaucm: the sound card's checks (docs/userspace.md#audio)
+alsa-utils
 vulkan-icd-loader
 vulkan-tools
 # GL test clients (glxgears, glxinfo, eglinfo): X11 presentation in gamescope (docs/session.md)

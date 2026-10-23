@@ -89,7 +89,7 @@ builds it from pinned linux-msm commits with patches for the stock 4.19 vendor k
    remoteproc sysfs entries to find them through.
 4. **Registry server.** `hexagonrpcd` (linux-msm/hexagonrpc) attaches to the sensors process
    (`sensorspd`) and serves it the sensor configuration and this headset's registry through
-   FastRPC. Two changes, both in
+   FastRPC. Four changes, all in
    [hexagonrpc-vendor-kernel.patch](../userspace/pkgbuilds/pico4-sensors/hexagonrpc-vendor-kernel.patch):
    - **Downstream ioctl ABI.** hexagonrpc targets the upstream `misc/fastrpc.h` driver. A small,
      unit-tested translation layer drives the downstream `adsprpc` ABI instead: `GETINFO`
@@ -98,6 +98,11 @@ builds it from pinned linux-msm commits with patches for the stock 4.19 vendor k
      so a descriptor is only ever driven with the ABI it was attached with.
    - **Registry version file.** It also serves `sns_reg_version`, so the DSP accepts the
      existing registry.
+   - **Static processes.** `-P NAME` starts a static process from the DSP's image instead of
+     attaching, as PICO OS's library does for the ADSP's audio process
+     ([userspace.md](userspace.md#audio)).
+   - **`ftell`.** The file server answers `ftell` (method 8 of the file interface), which the
+     audio process reads its configuration with; unanswered, the server ends its session.
 5. **Client.** `pico4-imu` is a dependency-free Python client of the SNS client service (QMI
    service 0x190 over QRTR; requests and events inside the QMI messages are protobuf-encoded).
    It finds sensors by data type, reads their attributes, streams accel and gyro, and reports

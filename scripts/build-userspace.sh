@@ -12,6 +12,9 @@
 #   --wlan DIR          Wi-Fi driver module, firmware, configuration and MAC addresses
 #                       extracted from YOUR OWN backup by scripts/extract-wlan.sh
 #                       (docs/userspace.md). Without it Wi-Fi stays off.
+#   --audio DIR         audio modules, ADSP firmware and the audio process's files extracted
+#                       from YOUR OWN backup by scripts/extract-audio.sh (docs/userspace.md).
+#                       Without it there is no sound card.
 #   --refresh           download the current package databases and reinstall the base
 #                       root; without it every build installs the same package versions
 #   --clean             rebuild the project packages from scratch
@@ -43,12 +46,13 @@ source_dir=$(cd "$(dirname "$0")/.." && pwd)
 build_root=${1:?specify an isolated Linux-filesystem build directory}
 output=${2:?specify an output directory}
 shift 2
-firmware="" sensor_data="" wlan="" refresh=0 clean=0 emulated_cc=0
+firmware="" sensor_data="" wlan="" audio="" refresh=0 clean=0 emulated_cc=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --gpu-firmware) firmware=$(realpath "${2:?}"); shift 2 ;;
     --sensor-data) sensor_data=$(realpath "${2:?}"); shift 2 ;;
     --wlan) wlan=$(realpath "${2:?}"); shift 2 ;;
+    --audio) audio=$(realpath "${2:?}"); shift 2 ;;
     --refresh) refresh=1; shift ;;
     --clean) clean=1; shift ;;
     --emulated-cc) emulated_cc=1; shift ;;
@@ -357,6 +361,25 @@ if [[ -n "$wlan" ]]; then
         sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
+# Audio: the ADSP's image and protection-domain maps where the PIL loader and pd-mapper look,
+# the stock signed modules with their modules.dep, loaded by path (pico4-audio-modules.service),
+# and the tree hexagonrpcd serves to the audio process (pico4-audiopd.service). The modules are
+# installed byte for byte: their signatures are appended.
+audio_json="[]"
+if [[ -n "$audio" ]]; then
+    for f in modules/audio_machine_kona.ko modules/modules.dep firmware/adsp.mdt firmware/adspr.jsn \
+        firmware/adspua.jsn audiopd/acdb/adsp_avs_config.acdb; do
+        [[ -s "$audio/$f" ]] || { echo "missing $audio/$f (see scripts/extract-audio.sh)" >&2; exit 1; }
+    done
+    mkdir -p "$T/usr/lib/firmware" "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio"
+    install -m 0644 "$audio"/firmware/adsp* "$T/usr/lib/firmware/"
+    install -m 0644 "$audio"/modules/* "$T/usr/lib/pico4-audio/"
+    cp -r --no-preserve=ownership "$audio/audiopd/." "$T/usr/share/qcom/pico4-audio/"
+    chown -R 0:0 "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio"
+    audio_json=$(cd "$T" && find usr/lib/firmware/adsp* usr/lib/pico4-audio usr/share/qcom/pico4-audio -type f -print0 |
+        sort -z | xargs -0 sha256sum |
+        python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
+fi
 # Sensor DSP: firmware for the kernel's PIL loader, protection-domain maps for
 # pd-mapper, and the tree hexagonrpcd serves to the sensors process (-R).
 sensor_json="[]"
@@ -409,7 +432,7 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path \
-    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service
+    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
@@ -494,9 +517,9 @@ mv "$archive.part" "$archive"
 installed_bytes=$(du -sb --apparent-size "$T" | cut -f1)
 cleanup
 python3 - "$archive" "$build_root" "$holo_url" "$holo_sha256" "$installed_bytes" "$firmware_json" "$sensor_json" \
-    "$wlan_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
+    "$wlan_json" "$audio_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
 import hashlib, json, os, sys, datetime
-archive, root, holo_url, holo_sha, installed, firmware, sensors, wlan = sys.argv[1:9]
+archive, root, holo_url, holo_sha, installed, firmware, sensors, wlan, audio = sys.argv[1:10]
 def lines(name):
     with open(os.path.join(root, name)) as f:
         return [l.split() for l in f if l.strip()]
@@ -516,6 +539,7 @@ print(json.dumps({
     "gpu_firmware": json.loads(firmware),
     "sensor_data": json.loads(sensors),
     "wlan": json.loads(wlan),
+    "audio": json.loads(audio),
 }, indent=1, sort_keys=True))
 EOF
 phase "done: $archive ($(du -h "$archive" | cut -f1), installed $((installed_bytes >> 20)) MiB)"

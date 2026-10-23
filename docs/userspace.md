@@ -420,7 +420,105 @@ storage is read-only, so every boot calibrates cold. A link file
 kernel's interface names. NetworkManager manages `wlan0` with `wpa_supplicant`; its connections
 live in RAM and are gone after a reboot.
 
+## Audio
+
+The sound card is Qualcomm's `kona-mtp-snd-card`, the audio DSP (ADSP) running its front ends.
+Its outputs are two WSA881x amplifiers, one per speaker, on SoundWire. Its microphone is analog,
+on the WCD938x codec's ADC1 (PICO OS's `amic1`); the card's digital-microphone inputs carry
+nothing. The stock kernel has the ASoC core; the rest is PICO OS's own modules (Qualcomm's audio
+techpack), signed with the kernel's build key like the Wi-Fi driver.
+[`scripts/extract-audio.sh`](../scripts/extract-audio.sh) reads them from the user's own backup:
+
+| File | From | Purpose |
+| --- | --- | --- |
+| `modules/audio_*.ko`, `modules.dep` | vendor | the 24 modules PICO OS loads and the 3 they depend on |
+| `firmware/adsp.mdt`, `adsp.bNN` | modem | the ADSP's image |
+| `firmware/adspr.jsn`, `adspua.jsn` | modem | its protection domains, for `pd-mapper`: the root process and the audio process (`audio_pd`, service `avs/audio`) |
+| `audiopd/acdb/adsp_avs_config.acdb` | vendor | the audio process's AVS configuration |
+| `audiopd/dsp/adsp/` | vendor | the audio process's libraries from PICO OS's ADSP library path: its audio modules, their C++ runtime, its heap module and audio configuration |
+
+`build-userspace.sh --audio DIR` installs the firmware and maps under `/usr/lib/firmware`, the
+modules in `/usr/lib/pico4-audio` and the audio process's files in
+`/usr/share/qcom/pico4-audio`. `pico4-audio.target` brings the card up in PICO OS's order:
+
+1. [`pico4-audio-modules.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-audio-modules.service)
+   loads the modules (PICO OS: early-init), each after the modules it depends on, before
+   `pico4-pd-mapper.service` starts. The audio notifier registers its clients only when the
+   kernel's service locator answers the audio service's lookup, and while the mapper runs that
+   answer comes within a millisecond of loading the first module, before the notifier module
+   has subscribed: the sound card would never appear. Loaded first, the lookup waits for the
+   mapper.
+2. [`pico4-adsp.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-adsp.service) sets the
+   ADSP's restart level to `RELATED` and boots it (PICO OS: early-boot), as for the SLPI.
+3. [`pico4-audiopd.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-audiopd.service)
+   starts the audio process as PICO OS's `adsprpcd audiopd` does: `hexagonrpcd -P audiopd`
+   creates the static process `audiopd` from the ADSP's image (FastRPC's create-static init with
+   a 2 MiB remote heap, as PICO OS's library does) and serves it its files. The channel is
+   marked secure, as for the SLPI. The process reads its files with `ftell`, which the server
+   answers ([xr.md](xr.md#head-imu-through-the-sensor-dsp)); without the answer the server stopped, and the DSP then
+   refused the stream buffers (`hw_params` failing with `ENOMEM`). It asks for some voice
+   processing modules that PICO OS does not have either.
+
+When the audio process reports its domain up, the APR driver adds the card's devices and the
+machine driver registers the card. The DSP runs without PICO OS's calibration database
+(`acdbdata/wsa8810`: speaker, handset, headset and global calibration, which PICO OS's audio HAL
+loads into the DSP): it reports missing calibration blocks and plays and records with its
+defaults.
+
+The card has about 40 PCMs; the system uses MultiMedia1 (PCM 0) in both directions, as PICO OS
+plays and records media. The other PCMs get no device node
+([`00-pico4-devnodes.rules`](../userspace/rootfs/usr/lib/udev/rules.d/00-pico4-devnodes.rules)):
+PipeWire's "pro-audio" profile opens every PCM it finds, and opening the capture side of the
+hostless MI2S PCM dereferences NULL in the stock kernel's ASoC core (an oops that kills the
+opening process with the PCM's lock held, so that every later reader of its status hangs).
+PipeWire's access check only looks at the nodes that exist.
+
+An ALSA UCM profile
+([`ucm2/conf.d/kona-mtp-snd-ca`](../userspace/rootfs/usr/share/alsa/ucm2/conf.d/kona-mtp-snd-ca))
+gives PipeWire the speakers and the microphone, with PICO OS's routes from its `mixer_paths.xml`
+(`speaker`, `deep-buffer-playback`, `handset-mic`, `audio-record`) and default volumes. The front
+end only accepts hardware parameters while its whole path to the speakers or the microphone is
+connected, and PipeWire probes it before it enables a device, so the verb sets both paths; with
+one output and one input there is nothing to switch. DAPM powers the amplifiers only while a
+stream runs. PipeWire shows a "Speakers" sink and a "Microphone" source; volume is PipeWire's
+own.
+
+Two settings keep the sound continuous under Valve's session (load average about 12 on 8 cores):
+
+- **Real-time audio threads.** PipeWire's data threads get real-time priority (round-robin, 80)
+  from RTKit (`rtkit`), as on SteamOS: when a session bus exists, PipeWire 1.4 asks the desktop
+  portal or RTKit and otherwise stays at normal priority, although its own limit would allow
+  real-time. The Frame's RTKit drop-in passes `--no-polkit`, an option Arch's RTKit 0.13 does
+  not have, so the daemon did not start;
+  [`rtkit-limits.conf`](../userspace/rootfs/etc/systemd/system/rtkit-daemon.service.d/rtkit-limits.conf)
+  replaces it with the same limits without that option.
+- **Two periods of headroom.** The DSP advances the PCM's position one 1024-frame period at a
+  time. SteamVR's sounds ask for quanta of 256 and 512 frames, and below a quantum of 1024 the
+  sink missed the DSP about 34 times a second: the sounds broke up.
+  [`51-pico4-sound-card.conf`](../userspace/rootfs/etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf)
+  sets the card's period to 1024 frames and its headroom to 2048 (one period was not enough).
+
+```sh
+cat /proc/asound/cards                     # kona-mtp-snd-card
+systemctl status pico4-audio.target        # the three units above
+# as the session user (steamos):
+wpctl status                               # "Speakers" sink and "Microphone" source
+pw-record --rate 48000 --channels 1 /tmp/mic.wav   # a few seconds, then Ctrl-C
+pw-play /tmp/mic.wav                       # through the speakers
+```
+
 ## Verified results
+
+### Audio on the headset
+
+| Check | Result |
+| --- | --- |
+| Bring-up at boot (installed system) | modules loaded, ADSP online and `kona-mtp-snd-card` registered 32.7 s after the kernel started; the audio process's file server without a restart; nodes for PCM 0 only; no oops |
+| Speakers | a 440 Hz test tone played on MultiMedia1 heard by the user |
+| Microphones | with the speakers playing that tone (−20 dBFS): the analog microphone (`amic1`) records it 58 dB above its level in silence; the six digital-microphone inputs record nothing |
+| PipeWire | "Speakers" sink (default) and "Microphone" source; playback and capture at the same time; the microphone records the speakers' tone at −54.9 dBFS at volume 1.0 and −78.9 dBFS at 0.4 |
+| Continuous playback | data threads round-robin 80 through RTKit; no xruns at quanta from 1024 down to 64 frames; while Valve's session starts and runs (SteamVR's streams at 512 frames, load average about 10), a 20 s tone at a 256-frame latency without xruns. Capture alone at a 64-frame quantum still loses about 5 periods a second |
+| `dev check` on the installed system | passes, Valve's session included (89.93 commits/s) |
 
 ### QEMU: stage 1 and the userspace on a stock-like 4.19 kernel
 

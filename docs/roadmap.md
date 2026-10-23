@@ -385,6 +385,8 @@ system updates. Open:
 
 ### Other hardware
 
-Wi-Fi comes up and scans ([userspace.md](userspace.md#wi-fi)). Bluetooth, audio and suspend have
-not been brought up under the userspace. Battery level and charging state reach UPower and
-SteamVR ([userspace.md](userspace.md)).
+Wi-Fi comes up and scans ([userspace.md](userspace.md#wi-fi)). Audio works: the speakers and
+the microphone are PipeWire's default sink and source, and playback runs without xruns under
+Valve's session ([userspace.md](userspace.md#audio)); open are a listening check of SteamVR's
+sounds, a spoken microphone check in the headset, and PICO OS's calibration database. Bluetooth and suspend have not been brought up under the userspace. Battery
+level and charging state reach UPower and SteamVR ([userspace.md](userspace.md)).
