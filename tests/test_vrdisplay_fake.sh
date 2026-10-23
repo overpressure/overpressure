@@ -5,7 +5,8 @@
 # and xf86drm.h, default /usr/include) and DRM_INCLUDE (default
 # $VULKAN_INCLUDE/libdrm). docs/session.md has the details.
 #
-# 1. A short run on the fake display presents and retires frames.
+# 1. A short run on the fake display presents and retires frames, and Valve's
+#    swapchain counter reports the newest vblank with its time.
 # 2. With PICO4_VRDISPLAY_FAKE_STUCK the fake display stops retiring flips: the
 #    layer must count retire timeouts, never treat one as a presented frame,
 #    and lose the surface (VK_ERROR_OUT_OF_DATE_KHR) within a bounded time
@@ -42,6 +43,8 @@ fail() { echo "FAIL: $*"; for f in "$work"/*.json "$work"/*.err "$work"/*.log; d
 
 run normal
 grep -q '"status":"pass"' "$work/normal.json" || fail "the fake display did not present"
+# With display control the pass includes Valve's counter: the vblank's time, under 3 refreshes old.
+grep -q '"display_control":true' "$work/normal.json" || fail "no display control on the fake display"
 [ "$(field normal.stats.json retire_timeouts)" = 0 ] || fail "retire timeouts on a working display"
 [ "$(field normal.stats.json commits)" -gt 30 ] || fail "too few commits on the fake display"
 

@@ -307,7 +307,8 @@ doubled lines.
 
 - The headset's proximity sensor in `driver_monado`, so that SteamVR's standby works as on the
   Frame (its compositor keeps running on standby until then).
-- Two one-second waits at SteamVR's start (the dashboard's attempt to start Steam).
+- One gap of 125–165 ms during each start of Valve's session
+  ([session.md](session.md#one-second-waits)).
 - Monado's composition headroom: its layer squasher fits the 11 ms frame only with the GPU
   clock floor. Options are compressed (UBWC) scanout images in the display's compressed
   formats; compressed client swapchain images; composing the layers directly through the
@@ -323,8 +324,9 @@ Details: [session.md](session.md), [userspace.md](userspace.md).
   the data partition (2.5 GB) and updates it. It starts with Valve's session and shows its UI
   as SteamVR overlays; pointer, clicks, haptics and its settings work. Its UI, its web helper
   and Xwayland run OpenGL on the GPU through zink ([graphics.md](graphics.md#opengl)). Open:
-  a fluid login page and library in the headset (checked by the user), signing in, and
-  SteamVR's one-second waits while the client works with its overlays.
+  a fluid login page and library in the headset (checked by the user), signing in, and a worn
+  check that SteamVR's one-second waits no longer come while the client works with its
+  overlays.
 - The headset reaches the internet over the USB link when the PC shares its connection
   ([userspace.md](userspace.md#internet-over-usb)). Wi-Fi comes up and scans
   ([userspace.md](userspace.md#wi-fi)); joining a network is unverified.

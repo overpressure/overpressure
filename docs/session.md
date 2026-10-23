@@ -246,9 +246,12 @@ other call passes through; without the panels, the layer stays out of the way.
   refresh period, at the time the kernel's newest event timestamp predicts. The events only
   correct its phase, and refreshes are counted by time: the kernel stamps a vblank when it
   handles the interrupt, now and then 2–3 ms late, so a later stamp moves the phase by at most
-  20 µs and an earlier one at once. It stops 250 ms after the last event. SteamVR takes the
-  moment its fence signals as the vblank's time; with a lead (`PICO4_VRDISPLAY_VSYNC_LEAD_US`)
-  the clock signals each vblank that much early. The lead is the layer's alone: the process
+  20 µs and an earlier one at once. It stops 250 ms after the last event. With a lead
+  (`PICO4_VRDISPLAY_VSYNC_LEAD_US`) the clock signals each vblank that much early. SteamVR's
+  compositor reads the counter through Valve's private counter (`0x7ffffffd`, from the Steam
+  Frame's Mesa: the count and that vblank's `CLOCK_MONOTONIC` time in ns, as
+  `drmCrtcGetSequence` gives them); the layer answers with the early signal's time, as for
+  the fences. The lead is the layer's alone: the process
   that drives the display publishes the lead it applies in
   `$XDG_RUNTIME_DIR/pico4-vrdisplay-lead-us` (microseconds; removed when the display goes),
   and the PICO 4 driver in SteamVR reads it and predicts its poses that much further, for the
@@ -256,7 +259,11 @@ other call passes through; without the panels, the layer stays out of the way.
   clock predicts for the kernel's event and the early signal as an event of its own. Frame
   dumps and statistics are written without the lock. A
   present counts as shown (`vkWaitForPresentKHR`) when its retire fence signals, or with
-  `PICO4_VRDISPLAY_FRAMES_AHEAD=N` once the present N before it is committed.
+  `PICO4_VRDISPLAY_FRAMES_AHEAD=N` once the present N before it is committed, and in both
+  cases not before the counter shows a count the client has not read yet: a shown present
+  means a new vblank, and `vrcompositor` reads the counter right after the wait
+  ([one-second waits](#one-second-waits)). Clients that never read the counter see no
+  difference.
 - **GPU clock floor.** While presenting, the layer raises the KGSL floor to 587 MHz or faster
   (`PICO4_VRDISPLAY_GPU_MIN_MHZ`): under SteamVR's load the stock governor stays at 305 MHz,
   where a frame takes longer than a refresh period. Afterwards it restores KGSL's default level
@@ -285,7 +292,7 @@ other call passes through; without the panels, the layer stays out of the way.
 | `PICO4_VRDISPLAY_FAKE=1` or `=WxH` | no panels: a 90 Hz timer stands in for vblanks and flips, so the handshake can be tested on any Vulkan driver, such as lavapipe on a PC; `WxH` sets the display's size; `PICO4_VRDISPLAY_FAKE_STUCK=N` stops retiring flips from commit N on (a stuck display) |
 | `PICO4_VRDISPLAY_STATS=path` | statistics as JSON per swapchain, every ten seconds and when it is destroyed: commits and their rate, late commits, vblank rate, kernel vblank intervals on the 10 ms tick, GPU and retire-fence waits and timeouts, present waits and their timeouts, the eyes' mean colours |
 | `PICO4_VRDISPLAY_MOTION=path` | per commit: commit time, the vblank that shows it, the image change against the previous commit and its horizontal shift; with `PICO4_VRDISPLAY_MOTION_BAND=1` also 16 bands of the left eye in hex, for offline shift measurements (the latency probe in [xr.md](xr.md)); reads the linear scanout images, so it needs `PICO4_VRDISPLAY_UBWC=0` |
-| `PICO4_VRDISPLAY_TRACE=path` | the present timeline, written with the statistics: one line per event (kind, time, present id, argument) for queued presents, finished rendering, commits, retire fences, `vkWaitForPresentKHR` begin and end, vblanks at the kernel's time, their early signal, kernel vblank events and acquired images |
+| `PICO4_VRDISPLAY_TRACE=path` | the present timeline, written with the statistics (`PICO4_VRDISPLAY_STATS` must be set): one line per event (kind, time, present id, argument) for queued presents, finished rendering, commits, retire fences, `vkWaitForPresentKHR` begin and end, vblanks at the kernel's time, their early signal, kernel vblank events, acquired images and counter reads (with the reading thread) |
 | `PICO4_VRDISPLAY_VSYNC_LEAD_US` | signal vblanks (event fences and the counter) this many microseconds early; SteamVR's service sets 5000. The layer publishes the lead it applies, and the PICO 4 driver adds that to its prediction |
 | `PICO4_VRDISPLAY_FRAMES_AHEAD=N` | a present counts as shown once the present N before it is committed (default 0: when its retire fence signals; at most 2); `steamvr.service` sets 1, so the GPU renders the next frame while SteamVR waits for the last one |
 | `PICO4_VRDISPLAY_DUMP=path` | present `PICO4_VRDISPLAY_DUMP_FRAME` (default 300) as a PPM, downscaled by four; this also gives the statistics each eye's mean colour. With compressed scanout and `PICO4_VRDISPLAY_DUMP_EVERY=N` also every N presents after it, as `path.COMMIT`, for artefacts that only show in motion |
@@ -449,8 +456,7 @@ time per frame (one 2x-MSAA pass over both panels with the system layer in it, r
 the scanout image; clears 2.0 ms, resolve 1.2 ms), the GPU is about 72 % busy with gamescope's
 share, and 94 % of the frames reach the panels 21–22 ms after their present. The hottest zone
 stays at 55–62 °C. In the lenses (user): fluid, no doubled lines, no flicker at the borders.
-Two one-second waits remain at SteamVR's start, while the dashboard tries to start the Steam
-client.
+SteamVR's one-second waits ([below](#one-second-waits)) are gone.
 
 SteamVR's desktop settings, which the session ran before, are described below: 83–90 frames per
 second with the GPU 97–98 % busy, 11.6 ms per frame with the dashboard open, grid lines doubling
@@ -491,6 +497,33 @@ further, so that the pose still matches the real vblank. With one frame ahead, 1
 With the desktop settings 4 ms was best. The Frame's path (Facet) stalls for one second now and
 then with 4 ms (8–14 of SteamVR's one-second waits in 30 s), runs 90.0 commits/s with 5 ms and
 81 with 6 ms; `steamvr.service` sets 5 ms.
+
+#### One-second waits
+
+`vrcompositor` paces its frames by the vblank counter. After each present wait it reads the
+counter with Valve's private query (its `PostVsyncEvent`): when the count has moved since its
+previous read, it publishes the count and the vblank's time; when it has not, it polls 25
+times about 15 µs apart and then publishes the old count. Its `WaitForPresent` then waits for
+a count it has not seen yet, and with the old count it spins for a second and logs `Aborting
+WaitForPresent after 1.000000 seconds!`. On the Frame a present wait returns after the
+present's flip, so a vblank has always passed since the previous one.
+
+Here two things differed:
+- The layer answered Valve's query with the count only, so SteamVR's vblank time stayed 0 and
+  every abort reported a `TimeSinceLastVSync` equal to the uptime. The layer now answers as
+  the Frame's Mesa does.
+- A present counted as shown ahead (`PICO4_VRDISPLAY_FRAMES_AHEAD=1`) returns its wait at a
+  commit, and the counter ticks 5 ms before the vblank (the lead). A frame committed just
+  after a tick and the next one committed before the following tick returned two waits within
+  one count. The present trace with counter reads showed this before each of SteamVR's waits:
+  the second read came 8.8–10.2 ms after the first, 0.8–1.8 ms before the next tick, followed
+  by 25 more reads and the second-long gap. A wait now returns only once the counter shows a
+  count the client has not read yet.
+
+The waits fell on the startup and on the Steam client's activity: 2–6 in every start, now and
+then one or two in a measured window. The vblank time alone changed nothing (4, 4 and 0 waits
+in three starts against 2, 4 and 3). With both changes, 17 starts in a row had none; every
+session check still shows one gap of 125–165 ms during its startup.
 
 The serial console must stay quiet during a session. journald copies warnings and errors into
 the kernel log for pstore, and SteamVR logs errors by the thousand while it misses frames (about
@@ -638,8 +671,8 @@ renderer the same settings reach 87.5/s with 79 late.
 
 It also froze every few seconds, in SteamVR's one-second waits: `vrcompositor` logged
 `Aborting WaitForPresent after 1.000000 seconds!` (47 in four minutes), each with a
-`TimeSinceLastVSync` equal to the system's uptime, while the vblank count beside it advanced
-at 90 Hz. The compositor keeps presenting during such a wait, so the layer's statistics did not
+`TimeSinceLastVSync` equal to the system's uptime (the layer did not report vblank times
+yet), while the vblank count beside it advanced at 90 Hz. The compositor keeps presenting during such a wait, so the layer's statistics did not
 show it. The layer then signalled SteamVR's vblank fences when the kernel's events reached it:
 33 of 2,649 more than 2 ms late, one 122 ms, followed by a burst of vblanks within a few
 milliseconds. With the vblank clock (above) the same settings run without a single such wait:
@@ -802,10 +835,12 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: GPU and display kernel threads at SCHED_RR 99 (`pico4-kthread-priorities`) | Valve's 30 s check, its last 10 s window: 49.3 commits/s, 325 of 461 late, longest gap 128 ms without; 51.0/s, 301 of 475, 139 ms with. Simplified shaders and overlay quality 1: 88.0-88.4 commits/s with, 88.2-88.8 without: no measurable change |
 | Headset: first Valve session after a boot, three boots in a row | the IMU listed 35.1 s after `pico4-imu-ready.service` started; each first session presented with the PICO 4 driver, no restart. A driver probing earlier finds no IMU and falls back to Monado's simulated headset, whose display SteamVR cannot find (render watchdog abort) |
 | Headset: `steamvr.service` stopped directly (`systemctl --user stop`), then the session started again, three rounds | each start presents after 15 s at 87–88 commits/s, no user-manager restart. The earlier failures to build the lens mesh came from SteamVR's own numerical inverse of the lens; the driver now gives it the exact inverse |
-| PC: `tests/test_vrdisplay_fake.sh` (the layer on lavapipe, fake display) | presents and retires on a working display; with the display stuck from commit 20 the retire timeouts are counted, no further present counts as shown, and the client gets `VK_ERROR_OUT_OF_DATE_KHR` after about 1 s instead of waiting |
+| PC: `tests/test_vrdisplay_fake.sh` (the layer on lavapipe, fake display) | presents and retires on a working display, and Valve's counter reports the newest vblank with its time; with the display stuck from commit 20 the retire timeouts are counted, no further present counts as shown, and the client gets `VK_ERROR_OUT_OF_DATE_KHR` after about 1 s instead of waiting |
 | Headset: present trace with the 5 ms lead, Valve's session, 30 s | 4,434 vblanks recorded at the kernel's vblank time (median −0.6 µs, 90 % within −41 to +24 µs of its stamps), their display events signalled 4.94 ms earlier; the driver reads the published 5000 µs lead; 90.0 commits/s, no stall |
 | Headset: DRM node users in Valve's session | the layer is loaded in gamescope, `vrcompositor` and two `vrwebhelper` processes; gamescope and `vrcompositor` read the DRM properties once each; gamescope holds `renderD128` open twice, `vrcompositor` `card0`; with zink (`MESA_LOADER_DRIVER_OVERRIDE=zink`) Xwayland and the Steam client run OpenGL on the KGSL Turnip ([graphics.md](graphics.md#opengl)) |
 | Headset: Valve's 30 s check with the Steam client and its UI on the GPU, installed system | 90.0 commits/s, 0.0–0.07 % late, no stall in the window in six of nine runs; the others 84.0–87.0 commits/s with one or two of SteamVR's one-second waits; 2–6 such waits during startup in every run. Before zink, with the client crashing in a loop, 83.8 commits/s and two waits |
+| Headset: present trace with counter reads, Valve's session | before each of SteamVR's one-second waits: one present wait returned just after a counter tick, the next 8.8–10.2 ms later and 0.8–1.8 ms before the following tick, then 25 reads of the same count |
+| Headset: Valve's session with the vblank time and the present waits held for an unread count | five 30 s checks in a row: 89.94–90.0 commits/s, 0.0–0.15 % late, no stall in the window, no one-second wait; twelve more starts with 25 s each: none; one gap of 125–150 ms in each check's startup |
 | Headset: X11 test clients in gamescope's Xwayland (the environment of `steam.service`) | `glxinfo`: direct rendering on `zink Vulkan 1.3(Turnip Adreno (TM) 650)`, OpenGL 4.6; `glxgears` synchronized to the refresh at 88.9–89.8 FPS; `vkcube` (xcb) 900 frames in 10.1 s, 88.8 FPS; no llvmpipe or glamor failure in Xwayland's log; `ibus-gamescope` active |
 | Headset: `pico4-vrsync-test` with injected faults (`PICO4_VRDISPLAY_SYNC_FAULT`) | `export` and `import` pass every check, waiting for the submission or on the CPU instead; `spares` fails the submission (`vkQueueSubmit` returns an error) without any value counting as reached |
 | Headset: SteamVR stopped with the session, two rounds | each stop clean ("Stopped SteamVR Launcher"), no fallback, Valve's failure tracker empty; before, every stop failed the unit (`vrstartup -shutdown` exit 255) |

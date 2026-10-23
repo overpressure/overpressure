@@ -274,7 +274,7 @@ In the userspace (installed system, Valve's session):
 | --- | --- |
 | `vkEnumeratePhysicalDevices` with each set of instance extensions (none, surface, display, display with DRM acquire, Xlib, Wayland) | one device each, `VK_SUCCESS`; before `kgsl-display.patch` every set with `VK_KHR_display` failed with `VK_ERROR_INITIALIZATION_FAILED` |
 | OpenGL through zink | Xwayland and the Steam client load zink on the KGSL Turnip; the web helper's GPU report: `ANGLE (Mesa, zink Vulkan 1.3(Turnip Adreno (TM) 650 (MESA_TURNIP)), OpenGL 4.3 (Core Profile) Mesa 25.2.7)`, GPU compositing enabled; the client runs without the SIGBUS of a KGSL-only build |
-| Valve's 30 s session check with the client's UI on the GPU | 90.0 commits/s, 0.0–0.07 % late, no stall in the window in six of nine runs ([session.md](session.md)) |
+| Valve's 30 s session check with the client's UI on the GPU | 89.94–90.0 commits/s, 0.0–0.15 % late, no stall in the window and no one-second wait in five runs in a row ([session.md](session.md#one-second-waits)) |
 
 Which behaviour inside the vendor driver corrupts unfenced updates is not known. The tests are
 bounded: they make no long-duration reliability or Vulkan conformance claim, and they verify

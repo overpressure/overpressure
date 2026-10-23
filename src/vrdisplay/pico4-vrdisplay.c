@@ -395,6 +395,7 @@ struct display
 	pthread_t vblank_thread, clock_thread;
 	bool vblank_started, clock_started, vblank_stop, vblank_pending;
 	uint64_t vblank_count, vblank_sequence; //!< As the event fences and the counter see them.
+	int64_t sequence_ns; //!< When the counter moved to vblank_sequence (CLOCK_MONOTONIC).
 	int64_t vblank_ns;
 	int64_t phase_ns;          //!< The clock's vblank time (kernel timestamps), 0 before one.
 	uint64_t phase_sequence;   //!< Its sequence.
@@ -425,7 +426,8 @@ static struct display g_display = {
  * later present counted as shown at a commit (PICO4_VRDISPLAY_FRAMES_AHEAD), W and w
  * vkWaitForPresentKHR begins (timeout in us) and returns (VkResult), V vblank (sequence) at the
  * time the clock predicts for the kernel's event, E the display events and counter for it signalled
- * (sequence, the lead in us), K kernel vblank event (its delay in us), A image acquired (index).
+ * (sequence, the lead in us), K kernel vblank event (its delay in us), A image acquired (index),
+ * N the counter read (its value, the reading thread's id).
  * Lines are in the order of recording, so a V with a lead comes before its time.
  */
 struct trace_event
@@ -1011,14 +1013,16 @@ kms_disable(struct display *d)
 static void
 vblank_tick(struct display *d, uint64_t sequence)
 {
-	if (d->vblank_count == 0 || sequence > d->vblank_sequence) {
-		d->vblank_sequence = sequence;
-	}
-	d->vblank_count++;
 	// The trace keeps the real vblank: the clock's phase, not the early signal.
 	int64_t when = d->fake || d->phase_ns == 0
 	                   ? now_ns()
 	                   : d->phase_ns + (int64_t)(sequence - d->phase_sequence) * PERIOD_NS;
+	if (d->vblank_count == 0 || sequence > d->vblank_sequence) {
+		d->vblank_sequence = sequence;
+		// The counter's time is the early signal's, as for the event fences.
+		d->sequence_ns = d->fake || d->phase_ns == 0 ? when : when - d->lead_ns;
+	}
+	d->vblank_count++;
 	trace_at('V', when, 0, (int64_t)sequence);
 	trace('E', sequence, d->lead_ns / 1000);
 	for (struct event_fence *e = d->events; e != NULL; e = e->next) {
@@ -1325,6 +1329,7 @@ struct swapchain
 	int64_t retire_report_ns; //!< after pending_ns: the next retire timeout to count
 	uint64_t presented_id;
 	uint64_t ahead; //!< PICO4_VRDISPLAY_FRAMES_AHEAD
+	uint64_t read_sequence; //!< The newest count the client read from the counter.
 	struct sc_stats stats;
 };
 
@@ -3523,6 +3528,20 @@ layer_WaitForPresentKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t pres
 			break;
 		}
 	}
+	/*
+	 * Shown means a vblank since the client last read the counter: vrcompositor reads it right
+	 * after the wait and spins for a second if it has not moved since its previous read. A
+	 * present counted as shown ahead (PICO4_VRDISPLAY_FRAMES_AHEAD) can be committed before
+	 * the next tick, so its wait returns with that tick.
+	 */
+	while (ret == VK_SUCCESS && g_display.vblank_sequence <= sc->read_sequence) {
+		if (sc->lost) {
+			ret = VK_ERROR_OUT_OF_DATE_KHR;
+		} else if (timeout == 0 ||
+		           pthread_cond_timedwait(&g_display.cond, &g_display.lock, &deadline) == ETIMEDOUT) {
+			ret = VK_TIMEOUT;
+		}
+	}
 	trace('w', present_id, ret);
 	pthread_mutex_unlock(&g_display.lock);
 	return ret;
@@ -3568,6 +3587,14 @@ layer_GetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSurfaceKHR surface
 	return VK_SUCCESS;
 }
 
+/*
+ * Valve's private counter (the Steam Frame's Mesa): the vblank count and that vblank's
+ * CLOCK_MONOTONIC time in nanoseconds, two uint64_t, as drmCrtcGetSequence reports them.
+ * vrcompositor asks for it after every present wait and takes the time as the last vsync's;
+ * without it SteamVR's time since the last vsync was its uptime.
+ */
+#define SURFACE_COUNTER_TIMESTAMP_VALVE ((VkSurfaceCounterFlagBitsEXT)0x7ffffffd)
+
 static VKAPI_ATTR VkResult VKAPI_CALL
 layer_GetSwapchainCounterEXT(VkDevice device, VkSwapchainKHR swapchain, VkSurfaceCounterFlagBitsEXT counter, uint64_t *value)
 {
@@ -3575,11 +3602,19 @@ layer_GetSwapchainCounterEXT(VkDevice device, VkSwapchainKHR swapchain, VkSurfac
 		struct device_data *dev = find_device(device);
 		return dev->GetSwapchainCounterEXT(device, swapchain, counter, value);
 	}
+	struct swapchain *sc = (struct swapchain *)(uintptr_t)swapchain;
 	pthread_mutex_lock(&g_display.lock);
 	uint64_t count = g_display.vblank_count;
-	*value = g_display.vblank_sequence;
+	value[0] = g_display.vblank_sequence;
+	if (value[0] > sc->read_sequence) {
+		sc->read_sequence = value[0];
+	}
+	if (counter == SURFACE_COUNTER_TIMESTAMP_VALVE) {
+		value[1] = (uint64_t)g_display.sequence_ns;
+	}
+	trace('N', value[0], gettid());
 	pthread_mutex_unlock(&g_display.lock);
-	DBG("vkGetSwapchainCounterEXT: %" PRIu64, *value);
+	DBG("vkGetSwapchainCounterEXT(%#x): %" PRIu64, (unsigned)counter, value[0]);
 	return count > 0 ? VK_SUCCESS : VK_ERROR_OUT_OF_DATE_KHR;
 }
 

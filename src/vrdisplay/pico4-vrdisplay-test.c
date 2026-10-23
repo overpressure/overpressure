@@ -36,6 +36,8 @@
 
 #define FRAMES_IN_FLIGHT 2
 #define MAX_IMAGES 8
+//! Valve's private swapchain counter: the vblank count and its CLOCK_MONOTONIC time in ns.
+#define COUNTER_TIMESTAMP_VALVE ((VkSurfaceCounterFlagBitsEXT)0x7ffffffd)
 
 static char g_error[256];
 
@@ -147,6 +149,8 @@ main(int argc, char **argv)
 	uint64_t counter_start = 0, counter_end = 0;
 	double frame_hz = 0, vblank_hz = 0, event_hz = 0, elapsed = 0;
 	double first_present = 0, last_present = 0, counter_start_s = 0, counter_end_s = 0;
+	double stamped_age_ms = 0;
+	bool stamped_ok = false;
 	int drm_fd = -1;
 
 	const char *instance_extensions[] = {
@@ -496,6 +500,13 @@ main(int argc, char **argv)
 	    get_counter(device, swapchain, VK_SURFACE_COUNTER_VBLANK_BIT_EXT, &counter_end) == VK_SUCCESS) {
 		counter_end_s = now_s();
 	}
+	// Valve's counter with the vblank's time, which vrcompositor reads after each present wait.
+	uint64_t stamped[2] = {0, 0};
+	if (get_counter != NULL &&
+	    get_counter(device, swapchain, COUNTER_TIMESTAMP_VALVE, stamped) == VK_SUCCESS && stamped[1] != 0) {
+		stamped_age_ms = (now_s() - stamped[1] / 1e9) * 1e3;
+		stamped_ok = stamped[0] >= counter_end && stamped_age_ms > -20.0 && stamped_age_ms < 3000.0 / hz;
+	}
 	if (frames > 1 && last_present > first_present) {
 		frame_hz = (frames - 1) / (last_present - first_present);
 	}
@@ -541,19 +552,20 @@ out:
 
 	bool pass = g_error[0] == '\0' && frames > 0 && (min_hz <= 0 || frame_hz >= min_hz) &&
 	            (!display_control || ((min_hz <= 0 || (vblank_hz >= min_hz && event_hz >= 0.9 * hz)) &&
-	                                  counter_end > counter_start));
+	                                  counter_end > counter_start && stamped_ok));
 	if (g_error[0] == '\0' && !pass) {
 		snprintf(g_error, sizeof(g_error),
-		         "frames %.2f Hz, vblanks %.2f Hz, events %.2f Hz, counter %" PRIu64 " -> %" PRIu64, frame_hz,
-		         vblank_hz, event_hz, counter_start, counter_end);
+		         "frames %.2f Hz, vblanks %.2f Hz, events %.2f Hz, counter %" PRIu64 " -> %" PRIu64
+		         ", vblank time %.3f ms old",
+		         frame_hz, vblank_hz, event_hz, counter_start, counter_end, stamped_age_ms);
 	}
 	printf("{\"schema\":1,\"status\":\"%s\",\"display\":\"%s\",\"mode\":\"%s\",\"acquire\":\"%s\","
 	       "\"format\":%d,\"images\":%u,\"seconds\":%.3f,\"frames\":%u,\"frame_hz\":%.3f,\"late_frames\":%u,"
 	       "\"display_control\":%s,\"vblank_events\":%" PRIu64 ",\"vblank_timeouts\":%" PRIu64
-	       ",\"event_hz\":%.3f,\"vblank_hz\":%.3f,\"counter\":[%" PRIu64 ",%" PRIu64 "]",
+	       ",\"event_hz\":%.3f,\"vblank_hz\":%.3f,\"counter\":[%" PRIu64 ",%" PRIu64 "],\"vblank_age_ms\":%.3f",
 	       pass ? "pass" : "fail", display_name, mode_text, acquire, format, image_count, elapsed, frames, frame_hz,
 	       late, display_control ? "true" : "false", watch.events, watch.timeouts, event_hz, vblank_hz,
-	       counter_start, counter_end);
+	       counter_start, counter_end, stamped_age_ms);
 	if (!pass) {
 		printf(",\"error\":\"%s\"", g_error);
 	}
