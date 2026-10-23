@@ -135,13 +135,18 @@ the ABL to stock (`python -m pico4 cycle --restore-only`) and entering developme
 | `dev check` on the installed system | the userspace, IMU, pose and display checks pass (the display check failed once on the first, cold run with 51 late frames, then passed with 21); Valve's session passes its integration checks, its performance verdict fails on one of the known one-second stalls (as in RAM) |
 | Development loop | `dev recovery`, `dev boot` (root on zram again), `dev reboot` (stays in maintenance), `dev normal` (installed system again) |
 | Boot without the PC (cable unplugged, power button) | stage 1 switches without waiting for a PC; systemd reaches the graphical target 1 min 53 s after power-on with no failed units; the data is there; the USB link comes up when the cable is plugged in later |
-| Power-off | stays off without the cable; with the cable attached the headset starts again within seconds; a short power-button press powers off (logind's default) |
+| Power-off | stays off without the cable; with the cable attached the headset starts again within seconds |
 
 ## Open work
 
 1. **The way back.** `dev restore` for an installed system is implemented and tested on the
    host, not yet on the headset; it ends in PICO OS's first-time setup.
 2. **Feedback and power.** The lenses stay dark while the system starts and afterwards (the
-   default session starts Monado only for a client); the power button and power-off do not
-   behave as on PICO OS yet.
+   default session starts Monado only for a client). The power button follows PICO OS only
+   partly: PICO OS turns the screen off on a short press and suspends, and offers power-off and
+   restart after a 2 s press. Here a short press does nothing and a 5 s press powers off
+   ([`50-pico4-power-key.conf`](../userspace/rootfs/usr/lib/systemd/logind.conf.d/50-pico4-power-key.conf));
+   both unverified on the headset. With the cable attached, a powered-off headset starts again:
+   the PMIC powers up on USB, and the bootloader then boots with `androidboot.mode=charger`, for
+   which PICO OS runs its charging screen. Stage 1 does not handle that mode yet.
 3. **Integrity.** The system image is checked when written, not at boot (no dm-verity).
