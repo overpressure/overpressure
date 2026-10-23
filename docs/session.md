@@ -133,8 +133,11 @@ Further adaptations:
 | --- | --- | --- |
 | [`gamescope-session.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/gamescope-session.service.d/50-pico4.conf) | `PICO4_VRDISPLAY=1` | gamescope needs the GPU's DRM nodes (`VK_EXT_physical_device_drm`), which Turnip's KGSL backend lacks; the layer reports `msm_drm`'s, whose render node imports the GPU's dma-bufs |
 | | `WLR_LIBINPUT_NO_DEVICES=1` | with the OpenVR backend, input comes through SteamVR's overlays and gamescope's EIS socket; wlroots must not insist on libinput devices |
+| | `MESA_LOADER_DRIVER_OVERRIDE=zink` | OpenGL on the GPU for Xwayland's glamor (and so DRI3 for X11 clients): Mesa's loader would pick the `msm` driver for `msm_drm`'s render node, which has no GPU, and fall back to llvmpipe ([graphics.md](graphics.md#opengl)) |
+| [`steam.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/steam.service.d/50-pico4.conf) | `PICO4_VRDISPLAY=1`, `MESA_LOADER_DRIVER_OVERRIDE=zink` | OpenGL on the GPU for the Steam client, its web helper's GPU process and the games it starts; zink finds the GPU for the render node through the layer's DRM nodes |
 | [`steamvr.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/50-pico4.conf) | `PICO4_VRDISPLAY=1`, `PICO4_VRDISPLAY_LOGFILE=%h/.local/share/Steam/logs/pico4-vrdisplay.txt` | the display layer for the compositor, logging beside SteamVR's logs |
 | | `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` | `driver_monado` recommends the panel's render size, not Monado's default 140 % |
+| | `ExecStop=-…vrstartup -shutdown` (Valve's stop with its exit status ignored) | when the session stops, `vrserver` is often gone before the stop runs; the shutdown request then finds no server and exits 255. Every stop failed the unit: `OnFailure=` started the fallback, and Valve's `steamvr-health-check` counted a failed launch, which after three in a row resets the Steam installation (unpacked again, then updated). A crash still fails the unit through its main process |
 | [`/usr/bin/displays_turn_off_drm_master`](../userspace/rootfs/usr/bin/displays_turn_off_drm_master) | does nothing | stands in for the Frame's deckard-hw-support tool, which `steamvr.service` runs after SteamVR exits (`ExecStopPost` without `-`: a missing program fails the unit); the compositor releases the display itself |
 | [`pico4-kthread-priorities.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-kthread-priorities.service) | the GPU dispatcher (`kgsl_worker_thr`, SCHED_FIFO 12 on the stock kernel) and the display's commit and event threads (`crtc_commit:N`, `crtc_event:N`, SCHED_FIFO 61) at SCHED_RR 99, at boot | SteamVR's render and compositor threads run at SCHED_RR 99, so on a shared CPU they would hold back their own submissions and flips; the Frame's unit does the same for its kernel's threads. The station's SPI thread (`spi0`) already runs at SCHED_FIFO 99, and the GPU's workqueues (`kgsl-events`, `kgsl-workqueue`) at nice -20, which is all a workqueue takes |
 | `/opt/steamvr/bin/linuxarm64/vrcompositor-launcher` | `cap_sys_nice=eip` | the compositor raises its priority, as SteamVR's setup does on desktops |
@@ -170,7 +173,8 @@ session:
 - **Repair loop.** The health check counts a start that ends within 5 s, or with an error
   within two minutes, as a failure; after five in a row it unpacks the bundle again, which undoes
   any update. A client that fails at once therefore alternates between the bundle, an update
-  and five failures.
+  and five failures. SteamVR's health check does the same after three failed SteamVR launches
+  in a row (the count lives in `$XDG_RUNTIME_DIR`, so a reboot clears it).
 - **Not installed.** `atomupd-daemon` and `steamos-atomupd-client`, SteamOS's updater for the
   Frame's own system images, which must never run here; the client logs that `atomupd-manager`
   is missing. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
@@ -265,9 +269,10 @@ other call passes through; without the panels, the layer stays out of the way.
     display device); its rendering stays on KGSL.
   - gamescope opens the render node (twice) as its DRM device and its clients' main device.
     Importing the clients' dma-bufs into its Vulkan device (Turnip on KGSL) works, since
-    dma-bufs carry no device. EGL on that node finds no GPU driver: Xwayland refuses glamor
-    on llvmpipe and draws in software, so X11 clients have no DRI3 and no GPU presentation.
-    This is a known limitation.
+    dma-bufs carry no device. Mesa's loader finds no GPU driver for that node (the `msm`
+    driver needs an msm GPU); gamescope's session and the Steam client therefore load zink,
+    OpenGL on Turnip, which finds the GPU for the node through these DRM nodes
+    ([graphics.md](graphics.md#opengl)). Xwayland then runs glamor on the GPU.
   The dashboard's web helpers load the layer but use only KGSL. Monado does not load it: its
   service has no `PICO4_VRDISPLAY=1`, and `driver_monado` runs in `vrserver`, which had no
   Vulkan loaded (no layer mapped) during the session.
@@ -781,7 +786,9 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: `steamvr.service` stopped directly (`systemctl --user stop`), then the session started again, three rounds | each start presents after 15 s at 87–88 commits/s, no user-manager restart. The earlier failures to build the lens mesh came from SteamVR's own numerical inverse of the lens; the driver now gives it the exact inverse |
 | PC: `tests/test_vrdisplay_fake.sh` (the layer on lavapipe, fake display) | presents and retires on a working display; with the display stuck from commit 20 the retire timeouts are counted, no further present counts as shown, and the client gets `VK_ERROR_OUT_OF_DATE_KHR` after about 1 s instead of waiting |
 | Headset: present trace with the 5 ms lead, Valve's session, 30 s | 4,434 vblanks recorded at the kernel's vblank time (median −0.6 µs, 90 % within −41 to +24 µs of its stamps), their display events signalled 4.94 ms earlier; the driver reads the published 5000 µs lead; 90.0 commits/s, no stall |
-| Headset: DRM node users in Valve's session | the layer is loaded in gamescope, `vrcompositor` and two `vrwebhelper` processes; gamescope and `vrcompositor` read the DRM properties once each; gamescope holds `renderD128` open twice, `vrcompositor` `card0`; Xwayland disables glamor ("Refusing to try glamor on llvmpipe") |
+| Headset: DRM node users in Valve's session | the layer is loaded in gamescope, `vrcompositor` and two `vrwebhelper` processes; gamescope and `vrcompositor` read the DRM properties once each; gamescope holds `renderD128` open twice, `vrcompositor` `card0`; with zink (`MESA_LOADER_DRIVER_OVERRIDE=zink`) Xwayland and the Steam client run OpenGL on the KGSL Turnip ([graphics.md](graphics.md#opengl)) |
+| Headset: Valve's 30 s check with the Steam client and its UI on the GPU, installed system | 90.0 commits/s, 0.0–0.07 % late, no stall in the window in six of nine runs; the others 84.0–87.0 commits/s with one or two of SteamVR's one-second waits; 2–6 such waits during startup in every run. Before zink, with the client crashing in a loop, 83.8 commits/s and two waits |
+| Headset: SteamVR stopped with the session, two rounds | each stop clean ("Stopped SteamVR Launcher"), no fallback, Valve's failure tracker empty; before, every stop failed the unit (`vrstartup -shutdown` exit 255) |
 | Headset: five starts of Valve's session in 252 s, then a forced crash loop | all five present, no start limit hit; the crash loop still ends in the fallback after three starts |
 | Headset: forced crash loop (`vrcompositor` killed whenever it runs) | three crashes, driver starts (station resets) 34.5 s apart, then "Start request repeated too quickly"; 11 s later the session runs Monado's target, the one-time override consumed; no SteamVR start afterwards |
 | Headset: Monado service | userspace check passes (session active, every listed device node accessible to `steamos`); OpenXR pose: 959–960 of 960 located, tilt 4.29° against the accelerometer's 4.28°, heading rate 0.005°/s; display client through the service (two layers, 30 s): about 2,686 frames at 89.5–89.6 Hz, 11 late, KMS target 88.4–89.6 commits/s at vblank 89.998 Hz, no fence timeout, eyes left/right correct; statistics written when the service stops, GPU floor back to the stock level 6 (305 MHz); the session user's client through the socket link: 1,348 frames at 89.74 Hz |

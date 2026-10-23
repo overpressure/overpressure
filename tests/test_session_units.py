@@ -48,6 +48,36 @@ class SteamvrRestartTest(unittest.TestCase):
         self.assertTrue(flag.startswith("/run/pico4-session/"))
 
 
+class SteamvrStopTest(unittest.TestCase):
+    def test_failed_shutdown_request_is_not_a_failure(self):
+        # A stop whose shutdown request finds vrserver gone must not count as a failed launch:
+        # Valve's health check resets the Steam installation after three.
+        dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
+        stops = re.findall(r"(?m)^ExecStop=(.*)$", dropin)
+        self.assertEqual(stops[0], "")  # Valve's own ExecStop is replaced, not added to
+        self.assertEqual(stops[1:], ["-/usr/share/deckard/select_steamvr.sh bin/linuxarm64/vrstartup -shutdown"])
+
+
+class OpenGLTest(unittest.TestCase):
+    def test_gl_clients_use_zink(self):
+        # an issue: Mesa's loader would pick msm for msm_drm's render node and fall back to
+        # llvmpipe; zink on Turnip is the GPU's OpenGL.
+        for name in ("gamescope-session", "steam"):
+            dropin = (ROOTFS / f"usr/lib/systemd/user/{name}.service.d/50-pico4.conf").read_text(encoding="utf-8")
+            self.assertRegex(dropin, r"(?m)^Environment=MESA_LOADER_DRIVER_OVERRIDE=zink$", name)
+            # Zink finds the GPU for the render node through the layer's DRM nodes.
+            self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY=1$", name)
+
+    def test_turnip_keeps_the_drm_wsi(self):
+        # A KGSL-only Turnip builds without libdrm, and its swapchains read DRM image
+        # parameters as CPU ones; KGSL must still accept instances with VK_KHR_display.
+        recipe = (ROOT / "userspace/pkgbuilds/pico4-turnip-kgsl/PKGBUILD").read_text(encoding="utf-8")
+        self.assertIn("-Dfreedreno-kmds=kgsl,msm", recipe)
+        self.assertIn("kgsl-display.patch", recipe)
+        patch = (ROOT / "userspace/pkgbuilds/pico4-turnip-kgsl/kgsl-display.patch").read_text(encoding="utf-8")
+        self.assertIn("-                       \"I can't KHR_display\");", patch)
+
+
 class VsyncLeadTest(unittest.TestCase):
     def test_steamvr_runs_with_the_lead(self):
         # SteamVR starts its compositor about 4 ms before the vblank it sees.

@@ -319,14 +319,17 @@ doubled lines.
 
 Details: [session.md](session.md), [userspace.md](userspace.md).
 
-- The Steam client (2.5 GB unpacked) is not in the image; it only satisfies package
-  dependencies. It needs a network and a Steam login.
+- The Steam client is in the image as Valve's 671 MiB bundle; its first start unpacks it on
+  the data partition (2.5 GB) and updates it. It starts with Valve's session and shows its UI
+  as SteamVR overlays; pointer, clicks, haptics and its settings work. Its UI, its web helper
+  and Xwayland run OpenGL on the GPU through zink ([graphics.md](graphics.md#opengl)). Open:
+  a fluid login page and library in the headset (checked by the user), signing in, and
+  SteamVR's one-second waits while the client works with its overlays.
 - The headset reaches the internet over the USB link when the PC shares its connection
   ([userspace.md](userspace.md#internet-over-usb)). Wi-Fi comes up and scans
   ([userspace.md](userspace.md#wi-fi)); joining a network is unverified.
-- Without the client, gamescope has no Steam or desktop apps to show as SteamVR overlays.
-  MangoHud's `mangoapp`, the client's performance overlay, is left out: the Frame's build
-  needs libraries of the Frame's private base.
+- MangoHud's `mangoapp`, the client's performance overlay, is left out: the Frame's build
+  needs libraries of the Frame's private base. The client's video playback needs FFmpeg 7.
 - The client will meet the kernel limits of step 4: no namespaces for Steam Linux Runtime's
   containers, no `binfmt_misc` for FEX, no `hidraw` for Steam Input.
 
@@ -342,8 +345,8 @@ Details: [xr.md](xr.md).
 - **Models.** SteamVR draws PICO OS's own controller models, read from the headset's firmware.
 - **Haptics.** Vibration goes to the addressed controller through the station's motor command,
   the only controller command in the allowlist; firmware and OTA commands stay excluded.
-- **SteamVR.** The dashboard bindings reach SteamVR's system UI, but its dashboard needs the
-  Steam client, which the session does not run yet.
+- **SteamVR.** The dashboard bindings reach SteamVR's system UI. Its dashboard comes from the
+  Steam client, which now runs in the session; the dashboard itself is unverified.
 
 ### Head tracking
 

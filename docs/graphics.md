@@ -193,12 +193,20 @@ test binaries to `/run` through the run's SSH configuration.
 In the userspace, `pico4-turnip-kgsl` provides Turnip under its own ICD file
 (`/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json`) and `pico4-graphics-tests` the same
 two tests, built for glibc. `pico4-userspace-check` runs the Vulkan test there
-([userspace.md](userspace.md)). Its one patch,
-[kgsl-context-priority.patch](../userspace/pkgbuilds/pico4-turnip-kgsl/kgsl-context-priority.patch),
-gives Vulkan's queue priorities to the KGSL contexts. Upstream, the KGSL backend reports a single
-priority and creates every context at KGSL's default level 8. The PICO 4's KGSL preempts between
-four ringbuffers, one per four levels (`preemption` is 1), so the patch reports four priorities
-and maps realtime, high, medium and low to levels 1, 4, 8 and 12.
+([userspace.md](userspace.md)). It builds the `msm` backend beside KGSL
+(`-Dfreedreno-kmds=kgsl,msm`) only for libdrm ([OpenGL](#opengl)); KGSL is enumerated first,
+so the `msm` backend never runs on the stock kernel. Its two patches:
+
+- [kgsl-context-priority.patch](../userspace/pkgbuilds/pico4-turnip-kgsl/kgsl-context-priority.patch)
+  gives Vulkan's queue priorities to the KGSL contexts. Upstream, the KGSL backend reports a
+  single priority and creates every context at KGSL's default level 8. The PICO 4's KGSL
+  preempts between four ringbuffers, one per four levels (`preemption` is 1), so the patch
+  reports four priorities and maps realtime, high, medium and low to levels 1, 4, 8 and 12.
+- [kgsl-display.patch](../userspace/pkgbuilds/pico4-turnip-kgsl/kgsl-display.patch): with
+  libdrm, Turnip offers `VK_KHR_display`, and the KGSL backend refused every instance that
+  enables it (`vkEnumeratePhysicalDevices` returned `VK_ERROR_INITIALIZATION_FAILED`;
+  `vrcompositor` aborted). KGSL has no DRM master, so the display WSI now reports no displays;
+  the panels stay the display layer's ([session.md](session.md)).
 
 The Stearlight project (Quest 2, the same Mesa 26.1.6 KGSL backend) works around three
 defects. One applies here:
@@ -220,6 +228,31 @@ defects. One applies here:
   SteamVR's shared timeline and binary semaphores over sync files
   ([session.md](session.md#shared-semaphores)).
 
+## OpenGL
+
+The GPU's only driver is Turnip on KGSL. Holo's Mesa (25.2.7) brings the rest of the OpenGL
+stack: EGL, GLX, GBM and zink, Mesa's OpenGL on Vulkan. Mesa's loader picks an OpenGL driver
+by the DRM node's kernel driver; `msm_drm`'s render node, the only one, names `msm`, whose
+driver needs an msm GPU, so on its own the loader falls back to llvmpipe. Xwayland in gamescope
+then refuses glamor ("Refusing to try glamor on llvmpipe"), and the Steam client and its web
+helper draw on the CPU, too slowly to use in the headset.
+
+`MESA_LOADER_DRIVER_OVERRIDE=zink` selects zink instead, in gamescope's session (Xwayland) and
+`steam.service` (the client, its web helper and the games it starts)
+([session.md](session.md)). Zink finds the Vulkan device for the render node through
+`VK_EXT_physical_device_drm`, which the display layer reports (`PICO4_VRDISPLAY=1`).
+Surfaceless EGL needs neither.
+
+Zink presents through Turnip's window-system code (Wayland, or X11 through gamescope's WSI
+layer). A Turnip built with only the KGSL backend builds Mesa without libdrm: Mesa's build drops
+libdrm when no kernel interface needs it. Without `HAVE_LIBDRM` the swapchain code has no DRM
+image type, and with assertions off its `UNREACHABLE` default falls through to the CPU type.
+The Wayland swapchain's DRM parameters were then read as CPU ones: the modifier-list count (1)
+landed in the `alloc_shm` function pointer, and every GL window crashed with SIGBUS at address
+0x1. `pico4-turnip-kgsl` therefore builds the `msm` backend too, for libdrm; with it
+the swapchains take the DRM path. KGSL has no DRM node to share, so a swapchain blits each image
+into a linear buffer exported as a dma-buf (the prime path).
+
 ## Verified results
 
 Original PICO 4, PICO OS 5.13.7, stock kernel `4.19.81-perf+`, tests from the stage-1 overlay:
@@ -234,6 +267,14 @@ Original PICO 4, PICO OS 5.13.7, stock kernel `4.19.81-perf+`, tests from the st
 | Static scanout (no commits after the modeset), 70 s per mode | steady in both modes, confirmed by eye; vblank 89.9979 Hz and 72.0048 Hz, zero gaps |
 | Updates without the fences | page-flip events alone run at the right rate but give visibly flickering, corrupted output at 90 Hz, also after a full panel power cycle; repeating one buffer, blocking commits, resubmitting all plane properties and a shared framebuffer each still flicker |
 | Recovery after the acceptance run | automatic stock-boot restoration; full readbacks of boot and the original ABL match the backup; PICO OS 5.13.7 completes its boot with SELinux enforcing; the bootloader stays unlocked |
+
+In the userspace (installed system, Valve's session):
+
+| Check | Result |
+| --- | --- |
+| `vkEnumeratePhysicalDevices` with each set of instance extensions (none, surface, display, display with DRM acquire, Xlib, Wayland) | one device each, `VK_SUCCESS`; before `kgsl-display.patch` every set with `VK_KHR_display` failed with `VK_ERROR_INITIALIZATION_FAILED` |
+| OpenGL through zink | Xwayland and the Steam client load zink on the KGSL Turnip; the web helper's GPU report: `ANGLE (Mesa, zink Vulkan 1.3(Turnip Adreno (TM) 650 (MESA_TURNIP)), OpenGL 4.3 (Core Profile) Mesa 25.2.7)`, GPU compositing enabled; the client runs without the SIGBUS of a KGSL-only build |
+| Valve's 30 s session check with the client's UI on the GPU | 90.0 commits/s, 0.0–0.07 % late, no stall in the window in six of nine runs ([session.md](session.md)) |
 
 Which behaviour inside the vendor driver corrupts unfenced updates is not known. The tests are
 bounded: they make no long-duration reliability or Vulkan conformance claim, and they verify
