@@ -113,8 +113,9 @@ takes its place), `steamvr-v4l2loopback`,
 `steam-video-codec-setup` (the Frame's video codec nodes, from the client's package) and the debug port forwards
 (`steamvr-web-debug-portforward`, `steam-web-debug-portforward`). It masks these user units
 globally: `steamvr-v4l2cam` (the headset-view loopback camera), `steamvr-proxmicmute`
-(proximity microphone mute), `ibus-gamescope` (ibus is not installed), `steamos-scheduler` (the
-sched_ext scheduler `scx_lavd` needs Linux 6.12; stage 1 already sets `schedutil`).
+(proximity microphone mute), `steamos-scheduler` (the sched_ext scheduler `scx_lavd` needs
+Linux 6.12; stage 1 already sets `schedutil`). The session's input method, `ibus-gamescope`
+(Valve's unit running `ibus-daemon`), runs with the Frame's `ibus` package.
 
 `steamvr-logs` forwards SteamVR's logs from `~/.local/share/Steam/logs` to the journal
 (identifiers `vrserver`, `vrcompositor`, `vrclient_*`). It imports `inotify_simple`, which the
@@ -167,9 +168,10 @@ session:
   with status 255 at once) and IBus (`libibus-1.0.so.5` for `steamwebhelper`). The Frame's
   repository has `libibus`; no aarch64 repository has GTK 2, so the build makes `pico4-gtk2`
   from GTK 2.24.33's release tarball (libraries and modules only). `gtk2-compat` in Holo's
-  `extra` ships only pkg-config files. The client polls processes with `lsof`. Its FFmpeg
-  wrappers need FFmpeg 7, which the image does not have (opencv needs Holo's FFmpeg 8): video in
-  the client is open.
+  `extra` ships only pkg-config files. The client polls processes with `lsof`. Its video module
+  (`libvideo.so`) links FFmpeg 8 (`libavcodec.so.62`, `libavutil.so.60`, …) and libvpx 6, which
+  the client brings in `steamrtarm64`; they resolve with the image's libva. The unversioned
+  `libav*.so` beside them are FFmpeg 7 builds (`libavutil.so.59`) that nothing loads.
 - **Repair loop.** The health check counts a start that ends within 5 s, or with an error
   within two minutes, as a failure; after five in a row it unpacks the bundle again, which undoes
   any update. A client that fails at once therefore alternates between the bundle, an update
@@ -288,7 +290,8 @@ other call passes through; without the panels, the layer stays out of the way.
 | `PICO4_VRDISPLAY_FRAMES_AHEAD=N` | a present counts as shown once the present N before it is committed (default 0: when its retire fence signals; at most 2); `steamvr.service` sets 1, so the GPU renders the next frame while SteamVR waits for the last one |
 | `PICO4_VRDISPLAY_DUMP=path` | present `PICO4_VRDISPLAY_DUMP_FRAME` (default 300) as a PPM, downscaled by four; this also gives the statistics each eye's mean colour. With compressed scanout and `PICO4_VRDISPLAY_DUMP_EVERY=N` also every N presents after it, as `path.COMMIT`, for artefacts that only show in motion |
 | `PICO4_VRDISPLAY_GPU_MIN_MHZ` | GPU clock floor while presenting (default 587; 0 leaves the governor alone) |
-| `PICO4_VRDISPLAY_SYNC=off` | no semaphore emulation |
+| `PICO4_VRDISPLAY_SYNC=off` | no semaphore emulation; `force`: emulation even where the driver shares semaphores |
+| `PICO4_VRDISPLAY_SYNC_FAULT=export,import,spares` | test only: the semaphore emulation pretends these failures ([below](#shared-semaphores)) |
 | `PICO4_VRDISPLAY_UBWC=1` | compressed scanout: tiled, compressed images for the application, converted at each present into compressed RGBA scanout images. The CPU cannot read compressed images: the dumped present also copies the application's image into a host-visible buffer, and the motion data are off |
 | `PICO4_VRDISPLAY_UBWC=2` | compressed scanout without the conversion (`steamvr.service` sets it): the application renders into the compressed RGBA scanout images; its image views of them and its render passes with a `PRESENT_SRC` final layout get the RGBA variant of its BGRA format, which changes the byte order in memory, not the colours |
 | `PICO4_VRDISPLAY_PASS_BARRIER=1` | a full memory barrier before every render pass of the application (`steamvr.service` sets it): without it chunks of SteamVR's overlays are missing in the right eye ([graphics.md](graphics.md)). The layer answers the render-pass calls by their core and extension names and calls the driver's by whichever it has: the Facet renderer uses the extension names, and a missing core entry crashed it |
@@ -330,10 +333,25 @@ exportable and importable:
   the values they reach and hands them out. The thread keeps the layer loaded, which the
   loader would otherwise unload after the last instance.
 - **Host.** `vkWaitSemaphores`, `vkSignalSemaphore` and `vkGetSemaphoreCounterValue` work on
-  the shared state; a holder that exits counts as signalled.
+  the shared state; a holder that exits counts as signalled. A wait that times out or takes
+  over 250 ms is logged with the value, the value reached and the pending signal operations.
+- **Failures.** A value counts as reached only on proof that the work finished:
+  - a signal operation whose fence cannot be exported waits for the submission's own fence
+    (or the device) before its values count as reached;
+  - a fence that cannot be imported, or finds no free binary semaphore, is waited for on the
+    CPU before the submission;
+  - a signal operation that finds no free binary semaphore within two seconds fails the
+    submission;
+  - a fence that signals with an error is logged, and one that is no valid file never counts.
+
+  Two cases still continue without proof: a holder that exits, and a wait whose signal
+  operation is not submitted within two seconds (logged, then submitted without the wait).
+  Failing them would stop the compositor where it now goes on.
 
 Every process that uses such a semaphore must run the layer (`PICO4_VRDISPLAY=1`, which
-`steamvr.service` sets). `PICO4_VRDISPLAY_SYNC=off` leaves semaphores to the driver.
+`steamvr.service` sets). `PICO4_VRDISPLAY_SYNC=off` leaves semaphores to the driver, `force`
+emulates them even where the driver shares them itself. `PICO4_VRDISPLAY_SYNC_FAULT` (test
+only) pretends failures, comma-separated: `export`, `import`, `spares`.
 [`pico4-vrsync-test`](../src/vrdisplay/pico4-vrsync-test.c) shares one timeline between two
 processes, the parent submitting with `vkQueueSubmit` and the child with `vkQueueSubmit2`. It
 checks a GPU wait for the other process's GPU signal (by GPU timestamps), host waits for the
@@ -788,6 +806,8 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: present trace with the 5 ms lead, Valve's session, 30 s | 4,434 vblanks recorded at the kernel's vblank time (median −0.6 µs, 90 % within −41 to +24 µs of its stamps), their display events signalled 4.94 ms earlier; the driver reads the published 5000 µs lead; 90.0 commits/s, no stall |
 | Headset: DRM node users in Valve's session | the layer is loaded in gamescope, `vrcompositor` and two `vrwebhelper` processes; gamescope and `vrcompositor` read the DRM properties once each; gamescope holds `renderD128` open twice, `vrcompositor` `card0`; with zink (`MESA_LOADER_DRIVER_OVERRIDE=zink`) Xwayland and the Steam client run OpenGL on the KGSL Turnip ([graphics.md](graphics.md#opengl)) |
 | Headset: Valve's 30 s check with the Steam client and its UI on the GPU, installed system | 90.0 commits/s, 0.0–0.07 % late, no stall in the window in six of nine runs; the others 84.0–87.0 commits/s with one or two of SteamVR's one-second waits; 2–6 such waits during startup in every run. Before zink, with the client crashing in a loop, 83.8 commits/s and two waits |
+| Headset: X11 test clients in gamescope's Xwayland (the environment of `steam.service`) | `glxinfo`: direct rendering on `zink Vulkan 1.3(Turnip Adreno (TM) 650)`, OpenGL 4.6; `glxgears` synchronized to the refresh at 88.9–89.8 FPS; `vkcube` (xcb) 900 frames in 10.1 s, 88.8 FPS; no llvmpipe or glamor failure in Xwayland's log; `ibus-gamescope` active |
+| Headset: `pico4-vrsync-test` with injected faults (`PICO4_VRDISPLAY_SYNC_FAULT`) | `export` and `import` pass every check, waiting for the submission or on the CPU instead; `spares` fails the submission (`vkQueueSubmit` returns an error) without any value counting as reached |
 | Headset: SteamVR stopped with the session, two rounds | each stop clean ("Stopped SteamVR Launcher"), no fallback, Valve's failure tracker empty; before, every stop failed the unit (`vrstartup -shutdown` exit 255) |
 | Headset: five starts of Valve's session in 252 s, then a forced crash loop | all five present, no start limit hit; the crash loop still ends in the fallback after three starts |
 | Headset: forced crash loop (`vrcompositor` killed whenever it runs) | three crashes, driver starts (station resets) 34.5 s apart, then "Start request repeated too quickly"; 11 s later the session runs Monado's target, the one-time override consumed; no SteamVR start afterwards |
@@ -802,8 +822,8 @@ userspace check, the head IMU and Monado's pose and display clients, they run
    the switch.
 2. **Cooling.** Measure the fan control ([cooling.md](cooling.md)) on the headset, with the
    full session for 10 minutes against an agreed limit for the hottest zone.
-3. **The Steam client.** It updates and starts with the session; signing in, the library and
-   gamescope's overlays of Steam's apps are not verified yet; video needs FFmpeg 7.
+3. **The Steam client.** It updates and starts with the session, its UI on the GPU; signing in,
+   the library, video playback and gamescope's overlays of Steam's apps are not verified yet.
 4. **Controller positions.** IR-LED tracking, as for Monado ([xr.md](xr.md)); until then the
    controllers are 3DoF, placed by the arm model.
 5. **Dashboard input.** Not verified: SteamVR loads its generic bindings for the PICO 4

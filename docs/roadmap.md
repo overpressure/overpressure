@@ -329,7 +329,8 @@ Details: [session.md](session.md), [userspace.md](userspace.md).
   ([userspace.md](userspace.md#internet-over-usb)). Wi-Fi comes up and scans
   ([userspace.md](userspace.md#wi-fi)); joining a network is unverified.
 - MangoHud's `mangoapp`, the client's performance overlay, is left out: the Frame's build
-  needs libraries of the Frame's private base. The client's video playback needs FFmpeg 7.
+  needs libraries of the Frame's private base. The client's video module uses the FFmpeg 8 it
+  brings itself; playback is unverified.
 - The client will meet the kernel limits of step 4: no namespaces for Steam Linux Runtime's
   containers, no `binfmt_misc` for FEX, no `hidraw` for Steam Input.
 
