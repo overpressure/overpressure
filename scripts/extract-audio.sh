@@ -12,6 +12,8 @@
 #   firmware/adspr.jsn, adspua.jsn      its protection-domain maps, for pd-mapper (modem)
 #   audiopd/acdb/adsp_avs_config.acdb   the audio process's AVS configuration (vendor acdbdata)
 #   audiopd/dsp/adsp/                   the audio libraries PICO OS serves it (vendor lib/rfsa/adsp)
+#   calibration/*.acdb                  the calibration database of the speakers and the handset
+#                                      microphone, which pico4-audiocal loads (vendor acdbdata)
 #   manifest.json                       sources and sha256 of every file
 # The result is device-specific and proprietary: keep it private (assets/ is ignored by Git).
 # Nothing touches the headset.
@@ -29,7 +31,7 @@ command -v debugfs >/dev/null && command -v mcopy >/dev/null ||
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$output"/{modules,firmware,audiopd/acdb,audiopd/dsp/adsp}
+mkdir -p "$output"/{modules,firmware,audiopd/acdb,audiopd/dsp/adsp,calibration}
 output=$(realpath "$output")
 
 # Files must match the backup manifest before anything is read from them.
@@ -82,6 +84,12 @@ while read -r m; do
 done < "$work/modules.txt"
 grep -E '^/vendor/lib/modules/audio_' "$work/modules.dep" > "$output/modules/modules.dep"
 dump "$work/vendor.img" /etc/acdbdata/adsp_avs_config.acdb "$output/audiopd/acdb/adsp_avs_config.acdb"
+# PICO OS's audio HAL loads its calibration from the WSA8810 MTP database: the global file and
+# the files of the speaker and handset devices are what the system's two paths use.
+for f in Global Speaker Handset; do
+    dump "$work/vendor.img" "/etc/acdbdata/wsa8810/base/MTP/MTP_base_Wsa8810_${f}_cal.acdb" \
+        "$output/calibration/MTP_base_Wsa8810_${f}_cal.acdb"
+done
 # The audio process's share of PICO OS's ADSP library path: its audio modules, the C++ runtime
 # they link, its heap module and audio configuration. The rest of the directory (vision, neural
 # network, SLAM and sensor libraries, about 72 MB) belongs to processes this system does not run.
@@ -122,7 +130,8 @@ for p in sorted(out.rglob("*")):
     if p.is_file() and p.name != "manifest.json":
         files[str(p.relative_to(out))] = hashlib.sha256(p.read_bytes()).hexdigest()
 sources = {"modules/": "vendor /lib/modules", "firmware/": "modem /image",
-           "audiopd/acdb/": "vendor /etc/acdbdata", "audiopd/dsp/adsp/": "vendor /lib/rfsa/adsp"}
+           "audiopd/acdb/": "vendor /etc/acdbdata", "audiopd/dsp/adsp/": "vendor /lib/rfsa/adsp",
+           "calibration/": "vendor /etc/acdbdata/wsa8810/base/MTP"}
 print(json.dumps({"schema": 1, "source_backup": str(backup),
                   "fingerprint": identity.get("fingerprint"), "sources": sources,
                   "files": files}, indent=1))

@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""Load PICO OS's audio calibration (ACDB) into the ADSP, as its audio HAL does.
+
+PICO OS's audio HAL reads the calibration database (vendor acdbdata, from the user's
+backup at build time) and hands the blocks for each sound device to the kernel's
+calibration store, /dev/msm_audio_cal; the kernel sends them to the ADSP when a stream
+opens its path (docs/userspace.md#audio). This tool does the same for the two paths the
+system uses: the speakers (deep-buffer playback, acdb device 15) and the handset
+microphone (record, acdb device 4).
+
+  pico4-audiocal show [--acdb DIR]   the topologies and blocks it would send, as JSON
+  pico4-audiocal run  [--acdb DIR]   send them, set the app-type controls and stay
+
+`run` stays running: the kernel drops every calibration block when the last process
+that opened /dev/msm_audio_cal closes it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import glob
+import json
+import mmap
+import os
+import signal
+import struct
+import subprocess
+import sys
+import time
+
+ACDB_DIR = "/usr/lib/pico4-audio/acdb"
+CARD = "/dev/snd/controlC0"
+PCM_PLAYBACK = "/dev/snd/pcmC0D0p"  # MultiMedia1, the only PCMs with nodes
+PCM_CAPTURE = "/dev/snd/pcmC0D0c"
+IN_OPEN, IN_CLOSE, IN_IGNORED = 0x20, 0x08 | 0x10, 0x8000
+
+# ACDB property and table identifiers PICO OS's ACDB library looks up.
+PROP_ADM_TOPOLOGY = 0x113AD     # device: {app type, topology} pairs
+PROP_ASM_TOPOLOGY = 0x113AE     # global: {app type, topology} pairs
+PROP_AFE_TOPOLOGY = 0x13150     # device: the AFE topology
+PROP_INSTANCE_IDS = 0x1327F     # global: 1 when the instance tables apply
+PROP_CUSTOM_TOPOLOGIES = 0x132AC  # global: the custom topologies, sent as they are
+
+# /dev/msm_audio_cal (audio_calibration.c): _IOWR('a', 200 + n, void *).
+AUDIO_ALLOCATE_CALIBRATION = 0xC00861C8
+AUDIO_SET_CALIBRATION = 0xC00861CB
+ADM_TOPOLOGY_CAL_TYPE = 9
+ADM_AUDPROC_CAL_TYPE = 11
+ADM_AUDVOL_CAL_TYPE = 12
+AFE_TOPOLOGY_CAL_TYPE = 23
+CORE_CUSTOM_TOPOLOGIES_CAL_TYPE = 39
+
+# ION (msm, 4.19): the system heap, uncached, as PICO OS's loader allocates.
+ION_IOC_ALLOC = 0xC0184900
+ION_SYSTEM_HEAP_ID = 25
+
+# ALSA: SNDRV_CTL_IOCTL_TLV_READ, for the routing driver's backend table.
+SNDRV_CTL_IOCTL_TLV_READ = 0xC008551A
+
+# The two paths: PICO OS's sound devices, their ACDB devices and app types
+# (audio_platform_info.xml, audio_io_policy.conf), and the backends they play through.
+PATHS = [
+    {"name": "speaker", "acdb_id": 15, "path": 0, "app_type": 0x11130, "rate": 48000, "bits": 16,
+     "backend": "WSA_CDC_DMA_RX_0", "stream_control": "Audio Stream 0 App Type Cfg"},
+    {"name": "handset-mic", "acdb_id": 4, "path": 1, "app_type": 0x11132, "rate": 48000, "bits": 16,
+     "backend": "TX_CDC_DMA_TX_3", "stream_control": "Audio Stream Capture 0 App Type Cfg"},
+]
+
+
+def u32s(data: bytes) -> list[int]:
+    return list(struct.unpack_from(f"<{len(data) // 4}I", data))
+
+
+class AcdbFile:
+    """One calibration database file: "QCMSNDDB", then chunks of named tables."""
+
+    def __init__(self, path: str):
+        with open(path, "rb") as f:
+            data = f.read()
+        if data[:8] != b"QCMSNDDB":
+            raise ValueError(f"{path}: not a calibration database")
+        self.path = path
+        self.kind = ""
+        self.tables: dict[str, bytes] = {}
+        off = 16
+        while off + 16 <= len(data):
+            self.kind = data[off:off + 4].decode("latin1")  # AVDB device, GCDB global
+            size = struct.unpack_from("<I", data, off + 8)[0]
+            p, end = off + 16, off + 16 + size
+            while p + 12 <= end:
+                name = data[p:p + 8].decode("latin1")
+                length = struct.unpack_from("<I", data, p + 8)[0]
+                self.tables[name] = data[p + 12:p + 12 + length]
+                p += 12 + length
+            off = end
+        self.pool = self.tables.get("DATAPOOL", b"")
+
+    def record(self, off: int) -> bytes:
+        length = struct.unpack_from("<I", self.pool, off)[0]
+        return self.pool[off + 4:off + 4 + length]
+
+    def rows(self, name: str, width: int) -> list[list[int]]:
+        if name not in self.tables:
+            return []
+        values = u32s(self.tables[name])
+        count = values[0]
+        if len(values) - 1 != count * width:
+            raise ValueError(f"{self.path}: {name} holds {len(values) - 1} words, not {count} x {width}")
+        return [values[1 + i * width:1 + (i + 1) * width] for i in range(count)]
+
+    def device_property(self, device: int, prop: int) -> bytes | None:
+        for dev, pid, off in self.rows("DPROPLUT", 3):
+            if dev == device and pid == prop:
+                return self.record(off)
+        return None
+
+    def global_property(self, prop: int) -> bytes | None:
+        for pid, off in self.rows("GPROPLUT", 2):
+            if pid == prop:
+                return self.record(off)
+        return None
+
+    def devices(self) -> set[int]:
+        return {dev for dev, _pid, _off in self.rows("DPROPLUT", 3)}
+
+    def table(self, prefix: str, key: tuple[int, ...]) -> bytes | None:
+        """The calibration of @p key in an instance table (prefix + LUT0/CDFT/CDOT), packed as
+        the DSP's parameter list: per parameter {module, instance, 0, parameter, size} and its
+        data, padded to four bytes. None when the table has no such key."""
+        for row in self.rows(prefix + "LUT0", len(key) + 2):
+            if tuple(row[:len(key)]) != key:
+                continue
+            ids_at, data_at = row[len(key)], row[len(key) + 1]
+            ids, offsets = self.tables[prefix + "CDFT"], self.tables[prefix + "CDOT"]
+            count = struct.unpack_from("<I", ids, ids_at)[0]
+            if struct.unpack_from("<I", offsets, data_at)[0] != count:
+                raise ValueError(f"{self.path}: {prefix} tables disagree for {key}")
+            out = b""
+            for i in range(count):
+                module, instance, param = struct.unpack_from("<III", ids, ids_at + 4 + 12 * i)
+                data = self.record(struct.unpack_from("<I", offsets, data_at + 4 + 4 * i)[0])
+                pad = -len(data) % 4
+                out += struct.pack("<IHHII", module, instance & 0xFFFF, 0, param, len(data) + pad)
+                out += data + bytes(pad)
+            return out
+        return None
+
+
+def pair_value(data: bytes | None, key: int) -> int | None:
+    values = u32s(data or b"")
+    for i in range(0, len(values) - 1, 2):
+        if values[i] == key:
+            return values[i + 1]
+    return None
+
+
+def lookup(acdb_dir: str) -> dict:
+    """Everything the two paths need from the database."""
+    files = [AcdbFile(p) for p in sorted(glob.glob(os.path.join(acdb_dir, "*.acdb")))]
+    shared = [f for f in files if f.kind == "GCDB"]
+    if not shared:
+        raise FileNotFoundError(f"no global calibration file in {acdb_dir}")
+    shared = shared[0]
+    if u32s(shared.global_property(PROP_INSTANCE_IDS) or b"\0\0\0\0")[0] != 1:
+        raise ValueError("the database does not use instance tables, which this tool reads")
+    custom = shared.global_property(PROP_CUSTOM_TOPOLOGIES)
+    if not custom:
+        raise ValueError("no custom topologies in the global file")
+    result = {"custom_topologies": custom, "paths": []}
+    for p in PATHS:
+        owner = next((f for f in files if f.kind == "AVDB" and p["acdb_id"] in f.devices()), None)
+        if owner is None:
+            raise ValueError(f"acdb device {p['acdb_id']} ({p['name']}) is in no file")
+        afe = owner.device_property(p["acdb_id"], PROP_AFE_TOPOLOGY)
+        entry = dict(p)
+        entry.update({
+            "file": os.path.basename(owner.path),
+            "adm_topology": pair_value(owner.device_property(p["acdb_id"], PROP_ADM_TOPOLOGY), p["app_type"]),
+            "afe_topology": u32s(afe)[0] if afe and len(afe) >= 4 else None,
+            "asm_topology": pair_value(shared.global_property(PROP_ASM_TOPOLOGY), p["app_type"]),
+            "audproc": owner.table("AGII", (p["acdb_id"], p["rate"], p["app_type"])),
+            # Volume tables are for playback; PICO OS sends step 0.
+            "audvol": owner.table("AVII", (p["acdb_id"], p["app_type"], 0)) if p["path"] == 0 else None,
+        })
+        if entry["adm_topology"] is None or entry["afe_topology"] is None:
+            raise ValueError(f"{p['name']}: no topology in {entry['file']}")
+        result["paths"].append(entry)
+    return result
+
+
+class Calibration:
+    """The kernel's calibration store, with one ION buffer per block that has data."""
+
+    def __init__(self):
+        import fcntl  # Linux only; the database reading above also runs in the host tests
+
+        self.fcntl = fcntl
+        self.cal = os.open("/dev/msm_audio_cal", os.O_RDWR | os.O_CLOEXEC)
+        self.ion = os.open("/dev/ion", os.O_RDONLY | os.O_CLOEXEC)
+        self.buffers = []  # (fd, mmap): the kernel maps them to the DSP; they stay
+        self.sets: dict[int, list] = {}  # per path: the SET requests, sent again per stream
+
+    def _ioctl(self, request: int, cal_type: int, buffer: int, size: int, handle: int, info: list[int]):
+        body = struct.pack(f"<iiii{len(info)}i", 0, buffer, size, handle, *info)
+        data = struct.pack("<iiii", 16 + len(body), 0, cal_type, len(body)) + body
+        self.fcntl.ioctl(self.cal, request, bytearray(data))
+
+    def _ion_buffer(self, size: int):
+        size = (size + 4095) // 4096 * 4096
+        request = bytearray(struct.pack("<QIIII", size, 1 << ION_SYSTEM_HEAP_ID, 0, 0, 0))
+        self.fcntl.ioctl(self.ion, ION_IOC_ALLOC, request)
+        fd = struct.unpack_from("<I", request, 16)[0]
+        mem = mmap.mmap(fd, size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+        self.buffers.append((fd, mem))
+        return fd, mem
+
+    def send(self, cal_type: int, buffer: int, data: bytes, info: list[int], minimum: int = 4096,
+             path: int | None = None):
+        """A block with data: an ION buffer handed to the kernel, then the data and its key."""
+        fd, mem = self._ion_buffer(max(len(data), minimum))
+        self._ioctl(AUDIO_ALLOCATE_CALIBRATION, cal_type, buffer, 0, fd, [])
+        mem[:len(data)] = data
+        self._set(path, (cal_type, buffer, len(data), fd, info))
+
+    def send_info(self, cal_type: int, buffer: int, info: list[int], path: int | None = None):
+        """A block that is only its key (topologies)."""
+        self._set(path, (cal_type, buffer, 0, -1, info))
+
+    def _set(self, path: int | None, request: tuple):
+        self._ioctl(AUDIO_SET_CALIBRATION, *request)
+        if path is not None:
+            self.sets.setdefault(path, []).append(request)
+
+    def refresh(self, path: int):
+        """Sends a path's blocks again. The kernel uses a device and port block for one stream
+        and then skips it as stale (cal_utils_mark_cal_used), so PICO OS's HAL sends them before
+        every stream; a SET makes them current again."""
+        for request in self.sets.get(path, []):
+            self._ioctl(AUDIO_SET_CALIBRATION, *request)
+
+
+def backend_ids() -> dict[str, int]:
+    """The routing driver's backend table: {id, name[24]} entries over a TLV control."""
+    import fcntl
+
+    out = subprocess.run(["amixer", "-c", "0", "controls"], capture_output=True, text=True, check=True).stdout
+    numid = next(int(line.split(",")[0].split("=")[1]) for line in out.splitlines()
+                 if "'Backend DAI Name Table'" in line)
+    info = subprocess.run(["amixer", "-c", "0", "cget", f"numid={numid}"], capture_output=True, text=True).stdout
+    size = int(info.split("values=")[1].split()[0].split(",")[0])
+    fd = os.open(CARD, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        request = bytearray(struct.pack("<II", numid, size) + bytes(size))
+        fcntl.ioctl(fd, SNDRV_CTL_IOCTL_TLV_READ, request)
+    finally:
+        os.close(fd)
+    table = bytes(request[8:])
+    ids = {}
+    for off in range(0, len(table) - 27, 28):
+        ident = struct.unpack_from("<i", table, off)[0]
+        name = table[off + 4:off + 28].split(b"\0")[0].decode("latin1")
+        if name:
+            ids[name] = ident
+    return ids
+
+
+def set_control(name: str, values: list[int], iface: str = "MIXER"):
+    subprocess.run(["amixer", "-q", "-c", "0", "cset", f"iface={iface},name={name}",
+                    ",".join(str(v) for v in values)], check=True)
+
+
+def wait_for_card(timeout: float) -> None:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if os.path.exists(CARD) and os.path.exists("/dev/msm_audio_cal"):
+            out = subprocess.run(["amixer", "-c", "0", "controls"], capture_output=True, text=True).stdout
+            if "'App Type Config'" in out and "'Backend DAI Name Table'" in out:
+                return
+        time.sleep(1)
+    raise TimeoutError("the sound card's routing controls did not appear")
+
+
+def describe(cal: dict) -> dict:
+    out = {"custom_topologies_bytes": len(cal["custom_topologies"]), "paths": []}
+    for p in cal["paths"]:
+        out["paths"].append({
+            "name": p["name"], "acdb_id": p["acdb_id"], "file": p["file"], "app_type": hex(p["app_type"]),
+            "adm_topology": hex(p["adm_topology"]), "afe_topology": hex(p["afe_topology"]),
+            "asm_topology": hex(p["asm_topology"]) if p["asm_topology"] is not None else None,
+            "audproc_bytes": len(p["audproc"] or b""), "audvol_bytes": len(p["audvol"] or b""),
+        })
+    return out
+
+
+def cmd_run(args) -> int:
+    cal = lookup(args.acdb)
+    wait_for_card(args.timeout)
+    store = Calibration()
+    # The custom topologies first: the DSP learns them now, and the device topologies use them.
+    store.send(CORE_CUSTOM_TOPOLOGIES_CAL_TYPE, 0, cal["custom_topologies"], [])
+    for p in cal["paths"]:
+        path = buffer = p["path"]  # PICO OS: path + 2 x use case, one use case per path here
+        store.send_info(ADM_TOPOLOGY_CAL_TYPE, buffer,
+                        [p["adm_topology"], p["acdb_id"], p["path"], p["app_type"], p["rate"]], path=path)
+        if p["audproc"]:
+            store.send(ADM_AUDPROC_CAL_TYPE, buffer, p["audproc"],
+                       [p["acdb_id"], p["path"], p["app_type"], p["rate"]], minimum=16384, path=path)
+        if p["audvol"]:
+            store.send(ADM_AUDVOL_CAL_TYPE, buffer, p["audvol"], [p["acdb_id"], p["path"], p["app_type"], 0],
+                       path=path)
+        store.send_info(AFE_TOPOLOGY_CAL_TYPE, buffer, [p["afe_topology"], p["acdb_id"], p["path"], p["rate"]],
+                        path=path)
+    # The database's parameters carry instance ids; PICO OS's HAL tells the kernel after loading
+    # it, which then sends them with the DSP's instance-aware commands (the DSP rejects them
+    # otherwise: ADSP_ENEEDMORE).
+    set_control("Instance ID Support", [1], iface="CARD")
+    # The routing driver then picks these blocks for streams of these app types on these backends.
+    # The stream (ASM) blocks stay the DSP's: the kernel keeps one for both directions, which PICO
+    # OS sends again before every stream.
+    backends = backend_ids()
+    app_types = [len(cal["paths"])]
+    for p in cal["paths"]:
+        app_types += [p["app_type"], p["rate"], p["bits"]]
+    set_control("App Type Config", app_types)
+    for p in cal["paths"]:
+        set_control(p["stream_control"], [p["app_type"], p["acdb_id"], p["rate"], backends[p["backend"]]])
+    print(json.dumps({"status": "loaded", **describe(cal)}), flush=True)
+    if args.once:
+        return 0
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    follow_streams(store)
+    return 1
+
+
+def follow_streams(store: Calibration):
+    """Sends a path's blocks again whenever its PCM node is opened or closed, as PICO OS's HAL
+    does before every stream: once on opening, before the stream reaches its device, and once
+    on closing, for the next one. Returns when the nodes go away (the card left with the ADSP;
+    the service then starts over)."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    fd = libc.inotify_init1(os.O_CLOEXEC)
+    if fd < 0:
+        raise OSError(ctypes.get_errno(), "inotify_init1")
+    watches = {}
+    for path, node in ((0, PCM_PLAYBACK), (1, PCM_CAPTURE)):
+        wd = libc.inotify_add_watch(fd, node.encode(), IN_OPEN | IN_CLOSE | IN_IGNORED)
+        if wd < 0:
+            raise OSError(ctypes.get_errno(), f"inotify_add_watch {node}")
+        watches[wd] = path
+    while watches:
+        data = os.read(fd, 4096)
+        changed = set()
+        off = 0
+        while off + 16 <= len(data):
+            wd, mask, _cookie, length = struct.unpack_from("<iIII", data, off)
+            off += 16 + length
+            if mask & IN_IGNORED:
+                watches.pop(wd, None)
+            elif wd in watches:
+                changed.add(watches[wd])
+        for path in changed:
+            store.refresh(path)
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name in ("show", "run"):
+        p = sub.add_parser(name)
+        p.add_argument("--acdb", default=ACDB_DIR, help="directory of the .acdb files")
+        if name == "run":
+            p.add_argument("--timeout", type=float, default=120.0, help="seconds to wait for the card")
+            p.add_argument("--once", action="store_true", help="exit after loading (drops the blocks)")
+    args = parser.parse_args(argv)
+    if args.command == "show":
+        print(json.dumps(describe(lookup(args.acdb)), indent=2))
+        return 0
+    return cmd_run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

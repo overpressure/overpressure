@@ -33,16 +33,26 @@ class AudioUnitTests(unittest.TestCase):
         self.assertIn("-f /dev/adsprpc-smd-secure -d adsp -P audiopd -R /usr/share/qcom/pico4-audio", pd)
         self.assertIn("Restart=always", pd)
 
-    def test_target_pulls_in_all_three(self):
+    def test_target_pulls_in_all_units(self):
         target = unit("pico4-audio.target")
-        for name in ("pico4-audio-modules.service", "pico4-adsp.service", "pico4-audiopd.service"):
+        for name in ("pico4-audio-modules.service", "pico4-adsp.service", "pico4-audiopd.service",
+                     "pico4-audiocal.service"):
             self.assertIn(name, target)
             self.assertIn("WantedBy=pico4-audio.target", unit(name))
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertRegex(build, r"systemctl enable [^\n]*(\\\n[^\n]*)*pico4-audio\.target")
 
+    def test_calibration_follows_the_audio_process_and_stays(self):
+        cal = unit("pico4-audiocal.service")
+        self.assertIn("After=pico4-audiopd.service", cal)
+        # Sent again after the ADSP restarts; the kernel drops the blocks when the device closes.
+        self.assertIn("PartOf=pico4-adsp.service", cal)
+        self.assertIn("ExecStart=/usr/bin/pico4-audiocal run", cal)
+        self.assertNotIn("--once", cal)
+
     def test_no_cpu_controller_settings(self):
-        for name in ("pico4-audio-modules.service", "pico4-adsp.service", "pico4-audiopd.service"):
+        for name in ("pico4-audio-modules.service", "pico4-adsp.service", "pico4-audiopd.service",
+                     "pico4-audiocal.service"):
             self.assertNotIn("CPUWeight", unit(name))
             self.assertNotIn("CPUQuota", unit(name))
 

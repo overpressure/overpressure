@@ -436,10 +436,12 @@ techpack), signed with the kernel's build key like the Wi-Fi driver.
 | `firmware/adspr.jsn`, `adspua.jsn` | modem | its protection domains, for `pd-mapper`: the root process and the audio process (`audio_pd`, service `avs/audio`) |
 | `audiopd/acdb/adsp_avs_config.acdb` | vendor | the audio process's AVS configuration |
 | `audiopd/dsp/adsp/` | vendor | the audio process's libraries from PICO OS's ADSP library path: its audio modules, their C++ runtime, its heap module and audio configuration |
+| `calibration/*.acdb` | vendor | PICO OS's calibration database for the speakers and the handset microphone (`acdbdata/wsa8810/base/MTP`: global, speaker and handset files) |
 
 `build-userspace.sh --audio DIR` installs the firmware and maps under `/usr/lib/firmware`, the
-modules in `/usr/lib/pico4-audio` and the audio process's files in
-`/usr/share/qcom/pico4-audio`. `pico4-audio.target` brings the card up in PICO OS's order:
+modules in `/usr/lib/pico4-audio`, the calibration database in `/usr/lib/pico4-audio/acdb` and
+the audio process's files in `/usr/share/qcom/pico4-audio`. `pico4-audio.target` brings the card
+up in PICO OS's order:
 
 1. [`pico4-audio-modules.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-audio-modules.service)
    loads the modules (PICO OS: early-init), each after the modules it depends on, before
@@ -460,10 +462,35 @@ modules in `/usr/lib/pico4-audio` and the audio process's files in
    processing modules that PICO OS does not have either.
 
 When the audio process reports its domain up, the APR driver adds the card's devices and the
-machine driver registers the card. The DSP runs without PICO OS's calibration database
-(`acdbdata/wsa8810`: speaker, handset, headset and global calibration, which PICO OS's audio HAL
-loads into the DSP): it reports missing calibration blocks and plays and records with its
-defaults.
+machine driver registers the card.
+
+4. [`pico4-audiocal.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-audiocal.service)
+   loads PICO OS's calibration as its audio HAL does
+   ([`pico4-audiocal`](../userspace/rootfs/usr/bin/pico4-audiocal)). It reads the calibration
+   database (`acdbdata/wsa8810`, its global, speaker and handset files) for the two paths: the
+   speakers (ACDB device 15, app type 0x11130, deep-buffer playback) and the handset microphone
+   (device 4, app type 0x11132, record). It hands the blocks to the kernel's calibration store
+   (`/dev/msm_audio_cal`, data in ION buffers of the system heap):
+   - the custom topologies, which the kernel registers with the DSP at once;
+   - each path's device (ADM) topology and processing parameters, and the speakers' volume table;
+   - each path's port (AFE) topology.
+
+   It then switches on the kernel's instance-ID support, as PICO OS's HAL does after loading the
+   database: the parameters carry instance IDs, and the DSP refuses them in the older commands
+   (`ADSP_ENEEDMORE`). Last, it sets the app-type controls that make the routing driver pick
+   these blocks for MultiMedia1 on the speakers' and the microphone's backends.
+
+   The kernel uses a device or port block for one stream and then skips it as stale, so PICO
+   OS's HAL sends a path's blocks before every stream. The service does the same: it watches
+   MultiMedia1's two PCM nodes and sends a path's blocks again when its node is opened (before
+   the stream reaches its device) and when it is closed. Without that, only the first stream
+   after loading had its topologies. The stream (ASM) blocks stay the DSP's defaults: the kernel
+   keeps a single stream block for both directions. The service stays running, because the
+   kernel drops every block when the calibration device is closed for the last time. It
+   restarts with the ADSP, which forgets the topologies.
+
+The database has no port (AFE) parameters for these two devices, so the kernel still reports
+"cal_block not found" for them, as on PICO OS.
 
 The card has about 40 PCMs; the system uses MultiMedia1 (PCM 0) in both directions, as PICO OS
 plays and records media. The other PCMs get no device node
@@ -517,6 +544,7 @@ pw-play /tmp/mic.wav                       # through the speakers
 | Speakers | a 440 Hz test tone played on MultiMedia1 heard by the user |
 | Microphones | with the speakers playing that tone (−20 dBFS): the analog microphone (`amic1`) records it 58 dB above its level in silence; the six digital-microphone inputs record nothing |
 | PipeWire | "Speakers" sink (default) and "Microphone" source; playback and capture at the same time; the microphone records the speakers' tone at −54.9 dBFS at volume 1.0 and −78.9 dBFS at 0.4 |
+| Calibration (`pico4-audiocal`) | its blocks match those extracted from PICO OS's database byte for byte; loaded at boot 0.6 s after the card registers; five fresh streams in each direction all get the port topologies 0x112fc (speakers) and 0x112fb (microphone) instead of 0; the DSP takes the device topologies and parameters without an error; playback without xruns; the microphone records the speakers' tone 1.8 dB lower than without calibration |
 | Continuous playback | data threads round-robin 80 through RTKit; no xruns at quanta from 1024 down to 64 frames; while Valve's session starts and runs (SteamVR's streams at 512 frames, load average about 10), a 20 s tone at a 256-frame latency without xruns. Capture alone at a 64-frame quantum still loses about 5 periods a second |
 | `dev check` on the installed system | passes, Valve's session included (89.93 commits/s) |
 

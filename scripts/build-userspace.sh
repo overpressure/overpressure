@@ -364,17 +364,19 @@ if [[ -n "$wlan" ]]; then
 fi
 # Audio: the ADSP's image and protection-domain maps where the PIL loader and pd-mapper look,
 # the stock signed modules with their modules.dep, loaded by path (pico4-audio-modules.service),
-# and the tree hexagonrpcd serves to the audio process (pico4-audiopd.service). The modules are
-# installed byte for byte: their signatures are appended.
+# the tree hexagonrpcd serves to the audio process (pico4-audiopd.service) and the calibration
+# database pico4-audiocal.service loads. The modules are installed byte for byte: their
+# signatures are appended.
 audio_json="[]"
 if [[ -n "$audio" ]]; then
     for f in modules/audio_machine_kona.ko modules/modules.dep firmware/adsp.mdt firmware/adspr.jsn \
-        firmware/adspua.jsn audiopd/acdb/adsp_avs_config.acdb; do
+        firmware/adspua.jsn audiopd/acdb/adsp_avs_config.acdb calibration/MTP_base_Wsa8810_Global_cal.acdb; do
         [[ -s "$audio/$f" ]] || { echo "missing $audio/$f (see scripts/extract-audio.sh)" >&2; exit 1; }
     done
     mkdir -p "$T/usr/lib/firmware" "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio"
     install -m 0644 "$audio"/firmware/adsp* "$T/usr/lib/firmware/"
     install -m 0644 "$audio"/modules/* "$T/usr/lib/pico4-audio/"
+    install -D -m 0644 -t "$T/usr/lib/pico4-audio/acdb" "$audio"/calibration/*.acdb
     cp -r --no-preserve=ownership "$audio/audiopd/." "$T/usr/share/qcom/pico4-audio/"
     chown -R 0:0 "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio"
     audio_json=$(cd "$T" && find usr/lib/firmware/adsp* usr/lib/pico4-audio usr/share/qcom/pico4-audio -type f -print0 |
