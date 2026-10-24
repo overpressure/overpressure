@@ -72,6 +72,9 @@ install -d -o "$user" -m 0755 "$work"
 mkdir -p "${dropin%/*}"
 printf '[Service]\nEnvironment=PICO4_VRDISPLAY_STATS=%s/vrdisplay.json PICO4_VRDISPLAY_DUMP=%s/vrdisplay.ppm\n' \
 	"$work" "$work" > "$dropin"
+# The user manager outlives a session restart (logind stops it only after a delay), so it
+# must read the drop-in now; without a running manager the next one reads it at its start.
+user_systemctl daemon-reload 2>/dev/null || true
 rm -f "$logs"/*.txt
 # driver_monado in SteamVR owns the hardware: the Monado service must not hold it.
 systemctl stop pico4-monado.service
@@ -147,6 +150,7 @@ grep -q '"index":2' <<<"$devices" || errors+=("SteamVR does not report the heads
 
 # Back to the configured session.
 rm -f "$dropin"
+user_systemctl daemon-reload 2>/dev/null || true
 if [ -n "$saved" ]; then printf '%s\n' "$saved" > "$conf"; else rm -f "$conf"; fi
 systemctl restart pico4-session.service
 restored=$(systemctl is-active pico4-session.service)
