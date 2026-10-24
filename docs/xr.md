@@ -531,6 +531,27 @@ Basalt in [pico4_tcam.c](../src/monado/pico4_tcam.c), at 0.21–0.52 px RMS.
   station exposure; `--lines` and `--sensor-lines` (480–482) override the capture and sensor
   heights.
 
+## Passthrough
+
+SteamVR has no camera view (room view) here yet. How the Frame provides one:
+
+- **Driver.** The Frame's HMD driver (`driver_cv`, not installed here) implements OpenVR's
+  camera component (`IVRCameraComponent_003`) and a private passthrough interface; Valve's
+  XR service captures the passthrough cameras for it. The Frame's settings turn the camera and
+  the compositor's room view on (`camera.enableCamera`, `roomView`, `enableCompositorRoomView`).
+- **Not passthrough.** `steamvr-v4l2cam` copies SteamVR's view out to a V4L2 loopback device (a
+  virtual webcam); it stays masked, and the stock kernel has no `v4l2loopback`.
+- **Signing in.** The Steam client's VR sign-in does not use the cameras: it offers "Mobile App -
+  Tap to confirm" (Bluetooth LE, which the stock kernel's Bluetooth stack does not serve), "Mobile
+  App - Scan QR code" (the QR code is shown in the headset and the phone scans it) and the
+  password.
+
+For the PICO 4 the camera component belongs in `driver_monado`'s HMD, fed from the scene frames
+`pico4_cam` already captures in `vrserver`: the cameras and the station keep a single owner.
+OpenVR's camera formats have no 8-bit grey one, so the OV7251 frames (two stacked, 640×960)
+would go out as NV12 with neutral chroma, upright, without the controller-LED frames, with
+the cameras' fisheye model as their distortion; exposure stays with the tracking.
+
 ## 6DoF head tracking
 
 [pico4_slam.c](../src/monado/pico4_slam.c) feeds Monado's SLAM tracker. Monado loads Basalt
@@ -1097,7 +1118,11 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
    unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
    which needs the Steam client in the session.
-4. **Composition headroom.** The two-layer scene fits the period at the governor's clocks when
+4. **Passthrough.** SteamVR's camera component in `driver_monado` from the tracking cameras'
+   scene frames ([Passthrough](#passthrough)). Its frame copy must never hold up capture,
+   tracking or the IMU, so it needs the tracking checks (still and worn); whether this SteamVR
+   build shows room view through the public camera interface alone is the first thing to test.
+5. **Composition headroom.** The two-layer scene fits the period at the governor's clocks when
    the compositor starts a refresh early, at the cost of a pose sampled that much earlier; with
    Basalt running, 9–28 frames of 30 s are still late, with or without the clock floor, against
    7 without Basalt. Options to cut the GPU time itself:
