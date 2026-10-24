@@ -1,0 +1,26 @@
+diff --git a/src/drivers/driver_nl80211.c b/src/drivers/driver_nl80211.c
+index e6fbad96d..25d49284d 100644
+--- a/src/drivers/driver_nl80211.c
++++ b/src/drivers/driver_nl80211.c
+@@ -6821,15 +6821,13 @@ static int nl80211_connect_common(struct wpa_driver_nl80211_data *drv,
+ 			ver |= NL80211_WPA_VERSION_1;
+ 		if (params->wpa_proto & WPA_PROTO_RSN) {
+ 			/*
+-			 * NL80211_ATTR_SAE_PASSWORD is related and was added
+-			 * at the same time as NL80211_WPA_VERSION_3.
++			 * The PICO 4's Android 4.19 kernel numbers nl80211
++			 * attributes up to NL80211_ATTR_SAE_PASSWORD and beyond,
++			 * but its cfg80211 refuses NL80211_WPA_VERSION_3 in
++			 * CONNECT (EINVAL before the driver sees it). SAE
++			 * connects as WPA version 2 here.
+ 			 */
+-			if (nl80211_attr_supported(drv,
+-						   NL80211_ATTR_SAE_PASSWORD) &&
+-			    wpa_key_mgmt_sae(params->key_mgmt_suite))
+-				ver |= NL80211_WPA_VERSION_3;
+-			else
+-				ver |= NL80211_WPA_VERSION_2;
++			ver |= NL80211_WPA_VERSION_2;
+ 		}
+ 
+ 		wpa_printf(MSG_DEBUG, "  * WPA Versions 0x%x", ver);

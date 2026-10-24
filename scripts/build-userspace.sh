@@ -147,7 +147,7 @@ in_b pacman "-S$sync" --noconfirm --needed base-devel git meson ninja cmake eige
     python-packaging glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
     wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache \
     glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage \
-    shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon
+    shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon libnl pcsclite
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
 builder=$(in_b id -u builder):$(in_b id -g builder)
 # Emulated compilers: ccache (in the builder's home, kept between builds) saves repeats.
@@ -231,6 +231,7 @@ build_package pico4-vrdisplay "$project"/src/vrdisplay/*
 build_package pico4-sysvsem "$project"/src/sysvsem/*
 build_package pico4-gtk2
 build_package pico4-mangohud
+build_package pico4-wpa-supplicant
 build_package pico4-monado "$project"/src/monado/* "$project"/src/xr/*
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
 if [[ -n $llvm ]]; then
@@ -438,7 +439,7 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path \
-    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-wifi-wpa2-fallback.path pico4-audio.target \
+    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
     pico4-splash.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.

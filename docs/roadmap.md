@@ -329,8 +329,7 @@ Details: [session.md](session.md), [userspace.md](userspace.md).
   overlays.
 - The headset reaches the internet over the USB link when the PC shares its connection
   ([userspace.md](userspace.md#internet-over-usb)). Wi-Fi comes up and scans
-  ([userspace.md](userspace.md#wi-fi)) and joins WPA2 networks (WPA2/WPA3 networks as WPA2);
-  WPA3-only networks do not work.
+  ([userspace.md](userspace.md#wi-fi)) and joins WPA2 and WPA3 networks.
 - MangoHud's `mangoapp`, the client's performance overlay, runs (built against the image's
   libraries, its frame timings through the System V message queues of `pico4-sysvsem`); the
   overlay in the headset is unverified. The client's video module uses the FFmpeg 8 it

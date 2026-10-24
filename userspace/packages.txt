@@ -20,6 +20,8 @@ zstd
 deckard-arch-hotfixes-release-0.3/steamos-customizations-deckard
 deckard-arch-hotfixes-release-0.3/steamos-manager
 networkmanager
+# NetworkManager's wpa_supplicant, patched so that WPA3 (SAE) connects on the 4.19 kernel
+pico4/pico4-wpa-supplicant
 # Battery level and charging state from the stock kernel's power supply (D-Bus activated)
 upower
 

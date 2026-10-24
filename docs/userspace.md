@@ -425,15 +425,17 @@ that backend `wlan0` stayed "unavailable" and listed no network.
 [`99-zz-pico4-wifi-backend.conf`](../userspace/rootfs/etc/NetworkManager/conf.d/99-zz-pico4-wifi-backend.conf)
 sorts after Valve's file and keeps `wpa_supplicant`.
 
-The driver connects in firmware, and NetworkManager hands `wpa_supplicant` open authentication
-for every network. With WPA3's SAE key management the driver refuses that connect request
-(`EINVAL`) before any authentication, so WPA3 does not work. The Steam client saves networks
-whose access points offer WPA3 as WPA3-only (`key-mgmt sae`), and joining them through Steam
-failed. Most networks also offer WPA2 (WPA2/WPA3 transition mode): a path unit
-([`pico4-wifi-wpa2-fallback.path`](../userspace/rootfs/usr/lib/systemd/system/pico4-wifi-wpa2-fallback.path))
-watches the saved networks, switches such a profile to WPA2 with the same passphrase and
-connects it ([`wifi-wpa2-fallback`](../userspace/rootfs/usr/libexec/pico4-poc/wifi-wpa2-fallback)).
-A WPA3-only network stays unsupported.
+WPA3 (SAE) works through the driver's external authentication: the driver connects in
+firmware and asks `wpa_supplicant` (`NL80211_CMD_EXTERNAL_AUTH`) for the SAE handshake. The
+Steam client saves networks whose access points offer WPA3 as WPA3-only (`key-mgmt sae`, open
+authentication), and they connect as saved. `wpa_supplicant` 2.11 asks for WPA version 3 in
+the connect request whenever the kernel numbers nl80211 attributes up to
+`NL80211_ATTR_SAE_PASSWORD`. The PICO 4's Android 4.19 kernel does, but its cfg80211 accepts
+only versions 1 and 2 there: every WPA3 connect failed with `EINVAL` before the driver saw it.
+The image's `wpa_supplicant` is therefore
+[`pico4-wpa-supplicant`](../userspace/pkgbuilds/pico4-wpa-supplicant/PKGBUILD): Arch's 2.11 with
+[a patch](../userspace/pkgbuilds/pico4-wpa-supplicant/sae-wpa-version-2.patch) that asks for
+version 2.
 
 ## Audio
 
@@ -635,8 +637,9 @@ recovery deadlines (on uptime) are unaffected by the eight-month clock jump.
 
 Wi-Fi comes up by itself in 41 s, in parallel with the rest of the boot: registration, FW memory
 ready, calibration, the firmware's restart and `wlan0`. NetworkManager scans 2.4 and 5 GHz
-networks (34 seen, strongest 94 %). A WPA2/WPA3 network saved by the Steam client joins as WPA2:
-an address by DHCP, HTTPS to the Steam store, 21 MB/s download.
+networks (34 seen, strongest 94 %). A WPA2 network joins: an address by DHCP, HTTPS to the
+Steam store, 21 MB/s download. A WPA2/WPA3 network joins with WPA3 (SAE through the driver's
+external authentication), with open or unset authentication in the profile, and HTTPS works.
 
 ### Limits and known messages
 

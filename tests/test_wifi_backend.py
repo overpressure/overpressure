@@ -4,8 +4,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONF = ROOT / "userspace/rootfs/etc/NetworkManager/conf.d"
-UNITS = ROOT / "userspace/rootfs/usr/lib/systemd/system"
-FALLBACK = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/wifi-wpa2-fallback"
 
 
 class WifiBackendTests(unittest.TestCase):
@@ -21,23 +19,22 @@ class WifiBackendTests(unittest.TestCase):
         self.assertNotIn("iwd", packages)
 
 
-class WifiFallbackTests(unittest.TestCase):
-    def test_saved_profiles_are_watched(self):
-        path = (UNITS / "pico4-wifi-wpa2-fallback.path").read_text(encoding="utf-8")
-        self.assertIn("PathChanged=/etc/NetworkManager/system-connections", path)
-        service = (UNITS / "pico4-wifi-wpa2-fallback.service").read_text(encoding="utf-8")
-        self.assertIn("ExecStart=/usr/libexec/pico4-poc/wifi-wpa2-fallback", service)
+class WpaSupplicantTests(unittest.TestCase):
+    def test_sae_asks_for_wpa_version_2(self):
+        # an issue: the 4.19 kernel's cfg80211 refuses NL80211_WPA_VERSION_3 in CONNECT.
+        recipe = ROOT / "userspace/pkgbuilds/pico4-wpa-supplicant"
+        patch = (recipe / "sae-wpa-version-2.patch").read_text(encoding="utf-8")
+        self.assertIn("-\t\t\t\tver |= NL80211_WPA_VERSION_3;", patch)
+        self.assertNotIn("+\t\t\t\tver |= NL80211_WPA_VERSION_3;", patch)
+        pkgbuild = (recipe / "PKGBUILD").read_text(encoding="utf-8")
+        self.assertIn('provides=("wpa_supplicant=2:$pkgver")', pkgbuild)
+        self.assertIn("conflicts=(wpa_supplicant)", pkgbuild)
+        packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
+        self.assertIn("pico4/pico4-wpa-supplicant", packages)
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertRegex(build, r"systemctl enable [^\n]*(\\\n[^\n]*)*pico4-wifi-wpa2-fallback\.path")
-
-    def test_only_networks_that_offer_wpa2_switch(self):
-        script = FALLBACK.read_text(encoding="utf-8")
-        # WPA3-only profiles whose network also offers PSK, nothing else.
-        self.assertIn('= sae ]', script)
-        self.assertRegex(script, r"/\(\^\| \)psk\( \|\$\)/")
-        self.assertIn("802-11-wireless-security.key-mgmt wpa-psk", script)
-        # The passphrase stays as the client saved it: the script never reads or sets it.
-        self.assertNotIn("802-11-wireless-security.psk", script)
+        self.assertIn("build_package pico4-wpa-supplicant", build)
+        # Steam's WPA3 profiles connect as saved: no WPA2 fallback any more.
+        self.assertNotIn("wpa2-fallback", build)
 
 
 if __name__ == "__main__":

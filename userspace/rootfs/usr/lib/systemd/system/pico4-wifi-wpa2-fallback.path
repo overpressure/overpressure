@@ -1,9 +1,0 @@
-[Unit]
-Description=Watch saved Wi-Fi networks for WPA3-only profiles
-
-[Path]
-# NetworkManager writes a profile here when the Steam client (or nmcli) saves a network.
-PathChanged=/etc/NetworkManager/system-connections
-
-[Install]
-WantedBy=multi-user.target
