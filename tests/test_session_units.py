@@ -209,6 +209,17 @@ class FallbackTest(unittest.TestCase):
         self.assertLess(reset, script.index("exec /usr/bin/start-gamescope-session"))
         self.assertLess(reset, script.index('systemctl --user --wait start "$target"'))
 
+    def test_check_expects_the_socket_link_only_outside_valves_session(self):
+        # Valve's session removes the link (SteamVR owns the hardware); the check follows it.
+        script = (ROOTFS / "usr/libexec/pico4-poc/session").read_text(encoding="utf-8")
+        self.assertLess(script.index("gamescope-session.target | plasma-session.target)"),
+                        script.index('rm -f "$runtime/monado_comp_ipc"'))
+        check = (ROOTFS / "usr/bin/pico4-userspace-check").read_text(encoding="utf-8")
+        valve = check.index("gamescope-session.target | plasma-session.target)")
+        self.assertLess(valve, check.index("Monado socket not linked into Valve's session"))
+        self.assertLess(check.index("Monado socket not linked into Valve's session"),
+                        check.index('*) need "Monado socket linked into the session"'))
+
     def test_path_unit_enabled(self):
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         enable = re.search(r"in_t systemctl enable (.*?)\n(?!\s)", build, re.S).group(1)

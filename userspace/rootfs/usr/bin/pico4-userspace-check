@@ -173,7 +173,12 @@ need "session user logged in (is: $session_user_state)" [ "$session_user_state" 
 need "session target $session_target active (is: $session_target_state)" [ "$session_target_state" = active ]
 need "Monado socket listening (is: $monado_socket)" [ "$monado_socket" = active ]
 need "Monado socket file" [ -S /run/pico4-monado/monado_comp_ipc ]
-need "Monado socket linked into the session" [ -L "/run/user/$session_uid/monado_comp_ipc" ]
+case "$session_target" in
+gamescope-session.target | plasma-session.target)
+	# Valve's session: SteamVR is the runtime, and the session removes the link (session).
+	need "Monado socket not linked into Valve's session" [ ! -e "/run/user/$session_uid/monado_comp_ipc" ] ;;
+*) need "Monado socket linked into the session" [ -L "/run/user/$session_uid/monado_comp_ipc" ] ;;
+esac
 
 # -- the fan (docs/cooling.md) ---------------------------------------------------
 # pico4-fan.service runs where the lens MCU's UART exists (not in QEMU) and
