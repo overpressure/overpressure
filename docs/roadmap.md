@@ -211,7 +211,7 @@ calibration it uses comes from the user's own backup.
 - **Acceptance.** In the step's acceptance cycle, with 6DoF running, an OpenXR client renders
   2,698 frames in 30 s at 89.996 Hz (2 late), each eye on its own panel.
 
-**Open.** The SteamVR dashboard (needs the Steam client), 6DoF robustness and composition headroom; see
+**Open.** The SteamVR dashboard (needs the Steam client) and 6DoF robustness; see
 [Open work](#open-work).
 
 ### 6. Valve's VR session
@@ -309,12 +309,6 @@ doubled lines.
   Frame (its compositor keeps running on standby until then).
 - One gap of 125–165 ms during each start of Valve's session
   ([session.md](session.md#one-second-waits)).
-- Monado's composition headroom: its layer squasher fits the 11 ms frame only with the GPU
-  clock floor. Options are compressed (UBWC) scanout images in the display's compressed
-  formats; compressed client swapchain images; composing the layers directly through the
-  distortion mesh, without scratch images; a cheaper chromatic aberration correction (the
-  current one costs 2–5 % of the refreshes in the two-layer scene, hence off by default); and
-  pacing from the retire fences' timestamps.
 
 ### Steam client and network
 

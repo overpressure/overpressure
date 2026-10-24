@@ -1122,12 +1122,3 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    scene frames ([Passthrough](#passthrough)). Its frame copy must never hold up capture,
    tracking or the IMU, so it needs the tracking checks (still and worn); whether this SteamVR
    build shows room view through the public camera interface alone is the first thing to test.
-5. **Composition headroom.** The two-layer scene fits the period at the governor's clocks when
-   the compositor starts a refresh early, at the cost of a pose sampled that much earlier; with
-   Basalt running, 9–28 frames of 30 s are still late, with or without the clock floor, against
-   7 without Basalt. Options to cut the GPU time itself:
-   - compressed (UBWC) scanout images, using the display's compressed formats;
-   - compressed client swapchain images;
-   - composing the layers directly through the distortion mesh, without scratch images;
-   - cheaper chromatic aberration correction (it costs 2–5% of the refreshes in the two-layer
-     scene, hence opt-in).
