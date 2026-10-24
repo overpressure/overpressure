@@ -138,6 +138,7 @@ Further adaptations:
 | | `WLR_LIBINPUT_NO_DEVICES=1` | with the OpenVR backend, input comes through SteamVR's overlays and gamescope's EIS socket; wlroots must not insist on libinput devices |
 | | `MESA_LOADER_DRIVER_OVERRIDE=zink` | OpenGL on the GPU for Xwayland's glamor (and so DRI3 for X11 clients): Mesa's loader would pick the `msm` driver for `msm_drm`'s render node, which has no GPU, and fall back to llvmpipe ([graphics.md](graphics.md#opengl)) |
 | [`steam.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/steam.service.d/50-pico4.conf) | `PICO4_VRDISPLAY=1`, `MESA_LOADER_DRIVER_OVERRIDE=zink` | OpenGL on the GPU for the Steam client, its web helper's GPU process and the games it starts; zink finds the GPU for the render node through the layer's DRM nodes |
+| | `STEAM_EXTRA_ARGS=-cef-use-vulkan` | the web helper composites the client's UI on ANGLE's Vulkan backend instead of its OpenGL backend on zink, on which the UI flickers while a dialog opens or closes ([The Steam client](#the-steam-client)) |
 | [`steamvr.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/50-pico4.conf) | `PICO4_VRDISPLAY=1`, `PICO4_VRDISPLAY_LOGFILE=%h/.local/share/Steam/logs/pico4-vrdisplay.txt` | the display layer for the compositor, logging beside SteamVR's logs |
 | | `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` | `driver_monado` recommends the panel's render size, not Monado's default 140 % |
 | | `ExecStop=-…vrstartup -shutdown` (Valve's stop with its exit status ignored) | when the session stops, `vrserver` is often gone before the stop runs; the shutdown request then finds no server and exits 255. Every stop failed the unit: `OnFailure=` started the fallback, and Valve's `steamvr-health-check` counted a failed launch, which after three in a row resets the Steam installation (unpacked again, then updated). A crash still fails the unit through its main process |
@@ -179,6 +180,14 @@ session:
   any update. A client that fails at once therefore alternates between the bundle, an update
   and five failures. SteamVR's health check does the same after three failed SteamVR launches
   in a row (the count lives in `$XDG_RUNTIME_DIR`, so a reboot clears it).
+- **UI on the GPU.** The client's web helper (CEF) draws the UI with ANGLE. On ANGLE's OpenGL
+  backend, zink on Turnip, the UI's overlay alternates between the new and an older frame from
+  the moment a dialog opens (the sign-in's "More Options..." dialog: in panel images every fifth
+  present, the window's brightness jumped back and forth 42 times in 16 s) until the next full
+  repaint. The client's `-cef-use-vulkan` (`--use-angle=vulkan`), which Valve's `RUNSTEAM.sh`
+  leaves commented out on the Frame, puts ANGLE on Turnip directly: no alternation, and the web
+  helpers use 0.84 instead of 0.92 cores on the sign-in page. Compositing on the CPU
+  (`-cef-disable-gpu-compositing`) does not flicker either, but takes 2.06 cores.
 - **Not installed.** `atomupd-daemon` and `steamos-atomupd-client`, SteamOS's updater for the
   Frame's own system images, which must never run here; the client logs that `atomupd-manager`
   is missing. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
@@ -872,6 +881,7 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: present trace with the 5 ms lead, Valve's session, 30 s | 4,434 vblanks recorded at the kernel's vblank time (median −0.6 µs, 90 % within −41 to +24 µs of its stamps), their display events signalled 4.94 ms earlier; the driver reads the published 5000 µs lead; 90.0 commits/s, no stall |
 | Headset: DRM node users in Valve's session | the layer is loaded in gamescope, `vrcompositor` and two `vrwebhelper` processes; gamescope and `vrcompositor` read the DRM properties once each; gamescope holds `renderD128` open twice, `vrcompositor` `card0`; with zink (`MESA_LOADER_DRIVER_OVERRIDE=zink`) Xwayland and the Steam client run OpenGL on the KGSL Turnip ([graphics.md](graphics.md#opengl)) |
 | Headset: Valve's 30 s check with the Steam client and its UI on the GPU, installed system | 90.0 commits/s, 0.0–0.07 % late, no stall in the window in six of nine runs; the others 84.0–87.0 commits/s with one or two of SteamVR's one-second waits; 2–6 such waits during startup in every run. Before zink, with the client crashing in a loop, 83.8 commits/s and two waits |
+| Headset: the sign-in's "More Options..." dialog opened and cancelled four times, panel images every fifth present | ANGLE on zink: the client's window alternates between the dialog and the sign-in page, its brightness jumping back and forth 42 times; with `-cef-use-vulkan` and with CPU compositing none; web helpers on the sign-in page 0.92 cores (zink), 0.84 (Vulkan), 2.06 (CPU) |
 | Headset: present trace with counter reads, Valve's session | before each of SteamVR's one-second waits: one present wait returned just after a counter tick, the next 8.8–10.2 ms later and 0.8–1.8 ms before the following tick, then 25 reads of the same count |
 | Headset: Valve's session with the vblank time and the present waits held for an unread count | five 30 s checks in a row: 89.94–90.0 commits/s, 0.0–0.15 % late, no stall in the window, no one-second wait; twelve more starts with 25 s each: none |
 | Headset: Valve's 20 s check with the frame dump copying rows first, two runs | 90.0 and 89.97 commits/s, 0.06 % late; the startup's largest gap 46 and 77 ms (125–165 ms in every check before); eye means measured |

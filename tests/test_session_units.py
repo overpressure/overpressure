@@ -68,6 +68,12 @@ class OpenGLTest(unittest.TestCase):
             # Zink finds the GPU for the render node through the layer's DRM nodes.
             self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY=1$", name)
 
+    def test_web_helper_composites_on_vulkan(self):
+        # an issue: on ANGLE's OpenGL backend (zink) the client's VR overlays flicker between
+        # frames while a dialog opens; Valve's unit sets STEAM_EXTRA_ARGS empty.
+        dropin = (ROOTFS / "usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(encoding="utf-8")
+        self.assertRegex(dropin, r"(?m)^Environment=STEAM_EXTRA_ARGS=-cef-use-vulkan$")
+
     def test_turnip_keeps_the_drm_wsi(self):
         # A KGSL-only Turnip builds without libdrm, and its swapchains read DRM image
         # parameters as CPU ones; KGSL must still accept instances with VK_KHR_display.
