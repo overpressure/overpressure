@@ -882,7 +882,11 @@ get_head_pose(struct xrt_device *xdev,
 		math_quat_normalize(&imu.pose.orientation);
 	}
 
-	if (h->slam != NULL && pico4_slam_get_head_pose(h->slam, at_timestamp_ns, &rel)) {
+	// PICO OS's tracker predicts like the fusion's track: with the display lead for applications.
+	int64_t lead = pico4_slam_fuses_imu(h->slam)
+	                   ? debug_get_num_option_pico4_predict_ms() * U_TIME_1MS_IN_NS + display_lead_ns(h)
+	                   : 0;
+	if (h->slam != NULL && pico4_slam_get_head_pose(h->slam, at_timestamp_ns + lead, &rel)) {
 		h->slam_position = rel.pose.position;
 		if (imu_valid) {
 			struct xrt_quat inverse;
@@ -1191,7 +1195,11 @@ pico4_hmd_create(void)
 	h->base.supported.position_tracking = h->slam != NULL;
 	if (h->slam != NULL) {
 		snprintf(h->base.serial, XRT_DEVICE_NAME_LEN, "PICO 4 (SLAM)");
-		setup_track(h);
+		if (pico4_slam_fuses_imu(h->slam)) {
+			P4_INFO(h, "6DoF from PICO OS's tracker, which fuses the IMU itself");
+		} else {
+			setup_track(h);
+		}
 	}
 
 	if (pico4_ssc_enable(h->ssc, &h->accel_suid, rate) < 0 || pico4_ssc_enable(h->ssc, &h->gyro_suid, rate) < 0 ||

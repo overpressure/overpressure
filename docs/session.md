@@ -226,8 +226,9 @@ session:
 [`pico4-monado.socket`](../userspace/rootfs/usr/lib/systemd/system/pico4-monado.socket) listens
 on `/run/pico4-monado/monado_comp_ipc` (mode 0666) for clients of any user. The first client
 starts [`pico4-monado.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-monado.service)
-(`monado-service` as root), which then owns the display, the head IMU, the cameras with
-Basalt, the controllers and the lens motor until it is stopped. The OpenXR runtime library,
+(`monado-service` as root), which then owns the display, the head IMU, the cameras (head
+tracking through `pico4-slamd`, [xr.md](xr.md#head-tracking)), the controllers and the lens
+motor until it is stopped. The OpenXR runtime library,
 the system's active runtime (`/etc/openxr/1/active_runtime.json`), is Monado's IPC client.
 Clients find the socket in their `$XDG_RUNTIME_DIR`: the session links it there, and root
 clients set `XDG_RUNTIME_DIR=/run/pico4-monado`. Upstream's user units are not installed; they

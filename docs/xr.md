@@ -194,8 +194,8 @@ The HMD ([pico4_hmd.c](../src/monado/pico4_hmd.c)):
   field of view and the distortion come from the lens data
   ([Lens distortion and IPD](#lens-distortion-and-ipd)). Without that data the driver falls back
   to the stock runtime's symmetric 104° and no distortion.
-- **Pose.** While Basalt tracks, the HMD reports position tracking and the 6DoF pose
-  ([6DoF head tracking](#6dof-head-tracking)); otherwise the 3DoF orientation.
+- **Pose.** While the head tracker tracks, the HMD reports position tracking and the 6DoF pose
+  ([head tracking](#head-tracking)); otherwise the 3DoF orientation.
 
 [`pico4-openxr-pose`](../src/xr/pico4-openxr-pose.c) `[SECONDS] [INTERVAL_MS]` is the pose
 acceptance client. It uses the OpenXR loader with `XR_MND_headless`, so it needs no graphics. It
@@ -552,12 +552,95 @@ OpenVR's camera formats have no 8-bit grey one, so the OV7251 frames (two stacke
 would go out as NV12 with neutral chroma, upright, without the controller-LED frames, with
 the cameras' fisheye model as their distortion; exposure stays with the tracking.
 
-## 6DoF head tracking
+## Head tracking
 
-[pico4_slam.c](../src/monado/pico4_slam.c) feeds Monado's SLAM tracker. Monado loads Basalt
-through its VIT interface (`libbasalt.so` from the
-[`pico4-basalt`](../userspace/pkgbuilds/pico4-basalt/PKGBUILD) package, Monado's Basalt fork
-pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
+The head is tracked by PICO OS's own tracker, `libSlam.so`, as on PICO OS
+(`PICO4_SLAM_BACKEND=stock`, the default). It is a multi-camera visual-inertial tracker whose
+front end (image pyramids, map reprojection, corner detection, the depth filter) runs on the
+Compute DSP (CDSP); in Valve's idle session `pico4-slamd` takes about 70 % of one core and
+SteamVR's `vrserver` about 120 %, where `vrserver` with Basalt took 350–390 %. Monado's Basalt
+remains selectable (`PICO4_SLAM_BACKEND=basalt`, [below](#basalt)).
+Without the tracker's data in the image, or without the station, the HMD stays on 3DoF.
+
+```text
+cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
+                        │ raw 10-bit scene sets, IMU samples        ▲ poses (IMU rate)
+                        ▼                                           │
+                     /dev/shm/pico4-slam (pico4_slam_feed.h)        │
+                        │                                           │
+                     pico4-slamd ── image processing ── libSlam.so ─┘
+                        (bionic root /usr/lib/pico4-stock-slam)  ── FastRPC ──▶ CDSP
+```
+
+### PICO OS's tracker
+
+- **Its root.** `libSlam.so` is an Android (bionic) library. It runs in a root of its own,
+  `/usr/lib/pico4-stock-slam`, with PICO OS's bootstrap linker and bionic C library, which need no
+  Android runtime: the tracker, the eleven libraries it needs (among them `libion.so`, without
+  which its DSP optical flow cannot allocate memory and 6DoF never starts), its DSP modules,
+  configuration (`/system/etc/pvr/config`), the DSP's process shells and its root listener
+  `cdsprpcd`. [scripts/extract-stock-slam.sh](../scripts/extract-stock-slam.sh) takes them from
+  the headset's own backup, `build-userspace.sh --stock-slam` installs them. Two stand-ins of this
+  project replace Android pieces: a `libandroid.so` with the two trace calls the tracker uses, and
+  `libpico4-slam-stubs.so`, preloaded, which sends Android's log calls to the journal and answers
+  property lookups with nothing (the tracker's defaults). Programs in the root are built with the
+  host's clang for `aarch64-linux-android29` against the root's own libraries, without an NDK
+  ([src/stockslam](../src/stockslam)).
+- **Its runner.** [`stock-slam`](../userspace/rootfs/usr/libexec/pico4-poc/stock-slam) starts a
+  program of the root in a private mount namespace, chrooted, with `/dev`, `/proc` and `/sys`
+  bound in, the image's factory calibration at `/mnt/vendor/persist/pvr` and `/mnt/vendor/pvr`
+  (where the tracker reads it and its gyro bias table) and `/data` and `/tmp` as tmpfs.
+- **The CDSP.** [`pico4-cdsp.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-cdsp.service)
+  boots it as the SLPI: restart level RELATED first (the kernel's SYSTEM would reboot the headset
+  on a DSP crash), then `/sys/kernel/boot_cdsp/boot`; its firmware (`cdsp.mdt`, `cdspr.jsn`) comes
+  from the modem partition. `pico4-cdsprpcd.service` runs `cdsprpcd` in the root: without it the
+  DSP's loader stalls on the tracker's first module. The tracker then opens a signed user PD on
+  the CDSP (`fastrpc_shell_3`) and loads its modules there itself, through the stock
+  `libcdsprpc.so` on this kernel's own FastRPC driver.
+- **pico4-slamd.** [`pico4-slamd`](../src/stockslam/pico4-slamd.c)
+  ([`pico4-slamd.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service),
+  wanted by Valve's session and Monado) creates `/dev/shm/pico4-slam` (group video, mode 0660)
+  and feeds the tracker as PICO OS's tracking service does: `createHandle("")`,
+  `headSensorModel` `icm4x6xx`, `startAlgorithm`, the result callback, `start6DOF` `6`; every IMU
+  sample as {gyro, accel, temperature} with its time; each frame set once the IMU is 30 ms past
+  it (on PICO OS the camera's latency does that; earlier, the tracker waited for the IMU in vain
+  on nearly every frame); then every pose back. Each start of the driver bumps a generation in the
+  shared memory; `pico4-slamd` then exits and comes back with a new tracker.
+- **Images.** PICO OS's processing of each scene frame, reimplemented
+  ([isp.h](../src/stockslam/isp.h)): the first scene row doubled (it replaces the sensor's metadata
+  row; the last row drops out), black level 16 off, `v + (v >> 8)`, a per-pixel lens-shading gain
+  (128 = 1×, up to 16× in the fisheyes' corners) and a 10-to-8-bit gamma table. The gain table is
+  chosen by the camera modules' vendor, which PICO OS reads from their OTP through the station:
+  vendor 9 on this headset (`config_lscLH.txt`, the default; `PICO4_SLAMD_LSC` names another).
+  No rotation: the tracker's calibration describes the sensors as read out.
+- **IMU.** The raw samples of the factory body frame, at the DSP's 1 kHz, as PICO OS feeds them
+  (its uncalibrated streams carry the same values; the service applies no bias or axis change).
+- **Poses.** The tracker's world and body frames have the factory body frame's axes (x up, y
+  left, z back). PICO OS's client maps both with the HMD axes; the driver does the same (the
+  inverse of `Q_B_H` on each side), adds the HMD origin and predicts along the pose's velocities to
+  the requested time plus the display lead, at most 45 ms past the newest pose, as PICO OS's
+  client clamps it. The tracker fuses the IMU itself, so the HMD takes its poses directly, without
+  [pico4_fusion.c](../src/monado/pico4_fusion.c). A pose older than 200 ms, or one the tracker
+  reports untracked, counts as lost: the HMD keeps the last position with the 3DoF orientation.
+  The tracker relocalises in its own map.
+
+### Frame times
+
+The tracker, Basalt and the controller tracker take each frame's time from the camera hardware's
+start-of-frame stamp, the request manager's `V4L_EVENT_CAM_REQ_MGR_SOF` (QTimer in ns), onto
+`CLOCK_MONOTONIC` with the same offset as the IMU's samples, as PICO OS does. The boot-time stamp
+(`V4L_EVENT_CAM_REQ_MGR_SOF_BOOT_TS`) is that stamp plus an offset the kernel takes once, at the
+first frame after boot, late by however long that interrupt waited: on the headset it was 395 ms
+off (constant within 0.2 ms). It is only the fallback. The time of a frame is the middle of its
+exposure: the start of frame minus 52 µs, seven lines (133.5 µs) and half the exposure in lines
+of 19.07 µs, from the frame's own metadata line, as PICO OS computes it.
+
+### Basalt
+
+[pico4_slam.c](../src/monado/pico4_slam.c) feeds Monado's SLAM tracker with
+`PICO4_SLAM_BACKEND=basalt`. Monado loads Basalt through its VIT interface (`libbasalt.so` from
+the [`pico4-basalt`](../userspace/pkgbuilds/pico4-basalt/PKGBUILD) package, Monado's Basalt fork
+pinned by commit).
 
 - **Frames.** Frames of one sync pulse are grouped by start-of-frame time (within 4 ms), and the
   controller-LED frames are skipped by the phase in their metadata line; a frame whose line does
@@ -570,13 +653,13 @@ pinned by commit). Without `libbasalt.so` or the station the HMD stays on 3DoF.
   to 8 bits: black level (16 of 1023) removed, slowly adapting digital gain (1–8×, aiming at a
   mean of 70). Sets go out in camera order with one timestamp, as Basalt requires; a set that
   misses a camera is dropped.
-- **Frame time.** Each frame's time is the middle of its exposure, as in PICO's stock tracking:
-  the start-of-frame time minus 52 µs and half the exposure that frame's metadata line reports
-  (not the newest one commanded, which may not have reached the sensor yet). The start-of-frame
-  interrupt marks the readout after the exposure, up to 4 ms later and changing with the
-  exposure, which would put the images out of step with the IMU while the head moves. The set
-  gets the mean of its cameras' times; the driver logs their spread (0.00–0.01 ms).
-  `PICO4_SLAM_EXPOSURE_CENTRE=0` uses the start of frame.
+- **Frame time.** Each frame's time is the middle of its exposure ([Frame times](#frame-times)),
+  from the exposure that frame's metadata line reports (not the newest one commanded, which may
+  not have reached the sensor yet). The start-of-frame interrupt marks the readout after the
+  exposure, up to 4 ms later and changing with the exposure, which would put the images out of
+  step with the IMU while the head moves. The set gets the mean of its cameras' times; the
+  driver logs their spread (0.00–0.01 ms). `PICO4_SLAM_EXPOSURE_CENTRE=0` uses the start of
+  frame.
 - **Auto exposure.** A slow loop sets the station exposure from the median brightness of the
   set's cameras and the exposure the set was taken with, every 25 sets (half a second). With the
   first camera alone, a headset lying with that camera against fabric drove the exposure to
@@ -888,6 +971,29 @@ The image gets the DSP firmware in `/usr/lib/firmware` and the sensor tree and c
 `/usr/share/qcom/pico4/`, which `hexagonrpcd` serves to the DSP and the driver reads. The
 extracted data and the archive are device-specific and partly proprietary: keep them private.
 
+PICO OS's head tracker comes the same way, from `lun0/super.bin`, `lun4/modem.bin` and
+`lun4/dsp.bin`:
+
+```sh
+bash scripts/extract-stock-slam.sh backup/stock assets/stock-slam-5.13.7
+```
+
+| Output | Content (source partition) |
+| --- | --- |
+| `firmware/cdsp.mdt`, `cdsp.bNN`, `cdspr.jsn` | the Compute DSP's image and protection-domain map (modem) |
+| `root/system/bin/bootstrap/linker64`, `root/system/lib64/bootstrap/` | bionic's linker and C library, which need no Android runtime (system) |
+| `root/system/lib64/` | `libSlam.so` and the libraries it needs (system) |
+| `root/system/etc/pvr/config/` | the tracker's configuration, lens-shading and gamma tables (system) |
+| `root/vendor/lib/rfsa/adsp/` | the tracker's DSP modules (vendor) |
+| `root/vendor/dsp/cdsp/` | the DSP's process shells (dsp) |
+| `root/vendor/bin/cdsprpcd`, `root/vendor/lib64/` | the DSP's root listener (vendor) |
+| `manifest.json` | sources and SHA-256 of every file |
+
+`build-userspace.sh --stock-slam assets/stock-slam-5.13.7` installs the firmware in
+`/usr/lib/firmware` and the root in `/usr/lib/pico4-stock-slam`, and builds `pico4-slamd` and
+the root's stand-ins ([src/stockslam/build.sh](../src/stockslam/build.sh)) with the host's clang;
+it first runs `test_isp` (the image processing against hand-computed values) natively.
+
 - **`pico4-sensors`**: qrtr-ns, pd-mapper and hexagonrpcd from pinned linux-msm commits plus this
   project's patches. Its `meson test` covers the FastRPC ABI translation.
 - **`pico4-basalt`**: Basalt and the submodules the library needs, at pinned commits.
@@ -982,6 +1088,9 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_KMS_DUMP`, `PICO4_KMS_DUMP_FRAME` | unset, 300 | PPM of that commit's image, plus the eye means |
 | `XRT_COMPOSITOR_COMPUTE` | off in this build | Monado's compute composition path |
 | `PICO4_SLAM` | on | 6DoF |
+| `PICO4_SLAM_BACKEND` | `stock` | `stock`: PICO OS's tracker through `pico4-slamd`; `basalt`: Monado's Basalt |
+| `PICO4_SLAMD_LSC` | `config_lscLH.txt` | `pico4-slamd`'s lens-shading table in `/system/etc/pvr/config` (camera modules of vendor 9); set in the unit's environment |
+| `PICO4_SLAMD_DEBUG` | unset | `pico4-slamd` passes the tracker's debug and verbose log lines to the journal |
 | `PICO4_SLAM_CAMS` | `0,1,2,3` | factory cameras for Basalt in tracker order, at least two; Basalt matches the first against the others |
 | `PICO4_TCAM_SLOTS` | `0,2,1,3` | CSL slot of factory cameras cam0–cam3 |
 | `PICO4_SLAM_UPRIGHT` | on | turn images that are upside down relative to the first camera's |
@@ -1051,6 +1160,10 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Sticks pushed right, left, up, down, both controllers | x (record byte 2): 255, 0; y (byte 1): 255, 0 |
 | Headset: SLPI restart (`RELATED`) during a Monado session, a pose client running 120 s | the driver saw the service go away at once and reported the pose untracked; `pico4-sensorspd` restarted after 2 s; the IMU stream came back after 36.6 s in the same Monado process; every pose valid, 1,652 of 2,376 tracked; the service stopped cleanly afterwards |
 | Headset: frame identity in Valve's sessions (several runs, over 1,250 frame sets each) | no inconsistent and no incomplete set, while auto exposure moved from 300 lines at gain 16 to 400 lines at gain 46: all four sensors take a new exposure on the same frame |
+| PICO OS's tracker in Valve's session, headset still on a table, 60 s | 61,391 poses, none lost, within 0.7 mm and 0.04° of the first; 25 frame sets and 1,024 IMU samples per second to `pico4-slamd`, none skipped, no frame without the hardware start of frame; `pico4-slamd` 71 % of one core, `vrserver` 116 % (with Basalt 346–388 %); hottest zone 55.8 °C (with Basalt 75.8 °C) |
+| PICO OS's tracker, a recorded walk replayed (4 cameras and the IMU, hardware start-of-frame times) | back within 9 cm of the start; lost in the fastest part of a turn and relocalised in its own map |
+| PICO OS's tracker, a still recording looped for 5 minutes | 39 % of one core, back within 6 mm of the start, farthest 7 mm, no jump |
+| Frame times: the boot-time start-of-frame stamp against the hardware one | 395 ms late, constant within 0.2 ms over a boot |
 | SLAM feed, 30 s, four cameras, no compositor | 744 frame sets at 25 Hz, 0–1 incomplete, none skipped while Basalt was busy, no IMU sample dropped; frame to tracker 15–23 ms |
 | 6DoF: headset on a table in a lit room, slid 50 cm (measured) and back, twice | 0.50 m and 0.52 m; back at the start within 1.5 and 1.8 cm; at rest within 5–11 mm. In a dim room (exposure at its limit, gain 202–230) 0.48 m and back within 3.7 and 4.9 cm, with a 9 cm wander at rest before the first slide |
 | 6DoF worn in Valve's session: a step forward and one to the left, each back onto a floor mark | steps of 0.57 m and 0.59 m at 92° to each other; back within 3.4 and 4.4 cm of the start; no reset in 2.8 minutes; user: tracking good, no freeze or jump |
@@ -1101,15 +1214,12 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 
 ## Next steps
 
-1. **6DoF robustness.** With the 24 ms prediction the worn view is close to right. Basalt still
-   runs away now and then, mostly in its first seconds; the fusion holds and resets it, which
-   freezes the position for a moment. Basalt drifts slowly at rest (centimetres in half a
-   minute). The 24 ms are fixed while SteamVR's frame intervals vary (it renders at about 52
-   frames per second); a prediction that follows the actual frame timing would fit better.
-   With one camera covered the others stay exposed, but Basalt creeps until the fusion resets
-   it: a dark or blinded camera has to be kept from Basalt. Tracking needs light; in a dim room
-   the cameras run at their exposure limit and the returns to a start point widen from about
-   2 cm to about 5 cm.
+1. **PICO OS's tracker worn.** It holds still within a millimetre and costs a fraction of
+   Basalt; worn checks in Valve's session (walking, fast turns, covering a camera, a dim room)
+   are open. In the replayed walk it lost track in the fastest part of a turn and relocalised.
+   Two inputs are not yet PICO OS's: the IMU temperature (a fixed 30 °C; PICO OS passes the
+   sensor's) and the lens-shading table, fixed to this headset's camera vendor where PICO OS
+   reads the vendor from the modules' OTP.
 2. **Controllers in applications.** SteamVR's dashboard toggles but stays hidden without the
    Steam client ([session.md](session.md)), so the laser, clicking and the grip frame are
    unchecked in it. A vibration strong enough to feel has not yet come from a SteamVR

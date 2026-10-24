@@ -1,5 +1,5 @@
 # Monado OpenXR runtime as a system service (docs/session.md): the compositor on the
-# panels, the head IMU, the tracking cameras with Basalt, the controllers and
+# panels, the head IMU, the tracking cameras for pico4-slamd, the controllers and
 # the lens motor, for clients of any user through pico4-monado.socket. The
 # first client starts it (socket activation); it keeps the hardware until it
 # is stopped. SteamVR's driver_monado opens the same hardware, so the two
@@ -11,6 +11,8 @@ Description=Monado OpenXR runtime (PICO 4)
 Requires=pico4-monado.socket
 After=pico4-monado.socket pico4-sensors.target
 Wants=pico4-sensors.target
+# PICO OS's head tracker (docs/xr.md#head-tracking).
+Wants=pico4-slamd.service
 ConditionPathExists=/dev/kgsl-3d0
 
 [Service]

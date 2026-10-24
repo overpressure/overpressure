@@ -5,7 +5,7 @@ FIRMWARE ?= 5.13.7-global-seko
 BUILD_ROOT ?= /var/tmp/pico4-userspace-build
 USERSPACE ?= out/userspace
 USERSPACE_FLAGS ?= --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
-	--wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7
+	--wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
 
 .PHONY: help test image userspace qemu-stage1 qemu-userspace
 

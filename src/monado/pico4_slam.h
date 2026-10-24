@@ -68,6 +68,13 @@ pico4_slam_get_head_pose(struct pico4_slam *s, int64_t at_ns, struct xrt_space_r
 bool
 pico4_slam_get_latest(struct pico4_slam *s, struct pico4_fusion_slam *out);
 
+/*!
+ * Whether the tracker's poses already fuse the IMU at its rate (PICO OS's tracker): the HMD
+ * then takes pico4_slam_get_head_pose() directly instead of its own fusion (pico4_fusion.h).
+ */
+bool
+pico4_slam_fuses_imu(const struct pico4_slam *s);
+
 //! Tells the tracker to drop its state and start a new map (after it ran away).
 void
 pico4_slam_reset(struct pico4_slam *s);

@@ -38,7 +38,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
-        pico4_slam.h pico4_slam.c pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
+        pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
         comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
         pico4_retire.h test_pico4_retire.c
@@ -63,7 +63,7 @@ sha256sums=(SKIP
             a7e0b04b5fdff083e8556442f33a1ebc2cda18152bf7d4a711e9d2549d988762
             SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
-            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
+            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP
             SKIP
             SKIP
@@ -93,7 +93,7 @@ build() {
   # install -C leaves unchanged files and their timestamps alone.
   install -C -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c \
     pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c \
-    pico4_tcam.h pico4_tcam.c pico4_slam.h pico4_slam.c pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
+    pico4_tcam.h pico4_tcam.c pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
     pico4_controller.c pico4_fusion.h pico4_fusion.c pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_types.hpp \
     pico4_ctrack_model.hpp pico4_ctrack_model.cpp pico4_ctrack_solve.hpp pico4_ctrack_solve.cpp \
     pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp \

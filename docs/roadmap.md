@@ -204,10 +204,12 @@ calibration it uses comes from the user's own backup.
   appear in OpenXR with the PICO 4 controller profile, all buttons, touch sensors, sticks and
   triggers, and 3DoF orientation, at about 500 IMU samples and 100 input packets per second
   each.
-- **6DoF.** Basalt runs inside Monado on all four cameras and the IMU at 25 Hz, without
-  blocking the 3DoF path. In a lit room a measured 50 cm slide reads 0.50–0.52 m and returns
-  to within 2 cm of the start; a resting headset holds within millimetres. Worn, steps of about
-  0.6 m return within 3–4 cm of a floor mark.
+- **6DoF.** PICO OS's own tracker (`libSlam.so`, its front end on the Compute DSP) runs in a
+  bionic root beside the driver, on all four cameras at 25 Hz and the IMU at 1 kHz. Still, it
+  holds within a millimetre for a minute at about 70 % of one core (Basalt took about 3.5
+  cores). Basalt inside Monado remains selectable: in a lit room a measured 50 cm slide reads
+  0.50–0.52 m and returns to within 2 cm of the start; worn, steps of about 0.6 m return within
+  3–4 cm of a floor mark.
 - **Acceptance.** In the step's acceptance cycle, with 6DoF running, an OpenXR client renders
   2,698 frames in 30 s at 89.996 Hz (2 late), each eye on its own panel.
 
@@ -350,19 +352,15 @@ Details: [xr.md](xr.md).
 
 Details: [xr.md](xr.md).
 
-- Worn, the view is close to right since the driver predicts the 24 ms of the pipeline that
-  SteamVR leaves out (measured with a latency probe). Basalt runs away now and then in its first
-  seconds; the fusion holds the position, resets Basalt and re-anchors. Basalt drifts slowly at
-  rest.
-- Basalt can jump in its first seconds, before it has initialized (0.8 m in one walking test).
-  The driver could hold the 3DoF pose until Basalt has settled.
-- A still headset facing a surface a few centimetres away drifts by metres: there is no stereo
-  depth. The driver could fall back to the 3DoF position while Basalt reports too few
-  landmarks.
-- A covered or blinded camera makes Basalt creep (0.15 m/s) although the others stay exposed;
-  such a camera has to be kept from Basalt.
-- Tracking needs light: in a dim room the cameras run at their exposure limit and the returns
-  to a start point widen to about 5 cm.
+- PICO OS's tracker is the default; worn checks in Valve's session are open (walking, fast
+  turns, a covered camera, a dim room). In a replayed walk it lost track in the fastest part of
+  a turn and relocalised.
+- Two of its inputs are not yet PICO OS's: the IMU temperature (fixed at 30 °C) and the
+  lens-shading table (fixed to this headset's camera vendor; PICO OS reads it from the modules'
+  OTP).
+- With Basalt (`PICO4_SLAM_BACKEND=basalt`): it runs away now and then in its first seconds
+  (the fusion holds, resets and re-anchors), drifts slowly at rest, creeps with a covered
+  camera, and drifts by metres in front of a near surface.
 
 ### Standalone boot
 

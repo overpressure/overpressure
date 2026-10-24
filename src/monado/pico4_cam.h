@@ -78,6 +78,7 @@ struct pico4_cam_frame
 	uint64_t frame_id;         //!< ISP start-of-frame counter of this session.
 	int64_t sof_boottime_ns;   //!< CLOCK_BOOTTIME at the start-of-frame interrupt; 0 if no event arrived.
 	int64_t sof_monotonic_ns;  //!< The same instant on CLOCK_MONOTONIC; 0 if unknown.
+	int64_t sof_qtimer_ns;     //!< The camera hardware's SOF stamp, QTimer in ns (the IMU's clock); 0 if unknown.
 	uint32_t width;            //!< 640.
 	uint32_t height;           //!< Scene rows from data on (480, fewer if the buffer is shorter).
 	uint32_t lines;            //!< Lines in the buffer, the metadata line included (481).

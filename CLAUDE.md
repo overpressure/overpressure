@@ -15,7 +15,7 @@ section lists what comes next. Each step has its own document:
 | 2 Linux shell (Alpine initramfs, USB NCM/SSH, read-only storage) | verified on hardware | [docs/stage1.md](docs/stage1.md), [docs/hardware-testing.md](docs/hardware-testing.md) |
 | 3 Native graphics (Turnip/KGSL Vulkan, fenced KMS on both panels) | verified | [docs/graphics.md](docs/graphics.md) |
 | 4 SteamOS-compatible userspace (Holo Core aarch64 + Steam Frame systemd 257.7) | verified | [docs/userspace.md](docs/userspace.md) |
-| 5 XR hardware: IMU, Monado driver and KMS display, lenses and IPD, cameras, controllers (3DoF), Basalt 6DoF | verified with stock restore; controller positions open | [docs/xr.md](docs/xr.md) |
+| 5 XR hardware: IMU, Monado driver and KMS display, lenses and IPD, cameras, controllers (3DoF), 6DoF (PICO OS's libSlam on the CDSP; Basalt selectable) | verified with stock restore; controller positions open | [docs/xr.md](docs/xr.md) |
 | 6 Valve's VR session: gamescope + SteamVR with `driver_monado`, `pico4-vrdisplay`, shared GPU and System V semaphores | verified with stock restore; 90 fps on the Frame's compositor path; Steam client, performance and cooling open | [docs/session.md](docs/session.md) |
 
 Installed system: the system image read-only in `super`, data in `userdata`, the maintenance
@@ -78,9 +78,10 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
   pico4-mangohud).
 - `src/`: the project's C sources (`graphics/`, `monado/` driver and KMS target, `xr/` OpenXR
   clients, `vrdisplay/`, `sysvsem/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
-  them in.
+  them in. `stockslam/` is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a
+  bionic root; `build-userspace.sh` builds it with clang for Android, without an NDK.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-graphics.sh`, `extract-sensor-data.sh`,
-  `extract-wlan.sh`, `extract-audio.sh`, boot and
+  `extract-wlan.sh`, `extract-audio.sh`, `extract-stock-slam.sh`, boot and
   preflight helpers. `tests/`: unittest suites, `test_recovery_policy.sh`, `test_charger.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`.
 - Private and generated, ignored: `backup/` (identity `backup/device.json`, EDL backups),
   `assets/`, `cache/`, `out/` (`out/dev/` for the dev loop, `out/cycle-*/` evidence), `.env`.
@@ -96,7 +97,7 @@ python -m pico4 build --firmware 5.13.7-global-seko      # stage-1 image -> out/
 # Linux/WSL as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
 scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
-    --wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7
+    --wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
 # The headset, which stays in development mode (settings from .env); the integration test:
 python -m pico4 dev boot && python -m pico4 dev check    # iterate on the flashed dev image
 python -m pico4 dev reboot                               # next attempt; also from fastboot
@@ -145,8 +146,8 @@ python -m pico4 cycle --restore-only                     # verified stock boot a
   readback. The way back to stock (`dev restore`, `cycle --restore-only`) must keep working,
   but tasks do not end on stock: the headset stays in development mode. Ask the user before the
   first flash or EDL action in a new conversation.
-- **SLPI, ADSP and WLAN restart level.** Set it to `RELATED` before any restart or start of the
-  firmware (`slpi-boot`, `pico4-adsp.service` and `pico4-wlan.service` do this). The kernel
+- **SLPI, ADSP, CDSP and WLAN restart level.** Set it to `RELATED` before any restart or start of
+  the firmware (`slpi-boot`, `pico4-adsp.service`, `cdsp-boot` and `pico4-wlan.service` do this). The kernel
   default `SYSTEM` reboots the whole headset.
 - **Sound card PCMs.** Only MultiMedia1 (PCM 0) gets device nodes: opening the capture side of
   the hostless MI2S PCM oopses the stock kernel and leaves that PCM's lock held until a reboot.

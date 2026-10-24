@@ -15,6 +15,9 @@
 #   --audio DIR         audio modules, ADSP firmware and the audio process's files extracted
 #                       from YOUR OWN backup by scripts/extract-audio.sh (docs/userspace.md).
 #                       Without it there is no sound card.
+#   --stock-slam DIR    PICO OS's head tracker, its Compute DSP firmware and bionic root extracted
+#                       from YOUR OWN backup by scripts/extract-stock-slam.sh (docs/xr.md). Without
+#                       it head tracking falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
 #   --refresh           download the current package databases and reinstall the base
 #                       root; without it every build installs the same package versions
 #   --clean             rebuild the project packages from scratch
@@ -46,13 +49,14 @@ source_dir=$(cd "$(dirname "$0")/.." && pwd)
 build_root=${1:?specify an isolated Linux-filesystem build directory}
 output=${2:?specify an output directory}
 shift 2
-firmware="" sensor_data="" wlan="" audio="" refresh=0 clean=0 emulated_cc=0
+firmware="" sensor_data="" wlan="" audio="" stock_slam="" refresh=0 clean=0 emulated_cc=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --gpu-firmware) firmware=$(realpath "${2:?}"); shift 2 ;;
     --sensor-data) sensor_data=$(realpath "${2:?}"); shift 2 ;;
     --wlan) wlan=$(realpath "${2:?}"); shift 2 ;;
     --audio) audio=$(realpath "${2:?}"); shift 2 ;;
+    --stock-slam) stock_slam=$(realpath "${2:?}"); shift 2 ;;
     --refresh) refresh=1; shift ;;
     --clean) clean=1; shift ;;
     --emulated-cc) emulated_cc=1; shift ;;
@@ -415,6 +419,33 @@ if [[ -n "$sensor_data" ]]; then
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
 
+# PICO OS's head tracker (docs/xr.md#head-tracking): the Compute DSP's firmware for the PIL
+# loader and pd-mapper, the tracker's bionic root, and this project's pico4-slamd with the
+# root's stand-ins, built for bionic with the host's clang against the root's own libraries.
+stock_json="[]"
+if [[ -n "$stock_slam" ]]; then
+    [[ -s "$stock_slam/firmware/cdsp.mdt" && -s "$stock_slam/root/system/lib64/libSlam.so" ]] ||
+        { echo "incomplete tracker data in $stock_slam (see scripts/extract-stock-slam.sh)" >&2; exit 1; }
+    [[ -n $llvm ]] || { echo "--stock-slam needs the host's clang and lld (apt install clang-20 lld-20)" >&2; exit 1; }
+    mkdir -p "$T/usr/lib/firmware"
+    install -m 0644 "$stock_slam"/firmware/cdsp* "$T/usr/lib/firmware/"
+    island=$T/usr/lib/pico4-stock-slam
+    rm -rf "$island"
+    mkdir -p "$island"
+    cp -r --no-preserve=ownership "$stock_slam/root/." "$island/"
+    bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" "$llvm"
+    mv "$island/pico4/libandroid.so" "$island/system/lib64/libandroid.so"
+    # Mount points: the root is read-only on the headset.
+    mkdir -p "$island"/{dev,proc,sys,data,tmp,mnt/vendor/persist/pvr,mnt/vendor/pvr}
+    chown -R 0:0 "$island"
+    find "$island" -type d -exec chmod 0755 {} +
+    find "$island" -type f -exec chmod 0644 {} +
+    chmod 0755 "$island/system/bin/bootstrap/linker64" "$island/vendor/bin/cdsprpcd" "$island/pico4/pico4-slamd"
+    stock_json=$(cd "$T" && find usr/lib/firmware/cdsp* usr/lib/pico4-stock-slam -type f -print0 | sort -z |
+        xargs -0 sha256sum |
+        python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
+fi
+
 in_t systemd-sysusers
 # The Frame's session user (steamos-customizations-deckard refers to it), from
 # pico4-steamos.conf. sysusers creates no home: it comes from /etc/skel, as with useradd -m.
@@ -526,9 +557,9 @@ mv "$archive.part" "$archive"
 installed_bytes=$(du -sb --apparent-size "$T" | cut -f1)
 cleanup
 python3 - "$archive" "$build_root" "$holo_url" "$holo_sha256" "$installed_bytes" "$firmware_json" "$sensor_json" \
-    "$wlan_json" "$audio_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
+    "$wlan_json" "$audio_json" "$stock_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
 import hashlib, json, os, sys, datetime
-archive, root, holo_url, holo_sha, installed, firmware, sensors, wlan, audio = sys.argv[1:10]
+archive, root, holo_url, holo_sha, installed, firmware, sensors, wlan, audio, stock = sys.argv[1:11]
 def lines(name):
     with open(os.path.join(root, name)) as f:
         return [l.split() for l in f if l.strip()]
@@ -549,6 +580,7 @@ print(json.dumps({
     "sensor_data": json.loads(sensors),
     "wlan": json.loads(wlan),
     "audio": json.loads(audio),
+    "stock_slam": json.loads(stock),
 }, indent=1, sort_keys=True))
 EOF
 phase "done: $archive ($(du -h "$archive" | cut -f1), installed $((installed_bytes >> 20)) MiB)"

@@ -30,10 +30,19 @@
  * feeding both deadlocked. IMU samples arrive from
  * the HMD's sensor thread in the same body frame as the factory extrinsics.
  *
+ * The default tracker is PICO OS's own (PICO4_SLAM_BACKEND=stock, docs/xr.md#head-tracking):
+ * pico4-slamd runs it in its bionic root with its front end on the Compute DSP. This module
+ * then writes each scene set's raw 10-bit frames (factory camera order, as read out) and every
+ * IMU sample into the shared memory of pico4_slam_feed.h and takes the tracker's IMU-rate poses
+ * back; Basalt is not started. Frame times come from the camera hardware's start of frame on the
+ * QTimer, the IMU's clock: the kernel's boot-time stamp adds an offset taken once per boot (it
+ * was 395 ms off on the headset).
+ *
  * @ingroup drv_pico4
  */
 
 #include "pico4_slam.h"
+#include "pico4_slam_feed.h"
 #include "pico4_fusion.h"
 
 #include "xrt/xrt_config_build.h"
@@ -57,16 +66,21 @@
 #include "util/u_misc.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sched.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 DEBUG_GET_ONCE_BOOL_OPTION(pico4_slam, "PICO4_SLAM", true)
+//! "stock": PICO OS's tracker through pico4-slamd; "basalt": Monado's SLAM tracker.
+DEBUG_GET_ONCE_OPTION(pico4_slam_backend, "PICO4_SLAM_BACKEND", "stock")
 /*!
  * Factory cameras (cam0..cam3) given to the tracker, in tracker order. Basalt matches the
  * first camera against the others; all four keep up on the XR2 and see the most.
@@ -90,13 +104,16 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_imu_divisor, "PICO4_SLAM_IMU_DIVISOR", 2)
 DEBUG_GET_ONCE_OPTION(pico4_slam_dump, "PICO4_SLAM_DUMP", NULL)
 //! Mean 8-bit brightness the digital gain aims for.
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_brightness, "PICO4_SLAM_BRIGHTNESS", 70)
-//! Longest exposure in sensor lines (19.3 us each): with the 9 ms readout a frame must fit
+//! Longest exposure in sensor lines (19.07 us each): with the 9 ms readout a frame must fit
 //! the 20 ms sync period, and longer exposures smear more when moving.
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_max_exposure, "PICO4_SLAM_MAX_EXPOSURE", 400)
 //! Frame times at the middle of the exposure rather than at the start of frame (push_group).
 DEBUG_GET_ONCE_BOOL_OPTION(pico4_slam_exposure_centre, "PICO4_SLAM_EXPOSURE_CENTRE", true)
-#define LINE_NS 19300                 //!< One sensor line of exposure.
+#define LINE_NS 19069                 //!< One sensor line (stock).
 #define SOF_AFTER_EXPOSURE_NS 52000   //!< Start-of-frame interrupt after the exposure's end (stock).
+#define SOF_AFTER_LINES_NS 133483     //!< Seven more lines the stock service takes off (stock).
+//! The stock tracker's poses are predicted at most this far past the newest one (as PICO OS).
+#define STOCK_PREDICT_MAX_NS (45 * U_TIME_1MS_IN_NS)
 //! CPUs (bit mask) Basalt may use; 0 = no restriction. Default: all but cores 6 and 7.
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_cpus, "PICO4_SLAM_CPUS", 0x3f)
 /*!
@@ -169,6 +186,7 @@ struct pico4_slam
 		struct pico4_cam_assembly assembly; //!< Which cameras it has, by start of frame.
 		struct xrt_frame *frames[PICO4_TCAM_COUNT];
 		int64_t taken[PICO4_TCAM_COUNT]; //!< Middle of each frame's own exposure.
+		int64_t sof[PICO4_TCAM_COUNT];   //!< Each frame's start of frame.
 		float signal[PICO4_TCAM_COUNT];  //!< Mean signal above black of each frame (10-bit).
 		struct pico4_cam_meta applied;   //!< The exposure the set was taken with.
 		uint64_t frame_id[PICO4_TCAM_COUNT];          //!< Each frame's ISP frame counter.
@@ -219,7 +237,19 @@ struct pico4_slam
 	bool rate_reported;
 	float gain, brightness;
 
+	//! CLOCK_MONOTONIC minus QTimer ns, for the hardware start-of-frame stamps.
+	int64_t qtimer_offset_ns;
+	uint64_t frames_boot_time; //!< Scene frames without a hardware stamp (boot-time stamp used).
+
+	//! PICO OS's tracker through pico4-slamd (PICO4_SLAM_BACKEND=stock).
+	bool stock;
+	struct pico4_slam_feed *feed; //!< NULL until pico4-slamd's shared memory is there.
+	int64_t feed_retry_ns;
+	uint64_t stock_sets, stock_imu, stock_lost_feed;
 };
+
+static void
+stock_publish(struct pico4_slam *s);
 
 //! Comma-separated indices below @p limit; returns the count, 0 on a parse error.
 static int
@@ -398,6 +428,12 @@ push_group(struct pico4_slam *s)
 {
 	const char *dump = debug_get_option_pico4_slam_dump();
 	s->sequence++;
+	if (s->stock) {
+		stock_publish(s);
+		s->sets_pushed++;
+		drop_group(s);
+		return;
+	}
 	if (dump != NULL && s->sets_pushed % 500 == 100) {
 		for (int i = 0; i < s->cam_count; i++) {
 			dump_frame(s->group.frames[i], dump, s->sets_pushed, i);
@@ -504,7 +540,156 @@ exposure_middle(int64_t sof_ns, const struct pico4_cam_meta *m)
 	if (!debug_get_bool_option_pico4_slam_exposure_centre()) {
 		return sof_ns;
 	}
-	return sof_ns - SOF_AFTER_EXPOSURE_NS - (int64_t)m->exposure_lines * LINE_NS / 2;
+	return sof_ns - SOF_AFTER_EXPOSURE_NS - SOF_AFTER_LINES_NS - (((int64_t)LINE_NS * m->exposure_lines) >> 1);
+}
+
+//! QTimer ticks (19.2 MHz) in ns, without overflow.
+static uint64_t
+qtimer_to_ns(uint64_t ticks)
+{
+	return (ticks / 12) * 625 + (ticks % 12) * 625 / 12;
+}
+
+/*!
+ * CLOCK_MONOTONIC minus QTimer ns: the narrowest of a few (monotonic, arch counter) pairs. On
+ * the XR2 the arch counter is the QTimer, as in pico4_hmd.c for the IMU's timestamps.
+ */
+static int64_t
+qtimer_offset(void)
+{
+	int64_t best = INT64_MAX, offset = 0;
+	for (int i = 0; i < 8; i++) {
+		uint64_t ticks = 0;
+		int64_t before = os_monotonic_get_ns();
+#if defined(__aarch64__)
+		__asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(ticks)::"memory");
+#endif
+		int64_t after = os_monotonic_get_ns();
+		if (after - before < best) {
+			best = after - before;
+			offset = before + (after - before) / 2 - (int64_t)qtimer_to_ns(ticks);
+		}
+	}
+	return offset;
+}
+
+/*!
+ * A frame's start of frame on CLOCK_MONOTONIC: the camera hardware's QTimer stamp, as PICO OS
+ * takes it, on the IMU's clock. The kernel's boot-time stamp is that plus an offset it takes at
+ * the first frame after boot, late by however long that interrupt waited (395 ms on the headset);
+ * it is only the fallback.
+ */
+static int64_t
+frame_sof_ns(struct pico4_slam *s, const struct pico4_cam_frame *f)
+{
+	if (f->sof_qtimer_ns != 0) {
+		return f->sof_qtimer_ns + s->qtimer_offset_ns;
+	}
+	s->frames_boot_time++;
+	return f->sof_monotonic_ns;
+}
+
+/*!
+ * Maps pico4-slamd's shared memory once it is there (camera thread; retried once a second) and
+ * starts a new generation, which gives the driver a tracker of its own.
+ */
+static void
+stock_attach(struct pico4_slam *s)
+{
+	if (__atomic_load_n(&s->feed, __ATOMIC_ACQUIRE) != NULL) {
+		return;
+	}
+	int64_t now = os_monotonic_get_ns();
+	if (now < s->feed_retry_ns) {
+		return;
+	}
+	s->feed_retry_ns = now + U_TIME_1S_IN_NS;
+	int fd = open(PICO4_SLAM_FEED_PATH, O_RDWR | O_CLOEXEC);
+	if (fd < 0) {
+		if (s->stock_lost_feed++ % 30 == 0) {
+			SLAM_WARN(s, "No %s (%s): is pico4-slamd running?", PICO4_SLAM_FEED_PATH, strerror(errno));
+		}
+		return;
+	}
+	struct stat st;
+	void *map = MAP_FAILED;
+	if (fstat(fd, &st) == 0 && (size_t)st.st_size >= sizeof(struct pico4_slam_feed)) {
+		map = mmap(NULL, sizeof(struct pico4_slam_feed), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	}
+	close(fd);
+	if (map == MAP_FAILED) {
+		return;
+	}
+	struct pico4_slam_feed *feed = map;
+	if (__atomic_load_n(&feed->magic, __ATOMIC_ACQUIRE) != PICO4_SLAM_FEED_MAGIC) {
+		munmap(map, sizeof(struct pico4_slam_feed));
+		return;
+	}
+	uint32_t generation = __atomic_add_fetch(&feed->generation, 1, __ATOMIC_ACQ_REL);
+	__atomic_store_n(&s->feed, feed, __ATOMIC_RELEASE);
+	SLAM_INFO(s, "PICO OS's tracker through pico4-slamd (generation %u)", generation);
+}
+
+//! One scene frame's raw rows into the set being collected in the shared memory.
+static void
+stock_copy_frame(struct pico4_slam *s, const struct pico4_cam_frame *f, int index)
+{
+	(void)index;
+	stock_attach(s);
+	struct pico4_slam_feed *feed = s->feed;
+	int k = s->factory_of_slot[f->slot];
+	if (feed == NULL || k < 0 || f->width != PICO4_SLAM_FEED_W || f->height < PICO4_SLAM_FEED_H) {
+		return;
+	}
+	uint64_t w = __atomic_load_n(&feed->sets_written, __ATOMIC_RELAXED);
+	struct pico4_slam_feed_set *set = &feed->sets[w % PICO4_SLAM_FEED_SETS];
+	for (uint32_t y = 0; y < PICO4_SLAM_FEED_H; y++) {
+		memcpy(set->pixels[k] + (size_t)y * PICO4_SLAM_FEED_W, (const uint8_t *)f->data + (size_t)y * f->stride,
+		       PICO4_SLAM_FEED_W * sizeof(uint16_t));
+	}
+}
+
+//! Completes the collected set (times and exposures) and hands it to pico4-slamd.
+static void
+stock_publish(struct pico4_slam *s)
+{
+	struct pico4_slam_feed *feed = s->feed;
+	if (feed == NULL) {
+		return;
+	}
+	uint64_t w = __atomic_load_n(&feed->sets_written, __ATOMIC_RELAXED);
+	struct pico4_slam_feed_set *set = &feed->sets[w % PICO4_SLAM_FEED_SETS];
+	// As the stock service: the earliest exposure middle stands for all four.
+	int64_t first = INT64_MAX;
+	for (int i = 0; i < s->cam_count; i++) {
+		first = s->group.taken[i] < first ? s->group.taken[i] : first;
+	}
+	for (int slot = 0; slot < PICO4_CAM_NUM; slot++) {
+		int k = s->factory_of_slot[slot], i = s->index_of_slot[slot];
+		if (k < 0 || i < 0) {
+			continue;
+		}
+		set->sof_ns[k] = s->group.sof[i];
+		set->exposure_lines[k] = s->group.meta[i].exposure_lines;
+		set->gain[k] = s->group.meta[i].gain;
+		set->frame_id[k] = s->group.frame_id[i];
+	}
+	set->ts_ns = first;
+	__atomic_store_n(&feed->sets_written, w + 1, __ATOMIC_RELEASE);
+	s->stock_sets++;
+	if (s->stock_sets % 250 == 1) {
+		uint64_t poses = __atomic_load_n(&feed->poses_written, __ATOMIC_ACQUIRE);
+		const struct pico4_slam_feed_pose *p = poses > 0 ? &feed->poses[(poses - 1) % PICO4_SLAM_FEED_POSES] : NULL;
+		SLAM_INFO(s,
+		          "frame set %llu to pico4-slamd: exposure %u lines gain %u, %llu IMU samples, %llu poses (newest "
+		          "%.1f ms old, confidence %u, error %d); %llu frames without a hardware SOF; %llu incomplete and "
+		          "%llu inconsistent sets dropped",
+		          (unsigned long long)s->stock_sets, s->exposure_lines, s->exposure_gain,
+		          (unsigned long long)s->stock_imu, (unsigned long long)poses,
+		          p != NULL ? (os_monotonic_get_ns() - p->ts_ns) / 1e6 : -1.0, p != NULL ? p->confidence : 0,
+		          p != NULL ? p->error : 0, (unsigned long long)s->frames_boot_time,
+		          (unsigned long long)s->sets_dropped, (unsigned long long)s->sets_inconsistent);
+	}
 }
 
 /*!
@@ -520,8 +705,9 @@ handle_led_frame(struct pico4_slam *s, const struct pico4_cam_frame *f, const st
 		return;
 	}
 	bool dropped;
+	int64_t sof = frame_sof_ns(s, f);
 	enum pico4_cam_assembly_result added =
-	    pico4_cam_assembly_add(&s->leds.assembly, k, f->sof_monotonic_ns, GROUP_WINDOW_NS, PICO4_TCAM_COUNT, &dropped);
+	    pico4_cam_assembly_add(&s->leds.assembly, k, sof, GROUP_WINDOW_NS, PICO4_TCAM_COUNT, &dropped);
 	if (dropped) {
 		s->led_sets_dropped++;
 	}
@@ -535,7 +721,7 @@ handle_led_frame(struct pico4_slam *s, const struct pico4_cam_frame *f, const st
 			out[(size_t)y * f->width + x] = (uint8_t)((in[x] & 0x3ff) >> 2);
 		}
 	}
-	s->leds.taken[k] = exposure_middle(f->sof_monotonic_ns, meta);
+	s->leds.taken[k] = exposure_middle(sof, meta);
 	if (added == PICO4_CAM_SET_COMPLETE) {
 		int64_t sum = 0;
 		for (int i = 0; i < PICO4_TCAM_COUNT; i++) {
@@ -572,7 +758,7 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	if (index < 0) {
 		return;
 	}
-	int64_t ts = f->sof_monotonic_ns;
+	int64_t ts = frame_sof_ns(s, f);
 	bool dropped;
 	enum pico4_cam_assembly_result added =
 	    pico4_cam_assembly_add(&s->group.assembly, index, ts, GROUP_WINDOW_NS, s->cam_count, &dropped);
@@ -585,15 +771,20 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	if (added == PICO4_CAM_SET_LATE || added == PICO4_CAM_SET_DUPLICATE) {
 		return;
 	}
-	s->group.frames[index] = convert(s, f, s->rotated[index]);
+	if (s->stock) {
+		stock_copy_frame(s, f, index);
+	} else {
+		s->group.frames[index] = convert(s, f, s->rotated[index]);
+	}
 	s->group.taken[index] = exposure_middle(ts, &meta);
+	s->group.sof[index] = ts;
 	s->group.signal[index] = sample_mean(f) - BLACK_LEVEL;
 	s->group.frame_id[index] = f->frame_id;
 	s->group.meta[index] = meta;
 	if (index == 0) {
 		s->group.applied = meta;
 	}
-	if (s->group.frames[index] == NULL) {
+	if (!s->stock && s->group.frames[index] == NULL) {
 		drop_group(s);
 		return;
 	}
@@ -828,6 +1019,18 @@ pico4_slam_create(const char *calibration_dir,
 		free(s);
 		return NULL;
 	}
+	s->qtimer_offset_ns = qtimer_offset();
+	s->stock = strcmp(debug_get_option_pico4_slam_backend(), "basalt") != 0;
+	if (s->stock && s->cam_count != PICO4_TCAM_COUNT) {
+		SLAM_ERROR(s, "PICO OS's tracker needs all four cameras (PICO4_SLAM_CAMS=0,1,2,3)");
+		free(s);
+		return NULL;
+	}
+	// The first frame attaches to pico4-slamd (stock_copy_frame): a driver whose cameras fail
+	// to start, because another one has them, must not restart that one's tracker.
+	if (s->stock) {
+		goto cameras;
+	}
 
 	// pico4-basalt reads it when it creates the tracker (basalt-vio-config.patch).
 	const char *vio = debug_get_option_pico4_slam_vio_config();
@@ -868,6 +1071,7 @@ pico4_slam_create(const char *calibration_dir,
 		goto fail;
 	}
 
+cameras:
 	s->station = station;
 	for (int k = 0; s->ctrack != NULL && k < PICO4_TCAM_COUNT; k++) {
 		s->leds.images[k] = U_TYPED_ARRAY_CALLOC(uint8_t, 640 * 480);
@@ -887,13 +1091,17 @@ pico4_slam_create(const char *calibration_dir,
 		goto fail;
 	}
 	pico4_station_camera_set_exposure(s->station, s->exposure_lines, s->exposure_gain);
-	if (os_thread_helper_init(&s->imu_oth) != 0 || os_thread_helper_start(&s->imu_oth, imu_push_thread, s) != 0 ||
-	    os_thread_helper_init(&s->push_oth) != 0 || os_thread_helper_start(&s->push_oth, push_thread, s) != 0 ||
+	// The stock tracker gets frames and IMU samples straight from the capture and IMU threads.
+	if ((!s->stock && (os_thread_helper_init(&s->imu_oth) != 0 ||
+	                   os_thread_helper_start(&s->imu_oth, imu_push_thread, s) != 0 ||
+	                   os_thread_helper_init(&s->push_oth) != 0 ||
+	                   os_thread_helper_start(&s->push_oth, push_thread, s) != 0)) ||
 	    os_thread_helper_init(&s->oth) != 0 || os_thread_helper_start(&s->oth, camera_thread, s) != 0) {
 		SLAM_ERROR(s, "Could not start the camera threads");
 		goto fail;
 	}
-	SLAM_INFO(s, "SLAM tracking with %d cameras at %.1f Hz", s->cam_count, SCENE_HZ / s->divisor);
+	SLAM_INFO(s, "SLAM tracking (%s) with %d cameras at %.1f Hz", s->stock ? "PICO OS's tracker" : "Basalt",
+	          s->cam_count, SCENE_HZ / s->divisor);
 	return s;
 
 fail:
@@ -931,6 +1139,22 @@ void
 pico4_slam_push_imu(struct pico4_slam *s, int64_t timestamp_ns, const float accel[3], const float gyro[3])
 {
 	measure_imu_rate(s, timestamp_ns);
+	if (s->stock) {
+		// Every sample, as PICO OS feeds its tracker (only this thread writes the ring).
+		struct pico4_slam_feed *feed = __atomic_load_n(&s->feed, __ATOMIC_ACQUIRE);
+		if (feed != NULL) {
+			uint64_t w = __atomic_load_n(&feed->imu_written, __ATOMIC_RELAXED);
+			struct pico4_slam_feed_imu *e = &feed->imu[w % PICO4_SLAM_FEED_IMU];
+			e->ts_ns = timestamp_ns;
+			memcpy(e->gyro, gyro, sizeof(e->gyro));
+			memcpy(e->accel, accel, sizeof(e->accel));
+			e->temperature = NAN;
+			__atomic_store_n(&feed->imu_written, w + 1, __ATOMIC_RELEASE);
+			s->stock_imu++;
+		}
+		__atomic_store_n(&s->last_imu_ns, timestamp_ns, __ATOMIC_RELAXED);
+		return;
+	}
 	if (s->imu_count++ % s->imu_divisor != 0) {
 		return;
 	}
@@ -953,9 +1177,106 @@ pico4_slam_push_imu(struct pico4_slam *s, int64_t timestamp_ns, const float acce
 	__atomic_store_n(&s->last_imu_ns, timestamp_ns, __ATOMIC_RELAXED);
 }
 
+//! A tracked stock pose not older than this counts; older, the head is lost (3DoF in the HMD).
+#define STOCK_STALE_NS (200 * U_TIME_1MS_IN_NS)
+
+//! The stock tracker's newest pose, if it tracks; false while lost, stale or not attached.
+static bool
+stock_newest(struct pico4_slam *s, struct pico4_slam_feed_pose *out)
+{
+	struct pico4_slam_feed *feed = __atomic_load_n(&s->feed, __ATOMIC_ACQUIRE);
+	if (feed == NULL) {
+		return false;
+	}
+	for (int attempt = 0; attempt < 3; attempt++) {
+		uint64_t n = __atomic_load_n(&feed->poses_written, __ATOMIC_ACQUIRE);
+		if (n == 0) {
+			return false;
+		}
+		*out = feed->poses[(n - 1) % PICO4_SLAM_FEED_POSES];
+		// The entry stays valid until the writer laps the ring.
+		if (__atomic_load_n(&feed->poses_written, __ATOMIC_ACQUIRE) - n < PICO4_SLAM_FEED_POSES - 1) {
+			return out->confidence > 0 && os_monotonic_get_ns() - out->ts_ns < STOCK_STALE_NS;
+		}
+	}
+	return false;
+}
+
+/*!
+ * The stock tracker's pose in OpenXR. Its world and body frames are the factory body frame's
+ * axes (x up, y left, z back), as Basalt's body frame: PICO OS's client maps both with the HMD
+ * axes (x right = -y, y up = x, z back = z), the inverse of Q_B_H on each side. @p dt_ns
+ * predicts the pose that far along its velocities.
+ */
+static void
+stock_to_openxr(const struct pico4_slam_feed_pose *p, int64_t dt_ns, struct xrt_space_relation *out,
+                struct xrt_vec3 *out_imu_position)
+{
+	const struct xrt_quat q_h_b = {-Q_B_H.x, -Q_B_H.y, -Q_B_H.z, Q_B_H.w};
+	struct xrt_quat q_s = {(float)p->orientation[1], (float)p->orientation[2], (float)p->orientation[3],
+	                       (float)p->orientation[0]};
+	math_quat_normalize(&q_s);
+	struct xrt_vec3 pos_s = {(float)p->position[0], (float)p->position[1], (float)p->position[2]};
+	struct xrt_vec3 vel_s = {(float)p->velocity[0], (float)p->velocity[1], (float)p->velocity[2]};
+	struct xrt_vec3 rate_b = {(float)p->angular[0], (float)p->angular[1], (float)p->angular[2]};
+
+	struct xrt_quat t, q;
+	math_quat_rotate(&q_h_b, &q_s, &t);
+	math_quat_rotate(&t, &Q_B_H, &q);
+	struct xrt_vec3 lever, hmd_s, rate_s, hmd, vel, rate;
+	math_quat_rotate_vec3(&q_s, &P_BODY_HMD, &lever);
+	hmd_s = (struct xrt_vec3){pos_s.x + lever.x, pos_s.y + lever.y, pos_s.z + lever.z};
+	math_quat_rotate_vec3(&q_h_b, &hmd_s, &hmd);
+	math_quat_rotate_vec3(&q_h_b, &vel_s, &vel);
+	math_quat_rotate_vec3(&q_s, &rate_b, &rate_s);
+	math_quat_rotate_vec3(&q_h_b, &rate_s, &rate);
+	if (out_imu_position != NULL) {
+		math_quat_rotate_vec3(&q_h_b, &pos_s, out_imu_position);
+	}
+
+	if (dt_ns > 0) {
+		float dt = (float)dt_ns / (float)U_TIME_1S_IN_NS;
+		float speed = sqrtf(rate.x * rate.x + rate.y * rate.y + rate.z * rate.z);
+		if (speed * dt > 1e-6f) {
+			float half = 0.5f * speed * dt, k = sinf(half) / speed;
+			struct xrt_quat dq = {rate.x * k, rate.y * k, rate.z * k, cosf(half)};
+			struct xrt_quat before = q;
+			math_quat_rotate(&dq, &before, &q); // world rates turn from the left
+		}
+		hmd.x += vel.x * dt;
+		hmd.y += vel.y * dt;
+		hmd.z += vel.z * dt;
+	}
+	math_quat_normalize(&q);
+	out->pose.orientation = q;
+	out->pose.position = hmd;
+	out->linear_velocity = vel;
+	out->angular_velocity = rate;
+	out->relation_flags = (enum xrt_space_relation_flags)(
+	    XRT_SPACE_RELATION_ORIENTATION_VALID_BIT | XRT_SPACE_RELATION_POSITION_VALID_BIT |
+	    XRT_SPACE_RELATION_ORIENTATION_TRACKED_BIT | XRT_SPACE_RELATION_POSITION_TRACKED_BIT |
+	    XRT_SPACE_RELATION_LINEAR_VELOCITY_VALID_BIT | XRT_SPACE_RELATION_ANGULAR_VELOCITY_VALID_BIT);
+}
+
+bool
+pico4_slam_fuses_imu(const struct pico4_slam *s)
+{
+	return s != NULL && s->stock;
+}
+
 bool
 pico4_slam_get_head_pose(struct pico4_slam *s, int64_t at_ns, struct xrt_space_relation *out)
 {
+	if (s->stock) {
+		struct pico4_slam_feed_pose p;
+		if (!stock_newest(s, &p)) {
+			return false;
+		}
+		int64_t dt = at_ns - p.ts_ns;
+		dt = dt < 0 ? 0 : dt > STOCK_PREDICT_MAX_NS ? STOCK_PREDICT_MAX_NS : dt;
+		stock_to_openxr(&p, dt, out, NULL);
+		return true;
+	}
 	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
 	xrt_tracked_slam_get_tracked_pose(s->tracker, at_ns, &rel);
 	if (!(rel.relation_flags & XRT_SPACE_RELATION_POSITION_TRACKED_BIT)) {
@@ -984,6 +1305,18 @@ pico4_slam_get_head_pose(struct pico4_slam *s, int64_t at_ns, struct xrt_space_r
 bool
 pico4_slam_get_latest(struct pico4_slam *s, struct pico4_fusion_slam *out)
 {
+	if (s->stock) {
+		struct pico4_slam_feed_pose p;
+		struct xrt_space_relation r = XRT_SPACE_RELATION_ZERO;
+		if (!stock_newest(s, &p)) {
+			return false;
+		}
+		stock_to_openxr(&p, 0, &r, &out->position);
+		out->ts_ns = p.ts_ns;
+		out->orientation = r.pose.orientation;
+		out->velocity = r.linear_velocity;
+		return true;
+	}
 	int64_t ts;
 	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
 	if (!t_slam_get_latest_pose(s->tracker, &ts, &rel)) {
@@ -1002,6 +1335,9 @@ pico4_slam_get_latest(struct pico4_slam *s, struct pico4_fusion_slam *out)
 void
 pico4_slam_reset(struct pico4_slam *s)
 {
+	if (s->stock) {
+		return; // PICO OS's tracker relocalises in its own map
+	}
 	t_slam_reset(s->tracker);
 }
 
@@ -1047,6 +1383,13 @@ pico4_slam_destroy(struct pico4_slam **ptr)
 	          (unsigned long long)s->sets_pushed, (unsigned long long)s->sets_dropped,
 	          (unsigned long long)s->sets_busy, (unsigned long long)s->imu_overflow,
 	          (unsigned long long)s->led_sets, (unsigned long long)s->led_sets_dropped);
+	if (s->stock) {
+		SLAM_INFO(s, "PICO OS's tracker: %llu frame sets and %llu IMU samples to pico4-slamd",
+		          (unsigned long long)s->stock_sets, (unsigned long long)s->stock_imu);
+	}
+	if (s->feed != NULL) {
+		munmap(s->feed, sizeof(struct pico4_slam_feed));
+	}
 	for (int k = 0; k < PICO4_TCAM_COUNT; k++) {
 		free(s->leds.images[k]);
 	}
@@ -1055,6 +1398,13 @@ pico4_slam_destroy(struct pico4_slam **ptr)
 }
 
 #else // XRT_FEATURE_SLAM
+
+bool
+pico4_slam_fuses_imu(const struct pico4_slam *s)
+{
+	(void)s;
+	return false;
+}
 
 struct pico4_slam *
 pico4_slam_create(const char *calibration_dir,

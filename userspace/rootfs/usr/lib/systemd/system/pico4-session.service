@@ -8,6 +8,8 @@ Description=PICO 4 user session (steamos)
 # After the head IMU is listed: SteamVR's driver_monado probes it when SteamVR starts.
 After=systemd-user-sessions.service systemd-logind.service pico4-monado.socket pico4-sensors.target
 Wants=pico4-monado.socket
+# PICO OS's head tracker for SteamVR's driver_monado (docs/xr.md#head-tracking).
+Wants=pico4-slamd.service
 
 [Service]
 User=steamos
