@@ -194,9 +194,13 @@ session:
   new namespace failed"), and it then takes the image's `/usr/bin/bwrap`, which is setuid
   (pressure-vessel's `bwrap-setuid` mode). A setuid bubblewrap sets up mount namespaces as
   root and runs the program as the user; without PID namespaces the container shares the
-  host's process IDs. Beat Saber starts this way: the game runs under Proton and connects to
-  SteamVR as an OpenXR application, but no frame reaches SteamVR (the headset stays on
-  SteamVR's "Waiting" screen). Games with an Android build (Cubism) start through Valve's
+  host's process IDs. Beat Saber starts this way: the game runs under Proton, its OpenXR
+  session reaches the focused state in SteamVR, and its Steam API initializes once the
+  semaphore library reaches the container ([below](#system-v-semaphores-and-message-queues));
+  the game then gets to its health warning. Without it the game waited in its Steam
+  initialization and the headset stayed on SteamVR's "Waiting" screen. Under FEX the game
+  heats the headset quickly (above 88 °C within a minute in the idle session's state).
+  Games with an Android build (Cubism) start through Valve's
   Lepton instead, which runs the Android build in a podman container; podman is not in the
   image.
 - **UI on the GPU.** The client's web helper (CEF) draws the UI with ANGLE. On ANGLE's OpenGL
@@ -429,6 +433,13 @@ The stock kernel has no `CONFIG_SYSVIPC`. SteamVR's processes take their named l
 - blocked operations sleep on a futex word that every change bumps;
 - `SEM_UNDO` adjustments come back when a process exits or, if it died without running its
   destructor, when the next operation finds it gone.
+
+The Steam API in a game takes such semaphores too (`steamclient.so`; with `ENOSYS` it asserts
+in `threadtools.cpp` and the game waits in its Steam initialization). Games run in Steam Linux
+Runtime's container, whose `/etc` has no `ld.so.preload`; pressure-vessel imports `LD_PRELOAD`
+instead, as `/run/host/usr/lib/...`, so the Steam client's unit sets
+`LD_PRELOAD=/usr/lib/libpico4-sysvsem.so` for everything it starts. `/dev/shm` is shared with
+the container, and with it the table.
 
 The library is inert until a program calls it, PID 1 included. Its
 [test](../src/sysvsem/test_pico4_sysvsem.c) uses the calls as SteamVR does (a named lock

@@ -74,6 +74,14 @@ class OpenGLTest(unittest.TestCase):
         dropin = (ROOTFS / "usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(encoding="utf-8")
         self.assertRegex(dropin, r"(?m)^Environment=STEAM_EXTRA_ARGS=-cef-use-vulkan$")
 
+    def test_games_get_the_semaphore_library(self):
+        # an issue: the Steam API in a game takes System V semaphores; Steam Linux Runtime's
+        # container ignores the host's /etc/ld.so.preload but imports LD_PRELOAD.
+        preload = (ROOTFS / "etc/ld.so.preload").read_text(encoding="utf-8").split()
+        dropin = (ROOTFS / "usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(encoding="utf-8")
+        self.assertRegex(dropin, r"(?m)^Environment=LD_PRELOAD=/usr/lib/libpico4-sysvsem\.so$")
+        self.assertIn("/usr/lib/libpico4-sysvsem.so", preload)
+
     def test_turnip_keeps_the_drm_wsi(self):
         # A KGSL-only Turnip builds without libdrm, and its swapchains read DRM image
         # parameters as CPU ones; KGSL must still accept instances with VK_KHR_display.
