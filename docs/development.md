@@ -30,7 +30,7 @@ src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's
                   sysvsem/ (System V semaphores), reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-graphics.sh, extract-sensor-data.sh, boot and preflight helpers
-tests/            host tests (unittest), test_recovery_policy.sh, test_vrdisplay_fake.sh, qemu/ (test kernels and boot tests)
+tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, test_vrdisplay_fake.sh, qemu/ (test kernels and boot tests)
 docs/             documentation
 ```
 
@@ -141,6 +141,7 @@ debug packages and compression take about a minute for Monado.
 | --- | --- | --- |
 | Host tests: protocols, validators, the runner, cycle and dev loop against fakes | `python -m unittest discover -s tests` | about 6 s |
 | Stage-1 recovery policy | `bash tests/test_recovery_policy.sh` | seconds |
+| Stage-1 charger mode | `sh tests/test_charger.sh` | seconds |
 | The SteamVR display layer on a fake display: presenting, a stuck display that must lose its surface, and idle pauses that turn the panels off (Linux or WSL with lavapipe; `VULKAN_INCLUDE` names a directory with the Vulkan and libdrm headers, such as the userspace build's `bootstrap/usr/include`) | `bash tests/test_vrdisplay_fake.sh` | seconds |
 | Both of the above | `make test` | seconds |
 | On the headset: the integration test | `python -m pico4 dev boot` and `dev check`, in development mode | minutes; [hardware-testing.md](hardware-testing.md) |

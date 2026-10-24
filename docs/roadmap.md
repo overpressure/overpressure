@@ -382,8 +382,11 @@ system updates. Open:
 
 1. **The way back.** `dev restore` for an installed system (stock `super`, `boot`, `recovery`,
    wiped data) is not yet verified on the headset.
-2. **Feedback and power.** The lenses stay dark while the system starts; a short press of the
-   power button powers off, and a power-off with the cable attached starts the headset again.
+2. **Feedback and power.** The lenses show a boot indication until the session starts; the
+   default session then shows nothing until an OpenXR application starts. A short press of the
+   power button does nothing (PICO OS turns the screen off and suspends). A power-off with the
+   cable attached ends in charger mode, as on PICO OS; its power key and unplug handling are
+   not yet tried on the headset.
 
 ### Other hardware
 

@@ -21,7 +21,8 @@ section lists what comes next. Each step has its own document:
 Installed system: the system image read-only in `super`, data in `userdata`, the maintenance
 stage 1 in `recovery`, following PICO OS's layout; installed, starts without the PC, persistent
 across reboots and updates; the way back is open ([docs/install.md](docs/install.md)).
-Powering off with the USB cable attached restarts the headset; a short power press powers off.
+Powering off with the USB cable attached starts the headset in charger mode (stage 1 waits for a
+2 s power press; `pico4-reboot` from there starts the system); a short power press does nothing.
 Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; on the headset the
 MCU acknowledges, and longer sessions and tuning are open ([docs/cooling.md](docs/cooling.md)).
 Build system, tests and the Windows/WSL environment: [docs/development.md](docs/development.md).
@@ -80,7 +81,7 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
   them in.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-graphics.sh`, `extract-sensor-data.sh`,
   `extract-wlan.sh`, `extract-audio.sh`, boot and
-  preflight helpers. `tests/`: unittest suites, `test_recovery_policy.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`.
+  preflight helpers. `tests/`: unittest suites, `test_recovery_policy.sh`, `test_charger.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`.
 - Private and generated, ignored: `backup/` (identity `backup/device.json`, EDL backups),
   `assets/`, `cache/`, `out/` (`out/dev/` for the dev loop, `out/cycle-*/` evidence), `.env`.
 
@@ -89,6 +90,7 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
 ```sh
 python -m unittest discover -s tests                     # host tests, ~6 s, no hardware
 bash tests/test_recovery_policy.sh                       # stage-1 recovery policy
+sh tests/test_charger.sh                                 # stage-1 charger mode
 bash tests/test_vrdisplay_fake.sh                        # display layer on lavapipe (WSL; VULKAN_INCLUDE=...)
 python -m pico4 build --firmware 5.13.7-global-seko      # stage-1 image -> out/
 # Linux/WSL as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):

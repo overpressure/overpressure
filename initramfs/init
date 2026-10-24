@@ -94,7 +94,10 @@ fi
 # The installed system (pico4poc.root=installed, the boot image pico4-install wrote): mount it
 # from super and userdata and switch to it, with or without a PC on the cable. When that fails,
 # the maintenance stage 1 in recovery starts instead.
-if [ "$(poc_arg root "")" = installed ]; then
+if [ "$(poc_arg root "")" = installed ] && [ "$(cmdline_arg androidboot.mode)" = charger ]; then
+	# Powered on by the USB cable: charge, as PICO OS does, until the power key starts the system.
+	"$POC_LIB/charger" &
+elif [ "$(poc_arg root "")" = installed ]; then
 	# A sign of life in the lenses until stage 2 starts its own (pico4-splash.service).
 	pico4-splash 300 </dev/null >/dev/null 2>/dev/kmsg &
 	(

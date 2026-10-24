@@ -63,6 +63,16 @@ The ABL starts `recovery` instead of `boot` while `misc` holds the bootloader me
 The deadlines of the maintenance stage 1 return the headset to fastboot as before; with
 `boot-recovery` in `misc`, every boot from there starts the maintenance stage 1 again.
 
+### Charger mode
+
+With the USB cable attached, a powered-off headset starts again: the PMIC powers up on USB,
+and the bootloader boots with `androidboot.mode=charger`. PICO OS then runs AOSP's `charger`
+instead of its system (`init.qcom.rc`). Stage 1 does the same for the installed system
+([`charger`](../initramfs/usr/libexec/pico4-poc/charger)): it does not switch, leaves the lenses
+dark and the status LED amber, and keeps the USB link and SSH as every stage 1 does. Holding the
+power key for 2 s starts the system (a plain reboot, which the bootloader starts normally), and
+10 s without USB power turn the headset off, as AOSP's charger does.
+
 ## Boot images
 
 `python -m pico4 dev image` writes three images from the stage-1 image to `out/dev/` (private:
@@ -144,7 +154,7 @@ the ABL to stock (`python -m pico4 cycle --restore-only`) and entering developme
 | Development loop | `dev recovery`, `dev boot` (root on zram again), `dev reboot` (stays in maintenance), `dev normal` (installed system again) |
 | Boot without the PC (cable unplugged, power button) | stage 1 switches without waiting for a PC; systemd reaches the graphical target 1 min 53 s after power-on with no failed units; the data is there; the USB link comes up when the cable is plugged in later |
 | Boot indication | stage 1 shows it 15.3 s after the kernel started, stage 2's service takes over at 29.2 s without a gap, Monado's session ends it at 68 s; Monado and SteamVR's compositor take the display from it (it exits within 0.5 s) |
-| Power-off | stays off without the cable; with the cable attached the headset starts again within seconds |
+| Power-off | stays off without the cable; with the cable attached the headset starts again in charger mode (`androidboot.mode=charger`), and stage 1 stays there: no system, lenses dark, amber LED, waiting on the power key; `pico4-reboot` from there starts the installed system |
 
 ## Open work
 
@@ -155,7 +165,7 @@ the ABL to stock (`python -m pico4 cycle --restore-only`) and entering developme
    button follows PICO OS only partly: PICO OS turns the screen off on a short press and
    suspends, and offers power-off and restart after a 2 s press. Here a short press does
    nothing (checked on the headset) and a 5 s press powers off
-   ([`50-pico4-power-key.conf`](../userspace/rootfs/usr/lib/systemd/logind.conf.d/50-pico4-power-key.conf)). With the cable attached, a powered-off headset starts again:
-   the PMIC powers up on USB, and the bootloader then boots with `androidboot.mode=charger`, for
-   which PICO OS runs its charging screen. Stage 1 does not handle that mode yet.
+   ([`50-pico4-power-key.conf`](../userspace/rootfs/usr/lib/systemd/logind.conf.d/50-pico4-power-key.conf)).
+   In charger mode, holding the power key and unplugging the cable are not yet tried on the
+   headset.
 3. **Integrity.** The system image is checked when written, not at boot (no dm-verity).
