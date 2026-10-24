@@ -189,8 +189,13 @@ session:
   helpers use 0.84 instead of 0.92 cores on the sign-in page. Compositing on the CPU
   (`-cef-disable-gpu-compositing`) does not flicker either, but takes 2.06 cores.
 - **Not installed.** `atomupd-daemon` and `steamos-atomupd-client`, SteamOS's updater for the
-  Frame's own system images, which must never run here; the client logs that `atomupd-manager`
-  is missing. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
+  Frame's own system images, which must never run here. The client asks Valve's
+  `steamos-select-branch` and `steamos-update` every few seconds for the tracked branch and for
+  updates, and both call `atomupd-manager`: the image's
+  [`atomupd-manager`](../userspace/rootfs/usr/bin/atomupd-manager) answers as an up-to-date
+  system on the stable branch (`rel` to the client, "No update available") and refuses to switch
+  branches or update. The client's request to set the updater's proxy over D-Bus still fails
+  once per start. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
   packaged for arm64; the client disables it.
 
 ### Monado as a service
