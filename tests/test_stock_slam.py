@@ -115,6 +115,33 @@ class DriverAttachTests(unittest.TestCase):
         self.assertLess(calls[0], source.index("\n}\n", copy))
 
 
+class TemperatureTests(unittest.TestCase):
+    """an issue: the IMU's die temperature with every sample, as PICO OS's sensor DSP inserts it."""
+
+    def test_driver_streams_it_into_the_feed(self):
+        hmd = read(ROOT / "src/monado/pico4_hmd.c")
+        # Looked up before the IMU thread owns the client, enabled with the other streams.
+        lookup = hmd.index('pico4_ssc_find(h->ssc, "sensor_temperature", &h->temperature_suid, 3000)')
+        self.assertLess(lookup, hmd.index("os_thread_helper_start(&h->oth, imu_thread, h)"))
+        self.assertIn("pico4_ssc_enable(h->ssc, &h->temperature_suid, PICO4_TEMPERATURE_HZ)", hmd)
+        # Single-value samples are taken before the three-axis check drops them.
+        handle = hmd.index("handle_sample(struct pico4_hmd *h")
+        self.assertLess(hmd.index("suid_equal(&s->suid, &h->temperature_suid)", handle),
+                        hmd.index("if (s->count < 3)", handle))
+        self.assertIn("pico4_slam_push_imu(h->slam, ts, h->last_accel_raw, s->values, h->temperature_c);", hmd)
+        # Found again after a sensor DSP restart.
+        recover = hmd.index("recover_imu(struct pico4_hmd *h")
+        self.assertGreater(hmd.index("setup_temperature(h, 1000);", recover), recover)
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        self.assertIn("e->temperature = temperature_c;", slam)
+
+    def test_slamd_passes_only_what_libslam_accepts(self):
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        self.assertIn("#define TEMPERATURE_MIN -30.0", slamd)
+        self.assertIn("#define TEMPERATURE_MAX 100.0", slamd)
+        self.assertIn("sample[6] = known ? e.temperature : DEFAULT_TEMPERATURE;", slamd)
+
+
 class FeedHeaderTests(unittest.TestCase):
     def test_layout_is_libc_neutral(self):
         # The same header builds against glibc (the driver) and bionic (pico4-slamd).

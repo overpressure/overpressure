@@ -20,11 +20,16 @@
 #include "isp.h"
 #include "pico4_slam_feed.h"
 
+#include <stdbool.h>
+
 #define CONFIG_DIR "/system/etc/pvr/config/"
 //! A set goes in once the IMU is this far past it.
 #define SET_DELAY_NS 30000000
 //! Temperature for samples without one: the gyro bias table's middle.
 #define DEFAULT_TEMPERATURE 30.0
+//! The range libSlam accepts as a temperature (°C); outside it the tracker ignores the value.
+#define TEMPERATURE_MIN -30.0
+#define TEMPERATURE_MAX 100.0
 
 struct vec
 {
@@ -250,7 +255,9 @@ main(int argc, char **argv, char **envp)
 			sample[k] = e.gyro[k];
 			sample[3 + k] = e.accel[k];
 		}
-		sample[6] = e.temperature == e.temperature ? e.temperature : DEFAULT_TEMPERATURE;
+		// The IMU's own temperature, as PICO OS's sensor DSP inserts it (NaN: none yet).
+		bool known = e.temperature >= TEMPERATURE_MIN && e.temperature <= TEMPERATURE_MAX;
+		sample[6] = known ? e.temperature : DEFAULT_TEMPERATURE;
 		imu(h, &samples, e.ts_ns);
 		imu_fed++;
 		memset(res, 0, sizeof(res));
@@ -271,10 +278,10 @@ main(int argc, char **argv, char **envp)
 		if (now >= report) {
 			double cpu = (double)(now_ns(CLOCK_PROCESS_CPUTIME_ID) - cpu0) / (double)(now - wall0);
 			fprintf(stderr,
-			        "pico4-slamd: %llu frame sets, %llu IMU samples, %llu tracked poses, %llu skipped; CPU %.0f %% "
-			        "of one core\n",
+			        "pico4-slamd: %llu frame sets, %llu IMU samples, %llu tracked poses, %llu skipped; IMU at "
+			        "%.1f C%s; CPU %.0f %% of one core\n",
 			        (unsigned long long)sets_fed, (unsigned long long)imu_fed, (unsigned long long)tracked,
-			        (unsigned long long)skipped, 100.0 * cpu);
+			        (unsigned long long)skipped, sample[6], known ? "" : " (none reported, default)", 100.0 * cpu);
 			fflush(stderr);
 			report = now + 10000000000LL;
 		}

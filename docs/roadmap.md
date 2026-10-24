@@ -355,9 +355,8 @@ Details: [xr.md](xr.md).
 - PICO OS's tracker is the default; worn checks in Valve's session are open (walking, fast
   turns, a covered camera, a dim room). In a replayed walk it lost track in the fastest part of
   a turn and relocalised.
-- Two of its inputs are not yet PICO OS's: the IMU temperature (fixed at 30 °C) and the
-  lens-shading table (fixed to this headset's camera vendor; PICO OS reads it from the modules'
-  OTP).
+- One of its inputs is not yet PICO OS's: the lens-shading table (fixed to this headset's
+  camera vendor; PICO OS reads the vendor from the modules' OTP).
 - With Basalt (`PICO4_SLAM_BACKEND=basalt`): it runs away now and then in its first seconds
   (the fusion holds, resets and re-anchors), drifts slowly at rest, creeps with a covered
   camera, and drifts by metres in front of a near surface.

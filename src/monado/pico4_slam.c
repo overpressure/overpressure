@@ -1136,7 +1136,8 @@ measure_imu_rate(struct pico4_slam *s, int64_t timestamp_ns)
 }
 
 void
-pico4_slam_push_imu(struct pico4_slam *s, int64_t timestamp_ns, const float accel[3], const float gyro[3])
+pico4_slam_push_imu(
+    struct pico4_slam *s, int64_t timestamp_ns, const float accel[3], const float gyro[3], float temperature_c)
 {
 	measure_imu_rate(s, timestamp_ns);
 	if (s->stock) {
@@ -1148,7 +1149,7 @@ pico4_slam_push_imu(struct pico4_slam *s, int64_t timestamp_ns, const float acce
 			e->ts_ns = timestamp_ns;
 			memcpy(e->gyro, gyro, sizeof(e->gyro));
 			memcpy(e->accel, accel, sizeof(e->accel));
-			e->temperature = NAN;
+			e->temperature = temperature_c;
 			__atomic_store_n(&feed->imu_written, w + 1, __ATOMIC_RELEASE);
 			s->stock_imu++;
 		}
@@ -1422,12 +1423,14 @@ pico4_slam_create(const char *calibration_dir,
 }
 
 void
-pico4_slam_push_imu(struct pico4_slam *s, int64_t timestamp_ns, const float accel[3], const float gyro[3])
+pico4_slam_push_imu(
+    struct pico4_slam *s, int64_t timestamp_ns, const float accel[3], const float gyro[3], float temperature_c)
 {
 	(void)s;
 	(void)timestamp_ns;
 	(void)accel;
 	(void)gyro;
+	(void)temperature_c;
 }
 
 bool

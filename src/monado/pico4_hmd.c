@@ -110,6 +110,8 @@ DEBUG_GET_ONCE_OPTION(pico4_fusion_csv, "PICO4_FUSION_CSV", NULL)
 #define PICO4_BATTERY "/sys/class/power_supply/battery"
 #define PICO4_WARMUP_SKIP 100
 #define PICO4_WARMUP_AVERAGE 100
+//! The ICM-42688's temperature stream: its fastest rate (it offers 1 and 5 Hz).
+#define PICO4_TEMPERATURE_HZ 5.0f
 
 //! Samples per stillness window of the gyro bias estimate (a quarter second at 1 kHz).
 #define PICO4_STILL_WINDOW 256
@@ -124,8 +126,10 @@ struct pico4_hmd
 	struct xrt_device base;
 
 	struct pico4_ssc *ssc;
-	struct pico4_ssc_suid accel_suid, gyro_suid, blemcu_suid;
-	bool has_blemcu;
+	struct pico4_ssc_suid accel_suid, gyro_suid, blemcu_suid, temperature_suid;
+	bool has_blemcu, has_temperature;
+	//! The ICM-42688's die temperature, °C, NaN until its first report (PICO OS's tracker uses it).
+	float temperature_c;
 	//! The IMU stream is lost and being reconnected: the head pose is untracked meanwhile.
 	bool imu_stale;
 	struct os_thread_helper oth;
@@ -420,6 +424,10 @@ log_blemcu_clock(struct pico4_hmd *h, int64_t diff_ns, int64_t now_ns)
 static void
 handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 {
+	if (h->has_temperature && s->count >= 1 && suid_equal(&s->suid, &h->temperature_suid)) {
+		h->temperature_c = s->values[0]; // read below, on the same (IMU) thread
+		return;
+	}
 	if (s->count < 3) {
 		return;
 	}
@@ -456,7 +464,7 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 	h->gyro_samples++;
 	h->last_latency_ns = os_monotonic_get_ns() - ts;
 	if (h->slam != NULL) {
-		pico4_slam_push_imu(h->slam, ts, h->last_accel_raw, s->values);
+		pico4_slam_push_imu(h->slam, ts, h->last_accel_raw, s->values, h->temperature_c);
 	}
 
 	update_bias(h, &v, &h->last_accel);
@@ -528,6 +536,21 @@ imu_thread_running(struct pico4_hmd *h)
 }
 
 /*!
+ * The IMU's die temperature, which PICO OS's tracker takes with every IMU sample (its gyro bias
+ * table is binned by it); on PICO OS the sensor DSP inserts it into each gyro sample. Without
+ * it the tracker gets a fixed value (pico4-slamd). On the IMU thread, which owns the client.
+ */
+static void
+setup_temperature(struct pico4_hmd *h, int timeout_ms)
+{
+	h->has_temperature = pico4_ssc_find(h->ssc, "sensor_temperature", &h->temperature_suid, timeout_ms) == 0 &&
+	                     pico4_ssc_enable(h->ssc, &h->temperature_suid, PICO4_TEMPERATURE_HZ) >= 0;
+	if (!h->has_temperature) {
+		P4_WARN(h, "No IMU temperature from the sensor service");
+	}
+}
+
+/*!
  * The IMU stream is gone, typically because the sensor DSP restarted: its service, the
  * sensor UIDs and the QTimer mapping may all have changed. Report the head pose untracked,
  * then open a new client, find the sensors again, map the clock and subscribe, until it
@@ -552,6 +575,7 @@ recover_imu(struct pico4_hmd *h, float rate, const char *why)
 			                      pico4_ssc_enable(h->ssc, &h->blemcu_suid, rate) < 0)) {
 				P4_ERROR(h, "The controller stream did not come back with the IMU");
 			}
+			setup_temperature(h, 1000);
 			__atomic_store_n(&h->imu_stale, false, __ATOMIC_RELEASE);
 			P4_INFO(h, "IMU stream back after %.1f s (attempt %d), QTimer offset %lld ns",
 			        (double)(os_monotonic_get_ns() - start) / U_TIME_1S_IN_NS, attempt,
@@ -726,6 +750,9 @@ pico4_hmd_destroy(struct xrt_device *xdev)
 		pico4_ssc_disable(h->ssc, &h->gyro_suid);
 		if (h->has_blemcu) {
 			pico4_ssc_disable(h->ssc, &h->blemcu_suid);
+		}
+		if (h->has_temperature) {
+			pico4_ssc_disable(h->ssc, &h->temperature_suid);
 		}
 		pico4_ssc_close(&h->ssc);
 	}
@@ -1120,6 +1147,7 @@ pico4_hmd_create(void)
 	    (enum u_device_alloc_flags)(U_DEVICE_ALLOC_HMD | U_DEVICE_ALLOC_TRACKING_NONE);
 	struct pico4_hmd *h = U_DEVICE_ALLOCATE(struct pico4_hmd, flags, 1, 0);
 	h->log_level = debug_get_log_option_pico4_log();
+	h->temperature_c = NAN;
 
 	h->base.update_inputs = u_device_noop_update_inputs;
 	h->base.get_tracked_pose = pico4_hmd_get_tracked_pose;
@@ -1169,6 +1197,8 @@ pico4_hmd_create(void)
 		P4_ERROR(h, "Cannot map sensor timestamps to CLOCK_MONOTONIC");
 		goto fail;
 	}
+	// Looked up before the IMU thread reads the client; enabled with the other streams.
+	h->has_temperature = pico4_ssc_find(h->ssc, "sensor_temperature", &h->temperature_suid, 3000) == 0;
 
 	// The controllers' packets come through the same service, when the radio is up.
 	setup_station(h);
@@ -1209,6 +1239,12 @@ pico4_hmd_create(void)
 	}
 	if (h->has_blemcu && pico4_ssc_enable(h->ssc, &h->blemcu_suid, rate) < 0) {
 		P4_ERROR(h, "Failed to start the controller stream");
+	}
+	if (h->has_temperature && pico4_ssc_enable(h->ssc, &h->temperature_suid, PICO4_TEMPERATURE_HZ) < 0) {
+		h->has_temperature = false;
+	}
+	if (!h->has_temperature) {
+		P4_WARN(h, "No IMU temperature from the sensor service");
 	}
 	P4_INFO(h, "IMU streaming at %.0f Hz requested, QTimer offset %lld ns", rate,
 	        (long long)h->qtimer_offset_ns);

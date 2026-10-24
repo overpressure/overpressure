@@ -48,10 +48,12 @@ pico4_slam_create(const char *calibration_dir,
 
 /*!
  * One IMU sample in the sensor DSP's raw axes (the factory "body" frame):
- * CLOCK_MONOTONIC nanoseconds, m/s^2 and rad/s, without bias correction.
+ * CLOCK_MONOTONIC nanoseconds, m/s^2 and rad/s, without bias correction, and the IMU's
+ * latest temperature in °C (NaN if unknown; PICO OS's tracker uses it, Basalt does not).
  */
 void
-pico4_slam_push_imu(struct pico4_slam *s, int64_t timestamp_ns, const float accel[3], const float gyro[3]);
+pico4_slam_push_imu(
+    struct pico4_slam *s, int64_t timestamp_ns, const float accel[3], const float gyro[3], float temperature_c);
 
 /*!
  * Head pose at @p at_ns in the OpenXR convention (world Y up; HMD x right, y

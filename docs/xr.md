@@ -614,7 +614,11 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   vendor 9 on this headset (`config_lscLH.txt`, the default; `PICO4_SLAMD_LSC` names another).
   No rotation: the tracker's calibration describes the sensors as read out.
 - **IMU.** The raw samples of the factory body frame, at the DSP's 1 kHz, as PICO OS feeds them
-  (its uncalibrated streams carry the same values; the service applies no bias or axis change).
+  (its uncalibrated streams carry the same values; the service applies no bias or axis change),
+  each with the ICM-42688's latest die temperature, which the tracker's gyro bias table is
+  binned by. On PICO OS the sensor DSP inserts it into each gyro sample; here the driver streams
+  the sensor's own `sensor_temperature` at 5 Hz (its fastest rate) beside it. Without a
+  temperature, `pico4-slamd` passes 30 °C, the table's middle.
 - **Poses.** The tracker's world and body frames have the factory body frame's axes (x up, y
   left, z back). PICO OS's client maps both with the HMD axes; the driver does the same (the
   inverse of `Q_B_H` on each side), adds the HMD origin and predicts along the pose's velocities to
@@ -1161,6 +1165,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Headset: SLPI restart (`RELATED`) during a Monado session, a pose client running 120 s | the driver saw the service go away at once and reported the pose untracked; `pico4-sensorspd` restarted after 2 s; the IMU stream came back after 36.6 s in the same Monado process; every pose valid, 1,652 of 2,376 tracked; the service stopped cleanly afterwards |
 | Headset: frame identity in Valve's sessions (several runs, over 1,250 frame sets each) | no inconsistent and no incomplete set, while auto exposure moved from 300 lines at gain 16 to 400 lines at gain 46: all four sensors take a new exposure on the same frame |
 | PICO OS's tracker in Valve's session, headset still on a table, 60 s | 61,391 poses, none lost, within 0.7 mm and 0.04° of the first; 25 frame sets and 1,024 IMU samples per second to `pico4-slamd`, none skipped, no frame without the hardware start of frame; `pico4-slamd` 71 % of one core, `vrserver` 116 % (with Basalt 346–388 %); hottest zone 55.8 °C (with Basalt 75.8 °C) |
+| IMU temperature to the tracker, Valve's session | `sensor_temperature` of the ICM-42688 at 44.1–44.3 °C with the SoC's hottest zone at 60–61 °C; still within 0.8 mm for 60 s, no pose lost |
 | PICO OS's tracker, a recorded walk replayed (4 cameras and the IMU, hardware start-of-frame times) | back within 9 cm of the start; lost in the fastest part of a turn and relocalised in its own map |
 | PICO OS's tracker, a still recording looped for 5 minutes | 39 % of one core, back within 6 mm of the start, farthest 7 mm, no jump |
 | Frame times: the boot-time start-of-frame stamp against the hardware one | 395 ms late, constant within 0.2 ms over a boot |
@@ -1217,9 +1222,8 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 1. **PICO OS's tracker worn.** It holds still within a millimetre and costs a fraction of
    Basalt; worn checks in Valve's session (walking, fast turns, covering a camera, a dim room)
    are open. In the replayed walk it lost track in the fastest part of a turn and relocalised.
-   Two inputs are not yet PICO OS's: the IMU temperature (a fixed 30 °C; PICO OS passes the
-   sensor's) and the lens-shading table, fixed to this headset's camera vendor where PICO OS
-   reads the vendor from the modules' OTP.
+   One input is not yet PICO OS's: the lens-shading table, fixed to this headset's camera
+   vendor where PICO OS reads the vendor from the modules' OTP.
 2. **Controllers in applications.** SteamVR's dashboard toggles but stays hidden without the
    Steam client ([session.md](session.md)), so the laser, clicking and the grip frame are
    unchecked in it. A vibration strong enough to feel has not yet come from a SteamVR
