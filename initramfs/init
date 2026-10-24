@@ -95,6 +95,8 @@ fi
 # from super and userdata and switch to it, with or without a PC on the cable. When that fails,
 # the maintenance stage 1 in recovery starts instead.
 if [ "$(poc_arg root "")" = installed ]; then
+	# A sign of life in the lenses until stage 2 starts its own (pico4-splash.service).
+	pico4-splash 300 </dev/null >/dev/null 2>/dev/kmsg &
 	(
 		wait_for "$POC_RUN/usb.done" 120
 		pico4-userspace installed && pico4-userspace switch || {

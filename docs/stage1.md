@@ -111,7 +111,7 @@ with HTTP range requests, and checked against the CRC-32 in the zip directory.
      signature stops the build and drops the index from the cache;
    * kernel modules from the stock ramdisk's `lib/modules` (current firmware has none);
    * the [initramfs/](../initramfs/) overlay;
-   * `pico4-reboot` from [prebuilt/aarch64/](../prebuilt/aarch64/);
+   * `pico4-reboot` and `pico4-splash` from [prebuilt/aarch64/](../prebuilt/aarch64/);
    * static device nodes (`console`, `null`, `zero`, `kmsg`, `tty`, `ptmx`, `random`,
      `urandom`): the kernel opens `/dev/console` before `/init` runs, and there is no devtmpfs;
    * a root account without password, the host name `pico4-poc` and the build record
@@ -158,6 +158,17 @@ recovery). Any aarch64 cross compiler rebuilds it:
 aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector \
     -fno-asynchronous-unwind-tables -Wl,--build-id=none -s \
     -o prebuilt/aarch64/pico4-reboot src/reboot/pico4-reboot.c
+```
+
+`pico4-splash` ([source](../src/splash/pico4-splash.c)), the installed system's boot indication
+in the lenses ([install.md](install.md)), is freestanding the same way (about 9 KB), so stage 1
+and stage 2 run the same file:
+
+```sh
+aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector \
+    -fno-asynchronous-unwind-tables -fno-builtin -Wall -Wextra -Werror \
+    -Wl,--build-id=none,-z,max-page-size=4096 -s \
+    -o prebuilt/aarch64/pico4-splash src/splash/pico4-splash.c
 ```
 
 ## Booting

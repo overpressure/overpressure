@@ -205,9 +205,9 @@ def build_rootfs(args, stock_entries, build_info: dict) -> cpio.Tree:
 
     log(">> POC overlay (initramfs/)")
     add_overlay(tree, OVERLAY)
-    helper = os.path.join(PREBUILT, "pico4-reboot")
-    with open(helper, "rb") as f:
-        tree.add_file("usr/sbin/pico4-reboot", f.read(), 0o755)
+    for name in ("pico4-reboot", "pico4-splash"):
+        with open(os.path.join(PREBUILT, name), "rb") as f:
+            tree.add_file(f"usr/sbin/{name}", f.read(), 0o755)
 
     # Optional local experiments (for example a separately built graphics bundle).
     # Keep these out of the default, verified shell image.

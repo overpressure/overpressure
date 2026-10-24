@@ -38,6 +38,14 @@ come from the image ([stage1.md](stage1.md), [xr.md](xr.md)).
 - **Updates.** A new system image replaces `super` whole; the data stays. When stage 1 sees an
   image it has not booted before, `/var/lib/pacman` (the package database, which describes the
   image) is taken from the new image.
+- **Boot indication.** [`pico4-splash`](../src/splash/pico4-splash.c) shows a turning ring of
+  dots in the middle of both lenses while the system starts. Stage 1 starts it before it mounts
+  the system, about 15 s after the kernel; it survives the switch to systemd, whose
+  `pico4-splash.service` takes the display from it at about 29 s. It sets the panels' 90 Hz
+  mode on the six stock layers and then gives up DRM master, so the next compositor (Monado,
+  SteamVR's) becomes master as usual; its commit ends the indication. Monado's session shows
+  nothing until an OpenXR application starts, so its start ends the indication there
+  (`splash-done`, from `pico4-session.service`); after four minutes it ends in any case.
 - **SSH host keys.** The installed system keeps the keys of its first boot (in the `/etc`
   overlay); stage 1 makes new ones on every boot, so its few seconds before the switch answer
   with another key.
@@ -135,18 +143,19 @@ the ABL to stock (`python -m pico4 cycle --restore-only`) and entering developme
 | `dev check` on the installed system | the userspace, IMU, pose and display checks pass (the display check failed once on the first, cold run with 51 late frames, then passed with 21); Valve's session passes its integration checks, its performance verdict fails on one of the known one-second stalls (as in RAM) |
 | Development loop | `dev recovery`, `dev boot` (root on zram again), `dev reboot` (stays in maintenance), `dev normal` (installed system again) |
 | Boot without the PC (cable unplugged, power button) | stage 1 switches without waiting for a PC; systemd reaches the graphical target 1 min 53 s after power-on with no failed units; the data is there; the USB link comes up when the cable is plugged in later |
+| Boot indication | stage 1 shows it 15.3 s after the kernel started, stage 2's service takes over at 29.2 s without a gap, Monado's session ends it at 68 s; Monado and SteamVR's compositor take the display from it (it exits within 0.5 s) |
 | Power-off | stays off without the cable; with the cable attached the headset starts again within seconds |
 
 ## Open work
 
 1. **The way back.** `dev restore` for an installed system is implemented and tested on the
    host, not yet on the headset; it ends in PICO OS's first-time setup.
-2. **Feedback and power.** The lenses stay dark while the system starts and afterwards (the
-   default session starts Monado only for a client). The power button follows PICO OS only
-   partly: PICO OS turns the screen off on a short press and suspends, and offers power-off and
-   restart after a 2 s press. Here a short press does nothing and a 5 s press powers off
-   ([`50-pico4-power-key.conf`](../userspace/rootfs/usr/lib/systemd/logind.conf.d/50-pico4-power-key.conf));
-   both unverified on the headset. With the cable attached, a powered-off headset starts again:
+2. **Feedback and power.** The lenses show the boot indication until the session starts; the
+   default session (Monado) then shows nothing until an OpenXR application starts. The power
+   button follows PICO OS only partly: PICO OS turns the screen off on a short press and
+   suspends, and offers power-off and restart after a 2 s press. Here a short press does
+   nothing (checked on the headset) and a 5 s press powers off
+   ([`50-pico4-power-key.conf`](../userspace/rootfs/usr/lib/systemd/logind.conf.d/50-pico4-power-key.conf)). With the cable attached, a powered-off headset starts again:
    the PMIC powers up on USB, and the bootloader then boots with `androidboot.mode=charger`, for
    which PICO OS runs its charging screen. Stage 1 does not handle that mode yet.
 3. **Integrity.** The system image is checked when written, not at boot (no dm-verity).

@@ -76,7 +76,7 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
   pico4-basalt, pico4-monado, pico4-vrdisplay, pico4-sysvsem, pico4-gtk2 for the Steam client,
   pico4-mangohud).
 - `src/`: the project's C sources (`graphics/`, `monado/` driver and KMS target, `xr/` OpenXR
-  clients, `vrdisplay/`, `sysvsem/`, `reboot/`). Recipes list them as `SKIP`; the build copies
+  clients, `vrdisplay/`, `sysvsem/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
   them in.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-graphics.sh`, `extract-sensor-data.sh`,
   `extract-wlan.sh`, `extract-audio.sh`, boot and

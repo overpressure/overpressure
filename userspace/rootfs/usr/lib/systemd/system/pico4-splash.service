@@ -1,0 +1,18 @@
+# A sign of life in the lenses while the installed system starts (docs/install.md): stage 1's
+# pico4-splash ends with the switch to this system, this one carries on until a compositor
+# takes the display (it exits by itself) or the session starts without one
+# (pico4-session.service stops it, /usr/libexec/pico4-poc/splash-done).
+[Unit]
+Description=Boot indication in the lenses
+DefaultDependencies=no
+ConditionKernelCommandLine=pico4poc.root=installed
+# The device nodes exist after the sweep (no devtmpfs on the stock kernel).
+After=pico4-storage-ro.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+ExecStart=/usr/bin/pico4-splash 240
+
+[Install]
+WantedBy=sysinit.target

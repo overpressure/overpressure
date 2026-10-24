@@ -110,7 +110,8 @@ cp -r "$source_dir/pico4" "$source_dir/src" "$source_dir/userspace" "$project.ne
 for f in lib.sh recovery-policy.sh recovery-watch; do
     cp "$source_dir/initramfs/usr/libexec/pico4-poc/$f" "$project.new/initramfs/usr/libexec/pico4-poc/"
 done
-cp "$source_dir/prebuilt/aarch64/pico4-reboot" "$project.new/prebuilt/aarch64/"
+cp "$source_dir/prebuilt/aarch64/pico4-reboot" "$source_dir/prebuilt/aarch64/pico4-splash" \
+    "$project.new/prebuilt/aarch64/"
 find "$project.new" -name __pycache__ -prune -exec rm -rf {} +
 rm -rf "$project"
 mv "$project.new" "$project"
@@ -335,7 +336,9 @@ done < <(find "$project/userspace/rootfs" -type f -print0)
 for f in lib.sh recovery-policy.sh recovery-watch; do
     overlay "$project/initramfs/usr/libexec/pico4-poc/$f" "$T/usr/libexec/pico4-poc/$f"
 done
-install -o 0 -g 0 -m 0755 "$project/prebuilt/aarch64/pico4-reboot" "$T/usr/bin/pico4-reboot"
+for f in pico4-reboot pico4-splash; do
+    install -o 0 -g 0 -m 0755 "$project/prebuilt/aarch64/$f" "$T/usr/bin/$f"
+done
 firmware_json="[]"
 if [[ -n "$firmware" ]]; then
     mkdir -p "$T/usr/lib/firmware"
@@ -435,7 +438,8 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path \
-    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-wifi-wpa2-fallback.path pico4-audio.target
+    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-wifi-wpa2-fallback.path pico4-audio.target \
+    pico4-splash.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration

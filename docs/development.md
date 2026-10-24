@@ -27,8 +27,8 @@ userspace/        stage 2: the SteamOS-compatible userspace
                     pico4-monado, pico4-vrdisplay, pico4-sysvsem, pico4-gtk2
 src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's PICO 4 driver and
                   KMS target), xr/ (OpenXR test clients), vrdisplay/ (SteamVR's display layer),
-                  sysvsem/ (System V semaphores), reboot/ (pico4-reboot)
-prebuilt/         the static aarch64 pico4-reboot, so stage 1 builds without a compiler
+                  sysvsem/ (System V semaphores), reboot/ (pico4-reboot), splash/ (pico4-splash)
+prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-graphics.sh, extract-sensor-data.sh, boot and preflight helpers
 tests/            host tests (unittest), test_recovery_policy.sh, test_vrdisplay_fake.sh, qemu/ (test kernels and boot tests)
 docs/             documentation
