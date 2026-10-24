@@ -496,6 +496,11 @@ chown -R 1000:1000 "$T/home/$user"
 # The compositor's launcher raises its priority (as SteamVR's setup does on
 # desktops); the archive keeps file capabilities.
 in_t setcap cap_sys_nice=eip /opt/steamvr/bin/linuxarm64/vrcompositor-launcher
+# Steam Linux Runtime's containers (pressure-vessel) need bubblewrap, which without user
+# namespaces (not in the stock kernel) only works setuid; pressure-vessel takes a setuid
+# /usr/bin/bwrap when its own fails (docs/session.md#the-steam-client).
+[[ -x "$T/usr/bin/bwrap" ]] || { echo "bubblewrap is missing from the image" >&2; exit 1; }
+chmod 4755 "$T/usr/bin/bwrap"
 mkdir -p "$T/etc/systemd/system-generators"
 ln -sfn /dev/null "$T/etc/systemd/system-generators/systemd-gpt-auto-generator"
 in_t systemctl set-default graphical.target

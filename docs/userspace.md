@@ -97,7 +97,7 @@ replaces it. The gaps and their adaptations:
 | --- | --- | --- |
 | `DEVTMPFS` (systemd requires it) | `/dev`, udev | stage 1 hands over a tmpfs copy of its `/dev`; [`00-pico4-devnodes.rules`](../userspace/rootfs/usr/lib/udev/rules.d/00-pico4-devnodes.rules) creates and removes the node for every uevent before any other rule runs |
 | `FHANDLE` | systemd mount detection, udev | none needed: systemd falls back to mount IDs |
-| `USER_NS`, `PID_NS`, `IPC_NS`, `UTS_NS` | unit sandboxing; Steam's pressure-vessel containers | systemd ignores these settings; Steam Linux Runtime containers would need a setuid bubblewrap and cannot isolate PIDs (open) |
+| `USER_NS`, `PID_NS`, `IPC_NS`, `UTS_NS` | unit sandboxing; Steam's pressure-vessel containers | systemd ignores these settings; `/usr/bin/bwrap` is setuid, which pressure-vessel uses for Steam Linux Runtime's containers when its own bubblewrap fails; the containers then share the host's PIDs ([session.md](session.md#the-steam-client)) |
 | `MEMCG`, `CGROUP_PIDS`, `CGROUP_DEVICE` | resource control | `systemd-oomd` masked; memory and task limits are not enforced |
 | `SYSVIPC`, `POSIX_MQUEUE` | X11 MIT-SHM (`shmget`), SteamVR's process locks (`semget`), some games | semaphores: [`pico4-sysvsem`](../src/sysvsem/pico4-sysvsem.c), preloaded for every process ([session.md](session.md)); shared memory and message queues: none, clients must use memfd and fd passing |
 | `BINFMT_MISC` | FEX for x86 games | FEX must be invoked explicitly |

@@ -188,6 +188,17 @@ session:
   any update. A client that fails at once therefore alternates between the bundle, an update
   and five failures. SteamVR's health check does the same after three failed SteamVR launches
   in a row (the count lives in `$XDG_RUNTIME_DIR`, so a reboot clears it).
+- **Games.** For Windows games the client downloads Proton 11 (ARM64), which runs the game
+  inside Steam Linux Runtime 4 for arm64. Its container (pressure-vessel) is set up by
+  bubblewrap, which without user namespaces needs root: its own bubblewrap fails ("Creating
+  new namespace failed"), and it then takes the image's `/usr/bin/bwrap`, which is setuid
+  (pressure-vessel's `bwrap-setuid` mode). A setuid bubblewrap sets up mount namespaces as
+  root and runs the program as the user; without PID namespaces the container shares the
+  host's process IDs. Beat Saber starts this way: the game runs under Proton and connects to
+  SteamVR as an OpenXR application, but no frame reaches SteamVR (the headset stays on
+  SteamVR's "Waiting" screen). Games with an Android build (Cubism) start through Valve's
+  Lepton instead, which runs the Android build in a podman container; podman is not in the
+  image.
 - **UI on the GPU.** The client's web helper (CEF) draws the UI with ANGLE. On ANGLE's OpenGL
   backend, zink on Turnip, the UI's overlay alternates between the new and an older frame from
   the moment a dialog opens (the sign-in's "More Options..." dialog: in panel images every fifth
