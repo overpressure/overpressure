@@ -130,6 +130,14 @@ The build fails if `gamescope-session` does not start `mangoapp` or the program 
 gamescope's reaper restarts a `mangoapp` that cannot start without end (15,077 times in a minute
 without its `libglfw`).
 
+In VR mode gamescope hands each layer of an app's frame to SteamVR as a subview of the app's
+overlay (`….layer1` to `….layer7`). `mangoapp`'s window, the external overlay, is one of these
+layers, so the HUD appears over apps that run in gamescope. The Steam client's own UI is a
+SteamVR overlay that gamescope forwards rather than composes, and it gets no HUD. gamescope's
+screenshots and the window's X11 contents do not show the HUD in VR mode, but the panels do:
+only the display layer's frame dumps (`PICO4_VRDISPLAY_DUMP`) or the headset itself show what
+SteamVR presents.
+
 Further adaptations:
 
 | Where | What | Why |
@@ -893,6 +901,7 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: `pico4-vrdisplay-test` with five 8 s pauses (`--pauses 5`) | each pause: panels off after 5 s without a present (backlight powered down), GPU floor back to the default level, the vblank counter going on at 90 Hz (720 counts in 8 s); each next present: panels on after 459-473 ms, floor raised again; 87.3 frames/s between the pauses, 2 late, no stall |
 | Headset: Valve's session with `pauseCompositorOnStandby` on, headset lying still, orientation only (`PICO4_SLAM=0`) | SteamVR enters standby after about 15 s and stops presenting; 5 s later the panels go off, the GPU drops to 305 MHz at its default floor, and the hottest zone falls from 40 to 30 °C in 100 s. With 6DoF the tracker's runaways count as motion, and SteamVR does not enter standby |
 | Headset: Valve's session with `mangoapp` (60 s) | one `mangoapp` process throughout (before, without its library, 15,077 restarts a minute); gamescope's queue to it in `pico4-sysvmsg`, its messages received by `mangoapp`; MangoHud warns about two Steam settings it does not know (`no_display`, `nis_steam_sharpness`) |
+| Headset: Valve's session, `glxgears` in gamescope with the HUD switched on in `mangoapp`'s configuration, panel images every 15th present for 25 s | the HUD (GPU and CPU load, frame rate, frame time and its graph) over `glxgears` in every image; SteamVR lists the app's overlay and three of its layer subviews as visible |
 | Headset: X11 test clients in gamescope's Xwayland (the environment of `steam.service`) | `glxinfo`: direct rendering on `zink Vulkan 1.3(Turnip Adreno (TM) 650)`, OpenGL 4.6; `glxgears` synchronized to the refresh at 88.9–89.8 FPS; `vkcube` (xcb) 900 frames in 10.1 s, 88.8 FPS; no llvmpipe or glamor failure in Xwayland's log; `ibus-gamescope` active |
 | Headset: `pico4-vrsync-test` with injected faults (`PICO4_VRDISPLAY_SYNC_FAULT`) | `export` and `import` pass every check, waiting for the submission or on the CPU instead; `spares` fails the submission (`vkQueueSubmit` returns an error) without any value counting as reached |
 | Headset: SteamVR stopped with the session, two rounds | each stop clean ("Stopped SteamVR Launcher"), no fallback, Valve's failure tracker empty; before, every stop failed the unit (`vrstartup -shutdown` exit 255) |
