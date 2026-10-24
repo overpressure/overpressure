@@ -15,7 +15,8 @@
  *                     [--ring N] [--timeout MS] [--lane-assign SLOT=LANE]
  *                     [--no-station] [--no-station-reset] [--stats-log FILE]
  *                     [--exposure LINES [--gain G]] [--led-exposure LINES [--led-gain G]]
- *                     [--lines N] [--sensor-lines N] [--record-leds FILE] [--record-imu FILE]
+ *                     [--lines N] [--sensor-lines N] [--record-leds FILE] [--record-scene FILE]
+ *                     [--record-imu FILE]
  *       Streams until every selected camera delivered N frames (default 30),
  *       saves an early scene frame of each camera as DIR/camS.pgm (8 bits, the
  *       640x480 scene rows) and DIR/camS.raw16 (the whole buffer, little-endian
@@ -46,7 +47,8 @@
  *       header ("P4LF", version 1, slot, the ISP frame counter, start of frame
  *       on CLOCK_BOOTTIME and CLOCK_MONOTONIC in ns, the applied exposure lines
  *       and gain, width, height; little-endian) and the scene rows as 8 bits
- *       (the 10-bit samples shifted right by two).
+ *       (the 10-bit samples shifted right by two). --record-scene writes the
+ *       scene exposures (the head-tracking frames) the same way.
  *       --record-imu appends the controllers' radio packets (the sensor
  *       service's ble_mcu events, with their IMU and input records) and the
  *       head IMU to FILE: records of an 8-byte header ("P4L", kind I, H or C,
@@ -101,7 +103,7 @@ usage(FILE *f)
 	      "                 [--ring N] [--timeout MS] [--lane-assign SLOT=LANE] [--no-station]\n"
 	      "                 [--no-station-reset] [--stats-log FILE] [--exposure LINES [--gain G]]\n"
 	      "                 [--led-exposure LINES [--led-gain G]] [--lines N] [--sensor-lines N]\n"
-	      "                 [--record-leds FILE] [--record-imu FILE]\n",
+	      "                 [--record-leds FILE] [--record-scene FILE] [--record-imu FILE]\n",
 	      f);
 }
 
@@ -408,9 +410,9 @@ log_frame(FILE *log, const struct pico4_cam_frame *f)
 	        m.gain, peak, saturated);
 }
 
-//! One controller-LED exposure for --record-leds (format in the header comment); false on a write error.
+//! One exposure for --record-leds or --record-scene (format in the header comment); false on a write error.
 static bool
-record_led_frame(FILE *out, const struct pico4_cam_frame *f, const struct pico4_cam_meta *m)
+record_frame(FILE *out, const struct pico4_cam_frame *f, const struct pico4_cam_meta *m)
 {
 	uint8_t head[48] = {'P', '4', 'L', 'F', 1, (uint8_t)f->slot};
 	uint64_t id = f->frame_id, boot = (uint64_t)f->sof_boottime_ns, mono = (uint64_t)f->sof_monotonic_ns;
@@ -623,7 +625,7 @@ static int
 cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 {
 	const char *dir = ".";
-	FILE *stats_log = NULL, *led_record = NULL;
+	FILE *stats_log = NULL, *led_record = NULL, *scene_record = NULL;
 	struct imu_recorder imu = {0};
 	pthread_t imu_thread;
 	bool imu_running = false;
@@ -683,12 +685,13 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 				fprintf(stderr, "pico4-cam: cannot write %s: %s\n", v, strerror(errno));
 				return 1;
 			}
-		} else if (strcmp(a, "--record-leds") == 0) {
-			if (led_record != NULL) {
-				fclose(led_record);
+		} else if (strcmp(a, "--record-leds") == 0 || strcmp(a, "--record-scene") == 0) {
+			FILE **out = a[9] == 'l' ? &led_record : &scene_record;
+			if (*out != NULL) {
+				fclose(*out);
 			}
-			led_record = fopen(v, "we");
-			if (led_record == NULL) {
+			*out = fopen(v, "we");
+			if (*out == NULL) {
 				fprintf(stderr, "pico4-cam: cannot write %s: %s\n", v, strerror(errno));
 				return 1;
 			}
@@ -784,9 +787,14 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 				log_frame(stats_log, &f);
 			}
 			struct pico4_cam_meta m;
-			if (led_record != NULL && pico4_cam_meta_decode(f.meta, f.stride, &m) &&
-			    m.phase == PICO4_CAM_PHASE_LEDS && !record_led_frame(led_record, &f, &m)) {
+			bool decoded = (led_record != NULL || scene_record != NULL) && pico4_cam_meta_decode(f.meta, f.stride, &m);
+			if (decoded && led_record != NULL && m.phase == PICO4_CAM_PHASE_LEDS && !record_frame(led_record, &f, &m)) {
 				error = "writing the LED record failed";
+				r = -EIO;
+			}
+			if (decoded && scene_record != NULL && m.phase == PICO4_CAM_PHASE_SCENE &&
+			    !record_frame(scene_record, &f, &m)) {
+				error = "writing the scene record failed";
 				r = -EIO;
 			}
 		}
@@ -874,6 +882,9 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 		fclose(stats_log);
 	}
 	if (led_record != NULL && fclose(led_record) != 0) {
+		ok = false;
+	}
+	if (scene_record != NULL && fclose(scene_record) != 0) {
 		ok = false;
 	}
 	if (imu.out != NULL && fclose(imu.out) != 0) {

@@ -833,6 +833,8 @@ streams too. With `ble_mcu` alone, the sensor DSP drops it to about 90 events pe
 rate is requested, a few minutes after the DSP started. Then gaps of up to 0.1 s trip the 35 ms
 rule about once a second. The driver always streams the head IMU at 1 kHz, and
 `pico4-cam --record-imu` records the head IMU along with the controllers for the same reason.
+`pico4-cam --record-scene` records the scene exposures (the head-tracking frames) in the format
+of `--record-leds`, for replaying head trackers.
 
 PICO OS sends exposure commands all the time, so its tracker sees the LEDs as they are after the
 first such command (see the tracking cameras): at 0.7 m neighbouring LEDs merge into one blob and
