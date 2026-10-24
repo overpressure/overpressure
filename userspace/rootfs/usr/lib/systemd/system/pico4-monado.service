@@ -13,6 +13,9 @@ After=pico4-monado.socket pico4-sensors.target
 Wants=pico4-sensors.target
 # PICO OS's head tracker (docs/xr.md#head-tracking).
 Wants=pico4-slamd.service
+# PICO OS's CPU limits for VR while it runs (docs/cooling.md#vr-cpu-limits).
+Wants=pico4-vr-performance.service
+After=pico4-vr-performance.service
 ConditionPathExists=/dev/kgsl-3d0
 
 [Service]

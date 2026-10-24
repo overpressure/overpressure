@@ -150,6 +150,32 @@ Settings, in `/etc/pico4-poc/fan.conf` (the service's `EnvironmentFile`):
 The daemon writes its state to `/run/pico4-fan/state.json` every second: duty, reason, RPM,
 the hottest mean, and every sensor's reading and mean.
 
+## VR CPU limits
+
+While a VR app runs, PICO OS limits the CPU through Qualcomm's VR service. `svrSetPerformanceLevels`
+in `libsvrapi.so` hands the app's CPU and GPU levels to `qvrservice`, whose configuration
+(`/system/etc/qvr/qvrservice_config.txt`, `performance_perf_hints`) maps each of the nine level
+pairs to a power hint in the vendor's `powerhint.xml`, `0x130A`–`0x1312`. All nine hints hold
+the same resources (perf HAL opcodes, decoded with the vendor's `commonresourceconfigs.xml`; the
+hint's clusters count big, little, prime):
+
+| Resource | Value |
+| --- | --- |
+| `msm_performance` `cpu_min_freq` / `cpu_max_freq`, big cores (4–6) | 864 / 2016 MHz |
+| the same, little cores (0–3) | 576 / 1804 MHz (their own maximum) |
+| the same, prime core (7) | 941 / 2054 MHz |
+| `core_ctl` `min_cpus` | 3 big cores, 1 prime core |
+| KGSL `min_pwrlevel` / `max_pwrlevel` | 5 / 0 |
+
+Without limits the big cores reach 2419 MHz and the prime core 2842 MHz. The stock kernel has
+the same `msm_performance` and `core_ctl` nodes, and
+[`vr-performance`](../userspace/rootfs/usr/libexec/pico4-poc/vr-performance) applies the CPU part:
+[`pico4-vr-performance.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-vr-performance.service)
+runs it while `pico4-session.service` or `pico4-monado.service` runs (both want the unit, which
+stops when neither does) and puts the limits it found back when it stops. The GPU part stays
+with the compositors, which hold KGSL's floor themselves while they present
+([session.md](session.md)).
+
 ## Build
 
 The overlay in [userspace/rootfs](../userspace/rootfs) puts `pico4-fan` and its unit into the
