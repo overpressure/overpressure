@@ -603,10 +603,12 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   ([`pico4-slamd.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service),
   wanted by Valve's session and Monado) creates `/dev/shm/pico4-slam` (group video, mode 0660)
   and feeds the tracker as PICO OS's tracking service does: `createHandle("")`,
-  `headSensorModel` `icm4x6xx`, `startAlgorithm`, the result callback, `start6DOF` `6`; every IMU
-  sample as {gyro, accel, temperature} with its time; each frame set once the IMU is 30 ms past
-  it (on PICO OS the camera's latency does that; earlier, the tracker waited for the IMU in vain
-  on nearly every frame); then every pose back. Each start of the driver bumps a generation in the
+  `headSensorModel` `icm4x6xx`, `startAlgorithm`, the result callback, `start6DOF` `6`; from one
+  thread every IMU sample as {gyro, accel, temperature} with its time and the pose after it, from
+  another each frame set once the IMU is 30 ms past it (on PICO OS the camera's latency does that;
+  earlier, the tracker waited for the IMU in vain on nearly every frame). `updateImage` only
+  queues a set (up to 2.5 ms); the tracker works on it inside a later `update6AxisIMU`, which
+  then takes up to 11 ms, so poses can be up to about 18 ms apart. Each start of the driver bumps a generation in the
   shared memory; `pico4-slamd` then exits and comes back with a new tracker.
 - **Images.** PICO OS's processing of each scene frame, reimplemented
   ([isp.h](../src/stockslam/isp.h)): the first scene row doubled (it replaces the sensor's metadata
@@ -624,8 +626,12 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
 - **Poses.** The tracker's world and body frames have the factory body frame's axes (x up, y
   left, z back). PICO OS's client maps both with the HMD axes; the driver does the same (the
   inverse of `Q_B_H` on each side), adds the HMD origin and predicts along the pose's velocities to
-  the requested time plus the display lead, at most 45 ms past the newest pose, as PICO OS's
-  client clamps it. The tracker fuses the IMU itself, so the HMD takes its poses directly, without
+  the requested time plus the display lead, at most 45 ms past the newest pose. PICO OS's
+  `getPredictResult` extrapolates the same way (body rates on the right of the orientation,
+  velocity and acceleration for the position) within 45 ms of a reference pose; its client asks
+  for the pose's own time and predicts for the display elsewhere. A time already past (the
+  controller tracker's LED exposures) is interpolated between the two poses around it in the
+  shared memory. The tracker fuses the IMU itself, so the HMD takes its poses directly, without
   [pico4_fusion.c](../src/monado/pico4_fusion.c). A pose older than 200 ms, or one the tracker
   reports untracked, counts as lost: the HMD keeps the last position with the 3DoF orientation.
   The tracker relocalises in its own map.
@@ -640,6 +646,13 @@ first frame after boot, late by however long that interrupt waited: on the heads
 off (constant within 0.2 ms). It is only the fallback. The time of a frame is the middle of its
 exposure: the start of frame minus 52 µs, seven lines (133.5 µs) and half the exposure in lines
 of 19.07 µs, from the frame's own metadata line, as PICO OS computes it.
+
+The QTimer's offset to `CLOCK_MONOTONIC` is taken again every second, on the IMU thread and on the
+camera thread. `systemd-timesyncd` steers `CLOCK_MONOTONIC` against the QTimer (16.6 ppm on the
+headset, 1 ms a minute): an offset taken once at the driver's start is 0.3 s off after five
+hours. Poses then look older than the 200 ms after which the HMD counts them lost, and the view
+falls back to the IMU orientation extrapolated across the gap. Worn, every motion then overshot
+and sprang back.
 
 ### Basalt
 
@@ -1167,6 +1180,8 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Headset: SLPI restart (`RELATED`) during a Monado session, a pose client running 120 s | the driver saw the service go away at once and reported the pose untracked; `pico4-sensorspd` restarted after 2 s; the IMU stream came back after 36.6 s in the same Monado process; every pose valid, 1,652 of 2,376 tracked; the service stopped cleanly afterwards |
 | Headset: frame identity in Valve's sessions (several runs, over 1,250 frame sets each) | no inconsistent and no incomplete set, while auto exposure moved from 300 lines at gain 16 to 400 lines at gain 46: all four sensors take a new exposure on the same frame |
 | PICO OS's tracker in Valve's session, headset still on a table, 60 s | 61,391 poses, none lost, within 0.7 mm and 0.04° of the first; 25 frame sets and 1,024 IMU samples per second to `pico4-slamd`, none skipped, no frame without the hardware start of frame; `pico4-slamd` 71 % of one core, `vrserver` 116 % (with Basalt 346–388 %); hottest zone 55.8 °C (with Basalt 75.8 °C) |
+| PICO OS's tracker, headset turned and lifted by hand for 72 s (73,596 poses) | its angular rate equals the raw gyro and the poses' own rate (ratio 1.000), its velocity the positions' own (1.001); extrapolated 45 ms with them, within 0.07° and 0.3 mm of the pose that came 45 ms later (median; 0.63° and 5.5 mm without); after the HMD's conversion to OpenXR the angular velocity still matches the orientation's rate (0.999) |
+| `CLOCK_MONOTONIC` against the raw counter (timesyncd running) | 0.998 ms in 60 s: 16.6 ppm |
 | A Monado client while Valve's session runs | Monado's service is refused the station (locked by SteamVR's driver) before any reset, gets no cameras, and fails the client in 3 s (`xrGetSystem`); no core dump, a clean stop; Valve's session keeps its controllers and its tracker (no new generation) |
 | IMU temperature to the tracker, Valve's session | `sensor_temperature` of the ICM-42688 at 44.1–44.3 °C with the SoC's hottest zone at 60–61 °C; still within 0.8 mm for 60 s, no pose lost |
 | PICO OS's tracker, a recorded walk replayed (4 cameras and the IMU, hardware start-of-frame times) | back within 9 cm of the start; lost in the fastest part of a turn and relocalised in its own map |

@@ -592,7 +592,7 @@ imu_thread(void *ptr)
 	struct pico4_hmd *h = (struct pico4_hmd *)ptr;
 	struct pico4_ssc_sample samples[64];
 	float rate = (float)debug_get_num_option_pico4_imu_rate();
-	int64_t last_data_ns = os_monotonic_get_ns();
+	int64_t last_data_ns = os_monotonic_get_ns(), clock_ns = last_data_ns;
 
 	os_thread_helper_name(&h->oth, "PICO 4 IMU");
 	os_thread_helper_lock(&h->oth);
@@ -602,6 +602,15 @@ imu_thread(void *ptr)
 		int64_t now = os_monotonic_get_ns();
 		if (n > 0) {
 			last_data_ns = now;
+		}
+		/*
+		 * timesyncd steers CLOCK_MONOTONIC against the QTimer (15 ppm measured): an offset taken
+		 * once is 0.3 s off after five hours, and the poses then look stale. Taken again each
+		 * second, on the only thread that maps the sensor DSP's times.
+		 */
+		if (now - clock_ns >= U_TIME_1S_IN_NS) {
+			calibrate_clock(h);
+			clock_ns = now;
 		}
 		bool gone = n == -ECONNRESET, silent = now - last_data_ns > IMU_LOST_NS;
 		if (n < 0 && !gone && !silent) {
@@ -855,6 +864,21 @@ display_lead_ns(struct pico4_hmd *h)
 	return us * 1000;
 }
 
+//! The relation handed out for @p at_ns, to PICO4_FUSION_CSV's fusion_pose.csv when set.
+static void
+log_pose(struct pico4_hmd *h, int64_t at_ns, const struct xrt_space_relation *rel)
+{
+	if (h->pose_csv == NULL) {
+		return;
+	}
+	const struct xrt_pose *p = &rel->pose;
+	const struct xrt_vec3 *v = &rel->linear_velocity, *w = &rel->angular_velocity;
+	fprintf(h->pose_csv, "%lld,%lld,%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
+	        (long long)at_ns, (long long)os_monotonic_get_ns(), p->position.x, p->position.y, p->position.z,
+	        p->orientation.x, p->orientation.y, p->orientation.z, p->orientation.w, (int)rel->relation_flags, v->x,
+	        v->y, v->z, w->x, w->y, w->z);
+}
+
 static xrt_result_t
 get_head_pose(struct xrt_device *xdev,
               enum xrt_input_name name,
@@ -891,14 +915,7 @@ get_head_pose(struct xrt_device *xdev,
 				out_relation->relation_flags |= XRT_SPACE_RELATION_ANGULAR_VELOCITY_VALID_BIT;
 			}
 		}
-		if (h->pose_csv != NULL) {
-			const struct xrt_pose *p = &out_relation->pose;
-			const struct xrt_vec3 *v = &out_relation->linear_velocity, *w = &out_relation->angular_velocity;
-			fprintf(h->pose_csv, "%lld,%lld,%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
-			        (long long)at_timestamp_ns, (long long)os_monotonic_get_ns(), p->position.x, p->position.y,
-			        p->position.z, p->orientation.x, p->orientation.y, p->orientation.z, p->orientation.w,
-			        (int)out_relation->relation_flags, v->x, v->y, v->z, w->x, w->y, w->z);
-		}
+		log_pose(h, at_timestamp_ns, out_relation);
 		return XRT_SUCCESS;
 	}
 
@@ -924,6 +941,7 @@ get_head_pose(struct xrt_device *xdev,
 			h->have_slam_position = true;
 		}
 		*out_relation = rel;
+		log_pose(h, at_timestamp_ns, out_relation);
 		return XRT_SUCCESS;
 	}
 	rel = imu;
@@ -1228,6 +1246,16 @@ pico4_hmd_create(void)
 		snprintf(h->base.serial, XRT_DEVICE_NAME_LEN, "PICO 4 (SLAM)");
 		if (pico4_slam_fuses_imu(h->slam)) {
 			P4_INFO(h, "6DoF from PICO OS's tracker, which fuses the IMU itself");
+			const char *dir = debug_get_option_pico4_fusion_csv();
+			if (dir != NULL) {
+				char path[512];
+				snprintf(path, sizeof(path), "%s/fusion_pose.csv", dir);
+				h->pose_csv = fopen(path, "w");
+				if (h->pose_csv != NULL) {
+					setvbuf(h->pose_csv, NULL, _IOLBF, 0);
+					fprintf(h->pose_csv, "#at_ns,now_ns,x,y,z,qx,qy,qz,qw,flags,vx,vy,vz,wx,wy,wz\n");
+				}
+			}
 		} else {
 			setup_track(h);
 		}

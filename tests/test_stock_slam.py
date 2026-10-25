@@ -115,6 +115,41 @@ class DriverAttachTests(unittest.TestCase):
         self.assertLess(calls[0], source.index("\n}\n", copy))
 
 
+class ClockTests(unittest.TestCase):
+    """timesyncd steers CLOCK_MONOTONIC against the QTimer: both mappings are taken again each second."""
+
+    def test_offsets_follow_the_clock(self):
+        hmd = read(ROOT / "src/monado/pico4_hmd.c")
+        thread = hmd.index("imu_thread(void *ptr)")
+        refresh = hmd.index("calibrate_clock(h);", thread)
+        self.assertLess(refresh, hmd.index("\n}\n", thread))
+        self.assertIn("if (now - clock_ns >= U_TIME_1S_IN_NS) {", hmd[thread:refresh])
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        sof = slam.index("frame_sof_ns(struct pico4_slam *s")
+        body = slam[sof:slam.index("\n}\n", sof)]
+        self.assertIn("if (now - s->qtimer_measured_ns >= U_TIME_1S_IN_NS) {", body)
+        self.assertIn("s->qtimer_offset_ns = qtimer_offset();", body)
+
+    def test_controller_tracker_gets_the_head_pose_of_its_exposure(self):
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        head = slam.index("pico4_slam_get_head_pose(struct pico4_slam *s")
+        self.assertIn("if (at_ns < p.ts_ns) {", slam[head:head + 900])
+        self.assertIn("stock_pose_at(s, at_ns, &then)", slam[head:head + 900])
+
+
+class SlamdThreadTests(unittest.TestCase):
+    def test_images_on_their_own_thread(self):
+        # As PICO OS: frames (checkIsSync) apart from the IMU (threadReader), so a set never holds
+        # up the samples and their poses.
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        frame = slamd.index("frame_thread(void *arg)")
+        self.assertIn("c->image(c->h, 0, &frames);", slamd[frame:slamd.index("\n}\n", frame)])
+        self.assertIn("pthread_create(&thread, 0, frame_thread, &frames)", slamd)
+        main = slamd.index("main(int argc")
+        self.assertNotIn("image(h,", slamd[main:])
+        self.assertIn("__atomic_store_n(&frames.imu_fed_ts, e.ts_ns, __ATOMIC_RELEASE);", slamd)
+
+
 class TemperatureTests(unittest.TestCase):
     """an issue: the IMU's die temperature with every sample, as PICO OS's sensor DSP inserts it."""
 

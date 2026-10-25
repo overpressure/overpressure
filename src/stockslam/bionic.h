@@ -15,6 +15,7 @@ typedef long off_t;
 typedef unsigned int uid_t;
 typedef unsigned int gid_t;
 typedef unsigned int mode_t;
+typedef long pthread_t;
 typedef struct
 {
 	long tv_sec;
@@ -53,6 +54,7 @@ void exit(int);
 void *dlopen(const char *, int);
 void *dlsym(void *, const char *);
 char *dlerror(void);
+int pthread_create(pthread_t *, const void *, void *(*)(void *), void *);
 
 #define RTLD_NOW 2
 #define O_RDONLY 0
