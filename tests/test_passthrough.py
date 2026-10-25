@@ -152,6 +152,15 @@ class RoomViewTests(unittest.TestCase):
         u, v = uv(0.1, -0.05, -1.0)  # the same point in OpenVR's axes: behind, clamped z
         self.assertFalse(0 < u < 1 and 0 < v < 1)
 
+    def test_exposure_pose_without_the_lead(self):
+        # The reported poses are predicted by the lead (24 + 5 ms); the camera saw the head at the
+        # exposure itself: with the lead the room trailed the head's turns.
+        hmd = read(ROOT / "src/monado/pico4_hmd.c")
+        pose = hmd[hmd.index("\nroomview_pose(void *ctx"):]
+        pose = pose[:pose.index("\n}\n")]
+        self.assertIn("ctrack_head(pico4_hmd((struct xrt_device *)ctx), timestamp_ns, &pose)", pose)
+        self.assertNotIn("xrt_device_get_tracked_pose", pose)
+
     def test_driver_starts_the_export_for_steamvrs_camera(self):
         hmd = read(ROOT / "src/monado/pico4_hmd.c")
         info = hmd[hmd.index("pico4_hmd_camera_info(struct xrt_device *xdev, struct pico4_passthrough_info *out)"):]

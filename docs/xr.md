@@ -616,7 +616,9 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   camera-to-head transforms, and a ring of four frames. While the producer reports that the
   compositor wants frames (with a fresh heartbeat), the camera thread hands each scene set over
   and a thread of the driver converts it (as for the component) into the ring, with the head pose
-  at the middle of the exposure as SteamVR saw it. Otherwise nothing is copied.
+  at the middle of the exposure in the space the driver reports to SteamVR, without the 29 ms of
+  prediction and display lead its reported poses carry (with it, the room trailed the head's
+  turns). Otherwise nothing is copied.
 - **Client.** `VR_Init` as a background application, then `IVRCompositor_029`: the frames'
   import goes over `vrclient`'s connection to the compositor, which only asking for a compositor
   interface opens (without it the import request gets no answer). Then the passthrough
