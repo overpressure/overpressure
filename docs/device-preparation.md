@@ -117,10 +117,10 @@ with `rawprogram<N>.xml`), which keeps duplicate partition names of different LU
 Before a manifest is written, every non-skipped file of each rawprogram map must have exactly
 the advertised sector count. The LUN list is explicit; the adapter does not prove that a
 manually supplied list is complete. The example captures the smaller firmware LUNs before LUN 0,
-which commonly holds userdata. Later tools read this layout:
-[scripts/extract-sensor-data.sh](../scripts/extract-sensor-data.sh), for example, takes
-`lun0/super.bin`, `lun0/persist.bin` and `lun4/modem.bin`. Pass `--edl-backend edl-ng --edl PATH`
-to `stage` and `restore-abl` as well.
+which commonly holds userdata. The way back to stock and the write checks read this layout (the
+partition maps, sizes and hashes); building an image does not need the backup
+([development.md](development.md#stock-firmware)). Pass `--edl-backend edl-ng --edl PATH` to
+`stage` and `restore-abl` as well.
 
 A manifest is written only when the dump contains `abl`, `boot` and `devinfo` images, the GPT
 (`gpt_main*`), the rawprogram maps and, when requested, userdata. A failed dump has no manifest

@@ -4,6 +4,7 @@ Stage-1 boot image (pico4.image):
   build      build the boot image from a stock boot.img, OTA zip or URL
   inspect    analyse a stock boot image and its kernel configuration
   match      find the firmware.json entry for a headset's fingerprint
+  stock      the stock firmware's partitions from the public OTA (pico4.stock)
 Headset (each operates on real hardware):
   device     identity, EDL backups, engineering ABL, unlock and restore (pico4.device)
   hwtest     preflight and the bounded acceptance runner (pico4.hardware_test)
@@ -22,6 +23,7 @@ COMMANDS = {
     "build": ("image", True),
     "inspect": ("image", True),
     "match": ("image", True),
+    "stock": ("stock", False),
     "device": ("device", False),
     "hwtest": ("hardware_test", False),
     "dev": ("devloop", False),

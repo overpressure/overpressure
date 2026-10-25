@@ -130,8 +130,9 @@ table.
   heats the headset more than PICO OS's own apps, and the early table runs the fan at least as
   fast at every temperature (see [Verified results](#verified-results) for both tables in a
   10-minute session). `PICO4_FAN_PROFILE=auto` picks the table by batch as PICO OS does: it
-  reads `/usr/share/qcom/pico4/calibration/fan-profile`, one word from the private sensor data
-  (see [Build](#build)), and uses "early" without it. The MCU cannot tell: GetFanInfo reports
+  reads the serial number in `/mnt/vendor/persist/falcon/sn` (persist, mounted read-only at
+  boot, [userspace.md](userspace.md#the-headsets-own-data)), takes only the batch from it, and
+  uses "early" without it. The MCU cannot tell: GetFanInfo reports
   the fan's duty, RPM and whether it runs, nothing that identifies the fan or its batch. This
   headset's batch is late.
 - **Stopping.** The fan keeps its last duty when the service stops.
@@ -180,11 +181,9 @@ with the compositors, which hold KGSL's floor themselves while they present
 
 The overlay in [userspace/rootfs](../userspace/rootfs) puts `pico4-fan` and its unit into the
 userspace archive, and `scripts/build-userspace.sh` enables the unit
-([development.md](development.md)). `scripts/extract-sensor-data.sh` writes
-`calibration/fan-profile` into the sensor data: it pipes the serial number from the persist
-backup into `pico4-fan batch -`, which prints only `early` or `late`, so the serial goes no
-further. The build installs the file with the rest of the calibration. Sensor data extracted
-without this step has no `fan-profile`; the daemon then uses the early table.
+([development.md](development.md)). Nothing about the batch is in the image: the `auto` profile
+reads the serial number from persist at start and keeps only the batch word, so the serial goes
+no further; `pico4-fan batch FILE` prints that word for a serial number file.
 
 ## Checks
 
@@ -228,8 +227,8 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
 | Stock system partition: `pxrfanservice` | starts at boot as root; MCU path for product `Phoenix`; zones, means, tables, hysteresis, timing and overheating notice as above |
 | Stock system partition: GD32 service and client | SetFanSpeed `A0 0E 00 dd 00 xx` (duty < 101, ack `79`), GetFanSpeed `0F`, GetFanRPM `10` (`79 lo hi xx`); SetFanRPM `29` and GetFanInfo `30` through the generic command path, which recomputes the checksum |
 | Live tree thermal zones | trips and cooling maps as in the table above |
-| Development headset (persist backup, through `scripts/extract-sensor-data.sh`'s step) | late batch; standard PICO 4, control type 1 |
-| Headset: `pico4-fan` with the sensor data extracted again | profile `late` from `calibration/fan-profile`; at a hottest mean of 41 °C the fan stands (the late table runs it from 55 °C) |
+| Development headset (`pico4-fan batch /mnt/vendor/persist/falcon/sn`) | late batch; standard PICO 4, control type 1 |
+| Headset: `pico4-fan` with `PICO4_FAN_PROFILE=auto` | profile `late` from the serial's batch; at a hottest mean of 41 °C the fan stands (the late table runs it from 55 °C) |
 | Headset: GetFanInfo at 0, 30, 45 and 60 % | `00 0000 … 00`, `1e d312 … 01`, `2d 131b … 01`, `3c 0e23 … 01`: duty, RPM (4,819, 6,931, 8,974) and running; no fan identity |
 | Host: [tests/test_fan.py](../tests/test_fan.py) | passes: frames against the stock bytes and the allowlist, replies, both tables and their hysteresis, boost and failsafe, the loop's means and timing, retries, the state file and what the checks read from it, zone selection, profile choice, the batch rule on synthetic serial numbers (the serial is never printed), the unit; one UART transaction over a pty on Linux |
 | Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | pass: the userspace check's `fan` object (active with a state; skipped only without `require_fan`; a state without an acknowledged duty or with an MCU error fails) and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |

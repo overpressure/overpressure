@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import avb, bootimg, compress, cpio, device, hardware_test as hw, localconfig, sparse
+from . import avb, bootimg, compress, cpio, device, firmware, hardware_test as hw, localconfig, sparse
 from .cycle import Headset, run
 
 ROOT = localconfig.ROOT
@@ -80,6 +80,13 @@ class Dev(Headset):
     def fastboot(self, *words, timeout=60) -> str:
         return self.run([self.s.tool("fastboot"), "-s", self.s.fastboot_serial, *words], timeout)
 
+    def stock_location(self) -> str:
+        """The headset's firmware in the OTA catalog (PICO4_FIRMWARE in .env, as for stage 1)."""
+        builds = firmware.load_catalog(str(ROOT / "pico4" / "firmware.json"))
+        if self.s.firmware not in builds:
+            raise ValueError(f"unknown firmware {self.s.firmware!r} (pico4/firmware.json)")
+        return builds[self.s.firmware]["url"]
+
     def image(self):
         source = ROOT / "out" / f"pico4-poc-{self.s.firmware}.img"
         if not source.exists():
@@ -93,14 +100,13 @@ class Dev(Headset):
         (self.work / "test-boot.img").replace(self.work / "dev-boot.img")
         # The same image for recovery, marked so stage 1 can tell which partition started it.
         # Booting recovery, the ABL loads the device-tree overlay from the image itself
-        # (recovery_dtbo); without one it falls back to fastboot. It comes from the backup's
-        # stock recovery, so it stays private like the rest of out/dev.
-        stock, expected = self.stock_partition("recovery")
-        if device.digest(stock) != expected:
-            raise RuntimeError(f"{stock} differs from the backup manifest")
-        dtbo = bootimg.parse(stock.read_bytes()).recovery_dtbo
+        # (recovery_dtbo); without one it falls back to fastboot. It comes from the stock recovery
+        # of the headset's firmware (its public OTA, as stage 1's kernel), the whole partition with
+        # its AVB footer, so it stays private like the rest of out/dev.
+        stock = firmware.fetch_boot_image(self.stock_location(), str(ROOT / "cache"), print, "recovery")
+        dtbo = bootimg.parse(stock).recovery_dtbo
         if not dtbo:
-            raise RuntimeError("the backup's recovery image has no recovery_dtbo")
+            raise RuntimeError("the stock recovery image has no recovery_dtbo")
         boot = bootimg.parse((self.work / "dev-boot.img").read_bytes())
         recovery = boot.with_cmdline(f"{boot.full_cmdline} {PART_MARK}recovery")
         recovery.recovery_dtbo = dtbo
@@ -108,7 +114,7 @@ class Dev(Headset):
         if bootimg.parse(recovery).recovery_dtbo != dtbo:
             raise RuntimeError("the recovery image failed validation")
         # recovery is a chained AVB partition: the whole partition, with stock's vbmeta behind it.
-        recovery = avb.with_stock_vbmeta(stock.read_bytes(), recovery)
+        recovery = avb.with_stock_vbmeta(stock, recovery)
         (self.work / "dev-recovery.img").write_bytes(recovery)
         info["recovery_sha256"] = hashlib.sha256(recovery).hexdigest()
         install = self.install_image(source, key.with_name("id_ed25519.pub").read_bytes())

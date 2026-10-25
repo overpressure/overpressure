@@ -87,7 +87,8 @@ PMIC resets the headset.
 ## Boot images
 
 `python -m pico4 dev image` writes three images from the stage-1 image to `out/dev/` (private:
-the recovery image carries vendor data from the backup):
+the recovery image carries vendor data, the stock recovery's device-tree overlay and AVB footer,
+from the public OTA of the headset's firmware):
 
 - `dev-boot.img`: the dev image for `boot`, as before.
 - `dev-recovery.img`: the same stage 1 for `recovery`, marked `pico4poc.part=recovery` on its

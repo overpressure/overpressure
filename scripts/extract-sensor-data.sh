@@ -1,17 +1,16 @@
 #!/bin/bash
-# Extract the head-IMU sensor stack inputs from YOUR OWN stock backup (docs/xr.md).
+# Extract the head-IMU sensor stack and the lens and controller data from the stock firmware
+# (docs/xr.md). The headset's own factory data (registry, calibration) is not extracted: the image
+# links it from persist on the headset (docs/userspace.md#the-headsets-own-data).
 #
 # Usage (Linux/WSL, root):
-#   scripts/extract-sensor-data.sh BACKUP_DIR OUTPUT_DIR
+#   scripts/extract-sensor-data.sh STOCK_DIR OUTPUT_DIR
 #
-# BACKUP_DIR is a full EDL backup as described in docs/device-preparation.md (lun0/super.bin,
-# lun0/persist.bin, lun4/modem.bin). OUTPUT_DIR receives:
-#   firmware/slpi.mdt, slpi.bNN, slpi*.jsn   sensor DSP image (modem partition)
+# STOCK_DIR comes from `python -m pico4 stock` (system.img, vendor.img, modem.bin from PICO's
+# public OTA). OUTPUT_DIR receives:
+#   firmware/slpi.mdt, slpi.bNN, slpi*.jsn   sensor DSP image (modem)
 #   sensors/config/*.json                     sensor driver config (vendor)
 #   sensors/sns_reg.conf                      registry layout (vendor)
-#   sensors/registry/, sns_reg_version        this headset's registry with its
-#                                             factory calibration (persist)
-#   calibration/pvr/                          factory camera/IMU/lens calibration
 #   calibration/pxrconfig/SDK_Lens_ConfigFile.txt  stock lens configuration
 #                                             (chromatic aberration terms; system)
 #   calibration/controllers/led-models.json   nominal LED rings of both controllers
@@ -22,20 +21,15 @@
 #                                             (controller tracking client; system)
 #   rendermodels/pico4_controller_*/          SteamVR render models of both controllers
 #                                             (PICO OS's controller models; system)
-#   calibration/fan-profile                   early or late: the production batch that
-#                                             selects the fan table (from the serial
-#                                             number in persist, which is not kept)
 #   manifest.json                             sources and sha256 of every file
-# The result is device-specific and partly proprietary: keep it private
-# (assets/ is ignored by Git). Nothing touches the headset.
+# The result is proprietary: keep it private (assets/ is ignored by Git). Nothing touches the
+# headset.
 set -euo pipefail
 project=$(cd "$(dirname "$0")/.." && pwd)
-backup=$(realpath "${1:?specify the backup directory}")
+. "$project/scripts/stock-lib.sh"
+stock_dir "${1:-}" system.img vendor.img modem.bin
 output=${2:?specify an output directory}
 [[ $EUID == 0 ]] || { echo 'root is required (debugfs on image files)' >&2; exit 2; }
-for f in lun0/super.bin lun0/persist.bin lun4/modem.bin manifest.json; do
-    [[ -s "$backup/$f" ]] || { echo "missing $backup/$f" >&2; exit 1; }
-done
 command -v debugfs >/dev/null && command -v mcopy >/dev/null ||
     { echo 'debugfs (e2fsprogs) and mcopy (mtools) are required' >&2; exit 2; }
 [[ ! -e "$output" ]] || { echo "$output exists; choose a new directory" >&2; exit 1; }
@@ -45,87 +39,33 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$output"/{firmware,sensors,calibration}
 output=$(realpath "$output")
 
-# Files must match the backup manifest before anything is read from them.
-python3 - "$backup" <<'EOF'
-import hashlib, json, sys, pathlib
-root = pathlib.Path(sys.argv[1])
-files = json.loads((root / "manifest.json").read_text())["files"]
-for name in ("lun0/super.bin", "lun0/persist.bin", "lun4/modem.bin"):
-    h = hashlib.sha256()
-    with open(root / name, "rb") as f:
-        for block in iter(lambda: f.read(1 << 22), b""):
-            h.update(block)
-    if h.hexdigest() != files[name]["sha256"]:
-        sys.exit(f"{name}: sha256 does not match the backup manifest")
-EOF
-
-# dump IMAGE PATH DEST: copy one file or directory out of an ext4 image.
-dump() {
-    local kind
-    kind=$(debugfs -R "stat $2" "$1" 2>/dev/null | sed -n 's/.*Type: \([a-z]*\).*/\1/p' | head -n 1)
-    case "$kind" in
-    directory) mkdir -p "$3" && debugfs -R "rdump $2 $3" "$1" >/dev/null 2>&1 ;;
-    regular) debugfs -R "dump $2 $3" "$1" >/dev/null 2>&1 ;;
-    *) echo "missing $2 in $1" >&2; return 1 ;;
-    esac
-}
-
 echo ">> vendor: sensor config"
-(cd "$project" && python3 -m pico4.superimg extract "$backup/lun0/super.bin" vendor "$work/vendor.img") >/dev/null
-dump "$work/vendor.img" /etc/sensors/config "$work"
+dump "$stock/vendor.img" /etc/sensors/config "$work"
 mv "$work/config" "$output/sensors/config"
-dump "$work/vendor.img" /etc/sensors/sns_reg_config "$output/sensors/sns_reg.conf"
-rm -f "$work/vendor.img"
+dump "$stock/vendor.img" /etc/sensors/sns_reg_config "$output/sensors/sns_reg.conf"
 
 echo ">> system: lens configuration, controller LED models, aim-to-grip transforms, lever arms, controller models"
-(cd "$project" && python3 -m pico4.superimg extract "$backup/lun0/super.bin" system "$work/system.img") >/dev/null
+system=$stock/system.img
 mkdir -p "$output/calibration/pxrconfig"
-dump "$work/system.img" /system/etc/pxrconfig/config/SDK_Lens_ConfigFile.txt \
+dump "$system" /system/etc/pxrconfig/config/SDK_Lens_ConfigFile.txt \
     "$output/calibration/pxrconfig/SDK_Lens_ConfigFile.txt"
-dump "$work/system.img" /system/lib64/libpico_controller_tracking.pxr.so "$work/libpico_controller_tracking.pxr.so"
+dump "$system" /system/lib64/libpico_controller_tracking.pxr.so "$work/libpico_controller_tracking.pxr.so"
 (cd "$project" && python3 -m pico4.ledmodel "$work/libpico_controller_tracking.pxr.so" "$output/calibration/controllers/led-models.json")
-dump "$work/system.img" /system/lib64/libpvrtrackingservice.so "$work/libpvrtrackingservice.so"
+dump "$system" /system/lib64/libpvrtrackingservice.so "$work/libpvrtrackingservice.so"
 (cd "$project" && python3 -m pico4.aimgrip "$work/libpvrtrackingservice.so" "$output/calibration/controllers/aim-to-grip.json")
-dump "$work/system.img" /system/lib64/libpico_controller_tracking.client.so "$work/libpico_controller_tracking.client.so"
+dump "$system" /system/lib64/libpico_controller_tracking.client.so "$work/libpico_controller_tracking.client.so"
 (cd "$project" && python3 -m pico4.leverarm "$work/libpico_controller_tracking.client.so" \
     "$output/calibration/controllers/lever-arm.json")
-dump "$work/system.img" /system/pre_resource/data/misc/user/controller/Neo3Phx "$work/models"
+dump "$system" /system/pre_resource/data/misc/user/controller/Neo3Phx "$work/models"
 controllers=$output/calibration/controllers
 (cd "$project" && python3 -m pico4.controllermodel "$work/models/Neo3Phx" "$output/rendermodels" \
     --aim-to-grip "$controllers/aim-to-grip.json" --check "$controllers/led-models.json" "$controllers/lever-arm.json")
-rm -rf "$work/system.img" "$work/libpico_controller_tracking.pxr.so" "$work/libpvrtrackingservice.so" \
-    "$work/libpico_controller_tracking.client.so" "$work/models"
-
-echo ">> persist: registry and factory calibration"
-dump "$backup/lun0/persist.bin" /sensors/registry/registry "$work"
-mv "$work/registry" "$output/sensors/registry"
-dump "$backup/lun0/persist.bin" /sensors/registry/sns_reg_version "$output/sensors/sns_reg_version"
-dump "$backup/lun0/persist.bin" /pvr "$output/calibration"
-
-echo ">> persist: the fan's production batch"
-# PICO OS picks its fan table by the production batch in the serial number
-# (docs/cooling.md). Only the batch word is written; the serial goes no further.
-if ! debugfs -R "cat /falcon/sn" "$backup/lun0/persist.bin" 2>/dev/null |
-    python3 "$project/userspace/rootfs/usr/bin/pico4-fan" batch - > "$output/calibration/fan-profile"; then
-    rm -f "$output/calibration/fan-profile"
-    echo "no serial number in persist: pico4-fan will use its early table" >&2
-fi
 
 echo ">> modem: sensor DSP firmware"
 export MTOOLS_SKIP_CHECK=1
-mcopy -n -i "$backup/lun4/modem.bin" '::/image/slpi*' "$output/firmware/"
+mcopy -n -i "$stock/modem.bin" '::/image/slpi*' "$output/firmware/"
 [[ -s "$output/firmware/slpi.mdt" ]] || { echo 'no slpi.mdt in the modem partition' >&2; exit 1; }
 
 chmod -R u+rwX,go+rX "$output"
-python3 - "$backup" "$output" > "$output/manifest.json" <<'EOF'
-import hashlib, json, sys, pathlib
-backup, out = map(pathlib.Path, sys.argv[1:3])
-identity = json.loads((backup / "manifest.json").read_text())["identity"]
-files = {}
-for p in sorted(out.rglob("*")):
-    if p.is_file() and p.name != "manifest.json":
-        files[str(p.relative_to(out))] = hashlib.sha256(p.read_bytes()).hexdigest()
-print(json.dumps({"schema": 1, "source_backup": str(backup),
-                  "fingerprint": identity.get("fingerprint"), "files": files}, indent=1))
-EOF
-echo ">> $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["files"]))' "$output/manifest.json") files in $output"
+write_manifest "$output" '{"firmware/": "modem /image", "sensors/": "vendor /etc/sensors",
+    "calibration/": "system", "rendermodels/": "system /system/pre_resource"}'

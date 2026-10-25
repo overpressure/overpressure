@@ -42,8 +42,9 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 DEVICE = "/dev/ttyHS1"
 THERMAL = Path("/sys/class/thermal")
 STATE = Path("/run/pico4-fan/state.json")
-# The headset's batch ("early" or "late"), from the private sensor data.
-PROFILE_FILE = Path("/usr/share/qcom/pico4/calibration/fan-profile")
+# The headset's serial number, whose batch ("early" or "late") picks PICO OS's table: persist,
+# mounted read-only at boot (pico4-persist.service). Only the batch word leaves this file.
+SERIAL_FILE = Path("/mnt/vendor/persist/falcon/sn")
 #: PICO OS's early table on every headset (see the module docstring); auto follows the batch.
 DEFAULT_PROFILE = "early"
 
@@ -510,7 +511,7 @@ class Daemon:
 
 
 def resolve_profile(name: Optional[str], table: Optional[str],
-                    profile_file: Path = PROFILE_FILE) -> Tuple[str, Table, str]:
+                    serial_file: Path = SERIAL_FILE) -> Tuple[str, Table, str]:
     """(profile, table, where the choice came from)."""
     if table:
         return "custom", Table.parse(table), "configured"
@@ -520,11 +521,12 @@ def resolve_profile(name: Optional[str], table: Optional[str],
             raise ValueError(f"unknown profile {name!r} (early, late or auto)")
         return name, PROFILES[name], "configured"
     try:
-        found = profile_file.read_text().strip()
+        serial = serial_file.read_bytes()
     except OSError:
-        found = ""
-    if found in PROFILES:
-        return found, PROFILES[found], str(profile_file)
+        serial = b""
+    if serial.strip(b"\0\n "):
+        found = serial_batch(serial)
+        return found, PROFILES[found], f"the batch of the serial in {serial_file}"
     # Unknown batch: the early table runs the fan at least as fast at every temperature.
     return "early", PROFILES["early"], "default, batch unknown"
 

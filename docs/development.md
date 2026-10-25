@@ -29,7 +29,8 @@ src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's
                   KMS target), xr/ (OpenXR test clients), vrdisplay/ (SteamVR's display layer),
                   sysvsem/ (System V semaphores), reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
-scripts/          build-userspace.sh, build-graphics.sh, extract-sensor-data.sh, boot and preflight helpers
+scripts/          build-userspace.sh, build-system-image.sh, build-graphics.sh, the extract-*.sh scripts
+                  (stock firmware, with stock-lib.sh), boot and preflight helpers
 tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, test_vrdisplay_fake.sh, qemu/ (test kernels and boot tests)
 docs/             documentation
 ```
@@ -80,6 +81,50 @@ Keep the private data rules in mind before building on someone else's machine.
 LLVM is installed. Packages built by clang use lld and no LTO (LTO's bitcode objects would need
 LLVM's archiver in every build system).
 
+## Stock firmware
+
+The image needs PICO OS's firmware, drivers and data files (DSP images, signed kernel modules,
+the head tracker, configuration). They are the same on every PICO 4 with that firmware and
+come from PICO's public full OTA, not from the user's backup:
+
+```sh
+# Linux or WSL, as root: the OTA's partitions (about 3.9 GB of OTA members, kept under
+# STOCK/download), then each asset from them
+python3 -m pico4 stock --firmware 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
+s=/var/tmp/pico4-stock/5.13.7-global-seko
+scripts/extract-graphics-firmware.sh $s assets/graphics-firmware-5.13.7
+scripts/extract-sensor-data.sh $s assets/sensor-data-5.13.7
+scripts/extract-wlan.sh $s assets/wlan-5.13.7
+scripts/extract-audio.sh $s assets/audio-5.13.7
+scripts/extract-stock-slam.sh $s assets/stock-slam-5.13.7
+```
+
+`python -m pico4 stock` ([pico4/stock.py](../pico4/stock.py)) takes from the OTA zip only the
+members it needs, each checked against the zip's CRC: `system` and `vendor` as ext4 images
+rebuilt from their brotli-compressed block images and transfer lists (the `brotli` command),
+`firmware-update/NON-HLOS.bin` as `modem.bin`, `firmware-update/dspso.bin` as `dsp.bin`, and
+`recovery.img` and `boot.img`; `manifest.json` holds their sha256, which every extraction script
+checks first ([scripts/stock-lib.sh](../scripts/stock-lib.sh)). The firmware entry is the
+headset's (`PICO4_FIRMWARE`, `python -m pico4 match`, [stage1.md](stage1.md)). The results are
+proprietary: keep the stock directory and `assets/` private.
+
+| Asset | Script | From |
+| --- | --- | --- |
+| GPU firmware `a650_*` | extract-graphics-firmware.sh | vendor `/firmware` |
+| SLPI image, sensor configuration, lens configuration, controller models and data | extract-sensor-data.sh | modem, vendor, system |
+| Wi-Fi driver module, chip firmware and board data, driver configuration | extract-wlan.sh | vendor, modem |
+| Audio modules, ADSP image, audio process files, calibration database | extract-audio.sh | vendor, modem |
+| Compute DSP image, the tracker's bionic root, DSP modules and process shells | extract-stock-slam.sh | modem, system, vendor, dsp |
+
+For 5.13.7 every file these scripts take is byte-identical to the same file in an EDL backup of
+a headset running that firmware. The headset's own factory data is not in the image: the sensor
+registry with its calibration, the camera, IMU and lens calibration, the serial number the
+fan's table follows and the Wi-Fi MAC addresses stay in its `persist` partition, which the
+system mounts read-only at boot ([userspace.md](userspace.md#the-headsets-own-data)). The dev
+image takes its stock recovery (device-tree overlay and AVB footer) from the same OTA. The
+user's backup remains the way back to stock and the reference of the write checks (partition
+sizes and hashes, [install.md](install.md)).
+
 ## The userspace build
 
 ```sh
@@ -91,9 +136,9 @@ scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
 
 | Option | Effect |
 | --- | --- |
-| `--gpu-firmware DIR` | `a650_*` GPU firmware from your own backup; without it Vulkan cannot start |
-| `--sensor-data DIR` | sensor DSP firmware, registry and calibration from `scripts/extract-sensor-data.sh` |
-| `--wlan DIR` | Wi-Fi driver module, firmware, configuration and MAC file from `scripts/extract-wlan.sh` |
+| `--gpu-firmware DIR` | `a650_*` GPU firmware from `scripts/extract-graphics-firmware.sh`; without it Vulkan cannot start |
+| `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data from `scripts/extract-sensor-data.sh` |
+| `--wlan DIR` | Wi-Fi driver module, firmware and configuration from `scripts/extract-wlan.sh` |
 | `--audio DIR` | audio modules, ADSP firmware and the audio process's files from `scripts/extract-audio.sh` |
 | `--stock-slam DIR` | PICO OS's head tracker, the Compute DSP's firmware and the tracker's bionic root from `scripts/extract-stock-slam.sh` ([xr.md](xr.md#head-tracking)); needs the host's clang |
 | `--refresh` | download current package databases and reinstall the base root |

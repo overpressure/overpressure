@@ -55,8 +55,8 @@ headset the DSP reports only the ICM-42688 and AK0991x sensors.
 
 ## Factory calibration
 
-`persist` (`lun0/persist.bin` in an EDL backup) holds per-unit calibration, in formats that
-Monado and Basalt can use with little conversion:
+`persist` holds per-unit calibration, in formats that Monado and Basalt can use with little
+conversion:
 
 - `pvr/mav0/cam0..cam4/sensor.yaml`: EuRoC/Kalibr-style camera models (omni ξ + radtan
   distortion, intrinsics, extrinsics `T_BS` to the body frame, 640×480 @ 30 Hz). The factory
@@ -67,9 +67,9 @@ Monado and Basalt can use with little conversion:
 - `pvr/OpticalCalibrationData.json`, `pvr/lens/*`, `ipdcalidata.txt` (IPD ADC → position):
   display colour, lens and IPD data used by `pxrhmdservice`.
 
-[`extract-sensor-data.sh`](../scripts/extract-sensor-data.sh) copies `pvr/` into the sensor data
-([Build](#build)); the image has it in `/usr/share/qcom/pico4/calibration`. It is per-device data
-and stays out of Git, like the rest of the backup.
+The image does not carry it: `persist` is mounted read-only at `/mnt/vendor/persist` at boot,
+and `/usr/share/qcom/pico4/calibration/pvr` and the sensor registry link there
+([userspace.md](userspace.md#the-headsets-own-data)), so every headset reads its own.
 
 ## Head IMU through the sensor DSP
 
@@ -607,7 +607,8 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   which its DSP optical flow cannot allocate memory and 6DoF never starts), its DSP modules,
   configuration (`/system/etc/pvr/config`), the DSP's process shells and its root listener
   `cdsprpcd`. [scripts/extract-stock-slam.sh](../scripts/extract-stock-slam.sh) takes them from
-  the headset's own backup, `build-userspace.sh --stock-slam` installs them. Two stand-ins of this
+  the stock firmware ([development.md](development.md#stock-firmware)), `build-userspace.sh
+  --stock-slam` installs them. Two stand-ins of this
   project replace Android pieces: a `libandroid.so` with the two trace calls the tracker uses, and
   `libpico4-slam-stubs.so`, preloaded, which sends Android's log calls to the journal and answers
   property lookups with nothing (the tracker's defaults). Programs in the root are built with the
@@ -615,7 +616,7 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   ([src/stockslam](../src/stockslam)).
 - **Its runner.** [`stock-slam`](../userspace/rootfs/usr/libexec/pico4-poc/stock-slam) starts a
   program of the root in a private mount namespace, chrooted, with `/dev`, `/proc` and `/sys`
-  bound in, the image's factory calibration at `/mnt/vendor/persist/pvr` and `/mnt/vendor/pvr`
+  bound in, the headset's factory calibration (persist's `pvr/`) at `/mnt/vendor/persist/pvr` and `/mnt/vendor/pvr`
   (where the tracker reads it and its gyro bias table) and `/data` and `/tmp` as tmpfs.
 - **The CDSP.** [`pico4-cdsp.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-cdsp.service)
   boots it as the SLPI: restart level RELATED first (the kernel's SYSTEM would reboot the headset
@@ -1032,27 +1033,23 @@ sets while the IMU runs.
 
 ## Build
 
-Extract the inputs from **your own** EDL backup ([device-preparation.md](device-preparation.md)),
-as root on Linux/WSL. This needs `debugfs` and `mcopy`; the script first verifies
-`lun0/super.bin`, `lun0/persist.bin` and `lun4/modem.bin` against the backup manifest and never
-touches the headset:
+Extract the inputs from the stock firmware ([development.md](development.md#stock-firmware)),
+as root on Linux/WSL. This needs `debugfs` and `mcopy`; the script first verifies the stock
+directory against its manifest and never touches the headset:
 
 ```sh
-bash scripts/extract-sensor-data.sh backup/stock assets/sensor-data-5.13.7
+bash scripts/extract-sensor-data.sh /var/tmp/pico4-stock/5.13.7-global-seko assets/sensor-data-5.13.7
 ```
 
 | Output | Content (source partition) |
 | --- | --- |
 | `firmware/slpi.mdt`, `slpi.bNN`, `slpi*.jsn` | sensor DSP image and protection-domain maps (modem) |
 | `sensors/config/*.json`, `sensors/sns_reg.conf` | sensor driver configuration and registry layout (vendor) |
-| `sensors/registry/`, `sns_reg_version` | this headset's registry with its factory calibration (persist) |
-| `calibration/pvr/` | factory camera, IMU and lens calibration (persist) |
 | `calibration/pxrconfig/SDK_Lens_ConfigFile.txt` | stock lens configuration with the chromatic aberration terms (system) |
 | `calibration/controllers/led-models.json` | the nominal LED rings of both controllers, read from PICO OS's controller tracking library (system; see Controllers) |
 | `calibration/controllers/aim-to-grip.json` | the grip pose of each controller in its aim frame, read from PICO OS's tracking service (system; see Controllers) |
 | `calibration/controllers/lever-arm.json` | the lever arm PICO OS adds to each aim pose, read from its controller tracking client (system; see Controller tracking) |
 | `rendermodels/pico4_controller_*/` | SteamVR render models of both controllers, converted from PICO OS's controller models (system; see Controllers) |
-| `calibration/fan-profile` | `early` or `late`: the production batch that selects the fan's table, from the serial number, which is not kept (persist; [cooling.md](cooling.md)) |
 | `manifest.json` | sources and SHA-256 of every file |
 
 Then build the userspace with it (`make userspace` uses these defaults; see
@@ -1063,15 +1060,16 @@ bash scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7
 ```
 
-The image gets the DSP firmware in `/usr/lib/firmware` and the sensor tree and calibration in
-`/usr/share/qcom/pico4/`, which `hexagonrpcd` serves to the DSP and the driver reads. The
-extracted data and the archive are device-specific and partly proprietary: keep them private.
+The image gets the DSP firmware in `/usr/lib/firmware` and the sensor tree in
+`/usr/share/qcom/pico4/`, which `hexagonrpcd` serves to the DSP and the driver reads; the registry
+and the factory calibration there link to the headset's persist. The extracted data and the
+archive are proprietary: keep them private.
 
-PICO OS's head tracker comes the same way, from `lun0/super.bin`, `lun4/modem.bin` and
-`lun4/dsp.bin`:
+PICO OS's head tracker comes the same way, from the stock system, vendor, modem and dsp
+partitions:
 
 ```sh
-bash scripts/extract-stock-slam.sh backup/stock assets/stock-slam-5.13.7
+bash scripts/extract-stock-slam.sh /var/tmp/pico4-stock/5.13.7-global-seko assets/stock-slam-5.13.7
 ```
 
 | Output | Content (source partition) |

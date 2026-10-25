@@ -4,20 +4,22 @@
 # Usage (Linux or WSL, as root):
 #   scripts/build-userspace.sh BUILD_ROOT OUTPUT_DIR [OPTIONS]
 #
-#   --gpu-firmware DIR  a650_* GPU firmware from YOUR OWN stock backup (docs/graphics.md).
-#                       Without it the userspace boots, but Vulkan cannot start.
-#   --sensor-data DIR   sensor DSP firmware, registry, config and calibration extracted
-#                       from YOUR OWN backup by scripts/extract-sensor-data.sh (docs/xr.md).
-#                       Without it the head IMU stack stays inactive.
-#   --wlan DIR          Wi-Fi driver module, firmware, configuration and MAC addresses
-#                       extracted from YOUR OWN backup by scripts/extract-wlan.sh
-#                       (docs/userspace.md). Without it Wi-Fi stays off.
-#   --audio DIR         audio modules, ADSP firmware and the audio process's files extracted
-#                       from YOUR OWN backup by scripts/extract-audio.sh (docs/userspace.md).
-#                       Without it there is no sound card.
-#   --stock-slam DIR    PICO OS's head tracker, its Compute DSP firmware and bionic root extracted
-#                       from YOUR OWN backup by scripts/extract-stock-slam.sh (docs/xr.md). Without
-#                       it head tracking falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
+# Each of these comes from the stock firmware (python -m pico4 stock: PICO's public OTA) through
+# an extraction script (docs/development.md#stock-firmware). The headset's own factory data is
+# not in the image: it links to persist, mounted read-only at boot (pico4-persist.service).
+#   --gpu-firmware DIR  a650_* GPU firmware (scripts/extract-graphics-firmware.sh,
+#                       docs/graphics.md). Without it the userspace boots, but Vulkan cannot start.
+#   --sensor-data DIR   sensor DSP firmware and config, lens and controller data
+#                       (scripts/extract-sensor-data.sh, docs/xr.md). Without it the head IMU
+#                       stack stays inactive.
+#   --wlan DIR          Wi-Fi driver module, firmware and configuration (scripts/extract-wlan.sh,
+#                       docs/userspace.md). Without it Wi-Fi stays off.
+#   --audio DIR         audio modules, ADSP firmware and the audio process's files
+#                       (scripts/extract-audio.sh, docs/userspace.md). Without it there is no
+#                       sound card.
+#   --stock-slam DIR    PICO OS's head tracker, its Compute DSP firmware and bionic root
+#                       (scripts/extract-stock-slam.sh, docs/xr.md). Without it head tracking
+#                       falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
 #   --refresh           download the current package databases and reinstall the base
 #                       root; without it every build installs the same package versions
 #   --clean             rebuild the project packages from scratch
@@ -353,18 +355,20 @@ if [[ -n "$firmware" ]]; then
     done
     firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
-# Wi-Fi: the QCA6390's firmware and board data and the driver's configuration and MAC file,
-# where the kernel's firmware loader looks, and the stock signed driver module, loaded by path
-# (pico4-wlan.service). The module is installed byte for byte: its signature is appended.
+# Wi-Fi: the QCA6390's firmware and board data and the driver's configuration, where the
+# kernel's firmware loader looks, and the stock signed driver module, loaded by path
+# (pico4-wlan.service). The module is installed byte for byte: its signature is appended. The
+# MAC file links to the headset's own in persist, as PICO OS links it.
 wlan_json="[]"
 if [[ -n "$wlan" ]]; then
     for f in modules/qca_cld3_qca6390.ko firmware/qca6390/amss20.bin firmware/qca6390/m3.bin \
-        firmware/wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini firmware/wlan/qca_cld/qca6390/wlan_mac.bin; do
+        firmware/wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini; do
         [[ -s "$wlan/$f" ]] || { echo "missing $wlan/$f (see scripts/extract-wlan.sh)" >&2; exit 1; }
     done
     mkdir -p "$T/usr/lib/firmware" "$T/usr/lib/pico4-wlan"
     cp -r --no-preserve=ownership "$wlan/firmware/." "$T/usr/lib/firmware/"
     install -m 0644 "$wlan/modules/qca_cld3_qca6390.ko" "$T/usr/lib/pico4-wlan/"
+    ln -sfn /mnt/vendor/persist/wlan_mac.bin "$T/usr/lib/firmware/wlan/qca_cld/qca6390/wlan_mac.bin"
     chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/wlan" "$T/usr/lib/pico4-wlan"
     wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 usr/lib/firmware/wlan usr/lib/pico4-wlan -type f -print0 |
         sort -z | xargs -0 sha256sum |
@@ -395,15 +399,21 @@ fi
 # pd-mapper, and the tree hexagonrpcd serves to the sensors process (-R).
 sensor_json="[]"
 if [[ -n "$sensor_data" ]]; then
-    [[ -s "$sensor_data/firmware/slpi.mdt" && -d "$sensor_data/sensors/config" && -d "$sensor_data/sensors/registry" ]] ||
+    [[ -s "$sensor_data/firmware/slpi.mdt" && -d "$sensor_data/sensors/config" ]] ||
         { echo "incomplete sensor data in $sensor_data (see scripts/extract-sensor-data.sh)" >&2; exit 1; }
     mkdir -p "$T/usr/lib/firmware"
     install -m 0644 "$sensor_data"/firmware/slpi* "$T/usr/lib/firmware/"
     qcom=$T/usr/share/qcom/pico4
     mkdir -p "$qcom"
     cp -r --no-preserve=ownership "$sensor_data/sensors" "$qcom/"
-    # Factory camera/IMU/lens calibration for Monado's PICO 4 driver.
+    # Lens configuration and controller data from the stock firmware.
     [[ ! -d "$sensor_data/calibration" ]] || cp -r --no-preserve=ownership "$sensor_data/calibration" "$qcom/"
+    # The headset's own: the sensor registry with its factory calibration and the camera, IMU and
+    # lens calibration, in persist where PICO OS keeps them (docs/userspace.md#the-headsets-own-data).
+    mkdir -p "$qcom/calibration"
+    ln -sfn /mnt/vendor/persist/sensors/registry/registry "$qcom/sensors/registry"
+    ln -sfn /mnt/vendor/persist/sensors/registry/sns_reg_version "$qcom/sensors/sns_reg_version"
+    ln -sfn /mnt/vendor/persist/pvr "$qcom/calibration/pvr"
     chown -R 0:0 "$qcom"
     # The controllers' render models, where SteamVR finds the Monado driver's resources ({monado}name).
     models=$T/usr/share/steamvr-monado/resources/rendermodels
@@ -466,12 +476,14 @@ rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
 # /var/tmp, /root, ... (steamos-offload.target, before tmpfiles runs). On the
 # Frame the sources persist; here they are created in the image.
 in_t systemd-tmpfiles --create steamos-offload.conf
+# PICO OS's mount point of its persist partition (pico4-persist.service, read-only).
+mkdir -p "$T/mnt/vendor/persist"
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path \
     pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
-    pico4-splash.service pico4-powerkey.service
+    pico4-splash.service pico4-powerkey.service pico4-persist.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration

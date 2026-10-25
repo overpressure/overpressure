@@ -58,11 +58,12 @@ def _zip_member(src: payload.Source, name: str, log=print) -> bytes:
     return bytes(out)
 
 
-def fetch_boot_image(location: str, cache_dir: str | None = None, log=print) -> bytes:
-    """Return the raw stock boot.img from a .img file, OTA zip/payload, or URL."""
+def fetch_boot_image(location: str, cache_dir: str | None = None, log=print, partition: str = "boot") -> bytes:
+    """Return the raw stock boot.img (or another partition's image, such as recovery's) from a
+    .img file, OTA zip/payload, or URL."""
     if cache_dir and location.startswith(("http://", "https://")):
         key = location.rstrip("/").rsplit("/", 1)[-1]
-        cached = os.path.join(cache_dir, "stock", key + ".boot.img")
+        cached = os.path.join(cache_dir, "stock", f"{key}.{partition}.img")
         if os.path.exists(cached):
             log(f"  using cached {cached}")
             with open(cached, "rb") as f:
@@ -79,12 +80,12 @@ def fetch_boot_image(location: str, cache_dir: str | None = None, log=print) -> 
     elif magic[:4] == b"PK\x03\x04":
         with zipfile.ZipFile(io.BufferedReader(payload.SourceFile(src), buffer_size=65536)) as zf:
             names = set(zf.namelist())
-        if "boot.img" in names:
-            data = _zip_member(src, "boot.img", log)
+        if f"{partition}.img" in names:
+            data = _zip_member(src, f"{partition}.img", log)
         elif "payload.bin" in names:
-            data = payload.extract_partition(payload.read_payload(payload.payload_from(location, log)), "boot", log)
+            data = payload.extract_partition(payload.read_payload(payload.payload_from(location, log)), partition, log)
         else:
-            raise ValueError("zip contains neither boot.img nor payload.bin")
+            raise ValueError(f"zip contains neither {partition}.img nor payload.bin")
     else:
         raise ValueError(f"{location}: not a boot image, OTA zip or payload (magic {magic!r})")
 

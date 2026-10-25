@@ -80,9 +80,11 @@ fact in place, and keep the status in docs/roadmap.md and README.md current.
   clients, `vrdisplay/`, `sysvsem/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
   them in. `stockslam/` is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a
   bionic root; `build-userspace.sh` builds it with clang for Android, without an NDK.
-- `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-graphics.sh`, `extract-sensor-data.sh`,
-  `extract-wlan.sh`, `extract-audio.sh`, `extract-stock-slam.sh`, boot and
-  preflight helpers. `tests/`: unittest suites, `test_recovery_policy.sh`, `test_charger.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`.
+- `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-graphics.sh`, the extraction
+  scripts `extract-graphics-firmware.sh`, `extract-sensor-data.sh`, `extract-wlan.sh`,
+  `extract-audio.sh`, `extract-stock-slam.sh` (from the stock directory of `python -m pico4 stock`,
+  PICO's public OTA; `stock-lib.sh`), boot and preflight helpers. The headset's own factory data
+  is not extracted: the image links to persist, mounted read-only at boot (`pico4-persist`). `tests/`: unittest suites, `test_recovery_policy.sh`, `test_charger.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`.
 - Private and generated, ignored: `backup/` (identity `backup/device.json`, EDL backups),
   `assets/`, `cache/`, `out/` (`out/dev/` for the dev loop, `out/cycle-*/` evidence), `.env`.
 
@@ -94,6 +96,9 @@ bash tests/test_recovery_policy.sh                       # stage-1 recovery poli
 sh tests/test_charger.sh                                 # stage-1 charger mode
 bash tests/test_vrdisplay_fake.sh                        # display layer on lavapipe (WSL; VULKAN_INCLUDE=...)
 python -m pico4 build --firmware 5.13.7-global-seko      # stage-1 image -> out/
+# Linux/WSL as root: the stock firmware from PICO's public OTA, then the assets
+# (docs/development.md#stock-firmware; about 11 GB of OTA members and images, on the WSL disk):
+python3 -m pico4 stock --firmware 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
 # Linux/WSL as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
 scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \

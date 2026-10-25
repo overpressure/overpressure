@@ -79,14 +79,15 @@ class ExtractionTests(unittest.TestCase):
                      "cdsprpcd", "libcdsp_default_listener.so", "linker64", "fastrpc_shell_3", "cdsp.mdt",
                      "cdspr.jsn", "libExposureImageProcess.so", "libtianti_shm_dynamic.so", "libc++_shared.so"):
             self.assertIn(name, script, name)
-        self.assertIn("sha256 does not match the backup manifest", script)
+        # From the stock firmware (PICO's public OTA), checked against its manifest first.
+        self.assertIn('stock_dir "${1:-}" system.img vendor.img modem.bin dsp.bin', script)
+        self.assertIn("sha256 does not match the stock manifest", read(ROOT / "scripts/stock-lib.sh"))
         # an issue: as a fresh PICO OS install, nothing of the camera modules' ids from the backup.
         self.assertNotIn("camera_otp", script)
         self.assertNotIn("userdata", script)
         # debugfs's rdump creates the directory inside its target: dump into the parent.
-        # debugfs's rdump creates the directory inside its target: dump into the parent.
-        self.assertIn('dump "$work/system.img" /system/etc/pvr/config "$root/system/etc/pvr"\n', script)
-        self.assertIn('dump "$backup/lun4/dsp.bin" /cdsp "$root/vendor/dsp"\n', script)
+        self.assertIn('dump "$stock/system.img" /system/etc/pvr/config "$root/system/etc/pvr"\n', script)
+        self.assertIn('dump "$stock/dsp.bin" /cdsp "$root/vendor/dsp"\n', script)
 
 
 class BuildTests(unittest.TestCase):

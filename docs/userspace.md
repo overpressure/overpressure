@@ -260,8 +260,8 @@ bash scripts/build-userspace.sh /var/tmp/pico4-userspace-build "$PWD/out/userspa
 
 | Option | Effect |
 | --- | --- |
-| `--gpu-firmware DIR` | the six `a650_*` GPU firmware files from **your own** backup ([graphics.md](graphics.md)); without them the userspace boots, but Vulkan cannot start |
-| `--sensor-data DIR` | sensor DSP firmware, registry, configuration and calibration, extracted from **your own** backup by `scripts/extract-sensor-data.sh` ([xr.md](xr.md)); without it the head IMU stack stays inactive |
+| `--gpu-firmware DIR` | the six `a650_*` GPU firmware files from the stock firmware ([development.md](development.md#stock-firmware), [graphics.md](graphics.md)); without them the userspace boots, but Vulkan cannot start |
+| `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data, extracted from the stock firmware by `scripts/extract-sensor-data.sh` ([xr.md](xr.md)); without it the head IMU stack stays inactive |
 | `--refresh` | downloads current package databases and reinstalls the base root |
 | `--clean` | rebuilds the project packages from scratch |
 | `--emulated-cc` | compiles with the build environment's own GCC under QEMU instead of the host's clang |
@@ -346,6 +346,26 @@ archive; the device-side deadlines return the headset to fastboot after a failur
 archive becomes a read-only system image in `super` with its data in `userdata`
 ([install.md](install.md)).
 
+## The headset's own data
+
+Each headset's factory data stays in its `persist` partition (ext4), where PICO OS keeps it:
+[`pico4-persist.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-persist.service)
+mounts it read-only at `/mnt/vendor/persist` before `local-fs.target` (`ro,noload`: the journal
+is never replayed, the block device stays read-only), and the image links to it instead of
+shipping a copy:
+
+| In the image | Links to | Read by |
+| --- | --- | --- |
+| `/usr/share/qcom/pico4/sensors/registry/` | `persist/sensors/registry/registry/` (registry and factory calibration of every sensor) | hexagonrpcd for the sensor DSP |
+| `/usr/share/qcom/pico4/sensors/sns_reg_version` | `persist/sensors/registry/sns_reg_version` | hexagonrpcd |
+| `/usr/share/qcom/pico4/calibration/pvr/` | `persist/pvr/` (camera, IMU and lens calibration, gyro bias tables) | Monado's driver, PICO OS's tracker |
+| `/usr/lib/firmware/wlan/qca_cld/qca6390/wlan_mac.bin` | `persist/wlan_mac.bin` | the Wi-Fi driver |
+| (read directly) | `persist/falcon/sn` | `pico4-fan`'s `auto` profile (the production batch, [cooling.md](cooling.md)) |
+
+The files belong to Android's `system` user, uid 1000, which is `steamos` here, so the driver in
+`vrserver` reads them; root reads all of them. Writes stay refused: the sensor DSP's attempt to
+save `temp.json` in the registry fails, as with the image's copy before.
+
 ## Internet over USB
 
 The PC can share its internet with the headset over the USB cable. On the headset,
@@ -380,15 +400,15 @@ The Wi-Fi chip is a QCA6390 (v2.0) on PCIe, run by the stock kernel's built-in c
 own driver module, qcacld-3.0 (`qca_cld3_qca6390.ko`, module `wlan`). The module is signed with
 the stock kernel's build key, so the kernel loads it as it is. It must stay byte for byte as
 extracted, because its signature is appended. [`scripts/extract-wlan.sh`](../scripts/extract-wlan.sh)
-reads from the user's own backup, checking the module and the MAC file without printing the
-addresses:
+reads them from the stock firmware ([development.md](development.md#stock-firmware)), checking
+the module; the MAC addresses are the headset's own, linked from persist:
 
 | File | From | Purpose |
 | --- | --- | --- |
 | `modules/qca_cld3_qca6390.ko` | vendor | the driver |
 | `firmware/qca6390/amss20.bin`, `m3.bin`, `bdwlan*` | modem | chip firmware and board data, requested by cnss2 |
 | `firmware/wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini` | vendor | the driver's configuration |
-| `firmware/wlan/qca_cld/qca6390/wlan_mac.bin` | persist | this headset's MAC addresses, read by the driver |
+| `firmware/wlan/qca_cld/qca6390/wlan_mac.bin` | a link to `/mnt/vendor/persist/wlan_mac.bin` | this headset's MAC addresses, read by the driver |
 
 `build-userspace.sh --wlan DIR` installs the firmware under `/usr/lib/firmware` and the module
 in `/usr/lib/pico4-wlan`. The bring-up follows PICO OS, plus one rule of our own, the restart level:
@@ -444,7 +464,8 @@ Its outputs are two WSA881x amplifiers, one per speaker, on SoundWire. Its micro
 on the WCD938x codec's ADC1 (PICO OS's `amic1`); the card's digital-microphone inputs carry
 nothing. The stock kernel has the ASoC core; the rest is PICO OS's own modules (Qualcomm's audio
 techpack), signed with the kernel's build key like the Wi-Fi driver.
-[`scripts/extract-audio.sh`](../scripts/extract-audio.sh) reads them from the user's own backup:
+[`scripts/extract-audio.sh`](../scripts/extract-audio.sh) reads them from the stock firmware
+([development.md](development.md#stock-firmware)):
 
 | File | From | Purpose |
 | --- | --- | --- |

@@ -80,25 +80,21 @@ Turnip (`usr/lib/libvulkan_freedreno.so`) with its ICD file
 Mesa provenance.
 
 The GPU firmware is not part of it. The kernel loads six files: `a650_gmu.bin`, `a650_sqe.fw`,
-`a650_zap.mdt`, `a650_zap.b00`, `a650_zap.b01` and `a650_zap.b02`. Take them from **your own**
-verified stock backup ([device-preparation.md](device-preparation.md)), never from another
-headset. They are in `/firmware` of the `vendor` logical partition inside the backup's `super`
-image. [pico4/superimg.py](../pico4/superimg.py) extracts the partition after verifying its
-metadata checksums, and `debugfs` reads it without writing:
+`a650_zap.mdt`, `a650_zap.b00`, `a650_zap.b01` and `a650_zap.b02`, in `/firmware` of the
+stock `vendor` partition of the headset's firmware. They come from PICO's public OTA
+([development.md](development.md#stock-firmware)):
 
 ```sh
-python -m pico4 device verify-backup --backup BACKUP
-python -m pico4.superimg extract BACKUP/lun0/super.bin vendor /var/tmp/vendor.img
-mkdir -p assets/graphics-firmware-5.13.7 out/graphics-overlay/lib/firmware
-for f in a650_gmu.bin a650_sqe.fw a650_zap.mdt a650_zap.b00 a650_zap.b01 a650_zap.b02; do
-    debugfs -R "dump /firmware/$f assets/graphics-firmware-5.13.7/$f" /var/tmp/vendor.img
-    cp "assets/graphics-firmware-5.13.7/$f" out/graphics-overlay/lib/firmware/
-done
+python3 -m pico4 stock --firmware 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
+scripts/extract-graphics-firmware.sh /var/tmp/pico4-stock/5.13.7-global-seko assets/graphics-firmware-5.13.7
+mkdir -p out/graphics-overlay/lib/firmware
+cp assets/graphics-firmware-5.13.7/a650_* out/graphics-overlay/lib/firmware/
 ```
 
-Record the files' SHA-256 and the firmware build they come from. The project distributes no
-vendor files; `assets/` and the build output stay private. The userspace build takes the same
-directory (`--gpu-firmware`, [userspace.md](userspace.md)).
+The script checks the stock directory's manifest first and writes the files' SHA-256 and the
+firmware build to `manifest.json`. The project distributes no vendor files; `assets/` and the
+build output stay private. The userspace build takes the same directory (`--gpu-firmware`,
+[userspace.md](userspace.md)).
 
 A stage-1 image with the overlay and the libraries the tests need:
 

@@ -445,10 +445,10 @@ class StateTest(unittest.TestCase):
 class ProfileTest(unittest.TestCase):
     def test_resolution(self):
         with tempfile.TemporaryDirectory() as tmp:
-            batch = Path(tmp) / "fan-profile"
+            batch = Path(tmp) / "sn"  # persist/falcon/sn
             self.assertEqual(fan.resolve_profile(None, None, batch)[:2], ("early", EARLY))
             self.assertEqual(fan.resolve_profile("auto", None, batch)[:2], ("early", EARLY))
-            batch.write_text("late\n")
+            batch.write_bytes(b"XXXXXXXXH0000000")  # ninth character after G: the late batch
             # The early table is the default whatever the batch; auto follows the batch.
             self.assertEqual(fan.resolve_profile(None, None, batch)[:2], ("early", EARLY))
             self.assertEqual(fan.resolve_profile("auto", None, batch)[:2], ("late", LATE))
