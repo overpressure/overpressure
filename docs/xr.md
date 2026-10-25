@@ -577,6 +577,12 @@ station keep a single owner:
   `IVRCameraPassthroughInternal_001` in `vrclient.so` writes that state, with the frames as
   dma-bufs and a distortion resource, so the public component alone gives no room view
   (`OperationFailed`, "no camera enabled"). A producer for that interface is the remaining step.
+- **Depth-mesh queues.** The compositor's room view also connects to two block queues,
+  `/xrservice/roomview3d/meshData` and `/xrservice/roomview3d/meshLayout` (OpenVR's
+  `IVRBlockQueue_005`), which the Frame's XR service provides; only code inside `vrserver` may
+  create block queues. The camera component creates both, empty, when the HMD activates; the
+  compositor connects ("Depth mesh block queues connection successfull") and, with no mesh
+  marked up to date, renders the camera view without depth reprojection.
 
 ## Head tracking
 

@@ -21,7 +21,7 @@
  	//! SteamVR's camera, when the HMD has one (the PICO 4's forward tracking cameras).
  	CCameraComponent_Monado *m_camera = NULL;
  	bool m_camera_probed = false;
-@@ -1648,6 +1655,7 @@
+@@ -1703,6 +1710,7 @@
  	ovrd_log("Starting HMD pose update thread\n");
  
  	std::chrono::steady_clock::time_point battery_at{};
@@ -29,7 +29,7 @@
  	while (m_poseUpdating) {
  		//! @todo figure out the best pose update rate
  		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-@@ -1661,6 +1669,17 @@
+@@ -1716,6 +1724,17 @@
  			m_worn = worn;
  			ovrd_log("Headset %s\n", worn ? "worn" : "taken off");
  		}

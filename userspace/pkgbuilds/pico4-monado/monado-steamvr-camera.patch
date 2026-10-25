@@ -53,10 +53,27 @@
  	// clang-format on
  };
  
-@@ -1221,6 +1245,378 @@
+@@ -1221,6 +1245,433 @@
  }
  
  /*!
++ * SteamVR's block queues (IVRBlockQueue_005, public in the OpenVR SDK's C API but not in the
++ * driver header Monado carries): the calls this driver needs, in the interface's slot order.
++ * Only code inside vrserver may create queues; clients connect to them.
++ */
++class IVRBlockQueue005
++{
++public:
++	virtual int
++	Create(vr::PropertyContainerHandle_t *queue, const char *path, uint32_t block_data_size,
++	       uint32_t block_header_size, uint32_t block_count, uint32_t flags) = 0;
++	virtual int
++	Connect(vr::PropertyContainerHandle_t *queue, const char *path) = 0;
++	virtual int
++	Destroy(vr::PropertyContainerHandle_t queue) = 0;
++};
++
++/*!
 + * SteamVR's camera (IVRCameraComponent) from the PICO 4's two forward tracking cameras
 + * (drivers/pico4/pico4_interface.h): grey frames as NV12 with neutral chroma, both cameras in
 + * one frame, left above right, with their fisheye model (OpenVR's FTheta) as the distortion.
@@ -71,6 +88,42 @@
 +	virtual ~CCameraComponent_Monado()
 +	{
 +		StopVideoStream();
++		DestroyMeshQueues();
++	}
++
++	/*!
++	 * The room view's depth-mesh queues, which Valve's XR service provides on the Frame:
++	 * vrcompositor starts its room view only when it can connect to both, and reads them only
++	 * with depth projection and a mesh marked up to date, so they stay empty here.
++	 */
++	void
++	CreateMeshQueues()
++	{
++		vr::EVRInitError err = vr::VRInitError_None;
++		m_queues = (IVRBlockQueue005 *)vr::VRDriverContext()->GetGenericInterface("IVRBlockQueue_005", &err);
++		if (m_queues == nullptr) {
++			ovrd_log("Camera: no IVRBlockQueue_005 (%d)\n", (int)err);
++			return;
++		}
++		static const char *const paths[2] = {"/xrservice/roomview3d/meshData", "/xrservice/roomview3d/meshLayout"};
++		for (int i = 0; i < 2; i++) {
++			int r = m_queues->Create(&m_mesh_queue[i], paths[i], 16, 16, 1, 0);
++			ovrd_log("Camera: block queue %s: %s (%d)\n", paths[i], r == 0 ? "created" : "not created", r);
++			if (r != 0) {
++				m_mesh_queue[i] = 0;
++			}
++		}
++	}
++
++	void
++	DestroyMeshQueues()
++	{
++		for (int i = 0; i < 2; i++) {
++			if (m_queues != nullptr && m_mesh_queue[i] != 0) {
++				m_queues->Destroy(m_mesh_queue[i]);
++				m_mesh_queue[i] = 0;
++			}
++		}
 +	}
 +
 +	bool
@@ -426,13 +479,15 @@
 +	std::atomic<bool> m_streaming{false}, m_paused{false};
 +	uint32_t m_sequence = 0;
 +	int64_t m_start_ns = 0;
++	IVRBlockQueue005 *m_queues = nullptr;
++	vr::PropertyContainerHandle_t m_mesh_queue[2] = {0, 0};
 +};
 +
 +/*!
   * SteamVR's battery properties from the device's battery status, at most every five
   * seconds; a device without a battery (the default implementation) sets none.
   */
-@@ -1269,6 +1665,21 @@
+@@ -1269,6 +1720,21 @@
  	ovrd_log("Stopping HMD pose update thread\n");
  }
  
@@ -454,19 +509,20 @@
  vr::EVRInitError
  CDeviceDriver_Monado::Activate(vr::TrackedDeviceIndex_t unObjectId)
  {
-@@ -1300,6 +1711,11 @@
+@@ -1300,6 +1766,12 @@
  		vr::VRDriverInput()->CreateBooleanComponent(m_ulPropertyContainer, "/proximity", &m_proximity);
  	}
  
 +	// SteamVR's camera (room view) from the forward tracking cameras.
 +	if (Camera() != NULL) {
 +		m_camera->SetProperties(m_ulPropertyContainer);
++		m_camera->CreateMeshQueues();
 +	}
 +
  	// avoid "not fullscreen" warnings from vrmonitor
  	//vr::VRProperties()->SetBoolProperty(m_ulPropertyContainer, vr::Prop_IsOnDesktop_Bool, false);
  
-@@ -1329,6 +1745,9 @@
+@@ -1329,6 +1801,9 @@
  {
  	m_poseUpdating = false;
  	m_poseUpdateThread->join();
@@ -476,7 +532,7 @@
  	ovrd_log("Deactivate\n");
  }
  
-@@ -1346,6 +1765,10 @@
+@@ -1346,6 +1821,10 @@
  	    strcmp(pchComponentNameAndVersion, vr::IVRDisplayComponent_Version3) == 0) {
  		return (vr::IVRDisplayComponent *)this;
  	}
