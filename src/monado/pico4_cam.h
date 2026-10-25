@@ -223,6 +223,8 @@ struct pico4_cam_set_check
 	int64_t offset[8];  //!< frame_id[i] - frame_id[0] of the accepted sets.
 	int64_t pending[8]; //!< A different offset seen in the last sets...
 	int pending_sets;   //!< ...this many in a row.
+	//! The cameras are exposed each on its own (PICO OS's auto exposure): only the counters count.
+	bool per_camera_exposure;
 };
 
 /*!
@@ -240,7 +242,7 @@ pico4_cam_set_consistent(struct pico4_cam_set_check *c,
 {
 	why[0] = '\0';
 	n = n > 8 ? 8 : n;
-	for (int i = 1; i < n; i++) {
+	for (int i = 1; i < n && !c->per_camera_exposure; i++) {
 		if (meta[i].exposure_lines != meta[0].exposure_lines || meta[i].gain != meta[0].gain) {
 			snprintf(why, why_len, "camera %d exposed %u lines at gain %u, camera 0 %u lines at gain %u", i,
 			         meta[i].exposure_lines, meta[i].gain, meta[0].exposure_lines, meta[0].gain);

@@ -55,10 +55,23 @@ void *dlopen(const char *, int);
 void *dlsym(void *, const char *);
 char *dlerror(void);
 int pthread_create(pthread_t *, const void *, void *(*)(void *), void *);
+int pthread_join(pthread_t, void **);
+void (*signal(int, void (*)(int)))(int);
+ssize_t write(int, const void *, size_t);
+int rename(const char *, const char *);
+int unlink(const char *);
+double atan2(double, double);
+double sin(double);
+double cos(double);
+double sqrt(double);
 
 #define RTLD_NOW 2
 #define O_RDONLY 0
+#define O_WRONLY 1
 #define O_RDWR 2
+#define O_TRUNC 01000
+#define SIGTERM 15
+#define SIGINT 2
 #define O_CREAT 0100
 #define O_CLOEXEC 02000000
 #define CLOCK_MONOTONIC 1

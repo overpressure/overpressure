@@ -236,11 +236,25 @@ pico4_station_camera_para(uint8_t out[28],
                           struct pico4_station_exposure leds,
                           unsigned index);
 
+//! pico4_station_camera_para with a scene setting per camera, in camera order 0-3.
+void
+pico4_station_camera_para_each(uint8_t out[28],
+                               const struct pico4_station_exposure scene[4],
+                               struct pico4_station_exposure leds,
+                               unsigned index);
+
 //! Both phases' exposure (see pico4_station_camera_para).
 int
 pico4_station_camera_set_exposures(struct pico4_station *st,
                                    struct pico4_station_exposure scene,
                                    struct pico4_station_exposure leds);
+
+/*!
+ * The scene phase's exposure per camera (camera order 0-3), as PICO OS's auto exposure sends
+ * it; the second set as pico4_station_camera_set_exposure fills it.
+ */
+int
+pico4_station_camera_set_each(struct pico4_station *st, const struct pico4_station_exposure scene[4]);
 
 //! Stop FSIN for all cameras.
 int

@@ -51,6 +51,7 @@
 
 #include "pico4_cam.h"
 #include "pico4_ctrack.h"
+#include "pico4_passthrough.h"
 #include "pico4_station.h"
 #include "pico4_tcam.h"
 
@@ -114,6 +115,8 @@ DEBUG_GET_ONCE_BOOL_OPTION(pico4_slam_exposure_centre, "PICO4_SLAM_EXPOSURE_CENT
 #define SOF_AFTER_LINES_NS 133483     //!< Seven more lines the stock service takes off (stock).
 //! The stock tracker's poses are predicted at most this far past the newest one (as PICO OS).
 #define STOCK_PREDICT_MAX_NS (45 * U_TIME_1MS_IN_NS)
+//! PICO OS's auto exposure in pico4-slamd counts while its heartbeat is this fresh.
+#define STOCK_AE_HEARTBEAT_NS (U_TIME_1S_IN_NS)
 //! CPUs (bit mask) Basalt may use; 0 = no restriction. Default: all but cores 6 and 7.
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_cpus, "PICO4_SLAM_CPUS", 0x3f)
 /*!
@@ -244,8 +247,14 @@ struct pico4_slam
 	//! PICO OS's tracker through pico4-slamd (PICO4_SLAM_BACKEND=stock).
 	bool stock;
 	struct pico4_slam_feed *feed; //!< NULL until pico4-slamd's shared memory is there.
+	uint32_t stock_generation;    //!< Ours, from the attach.
+	uint32_t stock_room_logged;   //!< The room state last logged.
+	uint64_t stock_ae_seen;       //!< pico4-slamd's auto-exposure results taken (ae_written).
+	bool stock_ae_logged;         //!< Whose auto exposure runs, as last logged.
 	int64_t feed_retry_ns;
 	uint64_t stock_sets, stock_imu, stock_lost_feed;
+	//! SteamVR's camera: the forward pair's scene sets while a client streams (NULL without).
+	struct pico4_passthrough *passthrough;
 };
 
 static void
@@ -632,6 +641,7 @@ stock_attach(struct pico4_slam *s)
 		return;
 	}
 	uint32_t generation = __atomic_add_fetch(&feed->generation, 1, __ATOMIC_ACQ_REL);
+	s->stock_generation = generation;
 	__atomic_store_n(&s->feed, feed, __ATOMIC_RELEASE);
 	SLAM_INFO(s, "PICO OS's tracker through pico4-slamd (generation %u)", generation);
 }
@@ -682,6 +692,11 @@ stock_publish(struct pico4_slam *s)
 	}
 	set->ts_ns = first;
 	__atomic_store_n(&feed->sets_written, w + 1, __ATOMIC_RELEASE);
+	// The forward pair for SteamVR's camera, from the copies just made (bottom left cam3, right cam2).
+	if (pico4_passthrough_streaming(s->passthrough)) {
+		pico4_passthrough_push(s->passthrough, set->pixels[3], set->pixels[2], PICO4_SLAM_FEED_W, first,
+		                       set->exposure_lines[3], s->gain);
+	}
 	s->stock_sets++;
 	if (s->stock_sets % 250 == 1) {
 		uint64_t poses = __atomic_load_n(&feed->poses_written, __ATOMIC_ACQUIRE);
@@ -696,6 +711,78 @@ stock_publish(struct pico4_slam *s)
 		          p != NULL ? p->error : 0, (unsigned long long)s->frames_boot_time,
 		          (unsigned long long)s->sets_dropped, (unsigned long long)s->sets_inconsistent,
 		          (double)(s->qtimer_offset_ns - s->qtimer_first_offset_ns) / 1e6);
+	}
+}
+
+//! SteamVR's camera from the forward pair (docs/xr.md#passthrough), placed in the HMD frame.
+static struct pico4_passthrough *
+create_passthrough(struct pico4_slam *s, const char *calibration_dir)
+{
+	// The HMD frame in the body frame: its axes are Q_B_H's columns, its origin P_BODY_HMD.
+	const struct xrt_vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+	struct xrt_vec3 col[3];
+	for (int i = 0; i < 3; i++) {
+		math_quat_rotate_vec3(&Q_B_H, &axes[i], &col[i]);
+	}
+	const double T_body_head[16] = {col[0].x, col[1].x, col[2].x, P_BODY_HMD.x, col[0].y, col[1].y,
+	                                col[2].y, P_BODY_HMD.y, col[0].z, col[1].z, col[2].z, P_BODY_HMD.z,
+	                                0,        0,        0,        1};
+	const double down_body[3] = {-col[1].x, -col[1].y, -col[1].z};
+	struct pico4_passthrough *p = pico4_passthrough_create(calibration_dir, down_body, T_body_head);
+	if (p == NULL) {
+		SLAM_WARN(s, "No passthrough: no calibration of the forward cameras in %s", calibration_dir);
+		return NULL;
+	}
+	struct pico4_passthrough_info info;
+	pico4_passthrough_info(p, &info);
+	for (int i = 0; i < PICO4_PASSTHROUGH_CAMS; i++) {
+		const double *m = info.camera_to_head[i];
+		SLAM_INFO(s, "Passthrough %s camera: %ux%u upright (quarter turn %d), at %.3f %.3f %.3f m, looking %.2f %.2f %.2f",
+		          i == 0 ? "left" : "right", info.width, info.height, info.turn[i], m[3], m[7], m[11], -m[2],
+		          -m[6], -m[10]);
+	}
+	return p;
+}
+
+/*!
+ * Whether pico4-slamd runs PICO OS's auto exposure for this driver generation and still runs: then
+ * the driver's own stays off, and the cameras of a set may differ in exposure.
+ */
+static bool
+stock_ae_active(struct pico4_slam *s)
+{
+	struct pico4_slam_feed *feed = s->feed;
+	if (feed == NULL || __atomic_load_n(&feed->ae_generation, __ATOMIC_ACQUIRE) != s->stock_generation) {
+		return false;
+	}
+	uint64_t beat = __atomic_load_n(&feed->slamd_heartbeat_ns, __ATOMIC_RELAXED);
+	return os_monotonic_get_ns() - (int64_t)beat < STOCK_AE_HEARTBEAT_NS;
+}
+
+//! Sends the exposure PICO OS's auto exposure published last, once (camera thread).
+static void
+stock_ae_apply(struct pico4_slam *s)
+{
+	struct pico4_slam_feed *feed = s->feed;
+	uint64_t w = __atomic_load_n(&feed->ae_written, __ATOMIC_ACQUIRE);
+	if (w == s->stock_ae_seen) {
+		return;
+	}
+	struct pico4_station_exposure scene[PICO4_SLAM_FEED_CAMS];
+	for (int k = 0; k < PICO4_SLAM_FEED_CAMS; k++) {
+		scene[k].lines = feed->ae_lines[k];
+		scene[k].gain = feed->ae_gain[k];
+	}
+	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	if (__atomic_load_n(&feed->ae_written, __ATOMIC_RELAXED) != w) {
+		return; // rewritten while read: the next set takes it
+	}
+	s->stock_ae_seen = w;
+	if (pico4_station_camera_set_each(s->station, scene) == 0) {
+		SLAM_DEBUG(s, "exposure %u/%u %u/%u %u/%u %u/%u (PICO OS's auto exposure)", scene[0].lines, scene[0].gain,
+		           scene[1].lines, scene[1].gain, scene[2].lines, scene[2].gain, scene[3].lines, scene[3].gain);
+		s->exposure_lines = scene[0].lines;
+		s->exposure_gain = scene[0].gain;
 	}
 }
 
@@ -797,6 +884,12 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	}
 	if (added == PICO4_CAM_SET_COMPLETE) {
 		// Four frames of one exposure pulse, or none: a mixed set would give Basalt two scenes.
+		bool stock_ae = s->stock && stock_ae_active(s);
+		if (stock_ae != s->stock_ae_logged) {
+			SLAM_INFO(s, "auto exposure: %s", stock_ae ? "PICO OS's, through pico4-slamd" : "the driver's");
+			s->stock_ae_logged = stock_ae;
+		}
+		s->identity.per_camera_exposure = stock_ae;
 		char why[160];
 		bool consistent = pico4_cam_set_consistent(&s->identity, s->group.frame_id, s->group.meta, s->cam_count,
 		                                           why, sizeof(why));
@@ -815,7 +908,11 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 		 * until the other three saturated.
 		 */
 		float signal = pico4_cam_median(s->group.signal, s->cam_count);
-		auto_exposure(s, signal, &s->group.applied);
+		if (stock_ae) {
+			stock_ae_apply(s);
+		} else {
+			auto_exposure(s, signal, &s->group.applied);
+		}
 		float mean8 = signal / 4.0f;
 		float want = mean8 > 0.5f ? s->brightness / mean8 : 8.0f;
 		want = want < 1.0f ? 1.0f : want > 8.0f ? 8.0f : want;
@@ -1037,6 +1134,7 @@ pico4_slam_create(const char *calibration_dir,
 	// The first frame attaches to pico4-slamd (stock_copy_frame): a driver whose cameras fail
 	// to start, because another one has them, must not restart that one's tracker.
 	if (s->stock) {
+		s->passthrough = create_passthrough(s, calibration_dir);
 		goto cameras;
 	}
 
@@ -1212,6 +1310,57 @@ stock_newest(struct pico4_slam *s, struct pico4_slam_feed_pose *out)
 }
 
 /*!
+ * A stock pose in the room's world (docs/xr.md#room-setup): once pico4-slamd has found that the
+ * tracker relocalised in a saved room, the session's world is turned about its up axis (x) and
+ * shifted onto the room's, so SteamVR's tracking space, and the play area kept in it, stay where
+ * they were in every session in that room. Body rates stay as they are.
+ */
+static void
+stock_in_room(struct pico4_slam *s, struct pico4_slam_feed_pose *p)
+{
+	struct pico4_slam_feed *feed = s->feed;
+	uint32_t state = __atomic_load_n(&feed->room_state, __ATOMIC_ACQUIRE);
+	if (feed->room_generation != s->stock_generation) {
+		return;
+	}
+	if (state != 0 && __atomic_exchange_n(&s->stock_room_logged, state, __ATOMIC_RELAXED) != state) {
+		SLAM_INFO(s, "Room: %s (map %.40s)", state == 1 ? "the saved room, its world from now on" : "a room of its own",
+		          feed->room_uuid);
+	}
+	if (state != 1) {
+		return;
+	}
+	double c = cos(feed->room_yaw), sn = sin(feed->room_yaw);
+	double y = p->position[1], z = p->position[2];
+	p->position[0] += feed->room_t[0];
+	p->position[1] = c * y - sn * z + feed->room_t[1];
+	p->position[2] = sn * y + c * z + feed->room_t[2];
+	double vy = p->velocity[1], vz = p->velocity[2];
+	p->velocity[1] = c * vy - sn * vz;
+	p->velocity[2] = sn * vy + c * vz;
+	// The turn as a quaternion about x, on the world side: q = r * q.
+	double rw = cos(feed->room_yaw / 2), rx = sin(feed->room_yaw / 2);
+	double w = p->orientation[0], x = p->orientation[1], qy = p->orientation[2], qz = p->orientation[3];
+	p->orientation[0] = rw * w - rx * x;
+	p->orientation[1] = rw * x + rx * w;
+	p->orientation[2] = rw * qy - rx * qz;
+	p->orientation[3] = rw * qz + rx * qy;
+}
+
+bool
+pico4_slam_room(struct pico4_slam *s, char out_map[40])
+{
+	struct pico4_slam_feed *feed = s != NULL ? __atomic_load_n(&s->feed, __ATOMIC_ACQUIRE) : NULL;
+	if (feed == NULL || __atomic_load_n(&feed->room_state, __ATOMIC_ACQUIRE) == 0 ||
+	    feed->room_generation != s->stock_generation || feed->room_uuid[0] == '\0') {
+		return false;
+	}
+	memcpy(out_map, feed->room_uuid, 40);
+	out_map[39] = '\0';
+	return true;
+}
+
+/*!
  * The stock tracker's pose at @p at_ns, which lies before its newest pose (an LED exposure for the
  * controller tracker): interpolated between the two ring entries around it. False if the ring no
  * longer holds that time, or either entry is untracked.
@@ -1337,12 +1486,14 @@ pico4_slam_get_head_pose(struct pico4_slam *s, int64_t at_ns, struct xrt_space_r
 		if (at_ns < p.ts_ns) {
 			struct pico4_slam_feed_pose then;
 			if (stock_pose_at(s, at_ns, &then)) {
+				stock_in_room(s, &then);
 				stock_to_openxr(&then, 0, out, NULL);
 				return true;
 			}
 		}
 		int64_t dt = at_ns - p.ts_ns;
 		dt = dt < 0 ? 0 : dt > STOCK_PREDICT_MAX_NS ? STOCK_PREDICT_MAX_NS : dt;
+		stock_in_room(s, &p);
 		stock_to_openxr(&p, dt, out, NULL);
 		return true;
 	}
@@ -1380,6 +1531,7 @@ pico4_slam_get_latest(struct pico4_slam *s, struct pico4_fusion_slam *out)
 		if (!stock_newest(s, &p)) {
 			return false;
 		}
+		stock_in_room(s, &p);
 		stock_to_openxr(&p, 0, &r, &out->position);
 		out->ts_ns = p.ts_ns;
 		out->orientation = r.pose.orientation;
@@ -1462,8 +1614,15 @@ pico4_slam_destroy(struct pico4_slam **ptr)
 	for (int k = 0; k < PICO4_TCAM_COUNT; k++) {
 		free(s->leds.images[k]);
 	}
+	pico4_passthrough_destroy(&s->passthrough);
 	free(s);
 	*ptr = NULL;
+}
+
+struct pico4_passthrough *
+pico4_slam_passthrough(struct pico4_slam *s)
+{
+	return s != NULL ? s->passthrough : NULL;
 }
 
 #else // XRT_FEATURE_SLAM
@@ -1528,6 +1687,21 @@ void
 pico4_slam_destroy(struct pico4_slam **s)
 {
 	*s = NULL;
+}
+
+struct pico4_passthrough *
+pico4_slam_passthrough(struct pico4_slam *s)
+{
+	(void)s;
+	return NULL;
+}
+
+bool
+pico4_slam_room(struct pico4_slam *s, char out_map[40])
+{
+	(void)s;
+	(void)out_map;
+	return false;
 }
 
 #endif // XRT_FEATURE_SLAM

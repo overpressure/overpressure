@@ -35,9 +35,11 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         "${_camheaders[@]/#/$_camuapi/}"
         monado-pico4-driver.patch monado-steamvr-pico4.patch monado-service-sigterm.patch
         monado-slam-prediction.patch monado-steamvr-battery.patch monado-vk-mutex-init-failure.patch
+        monado-steamvr-presence.patch monado-steamvr-camera.patch monado-steamvr-room.patch
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
+        pico4_passthrough.h pico4_passthrough.c
         pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
         comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
@@ -61,8 +63,8 @@ sha256sums=(SKIP
             891a5906ffaf4388adc07f21309b7a9bac7007efbafbb37dc7eb8387f8130941
             7ba04fb72ef7d0fdd6abe6a044cf3586b059ae98129011086f38d30ca4fd0c6a
             a7e0b04b5fdff083e8556442f33a1ebc2cda18152bf7d4a711e9d2549d988762
-            SKIP
-            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
+            SKIP SKIP SKIP
+            SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP
             SKIP
@@ -82,6 +84,12 @@ prepare() {
   patch -d monado -p1 < monado-steamvr-battery.patch
   # A compositor whose init failed before Vulkan (the panels taken) must not abort on teardown.
   patch -d monado -p1 < monado-vk-mutex-init-failure.patch
+  # The headset's wear sensor as SteamVR's user presence (/proximity).
+  patch -d monado -p1 < monado-steamvr-presence.patch
+  # SteamVR's camera (room view) from the forward tracking cameras.
+  patch -d monado -p1 < monado-steamvr-camera.patch
+  # A tracking universe per room (the tracker's map).
+  patch -d monado -p1 < monado-steamvr-room.patch
   # PICO's kernel allows four links per session where the CAF header says two.
   install -Dm644 -t monado/src/xrt/drivers/pico4/include/media "${_camheaders[@]}"
   sed -i -E 's/^(#define MAX_LINKS_PER_SESSION[[:space:]]+)2$/\14/' \
@@ -95,7 +103,7 @@ build() {
   # install -C leaves unchanged files and their timestamps alone.
   install -C -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c \
     pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c \
-    pico4_tcam.h pico4_tcam.c pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
+    pico4_tcam.h pico4_tcam.c pico4_passthrough.h pico4_passthrough.c pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
     pico4_controller.c pico4_fusion.h pico4_fusion.c pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_types.hpp \
     pico4_ctrack_model.hpp pico4_ctrack_model.cpp pico4_ctrack_solve.hpp pico4_ctrack_solve.cpp \
     pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp \
@@ -112,8 +120,8 @@ build() {
   ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -Imonado/src/xrt/include -Imonado/src/external/cjson \
     -o test_pico4_aimgrip test_pico4_aimgrip.c monado/src/external/cjson/cjson/cJSON.c -lm
   ./test_pico4_aimgrip
-  ${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -o test_pico4_tracking test_pico4_tracking.c pico4_station.c pico4_tcam.c \
-    pico4_blemcu.c -lm
+  ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_tracking test_pico4_tracking.c \
+    pico4_station.c pico4_tcam.c pico4_blemcu.c pico4_passthrough.c -lm -lpthread
   ./test_pico4_tracking
   ${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -Imonado/src/xrt/include -o test_pico4_fusion test_pico4_fusion.c \
     pico4_fusion.c -lm

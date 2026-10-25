@@ -501,6 +501,16 @@ pico4_station_camera_para(uint8_t out[CAMERA_SET_PARA_LEN],
                           struct pico4_station_exposure leds,
                           unsigned index)
 {
+	const struct pico4_station_exposure each[4] = {scene, scene, scene, scene};
+	pico4_station_camera_para_each(out, each, leds, index);
+}
+
+void
+pico4_station_camera_para_each(uint8_t out[CAMERA_SET_PARA_LEN],
+                               const struct pico4_station_exposure scene[4],
+                               struct pico4_station_exposure leds,
+                               unsigned index)
+{
 	if (leds.lines > PICO4_STATION_LED_MAX_LINES) {
 		leds.lines = PICO4_STATION_LED_MAX_LINES;
 	}
@@ -510,7 +520,7 @@ pico4_station_camera_para(uint8_t out[CAMERA_SET_PARA_LEN],
 	memset(out, 0, CAMERA_SET_PARA_LEN);
 	out[0] = CAMERA_SET_PARA;
 	for (int i = 0; i < 8; i++) {
-		const struct pico4_station_exposure *x = i < 4 ? &scene : &leds;
+		const struct pico4_station_exposure *x = i < 4 ? &scene[i] : &leds;
 		uint8_t *e = out + 1 + 3 * i + (i >= 4 ? 3 : 0);
 		e[0] = (uint8_t)(x->lines & 0xff);
 		e[1] = (uint8_t)(x->lines >> 8);
@@ -521,19 +531,35 @@ pico4_station_camera_para(uint8_t out[CAMERA_SET_PARA_LEN],
 	out[15] = (uint8_t)(index % 10);
 }
 
-int
-pico4_station_camera_set_exposures(struct pico4_station *st,
-                                   struct pico4_station_exposure scene,
-                                   struct pico4_station_exposure leds)
+static int
+send_camera_para(struct pico4_station *st,
+                 const struct pico4_station_exposure scene[4],
+                 struct pico4_station_exposure leds)
 {
 	// The station answers nothing.
 	uint8_t p[CAMERA_SET_PARA_LEN];
 	pthread_mutex_lock(&st->lock);
 	st->para_index = (st->para_index + 1) % 10; // counted before each command, as PICO OS does
-	pico4_station_camera_para(p, scene, leds, st->para_index);
+	pico4_station_camera_para_each(p, scene, leds, st->para_index);
 	int r = send_cmd(st, PICO4_STATION_CMD_CAMERA, p, sizeof(p));
 	pthread_mutex_unlock(&st->lock);
 	return r;
+}
+
+int
+pico4_station_camera_set_exposures(struct pico4_station *st,
+                                   struct pico4_station_exposure scene,
+                                   struct pico4_station_exposure leds)
+{
+	const struct pico4_station_exposure each[4] = {scene, scene, scene, scene};
+	return send_camera_para(st, each, leds);
+}
+
+int
+pico4_station_camera_set_each(struct pico4_station *st, const struct pico4_station_exposure scene[4])
+{
+	const struct pico4_station_exposure leds = {4, 26};
+	return send_camera_para(st, scene, leds);
 }
 
 int

@@ -19,7 +19,7 @@
 #include <stdint.h>
 
 #define PICO4_SLAM_FEED_PATH "/dev/shm/pico4-slam"
-#define PICO4_SLAM_FEED_MAGIC 0x32444546344f4350ull //!< "PCO4FED2"
+#define PICO4_SLAM_FEED_MAGIC 0x34444546344f4350ull //!< "PCO4FED4"
 #define PICO4_SLAM_FEED_W 640
 #define PICO4_SLAM_FEED_H 480
 #define PICO4_SLAM_FEED_CAMS 4
@@ -69,7 +69,27 @@ struct pico4_slam_feed
 	uint32_t version, generation; //!< generation: bumped by the driver at each start.
 	uint64_t imu_written, sets_written, poses_written;
 	uint64_t slamd_heartbeat_ns; //!< pico4-slamd's last activity.
-	uint64_t pad[8];
+	/*!
+	 * The room (docs/xr.md#room-setup): after the tracker relocalised in a saved room, the
+	 * transform from this session's world to the room's (a turn of @ref room_yaw about the
+	 * world's up axis x, then @ref room_t), written by pico4-slamd before @ref room_state.
+	 * 0 not known (yet), 1 relocalised, 2 a room of its own (no saved room, or no match).
+	 */
+	uint32_t room_state;
+	uint32_t room_generation; //!< The driver generation the room state belongs to.
+	double room_yaw;
+	double room_t[3];
+	char room_uuid[40]; //!< The tracker's map (getRelocMapInfo), the room's identity.
+	/*!
+	 * PICO OS's auto exposure of the head cameras (docs/xr.md#auto-exposure): pico4-slamd runs it
+	 * on the sets and publishes the scene exposure it wants per camera (factory order, gain 16 =
+	 * 1x), written before @ref ae_written is bumped. While @ref ae_generation is the driver's own
+	 * and pico4-slamd's heartbeat is fresh, the driver sends these and runs no auto exposure.
+	 */
+	uint32_t ae_generation;
+	uint32_t ae_lines[PICO4_SLAM_FEED_CAMS];
+	uint32_t ae_gain[PICO4_SLAM_FEED_CAMS];
+	uint64_t ae_written;
 	struct pico4_slam_feed_imu imu[PICO4_SLAM_FEED_IMU];
 	struct pico4_slam_feed_pose poses[PICO4_SLAM_FEED_POSES];
 	struct pico4_slam_feed_set sets[PICO4_SLAM_FEED_SETS];

@@ -28,6 +28,7 @@ main(void)
 	static struct isp_tables t;
 	static uint16_t rows[ISP_H * ISP_W];
 	static uint8_t out[ISP_W * ISP_H];
+	static uint16_t linear[ISP_W * ISP_H];
 
 	// Parser: any separators, a number at the very end, at most max.
 	uint32_t n[4];
@@ -53,7 +54,7 @@ main(void)
 	}
 	rows[3] = 600;
 	rows[(ISP_H - 1) * ISP_W] = 1000; // the last scene row: dropped
-	isp_process(&t, rows, ISP_W, out);
+	isp_process(&t, rows, ISP_W, out, linear);
 
 	// Row 0 and row 1 are both scene row 0: (100 - 16) = 84 -> 84 >> 2 = 21.
 	EXPECT(out[0] == 21 && out[ISP_W] == 21, "row 0 and 1 from scene row 0: %u %u", out[0], out[ISP_W]);
@@ -66,10 +67,26 @@ main(void)
 	// The last row is scene row 478 (578 - 16 = 562, + 2 = 564), its last pixel at 16x: clamped to 1023.
 	EXPECT(out[(ISP_H - 1) * ISP_W] == 141, "last row: %u", out[(ISP_H - 1) * ISP_W]);
 	EXPECT(out[ISP_W * ISP_H - 1] == 255, "16x clamps: %u", out[ISP_W * ISP_H - 1]);
+	// The auto exposure's input: the same samples before the gamma table.
+	EXPECT(linear[3] == 586 && linear[ISP_W + 5] == 168 && linear[ISP_W * ISP_H - 1] == 1023,
+	       "linear: %u %u %u", linear[3], linear[ISP_W + 5], linear[ISP_W * ISP_H - 1]);
 	// Below the black level: 0.
 	rows[ISP_W * 10] = 10;
-	isp_process(&t, rows, ISP_W, out);
+	isp_process(&t, rows, ISP_W, out, NULL);
 	EXPECT(out[ISP_W * 11] == 0, "black level: %u", out[ISP_W * 11]);
+
+	// The vendor's table, as PICO OS's ISPpreinit maps it; camera 0's id from cJSON's output.
+	EXPECT(strcmp(isp_lsc_file(9), "config_lscLH.txt") == 0 && strcmp(isp_lsc_file(13), "config_lscLH.txt") == 0,
+	       "vendor 9/13");
+	EXPECT(strcmp(isp_lsc_file(8), "config_lscSY.txt") == 0, "vendor 8");
+	EXPECT(strcmp(isp_lsc_file(7), "config_lscneo3.txt") == 0, "vendor 7");
+	EXPECT(isp_lsc_file(5) == NULL && isp_lsc_file(-1) == NULL, "illegal vendor");
+	const char otp[] = "{\n\t\"camera0\":\t9,\n\t\"camera1\":\t8,\n\t\"camera2\":\t9,\n\t\"camera3\":\t9\n}";
+	EXPECT(isp_otp_vendor(otp, (long)strlen(otp)) == 9, "otp camera0");
+	const char line[] = "camera otp \"camera1\": 8, \"camera0\" : 13";
+	EXPECT(isp_otp_vendor(line, (long)strlen(line)) == 13, "otp camera0 later in the text");
+	const char none[] = "{\"camera1\": 9}";
+	EXPECT(isp_otp_vendor(none, (long)strlen(none)) == -1, "otp without camera0");
 
 	if (failures == 0) {
 		printf("test_isp: passed\n");

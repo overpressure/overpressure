@@ -471,7 +471,7 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path \
     pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
-    pico4-splash.service
+    pico4-splash.service pico4-powerkey.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
@@ -491,10 +491,10 @@ in_t systemctl mask sddm.service dsp_service.service steamvr-program-ble.service
     steamvr-set-kernel-thread-priorities.service steamvr-v4l2loopback.service \
     steamvr-web-debug-portforward.service steam-video-codec-setup.service \
     steam-web-debug-portforward.service
-# The session's user units for Frame hardware (the headset-view loopback camera,
-# proximity microphone mute) and the sched_ext CPU scheduler (scx_lavd needs
-# Linux 6.12; steamos-manager offers no scheduler interface here, and stage 1
-# already sets schedutil).
+# The session's user units for Frame hardware (the headset-view loopback camera; the
+# proximity microphone mute, which cannot load this kernel's mixer: pico4-micmute does it) and
+# the sched_ext CPU scheduler (scx_lavd needs Linux 6.12; steamos-manager offers no scheduler
+# interface here, and stage 1 already sets schedutil).
 in_t systemctl --global mask steamvr-v4l2cam.service steamvr-proxmicmute.service steamos-scheduler.service
 # SteamVR's log forwarder (steamvr-logs) imports inotify_simple, which the Frame's
 # package installs for Python 3.12 only. The module is plain Python: the image's
@@ -517,6 +517,8 @@ install -d -o 1000 -g 1000 -m 0755 "$T/home/$user/.config/openvr" "$T/home/$user
     "$T/home/$user/.local/share/Steam/logs" "$T/home/$user/.steam"
 install -o 1000 -g 1000 -m 0644 "$project/userspace/session/openvrpaths.vrpath" "$T/home/$user/.config/openvr/"
 install -o 1000 -g 1000 -m 0644 "$project/userspace/session/steamvr.vrsettings" "$T/home/$user/.local/share/Steam/config/"
+# The image's copy: steamvr-settings puts its keys into the user's file at each SteamVR start.
+install -D -m 0644 "$project/userspace/session/steamvr.vrsettings" "$T/usr/share/pico4-poc/steamvr.vrsettings"
 # The Steam client's RUNSTEAM.sh makes these links; SteamVR finds its logs and
 # the Steam folder through them.
 ln -sfn "/home/$user/.local/share/Steam" "$T/home/$user/.steam/steam"

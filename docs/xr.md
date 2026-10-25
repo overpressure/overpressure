@@ -548,11 +548,33 @@ SteamVR has no camera view (room view) here yet. How the Frame provides one:
   App - Scan QR code" (the QR code is shown in the headset and the phone scans it) and the
   password.
 
-For the PICO 4 the camera component belongs in `driver_monado`'s HMD, fed from the scene frames
-`pico4_cam` already captures in `vrserver`: the cameras and the station keep a single owner.
-OpenVR's camera formats have no 8-bit grey one, so the OV7251 frames (two stacked, 640×960)
-would go out as NV12 with neutral chroma, upright, without the controller-LED frames, with
-the cameras' fisheye model as their distortion; exposure stays with the tracking.
+On the PICO 4 the camera component is `driver_monado`'s HMD
+([monado-steamvr-camera.patch](../userspace/pkgbuilds/pico4-monado/monado-steamvr-camera.patch)),
+fed from the scene frames the driver already captures in `vrserver`, so the cameras and the
+station keep a single owner:
+
+- **Cameras.** The lower pair looks forward, about 40° down, 11 cm apart: cam3 (left) and cam2
+  (right). Their images lie on their sides; [pico4_passthrough.c](../src/monado/pico4_passthrough.c)
+  turns each upright by the quarter turn that brings its image's "down" closest to the HMD's
+  (`pico4_tcam_upright`), giving 480×640 per camera, with the fisheye intrinsics (the KB4 fit of
+  the factory model, OpenVR's FTheta) and camera-to-head transforms turned alike.
+- **Frames.** While a client streams, the camera thread copies each complete scene set's two
+  raw images (never waiting: a set is skipped while the client converts the one before); the
+  component's thread converts them (black level off, the driver's brightness gain, 8 bits) into
+  SteamVR's buffers as NV12 with neutral chroma, left camera above right (480×1280,
+  `Stereo|VerticalLayout`), at the scene rate of 25 Hz, with the exposure time and the head pose
+  at the middle of the exposure. Controller-LED frames stay out; the exposure stays with the
+  tracking.
+- **Properties.** `HasCamera`, `HasCameraComponent`, two cameras, NV12, the camera-to-head
+  transforms, FTheta distortion with k1–k4 per camera, neutral white balance.
+- **Settings.** The Frame's: `camera.enableCamera`, `roomView` 2, no camera bounds, not on the
+  controller, `contentAwareRoomviewMonochromeTint`; `dashboard.allowPassthroughPortalManager` off.
+- **State.** SteamVR reports the camera (`IVRTrackedCamera::HasCamera`, a 480×1280 frame) but
+  `vrserver` 2.17 never asks the driver for the component, with `camera.enableCamera` on and
+  after toggling it at runtime: `AcquireVideoStreamingService` fails (`OperationFailed`) and the
+  compositor reports "no camera enabled". What makes `vrserver` take a driver's camera (its
+  camera host, the `TrackedCamera_Enable` message) is not yet known; the Frame's room view may
+  take only its private interface.
 
 ## Head tracking
 
@@ -615,9 +637,29 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   ([isp.h](../src/stockslam/isp.h)): the first scene row doubled (it replaces the sensor's metadata
   row; the last row drops out), black level 16 off, `v + (v >> 8)`, a per-pixel lens-shading gain
   (128 = 1×, up to 16× in the fisheyes' corners) and a 10-to-8-bit gamma table. The gain table is
-  chosen by the camera modules' vendor, which PICO OS reads from their OTP through the station:
-  vendor 9 on this headset (`config_lscLH.txt`, the default; `PICO4_SLAMD_LSC` names another).
+  chosen by the camera modules' vendor, which PICO OS's station service reads from their OTP
+  once and keeps in `/data/stationservice/camera_otp.json`, trusting saved values of 8 and 9
+  only. The extraction takes that file from the backup's userdata (as text in the dump: the
+  file or a log line repeating it) into the root's `/pico4/camera_otp.json`, and `pico4-slamd`
+  maps camera 0's id as PICO OS's ISP does: 8 → `config_lscSY.txt`, 9 and 13 →
+  `config_lscLH.txt`, 7 → `config_lscneo3.txt`, any other → no lens shading. This headset's
+  modules are all vendor 9. Without the file it takes the vendor-9 table and says so;
+  `PICO4_SLAMD_LSC` names a table by hand.
   No rotation: the tracker's calibration describes the sensors as read out.
+- **Auto exposure.** PICO OS's own, `ExposurePredict` from `libExposureImageProcess.so` (with
+  `libtianti_shm_dynamic.so` and `libc++_shared.so`, extracted into the root with the tracker;
+  this project's `libandroid.so` adds the six hardware-buffer calls that library binds, which fail:
+  they are used only between processes). `pico4-slamd` calls it as PICO OS's `calcExpo` thread
+  does, on a thread of its own: on each scene set it is not still busy with, the four images after
+  black level and lens shading and before the gamma table (16-bit, `isp.h`'s intermediate), the
+  lines and gains the set was taken with, 50 fps, bit width 16, and flicker detection started on
+  the first call. Its result (lines 13–737, gain 16–240 in steps of 16; cameras 2 and 3 share
+  one setting) goes to the driver through the shared memory unless it is what the set was taken
+  with or what was sent last; the driver sends it per camera as the scene phase of
+  `CameraSetPara` (the LED phase unchanged) and runs no auto exposure of its own while
+  `pico4-slamd` serves its generation with a fresh heartbeat. With per-camera exposures a set's
+  frames differ in exposure; their frame counters still decide whether they form a set.
+  `PICO4_SLAMD_AE=0` leaves the exposure to the driver's median loop ([Basalt](#basalt)).
 - **IMU.** The raw samples of the factory body frame, at the DSP's 1 kHz, as PICO OS feeds them
   (its uncalibrated streams carry the same values; the service applies no bias or axis change),
   each with the ICM-42688's latest die temperature, which the tracker's gyro bias table is
@@ -636,6 +678,34 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   [pico4_fusion.c](../src/monado/pico4_fusion.c). A pose older than 200 ms, or one the tracker
   reports untracked, counts as lost: the HMD keeps the last position with the 3DoF orientation.
   The tracker relocalises in its own map.
+
+### Room setup
+
+PICO OS keeps a room across sessions with the tracker's map: `libSlam.so` loads the maps in
+`/data/misc/user/0/maps` at `createHandle`, tries to relocalise in them for about 8 s after
+`start6DOF`, and saves its map at the stop (`preStopAlgorithm`, `stopAlgorithm` with
+`non_sleep`, `destroyHandle`), but only while `boundary/stdata.txt` holds a boundary;
+`createHandle` and `start6DOF` empty the boundary files. After a relocalisation it writes the
+saved room's boundary, in this session's world, to `boundary/stdataforalgorithm.txt`. A boundary
+file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's world point is
+(b, −a, c).
+
+- **Where it lives.** [`stock-slam`](../userspace/rootfs/usr/libexec/pico4-poc/stock-slam)
+  binds `/var/lib/pico4-stock-slam/{maps,boundary}` (the data partition, mode 0700) onto those
+  directories of the root, so the map survives reboots and system updates; it never leaves the
+  headset.
+- **A reference square.** Every map is saved with the same boundary in its own world: a 2 m
+  square 1.5 m below where the tracker started. 10 s after `start6DOF`, `pico4-slamd` fits the
+  tracker's copy of it in this session's world ([room.h](../src/stockslam/room.h): a turn about
+  the up axis and a shift, both worlds being gravity-aligned; accepted below 5 cm residual): that
+  is the transform from the session's world to the saved room's, whichever saved map the tracker
+  found. It publishes it in the shared memory and writes the copy to `stdata.txt`, so the stop
+  saves the map again; the driver puts every pose of that generation into the room's world.
+  Without a relocalisation the session is a new room, saved with the square as it is.
+- **SteamVR's universe.** The map's identity (`getRelocMapInfo`) is the room's: `driver_monado`
+  reports its hash as `Prop_CurrentUniverseId_Uint64` once the room is settled, so SteamVR keeps
+  a play area per room in `chaperone_info.vrchap`, back in its place whenever the tracker
+  relocalises in that room, and asks for a room setup in a new one. Until then the universe is 2.
 
 ### Frame times
 
@@ -1110,8 +1180,9 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `XRT_COMPOSITOR_COMPUTE` | off in this build | Monado's compute composition path |
 | `PICO4_SLAM` | on | 6DoF |
 | `PICO4_SLAM_BACKEND` | `stock` | `stock`: PICO OS's tracker through `pico4-slamd`; `basalt`: Monado's Basalt |
-| `PICO4_SLAMD_LSC` | `config_lscLH.txt` | `pico4-slamd`'s lens-shading table in `/system/etc/pvr/config` (camera modules of vendor 9); set in the unit's environment |
+| `PICO4_SLAMD_LSC` | the vendor's | `pico4-slamd`'s lens-shading table in `/system/etc/pvr/config` instead of the one the camera modules' vendor picks; set in the unit's environment |
 | `PICO4_SLAMD_DEBUG` | unset | `pico4-slamd` passes the tracker's debug and verbose log lines to the journal |
+| `PICO4_SLAMD_AE` | on | `0`: no PICO OS auto exposure in `pico4-slamd`; the driver's own sets the exposure |
 | `PICO4_SLAM_CAMS` | `0,1,2,3` | factory cameras for Basalt in tracker order, at least two; Basalt matches the first against the others |
 | `PICO4_TCAM_SLOTS` | `0,2,1,3` | CSL slot of factory cameras cam0–cam3 |
 | `PICO4_SLAM_UPRIGHT` | on | turn images that are upside down relative to the first camera's |
@@ -1243,9 +1314,9 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 ## Next steps
 
 1. **PICO OS's tracker.** Worn it tracks walking and fast turns as on PICO OS; a covered
-   camera and a dim room are unchecked. Two inputs are not yet PICO OS's: the auto exposure
-   (the driver's own median exposure) and the lens-shading table, fixed to this headset's
-   camera vendor where PICO OS reads the vendor from the modules' OTP.
+   camera and a dim room are unchecked, and so is PICO OS's auto exposure worn.
+   [Room setup](#room-setup): the play area drawn in SteamVR's room setup, and coming back to it
+   after a reboot, are not yet tried.
 2. **Controllers in applications.** SteamVR's dashboard toggles but stays hidden without the
    Steam client ([session.md](session.md)), so the laser, clicking and the grip frame are
    unchecked in it. A vibration strong enough to feel has not yet come from a SteamVR
@@ -1256,7 +1327,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
    unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
    which needs the Steam client in the session.
-4. **Passthrough.** SteamVR's camera component in `driver_monado` from the tracking cameras'
-   scene frames ([Passthrough](#passthrough)). Its frame copy must never hold up capture,
-   tracking or the IMU, so it needs the tracking checks (still and worn); whether this SteamVR
-   build shows room view through the public camera interface alone is the first thing to test.
+4. **Passthrough.** SteamVR's camera component is in `driver_monado`
+   ([Passthrough](#passthrough)), but `vrserver` does not take it: what its camera host needs
+   (or the Frame's private passthrough interface) is next. Once frames flow, the copy needs the
+   tracking checks (still and worn).

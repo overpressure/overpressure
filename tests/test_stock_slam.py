@@ -77,9 +77,16 @@ class ExtractionTests(unittest.TestCase):
         for name in ("libSlam.so", "libslamDSP.so", "libceres.so", "libminiglog.so", "libcdsprpc.so", "libion.so",
                      "libslamDSP_skel.so", "libpico_cv_dsp_skel.so", "libfastcvadsp.so", "libdspCV_skel.so",
                      "cdsprpcd", "libcdsp_default_listener.so", "linker64", "fastrpc_shell_3", "cdsp.mdt",
-                     "cdspr.jsn"):
+                     "cdspr.jsn", "libExposureImageProcess.so", "libtianti_shm_dynamic.so", "libc++_shared.so"):
             self.assertIn(name, script, name)
         self.assertIn("sha256 does not match the backup manifest", script)
+        # an issue: the camera modules' vendor ids as PICO OS saved them, only values it trusts.
+        self.assertIn("/data/stationservice/camera_otp.json", script)
+        self.assertIn("all(v in (8, 9) for v in ids)", script)
+        self.assertIn('"$root/pico4/camera_otp.json"', script)
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        self.assertIn('#define OTP_PATH "/pico4/camera_otp.json"', slamd)
+        self.assertIn("isp_lsc_file(vendor)", slamd)
         # debugfs's rdump creates the directory inside its target: dump into the parent.
         self.assertIn('dump "$work/system.img" /system/etc/pvr/config "$root/system/etc/pvr"\n', script)
         self.assertIn('dump "$backup/lun4/dsp.bin" /cdsp "$root/vendor/dsp"\n', script)
@@ -175,6 +182,66 @@ class TemperatureTests(unittest.TestCase):
         self.assertIn("#define TEMPERATURE_MIN -30.0", slamd)
         self.assertIn("#define TEMPERATURE_MAX 100.0", slamd)
         self.assertIn("sample[6] = known ? e.temperature : DEFAULT_TEMPERATURE;", slamd)
+
+
+class AutoExposureTests(unittest.TestCase):
+    """an issue: PICO OS's auto exposure in pico4-slamd, the station commands in the driver."""
+
+    def test_slamd_calls_it_as_pico_os(self):
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        self.assertIn('dlopen("libExposureImageProcess.so", RTLD_NOW)', slamd)
+        self.assertIn('dlsym(lib, "ExposurePredict")', slamd)
+        # Images after black level and lens shading, before gamma; 16-bit at the 50 Hz rate.
+        self.assertIn("to_ae ? g_linear[k] : 0", slamd)
+        self.assertIn("#define AE_FPS 50", slamd)
+        self.assertIn("#define AE_BIT_WIDTH 16", slamd)
+        # Nothing sent when it is what the set was taken with, or what was sent last.
+        self.assertIn("if (!own && !same)", slamd)
+        self.assertIn("__atomic_fetch_add(&feed->ae_written, 1, __ATOMIC_RELEASE);", slamd)
+        self.assertIn("__atomic_store_n(&feed->ae_generation, 0, __ATOMIC_RELEASE);", slamd)
+        runner = read(LIBEXEC / "stock-slam")
+        self.assertIn("${PICO4_SLAMD_AE:+PICO4_SLAMD_AE=$PICO4_SLAMD_AE}", runner)
+        android = read(ROOT / "src/stockslam/android.c")
+        for name in ("allocate", "lock", "unlock", "release", "sendHandleToUnixSocket", "recvHandleFromUnixSocket"):
+            self.assertIn(f"AHardwareBuffer_{name}(", android)
+
+    def test_driver_sends_it_per_camera(self):
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        self.assertIn("pico4_station_camera_set_each(s->station, scene)", slam)
+        self.assertIn("s->identity.per_camera_exposure = stock_ae;", slam)
+        apply = slam.index("if (stock_ae) {\n\t\t\tstock_ae_apply(s);\n\t\t} else {\n\t\t\tauto_exposure(")
+        self.assertGreater(apply, 0)
+
+
+class RoomTests(unittest.TestCase):
+    """an issue: PICO OS's map persistence and a SteamVR universe per room."""
+
+    def test_maps_on_the_data_partition(self):
+        runner = read(LIBEXEC / "stock-slam")
+        self.assertIn('mount --bind "$state/maps" "$root/data/misc/user/0/maps"', runner)
+        self.assertIn('mount --bind "$state/boundary" "$root/data/misc/user/0/boundary"', runner)
+
+    def test_slamd_saves_every_map_with_the_reference_square(self):
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        self.assertIn("static const double ROOM_SQUARE[4][3]", slamd)
+        self.assertIn("write_boundary(SESSION_BOUNDARY, ROOM_SQUARE, 4);", slamd)
+        self.assertIn("room_fit((const double(*)[3])g_seen, ROOM_SQUARE, 4,", slamd)
+        # A copy left from an earlier session must not count as this one's relocalisation.
+        self.assertLess(slamd.index("unlink(RELOCALISED_BOUNDARY);"), slamd.index('void *h = create("");'))
+        # The clean stop that saves the map, as PICO OS's service stops the tracker.
+        stop = slamd.index("prestop(h);")
+        self.assertLess(stop, slamd.index('stop(h, "non_sleep");'))
+        self.assertLess(slamd.index('stop(h, "non_sleep");'), slamd.index("destroy(h);"))
+
+    def test_steamvr_gets_a_universe_per_map(self):
+        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
+        self.assertIn("pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe) __attribute__((weak));",
+                      patch)
+        self.assertIn("vr::Prop_CurrentUniverseId_Uint64", patch)
+        recipe = read(ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD")
+        self.assertLess(recipe.index("< monado-steamvr-camera.patch"), recipe.index("< monado-steamvr-room.patch"))
+        hmd = read(ROOT / "src/monado/pico4_hmd.c")
+        self.assertIn("*out_universe = h > 1 ? h : h + 2;", hmd)  # 0 and 1 are OpenVR's
 
 
 class FeedHeaderTests(unittest.TestCase):

@@ -126,8 +126,10 @@ struct pico4_hmd
 	struct xrt_device base;
 
 	struct pico4_ssc *ssc;
-	struct pico4_ssc_suid accel_suid, gyro_suid, blemcu_suid, temperature_suid;
-	bool has_blemcu, has_temperature;
+	struct pico4_ssc_suid accel_suid, gyro_suid, blemcu_suid, temperature_suid, proximity_suid;
+	bool has_blemcu, has_temperature, has_proximity;
+	//! The wear sensor: -1 not reported yet, 0 off the head, 1 worn (pico4_hmd_get_presence).
+	int worn;
 	//! The ICM-42688's die temperature, °C, NaN until its first report (PICO OS's tracker uses it).
 	float temperature_c;
 	//! The IMU stream is lost and being reconnected: the head pose is untracked meanwhile.
@@ -421,9 +423,41 @@ log_blemcu_clock(struct pico4_hmd *h, int64_t diff_ns, int64_t now_ns)
 	}
 }
 
+/*!
+ * The wear state for the session's microphone mute (pico4-micmute): $XDG_RUNTIME_DIR/pico4-worn,
+ * "1" worn or "0" off the head, written atomically on each change.
+ */
+static void
+publish_worn(int worn)
+{
+	const char *dir = getenv("XDG_RUNTIME_DIR");
+	char path[512], tmp[520];
+	snprintf(path, sizeof(path), "%s/pico4-worn", dir != NULL ? dir : "/run");
+	snprintf(tmp, sizeof(tmp), "%s.new", path);
+	FILE *f = fopen(tmp, "we");
+	if (f == NULL) {
+		return;
+	}
+	fputs(worn ? "1\n" : "0\n", f);
+	if (fclose(f) == 0) {
+		rename(tmp, path);
+	}
+}
+
 static void
 handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 {
+	if (s->proximity) {
+		// As PICO OS's sensor HAL: only events of high accuracy (status 3) count; 1 is near.
+		if (h->has_proximity && s->count >= 3 && s->values[2] == 3.0f && suid_equal(&s->suid, &h->proximity_suid)) {
+			int worn = s->values[0] >= 0.5f;
+			if (__atomic_exchange_n(&h->worn, worn, __ATOMIC_RELAXED) != worn) {
+				P4_INFO(h, "Wear sensor: %s (raw %.0f)", worn ? "worn" : "off the head", s->values[1]);
+				publish_worn(worn);
+			}
+		}
+		return;
+	}
 	if (h->has_temperature && s->count >= 1 && suid_equal(&s->suid, &h->temperature_suid)) {
 		h->temperature_c = s->values[0]; // read below, on the same (IMU) thread
 		return;
@@ -551,6 +585,21 @@ setup_temperature(struct pico4_hmd *h, int timeout_ms)
 }
 
 /*!
+ * The wear sensor (STK3x1x proximity on the sensor DSP), enabled as PICO OS enables it: the
+ * on-change request with an empty payload; a standard request crashed the SLPI. On the IMU
+ * thread, which owns the client.
+ */
+static void
+setup_proximity(struct pico4_hmd *h, int timeout_ms)
+{
+	h->has_proximity = pico4_ssc_find(h->ssc, "proximity", &h->proximity_suid, timeout_ms) == 0 &&
+	                   pico4_ssc_enable_on_change(h->ssc, &h->proximity_suid) >= 0;
+	if (!h->has_proximity) {
+		P4_WARN(h, "No wear sensor from the sensor service");
+	}
+}
+
+/*!
  * The IMU stream is gone, typically because the sensor DSP restarted: its service, the
  * sensor UIDs and the QTimer mapping may all have changed. Report the head pose untracked,
  * then open a new client, find the sensors again, map the clock and subscribe, until it
@@ -576,6 +625,7 @@ recover_imu(struct pico4_hmd *h, float rate, const char *why)
 				P4_ERROR(h, "The controller stream did not come back with the IMU");
 			}
 			setup_temperature(h, 1000);
+			setup_proximity(h, 1000);
 			__atomic_store_n(&h->imu_stale, false, __ATOMIC_RELEASE);
 			P4_INFO(h, "IMU stream back after %.1f s (attempt %d), QTimer offset %lld ns",
 			        (double)(os_monotonic_get_ns() - start) / U_TIME_1S_IN_NS, attempt,
@@ -763,6 +813,9 @@ pico4_hmd_destroy(struct xrt_device *xdev)
 		}
 		if (h->has_temperature) {
 			pico4_ssc_disable(h->ssc, &h->temperature_suid);
+		}
+		if (h->has_proximity) {
+			pico4_ssc_disable(h->ssc, &h->proximity_suid);
 		}
 		pico4_ssc_close(&h->ssc);
 	}
@@ -1167,6 +1220,7 @@ pico4_hmd_create(void)
 	struct pico4_hmd *h = U_DEVICE_ALLOCATE(struct pico4_hmd, flags, 1, 0);
 	h->log_level = debug_get_log_option_pico4_log();
 	h->temperature_c = NAN;
+	h->worn = -1;
 
 	h->base.update_inputs = u_device_noop_update_inputs;
 	h->base.get_tracked_pose = pico4_hmd_get_tracked_pose;
@@ -1218,6 +1272,7 @@ pico4_hmd_create(void)
 	}
 	// Looked up before the IMU thread reads the client; enabled with the other streams.
 	h->has_temperature = pico4_ssc_find(h->ssc, "sensor_temperature", &h->temperature_suid, 3000) == 0;
+	h->has_proximity = pico4_ssc_find(h->ssc, "proximity", &h->proximity_suid, 3000) == 0;
 
 	// The controllers' packets come through the same service, when the radio is up.
 	setup_station(h);
@@ -1274,6 +1329,12 @@ pico4_hmd_create(void)
 	}
 	if (!h->has_temperature) {
 		P4_WARN(h, "No IMU temperature from the sensor service");
+	}
+	if (h->has_proximity && pico4_ssc_enable_on_change(h->ssc, &h->proximity_suid) < 0) {
+		h->has_proximity = false;
+	}
+	if (!h->has_proximity) {
+		P4_WARN(h, "No wear sensor from the sensor service");
 	}
 	P4_INFO(h, "IMU streaming at %.0f Hz requested, QTimer offset %lld ns", rate,
 	        (long long)h->qtimer_offset_ns);
@@ -1348,4 +1409,78 @@ pico4_create_auto_prober(void)
 	xap->destroy = pico4_auto_prober_destroy;
 	xap->lelo_dallas_autoprobe = pico4_autoprobe;
 	return xap;
+}
+
+bool
+pico4_hmd_get_presence(struct xrt_device *xdev, bool *out_worn)
+{
+	// Only our HMD has the wear sensor; other devices of the same process answer false.
+	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose) {
+		return false;
+	}
+	int worn = __atomic_load_n(&pico4_hmd(xdev)->worn, __ATOMIC_RELAXED);
+	if (worn < 0) {
+		return false;
+	}
+	*out_worn = worn != 0;
+	return true;
+}
+
+bool
+pico4_hmd_camera_info(struct xrt_device *xdev, struct pico4_passthrough_info *out)
+{
+	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose) {
+		return false;
+	}
+	struct pico4_passthrough *p = pico4_slam_passthrough(pico4_hmd(xdev)->slam);
+	if (p == NULL) {
+		return false;
+	}
+	pico4_passthrough_info(p, out);
+	return true;
+}
+
+void
+pico4_hmd_camera_stream(struct xrt_device *xdev, bool on)
+{
+	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose) {
+		return;
+	}
+	struct pico4_passthrough *p = pico4_slam_passthrough(pico4_hmd(xdev)->slam);
+	if (p != NULL) {
+		pico4_passthrough_set_streaming(p, on);
+		P4_INFO(pico4_hmd(xdev), "Passthrough cameras %s", on ? "streaming" : "stopped");
+	}
+}
+
+bool
+pico4_hmd_camera_frame(struct xrt_device *xdev,
+                       uint64_t after,
+                       int timeout_ms,
+                       uint8_t *y,
+                       uint32_t stride,
+                       struct pico4_passthrough_frame *out)
+{
+	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose) {
+		return false;
+	}
+	struct pico4_passthrough *p = pico4_slam_passthrough(pico4_hmd(xdev)->slam);
+	return p != NULL && pico4_passthrough_wait(p, after, timeout_ms, y, stride, out);
+}
+
+bool
+pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe)
+{
+	char map[40];
+	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose ||
+	    !pico4_slam_room(pico4_hmd(xdev)->slam, map)) {
+		return false;
+	}
+	// FNV-1a of the map's identity.
+	uint64_t h = 14695981039346656037ull;
+	for (const char *c = map; *c != '\0'; c++) {
+		h = (h ^ (uint8_t)*c) * 1099511628211ull;
+	}
+	*out_universe = h > 1 ? h : h + 2;
+	return true;
 }

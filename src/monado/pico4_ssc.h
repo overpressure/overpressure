@@ -45,6 +45,8 @@ struct pico4_ssc_sample
 	int count;
 	uint8_t raw[PICO4_SSC_RAW_MAX];
 	uint16_t raw_len;
+	//! A proximity event (msg 769): values = {type (0 far, 1 near), raw ADC, status}.
+	bool proximity;
 };
 
 struct pico4_ssc;
@@ -66,6 +68,13 @@ pico4_ssc_find(struct pico4_ssc *ssc, const char *data_type, struct pico4_ssc_su
 //! Request continuous reports at @p rate_hz; the DSP picks the next supported rate.
 int
 pico4_ssc_enable(struct pico4_ssc *ssc, const struct pico4_ssc_suid *suid, float rate_hz);
+
+/*!
+ * Enable an on-change sensor (proximity) with an empty request, as PICO OS does (msg 514); a
+ * standard request (pico4_ssc_enable) crashed the SLPI for the proximity sensor.
+ */
+int
+pico4_ssc_enable_on_change(struct pico4_ssc *ssc, const struct pico4_ssc_suid *suid);
 
 int
 pico4_ssc_disable(struct pico4_ssc *ssc, const struct pico4_ssc_suid *suid);

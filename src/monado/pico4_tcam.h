@@ -71,6 +71,17 @@ void
 pico4_tcam_rotate_180(struct pico4_tcam_kb4 *kb4, double T_BS[16], int width, int height);
 
 /*!
+ * The quarter turn (0-3, counter-clockwise as seen on screen) that brings the camera's image
+ * upright: its "down" (the camera's y axis) closest to @p down_body (a body-frame direction).
+ * Turn 1 reads pixel (u', v') at (v', h - 1 - u'), turn 3 at (w - 1 - v', u'); turns 1 and 3
+ * swap width and height. @p kb4 and @p T_BS change to describe the turned image; the image's
+ * new size goes to @p out_w and @p out_h.
+ */
+int
+pico4_tcam_upright(struct pico4_tcam_kb4 *kb4, double T_BS[16], int width, int height, const double down_body[3],
+                   int *out_w, int *out_h);
+
+/*!
  * Whether camera b's image is upside down relative to camera a's (their image
  * y axes point more apart than together). Basalt's stereo matching tracks
  * patches between cameras and cannot follow a 180 degree turn.

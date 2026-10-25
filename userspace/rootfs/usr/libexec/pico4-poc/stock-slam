@@ -4,7 +4,9 @@
 # modules and configuration (scripts/extract-stock-slam.sh) and this project's pico4-slamd. It
 # runs in a private mount namespace, chrooted, with /dev, /proc and /sys bound in, the factory
 # calibration where PICO OS keeps it (/mnt/vendor/persist/pvr and /mnt/vendor/pvr) and /data and
-# /tmp as tmpfs; the mounts vanish with the process.
+# /tmp as tmpfs; the mounts vanish with the process. The tracker's maps and boundary, which PICO OS
+# keeps in /data/misc/user/0, come from /var/lib/pico4-stock-slam (the data partition): a known
+# room relocalises in the next session.
 #
 #   stock-slam [--vendor] PROGRAM [ARGS...]   (PROGRAM's path in the root)
 #
@@ -13,14 +15,18 @@
 set -euo pipefail
 root=/usr/lib/pico4-stock-slam
 calibration=/usr/share/qcom/pico4/calibration/pvr
+state=/var/lib/pico4-stock-slam
+mkdir -p -m 0700 "$state/maps" "$state/boundary"
+# A leftover localmode would switch relocalisation off; stsdata (see-through type) is not ours.
+rm -f "$state/boundary/localmode" "$state/boundary/stsdata.txt"
 libs=/system/lib64/bootstrap:/system/lib64
 [ "${1:-}" = --vendor ] && { libs=/vendor/lib64:$libs; shift; }
 [ -x "$root/system/bin/bootstrap/linker64" ] || { echo "stock-slam: no tracker root in $root" >&2; exit 1; }
 [ -d "$calibration/mav0" ] || { echo "stock-slam: no factory calibration in $calibration" >&2; exit 1; }
 exec unshare -m --propagation private /bin/bash -c '
 	set -e
-	root=$1 calibration=$2 libs=$3
-	shift 3
+	root=$1 calibration=$2 libs=$3 state=$4
+	shift 4
 	mount --rbind /dev "$root/dev"
 	mount -t proc proc "$root/proc"
 	mount --rbind /sys "$root/sys"
@@ -28,9 +34,12 @@ exec unshare -m --propagation private /bin/bash -c '
 	mount -t tmpfs tmpfs "$root/tmp"
 	mount --bind "$calibration" "$root/mnt/vendor/persist/pvr"
 	mount --bind "$calibration" "$root/mnt/vendor/pvr"
-	mkdir -p "$root/data/local/tmp" "$root/data/misc/user/0/maps"
+	mkdir -p "$root/data/local/tmp" "$root/data/misc/user/0/maps" "$root/data/misc/user/0/boundary"
+	mount --bind "$state/maps" "$root/data/misc/user/0/maps"
+	mount --bind "$state/boundary" "$root/data/misc/user/0/boundary"
 	exec env -i PATH=/system/bin LD_LIBRARY_PATH="$libs" LD_PRELOAD=/pico4/libpico4-slam-stubs.so \
 		"ADSP_LIBRARY_PATH=/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp" \
 		${PICO4_SLAMD_DEBUG:+PICO4_SLAMD_DEBUG=$PICO4_SLAMD_DEBUG} ${PICO4_SLAMD_LSC:+PICO4_SLAMD_LSC=$PICO4_SLAMD_LSC} \
+		${PICO4_SLAMD_AE:+PICO4_SLAMD_AE=$PICO4_SLAMD_AE} \
 		/usr/bin/chroot "$root" /system/bin/bootstrap/linker64 "$@"
-' stock-slam "$root" "$calibration" "$libs" "$@"
+' stock-slam "$root" "$calibration" "$libs" "$state" "$@"

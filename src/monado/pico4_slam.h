@@ -22,6 +22,7 @@ struct pico4_slam;
 struct pico4_station;
 struct pico4_fusion_slam;
 struct pico4_ctrack;
+struct pico4_passthrough;
 
 /*!
  * Origin of the HMD frame (between the eyes) in the body frame of the factory
@@ -83,6 +84,17 @@ pico4_slam_reset(struct pico4_slam *s);
 
 void
 pico4_slam_destroy(struct pico4_slam **s);
+
+//! SteamVR's camera from the forward tracking cameras (PICO OS's tracker only); NULL without.
+struct pico4_passthrough *
+pico4_slam_passthrough(struct pico4_slam *s);
+
+/*!
+ * The room the tracker is in (docs/xr.md#room-setup), once pico4-slamd has settled it: the map's
+ * identity, the saved room's after a relocalisation, else this session's new map. False before.
+ */
+bool
+pico4_slam_room(struct pico4_slam *s, char out_map[40]);
 
 #ifdef __cplusplus
 }

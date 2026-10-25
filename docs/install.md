@@ -73,6 +73,17 @@ dark and the status LED amber, and keeps the USB link and SSH as every stage 1 d
 power key for 2 s starts the system (a plain reboot, which the bootloader starts normally), and
 10 s without USB power turn the headset off, as AOSP's charger does.
 
+### Power key
+
+PICO OS's window manager puts the headset to sleep on a short press (screen off, then the
+kernel's suspend) and shuts it down without asking once the key is held 2 s (its long-press
+timeout; `factory.long_press_power_off=1` makes the long press a power-off instead of the
+menu). [`pico4-powerkey.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-powerkey.service)
+does the same from the PMIC's key (`qpnp_pon`): a press released within 2 s runs
+`systemctl suspend` (deep suspend; the key wakes the headset, and the press that woke it is
+ignored), a press held 2 s runs `systemctl poweroff`. logind ignores the key. Held 8.7 s the
+PMIC resets the headset.
+
 ## Boot images
 
 `python -m pico4 dev image` writes three images from the stage-1 image to `out/dev/` (private:
@@ -161,11 +172,9 @@ the ABL to stock (`python -m pico4 cycle --restore-only`) and entering developme
 1. **The way back.** `dev restore` for an installed system is implemented and tested on the
    host, not yet on the headset; it ends in PICO OS's first-time setup.
 2. **Feedback and power.** The lenses show the boot indication until the session starts; the
-   default session (Monado) then shows nothing until an OpenXR application starts. The power
-   button follows PICO OS only partly: PICO OS turns the screen off on a short press and
-   suspends, and offers power-off and restart after a 2 s press. Here a short press does
-   nothing (checked on the headset) and a 5 s press powers off
-   ([`50-pico4-power-key.conf`](../userspace/rootfs/usr/lib/systemd/logind.conf.d/50-pico4-power-key.conf)).
-   In charger mode, holding the power key and unplugging the cable are not yet tried on the
-   headset.
+   default session (Monado) then shows nothing until an OpenXR application starts. The
+   [power key](#power-key)'s short press and 2 s hold are not yet tried on the headset; nor are,
+   in charger mode, holding the power key and unplugging the cable. PICO OS also sleeps when
+   the headset is taken off (screen off after 10 s, suspend after 15 s); here nothing follows
+   the wear sensor but the microphone ([session.md](session.md)).
 3. **Integrity.** The system image is checked when written, not at boot (no dm-verity).

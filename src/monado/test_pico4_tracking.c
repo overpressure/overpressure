@@ -11,6 +11,7 @@
 
 #include "pico4_blemcu.h"
 #include "pico4_cam.h"
+#include "pico4_passthrough.h"
 #include "pico4_station.h"
 #include "pico4_tcam.h"
 
@@ -79,6 +80,13 @@ test_station(void)
 	pico4_station_camera_para(built, scene, long_leds, 0);
 	EXPECT(built[16] == 10 && built[17] == 0 && built[18] == 32 && built[25] == 10 && built[27] == 32);
 	EXPECT(built[1] == 0x2C && built[2] == 0x01 && built[3] == 0x40);
+	// PICO OS's auto exposure: a setting per camera, in camera order (cameras 2 and 3 share one).
+	const struct pico4_station_exposure each[4] = {{263, 48}, {737, 240}, {13, 16}, {13, 16}};
+	pico4_station_camera_para_each(built, each, leds, 1);
+	EXPECT(built[1] == 0x07 && built[2] == 0x01 && built[3] == 48);
+	EXPECT(built[4] == 0xE1 && built[5] == 0x02 && built[6] == 240);
+	EXPECT(built[7] == 13 && built[8] == 0 && built[9] == 16 && built[10] == 13 && built[12] == 16);
+	EXPECT(built[13] == 0x34 && built[15] == 1 && built[16] == 4 && built[18] == 26);
 
 	// Replies: header and CRC.
 	uint8_t reply[PICO4_STATION_FRAME] = {0xBB, 0x01, 0x04, 0x01, 0x01};
@@ -252,6 +260,33 @@ test_calibration(void)
 	pico4_tcam_kb4_project(&k, pc, u0);
 	pico4_tcam_kb4_project(&r, pr, u1);
 	EXPECT(fabs(u1[0] - (c.width - 1 - u0[0])) < 1e-6 && fabs(u1[1] - (c.height - 1 - u0[1])) < 1e-6);
+
+	// Upright for passthrough: each quarter turn sees a body point where the pixel mapping says.
+	for (int t = 0; t < 4; t++) {
+		// down_body along the camera's y, x, -y and -x picks turns 0, 1, 2 and 3.
+		const int axis_col = t % 2 == 0 ? 1 : 0;
+		const double sign = t < 2 ? 1 : -1;
+		double down[3];
+		for (int i = 0; i < 3; i++) {
+			down[i] = sign * c.T_BS[i * 4 + axis_col];
+		}
+		struct pico4_tcam_kb4 q = k;
+		memcpy(T, c.T_BS, sizeof(T));
+		int w, h;
+		EXPECT(pico4_tcam_upright(&q, T, c.width, c.height, down, &w, &h) == t);
+		EXPECT(t % 2 == 0 ? (w == 640 && h == 480) : (w == 480 && h == 640));
+		for (int i = 0; i < 3; i++) {
+			pr[i] = 0;
+			for (int j = 0; j < 3; j++) {
+				pr[i] += T[j * 4 + i] * (body[j] - T[j * 4 + 3]);
+			}
+		}
+		pico4_tcam_kb4_project(&q, pr, u1);
+		// The source pixel of (u1) by the documented mapping is u0.
+		double su = t == 0 ? u1[0] : t == 1 ? u1[1] : t == 2 ? c.width - 1 - u1[0] : c.width - 1 - u1[1];
+		double sv = t == 0 ? u1[1] : t == 1 ? c.height - 1 - u1[0] : t == 2 ? c.height - 1 - u1[1] : u1[0];
+		EXPECT(fabs(su - u0[0]) < 1e-6 && fabs(sv - u0[1]) < 1e-6);
+	}
 }
 
 static void
@@ -480,6 +515,36 @@ test_set_identity(void)
 	m[3].exposure_lines = 300;
 	m[1].gain = 48;
 	EXPECT(!pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && strstr(why, "gain 48") != NULL);
+	// Exposed each on its own, the frames of one pulse differ; their counters still decide.
+	c.per_camera_exposure = true;
+	EXPECT(pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && why[0] == '\0');
+	ids[2] += 1;
+	EXPECT(!pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && strstr(why, "camera 2") != NULL);
+}
+
+static void
+test_passthrough(void)
+{
+	// A 640x480 raw image whose samples encode their own position: 16 (black) + x / 4 + y / 4.
+	static uint16_t raw[PICO4_PASSTHROUGH_SRC_W * PICO4_PASSTHROUGH_SRC_H];
+	static uint8_t out[PICO4_PASSTHROUGH_SRC_W * PICO4_PASSTHROUGH_SRC_H];
+	for (int y = 0; y < PICO4_PASSTHROUGH_SRC_H; y++) {
+		for (int x = 0; x < PICO4_PASSTHROUGH_SRC_W; x++) {
+			raw[y * PICO4_PASSTHROUGH_SRC_W + x] = (uint16_t)(16 + 4 * ((x + y) % 64));
+		}
+	}
+	raw[0] = 16 + 400; // the first sample: 100 at gain 1
+	// Turn 1 (480 wide): (u, v) reads (v, h - 1 - u), so source (0, 0) lands at (479, 0).
+	pico4_passthrough_convert(raw, PICO4_PASSTHROUGH_SRC_W, 1, 1.0f, out, 480);
+	EXPECT(out[479] == 100);
+	// Turn 3: (u, v) reads (w - 1 - v, u), so source (0, 0) lands at (0, 639).
+	pico4_passthrough_convert(raw, PICO4_PASSTHROUGH_SRC_W, 3, 1.0f, out, 480);
+	EXPECT(out[639 * 480] == 100);
+	// Turn 0 at gain 2, with the black level off: 400 * 2 / 4 = 200; saturating at 255.
+	pico4_passthrough_convert(raw, PICO4_PASSTHROUGH_SRC_W, 0, 2.0f, out, 640);
+	EXPECT(out[0] == 200);
+	pico4_passthrough_convert(raw, PICO4_PASSTHROUGH_SRC_W, 0, 4.0f, out, 640);
+	EXPECT(out[0] == 255 && out[1] == 4);
 }
 
 int
@@ -495,6 +560,7 @@ main(void)
 	test_median();
 	test_set_assembly();
 	test_set_identity();
+	test_passthrough();
 	if (failures != 0) {
 		fprintf(stderr, "%d failure(s)\n", failures);
 		return 1;

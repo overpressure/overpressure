@@ -1,0 +1,49 @@
+--- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
++++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
+@@ -56,6 +56,10 @@
+ extern "C" bool
+ pico4_hmd_get_presence(struct xrt_device *xdev, bool *out_worn) __attribute__((weak));
+ 
++// The tracking universe of the PICO 4's room, one per tracker map (pico4_interface.h); weak as above.
++extern "C" bool
++pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe) __attribute__((weak));
++
+ // SteamVR's camera from the PICO 4's forward tracking cameras (pico4_interface.h); weak as above.
+ #include "../../drivers/pico4/pico4_passthrough.h"
+ extern "C" bool
+@@ -1217,6 +1221,9 @@
+ 	vr::VRInputComponentHandle_t m_proximity = vr::k_ulInvalidInputComponentHandle;
+ 	int m_worn = -1;
+ 
++	//! The universe reported last (Prop_CurrentUniverseId_Uint64).
++	uint64_t m_universe = 2;
++
+ 	//! SteamVR's camera, when the HMD has one (the PICO 4's forward tracking cameras).
+ 	CCameraComponent_Monado *m_camera = NULL;
+ 	bool m_camera_probed = false;
+@@ -1648,6 +1655,7 @@
+ 	ovrd_log("Starting HMD pose update thread\n");
+ 
+ 	std::chrono::steady_clock::time_point battery_at{};
++	std::chrono::steady_clock::time_point universe_at{};
+ 	while (m_poseUpdating) {
+ 		//! @todo figure out the best pose update rate
+ 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+@@ -1661,6 +1669,17 @@
+ 			m_worn = worn;
+ 			ovrd_log("Headset %s\n", worn ? "worn" : "taken off");
+ 		}
++		// The room's universe once the tracker knows the room: SteamVR keeps a play area per universe.
++		uint64_t universe = 0;
++		if (pico4_hmd_get_universe != NULL && std::chrono::steady_clock::now() >= universe_at) {
++			universe_at = std::chrono::steady_clock::now() + std::chrono::seconds(1);
++			if (pico4_hmd_get_universe(m_xdev, &universe) && universe != m_universe) {
++				vr::VRProperties()->SetUint64Property(m_ulPropertyContainer, vr::Prop_CurrentUniverseId_Uint64,
++				                                      universe);
++				ovrd_log("Tracking universe %llu (the room's)\n", (unsigned long long)universe);
++				m_universe = universe;
++			}
++		}
+ 	}
+ 	ovrd_log("Stopping HMD pose update thread\n");
+ }

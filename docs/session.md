@@ -112,9 +112,15 @@ for the Frame's controller radio, which must never run against the PICO's statio
 takes its place), `steamvr-v4l2loopback`,
 `steam-video-codec-setup` (the Frame's video codec nodes, from the client's package) and the debug port forwards
 (`steamvr-web-debug-portforward`, `steam-web-debug-portforward`). It masks these user units
-globally: `steamvr-v4l2cam` (the headset-view loopback camera), `steamvr-proxmicmute`
-(proximity microphone mute), `steamos-scheduler` (the sched_ext scheduler `scx_lavd` needs
-Linux 6.12; stage 1 already sets `schedutil`). The session's input method, `ibus-gamescope`
+globally: `steamvr-v4l2cam` (the headset-view loopback camera), `steamvr-proxmicmute` and
+`steamos-scheduler` (the sched_ext scheduler `scx_lavd` needs Linux 6.12; stage 1 already sets
+`schedutil`). Valve's `proxmicmute` mutes the microphone through ALSA's simple mixer (the
+codec's `VA_DEC0`/`VA_DEC1` capture volumes), and that mixer does not load on this kernel: the
+MSM PCM volume controls fail while their PCM is closed ("load error: No such device").
+[`pico4-micmute`](../userspace/rootfs/usr/lib/systemd/user/pico4-micmute.service), wanted by
+`steamvr.service`, takes its place: it mutes PipeWire's default microphone while the
+headset's wear sensor reports it off the head (`$XDG_RUNTIME_DIR/pico4-worn`, written by the
+driver) and unmutes it when the headset is worn, or when it stops. The session's input method, `ibus-gamescope`
 (Valve's unit running `ibus-daemon`), runs with the Frame's `ibus` package.
 
 `steamvr-logs` forwards SteamVR's logs from `~/.local/share/Steam/logs` to the journal
@@ -482,7 +488,14 @@ SteamVR from its proximity sensor whether it is worn; `driver_monado` reports no
 (its `/user/head/proximity` input has the wrong type), so SteamVR goes by head motion and, with
 the 5 s screen timeout, paused the compositor while the headset was worn and held still.
 The Frame's headset driver sets that last one in its own settings, which are not loaded with
-that driver disabled. Without it the compositor creates no compute queue and stops at an
+that driver disabled. Of the Frame driver's room-setup settings it carries the prompt for room
+setup when a game starts without a play area (`promptForChaperoneAtGameLaunch`; not required:
+`requireChaperoneAtGameLaunch` off), no floor detection at the start, the play area not
+re-centred automatically, recentring not triggered by user interaction and the boundary
+style 2. The file is on the data partition, where an install copies it from the image only on
+its first boot, and SteamVR rewrites it; [`steamvr-settings`](../userspace/rootfs/usr/libexec/pico4-poc/steamvr-settings)
+(`ExecStartPre` of `steamvr.service`) sets every key of the image's copy
+(`/usr/share/pico4-poc/steamvr.vrsettings`) in it before each start and keeps all other keys. Without it the compositor creates no compute queue and stops at an
 assertion; with it, it shares Turnip's single queue for both.
 [openvrpaths.vrpath](../userspace/session/openvrpaths.vrpath), in `~/.config/openvr`, registers
 `/usr/share/steamvr-monado` as an external driver, with the runtime in `/opt/steamvr` and

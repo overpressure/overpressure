@@ -1,5 +1,18 @@
 {
+	"camera" : {
+		"AllowBubbleInImmersiveApps" : true,
+		"autoLowerPassthroughResolution" : 1,
+		"enableCamera" : true,
+		"enableCameraForCollisionBounds" : false,
+		"lightSourceFrequency" : 0,
+		"roomView" : 2,
+		"showOnController" : false
+	},
+	"collisionBounds" : {
+		"CollisionBoundsStyle" : 2
+	},
 	"dashboard" : {
+		"_inhibitRecenterOnUserInteraction" : true,
 		"allowCurvature" : true,
 		"allowExitVR" : true,
 		"allowFreeTransform" : true,
@@ -61,6 +74,9 @@
 		"xatten" : 1.0,
 		"yatten" : 1.0
 	},
+	"internal" : {
+		"autoCenterPlayArea" : false
+	},
 	"jsonid" : "vrsettings",
 	"power" : {
 		"pauseCompositorOnStandby" : false,
@@ -81,6 +97,7 @@
 		"backgroundOmitDomeProjectionFloor" : true,
 		"backgroundUseDomeProjection" : true,
 		"constructHorizonHeight" : 0.0,
+		"contentAwareRoomviewMonochromeTint" : true,
 		"defaultPerAppRefreshRate" : 72.0,
 		"depthReprojectionMesh" : false,
 		"depthReprojectionMeshGridResolution" : 256,
@@ -99,6 +116,7 @@
 		"environmentMode" : 1,
 		"fadeSharpness" : 0.75,
 		"floorColor" : "#bababa",
+		"floorDetectAtStart" : false,
 		"floorReflection" : "reflections/skydome_blue.png",
 		"forceSceneTextureIndexZero" : false,
 		"forcedDriver" : "monado",
@@ -121,10 +139,12 @@
 		"perfCriteriaResolutionPlayable" : 0,
 		"perfCriteriaResolutionVerified" : 1728,
 		"playAreaColor" : "#00000000",
+		"promptForChaperoneAtGameLaunch" : true,
 		"recommendedResolutionMultiplierMax" : 2.5,
 		"recommendedResolutionMultiplierMin" : 0.45,
 		"renderSystemLayerInDistortPass" : true,
 		"renderSystemLayerInDistortPassMSAA" : "3",
+		"requireChaperoneAtGameLaunch" : false,
 		"requireHmd" : true,
 		"sharpening" : true,
 		"sharpeningAlpha" : 0.75,

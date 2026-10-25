@@ -43,7 +43,11 @@
 #define MSG_SUID_REQ 512
 #define MSG_SUID_EVENT 768
 #define MSG_CONFIG 513
+//! On-change sensors (proximity): an empty request, as PICO OS sends it. 513 crashed the SLPI.
+#define MSG_ON_CHANGE_CONFIG 514
 #define MSG_SENSOR_EVENT 1025
+//! sns_proximity_event: 1 type (0 far, 1 near), 2 raw ADC, 3 status.
+#define MSG_PROXIMITY_EVENT 769
 
 static const struct pico4_ssc_suid suid_lookup = {0xABABABABABABABABULL, 0xABABABABABABABABULL};
 
@@ -369,6 +373,30 @@ decode_floats(const uint8_t *data, size_t len, float *out, int max)
 	return err ? err : n;
 }
 
+//! A proximity event's fields 1-3 (varints or floats) as values[0..2]; how many were found.
+static int
+decode_proximity(const uint8_t *data, size_t len, float *out)
+{
+	const uint8_t *p = data, *end = data + len;
+	struct pb_field f;
+	int err = 0, n = 0;
+	while (pb_next(&p, end, &f, &err)) {
+		if (f.field < 1 || f.field > 3) {
+			continue;
+		}
+		if (f.wire == 0) {
+			out[f.field - 1] = (float)f.value;
+		} else if (f.wire == 5) {
+			uint32_t bits = (uint32_t)f.value;
+			memcpy(&out[f.field - 1], &bits, sizeof(float));
+		} else {
+			continue;
+		}
+		n++;
+	}
+	return err ? err : n;
+}
+
 //! The first length-delimited field 1 of an event payload, as opaque bytes.
 static uint16_t
 copy_raw(const uint8_t *data, size_t len, uint8_t *out)
@@ -477,6 +505,18 @@ pico4_ssc_decode_indication(const uint8_t *packet,
 			out[n].ticks = ts;
 			out[n].count = count;
 			out[n].raw_len = copy_raw(payload, payload_len, out[n].raw);
+			out[n].proximity = false;
+			n++;
+		} else if (ev_id == MSG_PROXIMITY_EVENT && payload != NULL && n < max) {
+			memset(&out[n], 0, sizeof(out[n]));
+			int count = decode_proximity(payload, payload_len, out[n].values);
+			if (count < 0) {
+				return count;
+			}
+			out[n].suid = suid;
+			out[n].ticks = ts;
+			out[n].count = count;
+			out[n].proximity = true;
 			n++;
 		} else if (ev_id == MSG_SUID_EVENT && payload != NULL && out_suid_event != NULL &&
 		           suid.low == suid_lookup.low && suid.high == suid_lookup.high && suid_data_type != NULL) {
@@ -716,6 +756,12 @@ pico4_ssc_enable(struct pico4_ssc *ssc, const struct pico4_ssc_suid *suid, float
 	struct pico4_pb pb = {payload, 0, sizeof(payload), false};
 	pico4_pb_float(&pb, 1, rate_hz);
 	return send_request(ssc, suid, MSG_CONFIG, pb.data, pb.len);
+}
+
+int
+pico4_ssc_enable_on_change(struct pico4_ssc *ssc, const struct pico4_ssc_suid *suid)
+{
+	return send_request(ssc, suid, MSG_ON_CHANGE_CONFIG, NULL, 0);
 }
 
 int

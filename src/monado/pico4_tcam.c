@@ -324,6 +324,44 @@ pico4_tcam_rotate_180(struct pico4_tcam_kb4 *kb4, double T_BS[16], int width, in
 	}
 }
 
+int
+pico4_tcam_upright(struct pico4_tcam_kb4 *kb4, double T_BS[16], int width, int height, const double down_body[3],
+                   int *out_w, int *out_h)
+{
+	// The image's down axis after each turn, in the body frame: y, x, -y, -x of the camera.
+	double x_dot = 0, y_dot = 0;
+	for (int row = 0; row < 3; row++) {
+		x_dot += T_BS[row * 4 + 0] * down_body[row];
+		y_dot += T_BS[row * 4 + 1] * down_body[row];
+	}
+	const double dots[4] = {y_dot, x_dot, -y_dot, -x_dot};
+	int turn = 0;
+	for (int t = 1; t < 4; t++) {
+		turn = dots[t] > dots[turn] ? t : turn;
+	}
+	*out_w = turn % 2 == 0 ? width : height;
+	*out_h = turn % 2 == 0 ? height : width;
+	if (turn == 2) {
+		pico4_tcam_rotate_180(kb4, T_BS, width, height);
+		return turn;
+	}
+	if (turn == 0) {
+		return turn;
+	}
+	// Turn 1: u' = h - 1 - v, v' = u; the new x axis is -y, the new y axis x. Turn 3 the mirror.
+	double fx = kb4->fx, cx = kb4->cx;
+	kb4->fx = kb4->fy;
+	kb4->fy = fx;
+	kb4->cx = turn == 1 ? (height - 1) - kb4->cy : kb4->cy;
+	kb4->cy = turn == 1 ? cx : (width - 1) - cx;
+	for (int row = 0; row < 3; row++) {
+		double x = T_BS[row * 4 + 0], y = T_BS[row * 4 + 1];
+		T_BS[row * 4 + 0] = turn == 1 ? -y : y;
+		T_BS[row * 4 + 1] = turn == 1 ? x : -x;
+	}
+	return turn;
+}
+
 bool
 pico4_tcam_upside_down(const double a_T_BS[16], const double b_T_BS[16])
 {

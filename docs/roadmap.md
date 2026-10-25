@@ -353,9 +353,9 @@ Details: [xr.md](xr.md).
 
 - PICO OS's tracker is the default; worn it tracks walking and fast turns (up to 458 °/s)
   without a lost pose. A covered camera and a dim room are unchecked.
-- Two of its inputs are not yet PICO OS's: the auto exposure (the driver's own) and the
-  lens-shading table (fixed to this headset's camera vendor; PICO OS reads the vendor from the
-  modules' OTP).
+- Its inputs are PICO OS's: the lens-shading table by the camera modules' vendor and PICO
+  OS's own auto exposure. Its maps persist on the data partition, and SteamVR gets a tracking
+  universe per room; SteamVR's room setup in the headset is not yet tried.
 
 ### Standalone boot
 
@@ -369,10 +369,10 @@ system updates. Open:
 1. **The way back.** `dev restore` for an installed system (stock `super`, `boot`, `recovery`,
    wiped data) is not yet verified on the headset.
 2. **Feedback and power.** The lenses show a boot indication until the session starts; the
-   default session then shows nothing until an OpenXR application starts. A short press of the
-   power button does nothing (PICO OS turns the screen off and suspends). A power-off with the
-   cable attached ends in charger mode, as on PICO OS; its power key and unplug handling are
-   not yet tried on the headset.
+   default session then shows nothing until an OpenXR application starts. The power key
+   follows PICO OS (a short press suspends, 2 s held powers off); it is not yet tried on the
+   headset. A power-off with the cable attached ends in charger mode, as on PICO OS; its power
+   key and unplug handling are not yet tried on the headset.
 
 ### Other hardware
 
