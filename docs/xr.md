@@ -561,7 +561,8 @@ The head is tracked by PICO OS's own tracker, `libSlam.so`, as on PICO OS
 front end (image pyramids, map reprojection, corner detection, the depth filter) runs on the
 Compute DSP (CDSP); in Valve's idle session `pico4-slamd` takes about 70 % of one core and
 SteamVR's `vrserver` about 120 %, where `vrserver` with Basalt took 350–390 %. Monado's Basalt
-remains selectable (`PICO4_SLAM_BACKEND=basalt`, [below](#basalt)).
+is deprecated: it remains selectable (`PICO4_SLAM_BACKEND=basalt`, [below](#basalt)) as it is,
+without further work.
 Without the tracker's data in the image, or without the station, the HMD stays on 3DoF.
 
 ```text
@@ -656,6 +657,7 @@ and sprang back.
 
 ### Basalt
 
+Deprecated: kept selectable as it is, without further work.
 [pico4_slam.c](../src/monado/pico4_slam.c) feeds Monado's SLAM tracker with
 `PICO4_SLAM_BACKEND=basalt`. Monado loads Basalt through its VIT interface (`libbasalt.so` from
 the [`pico4-basalt`](../userspace/pkgbuilds/pico4-basalt/PKGBUILD) package, Monado's Basalt fork
@@ -1240,11 +1242,10 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 
 ## Next steps
 
-1. **PICO OS's tracker worn.** It holds still within a millimetre and costs a fraction of
-   Basalt; worn checks in Valve's session (walking, fast turns, covering a camera, a dim room)
-   are open. In the replayed walk it lost track in the fastest part of a turn and relocalised.
-   One input is not yet PICO OS's: the lens-shading table, fixed to this headset's camera
-   vendor where PICO OS reads the vendor from the modules' OTP.
+1. **PICO OS's tracker.** Worn it tracks walking and fast turns as on PICO OS; a covered
+   camera and a dim room are unchecked. Two inputs are not yet PICO OS's: the auto exposure
+   (the driver's own median exposure) and the lens-shading table, fixed to this headset's
+   camera vendor where PICO OS reads the vendor from the modules' OTP.
 2. **Controllers in applications.** SteamVR's dashboard toggles but stays hidden without the
    Steam client ([session.md](session.md)), so the laser, clicking and the grip frame are
    unchecked in it. A vibration strong enough to feel has not yet come from a SteamVR

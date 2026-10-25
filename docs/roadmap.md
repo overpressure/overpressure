@@ -207,9 +207,8 @@ calibration it uses comes from the user's own backup.
 - **6DoF.** PICO OS's own tracker (`libSlam.so`, its front end on the Compute DSP) runs in a
   bionic root beside the driver, on all four cameras at 25 Hz and the IMU at 1 kHz. Still, it
   holds within a millimetre for a minute at about 70 % of one core (Basalt took about 3.5
-  cores). Basalt inside Monado remains selectable: in a lit room a measured 50 cm slide reads
-  0.50–0.52 m and returns to within 2 cm of the start; worn, steps of about 0.6 m return within
-  3–4 cm of a floor mark.
+  cores). Worn, a closed 12 m walk ends within 1.8 cm of the start; slid 50 cm on a table, it
+  returns within 1 cm. Basalt inside Monado is deprecated; it remains selectable as it is.
 - **Acceptance.** In the step's acceptance cycle, with 6DoF running, an OpenXR client renders
   2,698 frames in 30 s at 89.996 Hz (2 late), each eye on its own panel.
 
@@ -352,14 +351,11 @@ Details: [xr.md](xr.md).
 
 Details: [xr.md](xr.md).
 
-- PICO OS's tracker is the default; worn checks in Valve's session are open (walking, fast
-  turns, a covered camera, a dim room). In a replayed walk it lost track in the fastest part of
-  a turn and relocalised.
-- One of its inputs is not yet PICO OS's: the lens-shading table (fixed to this headset's
-  camera vendor; PICO OS reads the vendor from the modules' OTP).
-- With Basalt (`PICO4_SLAM_BACKEND=basalt`): it runs away now and then in its first seconds
-  (the fusion holds, resets and re-anchors), drifts slowly at rest, creeps with a covered
-  camera, and drifts by metres in front of a near surface.
+- PICO OS's tracker is the default; worn it tracks walking and fast turns (up to 458 °/s)
+  without a lost pose. A covered camera and a dim room are unchecked.
+- Two of its inputs are not yet PICO OS's: the auto exposure (the driver's own) and the
+  lens-shading table (fixed to this headset's camera vendor; PICO OS reads the vendor from the
+  modules' OTP).
 
 ### Standalone boot
 
