@@ -1,0 +1,59 @@
+#!/usr/bin/python3
+"""Puts the image's SteamVR settings into the session user's steamvr.vrsettings before SteamVR
+starts (docs/session.md, SteamVR configuration).
+
+/home is copied from the image only on an install's first boot, and SteamVR rewrites the file
+itself, so a newer image's settings would never reach it. Every key of the image's file
+(/usr/share/pico4-poc/steamvr.vrsettings) is set to the image's value; keys the image does not
+name (SteamVR's own, the user's) stay as they are. A file that does not parse is replaced.
+
+    steamvr-settings [IMAGE_FILE [USER_FILE]]
+"""
+import json
+import os
+import sys
+import tempfile
+
+IMAGE = "/usr/share/pico4-poc/steamvr.vrsettings"
+USER = os.path.expanduser("~/.local/share/Steam/config/steamvr.vrsettings")
+
+
+def merge(image: dict, user: dict) -> bool:
+    """Sets the image's keys in user (sections are merged, not replaced); True if anything changed."""
+    changed = False
+    for key, value in image.items():
+        if isinstance(value, dict) and isinstance(user.get(key), dict):
+            changed |= merge(value, user[key])
+        elif user.get(key, object()) != value:
+            user[key] = value
+            changed = True
+    return changed
+
+
+def main(argv: list) -> int:
+    image_path = argv[1] if len(argv) > 1 else IMAGE
+    user_path = argv[2] if len(argv) > 2 else USER
+    with open(image_path, encoding="utf-8") as f:
+        image = json.load(f)
+    try:
+        with open(user_path, encoding="utf-8") as f:
+            user = json.load(f)
+        if not isinstance(user, dict):
+            user = {}
+    except (OSError, ValueError):
+        user = {}
+    if not merge(image, user):
+        return 0
+    os.makedirs(os.path.dirname(user_path), exist_ok=True)
+    # Atomically: SteamVR must never read half a file.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(user_path), prefix=".steamvr.vrsettings.")
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(user, f, indent=4, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, user_path)
+    print(f"steamvr-settings: {user_path} updated from {image_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

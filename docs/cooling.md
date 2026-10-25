@@ -242,6 +242,8 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
 | Headset: the same with `PICO4_FAN_TABLE=80:100,75:80,70:60,65:45,60:30,55:0` | fan at 45 % in the first minutes, 60 % (9,600 rpm) from the fourth; hottest zone 68–72 °C, peak 84.5 °C (mean 72.6 °C) |
 | Headset: Valve's session check (30 s) with the fan | hottest zone 45.3 °C before, 69.4 °C after; the fan stayed at 30 % (the early table holds 30 % up to a 70 °C mean); without fan control the same check went from 47.1 to 85.7 °C |
 | Headset: Valve's idle session with PICO OS's tracker, still, 3 minutes each without, with and again without the VR CPU limits | hottest zone mean 59.7, 59.4 and 59.4 °C; peaks 75.6, 60.8 and 70.9 °C (the limits cap the gold and prime cores' boosts); CPU 297, 289 and 307 % busy of 800; big-core clock 921, 1,047 (the hint's floor) and 938 MHz; the tracker lost no pose in the 10 minutes and stayed within 1.1 mm |
+| Headset: Valve's session with the VR CPU limits (`pico4-vr-performance.service` on with the session, off when it stops) | the big and prime cores capped at 2016/2054 MHz, `core_ctl` at least 3 big cores; Valve's 30 s session check passes (89.95 commits/s, 0.19 % late, no stall, hottest zone 64.7 °C); the tracker still holds within 0.6 mm, no pose lost |
+| Headset: Beat Saber (Proton, FEX) as SteamVR's scene application for 63 s, VR CPU limits on, PICO OS's tracker | hottest zone 70.5 °C at its peak, 59–61 °C for most of the run (with Basalt and without limits it passed 88 °C within a minute) |
 | Build: [test_pico4_lens.c](../src/monado/test_pico4_lens.c) | the IPD reader gives up with `-EBUSY` after a second while another descriptor holds the port lock, and goes on once it is free |
 
 ## Next steps
