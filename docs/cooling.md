@@ -241,6 +241,7 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
 | Headset: the same with the early table | fan at 45 % from the first minute (7,540–7,650 rpm); hottest mean 65.6–72.1 °C in minutes 5–10, peak zone 79.5 °C (from a warmer start); 8 gaps above 100 ms |
 | Headset: the same with `PICO4_FAN_TABLE=80:100,75:80,70:60,65:45,60:30,55:0` | fan at 45 % in the first minutes, 60 % (9,600 rpm) from the fourth; hottest zone 68–72 °C, peak 84.5 °C (mean 72.6 °C) |
 | Headset: Valve's session check (30 s) with the fan | hottest zone 45.3 °C before, 69.4 °C after; the fan stayed at 30 % (the early table holds 30 % up to a 70 °C mean); without fan control the same check went from 47.1 to 85.7 °C |
+| Headset: Valve's idle session with PICO OS's tracker, still, 3 minutes each without, with and again without the VR CPU limits | hottest zone mean 59.7, 59.4 and 59.4 °C; peaks 75.6, 60.8 and 70.9 °C (the limits cap the gold and prime cores' boosts); CPU 297, 289 and 307 % busy of 800; big-core clock 921, 1,047 (the hint's floor) and 938 MHz; the tracker lost no pose in the 10 minutes and stayed within 1.1 mm |
 | Build: [test_pico4_lens.c](../src/monado/test_pico4_lens.c) | the IPD reader gives up with `-EBUSY` after a second while another descriptor holds the port lock, and goes on once it is free |
 
 ## Next steps
