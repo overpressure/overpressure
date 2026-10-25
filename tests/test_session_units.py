@@ -190,16 +190,102 @@ class ConsoleQuietTest(unittest.TestCase):
 
 class FallbackTest(unittest.TestCase):
     def test_fallback_overrides_once(self):
-        service = (ROOTFS / "usr/lib/systemd/system/pico4-session-fallback.service").read_text(encoding="utf-8")
-        self.assertIn("PICO4_SESSION_TARGET=pico4-session.target > /run/pico4-session/override", service)
-        self.assertIn("rm -f /run/pico4-session/steamvr-failed", service)
-        self.assertIn("systemctl restart pico4-session.service", service)
+        service = unit("usr/lib/systemd/system/pico4-session-fallback.service")
+        self.assertEqual(service["Service"]["ExecStart"], "/usr/libexec/pico4-poc/session-fallback")
+        fallback = (ROOTFS / "usr/libexec/pico4-poc/session-fallback").read_text(encoding="utf-8")
+        self.assertIn("dir=/run/pico4-session", fallback)
+        self.assertIn('echo PICO4_SESSION_TARGET=pico4-session.target > "$dir/override"', fallback)
+        self.assertIn('rm -f "$dir/steamvr-failed"', fallback)
+        # A session that hit its start limit restarts only after a reset.
+        self.assertLess(fallback.index("systemctl reset-failed pico4-session.service"),
+                        fallback.index("systemctl restart pico4-session.service"))
+        self.assertLess(fallback.index('touch "$dir/fallback-start"'),
+                        fallback.index("systemctl restart pico4-session.service"))
+        # The script decides whether the override holds, so the unit must not load it first.
         session = (ROOTFS / "usr/lib/systemd/system/pico4-session.service").read_text(encoding="utf-8")
-        # The override is read after session.conf, so it wins.
-        self.assertLess(session.index("EnvironmentFile=-/etc/pico4-poc/session.conf"),
-                        session.index("EnvironmentFile=-/run/pico4-session/override"))
+        self.assertNotIn("/run/pico4-session/override", session.split("[Service]")[1])
         script = (ROOTFS / "usr/libexec/pico4-poc/session").read_text(encoding="utf-8")
-        self.assertIn("rm -f /run/pico4-session/override", script)
+        self.assertIn("state=/run/pico4-session", script)
+        self.assertIn('rm -f "$state/override"', script)
+
+    def test_override_holds_through_restarts_by_itself(self):
+        # an issue: after the fallback, a Monado session that restarts by itself stays Monado's;
+        # a deliberate start (NRestarts 0, no fallback token) reads session.conf again.
+        script = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/session"
+        text = script.read_text(encoding="utf-8")
+        chooser = text[text.index("state=/run/pico4-session"):text.index('printf')]
+        cases = [
+            # (NRestarts, token, override, session.conf's target, expected target, override kept)
+            ("0", False, True, "gamescope-session.target", "gamescope-session.target", False),
+            ("0", True, True, "gamescope-session.target", "pico4-session.target", True),
+            ("2", False, True, "gamescope-session.target", "pico4-session.target", True),
+            ("1", False, False, "gamescope-session.target", "gamescope-session.target", False),
+            ("0", False, False, "", "pico4-session.target", False),
+        ]
+        import shutil
+        import subprocess
+        import tempfile
+        bash = shutil.which("bash")
+        if bash is None:
+            self.skipTest("no bash")
+        for restarts, token, override, conf, expected, kept in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                state = Path(tmp)
+                if token:
+                    (state / "fallback-start").write_text("", encoding="utf-8")
+                if override:
+                    (state / "override").write_text("PICO4_SESSION_TARGET=pico4-session.target\n", encoding="utf-8")
+                body = chooser.replace("state=/run/pico4-session", f"state='{state.as_posix()}'")
+                program = ("set -euo pipefail\n"
+                           f"systemctl() {{ echo {restarts}; }}\n"
+                           f"PICO4_SESSION_TARGET='{conf}'\n"
+                           + body +
+                           'target=${PICO4_SESSION_TARGET:-pico4-session.target}\necho "$target"\n')
+                out = subprocess.run([bash, "-c", program], capture_output=True, text=True, check=True).stdout
+                case = (restarts, token, override, conf)
+                self.assertEqual(out.strip(), expected, case)
+                self.assertEqual((state / "override").exists(), kept, case)
+                self.assertFalse((state / "fallback-start").exists(), case)
+
+    def test_session_starts_again_after_it_ends(self):
+        # an issue: a compositor that dies in a running session makes vrserver quit everything,
+        # gamescope with it, and start-gamescope-session returns 0; sddm's Relogin=true starts
+        # the session again on the Frame.
+        session = unit("usr/lib/systemd/system/pico4-session.service")
+        self.assertEqual(session["Service"]["Restart"], "always")
+        self.assertEqual(session["Service"]["RestartMode"], "direct")
+        restart = int(session["Service"]["RestartSec"])
+        self.assertLessEqual(restart, 10)
+        # Bounded: a session that keeps ending falls back to Monado's.
+        interval = int(session["Unit"]["StartLimitIntervalSec"])
+        burst = int(session["Unit"]["StartLimitBurst"])
+        self.assertGreaterEqual(interval, burst * (restart + 30))
+        self.assertEqual(session["Unit"]["OnFailure"], "pico4-session-fallback.service")
+
+    def test_fallback_does_not_repeat_monados_session(self):
+        # The fallback reads the target that ran last; Monado's session that keeps ending stays failed.
+        script = (ROOTFS / "usr/libexec/pico4-poc/session").read_text(encoding="utf-8")
+        self.assertIn("""printf '%s\\n' "$target" > "$state/target\"""", script)
+        fallback = (ROOTFS / "usr/libexec/pico4-poc/session-fallback").read_text(encoding="utf-8")
+        give_up = fallback.index("= pico4-session.target ]")
+        self.assertLess(give_up, fallback.index('> "$dir/override"'))
+        self.assertIn("is-failed pico4-session.service", fallback[:give_up])
+
+    def test_deliberate_stop_stays_stopped(self):
+        # A stop that times out fails the unit; OnFailure= must not start a session then.
+        fallback = (ROOTFS / "usr/libexec/pico4-poc/session-fallback").read_text(encoding="utf-8")
+        gate = fallback.index('"$MONITOR_SERVICE_RESULT" != start-limit-hit ]')
+        self.assertLess(gate, fallback.index("systemctl restart pico4-session.service"))
+        # Valve's units take up to 10 s (gamescope) and 20 s (SteamVR) to stop.
+        session = unit("usr/lib/systemd/system/pico4-session.service")
+        self.assertGreaterEqual(int(session["Service"]["TimeoutStopSec"]), 30)
+
+    def test_deliberate_restarts_reset_the_count(self):
+        check = (ROOTFS / "usr/bin/pico4-valve-session-check").read_text(encoding="utf-8")
+        restarts = [m.start() for m in re.finditer(r"(?m)^systemctl restart pico4-session.service$", check)]
+        self.assertEqual(len(restarts), 2)
+        for at in restarts:
+            self.assertTrue(check[:at].rstrip("\n").endswith("systemctl reset-failed pico4-session.service"))
 
     def test_new_session_resets_the_start_limit(self):
         # The user manager outlives a session: without a reset, sessions started one after

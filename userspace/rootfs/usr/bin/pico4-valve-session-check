@@ -81,6 +81,8 @@ systemctl stop pico4-monado.service
 temp_before=$(max_temp)
 fan_before=$(fan_state)
 echo PICO4_SESSION_TARGET=gamescope-session.target > "$conf"
+# Deliberate restarts do not count against the session's start limit (pico4-session.service).
+systemctl reset-failed pico4-session.service
 systemctl restart pico4-session.service
 
 # Startup: the compositor's log, then the layer's first statistics (ten seconds of frames).
@@ -152,6 +154,7 @@ grep -q '"index":2' <<<"$devices" || errors+=("SteamVR does not report the heads
 rm -f "$dropin"
 user_systemctl daemon-reload 2>/dev/null || true
 if [ -n "$saved" ]; then printf '%s\n' "$saved" > "$conf"; else rm -f "$conf"; fi
+systemctl reset-failed pico4-session.service
 systemctl restart pico4-session.service
 restored=$(systemctl is-active pico4-session.service)
 [ "$restored" = active ] || errors+=("pico4-session.service is $restored after the check")

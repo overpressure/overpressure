@@ -77,8 +77,15 @@ the user manager, then starts the session target in it:
 
 `/etc/pico4-poc/session.conf` (`PICO4_SESSION_TARGET=...`, an optional `EnvironmentFile`)
 selects the target, and restarting `pico4-session.service` switches to it.
-`pico4-userspace-check` reads the same file to know which target must be active. The service
-restarts 5 s after a failure.
+`pico4-userspace-check` reads the same file to know which target must be active.
+
+A session that ends by itself starts again 5 s later (`Restart=always`), as sddm's
+`Relogin=true` does on the Frame: a `vrcompositor` that dies in a running session makes
+`vrserver` quit everything ("Compositor exited unexpectedly"), gamescope segfaults as its
+OpenVR server goes, and `start-gamescope-session` returns 0. A deliberate stop stays stopped.
+Five starts within five minutes end the session's restarts; `pico4-session-fallback.service`
+then starts Monado's session (the table of adaptations below). Deliberate restarts, such
+as the session check's, reset the count first (`systemctl reset-failed pico4-session.service`).
 
 In Valve's session SteamVR's compositor and `driver_monado` run as `steamos`, so
 [`70-pico4-xr.rules`](../userspace/rootfs/usr/lib/udev/rules.d/70-pico4-xr.rules) opens the XR
@@ -161,7 +168,7 @@ Further adaptations:
 | `/opt/steamvr/bin/linuxarm64/vrcompositor-launcher` | `cap_sys_nice=eip` | the compositor raises its priority, as SteamVR's setup does on desktops |
 | `~/.steam/steam`, `~/.steam/root` | links to `~/.local/share/Steam` | SteamVR finds its logs and the Steam folder through them; on the Frame the Steam client's `RUNSTEAM.sh` makes them |
 | [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, then `pico4-steamvr-failed.service`; each new session resets the counter | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end. The user manager outlives a session, so the session script resets the user units' counters (`systemctl --user reset-failed`) before it starts its target: the limit is for a crash loop within one session. It waits for the session before to have stopped SteamVR first (its compositor crashes on the way out, so that stop can still run when the next session starts); a reset before the end of that stop did not count, and the third session check in five minutes fell back to Monado. Without `RestartMode=direct` the unit passes through the failed state before each restart, and `OnFailure=` would run at the first crash |
-| [`pico4-session-fallback.path`](../userspace/rootfs/usr/lib/systemd/system/pico4-session-fallback.path) and `.service` | when SteamVR has failed for good (the user unit touches `/run/pico4-session/steamvr-failed`), restart `pico4-session.service` once with Monado's target | releases the display and the tracking hardware instead of leaving gamescope without SteamVR; the override in `/run/pico4-session` is used by that one start, so a reboot or a deliberate switch uses `session.conf` again |
+| [`pico4-session-fallback.path`](../userspace/rootfs/usr/lib/systemd/system/pico4-session-fallback.path) and `.service` | when SteamVR has failed for good (the user unit touches `/run/pico4-session/steamvr-failed`) or the session hit its own start limit (`OnFailure=`), [`session-fallback`](../userspace/rootfs/usr/libexec/pico4-poc/session-fallback) restarts `pico4-session.service` with Monado's target; when Monado's session is the one that kept ending, it leaves the session stopped | releases the display and the tracking hardware instead of leaving gamescope without SteamVR. The override in `/run/pico4-session` holds for the fallback's start (its token `fallback-start`) and while the session restarts by itself (`NRestarts` above 0), so a crash loop cannot return to Valve's session; a reboot or any other deliberate start uses `session.conf` again. The script reads the override itself rather than through `EnvironmentFile=`, which systemd loads before the script could tell the two apart |
 
 Every stop of SteamVR ends `vrcompositor` with a segmentation fault in its own shutdown code: a
 virtual call through an object that is already freed (its vtable and the call's target lie in
@@ -950,6 +957,10 @@ userspace check, the head IMU and Monado's pose and display clients, they run
 | Headset: five starts of Valve's session in 252 s, then a forced crash loop | all five present, no start limit hit; the crash loop still ends in the fallback after three starts |
 | Headset: four Valve session checks back to back (45 s apart; eight SteamVR starts in about seven minutes) | all four passed (89.9–90.0 commits/s), no start limit hit; before the wait for SteamVR's stop the third of three failed on the start limit; the forced crash loop below still ends in the fallback after three starts, and the next session starts SteamVR with clean counters |
 | Headset: forced crash loop (`vrcompositor` killed whenever it runs) | three crashes, driver starts (station resets) 34.5 s apart, then "Start request repeated too quickly"; 11 s later the session runs Monado's target, the one-time override consumed; no SteamVR start afterwards |
+| Headset: `vrcompositor` killed in a running Valve session | `vrserver` quits everything; either SteamVR restarts itself and the session goes on, or gamescope segfaults 16 s later and the session starts again after 5 s, Valve's target active within 30 s of the kill |
+| Headset: gamescope killed (SIGSEGV) in a running session | Valve's session starts again, its target active after 10 s and SteamVR's compositor up 14 s later; five such crashes in two minutes hit the session's start limit and the fallback starts Monado's session |
+| Headset: Monado's session after the fallback, ended five times | each restart stays Monado's (the override holds); the sixth start hits the limit and the fallback leaves the session stopped ("no session to fall back to"); a deliberate restart then starts Valve's session from `session.conf` |
+| Headset: deliberate stop of `pico4-session.service` while gamescope is slow to stop | stays stopped (60 s observed); before, the stop timed out at the 15 s default and the failure started the fallback |
 | Headset: Monado service | userspace check passes (session active, every listed device node accessible to `steamos`); OpenXR pose: 959–960 of 960 located, tilt 4.29° against the accelerometer's 4.28°, heading rate 0.005°/s; display client through the service (two layers, 30 s): about 2,686 frames at 89.5–89.6 Hz, 11 late, KMS target 88.4–89.6 commits/s at vblank 89.998 Hz, no fence timeout, eyes left/right correct; statistics written when the service stops, GPU floor back to the stock level 6 (305 MHz); the session user's client through the socket link: 1,348 frames at 89.74 Hz |
 | Headset: acceptance cycle with stock restore (flash-run with the archive, EDL readback of boot, stock ABL restore) | passes in about 8 minutes from PICO OS to PICO OS on stock boot and ABL, 39 s of it receiving the 801 MiB archive: userspace check with the fan service, head IMU, OpenXR pose (tilt 3.8°), Monado display client at 89.9 frames/s, display layer at 86 frames/s on a 90 Hz vblank, shared semaphores, Valve's session presenting after 15 s at 51.3 commits/s with the headset and both controllers in SteamVR (hottest zone 45.3 → 69.4 °C with the fan at 30 %; 47.1 → 85.7 °C without fan control); stock boot and ABL verified by EDL readback; PICO OS 5.13.7 boots |
 
@@ -967,10 +978,3 @@ userspace check, the head IMU and Monado's pose and display clients, they run
    controllers are 3DoF, placed by the arm model.
 5. **Dashboard input.** Not verified: SteamVR loads its generic bindings for the PICO 4
    controller type, and clicking in the dashboard is still to be checked.
-6. **Recovery from a crash in a running session.** When `vrcompositor` dies in a running
-   session, `vrserver` quits everything ("Compositor exited unexpectedly"), gamescope with it;
-   `start-gamescope-session` then returns 0 and `pico4-session.service` (`Restart=on-failure`)
-   is not restarted, so no session runs until it is restarted by hand. A crash at start is
-   handled (the start limit and the fallback above). A SIGKILL of SteamVR's launcher leaves
-   `vrserver` and `vrcompositor` in the unit's cgroup, the restart starts a second SteamVR next
-   to them, and gamescope segfaults.

@@ -5,10 +5,21 @@
 #   gamescope-session.target   Valve's VR session: SteamVR with driver_monado,
 #                              gamescope on SteamVR's OpenVR overlays
 set -euo pipefail
-target=${PICO4_SESSION_TARGET:-pico4-session.target}
 runtime=${XDG_RUNTIME_DIR:?not inside a logind session}
-# The fallback's override (pico4-session-fallback.service) applies to this start only.
-rm -f /run/pico4-session/override
+# The fallback's override (pico4-session-fallback.service) holds for the fallback's own
+# start (its token) and while the session starts again by itself (NRestarts above 0); any
+# other start selects session.conf's target again. The fallback reads which target ran
+# last: it does not fall back from Monado's session to Monado's.
+state=/run/pico4-session
+if [ -e "$state/fallback-start" ] || [ "$(systemctl show -p NRestarts --value pico4-session.service)" != 0 ]; then
+	rm -f "$state/fallback-start"
+	override=$(sed -n 's/^PICO4_SESSION_TARGET=//p' "$state/override" 2>/dev/null || true)
+	PICO4_SESSION_TARGET=${override:-${PICO4_SESSION_TARGET:-}}
+else
+	rm -f "$state/override"
+fi
+target=${PICO4_SESSION_TARGET:-pico4-session.target}
+printf '%s\n' "$target" > "$state/target"
 
 # logind starts the user manager with the session; wait until it listens.
 for _ in $(seq 100); do
