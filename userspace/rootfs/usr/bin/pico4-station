@@ -173,6 +173,12 @@ def valid_reply(buf: bytes) -> bool:
 class Station:
     def __init__(self, device: str = DEVICE):
         self.fd = os.open(device, os.O_RDWR)
+        # The same lock as the driver's (pico4_station.c): one owner of the station at a time.
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(self.fd)
+            raise OSError(f"{device} is in use (a running Monado or SteamVR session owns the station)") from None
         self.seq = 0
         self.log = []
         self.announced = False
@@ -306,7 +312,11 @@ def main(argv=None) -> int:
     p.add_argument("--raw", help="also write the 12 chunks (32 bytes each) to this file")
     args = parser.parse_args(argv)
 
-    st = Station()
+    try:
+        st = Station()
+    except OSError as e:
+        print(f"pico4-station: {e}", file=sys.stderr)
+        return 1
     out = {"command": args.command}
     try:
         if args.command == "power":

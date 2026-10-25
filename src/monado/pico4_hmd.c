@@ -688,7 +688,8 @@ setup_station(struct pico4_hmd *h)
 		r = -ENOMEM;
 	}
 	if (r < 0) {
-		P4_ERROR(h, "Controller radio unavailable (%s): no controllers, no camera sync", strerror(-r));
+		P4_ERROR(h, "Controller radio %s: no controllers, no camera sync",
+		         r == -EBUSY ? "in use by another runtime (SteamVR's driver_monado?)" : strerror(-r));
 		pico4_station_close(h->station);
 		h->station = NULL;
 	}

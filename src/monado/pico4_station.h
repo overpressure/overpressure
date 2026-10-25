@@ -163,6 +163,7 @@ pico4_station_parse_connection(const uint8_t f[PICO4_STATION_FRAME],
 
 struct pico4_station;
 
+//! Opens the station's device (NULL: the headset's) and locks it; -EBUSY if another process has it.
 int
 pico4_station_open(struct pico4_station **out, const char *device);
 

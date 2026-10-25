@@ -17,6 +17,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <time.h>
@@ -348,6 +349,17 @@ pico4_station_open(struct pico4_station **out, const char *device)
 		return -ENOMEM;
 	}
 	st->fd = open(device != NULL ? device : PICO4_STATION_DEVICE, O_RDWR | O_CLOEXEC);
+	/*
+	 * One owner at a time: a second runtime (Monado's service beside SteamVR's driver_monado)
+	 * would reset the station under the first one and read its frames. The lock goes with the
+	 * file, also when the process dies.
+	 */
+	if (st->fd >= 0 && flock(st->fd, LOCK_EX | LOCK_NB) < 0) {
+		int r = errno == EWOULDBLOCK ? -EBUSY : -errno;
+		close(st->fd);
+		free(st);
+		return r;
+	}
 	if (st->fd < 0) {
 		int r = -errno;
 		free(st);

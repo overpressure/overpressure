@@ -32,7 +32,9 @@ the OpenXR test clients and `pico4-cam` in [src/xr/](../src/xr), and the Python 
 > - **One owner for cameras and station.** The OV7251s stream only while the station pulses
 >   FSIN, so every capture resets the station first. One process at a time may own the cameras
 >   and the station: stop `pico4-monado.service` (or Valve's session) before `pico4-cam` or
->   `pico4-station`.
+>   `pico4-station`. The driver and `pico4-station` hold an exclusive lock (`flock`) on
+>   `/dev/spidev0.0`; a second owner is refused before it can reset the station, and a second
+>   runtime then runs without controllers and cameras.
 
 ## Inventory
 
@@ -1165,6 +1167,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Headset: SLPI restart (`RELATED`) during a Monado session, a pose client running 120 s | the driver saw the service go away at once and reported the pose untracked; `pico4-sensorspd` restarted after 2 s; the IMU stream came back after 36.6 s in the same Monado process; every pose valid, 1,652 of 2,376 tracked; the service stopped cleanly afterwards |
 | Headset: frame identity in Valve's sessions (several runs, over 1,250 frame sets each) | no inconsistent and no incomplete set, while auto exposure moved from 300 lines at gain 16 to 400 lines at gain 46: all four sensors take a new exposure on the same frame |
 | PICO OS's tracker in Valve's session, headset still on a table, 60 s | 61,391 poses, none lost, within 0.7 mm and 0.04° of the first; 25 frame sets and 1,024 IMU samples per second to `pico4-slamd`, none skipped, no frame without the hardware start of frame; `pico4-slamd` 71 % of one core, `vrserver` 116 % (with Basalt 346–388 %); hottest zone 55.8 °C (with Basalt 75.8 °C) |
+| A Monado client while Valve's session runs | Monado's service is refused the station (locked by SteamVR's driver) before any reset, gets no cameras, and fails the client in 3 s (`xrGetSystem`); no core dump, a clean stop; Valve's session keeps its controllers and its tracker (no new generation) |
 | IMU temperature to the tracker, Valve's session | `sensor_temperature` of the ICM-42688 at 44.1–44.3 °C with the SoC's hottest zone at 60–61 °C; still within 0.8 mm for 60 s, no pose lost |
 | PICO OS's tracker, a recorded walk replayed (4 cameras and the IMU, hardware start-of-frame times) | back within 9 cm of the start; lost in the fastest part of a turn and relocalised in its own map |
 | PICO OS's tracker, a still recording looped for 5 minutes | 39 % of one core, back within 6 mm of the start, farthest 7 mm, no jump |

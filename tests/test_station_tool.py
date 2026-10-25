@@ -6,8 +6,11 @@ import types
 import unittest
 from pathlib import Path
 
-# The tool uses fcntl only for the power ioctl; Windows has no fcntl.
-sys.modules.setdefault("fcntl", types.ModuleType("fcntl"))
+# The tool uses fcntl for the power ioctl and the device lock; Windows has no fcntl.
+try:
+    import fcntl  # noqa: F401
+except ImportError:
+    sys.modules.setdefault("fcntl", types.ModuleType("fcntl"))
 
 ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "userspace/rootfs/usr/bin/pico4-station"
@@ -131,6 +134,31 @@ class StationToolTests(unittest.TestCase):
         fake = FakeStation({(station.CMD_CONTROLLER_CALIBRATION, 1): [reply(0x02, 0x02, bytes([0xEE]))]})
         with self.assertRaises(OSError):
             fake.controller_calibration("left")
+
+
+class StationLockTests(unittest.TestCase):
+    """One owner of the station: a second runtime must not reset it under the first."""
+
+    @unittest.skipUnless(hasattr(station.fcntl, "flock"), "needs POSIX flock")
+    def test_second_owner_is_refused(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile() as f:
+            first = station.Station(f.name)
+            try:
+                with self.assertRaisesRegex(OSError, "in use"):
+                    station.Station(f.name)
+            finally:
+                first.close()
+            station.Station(f.name).close()  # free again once the owner closed it
+
+    def test_driver_locks_before_any_reset(self):
+        source = (ROOT / "src/monado/pico4_station.c").read_text(encoding="utf-8")
+        opened = source.index("pico4_station_open(struct pico4_station **out")
+        self.assertIn("flock(st->fd, LOCK_EX | LOCK_NB)", source[opened:source.index("\n}\n", opened)])
+        hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
+        setup = hmd.index("setup_station(struct pico4_hmd *h)")
+        self.assertLess(hmd.index("pico4_station_open(&h->station, NULL)", setup),
+                        hmd.index("pico4_station_reset(h->station)", setup))
 
 
 if __name__ == "__main__":
