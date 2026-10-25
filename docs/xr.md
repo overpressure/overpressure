@@ -397,6 +397,7 @@ frames only from an allowlist:
 | `04` | `02`, camera (0 all, 1–4), `01` on / `02` off | camera stream | yes | yes |
 | `04` | 28 bytes: `03`, 8 × (u16 exposure, u8 gain) in bytes 1–12 and 16–27, 52 (u16) and an event index in 13–15 ([cameras](#tracking-cameras)) | camera exposure and gain | yes | yes |
 | `04` | `07 00`, rate | camera frame rate | – | yes |
+| `04` | `05 01`, then `05 02` (not `05 03`) | the camera modules' ids from their OTP, as PICO OS reads them without saved ones | yes | – |
 | `01` | none (sequence number in bytes 37–38) | firmware version | – | yes |
 | `07` | controller, `01` on / `00` off | controllers' IMU stream to the DSP | – | yes |
 | `22` | exactly `01 00` (reads; a first byte of 0 would set the tracker work mode) | work mode | – | yes |
@@ -638,14 +639,17 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   ([isp.h](../src/stockslam/isp.h)): the first scene row doubled (it replaces the sensor's metadata
   row; the last row drops out), black level 16 off, `v + (v >> 8)`, a per-pixel lens-shading gain
   (128 = 1×, up to 16× in the fisheyes' corners) and a 10-to-8-bit gamma table. The gain table is
-  chosen by the camera modules' vendor, which PICO OS's station service reads from their OTP
-  once and keeps in `/data/stationservice/camera_otp.json`, trusting saved values of 8 and 9
-  only. The extraction takes that file from the backup's userdata (as text in the dump: the
-  file or a log line repeating it) into the root's `/pico4/camera_otp.json`, and `pico4-slamd`
-  maps camera 0's id as PICO OS's ISP does: 8 → `config_lscSY.txt`, 9 and 13 →
-  `config_lscLH.txt`, 7 → `config_lscneo3.txt`, any other → no lens shading. This headset's
-  modules are all vendor 9. Without the file it takes the vendor-9 table and says so;
-  `PICO4_SLAMD_LSC` names a table by hand.
+  chosen by the camera modules' (vendor) ids, which PICO OS's station service keeps in
+  `/data/stationservice/camera_otp.json` and, when it has no valid ones (all four 8 or 9),
+  reads from the modules' OTP through the station: camera op 05 sub-op 01, then 02, each
+  answered by `BB 01 04 05` with the four ids. The same here, as on a fresh install: the file
+  lives on the data partition (`/var/lib/pico4-stock-slam/stationservice`, bound into the root);
+  `pico4-slamd` hands the saved ids to the driver, which, the station's owner, reads the OTP
+  before it starts a tracker when they are not valid (the two requests are in the station
+  allowlist), and `pico4-slamd` saves what PICO OS would keep. It maps camera 0's id as PICO
+  OS's ISP does: 8 → `config_lscSY.txt`, 9 and 13 → `config_lscLH.txt`, 7 →
+  `config_lscneo3.txt`, any other (or none) → no lens shading. `PICO4_SLAMD_LSC` names a table
+  by hand.
   No rotation: the tracker's calibration describes the sensors as read out.
 - **Auto exposure.** PICO OS's own, `ExposurePredict` from `libExposureImageProcess.so` (with
   `libtianti_shm_dynamic.so` and `libc++_shared.so`, extracted into the root with the tracker;

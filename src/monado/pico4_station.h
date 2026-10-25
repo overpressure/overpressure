@@ -256,6 +256,20 @@ pico4_station_camera_set_exposures(struct pico4_station *st,
 int
 pico4_station_camera_set_each(struct pico4_station *st, const struct pico4_station_exposure scene[4]);
 
+/*!
+ * The tracking cameras' module (vendor) ids, as PICO OS's station service reads them from the
+ * modules' OTP when it has none saved: camera op 05 sub-op 01, then 02, each answered by
+ * BB 01 04 05 with the ids of cameras 0-3 in bytes 4-7 (a zero keeps the value before). Call
+ * with the cameras started; exposure commands wait meanwhile. 0 and @p out (zeros for ids the
+ * station did not give), or a negative errno.
+ */
+int
+pico4_station_camera_otp(struct pico4_station *st, uint8_t out[4]);
+
+//! The ids of an OTP reply (BB 01 04 05 v0-v3) into @p ids, keeping a byte where the reply has 0.
+bool
+pico4_station_parse_otp(const uint8_t f[PICO4_STATION_FRAME], uint8_t ids[4]);
+
 //! Stop FSIN for all cameras.
 int
 pico4_station_camera_stop(struct pico4_station *st);

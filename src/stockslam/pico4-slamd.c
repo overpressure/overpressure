@@ -24,8 +24,8 @@
 #include <stdbool.h>
 
 #define CONFIG_DIR "/system/etc/pvr/config/"
-//! The camera modules' vendor ids, as PICO OS's station service saved them (extract-stock-slam.sh).
-#define OTP_PATH "/pico4/camera_otp.json"
+//! The camera modules' ids where PICO OS's station service keeps them (the data partition, stock-slam).
+#define OTP_PATH "/data/stationservice/camera_otp.json"
 //! A set goes in once the IMU is this far past it.
 #define SET_DELAY_NS 30000000
 //! Temperature for samples without one: the gyro bias table's middle.
@@ -282,23 +282,63 @@ load_table(const char *path, uint32_t *out, int count)
 	return len >= 0 && isp_parse_numbers(g_text, len, out, count) == count ? 0 : -1;
 }
 
+//! The saved module ids (camera_otp.json) into @p ids; zeros where the file has none.
+static void
+read_saved_ids(uint8_t ids[4])
+{
+	long len = read_text(OTP_PATH);
+	for (int k = 0; k < 4; k++) {
+		int v = len > 0 ? isp_otp_id(g_text, len, k) : -1;
+		ids[k] = v > 0 ? (uint8_t)v : 0;
+	}
+}
+
 /*!
- * The lens-shading table as PICO OS chooses it: by the camera modules' vendor, which its station
- * service saved from their OTP (the extraction takes camera_otp.json from the user's backup).
- * PICO4_SLAMD_LSC names a table instead; NULL: PICO OS calls the vendor illegal and shades nothing.
+ * The cameras' module ids as PICO OS's station service hands them out: the saved ones if valid,
+ * else what the driver read from the modules' OTP for this generation, saved when PICO OS would
+ * keep them. Camera 0's id; 0 if there is none.
+ */
+static int
+camera_vendor(struct pico4_slam_feed *feed, uint32_t generation)
+{
+	uint8_t ids[4];
+	memcpy(ids, feed->otp_saved, sizeof(ids));
+	const char *from = "saved";
+	if (!isp_otp_valid(ids)) {
+		if (__atomic_load_n(&feed->otp_generation, __ATOMIC_ACQUIRE) == generation && feed->otp_state == 1) {
+			memcpy(ids, feed->otp_read, sizeof(ids));
+			from = "the modules' OTP";
+			char json[128];
+			int n = isp_otp_json(ids, json, sizeof(json));
+			int fd = isp_otp_valid(ids) ? open(OTP_PATH ".new", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644) : -1;
+			if (fd >= 0) {
+				int ok = write(fd, json, (size_t)n) == n;
+				close(fd);
+				ok = ok && rename(OTP_PATH ".new", OTP_PATH) == 0;
+				fprintf(stderr, "pico4-slamd: camera_otp %s\n", ok ? "saved" : "not saved");
+				if (ok) {
+					memcpy(feed->otp_saved, ids, sizeof(ids)); // the driver's next start reads no OTP
+				}
+			}
+		} else {
+			memset(ids, 0, sizeof(ids));
+			from = "none: the station gave no ids";
+		}
+	}
+	fprintf(stderr, "pico4-slamd: camera module ids %u,%u,%u,%u (%s)\n", ids[0], ids[1], ids[2], ids[3], from);
+	return ids[0];
+}
+
+/*!
+ * The lens-shading table as PICO OS chooses it: by camera 0's module (vendor) id. PICO4_SLAMD_LSC
+ * names a table instead; NULL: PICO OS calls the vendor illegal and shades nothing.
  */
 static const char *
-lsc_table(void)
+lsc_table(int vendor)
 {
 	const char *lsc = getenv("PICO4_SLAMD_LSC");
 	if (lsc != NULL && *lsc != '\0') {
 		return lsc;
-	}
-	long len = read_text(OTP_PATH);
-	int vendor = len >= 0 ? isp_otp_vendor(g_text, len) : -1;
-	if (vendor < 0) {
-		fprintf(stderr, "pico4-slamd: no camera vendor id (" OTP_PATH "): the vendor-9 table\n");
-		return "config_lscLH.txt";
 	}
 	const char *file = isp_lsc_file(vendor);
 	fprintf(stderr, "pico4-slamd: camera vendor %d: %s\n", vendor, file != NULL ? file : "no lens shading");
@@ -306,10 +346,10 @@ lsc_table(void)
 }
 
 static int
-load_tables(void)
+load_tables(int vendor)
 {
 	static uint32_t tmp[ISP_W * ISP_H];
-	const char *lsc = lsc_table();
+	const char *lsc = lsc_table(vendor);
 	if (lsc == NULL) {
 		for (int i = 0; i < ISP_W * ISP_H; i++) {
 			g_tables.lsc[i] = 128; // 1x
@@ -457,19 +497,23 @@ main(int argc, char **argv, char **envp)
 {
 	(void)envp;
 	int gid = argc > 1 ? atoi(argv[1]) : -1;
-	if (load_tables() < 0) {
-		return 1;
-	}
 	struct pico4_slam_feed *feed = open_feed(gid);
 	if (feed == 0) {
 		return 1;
 	}
+	// The saved module ids for the driver, which reads the OTP when they are not valid.
+	uint8_t saved[4];
+	read_saved_ids(saved);
+	memcpy(feed->otp_saved, saved, sizeof(saved));
 	// Wait for a driver, then serve its generation for as long as it lasts.
 	uint32_t generation;
 	while ((generation = __atomic_load_n(&feed->generation, __ATOMIC_ACQUIRE)) == 0 ||
 	       __atomic_load_n(&feed->imu_written, __ATOMIC_ACQUIRE) == 0) {
 		feed->slamd_heartbeat_ns = (uint64_t)now_ns(CLOCK_MONOTONIC);
 		usleep(100000);
+	}
+	if (load_tables(camera_vendor(feed, generation)) < 0) {
+		return 1;
 	}
 
 	void *lib = dlopen("libSlam.so", RTLD_NOW);

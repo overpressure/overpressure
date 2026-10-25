@@ -47,6 +47,11 @@
 #define CAMERA_STREAM 0x02
 #define CAMERA_SET_PARA 0x03 //!< Exposure and gain; 28-byte payload.
 #define CAMERA_SET_PARA_LEN 28
+//! Camera op 05: the modules' OTP ids (StationService::GetCameraOTPInfo, mode 0: sub-ops 01, 02).
+#define CAMERA_OTP 0x05
+#define CAMERA_OTP_READ 0x01
+#define CAMERA_OTP_RESULT 0x02
+#define CAMERA_OTP_WAIT_MS 2000
 #define CAMERA_ON 0x01
 #define CAMERA_OFF 0x02
 #define CAMERA_ALL 0x00
@@ -63,6 +68,8 @@ struct pico4_station
 	bool announced;
 	//! The last reply to a camera command: op, status.
 	int camera_op, camera_status;
+	//! The cameras' module ids from the OTP replies (a zero byte keeps the value before).
+	uint8_t otp[4];
 	//! CameraSetPara's event index of the last command (0-9).
 	unsigned para_index;
 	//! Connection state per hand (index hand - 1).
@@ -97,6 +104,9 @@ allowed(uint8_t cmd, const uint8_t *p, size_t n)
 		}
 		if (n == CAMERA_SET_PARA_LEN && p[0] == CAMERA_SET_PARA) {
 			return true;
+		}
+		if (n == 2 && p[0] == CAMERA_OTP) {
+			return p[1] == CAMERA_OTP_READ || p[1] == CAMERA_OTP_RESULT; // never sub-op 03 or others
 		}
 		return n == 3 && p[0] == CAMERA_STREAM && p[1] <= 4 && (p[2] == CAMERA_ON || p[2] == CAMERA_OFF);
 	default: return false;
@@ -316,6 +326,9 @@ read_one(struct pico4_station *st, int timeout_ms)
 	if (f[0] == HEADER_REPLY && f[2] == PICO4_STATION_CMD_CAMERA) {
 		st->camera_op = f[3];
 		st->camera_status = f[4];
+		if (f[1] == TARGET_STATION && f[3] == CAMERA_OTP) {
+			pico4_station_parse_otp(f, st->otp);
+		}
 	}
 	if (f[0] == HEADER_REPLY && (f[1] == TARGET_LEFT || f[1] == TARGET_RIGHT) &&
 	    f[2] == PICO4_STATION_CMD_CALIBRATION) {
@@ -580,6 +593,48 @@ pico4_station_motor(struct pico4_station *st, enum pico4_station_hand hand, unsi
 	pthread_mutex_lock(&st->lock);
 	ssize_t w = write(st->fd, f, sizeof(f));
 	int r = w < 0 ? -errno : w == (ssize_t)sizeof(f) ? 0 : -EIO;
+	pthread_mutex_unlock(&st->lock);
+	return r;
+}
+
+bool
+pico4_station_parse_otp(const uint8_t f[PICO4_STATION_FRAME], uint8_t ids[4])
+{
+	if (f[0] != HEADER_REPLY || f[1] != TARGET_STATION || f[2] != PICO4_STATION_CMD_CAMERA || f[3] != CAMERA_OTP) {
+		return false;
+	}
+	for (int k = 0; k < 4; k++) {
+		if (f[4 + k] != 0) { // as PICO OS's reply handler: a zero keeps the value before
+			ids[k] = f[4 + k];
+		}
+	}
+	return true;
+}
+
+int
+pico4_station_camera_otp(struct pico4_station *st, uint8_t out[4])
+{
+	const uint8_t subops[2] = {CAMERA_OTP_READ, CAMERA_OTP_RESULT};
+	int r = 0;
+	pthread_mutex_lock(&st->lock);
+	memset(st->otp, 0, sizeof(st->otp));
+	for (int i = 0; i < 2 && r == 0; i++) {
+		const uint8_t p[2] = {CAMERA_OTP, subops[i]};
+		st->camera_op = -1;
+		if ((r = send_cmd(st, PICO4_STATION_CMD_CAMERA, p, sizeof(p))) < 0) {
+			break;
+		}
+		for (int64_t end = now_ms() + CAMERA_OTP_WAIT_MS; st->camera_op != CAMERA_OTP && now_ms() < end;) {
+			if ((r = read_one(st, 50)) < 0) {
+				break;
+			}
+			r = 0;
+		}
+		if (r == 0 && st->camera_op != CAMERA_OTP) {
+			r = -ETIMEDOUT;
+		}
+	}
+	memcpy(out, st->otp, sizeof(st->otp));
 	pthread_mutex_unlock(&st->lock);
 	return r;
 }

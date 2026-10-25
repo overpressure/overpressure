@@ -80,13 +80,10 @@ class ExtractionTests(unittest.TestCase):
                      "cdspr.jsn", "libExposureImageProcess.so", "libtianti_shm_dynamic.so", "libc++_shared.so"):
             self.assertIn(name, script, name)
         self.assertIn("sha256 does not match the backup manifest", script)
-        # an issue: the camera modules' vendor ids as PICO OS saved them, only values it trusts.
-        self.assertIn("/data/stationservice/camera_otp.json", script)
-        self.assertIn("all(v in (8, 9) for v in ids)", script)
-        self.assertIn('"$root/pico4/camera_otp.json"', script)
-        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
-        self.assertIn('#define OTP_PATH "/pico4/camera_otp.json"', slamd)
-        self.assertIn("isp_lsc_file(vendor)", slamd)
+        # an issue: as a fresh PICO OS install, nothing of the camera modules' ids from the backup.
+        self.assertNotIn("camera_otp", script)
+        self.assertNotIn("userdata", script)
+        # debugfs's rdump creates the directory inside its target: dump into the parent.
         # debugfs's rdump creates the directory inside its target: dump into the parent.
         self.assertIn('dump "$work/system.img" /system/etc/pvr/config "$root/system/etc/pvr"\n', script)
         self.assertIn('dump "$backup/lun4/dsp.bin" /cdsp "$root/vendor/dsp"\n', script)
@@ -182,6 +179,30 @@ class TemperatureTests(unittest.TestCase):
         self.assertIn("#define TEMPERATURE_MIN -30.0", slamd)
         self.assertIn("#define TEMPERATURE_MAX 100.0", slamd)
         self.assertIn("sample[6] = known ? e.temperature : DEFAULT_TEMPERATURE;", slamd)
+
+
+class CameraOtpTests(unittest.TestCase):
+    """an issue: the modules' ids as PICO OS's station service gets them on a fresh install."""
+
+    def test_saved_on_the_data_partition_where_pico_os_keeps_them(self):
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        self.assertIn('#define OTP_PATH "/data/stationservice/camera_otp.json"', slamd)
+        runner = read(LIBEXEC / "stock-slam")
+        self.assertIn('mount --bind "$state/stationservice" "$root/data/stationservice"', runner)
+        # Saved only when PICO OS would keep them (all 8 or 9), and the saved ones offered first.
+        self.assertIn("isp_otp_valid(ids) ? open(OTP_PATH", slamd)
+        # Once saved, a driver started again while this pico4-slamd runs reads no OTP.
+        self.assertIn("memcpy(feed->otp_saved, ids, sizeof(ids));", slamd)
+        self.assertLess(slamd.index("memcpy(feed->otp_saved, saved, sizeof(saved));"),
+                        slamd.index("load_tables(camera_vendor(feed, generation))"))
+        self.assertIn("isp_lsc_file(vendor)", slamd)
+
+    def test_driver_reads_the_otp_only_without_valid_saved_ids(self):
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        attach = slam[slam.index("stock_attach(struct pico4_slam *s)"):]
+        self.assertLess(attach.index("stock_camera_otp(s, feed);"), attach.index("__atomic_add_fetch(&feed->generation"))
+        body = slam[slam.index("stock_camera_otp(struct pico4_slam *s"):]
+        self.assertLess(body.index("if (otp_valid(saved))"), body.index("pico4_station_camera_otp(s->station, ids)"))
 
 
 class AutoExposureTests(unittest.TestCase):

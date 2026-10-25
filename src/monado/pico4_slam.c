@@ -604,6 +604,43 @@ frame_sof_ns(struct pico4_slam *s, const struct pico4_cam_frame *f)
 	return f->sof_monotonic_ns;
 }
 
+//! A module id PICO OS's station service keeps (camera_otp.json): 8 or 9.
+static bool
+otp_valid(const uint8_t ids[PICO4_SLAM_FEED_CAMS])
+{
+	for (int k = 0; k < PICO4_SLAM_FEED_CAMS; k++) {
+		if ((ids[k] & 0xfe) != 8) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/*!
+ * The cameras' module ids for pico4-slamd's lens shading, as PICO OS's station service gets them:
+ * the saved ones if they are valid, else read from the modules' OTP through the station (once per
+ * generation; the cameras run by now). pico4-slamd saves what it may keep.
+ */
+static void
+stock_camera_otp(struct pico4_slam *s, struct pico4_slam_feed *feed)
+{
+	uint8_t saved[PICO4_SLAM_FEED_CAMS];
+	memcpy(saved, feed->otp_saved, sizeof(saved));
+	uint32_t next = __atomic_load_n(&feed->generation, __ATOMIC_ACQUIRE) + 1;
+	if (otp_valid(saved)) {
+		SLAM_INFO(s, "Camera module ids %u,%u,%u,%u (saved)", saved[0], saved[1], saved[2], saved[3]);
+		feed->otp_state = 0;
+	} else {
+		uint8_t ids[PICO4_SLAM_FEED_CAMS] = {0};
+		int r = s->station != NULL ? pico4_station_camera_otp(s->station, ids) : -ENODEV;
+		SLAM_INFO(s, "Camera module ids from the OTP: %u,%u,%u,%u (%s)", ids[0], ids[1], ids[2], ids[3],
+		          r == 0 ? "station answered" : strerror(-r));
+		memcpy(feed->otp_read, ids, sizeof(ids));
+		feed->otp_state = r == 0 ? 1 : 2;
+	}
+	__atomic_store_n(&feed->otp_generation, next, __ATOMIC_RELEASE);
+}
+
 /*!
  * Maps pico4-slamd's shared memory once it is there (camera thread; retried once a second) and
  * starts a new generation, which gives the driver a tracker of its own.
@@ -640,6 +677,7 @@ stock_attach(struct pico4_slam *s)
 		munmap(map, sizeof(struct pico4_slam_feed));
 		return;
 	}
+	stock_camera_otp(s, feed);
 	uint32_t generation = __atomic_add_fetch(&feed->generation, 1, __ATOMIC_ACQ_REL);
 	s->stock_generation = generation;
 	__atomic_store_n(&s->feed, feed, __ATOMIC_RELEASE);

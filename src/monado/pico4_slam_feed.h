@@ -19,7 +19,7 @@
 #include <stdint.h>
 
 #define PICO4_SLAM_FEED_PATH "/dev/shm/pico4-slam"
-#define PICO4_SLAM_FEED_MAGIC 0x34444546344f4350ull //!< "PCO4FED4"
+#define PICO4_SLAM_FEED_MAGIC 0x35444546344f4350ull //!< "PCO4FED5"
 #define PICO4_SLAM_FEED_W 640
 #define PICO4_SLAM_FEED_H 480
 #define PICO4_SLAM_FEED_CAMS 4
@@ -90,6 +90,17 @@ struct pico4_slam_feed
 	uint32_t ae_lines[PICO4_SLAM_FEED_CAMS];
 	uint32_t ae_gain[PICO4_SLAM_FEED_CAMS];
 	uint64_t ae_written;
+	/*!
+	 * The tracking cameras' module ids (lens shading, docs/xr.md#head-tracking), as PICO OS's
+	 * station service keeps them: pico4-slamd puts the saved ones in @ref otp_saved; when they
+	 * are not all 8 or 9, the driver (the station's owner) reads them from the modules' OTP
+	 * before it starts a generation, into @ref otp_read with @ref otp_state 1 (2: no answer) and
+	 * @ref otp_generation the generation it then starts; pico4-slamd saves valid ones.
+	 */
+	uint8_t otp_saved[PICO4_SLAM_FEED_CAMS];
+	uint8_t otp_read[PICO4_SLAM_FEED_CAMS];
+	uint32_t otp_state;
+	uint32_t otp_generation;
 	struct pico4_slam_feed_imu imu[PICO4_SLAM_FEED_IMU];
 	struct pico4_slam_feed_pose poses[PICO4_SLAM_FEED_POSES];
 	struct pico4_slam_feed_set sets[PICO4_SLAM_FEED_SETS];

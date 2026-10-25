@@ -80,6 +80,19 @@ test_station(void)
 	pico4_station_camera_para(built, scene, long_leds, 0);
 	EXPECT(built[16] == 10 && built[17] == 0 && built[18] == 32 && built[25] == 10 && built[27] == 32);
 	EXPECT(built[1] == 0x2C && built[2] == 0x01 && built[3] == 0x40);
+	// The modules' OTP ids as PICO OS's station service reads them: AA 01 04 05 01, then 05 02.
+	const uint8_t otp_read[2] = {0x05, 0x01}, otp_result[2] = {0x05, 0x02}, otp_init[2] = {0x05, 0x03};
+	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, otp_read, 2));
+	EXPECT(f[0] == 0xAA && f[1] == 0x01 && f[2] == 0x04 && f[3] == 0x05 && f[4] == 0x01 && f[5] == 0);
+	EXPECT(f[39] == pico4_station_crc8(f, 39));
+	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, otp_result, 2) && f[4] == 0x02);
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CAMERA, otp_init, 2)); // only the two PICO OS sends
+	uint8_t otp[PICO4_STATION_FRAME] = {0xBB, 0x01, 0x04, 0x05, 9, 9, 0, 8};
+	uint8_t ids[4] = {0, 0, 7, 0};
+	EXPECT(pico4_station_parse_otp(otp, ids) && ids[0] == 9 && ids[1] == 9 && ids[2] == 7 && ids[3] == 8);
+	otp[3] = 0x03;
+	EXPECT(!pico4_station_parse_otp(otp, ids));
+
 	// PICO OS's auto exposure: a setting per camera, in camera order (cameras 2 and 3 share one).
 	const struct pico4_station_exposure each[4] = {{263, 48}, {737, 240}, {13, 16}, {13, 16}};
 	pico4_station_camera_para_each(built, each, leds, 1);

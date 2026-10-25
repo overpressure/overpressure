@@ -63,13 +63,14 @@ isp_lsc_file(int vendor)
 }
 
 /*!
- * Camera 0's vendor id from PICO OS's camera_otp.json (cJSON's "camera0": N), as its ISP takes
- * camera 0's for all four; -1 if the text has none.
+ * Camera @p cam's module (vendor) id from PICO OS's camera_otp.json (cJSON's "cameraN": V); -1 if
+ * the text has none.
  */
 static inline int
-isp_otp_vendor(const char *text, long len)
+isp_otp_id(const char *text, long len, int cam)
 {
-	static const char key[] = "\"camera0\"";
+	char key[] = "\"camera0\"";
+	key[7] = (char)('0' + cam);
 	for (long i = 0; i + (long)sizeof(key) - 1 <= len; i++) {
 		long k = 0;
 		while (key[k] != '\0' && text[i + k] == key[k]) {
@@ -89,6 +90,46 @@ isp_otp_vendor(const char *text, long len)
 		return isp_parse_numbers(text + j + 1, len - j - 1, &v, 1) == 1 && v < 256 ? (int)v : -1;
 	}
 	return -1;
+}
+
+//! The ids PICO OS's station service keeps: all four 8 or 9 (anything else makes it read the OTP).
+static inline int
+isp_otp_valid(const uint8_t ids[4])
+{
+	for (int k = 0; k < 4; k++) {
+		if ((ids[k] & 0xfe) != 8) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+//! camera_otp.json as PICO OS's station service writes it (cJSON_Print); its length.
+static inline int
+isp_otp_json(const uint8_t ids[4], char *out, int size)
+{
+	static const char form[] = "{\n\t\"camera0\":\t#,\n\t\"camera1\":\t#,\n\t\"camera2\":\t#,\n\t\"camera3\":\t#\n}";
+	int n = 0, cam = 0;
+	for (const char *c = form; *c != '\0'; c++) {
+		if (*c != '#') {
+			if (n < size - 1) {
+				out[n++] = *c;
+			}
+			continue;
+		}
+		char digits[4];
+		int d = 0;
+		unsigned v = ids[cam++];
+		do {
+			digits[d++] = (char)('0' + v % 10);
+			v /= 10;
+		} while (v != 0 && d < 3);
+		while (d > 0 && n < size - 1) {
+			out[n++] = digits[--d];
+		}
+	}
+	out[n] = '\0';
+	return n;
 }
 
 /*!
