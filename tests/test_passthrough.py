@@ -152,6 +152,17 @@ class RoomViewTests(unittest.TestCase):
         u, v = uv(0.1, -0.05, -1.0)  # the same point in OpenVR's axes: behind, clamped z
         self.assertFalse(0 < u < 1 and 0 < v < 1)
 
+    def test_double_press_toggles_the_room_view(self):
+        # an issue: as the Frame's bindings on its headset's system button: once the dashboard,
+        # twice the room view.
+        bindings = json.loads(read(RECIPE / "pico4-vrcompositor-bindings.json"))
+        sources = bindings["bindings"]["/actions/system"]["sources"]
+        for path in ("/user/hand/right/input/system", "/user/hand/left/input/menu"):
+            source = next(s for s in sources if s["path"] == path)
+            self.assertEqual(source["mode"], "complex_button")
+            self.assertEqual(source["inputs"]["single"]["output"], "/actions/system/in/ToggleDashboard")
+            self.assertEqual(source["inputs"]["double"]["output"], "/actions/system/in/ToggleRoomView")
+
     def test_exposure_pose_without_the_lead(self):
         # The reported poses are predicted by the lead (24 + 5 ms); the camera saw the head at the
         # exposure itself: with the lead the room trailed the head's turns.

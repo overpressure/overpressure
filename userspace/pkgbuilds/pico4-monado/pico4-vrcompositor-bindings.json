@@ -4,7 +4,7 @@
   "category": "steamvr_input",
   "controller_type": "monado_bytedance_pico4_controller",
   "name": "SteamVR dashboard bindings for the PICO 4 controllers",
-  "description": "Home (right) or menu (left) toggles the dashboard; the aim pose points, the trigger clicks, the grip goes back, the joystick scrolls.",
+  "description": "Home (right) or menu (left): once toggles the dashboard, twice the room view (as the Frame's system button); the aim pose points, the trigger clicks, the grip goes back, the joystick scrolls.",
   "options": {},
   "simulated_actions": [],
   "alias_info": {},
@@ -13,17 +13,19 @@
       "sources": [
         {
           "path": "/user/hand/right/input/system",
-          "mode": "button",
+          "mode": "complex_button",
           "inputs": {
-            "click": {"output": "/actions/system/in/ToggleDashboard"},
+            "single": {"output": "/actions/system/in/ToggleDashboard"},
+            "double": {"output": "/actions/system/in/ToggleRoomView"},
             "held": {"output": "/actions/system/in/SystemButtonChord"}
           }
         },
         {
           "path": "/user/hand/left/input/menu",
-          "mode": "button",
+          "mode": "complex_button",
           "inputs": {
-            "click": {"output": "/actions/system/in/ToggleDashboard"},
+            "single": {"output": "/actions/system/in/ToggleDashboard"},
+            "double": {"output": "/actions/system/in/ToggleRoomView"},
             "held": {"output": "/actions/system/in/SystemButtonChord"}
           }
         }

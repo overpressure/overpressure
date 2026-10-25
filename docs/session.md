@@ -534,13 +534,12 @@ SteamVR's dashboard has default bindings only for controller types it knows, and
 generated profile for the PICO 4 controller names none, so SteamVR fell back to its generic
 ones, which point with a `/pose/tip` this controller lacks. The package installs
 [`pico4-vrcompositor-bindings.json`](../userspace/pkgbuilds/pico4-monado/pico4-vrcompositor-bindings.json)
-as the profile's `default_bindings` for `openvr.component.vrcompositor`: the PICO button
-(right) or the menu button (left) toggles the dashboard and holding the PICO button recenters;
-the aim pose is the laser, the trigger clicks, the grip goes back and the joystick scrolls.
-Both buttons reach SteamVR's system UI (`[Dashboard] [ToggleDashboard]` in
-`vrwebhelper_systemui.txt`), but it hides the dashboard again at once: this SteamVR's dashboard
-is the unified one, whose content comes from the Steam client's VR UI (`vrgamepadui`), and the
-Steam client does not run in the session.
+as the profile's `default_bindings` for `openvr.component.vrcompositor`: a press of the PICO
+button (right) or the menu button (left) toggles the dashboard, a double press the room view
+([xr.md](xr.md#passthrough)), as the Frame's bindings do with its headset's system button, and
+holding the PICO button recenters; the aim pose is the laser, the trigger clicks, the grip goes
+back and the joystick scrolls. The dashboard's content comes from the Steam client's VR UI
+(`vrgamepadui`), so it shows once the client runs in the session.
 
 ### Performance and heat
 
