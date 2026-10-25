@@ -24,10 +24,9 @@ them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL bac
 | 3 Native graphics | Turnip (Vulkan) on KGSL; both 2160 x 2160 panels at 90 and 72 Hz through the stock KMS driver |
 | 4 SteamOS-compatible userspace | Holo Core aarch64 with the Steam Frame's systemd 257.7 and SteamOS services, from RAM or installed (read-only system, 104 GiB of data); speakers and microphone through PipeWire |
 | 5 XR hardware | head IMU, Monado with KMS output, lens correction and IPD, four tracking cameras, 6DoF with PICO OS's tracker on the CDSP, controllers (inputs, 3DoF) |
-| 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path |
+| 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path; the Steam client in the headset, games started from its library |
 
-Open: fan control over longer sessions and its tuning, performance, the Steam client and
-network, controller position tracking, boot feedback and power handling of the installed system. Plan and details:
+Open: fan control over longer sessions and its tuning, performance, controller position tracking, boot feedback and power handling of the installed system. Plan and details:
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Quick start

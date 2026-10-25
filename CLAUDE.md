@@ -16,7 +16,7 @@ section lists what comes next. Each step has its own document:
 | 3 Native graphics (Turnip/KGSL Vulkan, fenced KMS on both panels) | verified | [docs/graphics.md](docs/graphics.md) |
 | 4 SteamOS-compatible userspace (Holo Core aarch64 + Steam Frame systemd 257.7) | verified | [docs/userspace.md](docs/userspace.md) |
 | 5 XR hardware: IMU, Monado driver and KMS display, lenses and IPD, cameras, controllers (3DoF), 6DoF (PICO OS's libSlam on the CDSP; Basalt selectable) | verified with stock restore; controller positions open | [docs/xr.md](docs/xr.md) |
-| 6 Valve's VR session: gamescope + SteamVR with `driver_monado`, `pico4-vrdisplay`, shared GPU and System V semaphores | verified with stock restore; 90 fps on the Frame's compositor path; Steam client, performance and cooling open | [docs/session.md](docs/session.md) |
+| 6 Valve's VR session: gamescope + SteamVR with `driver_monado`, `pico4-vrdisplay`, shared GPU and System V semaphores | verified with stock restore; 90 fps on the Frame's compositor path; the Steam client signs in, its library runs games; performance and cooling open | [docs/session.md](docs/session.md) |
 
 Installed system: the system image read-only in `super`, data in `userdata`, the maintenance
 stage 1 in `recovery`, following PICO OS's layout; installed, starts without the PC, persistent

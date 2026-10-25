@@ -5,8 +5,8 @@ PICO 4 (2022, codename phoenix, Snapdragon XR2), always on its stock Android ker
 (4.19.81-perf+, PICO OS 5.13.7 and 5.13.8) and stock device trees. The plan has six steps,
 from a recoverable development device to Valve's VR session, and follows the strategy of the
 background research in [research.md](research.md). All six steps work on the tested headset,
-an original PICO 4 on PICO OS 5.13.7. Open work: cooling, the Steam client and its network,
-performance, controller positions and a standalone boot.
+an original PICO 4 on PICO OS 5.13.7. Open work: cooling, performance, controller positions and
+the installed system's way back and power handling.
 
 ## Status
 
@@ -17,7 +17,7 @@ performance, controller positions and a standalone boot.
 | 3. Native graphics | Works: Turnip Vulkan on KGSL; both panels at 90 and 72 Hz through the stock KMS driver | [graphics.md](graphics.md) |
 | 4. SteamOS-compatible userspace | Works: Holo Core aarch64 with the Frame's systemd 257.7, no failed units | [userspace.md](userspace.md) |
 | 5. Native XR hardware | Works: head IMU, display, lens correction, tracking cameras, 6DoF head tracking, 3DoF controllers. Open: controller positions | [xr.md](xr.md) |
-| 6. Valve's VR session | Runs: SteamVR on both panels at 90 fps on the Steam Frame's compositor path. Open: Steam client, performance, cooling | [session.md](session.md), [cooling.md](cooling.md) |
+| 6. Valve's VR session | Runs: SteamVR on both panels at 90 fps on the Steam Frame's compositor path. The Steam client signs in, games start from its library. Open: performance, cooling | [session.md](session.md), [cooling.md](cooling.md) |
 
 Each step's document holds its design, measurements and reproduction steps.
 
@@ -213,7 +213,7 @@ calibration it uses comes from the user's own backup.
 - **Acceptance.** In the step's acceptance cycle, with 6DoF running, an OpenXR client renders
   2,698 frames in 30 s at 89.996 Hz (2 late), each eye on its own panel.
 
-**Open.** The SteamVR dashboard (needs the Steam client) and 6DoF robustness; see
+**Open.** 6DoF robustness; see
 [Open work](#open-work).
 
 ### 6. Valve's VR session
@@ -254,7 +254,7 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
   the switch at about 51 frames per second, no fence or GPU timeout, the headset and both
   controllers in SteamVR.
 
-**Open.** The Steam client and its network, performance, cooling and controller positions;
+**Open.** Performance, cooling and controller positions;
 see [Open work](#open-work).
 
 ## Milestones
@@ -268,9 +268,9 @@ and where they stand.
 | Boot minimal Linux | Done: stock kernel with an Alpine initramfs, root shell over USB-C (step 2) |
 | Obtain accelerated Linux graphics | Done: Turnip Vulkan on KGSL and both panels at 90 and 72 Hz through KMS (step 3); the compositors of steps 5 and 6 scan out GPU-rendered images |
 | Run the ARM64 SteamOS userspace | Done: Holo Core aarch64 with the Frame's systemd 257.7 and SteamOS services, no failed units (step 4) |
-| Display a Steam-style desktop in the headset | Partly: SteamVR's environment shows in the lenses and its dashboard runs (step 6); gamescope's desktop overlays need the Steam client |
+| Display a Steam-style desktop in the headset | Done: SteamVR's environment and dashboard in the lenses, the Steam client's library as SteamVR's overlay (step 6) |
 | Full 6DoF and controllers | Partly: 6DoF head tracking and 3DoF controllers with all inputs (step 5); controller positions are open |
-| Complete standalone SteamVR experience | Not yet: SteamVR runs on the panels at 90 fps, and every boot needs the PC; the Steam client, network, cooling and a standalone boot are open |
+| Complete standalone SteamVR experience | Partly: the installed system starts without the PC; in Valve's session SteamVR runs on the panels at 90 fps and games start from the Steam library; cooling and power handling are open |
 
 ## Open work
 
@@ -345,8 +345,8 @@ Details: [xr.md](xr.md).
 - **Models.** SteamVR draws PICO OS's own controller models, read from the headset's firmware.
 - **Haptics.** Vibration goes to the addressed controller through the station's motor command,
   the only controller command in the allowlist; firmware and OTA commands stay excluded.
-- **SteamVR.** The dashboard bindings reach SteamVR's system UI. Its dashboard comes from the
-  Steam client, which now runs in the session; the dashboard itself is unverified.
+- **SteamVR.** The dashboard bindings reach SteamVR's system UI; the menu button opens the
+  dashboard, whose content comes from the Steam client, and the laser and trigger clicks work in it.
 
 ### Head tracking
 
