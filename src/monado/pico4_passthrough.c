@@ -7,29 +7,43 @@
  */
 
 #include "pico4_passthrough.h"
+#include "pico4_roomview.h"
 #include "pico4_tcam.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <time.h>
+#include <unistd.h>
 
 #define BLACK_LEVEL 16
 //! Factory cameras of the forward pair: bottom left, bottom right.
 static const int FACTORY[PICO4_PASSTHROUGH_CAMS] = {3, 2};
+//! Who wants frames (pico4_passthrough::streaming).
+#define STREAM_CLIENT 1u
+#define STREAM_ROOMVIEW 2u
 
 struct pico4_passthrough
 {
 	struct pico4_passthrough_info info;
 	pthread_mutex_t lock;
 	pthread_cond_t cond;
-	bool streaming;
+	unsigned streaming; //!< STREAM_* bits.
 	//! The newest set, guarded by lock.
 	uint16_t *raw[PICO4_PASSTHROUGH_CAMS];
 	struct pico4_passthrough_frame frame;
 	float gain;
+
+	//! The room view's export (pico4_passthrough_export).
+	struct pico4_roomview *roomview;
+	pthread_t export_thread;
+	bool exporting, export_stop;
+	pico4_passthrough_pose_fn pose;
+	void *pose_ctx;
 };
 
 static char *
@@ -137,16 +151,26 @@ pico4_passthrough_info(const struct pico4_passthrough *p, struct pico4_passthrou
 	*out = p->info;
 }
 
+static void
+set_stream_bit(struct pico4_passthrough *p, unsigned bit, bool on)
+{
+	if (on) {
+		__atomic_fetch_or(&p->streaming, bit, __ATOMIC_RELEASE);
+	} else {
+		__atomic_fetch_and(&p->streaming, ~bit, __ATOMIC_RELEASE);
+	}
+}
+
 void
 pico4_passthrough_set_streaming(struct pico4_passthrough *p, bool on)
 {
-	__atomic_store_n(&p->streaming, on, __ATOMIC_RELEASE);
+	set_stream_bit(p, STREAM_CLIENT, on);
 }
 
 bool
 pico4_passthrough_streaming(const struct pico4_passthrough *p)
 {
-	return p != NULL && __atomic_load_n(&p->streaming, __ATOMIC_ACQUIRE);
+	return p != NULL && __atomic_load_n(&p->streaming, __ATOMIC_ACQUIRE) != 0;
 }
 
 void
@@ -229,12 +253,115 @@ pico4_passthrough_wait(struct pico4_passthrough *p,
 	return true;
 }
 
+static int64_t
+monotonic_ns(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000000000ll + ts.tv_nsec;
+}
+
+//! Streams the forward pair into the room view's ring while its producer asks for frames.
+static void *
+export_run(void *arg)
+{
+	struct pico4_passthrough *p = arg;
+	struct pico4_roomview *rv = p->roomview;
+	uint64_t after = 0;
+	while (!__atomic_load_n(&p->export_stop, __ATOMIC_ACQUIRE)) {
+		int64_t seen = __atomic_load_n(&rv->producer_ns, __ATOMIC_ACQUIRE);
+		bool want = __atomic_load_n(&rv->requested, __ATOMIC_ACQUIRE) != 0 &&
+		            monotonic_ns() - seen < PICO4_ROOMVIEW_PRODUCER_TIMEOUT_NS;
+		set_stream_bit(p, STREAM_ROOMVIEW, want);
+		if (!want) {
+			usleep(50 * 1000);
+			continue;
+		}
+		uint64_t n = __atomic_load_n(&rv->frames_written, __ATOMIC_RELAXED);
+		struct pico4_roomview_frame *f = &rv->frames[n % PICO4_ROOMVIEW_FRAMES];
+		__atomic_store_n(&f->sequence, 0, __ATOMIC_RELEASE);
+		__atomic_thread_fence(__ATOMIC_SEQ_CST);
+		struct pico4_passthrough_frame frame;
+		if (!pico4_passthrough_wait(p, after, 200, f->pixels[0], p->info.width, &frame)) {
+			continue;
+		}
+		after = frame.sequence;
+		f->timestamp_ns = frame.timestamp_ns;
+		f->exposure_us = frame.exposure_us;
+		f->pose_valid = p->pose != NULL && p->pose(p->pose_ctx, frame.timestamp_ns, f->tracking_from_head);
+		__atomic_store_n(&f->sequence, frame.sequence, __ATOMIC_RELEASE);
+		__atomic_store_n(&rv->frames_written, n + 1, __ATOMIC_RELEASE);
+	}
+	set_stream_bit(p, STREAM_ROOMVIEW, false);
+	return NULL;
+}
+
+bool
+pico4_passthrough_export(struct pico4_passthrough *p, const char *path, pico4_passthrough_pose_fn pose, void *ctx)
+{
+	if (p->exporting) {
+		return true;
+	}
+	// The frames stack the two cameras: pico4_passthrough_wait writes left above right.
+	if ((size_t)p->info.width * p->info.height > PICO4_ROOMVIEW_PIXELS) {
+		return false;
+	}
+	int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+	if (fd < 0) {
+		return false;
+	}
+	if (ftruncate(fd, sizeof(struct pico4_roomview)) != 0) {
+		close(fd);
+		return false;
+	}
+	struct pico4_roomview *rv = mmap(NULL, sizeof(*rv), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	close(fd);
+	if (rv == MAP_FAILED) {
+		return false;
+	}
+	// Kept in place across starts (pico4-roomview keeps its mapping); a new generation each start.
+	uint32_t generation = rv->magic == PICO4_ROOMVIEW_MAGIC ? rv->generation + 1 : 1;
+	__atomic_store_n(&rv->magic, 0, __ATOMIC_RELEASE);
+	rv->version = 1;
+	rv->generation = generation;
+	rv->width = p->info.width;
+	rv->height = p->info.height;
+	for (int i = 0; i < PICO4_ROOMVIEW_CAMS; i++) {
+		rv->fx[i] = p->info.fx[i];
+		rv->fy[i] = p->info.fy[i];
+		rv->cx[i] = p->info.cx[i];
+		rv->cy[i] = p->info.cy[i];
+		memcpy(rv->k[i], p->info.k[i], sizeof(rv->k[i]));
+		memcpy(rv->camera_to_head[i], p->info.camera_to_head[i], sizeof(rv->camera_to_head[i]));
+	}
+	for (int i = 0; i < PICO4_ROOMVIEW_FRAMES; i++) {
+		rv->frames[i].sequence = 0;
+	}
+	__atomic_store_n(&rv->magic, PICO4_ROOMVIEW_MAGIC, __ATOMIC_RELEASE);
+	p->roomview = rv;
+	p->pose = pose;
+	p->pose_ctx = ctx;
+	p->export_stop = false;
+	if (pthread_create(&p->export_thread, NULL, export_run, p) != 0) {
+		munmap(rv, sizeof(*rv));
+		p->roomview = NULL;
+		return false;
+	}
+	p->exporting = true;
+	return true;
+}
+
 void
 pico4_passthrough_destroy(struct pico4_passthrough **pp)
 {
 	struct pico4_passthrough *p = *pp;
 	if (p == NULL) {
 		return;
+	}
+	if (p->exporting) {
+		__atomic_store_n(&p->export_stop, true, __ATOMIC_RELEASE);
+		pthread_join(p->export_thread, NULL);
+		munmap(p->roomview, sizeof(*p->roomview));
 	}
 	pthread_mutex_destroy(&p->lock);
 	pthread_cond_destroy(&p->cond);

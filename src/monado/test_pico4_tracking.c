@@ -5,19 +5,26 @@
  * data): the station frame builder (golden frames from the Python tool that
  * was verified on hardware, and the allowlist), the vibration frames (golden
  * frames from the documented layout), the factory calibration
- * parser, the Kannala-Brandt refit, the controller packet parser and the
- * camera metadata line.
+ * parser, the Kannala-Brandt refit, the controller packet parser, the
+ * camera metadata line and the room view's shared frames.
  */
 
 #include "pico4_blemcu.h"
 #include "pico4_cam.h"
 #include "pico4_passthrough.h"
+#include "pico4_roomview.h"
 #include "pico4_station.h"
 #include "pico4_tcam.h"
 
+#include <fcntl.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
 
 static int failures;
 
@@ -560,6 +567,134 @@ test_passthrough(void)
 	EXPECT(out[0] == 255 && out[1] == 4);
 }
 
+static bool
+fixed_pose(void *ctx, int64_t timestamp_ns, double out[12])
+{
+	(void)ctx;
+	const double m[12] = {1, 0, 0, 0.5, 0, 1, 0, 1.5, 0, 0, 1, (double)(timestamp_ns % 1000)};
+	memcpy(out, m, sizeof(m));
+	return true;
+}
+
+static int64_t
+now_ns(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000000000ll + ts.tv_nsec;
+}
+
+//! Waits up to a second for the driver's export thread to reach @p written frames.
+static bool
+wait_written(struct pico4_roomview *rv, uint64_t written)
+{
+	for (int i = 0; i < 1000; i++) {
+		if (__atomic_load_n(&rv->frames_written, __ATOMIC_ACQUIRE) >= written) {
+			return true;
+		}
+		usleep(1000);
+	}
+	return false;
+}
+
+static void
+test_roomview(void)
+{
+	// The forward pair's calibration as the factory directory holds it.
+	char dir[] = "/tmp/pico4-roomview-test-XXXXXX";
+	EXPECT(mkdtemp(dir) != NULL);
+	char path[512];
+	for (int cam = 2; cam <= 3; cam++) {
+		snprintf(path, sizeof(path), "%s/pvr", dir);
+		mkdir(path, 0700);
+		snprintf(path, sizeof(path), "%s/pvr/mav0", dir);
+		mkdir(path, 0700);
+		snprintf(path, sizeof(path), "%s/pvr/mav0/cam%d", dir, cam);
+		mkdir(path, 0700);
+		snprintf(path, sizeof(path), "%s/pvr/mav0/cam%d/sensor.yaml", dir, cam);
+		FILE *f = fopen(path, "w");
+		EXPECT(f != NULL);
+		fputs(yaml, f);
+		fclose(f);
+	}
+	const double down[3] = {0, 0, -1};
+	const double head[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+	struct pico4_passthrough *p = pico4_passthrough_create(dir, down, head);
+	EXPECT(p != NULL);
+	if (p == NULL) {
+		return;
+	}
+	snprintf(path, sizeof(path), "%s/roomview", dir);
+	EXPECT(pico4_passthrough_export(p, path, fixed_pose, NULL));
+	EXPECT(pico4_passthrough_export(p, path, fixed_pose, NULL)); // once per passthrough
+	int fd = open(path, O_RDWR);
+	struct pico4_roomview *rv = mmap(NULL, sizeof(*rv), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	close(fd);
+	EXPECT(rv != MAP_FAILED);
+	EXPECT(rv->magic == PICO4_ROOMVIEW_MAGIC && rv->version == 1 && rv->generation == 1);
+	struct pico4_passthrough_info info;
+	pico4_passthrough_info(p, &info);
+	EXPECT(rv->width == info.width && rv->height == info.height && rv->fx[0] == info.fx[0]);
+	EXPECT(rv->camera_to_head[1][3] == info.camera_to_head[1][3]);
+
+	static uint16_t left[PICO4_PASSTHROUGH_SRC_W * PICO4_PASSTHROUGH_SRC_H];
+	static uint16_t right[PICO4_PASSTHROUGH_SRC_W * PICO4_PASSTHROUGH_SRC_H];
+	for (size_t i = 0; i < sizeof(left) / sizeof(left[0]); i++) {
+		left[i] = 16 + 400;  // 100 at gain 1
+		right[i] = 16 + 200; // 50
+	}
+	// Nobody asks: the camera thread hands nothing over.
+	usleep(100 * 1000);
+	EXPECT(!pico4_passthrough_streaming(p));
+	// pico4-roomview asks for frames.
+	__atomic_store_n(&rv->producer_ns, now_ns(), __ATOMIC_RELEASE);
+	__atomic_store_n(&rv->requested, 1u, __ATOMIC_RELEASE);
+	for (int i = 0; i < 200 && !pico4_passthrough_streaming(p); i++) {
+		usleep(1000);
+	}
+	EXPECT(pico4_passthrough_streaming(p));
+	pico4_passthrough_push(p, left, right, PICO4_PASSTHROUGH_SRC_W, 123456789, 100, 1.0f);
+	EXPECT(wait_written(rv, 1));
+	const struct pico4_roomview_frame *f = &rv->frames[0];
+	EXPECT(f->sequence == 1 && f->timestamp_ns == 123456789 && f->pose_valid == 1);
+	EXPECT(f->tracking_from_head[3] == 0.5 && f->tracking_from_head[11] == 789);
+	// The two cameras one after the other, each width x height.
+	EXPECT(f->pixels[0][0] == 100 && f->pixels[0][(size_t)info.width * info.height - 1] == 100);
+	EXPECT(f->pixels[1][0] == 50);
+	pico4_passthrough_push(p, left, right, PICO4_PASSTHROUGH_SRC_W, 223456789, 100, 1.0f);
+	EXPECT(wait_written(rv, 2));
+	EXPECT(rv->frames[1].sequence == 2);
+	// A producer that went quiet stops the stream.
+	__atomic_store_n(&rv->producer_ns, now_ns() - 3 * PICO4_ROOMVIEW_PRODUCER_TIMEOUT_NS, __ATOMIC_RELEASE);
+	for (int i = 0; i < 500 && pico4_passthrough_streaming(p); i++) {
+		usleep(1000);
+	}
+	EXPECT(!pico4_passthrough_streaming(p));
+	pico4_passthrough_destroy(&p);
+	munmap(rv, sizeof(*rv));
+	// A restart keeps the file and starts a new generation.
+	p = pico4_passthrough_create(dir, down, head);
+	EXPECT(p != NULL && pico4_passthrough_export(p, path, NULL, NULL));
+	fd = open(path, O_RDONLY);
+	rv = mmap(NULL, sizeof(*rv), PROT_READ, MAP_SHARED, fd, 0);
+	close(fd);
+	EXPECT(rv != MAP_FAILED && rv->generation == 2 && rv->frames[0].sequence == 0);
+	munmap(rv, sizeof(*rv));
+	pico4_passthrough_destroy(&p);
+	unlink(path);
+	for (int cam = 2; cam <= 3; cam++) {
+		snprintf(path, sizeof(path), "%s/pvr/mav0/cam%d/sensor.yaml", dir, cam);
+		unlink(path);
+		snprintf(path, sizeof(path), "%s/pvr/mav0/cam%d", dir, cam);
+		rmdir(path);
+	}
+	snprintf(path, sizeof(path), "%s/pvr/mav0", dir);
+	rmdir(path);
+	snprintf(path, sizeof(path), "%s/pvr", dir);
+	rmdir(path);
+	rmdir(dir);
+}
+
 int
 main(void)
 {
@@ -574,6 +709,7 @@ main(void)
 	test_set_assembly();
 	test_set_identity();
 	test_passthrough();
+	test_roomview();
 	if (failures != 0) {
 		fprintf(stderr, "%d failure(s)\n", failures);
 		return 1;

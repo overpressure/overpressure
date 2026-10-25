@@ -536,7 +536,8 @@ Basalt in [pico4_tcam.c](../src/monado/pico4_tcam.c), at 0.21–0.52 px RMS.
 
 ## Passthrough
 
-SteamVR has no camera view (room view) here yet. How the Frame provides one:
+SteamVR shows the forward cameras as its room view (the dashboard's camera button, or the
+compositor's `set_camera_roomview_enabled`). How the Frame provides one:
 
 - **Driver.** The Frame's HMD driver (`driver_cv`, not installed here) implements OpenVR's
   camera component (`IVRCameraComponent_003`) and a private passthrough interface; Valve's
@@ -570,19 +571,56 @@ station keep a single owner:
   transforms, FTheta distortion with k1–k4 per camera, neutral white balance.
 - **Settings.** The Frame's: `camera.enableCamera`, `roomView` 2, no camera bounds, not on the
   controller, `contentAwareRoomviewMonochromeTint`; `dashboard.allowPassthroughPortalManager` off.
-- **State.** `vrserver` takes the component (a client's `GetCameraFrameSize` returns its
+- **The public component alone.** `vrserver` takes it (a client's `GetCameraFrameSize` returns its
   480×1280 frame), but in SteamVR 2.17 the video stream and the room view are not `vrserver`'s:
-  `AcquireVideoStreamingService` goes to `vrcompositor`, which starts a camera only when the
-  shared state `VR_CameraPassthroughState` marks one enabled. Only the private
-  `IVRCameraPassthroughInternal_001` in `vrclient.so` writes that state, with the frames as
-  dma-bufs and a distortion resource, so the public component alone gives no room view
-  (`OperationFailed`, "no camera enabled"). A producer for that interface is the remaining step.
+  `vrcompositor` starts a camera only when the shared state `VR_CameraPassthroughState` marks one
+  enabled, and only the private `IVRCameraPassthroughInternal_001` in `vrclient.so` writes that
+  state, as the Frame's XR service does. `vrserver` has no implementation of it, so its producer is
+  a client process of its own.
 - **Depth-mesh queues.** The compositor's room view also connects to two block queues,
   `/xrservice/roomview3d/meshData` and `/xrservice/roomview3d/meshLayout` (OpenVR's
   `IVRBlockQueue_005`), which the Frame's XR service provides; only code inside `vrserver` may
   create block queues. The camera component creates both, empty, when the HMD activates; the
   compositor connects ("Depth mesh block queues connection successfull") and, with no mesh
   marked up to date, renders the camera view without depth reprojection.
+
+The room view's producer is [`pico4-roomview`](../src/xr/pico4-roomview.c), a user unit that runs
+with SteamVR ([pico4-roomview.service](../userspace/rootfs/usr/lib/systemd/user/pico4-roomview.service)):
+
+```text
+cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pico4-roomview ─▶ vrcompositor
+           upright 8-bit pair, the      (pico4_roomview.h)        R8 dma-bufs and     room view
+           head pose at exposure                                  per-frame metadata
+```
+
+- **Frames from the driver.** When SteamVR's camera component asks for the camera info,
+  `driver_monado` creates the shared memory
+  ([pico4_roomview.h](../src/monado/pico4_roomview.h)): the two cameras' size, KB4 intrinsics and
+  camera-to-head transforms, and a ring of four frames. While the producer reports that the
+  compositor wants frames (with a fresh heartbeat), the camera thread hands each scene set over
+  and a thread of the driver converts it (as for the component) into the ring, with the head pose
+  at the middle of the exposure as SteamVR saw it. Otherwise nothing is copied.
+- **Client.** `VR_Init` as a background application, then `IVRCompositor_029`: the frames'
+  import goes over `vrclient`'s connection to the compositor, which only asking for a compositor
+  interface opens (without it the import request gets no answer). Then the passthrough
+  interface, `SetGraphicsDevice` with its own Vulkan device on Turnip, and `SetupCameraFrames`
+  with three linear R8 images per camera, exported as dma-bufs (DRM format modifier, linear).
+  `vrclient` imports an OPAQUE_FD timeline semaphore from the compositor into that device, so the
+  device enables the external semaphore extensions and the process runs with the
+  `pico4-vrdisplay` layer, which emulates those semaphores on KGSL. The view state's "available"
+  flag goes on with the frames.
+- **Each frame.** While the compositor asks for frames: the newest frame from the ring into a free
+  image per camera (the pixel shader squares each sample, so the linear luma goes out as its
+  square root), then the frame's metadata and `PublishFrame`. The metadata the room view's shaders
+  read: the exposure time on the compositor's clock (`CLOCK_MONOTONIC_RAW`; a time after its now
+  shows nothing), fx, fy, cx, cy in pixels, k1–k4, the camera in the head frame in the
+  computer-vision axes (x right, y down, looking along +z; the vertex shader clamps the depth to
+  0.001, so OpenVR's camera axes send every point off the image), the head at the exposure, and
+  the image's valid rectangle (0, 0, 1, 1; the pixel shader clamps its coordinate to it, so zero
+  samples one texel). The compositor picks per eye the camera nearest to it; each camera's image
+  stays its own.
+- **Restarts.** A new compositor (its process changed) gets the frames set up again; without
+  `vrserver` the producer exits, and the unit starts again with SteamVR.
 
 ## Head tracking
 
@@ -1318,6 +1356,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Controller calibration records from the station, both controllers | 12 chunks each; gyro and accelerometer matrices within 0.4 % of identity, gyro biases up to 0.016 rad/s, LED positions 0.3 mm (mean) and 0.6 mm (largest) from the nominal models; the serial of each connect notification names one of the two bias tables in persist (9 and 8 temperature bins) |
 | Controllers worn in Valve's session (120 s): both held, the left switched off for 10 s and on again | both tracked with their own calibration; the left disconnected, held its place while off (user) and connected again, with its record re-read in 48 ms and tracking at once; event time minus station time 0.00–0.99 µs in every 30 s window, across the reconnect and under the session's load |
 | Acceptance cycle (`flash-run --userspace`, then stock restoration) | passed: archive received in 86–105 s, SSH 112–123 s after the start of the transfer; systemd `running`, 0 failed units, storage read-only, USB link unchanged, Turnip 65,536 pixels; IMU, pose and display checks as above (two layers, Basalt running); stock boot verified by EDL readback, stock ABL restored, PICO OS started |
+| Room view in Valve's session (`pico4-roomview`, still headset) | the compositor imports the frames ("Late initialization successful"); frame dumps show the room in both eyes, the dashboard over it; 25 frames per second per camera published, none skipped; with the room view on for 60 s the stock tracker lost no pose and stayed within 1.3 mm of its start (1.1 mm with it off), no tracker warnings |
 | QEMU, same archive (4.19 without SLPI or `msm_drm`) | self-test passed; the sensor units and Monado's PICO 4 prober stay inactive |
 
 ## Next steps
@@ -1336,7 +1375,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
    unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
    which needs the Steam client in the session.
-4. **Passthrough.** SteamVR's camera component is in `driver_monado`
-   ([Passthrough](#passthrough)); the room view needs a producer for SteamVR's private
-   `IVRCameraPassthroughInternal_001` (dma-buf frames). Once frames flow, the copy needs the
-   tracking checks (still and worn).
+4. **Passthrough.** The room view shows the forward cameras ([Passthrough](#passthrough)); worn
+   it is unchecked: that the room stays in place while the head turns (the head pose at the
+   exposure), the scale, and the tracking while it runs. The upper corners of the view lie outside
+   the cameras' field and show their edge pixels.

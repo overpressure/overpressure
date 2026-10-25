@@ -62,7 +62,7 @@ pico4_passthrough_create(const char *calibration_dir, const double down_body[3],
 void
 pico4_passthrough_info(const struct pico4_passthrough *p, struct pico4_passthrough_info *out);
 
-//! A client streams (or stops): only then the camera thread hands frames over.
+//! A client streams (or stops): only then, or while the room view takes frames, the camera thread hands frames over.
 void
 pico4_passthrough_set_streaming(struct pico4_passthrough *p, bool on);
 
@@ -94,6 +94,17 @@ pico4_passthrough_wait(struct pico4_passthrough *p,
                        uint8_t *y,
                        uint32_t stride,
                        struct pico4_passthrough_frame *out);
+
+//! The head pose at @p timestamp_ns in SteamVR's raw tracking space, row-major 3x4; false if unknown.
+typedef bool (*pico4_passthrough_pose_fn)(void *ctx, int64_t timestamp_ns, double out_tracking_from_head[12]);
+
+/*!
+ * SteamVR's room view (pico4_roomview.h): creates the shared memory at @p path and starts a thread
+ * that streams the forward pair into it while pico4-roomview asks for frames. Once per @p p; true
+ * if it runs.
+ */
+bool
+pico4_passthrough_export(struct pico4_passthrough *p, const char *path, pico4_passthrough_pose_fn pose, void *ctx);
 
 //! Turns one raw image upright (pico4_tcam_upright's @p turn) into 8 bits: black level 16 off, times @p gain.
 void

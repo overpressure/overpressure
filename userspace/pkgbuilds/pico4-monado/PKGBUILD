@@ -14,10 +14,11 @@
 # acceptance clients read the head pose (pico4-openxr-pose) and render frames
 # (pico4-openxr-display) through the OpenXR loader; pico4-cam checks the
 # tracking cameras on their own; pico4-ctrack-replay runs the controller LED
-# tracker over pico4-cam's recordings.
+# tracker over pico4-cam's recordings; pico4-roomview hands the forward cameras to
+# SteamVR's room view (docs/xr.md#passthrough).
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=8
+pkgrel=9
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -39,7 +40,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
-        pico4_passthrough.h pico4_passthrough.c
+        pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4-roomview.c
         pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
         comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
@@ -74,6 +75,7 @@ sha256sums=(SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP
+            SKIP SKIP
             3d9c5b9fa11ee4c9589fa15093d4f3bde89ea708b5835038dbd441ef08338123)
 
 prepare() {
@@ -103,7 +105,7 @@ build() {
   # install -C leaves unchanged files and their timestamps alone.
   install -C -Dm644 -t monado/src/xrt/drivers/pico4 pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c \
     pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c \
-    pico4_tcam.h pico4_tcam.c pico4_passthrough.h pico4_passthrough.c pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
+    pico4_tcam.h pico4_tcam.c pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h \
     pico4_controller.c pico4_fusion.h pico4_fusion.c pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_types.hpp \
     pico4_ctrack_model.hpp pico4_ctrack_model.cpp pico4_ctrack_solve.hpp pico4_ctrack_solve.cpp \
     pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp \
@@ -166,6 +168,7 @@ build() {
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-display pico4-openxr-display.c -lopenxr_loader -lvulkan -lm
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -Imonado/src/xrt/drivers/pico4/include -o pico4-cam pico4-cam.c \
     pico4_cam.c pico4_station.c pico4_ssc.c -lpthread
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-roomview pico4-roomview.c -lvulkan -ldl -lm
   ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -isystem /usr/include/eigen3 -o pico4-ctrack-replay \
     pico4-ctrack-replay.cpp "${objs[@]}" pico4_blemcu.o -lpthread -lm
 }
@@ -192,7 +195,7 @@ profile["default_bindings"] = [
 with open(sys.argv[1], "w") as f:
     json.dump(profile, f, indent=2)
 PY
-  install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay -t "$pkgdir/usr/bin"
+  install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay pico4-roomview -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.
   install -dm755 "$pkgdir/etc/openxr/1"
   ln -s /usr/share/openxr/1/openxr_monado.json "$pkgdir/etc/openxr/1/active_runtime.json"

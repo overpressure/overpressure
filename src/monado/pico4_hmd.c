@@ -28,6 +28,7 @@
 #include "pico4_interface.h"
 #include "pico4_ipd.h"
 #include "pico4_lens.h"
+#include "pico4_roomview.h"
 #include "pico4_slam.h"
 #include "pico4_ssc.h"
 #include "pico4_station.h"
@@ -1426,6 +1427,31 @@ pico4_hmd_get_presence(struct xrt_device *xdev, bool *out_worn)
 	return true;
 }
 
+/*!
+ * The head at @p timestamp_ns as SteamVR saw it: driver_monado reports this pose unchanged
+ * (world from driver is the identity), so the room view's producer gets the same space.
+ */
+static bool
+roomview_pose(void *ctx, int64_t timestamp_ns, double out[12])
+{
+	struct xrt_device *xdev = ctx;
+	struct xrt_space_relation rel = XRT_SPACE_RELATION_ZERO;
+	if (xrt_device_get_tracked_pose(xdev, XRT_INPUT_GENERIC_HEAD_POSE, timestamp_ns, &rel) != XRT_SUCCESS ||
+	    (rel.relation_flags & XRT_SPACE_RELATION_ORIENTATION_VALID_BIT) == 0) {
+		return false;
+	}
+	struct xrt_quat q = rel.pose.orientation;
+	math_quat_normalize(&q);
+	const double x = q.x, y = q.y, z = q.z, w = q.w;
+	const double m[12] = {
+	    1 - 2 * (y * y + z * z), 2 * (x * y - z * w),     2 * (x * z + y * w),     rel.pose.position.x,
+	    2 * (x * y + z * w),     1 - 2 * (x * x + z * z), 2 * (y * z - x * w),     rel.pose.position.y,
+	    2 * (x * z - y * w),     2 * (y * z + x * w),     1 - 2 * (x * x + y * y), rel.pose.position.z,
+	};
+	memcpy(out, m, sizeof(m));
+	return true;
+}
+
 bool
 pico4_hmd_camera_info(struct xrt_device *xdev, struct pico4_passthrough_info *out)
 {
@@ -1437,6 +1463,11 @@ pico4_hmd_camera_info(struct xrt_device *xdev, struct pico4_passthrough_info *ou
 		return false;
 	}
 	pico4_passthrough_info(p, out);
+	// SteamVR's camera component asks: its room view takes frames from pico4-roomview, which
+	// gets them from here (pico4_roomview.h).
+	if (!pico4_passthrough_export(p, PICO4_ROOMVIEW_PATH, roomview_pose, xdev)) {
+		P4_WARN(pico4_hmd(xdev), "No room view: %s not shared (%s)", PICO4_ROOMVIEW_PATH, strerror(errno));
+	}
 	return true;
 }
 

@@ -50,6 +50,115 @@ class ComponentTests(unittest.TestCase):
         self.assertIn("pico4_passthrough_push(s->passthrough, set->pixels[3], set->pixels[2]", slam)
 
 
+class RoomViewTests(unittest.TestCase):
+    """SteamVR's room view takes frames only from a client of its private passthrough interface."""
+
+    def test_recipe_builds_and_installs_the_producer(self):
+        recipe = read(RECIPE / "PKGBUILD")
+        sources = recipe.split("sha256sums=")[0]
+        self.assertIn("pico4_roomview.h pico4-roomview.c", sources)
+        self.assertRegex(recipe, r"-o pico4-roomview pico4-roomview\.c -lvulkan -ldl -lm")
+        self.assertRegex(recipe, r"install -Dm755 [^\n]*pico4-roomview -t \"\$pkgdir/usr/bin\"")
+        # The driver includes the layout: it goes into Monado's tree with the driver files.
+        install = recipe[recipe.index("install -C -Dm644 -t monado/src/xrt/drivers/pico4"):]
+        self.assertIn("pico4_roomview.h", install[:install.index("\n\n")])
+
+    def test_producer_runs_with_steamvr(self):
+        units = ROOT / "userspace/rootfs/usr/lib/systemd/user"
+        service = read(units / "pico4-roomview.service")
+        self.assertIn("PartOf=steamvr.service", service)
+        self.assertIn("ExecStart=/usr/bin/pico4-roomview", service)
+        self.assertNotRegex(service, r"CPUWeight|CPUQuota")  # RT groups (CLAUDE.md)
+        self.assertIn("Wants=pico4-roomview.service", read(units / "steamvr.service.d/52-pico4-roomview.conf"))
+
+    def test_both_sides_share_one_layout(self):
+        header = read(ROOT / "src/monado/pico4_roomview.h")
+        self.assertEqual(re.findall(r"(?m)^#include <([^>]+)>", header), ["stdint.h"])
+        magic = int(re.search(r"PICO4_ROOMVIEW_MAGIC (0x[0-9a-f]+)ull", header).group(1), 16)
+        self.assertEqual(magic.to_bytes(8, "little"), b"PCO4RVW1")
+        producer = read(ROOT / "src/xr/pico4-roomview.c")
+        self.assertIn('#include "pico4_roomview.h"', producer)
+        driver = read(ROOT / "src/monado/pico4_passthrough.c")
+        self.assertIn('#include "pico4_roomview.h"', driver)
+        # The driver writes a frame's sequence last; the producer checks it after copying.
+        export = driver[driver.index("export_run(void *arg)"):]
+        export = export[:export.index("\n}\n")]
+        self.assertLess(export.index("__atomic_store_n(&f->sequence, 0"), export.index("pico4_passthrough_wait("))
+        self.assertLess(export.index("pico4_passthrough_wait("), export.index("__atomic_store_n(&f->sequence, frame.sequence"))
+        newest = producer[producer.index("newest_frame(struct pico4_roomview"):]
+        newest = newest[:newest.index("\n}\n")]
+        self.assertLess(newest.index("memcpy(out->pixels[1]"), newest.index("!= seq"))
+
+    def test_producer_uses_the_described_interface(self):
+        producer = read(ROOT / "src/xr/pico4-roomview.c")
+        self.assertIn('#define INTERFACE "IVRCameraPassthroughInternal_001"', producer)
+        # Linear R8 dma-bufs, the format and modifier the compositor imports.
+        self.assertIn("#define DRM_FORMAT_R8 0x20203852u", producer)
+        self.assertIn(".tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT", producer)
+        self.assertIn("VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT", producer)
+        self.assertIn('_Static_assert(sizeof(struct frames_desc) == 0x38, "frames_desc");', producer)
+        self.assertIn('_Static_assert(sizeof(struct dmabuf_attributes) == 0x68, "dmabuf_attributes");', producer)
+        # Only free frames are written.
+        self.assertIn("if (status[i] == FRAME_FREE) {", producer)
+        # Valve's code is not linked: the client library is opened at run time.
+        self.assertIn('dlopen(OPENVR_API, RTLD_NOW)', producer)
+        # The import of the frames needs vrclient's compositor connection, which only a
+        # compositor interface opens; the shared semaphore needs the display layer's emulation.
+        self.assertLess(producer.index("vr_interface(COMPOSITOR_INTERFACE, &err)"),
+                        producer.index("vr_interface(INTERFACE, &err)"))
+        self.assertIn("VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME", producer)
+        service = read(ROOT / "userspace/rootfs/usr/lib/systemd/user/pico4-roomview.service")
+        self.assertIn("Environment=PICO4_VRDISPLAY=1", service)
+
+    def test_metadata_as_the_room_view_shaders_read_it(self):
+        producer = read(ROOT / "src/xr/pico4-roomview.c")
+        meta = producer[producer.index("\nmetadata(const struct pico4_roomview *rv"):]
+        meta = meta[:meta.index("\n}\n")]
+        # The pixel shader clamps its coordinate to the valid rectangle: zero pins every pixel
+        # to texel (0, 0).
+        self.assertIn("#define META_VALID 0xcc", producer)
+        self.assertIn("const float valid[4] = {0, 0, 1, 1};", meta)
+        # The vertex shader projects in the computer-vision camera frame (looking along +z).
+        self.assertIn("cv[r * 4 + 1] = -cv[r * 4 + 1];", meta)
+        self.assertIn("cv[r * 4 + 2] = -cv[r * 4 + 2];", meta)
+        self.assertIn("put_matrix(m, META_CAMERA, cv);", meta)
+        # The compositor's clock is CLOCK_MONOTONIC_RAW; a later time shows nothing.
+        self.assertIn("f->timestamp_ns + raw_offset", meta)
+        self.assertIn("clock_gettime(CLOCK_MONOTONIC_RAW, &raw);", producer)
+        # The pixel shader squares each sample: the linear luma goes out as its square root.
+        self.assertIn("sqrt(i / 255.0)", producer)
+
+    def test_projection_matches_the_shader(self):
+        # The vertex shader's fisheye (Kannala-Brandt) mapping, as the producer feeds it: a point
+        # in front of a camera (CV axes) lands inside the image; in OpenVR's axes it would not.
+        import math
+        fx, fy, cx, cy, w, h = 232.7, 232.9, 234.0, 324.2, 480, 640
+        k = (-0.0024, 0.0226, -0.014, 0.0013)
+
+        def uv(x, y, z):
+            z = max(z, 0.001)
+            r = math.hypot(x, y)
+            if r > 1e-8:
+                t = math.atan2(r, z)
+                t2 = t * t
+                s = t * (1 + t2 * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3])))) / r
+                x, y = x * s, y * s
+            else:
+                x, y = x / z, y / z
+            return (fx * x + cx) / w, (fy * y + cy) / h
+
+        u, v = uv(0.1, 0.05, 1.0)  # ahead of the camera, CV axes
+        self.assertTrue(0 < u < 1 and 0 < v < 1)
+        u, v = uv(0.1, -0.05, -1.0)  # the same point in OpenVR's axes: behind, clamped z
+        self.assertFalse(0 < u < 1 and 0 < v < 1)
+
+    def test_driver_starts_the_export_for_steamvrs_camera(self):
+        hmd = read(ROOT / "src/monado/pico4_hmd.c")
+        info = hmd[hmd.index("pico4_hmd_camera_info(struct xrt_device *xdev, struct pico4_passthrough_info *out)"):]
+        info = info[:info.index("\n}\n")]
+        self.assertIn("pico4_passthrough_export(p, PICO4_ROOMVIEW_PATH, roomview_pose, xdev)", info)
+
+
 class SettingsTests(unittest.TestCase):
     def test_camera_on_as_the_frame(self):
         s = json.loads(read(ROOT / "userspace/session/steamvr.vrsettings"))
