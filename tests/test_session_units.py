@@ -191,7 +191,9 @@ class ConsoleQuietTest(unittest.TestCase):
 class FallbackTest(unittest.TestCase):
     def test_fallback_overrides_once(self):
         service = unit("usr/lib/systemd/system/pico4-session-fallback.service")
-        self.assertEqual(service["Service"]["ExecStart"], "/usr/libexec/pico4-poc/session-fallback")
+        self.assertEqual(service["Service"]["ExecStart"], "/usr/libexec/pico4-poc/session-fallback steamvr")
+        failed = unit("usr/lib/systemd/system/pico4-session-failed.service")
+        self.assertEqual(failed["Service"]["ExecStart"], "/usr/libexec/pico4-poc/session-fallback session")
         fallback = (ROOTFS / "usr/libexec/pico4-poc/session-fallback").read_text(encoding="utf-8")
         self.assertIn("dir=/run/pico4-session", fallback)
         self.assertIn('echo PICO4_SESSION_TARGET=pico4-session.target > "$dir/override"', fallback)
@@ -260,22 +262,61 @@ class FallbackTest(unittest.TestCase):
         interval = int(session["Unit"]["StartLimitIntervalSec"])
         burst = int(session["Unit"]["StartLimitBurst"])
         self.assertGreaterEqual(interval, burst * (restart + 30))
-        self.assertEqual(session["Unit"]["OnFailure"], "pico4-session-fallback.service")
+        # Its own unit: systemd passes MONITOR_SERVICE_RESULT to OnFailure= units, and the path
+        # unit's activations of pico4-session-fallback.service must not be judged by it.
+        self.assertEqual(session["Unit"]["OnFailure"], "pico4-session-failed.service")
 
-    def test_fallback_does_not_repeat_monados_session(self):
-        # The fallback reads the target that ran last; Monado's session that keeps ending stays failed.
+    def run_fallback(self, reason, result=None, target="gamescope-session.target", flag=True):
+        """The fallback script with a fake systemctl: (exit code, systemctl calls, files left)."""
+        import shutil
+        import subprocess
+        import tempfile
+        bash = shutil.which("bash")
+        if bash is None:
+            self.skipTest("no bash")
+        text = (ROOTFS / "usr/libexec/pico4-poc/session-fallback").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            (state / "target").write_text(target + "\n", encoding="utf-8")
+            if flag:
+                (state / "steamvr-failed").write_text("", encoding="utf-8")
+            log = state / "calls"
+            program = (f'systemctl() {{ echo "$*" >> "{log.as_posix()}"; }}\n'
+                       + text.replace("dir=/run/pico4-session", f"dir='{state.as_posix()}'"))
+            env = {"PATH": "/usr/bin:/bin"}
+            if result is not None:
+                env["MONITOR_SERVICE_RESULT"] = result
+            code = subprocess.run([bash, "-c", program, "session-fallback", reason], env=env,
+                                  capture_output=True, text=True).returncode
+            calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+            return code, calls, sorted(p.name for p in state.iterdir() if p.name != "calls")
+
+    def test_steamvr_failure_falls_back(self):
+        # Started by the path unit: systemd may hand it a MONITOR_SERVICE_RESULT of its own
+        # ('success' on the headset); the flag goes in any case, or the path unit retriggers
+        # until its start limit and SteamVR's fallback is gone until a reboot.
+        for result in (None, "success"):
+            code, calls, files = self.run_fallback("steamvr", result)
+            self.assertEqual(code, 0, result)
+            self.assertEqual(calls, ["reset-failed pico4-session.service", "restart pico4-session.service"], result)
+            self.assertEqual(files, ["fallback-start", "override", "target"], result)
+
+    def test_session_failure_falls_back_once(self):
+        code, calls, files = self.run_fallback("session", "start-limit-hit", flag=False)
+        self.assertEqual(calls[-1], "restart pico4-session.service")
+        self.assertIn("override", files)
+        # Monado's session kept ending: nothing left to fall back to.
+        code, calls, files = self.run_fallback("session", "start-limit-hit", "pico4-session.target", flag=False)
+        self.assertEqual((code, calls), (0, []))
+        self.assertNotIn("override", files)
         script = (ROOTFS / "usr/libexec/pico4-poc/session").read_text(encoding="utf-8")
         self.assertIn("""printf '%s\\n' "$target" > "$state/target\"""", script)
-        fallback = (ROOTFS / "usr/libexec/pico4-poc/session-fallback").read_text(encoding="utf-8")
-        give_up = fallback.index("= pico4-session.target ]")
-        self.assertLess(give_up, fallback.index('> "$dir/override"'))
-        self.assertIn("is-failed pico4-session.service", fallback[:give_up])
 
     def test_deliberate_stop_stays_stopped(self):
         # A stop that times out fails the unit; OnFailure= must not start a session then.
-        fallback = (ROOTFS / "usr/libexec/pico4-poc/session-fallback").read_text(encoding="utf-8")
-        gate = fallback.index('"$MONITOR_SERVICE_RESULT" != start-limit-hit ]')
-        self.assertLess(gate, fallback.index("systemctl restart pico4-session.service"))
+        for result in ("timeout", "success", None):
+            code, calls, files = self.run_fallback("session", result, flag=False)
+            self.assertEqual((code, calls), (0, []), result)
         # Valve's units take up to 10 s (gamescope) and 20 s (SteamVR) to stop.
         session = unit("usr/lib/systemd/system/pico4-session.service")
         self.assertGreaterEqual(int(session["Service"]["TimeoutStopSec"]), 30)

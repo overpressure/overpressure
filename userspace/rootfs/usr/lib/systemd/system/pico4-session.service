@@ -16,10 +16,10 @@ After=pico4-vr-performance.service
 # A session that ends by itself starts again, as sddm's Relogin=true does on the Frame: a
 # compositor that dies in a running session makes vrserver quit everything, gamescope with
 # it, and start-gamescope-session then returns 0. Five starts in five minutes fall back to
-# Monado's session (pico4-session-fallback.service); deliberate restarts reset the count.
+# Monado's session (pico4-session-failed.service); deliberate restarts reset the count.
 StartLimitIntervalSec=300
 StartLimitBurst=5
-OnFailure=pico4-session-fallback.service
+OnFailure=pico4-session-failed.service
 
 [Service]
 User=steamos

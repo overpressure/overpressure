@@ -1,12 +1,11 @@
-# Fall back to Monado's session: SteamVR failed for good in Valve's session
-# (pico4-session-fallback.path), or the session kept ending (pico4-session.service's
-# start limit). Monado's target releases the display and the tracking hardware. The
-# override in /run holds for this start and the session's restarts by itself
+# Fall back to Monado's session after SteamVR failed for good in Valve's session
+# (pico4-session-fallback.path). Monado's target releases the display and the tracking
+# hardware. The override in /run holds for this start and the session's restarts by itself
 # (/usr/libexec/pico4-poc/session); a reboot or another deliberate start selects
 # /etc/pico4-poc/session.conf's target again.
 [Unit]
-Description=Fall back to Monado's session after SteamVR or the session failed
+Description=Fall back to Monado's session after SteamVR failed
 
 [Service]
 Type=oneshot
-ExecStart=/usr/libexec/pico4-poc/session-fallback
+ExecStart=/usr/libexec/pico4-poc/session-fallback steamvr
