@@ -775,6 +775,11 @@ file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's 
   reports its hash as `Prop_CurrentUniverseId_Uint64` once the room is settled, so SteamVR keeps
   a play area per room in `chaperone_info.vrchap`, back in its place whenever the tracker
   relocalises in that room, and asks for a room setup in a new one. Until then the universe is 2.
+- **Room setup in the headset.** SteamVR's dashboard offers its room setup (floor, play area) on
+  the Play Area page only for an HMD that reports `Prop_SupportsInHMDRoomSetup_Bool` (11003), as
+  the Frame's driver does; `driver_monado` reports it. Without it the page showed only the
+  Chaperone and Environment sections; Developer › Quick Calibration (floor and standing
+  position) works either way.
 
 ### Frame times
 
