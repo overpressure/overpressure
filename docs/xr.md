@@ -569,12 +569,13 @@ station keep a single owner:
   transforms, FTheta distortion with k1–k4 per camera, neutral white balance.
 - **Settings.** The Frame's: `camera.enableCamera`, `roomView` 2, no camera bounds, not on the
   controller, `contentAwareRoomviewMonochromeTint`; `dashboard.allowPassthroughPortalManager` off.
-- **State.** SteamVR reports the camera (`IVRTrackedCamera::HasCamera`, a 480×1280 frame) but
-  `vrserver` 2.17 never asks the driver for the component, with `camera.enableCamera` on and
-  after toggling it at runtime: `AcquireVideoStreamingService` fails (`OperationFailed`) and the
-  compositor reports "no camera enabled". What makes `vrserver` take a driver's camera (its
-  camera host, the `TrackedCamera_Enable` message) is not yet known; the Frame's room view may
-  take only its private interface.
+- **State.** `vrserver` takes the component (a client's `GetCameraFrameSize` returns its
+  480×1280 frame), but in SteamVR 2.17 the video stream and the room view are not `vrserver`'s:
+  `AcquireVideoStreamingService` goes to `vrcompositor`, which starts a camera only when the
+  shared state `VR_CameraPassthroughState` marks one enabled. Only the private
+  `IVRCameraPassthroughInternal_001` in `vrclient.so` writes that state, with the frames as
+  dma-bufs and a distortion resource, so the public component alone gives no room view
+  (`OperationFailed`, "no camera enabled"). A producer for that interface is the remaining step.
 
 ## Head tracking
 
@@ -1328,6 +1329,6 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
    which needs the Steam client in the session.
 4. **Passthrough.** SteamVR's camera component is in `driver_monado`
-   ([Passthrough](#passthrough)), but `vrserver` does not take it: what its camera host needs
-   (or the Frame's private passthrough interface) is next. Once frames flow, the copy needs the
+   ([Passthrough](#passthrough)); the room view needs a producer for SteamVR's private
+   `IVRCameraPassthroughInternal_001` (dma-buf frames). Once frames flow, the copy needs the
    tracking checks (still and worn).
