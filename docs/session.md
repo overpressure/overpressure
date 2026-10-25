@@ -157,6 +157,12 @@ Further adaptations:
 | [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, then `pico4-steamvr-failed.service`; each new session resets the counter | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end. The user manager outlives a session, so the session script resets the user units' counters (`systemctl --user reset-failed`) before it starts its target: the limit is for a crash loop within one session. Without `RestartMode=direct` the unit passes through the failed state before each restart, and `OnFailure=` would run at the first crash |
 | [`pico4-session-fallback.path`](../userspace/rootfs/usr/lib/systemd/system/pico4-session-fallback.path) and `.service` | when SteamVR has failed for good (the user unit touches `/run/pico4-session/steamvr-failed`), restart `pico4-session.service` once with Monado's target | releases the display and the tracking hardware instead of leaving gamescope without SteamVR; the override in `/run/pico4-session` is used by that one start, so a reboot or a deliberate switch uses `session.conf` again |
 
+Every stop of SteamVR ends `vrcompositor` with a segmentation fault in its own shutdown code: a
+virtual call through an object that is already freed (its vtable and the call's target lie in
+freed heap memory). No frame of the display layer or of Turnip is on the stack. The unit does
+not fail, because the compositor is not its main process; systemd-coredump keeps a core of
+5–6 MB per stop, within its defaults (at most 10 % of the data partition, two weeks).
+
 ### The Steam client
 
 The Frame's client package (`deckard-steam-rel`, a native aarch64 client) installs the client
