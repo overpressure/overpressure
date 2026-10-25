@@ -468,6 +468,23 @@ a pinned public kernel tree, the closest public match of the stock kernel):
   phase in word 82 (1 scene, 2 controller LEDs), read by `pico4_cam_meta_decode`. The sensor
   stays programmed for 480 lines; with a 480-line capture the metadata took row 0 and the
   bottom scene row was lost.
+- **Sets of one pulse.** The sensors centre their exposures on the station's sync pulse, so a
+  frame's start of frame comes half its exposure after the pulse. Frames are grouped into a set
+  by the start of frame less half the exposure (the metadata line's lines of 19.07 µs), within
+  4 ms. PICO OS's auto exposure sets each camera on its own: grouped by start of frame alone,
+  308 against 737 lines put one camera 4.1 ms after another and no set ever formed again.
+- **Stalls and recovery.** When no scene set completes for a second while scene frames arrive,
+  the driver logs each camera's frames, late and repeated frames, start-of-frame offsets and
+  exposure. A camera that delivers nothing while the others do has a stuck link (after a load
+  spike the ISP's request manager retried one request on every frame, "bubble", and that
+  camera stayed silent for good); then, and after 3 s without a set or 1 s without any frame,
+  the camera thread restarts the capture as at the start: the station's sync off, the sessions
+  closed and opened, the sync on, the exposure set (at most once in 5 s). The station refuses
+  the first restart's sync start after a single stop and takes it after a second one. With PICO
+  OS's auto exposure a stall shorter than that gets one exposure for all cameras (the median of
+  theirs), so the auto exposure, which runs on complete sets, can bring it down.
+  `PICO4_CAPTURE_RESTART_TEST_S=N` (test only) restarts the capture every N seconds: the frames
+  return within 1-2 s.
 - **Cached buffers.** Frames land in cached buffers, which are invalidated
   (`CAM_REQ_MGR_CACHE_OPS`) before the CPU reads them. With uncached buffers, reading frames
   stalls buffer delivery for about 100 ms every 10–13 frames (latency 45–67 ms mean). With cached
@@ -783,7 +800,8 @@ Deprecated: kept selectable as it is, without further work.
 the [`pico4-basalt`](../userspace/pkgbuilds/pico4-basalt/PKGBUILD) package, Monado's Basalt fork
 pinned by commit).
 
-- **Frames.** Frames of one sync pulse are grouped by start-of-frame time (within 4 ms), and the
+- **Frames.** Frames of one sync pulse are grouped by the pulse (start of frame less half the
+  exposure, within 4 ms, [above](#tracking-cameras)), and the
   controller-LED frames are skipped by the phase in their metadata line; a frame whose line does
   not decode is skipped too. A complete set goes on only as one exposure: the same exposure
   lines and analog gain in all four metadata lines, and each camera's ISP frame counter at its

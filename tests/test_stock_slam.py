@@ -235,6 +235,79 @@ class AutoExposureTests(unittest.TestCase):
         self.assertGreater(apply, 0)
 
 
+class SetAssemblyTests(unittest.TestCase):
+    """an issue: the frames of one pulse form a set whatever exposure each camera has."""
+
+    LINE_NS = 19069
+    WINDOW_NS = 4_000_000
+
+    def complete(self, sofs, keys):
+        """The driver's assembly (pico4_cam_assembly_add) over one pulse's frames, in SOF order."""
+        first = None
+        have = 0
+        for _, key in sorted(zip(sofs, keys)):
+            if first is not None and key > first + self.WINDOW_NS:
+                first, have = None, 0  # the set before is dropped
+            if first is None:
+                first = key
+            have += 1
+        return have == len(sofs)
+
+    def test_measured_spread_forms_a_set(self):
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        self.assertIn("return sof_ns - (((int64_t)LINE_NS * m->exposure_lines) >> 1);", slam)
+        lines = [308, 737, 510, 510]
+        # Measured on the headset: the sensors centre their exposures on the pulse, so each start
+        # of frame comes half its exposure after it (camera 1 +4.14 ms, cameras 2 and 3 +1.95 ms).
+        sofs = [l * self.LINE_NS // 2 for l in lines]
+        self.assertFalse(self.complete(sofs, sofs))  # by start of frame: never a set (the stall)
+        keys = [sof - (self.LINE_NS * l >> 1) for sof, l in zip(sofs, lines)]
+        self.assertTrue(self.complete(sofs, keys))
+
+    def test_both_assemblies_group_by_the_pulse(self):
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        self.assertIn("pico4_cam_assembly_add(&s->group.assembly, index, pulse_key(ts, &meta),", slam)
+        self.assertIn("pico4_cam_assembly_add(&s->leds.assembly, k, pulse_key(sof, meta),", slam)
+
+
+class CaptureRecoveryTests(unittest.TestCase):
+    """an issue/112: a stall is logged, cannot lock the exposure, and a stuck capture restarts."""
+
+    def test_stall_is_logged_per_camera(self):
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        stall = slam[slam.index("\nscene_stall(struct pico4_slam *s)"):]
+        stall = stall[:stall.index("\n}\n")]
+        self.assertIn('"no complete scene set for %.1f s (%llu started): %s"', stall)
+        # A camera without frames while the others deliver: its link is stuck.
+        self.assertIn('s->restart_why = "a camera delivers no frames";', stall)
+        self.assertIn('s->restart_why = "no complete scene set for 3 s";', stall)
+        # Otherwise PICO OS's per-camera exposure gives way to one for all cameras.
+        self.assertIn("stock_ae_active(s)", stall)
+        self.assertIn("pico4_station_camera_set_exposure(s->station, lines[n_cams / 2], gains[n_cams / 2])", stall)
+
+    def test_camera_thread_restarts_the_capture(self):
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        thread = slam[slam.index("\ncamera_thread(void *ptr)"):]
+        thread = thread[:thread.index("\n}\n")]
+        self.assertIn('why = timeouts >= 5 ? "no camera frames for 1 s" : why;', thread)
+        self.assertIn("now - restarted_ns >= (int64_t)5 * U_TIME_1S_IN_NS", thread)
+        self.assertIn("restart_capture(s, why);", thread)
+        restart = slam[slam.index("\nrestart_capture(struct pico4_slam *s, const char *why)"):]
+        restart = restart[:restart.index("\n}\n")]
+        # As the start: sync off, sessions again, sync on (a second stop when it refuses), exposure.
+        order = ["pico4_station_camera_stop(s->station);", "pico4_cam_close(s->cam);",
+                 "pico4_cam_open(&s->cam, &s->cam_config)", "pico4_cam_start(s->cam)",
+                 "pico4_station_camera_start(s->station)", "pico4_station_camera_set_exposure("]
+        at = [restart.index(o) for o in order]
+        self.assertEqual(at, sorted(at))
+        self.assertIn("s->cam_config = cc;", slam)
+
+    def test_overflow_free_durations(self):
+        # 3 and 5 s in ns do not fit an int: the build warned and the comparisons were wrong.
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        self.assertNotRegex(slam, r"[^)]\b[2-9] \* U_TIME_1S_IN_NS")
+
+
 class RoomTests(unittest.TestCase):
     """an issue: PICO OS's map persistence and a SteamVR universe per room."""
 

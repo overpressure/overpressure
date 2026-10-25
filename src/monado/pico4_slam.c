@@ -82,6 +82,8 @@
 DEBUG_GET_ONCE_BOOL_OPTION(pico4_slam, "PICO4_SLAM", true)
 //! "stock": PICO OS's tracker through pico4-slamd; "basalt": Monado's SLAM tracker.
 DEBUG_GET_ONCE_OPTION(pico4_slam_backend, "PICO4_SLAM_BACKEND", "stock")
+//! Test only: restart the camera capture every N seconds, as after a stuck link (0: never).
+DEBUG_GET_ONCE_NUM_OPTION(pico4_capture_restart_test_s, "PICO4_CAPTURE_RESTART_TEST_S", 0)
 /*!
  * Factory cameras (cam0..cam3) given to the tracker, in tracker order. Basalt matches the
  * first camera against the others; all four keep up on the XR2 and see the most.
@@ -176,6 +178,10 @@ struct pico4_slam
 
 	struct pico4_station *station;
 	struct pico4_cam *cam;
+	struct pico4_cam_config cam_config; //!< As opened: the capture restarts with it.
+	//! A restart of the capture asked for by the stall check, done by the camera thread.
+	const char *restart_why;
+	uint64_t capture_restarts;
 	struct os_thread_helper oth;
 
 	int cam_count;           //!< Cameras in the tracker.
@@ -195,6 +201,15 @@ struct pico4_slam
 		uint64_t frame_id[PICO4_TCAM_COUNT];          //!< Each frame's ISP frame counter.
 		struct pico4_cam_meta meta[PICO4_TCAM_COUNT]; //!< Each frame's metadata.
 	} group;
+	//! What each camera's scene frames did since no set completed (scene_stall).
+	struct
+	{
+		int64_t last_complete_ns, logged_ns;
+		uint64_t frames[PICO4_TCAM_COUNT], late[PICO4_TCAM_COUNT], duplicate[PICO4_TCAM_COUNT];
+		uint64_t sets_started;
+		int64_t sof[PICO4_TCAM_COUNT];
+		struct pico4_cam_meta meta[PICO4_TCAM_COUNT];
+	} stall;
 	//! Frame identity of the sets (pico4_cam_set_consistent).
 	struct pico4_cam_set_check identity;
 	uint64_t sets_pushed, sets_dropped, sets_busy, sequence;
@@ -825,6 +840,18 @@ stock_ae_apply(struct pico4_slam *s)
 }
 
 /*!
+ * The time that groups the frames of one FSIN pulse: the start of frame less half the exposure.
+ * The sensors centre their exposures on the pulse, so with exposures that differ per camera
+ * (PICO OS's auto exposure) their starts of frame differ by half the difference: 308 against
+ * 737 lines put one camera 4.1 ms after the other, outside the group window, and no set formed.
+ */
+static int64_t
+pulse_key(int64_t sof_ns, const struct pico4_cam_meta *m)
+{
+	return sof_ns - (((int64_t)LINE_NS * m->exposure_lines) >> 1);
+}
+
+/*!
  * A controller-LED exposure for the controller tracker: the four cameras of one pulse, in
  * factory order, 10 -> 8 bits by dropping the two lowest bits as pico4-cam --record-leds stores
  * them (the tracker's blob thresholds are for these), at the mean of their exposure middles.
@@ -838,8 +865,8 @@ handle_led_frame(struct pico4_slam *s, const struct pico4_cam_frame *f, const st
 	}
 	bool dropped;
 	int64_t sof = frame_sof_ns(s, f);
-	enum pico4_cam_assembly_result added =
-	    pico4_cam_assembly_add(&s->leds.assembly, k, sof, GROUP_WINDOW_NS, PICO4_TCAM_COUNT, &dropped);
+	enum pico4_cam_assembly_result added = pico4_cam_assembly_add(&s->leds.assembly, k, pulse_key(sof, meta),
+	                                                              GROUP_WINDOW_NS, PICO4_TCAM_COUNT, &dropped);
 	if (dropped) {
 		s->led_sets_dropped++;
 	}
@@ -864,6 +891,79 @@ handle_led_frame(struct pico4_slam *s, const struct pico4_cam_frame *f, const st
 		s->led_sets++;
 		pico4_cam_assembly_reset(&s->leds.assembly);
 	}
+}
+
+/*!
+ * No scene set completed for a second while scene frames arrive: what each camera's frames did
+ * (camera thread). Logged once a second while it lasts.
+ */
+static void
+scene_stall(struct pico4_slam *s)
+{
+	int64_t now = os_monotonic_get_ns();
+	if (s->stall.last_complete_ns == 0) {
+		s->stall.last_complete_ns = now;
+	}
+	if (now - s->stall.last_complete_ns < U_TIME_1S_IN_NS || now - s->stall.logged_ns < U_TIME_1S_IN_NS) {
+		return;
+	}
+	s->stall.logged_ns = now;
+	int64_t first = INT64_MAX;
+	for (int i = 0; i < s->cam_count; i++) {
+		first = s->stall.frames[i] != 0 && s->stall.sof[i] < first ? s->stall.sof[i] : first;
+	}
+	char line[512];
+	int n = 0;
+	for (int i = 0; i < s->cam_count && n < (int)sizeof(line); i++) {
+		n += snprintf(line + n, sizeof(line) - (size_t)n,
+		              "%scam %d: %llu frames, %llu late, %llu again, SOF +%.2f ms, %u lines gain %u", i ? "; " : "", i,
+		              (unsigned long long)s->stall.frames[i], (unsigned long long)s->stall.late[i],
+		              (unsigned long long)s->stall.duplicate[i],
+		              s->stall.frames[i] != 0 ? (s->stall.sof[i] - first) / 1e6 : -1.0, s->stall.meta[i].exposure_lines,
+		              s->stall.meta[i].gain);
+	}
+	SLAM_WARN(s, "no complete scene set for %.1f s (%llu started): %s", (now - s->stall.last_complete_ns) / 1e9,
+	          (unsigned long long)s->stall.sets_started, line);
+	bool silent = false, some = false;
+	for (int i = 0; i < s->cam_count; i++) {
+		silent = silent || s->stall.frames[i] == 0;
+		some = some || s->stall.frames[i] != 0;
+	}
+	if (silent && some) {
+		// One camera's link stuck while the others run: the ISP's request manager retrying a
+		// bubbled request on every frame after a load spike.
+		s->restart_why = "a camera delivers no frames";
+	} else if (now - s->stall.last_complete_ns >= (int64_t)3 * U_TIME_1S_IN_NS) {
+		s->restart_why = "no complete scene set for 3 s";
+	} else if (stock_ae_active(s)) {
+		// The auto exposure runs on complete sets: whatever keeps them from forming, one exposure
+		// for all cameras (the median of theirs) lets them form again, and it can come down.
+		unsigned lines[PICO4_TCAM_COUNT], gains[PICO4_TCAM_COUNT];
+		int n_cams = s->cam_count < PICO4_TCAM_COUNT ? s->cam_count : PICO4_TCAM_COUNT;
+		for (int i = 0; i < n_cams; i++) {
+			lines[i] = s->stall.meta[i].exposure_lines;
+			gains[i] = s->stall.meta[i].gain;
+		}
+		for (int i = 1; i < n_cams; i++) {
+			for (int j = i; j > 0 && lines[j] < lines[j - 1]; j--) {
+				unsigned t = lines[j];
+				lines[j] = lines[j - 1];
+				lines[j - 1] = t;
+			}
+			for (int j = i; j > 0 && gains[j] < gains[j - 1]; j--) {
+				unsigned t = gains[j];
+				gains[j] = gains[j - 1];
+				gains[j - 1] = t;
+			}
+		}
+		if (n_cams > 0 && pico4_station_camera_set_exposure(s->station, lines[n_cams / 2], gains[n_cams / 2]) == 0) {
+			SLAM_WARN(s, "one exposure for all cameras: %u lines gain %u", lines[n_cams / 2], gains[n_cams / 2]);
+		}
+	}
+	memset(s->stall.frames, 0, sizeof(s->stall.frames));
+	memset(s->stall.late, 0, sizeof(s->stall.late));
+	memset(s->stall.duplicate, 0, sizeof(s->stall.duplicate));
+	s->stall.sets_started = 0;
 }
 
 static void
@@ -891,9 +991,15 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 		return;
 	}
 	int64_t ts = frame_sof_ns(s, f);
+	s->stall.frames[index]++;
+	s->stall.sof[index] = ts;
+	s->stall.meta[index] = meta;
+	if (s->group.assembly.have == 0) {
+		s->stall.sets_started++;
+	}
 	bool dropped;
-	enum pico4_cam_assembly_result added =
-	    pico4_cam_assembly_add(&s->group.assembly, index, ts, GROUP_WINDOW_NS, s->cam_count, &dropped);
+	enum pico4_cam_assembly_result added = pico4_cam_assembly_add(&s->group.assembly, index, pulse_key(ts, &meta),
+	                                                              GROUP_WINDOW_NS, s->cam_count, &dropped);
 	if (dropped) {
 		s->sets_dropped++; // a camera missed the pulse of the set before
 		for (int i = 0; i < PICO4_TCAM_COUNT; i++) {
@@ -901,6 +1007,8 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 		}
 	}
 	if (added == PICO4_CAM_SET_LATE || added == PICO4_CAM_SET_DUPLICATE) {
+		(added == PICO4_CAM_SET_LATE ? s->stall.late : s->stall.duplicate)[index]++;
+		scene_stall(s);
 		return;
 	}
 	if (s->stock) {
@@ -920,7 +1028,11 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 		drop_group(s);
 		return;
 	}
+	if (added != PICO4_CAM_SET_COMPLETE) {
+		scene_stall(s);
+	}
 	if (added == PICO4_CAM_SET_COMPLETE) {
+		s->stall.last_complete_ns = os_monotonic_get_ns();
 		// Four frames of one exposure pulse, or none: a mixed set would give Basalt two scenes.
 		bool stock_ae = s->stock && stock_ae_active(s);
 		if (stock_ae != s->stock_ae_logged) {
@@ -1071,32 +1183,83 @@ imu_push_thread(void *ptr)
 	return NULL;
 }
 
+/*!
+ * The capture again from the start, as pico4_slam_create starts it: the station's camera sync off,
+ * the sessions closed and opened, the sync on, the exposure set (camera thread). A link the ISP's
+ * request manager keeps retrying recovers only this way.
+ */
+static bool
+restart_capture(struct pico4_slam *s, const char *why)
+{
+	s->capture_restarts++;
+	SLAM_WARN(s, "Restarting the camera capture (%llu so far): %s", (unsigned long long)s->capture_restarts, why);
+	pico4_station_camera_stop(s->station);
+	pico4_cam_close(s->cam);
+	s->cam = NULL;
+	drop_group(s);
+	pico4_cam_assembly_reset(&s->leds.assembly);
+	int r;
+	if ((r = pico4_cam_open(&s->cam, &s->cam_config)) < 0 || (r = pico4_cam_start(s->cam)) < 0) {
+		SLAM_ERROR(s, "The tracking cameras did not start again: %s", strerror(-r));
+		pico4_cam_close(s->cam);
+		s->cam = NULL;
+		return false;
+	}
+	// The first restart of a session: the station refuses (EIO) the start after the stop, and
+	// takes it after a second stop (measured, every time); later restarts take it at once.
+	for (int tries = 0; (r = pico4_station_camera_start(s->station)) < 0 && tries < 4; tries++) {
+		pico4_station_camera_stop(s->station);
+		os_nanosleep(200 * U_TIME_1MS_IN_NS);
+	}
+	if (r < 0) {
+		SLAM_ERROR(s, "The controller radio refused camera sync again: %s", strerror(-r));
+		return false;
+	}
+	pico4_station_camera_set_exposure(s->station, s->exposure_lines, s->exposure_gain);
+	s->stall.last_complete_ns = os_monotonic_get_ns();
+	return true;
+}
+
 static void *
 camera_thread(void *ptr)
 {
 	struct pico4_slam *s = ptr;
 	struct pico4_cam_frame f;
 	uint64_t timeouts = 0;
-	bool failed = false;
+	int64_t restarted_ns = 0;
 
 	os_thread_helper_name(&s->oth, "PICO 4 cameras");
 	os_thread_helper_lock(&s->oth);
 	while (os_thread_helper_is_running_locked(&s->oth)) {
 		os_thread_helper_unlock(&s->oth);
-		int r = pico4_cam_next(s->cam, &f, 200);
+		const char *why = s->restart_why;
+		int r = s->cam != NULL ? pico4_cam_next(s->cam, &f, 200) : -ENODEV;
 		if (r == 0) {
+			timeouts = 0;
 			handle_frame(s, &f);
 		} else if (r == -ETIMEDOUT) {
 			if (timeouts++ % 25 == 0) {
 				SLAM_ERROR(s, "No camera frames for 200 ms");
 			}
+			why = timeouts >= 5 ? "no camera frames for 1 s" : why;
 		} else if (r != -EINTR) {
-			// Every camera failed; nothing recovers that short of a restart.
-			if (!failed) {
-				SLAM_ERROR(s, "Camera capture failed: %s; 6DoF stops here", strerror(-r));
-				failed = true;
-			}
+			why = r == -ENODEV ? "the capture did not start" : "every camera failed";
 			os_nanosleep(U_TIME_1MS_IN_NS * 100);
+		}
+		// At most once in 5 s: the restart itself takes a moment, and a station that refuses
+		// should not be hammered.
+		int64_t now = os_monotonic_get_ns();
+		int64_t test_s = debug_get_num_option_pico4_capture_restart_test_s();
+		if (test_s > 0 && now - restarted_ns >= test_s * U_TIME_1S_IN_NS && restarted_ns != 0) {
+			why = "PICO4_CAPTURE_RESTART_TEST_S";
+		} else if (restarted_ns == 0) {
+			restarted_ns = now; // the test's first restart one period after the start
+		}
+		if (why != NULL && now - restarted_ns >= (int64_t)5 * U_TIME_1S_IN_NS) {
+			s->restart_why = NULL;
+			restarted_ns = now;
+			timeouts = 0;
+			restart_capture(s, why);
 		}
 		os_thread_helper_lock(&s->oth);
 	}
@@ -1226,6 +1389,7 @@ cameras:
 	cc.verbose = log_level <= U_LOGGING_DEBUG ? PICO4_CAM_LOG_INFO : PICO4_CAM_LOG_ERROR;
 	cc.log = cam_log;
 	cc.log_user = s;
+	s->cam_config = cc;
 	if ((r = pico4_cam_open(&s->cam, &cc)) < 0 || (r = pico4_cam_start(s->cam)) < 0) {
 		SLAM_ERROR(s, "Tracking cameras failed to start: %s", strerror(-r));
 		goto fail;
