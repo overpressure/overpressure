@@ -18,7 +18,15 @@ done
 [ -S "$runtime/systemd/private" ] || { echo "the user manager did not start" >&2; exit 1; }
 # A new session starts with clean counters: the user manager outlives the session, and
 # SteamVR's start limit (50-pico4-restart-limit.conf) is for crash loops within one session,
-# not for sessions started one after another.
+# not for sessions started one after another. The session before may still be stopping
+# SteamVR (its compositor crashes on the way out, an issue); reset only once that is over,
+# or the end of that stop still counts against this session and its first start hits the limit.
+for _ in $(seq 300); do
+	case "$(systemctl --user is-active steamvr.service 2>/dev/null)" in
+	deactivating | activating | reloading) sleep 0.1 ;;
+	*) break ;;
+	esac
+done
 systemctl --user reset-failed
 
 # The user's OpenXR runtime: SteamVR's first start links SteamVR here
