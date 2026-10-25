@@ -339,10 +339,10 @@ other call passes through; without the panels, the layer stays out of the way.
   layer's vblank clock goes on from its last phase meanwhile, so that SteamVR's waits keep their
   timing, and on the first event afterwards follows the kernel again while its count goes on by
   time: the counter SteamVR reads never goes back. A power-off request
-  (`vkDisplayPowerControlEXT` off or suspend) turns the panels off the same way. The session
-  keeps `pauseCompositorOnStandby` off (see [SteamVR configuration](#steamvr-configuration)), so
-  SteamVR only stops presenting, and the panels only go off, once the headset reports whether
-  it is worn.
+  (`vkDisplayPowerControlEXT` off or suspend) turns the panels off the same way. With
+  `power.pauseCompositorOnStandby` on (the Frame's default), SteamVR goes to standby about 8 s
+  after the wear sensor reports the headset off the head, the panels go off 5 s later, and
+  putting it on brings them back in 450-480 ms.
 - **DRM nodes.** gamescope needs the GPU's DRM nodes (`VK_EXT_physical_device_drm`). KGSL is
   not a DRM device, so the layer reports `msm_drm`'s: `/dev/dri/card0` and the render node
   `/dev/dri/renderD128`, which imports the GPU's dma-bufs. In Valve's session two processes
@@ -490,12 +490,10 @@ driver: the Facet renderer, the system layer drawn in the distortion pass (2x MS
 simplified and achromatic distortion shaders, scanout scaling, overlay quality 1, the blue dome
 background, 72 Hz as the default per-app refresh rate. The Frame is the baseline; left out are
 only its eye tracking, cameras, VR link, its CV driver and SteamOS power profiles, which the
-PICO 4 lacks. One setting differs: `pauseCompositorOnStandby` is off. The Frame tells
-SteamVR from its proximity sensor whether it is worn; `driver_monado` reports no proximity
-(its `/user/head/proximity` input has the wrong type), so SteamVR goes by head motion and, with
-the 5 s screen timeout, paused the compositor while the headset was worn and held still.
-The Frame's headset driver sets that last one in its own settings, which are not loaded with
-that driver disabled. Of the Frame driver's room-setup settings it carries the prompt for room
+PICO 4 lacks. Standby follows the wear sensor, as on the Frame: `driver_monado` reports the
+headset worn or off the head (`/proximity`, [xr.md](xr.md)), and `power.pauseCompositorOnStandby`
+is on. The Frame's headset driver sets that last one in its own settings, which are not loaded
+with that driver disabled. Of the Frame driver's room-setup settings it carries the prompt for room
 setup when a game starts without a play area (`promptForChaperoneAtGameLaunch`; not required:
 `requireChaperoneAtGameLaunch` off), no floor detection at the start, the play area not
 re-centred automatically, recentring not triggered by user interaction and the boundary

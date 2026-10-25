@@ -152,6 +152,12 @@ class FrameSettingsTest(unittest.TestCase):
         self.assertEqual(steamvr["overlayRenderQuality_2"], 1)
         self.assertEqual(steamvr["forcedDriver"], "monado")
         self.assertIs(settings["driver_frame_hmd"]["enable"], False)
+        # an issue: standby follows the wear sensor and pauses the compositor, as on the Frame.
+        self.assertIs(settings["power"]["pauseCompositorOnStandby"], True)
+        # an issue: the dashboard's room setup in the headset needs the HMD to say it supports it.
+        room = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch").read_text(encoding="utf-8")
+        self.assertIn("SetBoolProperty(m_ulPropertyContainer, static_cast<vr::ETrackedDeviceProperty>(11003), true)",
+                      room)
         # Facet builds its mesh from the driver's exact inverse distortion.
         patch = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-pico4.patch").read_text(encoding="utf-8")
         self.assertIn("IVRDisplayComponent_Version3", patch)

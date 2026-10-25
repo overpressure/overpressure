@@ -79,7 +79,7 @@
 	},
 	"jsonid" : "vrsettings",
 	"power" : {
-		"pauseCompositorOnStandby" : false,
+		"pauseCompositorOnStandby" : true,
 		"turnOffScreensTimeout" : 5
 	},
 	"sl" : {
