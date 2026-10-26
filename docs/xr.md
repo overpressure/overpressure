@@ -640,6 +640,17 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   stays its own.
 - **Restarts.** A new compositor (its process changed) gets the frames set up again; without
   `vrserver` the producer exits, and the unit starts again with SteamVR.
+- **Reprojection without a depth mesh.** Measured in frame dumps with the headset lying still, with
+  the published exposure pose changed on purpose:
+  - Turned by ±5°, the room view moves by 4.7 dump pixels per degree in pitch and 4.6 in yaw, in
+    the directions the turns give. The compositor compensates head rotation between exposure and
+    display equally in both axes.
+  - Moved by ±10 cm, it moves by 2 dump pixels (about 0.4°). The 2D room view projects the image
+    as if the room were 10–25 m away, so a nearby room does not follow head translation.
+  - Nodding pivots about the neck, well below the eyes, and moves the cameras more than turning
+    does. Up-down movement therefore shows the room trailing the head, and left-right far less.
+  - A depth mesh in the two queues (the 3D room view, `Prop_SupportsRoomViewDepthProjection_Bool`)
+    is what places the image at the room's real distance.
 
 ## Head tracking
 
@@ -1403,7 +1414,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
    unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
    which needs the Steam client in the session.
-4. **Passthrough.** The room view shows the forward cameras ([Passthrough](#passthrough)); worn
-   it is unchecked: that the room stays in place while the head turns (the head pose at the
-   exposure), the scale, and the tracking while it runs. The upper corners of the view lie outside
-   the cameras' field and show their edge pixels.
+4. **Passthrough.** The room view shows the forward cameras ([Passthrough](#passthrough)).
+   - Worn, left-right turns hold the room. Up-down movement trails, because the 2D view
+     projects the room far away. Next is a depth mesh for SteamVR's 3D room view.
+   - The upper corners of the view lie outside the cameras' field and show their edge pixels.
