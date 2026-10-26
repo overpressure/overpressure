@@ -485,6 +485,14 @@ a pinned public kernel tree, the closest public match of the stock kernel):
   theirs), so the auto exposure, which runs on complete sets, can bring it down.
   `PICO4_CAPTURE_RESTART_TEST_S=N` (test only) restarts the capture every N seconds: the frames
   return within 1-2 s.
+- **PICO OS's recovery, for comparison.** Its tracking service (`watchCameraLoop`,
+  `AlgorithmManager::onError`) restarts the cameras in the same way: it lets the frame in
+  processing finish, closes the cameras (the station's sync with them), waits 400 ms and opens
+  them again. It does so on every request-manager error message, of any type, and when a camera's
+  last frame is over 500 ms old, it has fewer than 80 % of its expected frames in a 2 s window,
+  or 61 late frames in that window (checked every 100 ms). One restart runs at a time, and after
+  6 failed ones it reports the system as irreparable. The driver keeps its own coarser triggers
+  and 5 s limit; with them it recovers within 1–2 s, and leaving a game no longer drops tracking.
 - **Cached buffers.** Frames land in cached buffers, which are invalidated
   (`CAM_REQ_MGR_CACHE_OPS`) before the CPU reads them. With uncached buffers, reading frames
   stalls buffer delivery for about 100 ms every 10–13 frames (latency 45–67 ms mean). With cached
