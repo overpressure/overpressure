@@ -24,6 +24,7 @@
 #include "isp.h"
 #include "room.h"
 #include "pico4_slam_feed.h"
+#include "vst.h"
 
 #include <stdbool.h>
 
@@ -49,6 +50,7 @@ typedef void (*image_fn)(void *, int, const struct vec *);
 typedef void (*imu_fn)(void *, const struct vec *, int64_t);
 typedef int (*result_fn)(void *, void *);
 typedef void (*register_fn)(void (*)(void));
+typedef int (*points_register_fn)(void (*)(const struct vst_slam_points *));
 typedef void (*prestop_fn)(void *);
 typedef int (*stop_fn)(void *, const char *);
 typedef void (*destroy_fn)(void *);
@@ -159,6 +161,75 @@ settle_room(struct pico4_slam_feed *feed, uint32_t generation, void *h, relocinf
 static struct isp_tables g_tables;
 static uint16_t g_raw[PICO4_SLAM_FEED_CAMS][PICO4_SLAM_FEED_W * PICO4_SLAM_FEED_H];
 static uint8_t g_images[PICO4_SLAM_FEED_CAMS][PICO4_SLAM_FEED_W * PICO4_SLAM_FEED_H];
+
+/*
+ * The see-through's depth mesh (vst.h), fed as PICO OS's see-through service feeds it: each pair
+ * of the forward cameras with the tracker's result at the pair's time, which the IMU thread keeps
+ * in a ring (a result per sample; the frame thread looks it up 30 ms later), and the tracker's map
+ * points, which libSlam hands its point callback on its own thread.
+ */
+#define HEADS 256
+static struct
+{
+	uint8_t res[HEADS][VST_HEAD_DATA_SIZE];
+	uint64_t written; //!< Results written; the slot of result n is n % HEADS.
+} g_heads;
+static struct vst_slam_points g_points, g_points_fed;
+static int g_points_lock, g_points_new;
+static bool g_vst;
+
+//! libSlam's point callback: the newest map points, for the next pair.
+static void
+on_points(const struct vst_slam_points *points)
+{
+	if (__atomic_exchange_n(&g_points_lock, 1, __ATOMIC_ACQUIRE)) {
+		return; // the frame thread is copying the last ones
+	}
+	memcpy(&g_points, points, sizeof(g_points));
+	g_points_new = 1;
+	__atomic_store_n(&g_points_lock, 0, __ATOMIC_RELEASE);
+}
+
+//! The tracker's result nearest to @p ts into @p out; false when the ring has none near it.
+static bool
+head_at(int64_t ts, uint8_t out[VST_HEAD_DATA_SIZE])
+{
+	uint64_t w = __atomic_load_n(&g_heads.written, __ATOMIC_ACQUIRE);
+	int64_t best = INT64_MAX;
+	for (uint64_t i = w > HEADS - 8 ? w - (HEADS - 8) : 0; i < w; i++) {
+		int64_t t;
+		memcpy(&t, g_heads.res[i % HEADS], 8);
+		int64_t d = t > ts ? t - ts : ts - t;
+		if (d < best) {
+			best = d;
+			memcpy(out, g_heads.res[i % HEADS], VST_HEAD_DATA_SIZE);
+		}
+	}
+	// The IMU thread may have overwritten the slot meanwhile: the copy's own time must match.
+	int64_t t;
+	memcpy(&t, out, 8);
+	return best < 5000000 && (t > ts ? t - ts : ts - t) == best;
+}
+
+//! Feed the forward pair (cameras 3 and 2: left and right as PICO OS's see-through names them).
+static void
+vst_feed_set(int64_t ts, int64_t exposure_ns)
+{
+	static uint8_t head[VST_HEAD_DATA_SIZE];
+	if (!head_at(ts, head)) {
+		return;
+	}
+	vst_feed(g_images[3], g_images[2], PICO4_SLAM_FEED_W, PICO4_SLAM_FEED_H, ts, exposure_ns, head);
+	// The map points with each pair, while the tracker tracks (as PICO OS's service).
+	if (head[0x40] == 1 && head[0x41] == 1 && !__atomic_exchange_n(&g_points_lock, 1, __ATOMIC_ACQUIRE)) {
+		if (g_points_new) {
+			memcpy(&g_points_fed, &g_points, sizeof(g_points));
+			g_points_new = 0;
+		}
+		__atomic_store_n(&g_points_lock, 0, __ATOMIC_RELEASE);
+		vst_points(&g_points_fed);
+	}
+}
 
 /*
  * PICO OS's auto exposure of the head cameras (docs/xr.md#auto-exposure): its
@@ -492,6 +563,11 @@ frame_thread(void *arg)
 			__atomic_store_n(&c->ae->ready, 1, __ATOMIC_RELEASE);
 		}
 		c->image(c->h, 0, &frames);
+		// The depth mesh only while the driver asks for it (SteamVR's room view).
+		if (g_vst && (uint64_t)now_ns(CLOCK_MONOTONIC) - __atomic_load_n(&feed->mesh_wanted_ns, __ATOMIC_ACQUIRE) <
+		                 1000000000ull) {
+			vst_feed_set(ts, lines[3]);
+		}
 		__atomic_store_n(&c->sets_fed, n + 1, __ATOMIC_RELAXED);
 		c->sr++;
 	}
@@ -505,6 +581,7 @@ struct tracker
 	set_fn set;
 	start_fn start;
 	register_fn reg;
+	points_register_fn points; //!< Or NULL.
 	prestop_fn prestop;
 	stop_fn stop;
 	destroy_fn destroy;
@@ -523,9 +600,15 @@ tracker_start(const struct tracker *t, struct pico4_slam_feed *feed)
 	t->set(h, "headSensorModel", "icm4x6xx");
 	t->start(h, "");
 	t->reg(on_result);
+	if (g_vst && t->points != 0) {
+		t->points(on_points);
+	}
 	__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);
 	t->set(h, "start6DOF", "6");
 	t->set(h, "bigRoom", "0"); // as PICO OS without large-space mode
+	// The tracker's ground detection (setPlaneDetect 1): the floor's height and status in every
+	// result (+0x48, +0x50), which PICO OS's see-through takes as its ground (docs/xr.md#passthrough).
+	t->set(h, "plane", "1");
 	return h;
 }
 
@@ -572,6 +655,7 @@ main(int argc, char **argv, char **envp)
 	    .set = (set_fn)dlsym(lib, "setAlgorithmParameters"),
 	    .start = (start_fn)dlsym(lib, "startAlgorithm"),
 	    .reg = (register_fn)dlsym(lib, "AlgorithmResultCallbackRegister"),
+	    .points = (points_register_fn)dlsym(lib, "AlgorithmPointCallbackRegister"),
 	    .prestop = (prestop_fn)dlsym(lib, "preStopAlgorithm"),
 	    .stop = (stop_fn)dlsym(lib, "stopAlgorithm"),
 	    .destroy = (destroy_fn)dlsym(lib, "destroyHandle"),
@@ -585,6 +669,9 @@ main(int argc, char **argv, char **envp)
 		fprintf(stderr, "pico4-slamd: libSlam.so lacks a function of its interface\n");
 		return 1;
 	}
+	// The see-through's depth mesh, unless PICO4_SLAMD_VST=0.
+	const char *vst_env = getenv("PICO4_SLAMD_VST");
+	g_vst = !(vst_env != 0 && strcmp(vst_env, "0") == 0) && vst_start(feed) == 0;
 	void *h = tracker_start(&t, feed);
 	if (h == 0) {
 		fprintf(stderr, "pico4-slamd: createHandle failed\n");
@@ -598,6 +685,9 @@ main(int argc, char **argv, char **envp)
 	int last_confidence = 0;
 	int64_t lost_since = 0;
 	uint64_t restarts = 0;
+	// The ground the tracker reports (+0x48 height, +0x50 status), logged when it changes.
+	int last_plane_status = -1;
+	double last_plane_height = 0;
 	signal(SIGTERM, on_stop_signal);
 	signal(SIGINT, on_stop_signal);
 	fprintf(stderr, "pico4-slamd: tracking for driver generation %u\n", generation);
@@ -647,6 +737,7 @@ main(int argc, char **argv, char **envp)
 				__atomic_store_n(&ae.stop, 1, __ATOMIC_RELEASE);
 				pthread_join(ae_th, 0);
 			}
+			vst_stop();
 			tracker_stop(&t, h);
 			fprintf(stderr, "pico4-slamd: tracker stopped\n");
 			fflush(stderr);
@@ -683,6 +774,11 @@ main(int argc, char **argv, char **envp)
 		__atomic_store_n(&frames.imu_fed_ts, e.ts_ns, __ATOMIC_RELEASE);
 		memset(res, 0, sizeof(res));
 		if (result(h, res) == 0) {
+			if (g_vst) {
+				uint64_t hw = g_heads.written;
+				memcpy(g_heads.res[hw % HEADS], res, sizeof(res));
+				__atomic_store_n(&g_heads.written, hw + 1, __ATOMIC_RELEASE);
+			}
 			uint64_t w = __atomic_load_n(&feed->poses_written, __ATOMIC_RELAXED);
 			struct pico4_slam_feed_pose *p = &feed->poses[w % PICO4_SLAM_FEED_POSES];
 			memcpy(&p->ts_ns, res, 8);
@@ -693,6 +789,19 @@ main(int argc, char **argv, char **envp)
 			p->type = res[0x40];
 			p->confidence = res[0x41];
 			memcpy(&p->error, res + 0x44, 4);
+			double plane_height;
+			memcpy(&plane_height, res + 0x48, 8);
+			const int plane_status = res[0x50];
+			p->floor_status = (uint32_t)plane_status;
+			p->floor_height = plane_height;
+			const double plane_moved = plane_height - last_plane_height;
+			if (plane_status != last_plane_status ||
+			    (plane_status != 0 && (plane_moved > 0.01 || plane_moved < -0.01))) {
+				fprintf(stderr, "pico4-slamd: ground status %d, height %.3f m (head at %.3f %.3f %.3f)\n",
+				        plane_status, plane_height, p->position[0], p->position[1], p->position[2]);
+				last_plane_status = plane_status;
+				last_plane_height = plane_height;
+			}
 			__atomic_store_n(&feed->poses_written, w + 1, __ATOMIC_RELEASE);
 			tracked += p->confidence > 0;
 			// PICO OS's watchdog: a drop from 1 to 0 starts the clock (CLOCK_BOOTTIME, as there);

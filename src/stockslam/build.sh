@@ -32,4 +32,4 @@ libs=(-L"$root/system/lib64/bootstrap" -L"$root/system/lib64")
 "${cc[@]}" -shared -Wl,-soname,libpico4-slam-stubs.so -o "$out/libpico4-slam-stubs.so" "$src/stubs.c" "${libs[@]}" -lc
 "${cc[@]}" -shared -Wl,-soname,libandroid.so -o "$out/libandroid.so" "$src/android.c"
 "${cc[@]}" -fPIE -pie -Wl,--dynamic-linker=/system/bin/bootstrap/linker64 -Wl,-z,max-page-size=4096 \
-    -o "$out/pico4-slamd" "$src/crt.c" "$src/pico4-slamd.c" "${libs[@]}" -lc -lm -ldl
+    -o "$out/pico4-slamd" "$src/crt.c" "$src/pico4-slamd.c" "$src/vst.c" "${libs[@]}" -lc -lm -ldl

@@ -434,7 +434,8 @@ fi
 # root's stand-ins, built for bionic with the host's clang against the root's own libraries.
 stock_json="[]"
 if [[ -n "$stock_slam" ]]; then
-    [[ -s "$stock_slam/firmware/cdsp.mdt" && -s "$stock_slam/root/system/lib64/libSlam.so" ]] ||
+    [[ -s "$stock_slam/firmware/cdsp.mdt" && -s "$stock_slam/firmware/cvpss.mdt" &&
+       -s "$stock_slam/root/system/lib64/libSlam.so" && -s "$stock_slam/root/system/lib64/libphotoid.so" ]] ||
         { echo "incomplete tracker data in $stock_slam (see scripts/extract-stock-slam.sh)" >&2; exit 1; }
     [[ -n $llvm ]] || { echo "--stock-slam needs the host's clang and lld (apt install clang-20 lld-20)" >&2; exit 1; }
     mkdir -p "$T/usr/lib/firmware"
@@ -443,6 +444,10 @@ if [[ -n "$stock_slam" ]]; then
     rm -rf "$island"
     mkdir -p "$island"
     cp -r --no-preserve=ownership "$stock_slam/root/." "$island/"
+    # The CVP's image, which the kernel loads when the see-through's depth mesh opens /dev/cvp:
+    # it looks for firmware in the opening process's root, the tracker's.
+    mkdir -p "$island/lib/firmware"
+    install -m 0644 "$stock_slam"/firmware/cvpss* "$island/lib/firmware/"
     bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" "$llvm"
     mv "$island/pico4/libandroid.so" "$island/system/lib64/libandroid.so"
     # Mount points: the root is read-only on the headset.

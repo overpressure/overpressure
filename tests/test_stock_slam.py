@@ -24,6 +24,14 @@ class CdspBootTests(unittest.TestCase):
         self.assertLess(related, check)
         self.assertLess(check, boot)
 
+    def test_cvp_related_before_the_depth_mesh(self):
+        # The kernel starts the CVP's firmware when libphotoid opens /dev/cvp.
+        script = read(LIBEXEC / "cdsp-boot")
+        self.assertIn('if cvp=$(subsys_dir cvpss); then\n\twrite RELATED "$cvp/restart_level"', script)
+        vst = read(ROOT / "src/stockslam/vst.c")
+        start = vst[vst.index("\nvst_start(struct pico4_slam_feed *feed)"):]
+        self.assertLess(start.index("if (!cvp_restart_related())"), start.index('dlopen("libphotoid.so"'))
+
     def test_unit(self):
         unit = read(UNITS / "pico4-cdsp.service")
         self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4-poc/cdsp-boot$")
@@ -349,6 +357,127 @@ class RoomTests(unittest.TestCase):
         self.assertLess(recipe.index("< monado-steamvr-camera.patch"), recipe.index("< monado-steamvr-room.patch"))
         hmd = read(ROOT / "src/monado/pico4_hmd.c")
         self.assertIn("*out_universe = h > 1 ? h : h + 2;", hmd)  # 0 and 1 are OpenVR's
+
+
+class DepthMeshTests(unittest.TestCase):
+    """PICO OS's see-through depth mesh (libphotoid) in pico4-slamd, fed as its see-through service."""
+
+    def test_head_and_points_go_in_y_up(self):
+        # libphotoid takes the head and the map points in libSlam's world turned (-y, x, z): fed
+        # unchanged, a head turned right put the hemisphere below the horizon.
+        vst = read(ROOT / "src/stockslam/vst.c")
+        turn = vst[vst.index("\nto_y_up("):]
+        turn = turn[:turn.index("\n}\n")]
+        self.assertIn("v[0] = -v[1];\n\tv[1] = x;", turn)
+        feed = vst[vst.index("\nvst_feed("):]
+        feed = feed[:feed.index("\n}\n")]
+        self.assertIn("to_y_up(position);\n\tto_y_up(orientation + 1);", feed)
+        self.assertIn("f->head = head;", feed)
+        points = vst[vst.index("\nvst_points("):]
+        points = points[:points.index("\n}\n")]
+        self.assertIn("p[0] = -p[1];\n\t\t\tp[1] = x;", points)
+        self.assertIn("g_vst.points(&turned);", points)
+        # The turn keeps a quaternion's rotation consistent: q' = (w, C v) is C R C^T.
+        import math
+        w, x, y, z = 0.82, -0.56, 0.05, -0.02
+        n = math.sqrt(w * w + x * x + y * y + z * z)
+        w, x, y, z = w / n, x / n, y / n, z / n
+
+        def rot(w, x, y, z):
+            return [[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+                    [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+                    [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]]
+        C = [[0, -1, 0], [1, 0, 0], [0, 0, 1]]
+        R = rot(w, x, y, z)
+        CRCt = [[sum(C[i][a] * R[a][b] * C[j][b] for a in range(3) for b in range(3)) for j in range(3)]
+                for i in range(3)]
+        turned = rot(w, -y, x, z)
+        for i in range(3):
+            for j in range(3):
+                self.assertAlmostEqual(turned[i][j], CRCt[i][j])
+
+    def test_extracts_libphotoid_and_its_backends(self):
+        script = read(ROOT / "scripts/extract-stock-slam.sh")
+        for name in ("libphotoid.so", "libSNPE.so", "libhexagon_runtime.so", "libcvp2.so", "libcvp2_hfi.so",
+                     "libcvp_common.so", "vst_releaseA.json.cpt", "FLNet_lite_v2", "libcvpdsp_skel.so",
+                     "libhexagon_nn_skel.so", "'::/image/cvpss.*'"):
+            self.assertIn(name, script, name)
+        # SNPE has the DSP load its skel by the system path, as on PICO OS.
+        self.assertIn("for f in libsnpe_dsp_v66_domains_v2_skel.so libsnpe_dsp_domains_v2.so; do\n"
+                      '    dump "$stock/system.img" "/system/lib64/$f" "$root/system/lib64/$f"', script)
+
+    def test_cvp_firmware_in_the_trackers_root(self):
+        # The kernel looks for the CVP's image in the root of the process opening /dev/cvp.
+        build = read(ROOT / "scripts/build-userspace.sh")
+        self.assertIn('install -m 0644 "$stock_slam"/firmware/cvpss* "$island/lib/firmware/"', build)
+        self.assertNotIn("usr/lib/firmware/cvpss", build)
+
+    def test_slamd_feeds_it_as_pico_os(self):
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        vst = read(ROOT / "src/stockslam/vst.c")
+        # libSlam's ground detection: the floor in every result, which libphotoid takes as its ground.
+        self.assertIn('t->set(h, "plane", "1");', slamd)
+        # The forward pair (cam3 left, cam2 right) with the tracker's result at the pair's time.
+        self.assertIn("vst_feed(g_images[3], g_images[2], PICO4_SLAM_FEED_W, PICO4_SLAM_FEED_H, ts, exposure_ns, head);",
+                      slamd)
+        # The map points only while the tracker tracks (type 1, confidence 1).
+        self.assertIn("head[0x40] == 1 && head[0x41] == 1", slamd)
+        self.assertIn('dlsym(lib, "AlgorithmPointCallbackRegister")', slamd)
+        # Only while the driver asks for meshes.
+        self.assertIn("__atomic_load_n(&feed->mesh_wanted_ns, __ATOMIC_ACQUIRE) <", slamd)
+        # The buffers before the start: the pipeline writes its first mesh without a check.
+        self.assertLess(vst.index("mesh_buffer(g_vst.vertices"), vst.index("int ok = start();"))
+        self.assertIn('"$src/crt.c" "$src/pico4-slamd.c" "$src/vst.c"', read(ROOT / "src/stockslam/build.sh"))
+
+    def test_feed_mesh_matches_the_drivers_limits(self):
+        header = read(ROOT / "src/monado/pico4_slam_feed.h")
+        passthrough = read(ROOT / "src/monado/pico4_passthrough.h")
+        self.assertIn("#define PICO4_SLAM_FEED_MESH_VERTICES 16384", header)
+        self.assertIn("#define PICO4_DEPTH_MESH_VERTICES 16384", passthrough)
+        self.assertIn("#define PICO4_SLAM_FEED_MESH_INDICES (6 * 127 * 127)", header)
+        self.assertIn("#define PICO4_DEPTH_MESH_INDICES (6 * 127 * 127)", passthrough)
+        # After the rings: the mesh slots are the largest part of the feed.
+        self.assertGreater(header.index("struct pico4_slam_feed_mesh meshes["),
+                           header.index("struct pico4_slam_feed_set sets["))
+
+
+class FloorTests(unittest.TestCase):
+    """an issue: the floor libSlam detects, to SteamVR's room setup as the Frame's driver_cv sends its own."""
+
+    def test_slamd_passes_the_ground_with_each_pose(self):
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        self.assertIn("p->floor_status = (uint32_t)plane_status;", slamd)
+        self.assertIn("p->floor_height = plane_height;", slamd)
+        self.assertLess(slamd.index("p->floor_height = plane_height;"),
+                        slamd.index("__atomic_store_n(&feed->poses_written, w + 1, __ATOMIC_RELEASE);"))
+
+    def test_driver_takes_only_a_detected_floor_below_the_origin(self):
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        floor = slam[slam.index("\npico4_slam_floor(struct pico4_slam *s, float *out_y)\n{\n\tstruct"):]
+        floor = floor[:floor.index("\n}\n")]
+        self.assertIn("p.floor_status != 1", floor)  # 2 is the initial estimate (1.13 m on the desk)
+        self.assertIn("double y = -p.floor_height;", floor)
+        self.assertIn("y += feed->room_t[0];", floor)
+        hmd = read(ROOT / "src/monado/pico4_hmd.c")
+        self.assertIn("math_pose_transform_point(&offset, &floor, &point);", hmd)
+
+    def test_room_setup_steps_as_driver_cv(self):
+        recipe = read(ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD")
+        self.assertLess(recipe.index("< monado-steamvr-roomview-mesh.patch"), recipe.index("< monado-steamvr-floor.patch"))
+        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch")
+        self.assertIn("static_cast<vr::EVREventType>(809)", patch)
+        self.assertIn("SetFloorDetection(step == 3 || step == 6 || step == 7);", patch)
+        self.assertIn('GetGenericInterface("IVRServerInternal_XXX", &err)', patch)
+        self.assertIn("kFloorDetectionSlot = 40;", patch)
+        self.assertIn("ReadPathBatch(kChaperoneRoot, &read, 1)", patch)
+        mesh = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-roomview-mesh.patch")
+        self.assertIn("kChaperoneRoot = 0x0000000600000003ull;", mesh)
+        self.assertIn('"/chaperone/room_setup/transform"', patch)
+        self.assertIn("read.tag != vr::k_unHmdMatrix34PropertyTag", patch)
+        self.assertIn("m.m[1][1] * y + m.m[1][3]", patch)
+        # Off: NaN clears the compositor's value.
+        off = patch[patch.index("ovrd_log(\"Room setup: floor detection %s\\n\""):]
+        self.assertIn("SendFloor(NAN);", off[:off.index("m_floor_sent = NAN;")])
 
 
 class FeedHeaderTests(unittest.TestCase):

@@ -19,13 +19,16 @@
 #include <stdint.h>
 
 #define PICO4_SLAM_FEED_PATH "/dev/shm/pico4-slam"
-#define PICO4_SLAM_FEED_MAGIC 0x35444546344f4350ull //!< "PCO4FED5"
+#define PICO4_SLAM_FEED_MAGIC 0x36444546344f4350ull //!< "PCO4FED6"
 #define PICO4_SLAM_FEED_W 640
 #define PICO4_SLAM_FEED_H 480
 #define PICO4_SLAM_FEED_CAMS 4
 #define PICO4_SLAM_FEED_IMU 8192
 #define PICO4_SLAM_FEED_SETS 4
 #define PICO4_SLAM_FEED_POSES 4096
+#define PICO4_SLAM_FEED_MESHES 2
+#define PICO4_SLAM_FEED_MESH_VERTICES 16384 //!< PICO OS's hemisphere: a 128 x 128 grid at most.
+#define PICO4_SLAM_FEED_MESH_INDICES (6 * 127 * 127)
 
 //! One head IMU sample: the sensor DSP's raw axes (the factory body frame), m/s^2 and rad/s.
 struct pico4_slam_feed_imu
@@ -60,7 +63,25 @@ struct pico4_slam_feed_pose
 	uint32_t confidence;     //!< 0: lost or not started; above: tracked.
 	int32_t error;           //!< The tracker's error code.
 	uint32_t type;
-	uint32_t pad;
+	/*!
+	 * The tracker's ground detection (docs/xr.md#room-setup): 0 none, 1 the floor detected in its
+	 * map, 2 an initial estimate. The floor lies @ref floor_height below the world's origin.
+	 */
+	uint32_t floor_status;
+	double floor_height;
+};
+
+/*!
+ * PICO OS's see-through depth mesh (docs/xr.md#passthrough): the room around the head as its
+ * libphotoid computes it from one pair of the forward cameras, in the tracker's world.
+ */
+struct pico4_slam_feed_mesh
+{
+	int64_t ts_ns;          //!< The pair's time.
+	uint32_t vertex_count;
+	uint32_t index_count;   //!< Triangles: three indices each.
+	float vertices[PICO4_SLAM_FEED_MESH_VERTICES][3]; //!< The tracker's world, metres.
+	uint32_t indices[PICO4_SLAM_FEED_MESH_INDICES];
 };
 
 struct pico4_slam_feed
@@ -104,4 +125,13 @@ struct pico4_slam_feed
 	struct pico4_slam_feed_imu imu[PICO4_SLAM_FEED_IMU];
 	struct pico4_slam_feed_pose poses[PICO4_SLAM_FEED_POSES];
 	struct pico4_slam_feed_set sets[PICO4_SLAM_FEED_SETS];
+	/*!
+	 * The depth mesh, written by pico4-slamd into slot @ref meshes_written % 2 before the count
+	 * is bumped: a reader takes the newest slot and checks the count again after its copy. The
+	 * driver stamps @ref mesh_wanted_ns whenever it asks for a mesh (SteamVR's room view reads
+	 * them); pico4-slamd feeds the depth pipeline only within a second of it.
+	 */
+	uint64_t mesh_wanted_ns;
+	uint64_t meshes_written;
+	struct pico4_slam_feed_mesh meshes[PICO4_SLAM_FEED_MESHES];
 };
