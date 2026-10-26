@@ -59,9 +59,9 @@ class KernelCompatTests(unittest.TestCase):
 class PowerWarningTests(unittest.TestCase):
     """an issue: a tethered headset that drains its battery is reported, never failed."""
 
-    def power(self, port, status, input_ma=1250, online=True):
+    def power(self, port, status, input_ma=1250, online=True, current_ma=800):
         return {"usb_online": online, "port": port, "input_ma": input_ma, "usb_mv": 4846,
-                "battery": {"status": status, "capacity": 15, "current_ma": 0}}
+                "battery": {"status": status, "capacity": 15, "current_ma": current_ma}}
 
     def test_charging_port_keeps_up(self):
         self.assertEqual(userspace.power_warnings(self.power("USB_CDP", "Charging")), [])
@@ -71,6 +71,15 @@ class PowerWarningTests(unittest.TestCase):
         (warning,) = userspace.power_warnings(self.power("USB", "Discharging", 490))
         self.assertIn("discharges while tethered at 15 %", warning)
         self.assertIn("USB port, 490 mA input", warning)
+
+    def test_drain_while_charging_warns(self):
+        # an issue: the charger said "Charging" while the battery lost 0.37 A under the session.
+        (warning,) = userspace.power_warnings(self.power("USB_CDP", "Charging", 1500, current_ma=-372))
+        self.assertIn("discharges while tethered at 15 %", warning)
+
+    def test_trickle_warns(self):
+        (warning,) = userspace.power_warnings(self.power("USB_CDP", "Charging", 1500, current_ma=35))
+        self.assertIn("charges at only 35 mA at 15 %", warning)
 
     def test_standard_port_warns_before_it_drains(self):
         (warning,) = userspace.power_warnings(self.power("USB", "Charging", 490))

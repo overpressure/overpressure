@@ -177,26 +177,34 @@ def validate_check(value, require_vulkan: bool = False, require_fan: bool = Fals
         validate_vulkan(vk.get("result"))
 
 
+TRICKLE_MA = 200  # a charging battery below this, not yet nearly full, gets a warning
+
+
 def power_warnings(power) -> list:
     """Warnings for the charger state pico4-userspace-check reports; they fail nothing.
 
     The charger limits its input by BC1.2 detection: a standard port (SDP, real_type USB)
     gives it about 0.5 A at 4.7 V, less than a session draws, so a tethered headset drains
-    its battery there; a charging port (CDP) or a wall charger keeps up (docs/development.md).
+    its battery there; a charging port (CDP) gives 1.5 A, about what Valve's session draws while
+    it renders, and a wall charger keeps up (docs/development.md). The charger reports
+    "Charging" also while the battery drains, so the battery's current decides.
     """
     if not isinstance(power, dict) or not power.get("usb_online"):
         return []
     port, input_ma = power.get("port") or "unknown", power.get("input_ma")
     supply = f"{port} port, {input_ma} mA input" if isinstance(input_ma, int) else f"{port} port"
     battery = power.get("battery") or {}
+    level, current = battery.get("capacity"), battery.get("current_ma")
+    at = f" at {level} %" if isinstance(level, int) else ""
     warnings = []
-    if battery.get("status") == "Discharging":
-        level = battery.get("capacity")
-        at = f" at {level} %" if isinstance(level, int) else ""
+    if battery.get("status") == "Discharging" or (isinstance(current, int) and current < 0):
         warnings.append(f"the battery discharges while tethered{at} ({supply}): use a charging port or a wall charger")
     elif port == "USB":
         warnings.append(f"standard USB port ({supply}): the charger cannot keep up with a session; "
                         "use a charging port or a wall charger")
+    elif (battery.get("status") == "Charging" and isinstance(current, int) and current < TRICKLE_MA
+          and isinstance(level, int) and level < 95):
+        warnings.append(f"the battery charges at only {current} mA{at} ({supply})")
     return warnings
 
 

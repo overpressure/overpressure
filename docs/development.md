@@ -233,14 +233,18 @@ Tethered work needs a charging USB port (CDP) or a wall charger. The headset's c
 input by BC1.2 detection, also through a USB-C to USB-A adapter. Type-C's "high current" is the
 adapter's pull-up resistor, which the charger rightly ignores.
 
-| Port | Charger input | Battery during the session |
+| Port | Charger input | Battery |
 | --- | --- | --- |
-| Standard port (`real_type` `USB`) | 0.49 A at 4.74 V, about 2.3 W | drains, 0.29–0.78 A |
-| Charging downstream port (`USB_CDP`) | settles at 1.25–1.5 A, about 6–7 W | charges, about +0.7 A |
+| Standard port (`real_type` `USB`) | 0.49 A at 4.74 V, about 2.3 W | drains during a session, 0.29–0.78 A |
+| Charging downstream port (`USB_CDP`) | settles at 1.5 A and draws 1.49 A at 4.49 V, about 6.7 W | session stopped: +1.13 A; Valve's session in standby: +0.78 A; Valve's session rendering: drains, about 0.37 A |
 
-`pico4-userspace-check` reports the charger's port type and input limit and the battery's state
-(`power`), and `dev check` prints a warning on a standard port or when the battery discharges
-while tethered (`power_warnings` in [pico4/userspace.py](../pico4/userspace.py)).
+On a CDP the input is the limit (`input_current_limited` 1, `input_current_settled` 1.5 A): the
+port's 6.7 W are about what Valve's session draws while it renders. The charger reports
+"Charging" also while the battery drains; the battery's `current_now` (positive while charging)
+tells. `pico4-userspace-check` reports the port type, the input limit and the measured input
+current, VBUS and the battery's state (`power`). `dev check` prints a warning on a standard
+port, when the battery drains while tethered, and when it charges at less than 200 mA below
+95 % (`power_warnings` in [pico4/userspace.py](../pico4/userspace.py)).
 
 ## Windows host and WSL
 

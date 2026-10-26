@@ -213,6 +213,8 @@ milli() { local v; v=$(num "${1:-}"); [ "$v" = null ] && echo null || echo $((v 
 usb_online=$(psv usb online)
 usb_port=$(psv usb real_type)
 usb_input_ma=$(milli "$(psv usb input_current_settled)")
+usb_input_now_ma=$(milli "$(psv usb input_current_now)")
+usb_limited=$(num "$(psv battery input_current_limited)")
 usb_mv=$(milli "$(psv usb voltage_now)")
 battery_status=$(psv battery status)
 battery_capacity=$(num "$(psv battery capacity)")
@@ -261,8 +263,9 @@ printf ',"session":{"user":%s,"user_state":%s,"service":%s,"target":%s,"target_s
 printf ',"monado_socket":%s,"monado_service":%s,"access_denied":%s}' "$(json_str "$monado_socket")" \
 	"$(json_str "$monado_service")" "$(json_list <<<"$access_denied")"
 printf ',"fan":{"service":%s,"state":%s}' "$(json_str "$fan_service")" "$fan_state"
-printf ',"power":{"usb_online":%s,"port":%s,"input_ma":%s,"usb_mv":%s,"battery":{"status":%s,"capacity":%s,"current_ma":%s}}' \
-	"$([ "$usb_online" = 1 ] && echo true || echo false)" "$(json_str "$usb_port")" "$usb_input_ma" "$usb_mv" \
+printf ',"power":{"usb_online":%s,"port":%s,"input_ma":%s,"input_now_ma":%s,"input_limited":%s,"usb_mv":%s,"battery":{"status":%s,"capacity":%s,"current_ma":%s}}' \
+	"$([ "$usb_online" = 1 ] && echo true || echo false)" "$(json_str "$usb_port")" "$usb_input_ma" \
+	"$usb_input_now_ma" "$usb_limited" "$usb_mv" \
 	"$(json_str "$battery_status")" "$battery_capacity" "$battery_ma"
 printf ',"versions":{"steamos-customizations-deckard":%s,"steamos-manager":%s,"gamescope":%s,"mesa":%s,"pico4-turnip-kgsl":%s,"glibc":%s}' \
 	"$(json_str "$(pkg steamos-customizations-deckard)")" "$(json_str "$(pkg steamos-manager)")" \
