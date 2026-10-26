@@ -381,7 +381,6 @@ system updates. Open:
 
 Wi-Fi joins WPA2 networks ([userspace.md](userspace.md#wi-fi)). Audio works: the speakers and
 the microphone are PipeWire's default sink and source, and playback runs without xruns under
-Valve's session ([userspace.md](userspace.md#audio)); open are a listening check of SteamVR's
-sounds, a spoken microphone check in the headset, and a listening comparison of PICO OS's
-calibration, which the system loads. Bluetooth has not been brought up under the userspace; suspend and resume work ([install.md](install.md#power-key)). Battery
+Valve's session ([userspace.md](userspace.md#audio)); SteamVR's sound and volume work in the
+headset, the microphone records speech, and PICO OS's calibration is loaded per stream. Bluetooth has not been brought up under the userspace; suspend and resume work ([install.md](install.md#power-key)). Battery
 level and charging state reach UPower and SteamVR ([userspace.md](userspace.md)).
