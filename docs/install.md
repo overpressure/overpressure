@@ -165,7 +165,7 @@ the ABL to stock (`python -m pico4 cycle --restore-only`) and entering developme
 | Development loop | `dev recovery`, `dev boot` (root on zram again), `dev reboot` (stays in maintenance), `dev normal` (installed system again) |
 | Boot without the PC (cable unplugged, power button) | stage 1 switches without waiting for a PC; systemd reaches the graphical target 1 min 53 s after power-on with no failed units; the data is there; the USB link comes up when the cable is plugged in later |
 | Boot indication | stage 1 shows it 15.3 s after the kernel started, stage 2's service takes over at 29.2 s without a gap, Monado and SteamVR's compositor take the display from it (it exits within 0.5 s) |
-| Power-off | stays off without the cable; with the cable attached the headset starts again in charger mode (`androidboot.mode=charger`), and stage 1 stays there: no system, lenses dark, amber LED, waiting on the power key; `pico4-reboot` from there starts the installed system |
+| Power-off | stays off without the cable; with the cable attached the headset starts again in charger mode (`androidboot.mode=charger`), and stage 1 stays there: no system, lenses dark, the LED amber (green once a PC configures the USB link, as in every stage 1), waiting on the power key; held 2 s it starts the installed system, as `pico4-reboot` does |
 
 ## Open work
 
