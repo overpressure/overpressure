@@ -83,7 +83,7 @@ class ControllerModelTests(unittest.TestCase):
         out = self.root / "out"
         controllermodel.convert(model_dir(self.root), out, {"left": transform, "right": transform})
         components = json.loads((out / "pico4_controller_right" / "pico4_controller_right.json").read_text())["components"]
-        for pose in ("grip", "openxr_grip"):
+        for pose in ("grip", "openxr_grip", "handgrip"):
             local = components[pose]["component_local"]
             self.assertEqual(local["origin"], [0.0016, 0.0141, 0.0491])
             self.assertAlmostEqual(local["rotate_xyz"][0], 34.0, places=3)

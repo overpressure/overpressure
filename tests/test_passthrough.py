@@ -157,7 +157,7 @@ class RoomViewTests(unittest.TestCase):
         # twice the room view.
         bindings = json.loads(read(RECIPE / "pico4-vrcompositor-bindings.json"))
         sources = bindings["bindings"]["/actions/system"]["sources"]
-        for path in ("/user/hand/right/input/system", "/user/hand/left/input/menu"):
+        for path in ("/user/hand/right/input/system", "/user/hand/left/input/system"):
             source = next(s for s in sources if s["path"] == path)
             self.assertEqual(source["mode"], "complex_button")
             self.assertEqual(source["inputs"]["single"]["output"], "/actions/system/in/ToggleDashboard")

@@ -14,8 +14,9 @@ without any rotation or offset. `--check` verifies that for every LED.
 
 For each hand this writes a SteamVR render model directory `pico4_controller_<hand>/`: the body
 as a triangulated OBJ in metres with its MTL and PNG, and a JSON with the body component and the
-pose components `aim`, `openxr_aim` and `tip` (the model's origin), plus `grip` and
-`openxr_grip` from PICO OS's aim-to-grip transform when it is given. The models are vendor data:
+pose components `aim`, `openxr_aim` and `tip` (the model's origin), plus `grip`, `openxr_grip`
+and `handgrip` (the name in SteamVR's pico_controller profile) from PICO OS's aim-to-grip
+transform when it is given. The models are vendor data:
 they are read from the headset's own firmware and stay out of the repository.
 
     python -m pico4.controllermodel MODEL_DIR OUTPUT_DIR [--aim-to-grip JSON] [--check LED_JSON LEVER_JSON]
@@ -223,7 +224,7 @@ def write_json(name: str, grip: dict | None) -> str:
     for pose in ("tip", "aim", "openxr_aim"):
         components[pose] = identity
     if grip is not None:
-        for pose in ("grip", "openxr_grip"):
+        for pose in ("grip", "openxr_grip", "handgrip"):
             components[pose] = {"component_local": grip}
     return json.dumps({"components": components}, indent=1) + "\n"
 

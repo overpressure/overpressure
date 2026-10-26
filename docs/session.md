@@ -107,8 +107,10 @@ client ([below](#the-steam-client)). `sddm` counts as installed for dependency r
 (`!name` in [packages.txt](../userspace/packages.txt)).
 SteamVR's Frame-only parts are not extracted (`NoExtract` in
 [pacman.conf](../userspace/pacman.conf)): the tracking driver, the Frame controller driver, the
-controller radio's firmware and programming scripts, other headsets' drivers, the Android and
-Windows binaries, and the eye-tracking and calibration tools. SteamVR's desktop tools
+controller radio's firmware and programming scripts, other controllers' firmware, the Android
+and Windows binaries, and the eye-tracking and calibration tools. The resources of the Index,
+Vive and Touch controllers (profiles, bindings, render models) stay: they define the controller
+types SteamVR remaps games' bindings from ([Controllers in games](#controllers-in-games)). SteamVR's desktop tools
 (`vrmonitor`, `overlay_viewer`, `hellovr_sdl`) are installed without the Qt5 and GLEW libraries
 they need.
 
@@ -530,16 +532,38 @@ adapts `driver_monado`:
   inverse is a bisection along the ray from the lens centre, also through the steep
   continuation beyond the fitted radius.
 
-SteamVR's dashboard has default bindings only for controller types it knows, and Monado's
-generated profile for the PICO 4 controller names none, so SteamVR fell back to its generic
-ones, which point with a `/pose/tip` this controller lacks. The package installs
+SteamVR's dashboard has default bindings only for some controller types (Index, Vive, Rift,
+Windows Mixed Reality), not for the PICO 4's. The package installs
 [`pico4-vrcompositor-bindings.json`](../userspace/pkgbuilds/pico4-monado/pico4-vrcompositor-bindings.json)
 as the profile's `default_bindings` for `openvr.component.vrcompositor`: a press of the PICO
-button (right) or the menu button (left) toggles the dashboard, a double press the room view
+button (right) or the menu button (left), each hand's `/input/system`, toggles the dashboard, a double press the room view
 ([xr.md](xr.md#passthrough)), as the Frame's bindings do with its headset's system button, and
 holding the PICO button recenters; the aim pose is the laser, the trigger clicks, the grip goes
 back and the joystick scrolls. The dashboard's content comes from the Steam client's VR UI
 (`vrgamepadui`), so it shows once the client runs in the session.
+
+#### Controllers in games
+
+SteamVR has its own controller type for the PICO 4's controllers, `pico_controller`: a stub
+profile and a remapping (`default_pico_controller_profile.json` and
+`default_pico_controller_remapping.json` in SteamVR's `resources/input`), with inputs under
+Touch's names. A game gets its own bindings for that type, or, through the remapping, its Touch
+bindings with the Touch controller, render model and headset simulated, or its Index, Vive or
+OpenXR generic bindings with their inputs remapped. vrserver creates those source types at
+start from the resource-only drivers `oculus`, `indexcontroller` and `htc`
+(`{oculus}/input/touch_profile.json` and so on); without them the remapping fails to parse
+("Could not find input profile for controller type: oculus_touch"). Monado's generated profile reports its own
+type, `monado_bytedance_pico4_controller`, which no game has bindings for and SteamVR has no
+remapping for: games got no controller input at all.
+
+The driver reports SteamVR's type with the project's profile
+([`pico4-controller-profile.json`](../userspace/pkgbuilds/pico4-monado/pico4-controller-profile.json),
+installed as `pico4_controller_profile.json`), whose `remapping` is SteamVR's own file (linked
+into the driver's resources). `monado-steamvr-pico-controller.patch` creates the inputs under the
+names of SteamVR's profile: trigger (value, click, touch), grip (value, click), joystick (x, y,
+click, touch), A/B or X/Y (click, touch), `/input/system` (the menu button on the left, the PICO
+button on the right) and the haptic output. The poses are the render model's components
+(`aim`, `tip`, `grip`, `handgrip`, `openxr_aim`, `openxr_grip`; `pico4/controllermodel.py`).
 
 ### Performance and heat
 
@@ -974,5 +998,6 @@ userspace check, the head IMU and Monado's pose and display clients, they run
    the library, video playback and gamescope's overlays of Steam's apps are not verified yet.
 4. **Controller positions.** IR-LED tracking, as for Monado ([xr.md](xr.md)); until then the
    controllers are 3DoF, placed by the arm model.
-5. **Dashboard input.** Not verified: SteamVR loads its generic bindings for the PICO 4
-   controller type, and clicking in the dashboard is still to be checked.
+5. **Controllers in games.** As SteamVR's `pico_controller`
+   ([Controllers in games](#controllers-in-games)): Beat Saber's menus and sabers, and an OpenVR
+   game, are still to be checked in the headset.

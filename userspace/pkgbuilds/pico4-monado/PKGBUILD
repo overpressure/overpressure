@@ -37,6 +37,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         monado-pico4-driver.patch monado-steamvr-pico4.patch monado-service-sigterm.patch
         monado-slam-prediction.patch monado-steamvr-battery.patch monado-vk-mutex-init-failure.patch
         monado-steamvr-presence.patch monado-steamvr-camera.patch monado-steamvr-room.patch
+        monado-steamvr-pico-controller.patch
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
@@ -53,7 +54,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4-ctrack-replay.cpp pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_calib.hpp pico4_ctrack_calib.cpp
         pico4_ctrack_runner.hpp pico4_ctrack_runner.cpp test_pico4_ctrack_runner.cpp test_pico4_ctrack_world.hpp
         pico4_aimgrip.h test_pico4_aimgrip.c
-        pico4-vrcompositor-bindings.json)
+        pico4-vrcompositor-bindings.json pico4-controller-profile.json)
 # Project files (src/monado, src/xr) are SKIP: build-userspace.sh copies them in.
 sha256sums=(SKIP
             56161a34cf6d6d64dde3b804e34fc1b2b6654a060cae6544b95be9e577278c29
@@ -65,6 +66,7 @@ sha256sums=(SKIP
             7ba04fb72ef7d0fdd6abe6a044cf3586b059ae98129011086f38d30ca4fd0c6a
             a7e0b04b5fdff083e8556442f33a1ebc2cda18152bf7d4a711e9d2549d988762
             SKIP SKIP SKIP
+            SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP
@@ -76,7 +78,8 @@ sha256sums=(SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP
             SKIP SKIP
-            72ceff0acc5f5bfec24760e2ce339fd7cfef2a389ba26a45fe799ec583313ac8)
+            f667c80d96c3251dd5e49ce10017b4fd702289ba2df5d49bacaf4465ceaee050
+            4d3f5097f8324fc7437ab127e5ad44c1e455c22324f1d21b02ebcfd58f4fe1ac)
 
 prepare() {
   patch -d monado -p1 < monado-pico4-driver.patch
@@ -92,6 +95,7 @@ prepare() {
   patch -d monado -p1 < monado-steamvr-camera.patch
   # A tracking universe per room (the tracker's map).
   patch -d monado -p1 < monado-steamvr-room.patch
+  patch -d monado -p1 < monado-steamvr-pico-controller.patch
   # PICO's kernel allows four links per session where the CAF header says two.
   install -Dm644 -t monado/src/xrt/drivers/pico4/include/media "${_camheaders[@]}"
   sed -i -E 's/^(#define MAX_LINKS_PER_SESSION[[:space:]]+)2$/\14/' \
@@ -183,18 +187,14 @@ package() {
   # The service units are the project's (userspace/rootfs): upstream's user
   # units would start a second Monado per user.
   rm -rf "$pkgdir/usr/lib/systemd"
-  # SteamVR's dashboard has no default bindings for this controller type: the profile names ours.
+  # SteamVR's dashboard has no default bindings for this controller type: the profile names ours
+  # (pico4-controller-profile.json).
   local input="$pkgdir/usr/share/steamvr-monado/resources/input"
   install -Dm644 pico4-vrcompositor-bindings.json "$input/pico4_vrcompositor_bindings.json"
-  python3 - "$input/bytedance_pico4_controller_profile.json" <<'PY'
-import json, sys
-with open(sys.argv[1]) as f:
-    profile = json.load(f)
-profile["default_bindings"] = [
-    {"app_key": "openvr.component.vrcompositor", "binding_url": "pico4_vrcompositor_bindings.json"}]
-with open(sys.argv[1], "w") as f:
-    json.dump(profile, f, indent=2)
-PY
+  # The controllers are SteamVR's pico_controller (monado-steamvr-pico-controller.patch); its
+  # remapping of other controllers' bindings is SteamVR's own file.
+  install -Dm644 pico4-controller-profile.json "$input/pico4_controller_profile.json"
+  ln -s /opt/steamvr/resources/input/default_pico_controller_remapping.json "$input/default_pico_controller_remapping.json"
   install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay pico4-roomview -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.
   install -dm755 "$pkgdir/etc/openxr/1"
