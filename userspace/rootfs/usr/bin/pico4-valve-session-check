@@ -58,6 +58,10 @@ user_systemctl() {
 max_temp() { # hottest thermal zone, degrees C
 	cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | awk '$1 < 200000 && $1 > m {m = $1} END {printf "%.1f", m / 1000}'
 }
+vrcmd() {
+	runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid" \
+		timeout 5 /opt/steamvr/bin/linuxarm64/vrcmd "$@"
+}
 fan_state() { # pico4-fan's duty, RPM and hottest mean, or null without the daemon
 	local s
 	s=$(pico4-fan state 2>/dev/null)
@@ -87,7 +91,15 @@ systemctl restart pico4-session.service
 
 # Startup: the compositor's log, then the layer's first statistics (ten seconds of frames).
 startup=-1
+# A headset lying still off the head enters SteamVR's standby after power.turnOffScreensTimeout
+# (5 s), which pauses the compositor (pauseCompositorOnStandby, the Frame's default) and leaves
+# nothing to measure: no standby while the check runs, as soon as vrserver answers.
+standby_off=false
 for i in $(seq 180); do
+	if [ "$standby_off" = false ] && pgrep -u "$user" -x vrserver >/dev/null &&
+		vrcmd --set-settings-float power.turnOffScreensTimeout 3600 >/dev/null 2>&1; then
+		standby_off=true
+	fi
 	if grep -qs "Startup Complete" "$logs/vrcompositor.txt" && [ -s "$work/vrdisplay.json" ]; then
 		startup=$i
 		break
@@ -150,7 +162,9 @@ grep -q '^{' <<<"$performance" || performance='{"status":"failed","failures":["n
 [ "$stats" != null ] || errors+=("the display layer wrote no statistics")
 grep -q '"index":2' <<<"$devices" || errors+=("SteamVR does not report the headset and both controllers")
 
-# Back to the configured session.
+# Back to the configured session, with SteamVR's standby timeout.
+[ "$standby_off" = false ] || vrcmd --set-settings-float power.turnOffScreensTimeout 5 >/dev/null 2>&1 ||
+	errors+=("SteamVR's standby timeout could not be set back")
 rm -f "$dropin"
 user_systemctl daemon-reload 2>/dev/null || true
 if [ -n "$saved" ]; then printf '%s\n' "$saved" > "$conf"; else rm -f "$conf"; fi

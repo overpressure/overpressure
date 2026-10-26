@@ -877,7 +877,10 @@ runs Valve's session for a bounded time and returns to the configured one:
    `pico4-session.service`. A runtime drop-in for `steamvr.service` has the layer write its
    statistics and frame 300 into `/run/pico4-valve-session`; SteamVR's old logs are removed.
 2. It waits up to 180 s for the compositor's "Startup Complete" and the layer's first
-   statistics (ten seconds of frames). SteamVR's startup still stalls the compositor a few
+   statistics (ten seconds of frames). As soon as `vrserver` answers, it sets
+   `power.turnOffScreensTimeout` to an hour (`vrcmd`): the headset lies still and off the head,
+   so SteamVR would enter standby after 5 s and pause the compositor (the Frame's
+   `pauseCompositorOnStandby`), leaving no frames to measure. SteamVR's startup still stalls the compositor a few
    times while the dashboard starts, so the measured window begins with the first statistics
    update (every ten seconds) that adds no stall, or after 60 s (`settle_seconds`). The
    session then runs for SECONDS (default 30).
@@ -885,7 +888,8 @@ runs Valve's session for a bounded time and returns to the configured one:
    are active, that the compositor started without an assertion and gamescope connected to it,
    that the layer wrote statistics, and that SteamVR reports the headset and both controllers
    (`vrcmd --pollposes`).
-4. It restores the configured session and checks that `pico4-session.service` is active again.
+4. It sets the standby timeout back to SteamVR's 5 s, restores the configured session and checks
+   that `pico4-session.service` is active again.
 
 It prints one JSON object (schema 1): status and errors, the startup time, the units' states,
 what the compositor's log shows (startup, gamescope's connection, assertions, failed present
