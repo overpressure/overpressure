@@ -626,10 +626,18 @@ station keep a single owner:
   it was worse than the room view without depth: head movements were over-corrected (looking
   up, the top of the view came close and settled after about a second; the trailing edge of a
   turn smeared), the more so the smaller the sphere. So it stays off by default.
-- **PICO OS's see-through.** On the PICO 4, `pxrseethroughservice` uses `libUndistort`, which
-  maps each forward camera's image onto a sphere around the head; its stereo-depth library
-  (`libSeethrough`, neural networks on the DSP) is loaded only on another platform. The tracking
-  cameras run at 50 or 60 Hz (`sys.camera.ae.fps`) while see-through is on.
+- **PICO OS's see-through.** On the PICO 4, `pxrseethroughservice` feeds `libphotoid.so`: depth
+  from the two grey forward cameras (the CVP's depth-from-stereo, or a neural network on the
+  DSP), gaps filled from the tracker's map points, made into a hemisphere mesh around the head that
+  ends at the ground. The ground is the tracker's own: `libSlam` detects the floor in its map and
+  reports its height and status in each pose result; the user's floor setting only refines it.
+  The guardian service draws the mesh per eye, coloured from the RGB camera, with the predicted
+  display pose. (`libUndistort` serves only the undistorted RGB image to apps.)
+- **The Frame's room view.** Without a mesh the compositor projects the cameras onto a fixed sphere
+  (the Frame's "RoomView2D"). The Frame's "RoomView3D" publishes a measured mesh: its XR service
+  computes depth from the stereo cameras on the CVP, smooths it, takes the floor from horizontal
+  planes in the tracking map, and writes each mesh with the pose and time of the frames it came
+  from.
 
 The room view's producer is [`pico4-roomview`](../src/xr/pico4-roomview.c), a user unit that runs
 with SteamVR ([pico4-roomview.service](../userspace/rootfs/usr/lib/systemd/user/pico4-roomview.service)):
