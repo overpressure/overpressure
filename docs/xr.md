@@ -802,7 +802,12 @@ file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's 
   `openvr_driver.h` predates their names. The playspace setup and the floor height adjustment
   run in the headset; the floor is hard to set exactly, and the 2D room view shown
   throughout is uncomfortable ([Passthrough](#passthrough)). Developer › Quick Calibration
-  (floor and standing position) works either way.
+  (floor and standing position) works either way. Clear Playspace is offered only by SteamVR's
+  main-branch builds (`m_bSteamVRMain`), not by this release.
+- **Verified.** A drawn play area comes back after a reboot exactly where it was drawn (the
+  tracker relocalises in the saved room, and SteamVR finds the room's universe in
+  `chaperone_info.vrchap`), and its boundary appears when walking toward its edge. With no play
+  area for the current universe, SteamVR asks for a space setup when a game is launched.
 
 ### Frame times
 
@@ -1404,8 +1409,8 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 
 1. **PICO OS's tracker.** Worn it tracks walking and fast turns as on PICO OS; a covered
    camera and a dim room are unchecked, and so is PICO OS's auto exposure worn.
-   [Room setup](#room-setup): SteamVR's room setup runs in the headset; the floor's accuracy,
-   the boundary at the play area's edge and coming back to it after a reboot are unchecked.
+   [Room setup](#room-setup): SteamVR's room setup runs in the headset and its play area
+   comes back after a reboot; the floor height is hard to set exactly.
 2. **Controllers in applications.** SteamVR's dashboard toggles but stays hidden without the
    Steam client ([session.md](session.md)), so the laser, clicking and the grip frame are
    unchecked in it. A vibration strong enough to feel has not yet come from a SteamVR
