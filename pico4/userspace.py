@@ -112,6 +112,11 @@ def format_compat(report: dict) -> str:
 
 
 SESSION_USER = "steamos"  # the Frame's session user, logged in by pico4-session.service (docs/session.md)
+SESSION_CONF = "/etc/pico4-poc/session.conf"  # its target (PICO4_SESSION_TARGET)
+# Valve's session's processes that still run for seconds after pico4-session.service stopped
+# (its user manager stops them), and how long the runner waits for them.
+SESSION_PROCESSES = "vrserver|vrcompositor|vrwebhelper|gamescope-wl|steam|steamwebhelper"
+SESSION_STOP_SECONDS = 60
 # Root clients of the Monado service find its socket here (the session links it
 # into the user's runtime directory).
 MONADO_RUNTIME_DIR = "/run/pico4-monado"

@@ -267,6 +267,11 @@ class HarnessTests(unittest.TestCase):
                                    "status": "fail" if failed else "pass",
                                    "failures": ["accel: |g| 3.0 m/s^2"] if failed else []}) + \
                     "\nEXIT=" + ("1" if failed else "0")
+            if command.startswith("if grep -qs '^PICO4_SESSION_TARGET=gamescope-session.target$'"):
+                return "SESSION-PAUSED" if getattr(self, "valve_configured", False) else ""
+            if command.startswith("systemctl is-active -q pico4-session.service ||"):
+                self.resumed_session = True
+                return ""
             if "pico4-openxr-pose" in command:
                 tilt = 25.0 if self.scenario == "openxr" else 8.8
                 return json.dumps({"schema": 1, "status": "pass", "system": "Monado: PICO 4",
@@ -457,6 +462,17 @@ class HarnessTests(unittest.TestCase):
                 self.assertEqual(state["system"], "Monado: PICO 4")
                 self.assertAlmostEqual(state["accel_tilt_deg"], 8.79, places=2)
                 self.assertTrue((self.runner.folder / "userspace-openxr-pose.json").exists())
+
+    def test_monado_checks_pause_a_configured_valve_session(self):
+        for configured, scenario, code in ((True, "", 0), (True, "openxr", 1), (False, "", 0)):
+            with self.subTest(configured=configured, scenario=scenario or "passing"):
+                self.setUp()
+                self.enable_flash_mode()
+                self.enable_userspace(sensors=True, openxr=True)
+                self.scenario, self.valve_configured, self.resumed_session = scenario, configured, False
+                self.assertEqual(self.execute(), code)
+                # Started again after the checks, also after a failed one; untouched when not paused.
+                self.assertEqual(self.resumed_session, configured)
 
     def test_openxr_display_is_checked_with_monado(self):
         for scenario, code in (("", 0), ("display", 1)):

@@ -585,7 +585,33 @@ class Runner:
         require(code.strip() == "0", "Head IMU check failed")
         userspace.validate_imu(value)
         if state["openxr_runtime"]:
-            self.openxr_pose(state, userspace.imu_tilt_deg(value))
+            paused = self.pause_valve_session()
+            try:
+                self.openxr_pose(state, userspace.imu_tilt_deg(value))
+            finally:
+                if paused:
+                    self.resume_session()
+
+    def pause_valve_session(self):
+        """Stops a configured Valve session for Monado's checks; True if it ran.
+
+        SteamVR's driver_monado holds the hardware that Monado's service opens
+        (pico4-monado.service), so its clients get no system while the installed
+        system's Valve session runs. The session's stop returns before the user
+        manager has stopped SteamVR and the Steam client, so this waits for them
+        (bounded): a check started earlier lost the controller radio and frames.
+        """
+        output = self.ssh(f"if grep -qs '^PICO4_SESSION_TARGET=gamescope-session.target$' {userspace.SESSION_CONF} && "
+                          "systemctl is-active -q pico4-session.service; then systemctl stop pico4-session.service; "
+                          f"for i in $(seq {userspace.SESSION_STOP_SECONDS}); do "
+                          f"pgrep -u {userspace.SESSION_USER} -x '{userspace.SESSION_PROCESSES}' >/dev/null || break; "
+                          "sleep 1; done; echo SESSION-PAUSED; fi", userspace.SESSION_STOP_SECONDS + 60)
+        return "SESSION-PAUSED" in output
+
+    def resume_session(self):
+        """Starts the configured session again, unless Valve's session check already did."""
+        self.ssh("systemctl is-active -q pico4-session.service || { systemctl reset-failed pico4-session.service; "
+                 "systemctl start pico4-session.service; }; true", 90)
 
     def openxr_pose(self, state, accel_tilt):
         """Head pose through the OpenXR loader and the Monado service with its PICO 4 driver (headless).

@@ -1193,7 +1193,10 @@ The stage-2 checks, `python -m pico4 dev check` in development mode and the same
 ARCHIVE` ([hardware-testing.md](hardware-testing.md)), test an archive built with sensor data
 after the userspace check: they record the sensor units' status and `pico4-imu list accel gyro`,
 then require `pico4-imu stream --rate 500 --seconds 10 --check`. With `pico4-monado` installed
-they continue, each client on a fresh Monado service:
+they continue, each client on a fresh Monado service. When `session.conf` selects Valve's session
+(the installed system), they stop `pico4-session.service` first, because SteamVR's
+`driver_monado` holds the hardware the service opens, and start it again afterwards, also after a
+failed check:
 
 - **`pico4-openxr-pose 10 10`.** The PICO 4 system with orientation tracking, no invalid pose after
   the first second, a tilt within 2° of the accelerometer's (from the IMU check) and a heading
