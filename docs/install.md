@@ -89,7 +89,9 @@ grew), maps both clocks anew before the next samples, drops IMU samples that do 
 and starts the camera capture again: it streamed into the suspend, and the camera request
 manager came back in a bad state. Before that, the first IMU samples after a resume landed the
 sleep's length in the future, the next ones stepped back, and Monado's 3DoF filter assert
-killed `vrserver`.
+killed `vrserver`. Two suspends of 11-12 s in a row, worn and unplugged: each logged
+"The system slept ...: QTimer offset taken again" and "the capture starts again", the tracker
+reported a short loss and recovered by itself, and the session went on.
 
 ## Boot images
 
@@ -180,8 +182,8 @@ the ABL to stock (`python -m pico4 cycle --restore-only`) and entering developme
 1. **The way back.** `dev restore` for an installed system is implemented and tested on the
    host, not yet on the headset; it ends in PICO OS's first-time setup.
 2. **Power.** The [power key](#power-key) works as on PICO OS: a short press suspends, 2 s held
-   powers off in about 7 s, and in charger mode 2 s held starts the system. That the session
-   continues after a resume is not yet verified. PICO OS also sleeps when the headset
+   powers off in about 7 s, and in charger mode 2 s held starts the system. After a resume
+   Valve's session goes on with 6DoF, both controllers and the cameras. PICO OS also sleeps when the headset
    is taken off (screen off after 10 s, suspend after 15 s); here SteamVR's standby follows the
    wear sensor ([session.md](session.md)).
 3. **Integrity.** The system image is checked when written, not at boot (no dm-verity).

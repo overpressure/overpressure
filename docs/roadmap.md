@@ -374,7 +374,7 @@ system updates. Open:
 2. **Power.** The lenses show a boot indication until Valve's session starts. The power key
    follows PICO OS (a short press suspends, 2 s held powers off), and a power-off with the
    cable attached ends in charger mode, from which the key starts the system; verified on the
-   headset. That the session continues after a resume is not yet verified.
+   headset. After a resume Valve's session goes on with 6DoF, both controllers and the cameras.
 
 ### Other hardware
 
@@ -382,5 +382,5 @@ Wi-Fi joins WPA2 networks ([userspace.md](userspace.md#wi-fi)). Audio works: the
 the microphone are PipeWire's default sink and source, and playback runs without xruns under
 Valve's session ([userspace.md](userspace.md#audio)); open are a listening check of SteamVR's
 sounds, a spoken microphone check in the headset, and a listening comparison of PICO OS's
-calibration, which the system loads. Bluetooth and suspend have not been brought up under the userspace. Battery
+calibration, which the system loads. Bluetooth has not been brought up under the userspace; suspend and resume work ([install.md](install.md#power-key)). Battery
 level and charging state reach UPower and SteamVR ([userspace.md](userspace.md)).
