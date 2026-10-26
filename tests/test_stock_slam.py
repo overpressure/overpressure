@@ -132,7 +132,7 @@ class ClockTests(unittest.TestCase):
         slam = read(ROOT / "src/monado/pico4_slam.c")
         sof = slam.index("frame_sof_ns(struct pico4_slam *s")
         body = slam[sof:slam.index("\n}\n", sof)]
-        self.assertIn("if (now - s->qtimer_measured_ns >= U_TIME_1S_IN_NS) {", body)
+        self.assertIn("if (now - s->qtimer_measured_ns >= U_TIME_1S_IN_NS ||", body)
         self.assertIn("s->qtimer_offset_ns = qtimer_offset();", body)
 
     def test_controller_tracker_gets_the_head_pose_of_its_exposure(self):
@@ -322,11 +322,23 @@ class RoomTests(unittest.TestCase):
         self.assertIn("write_boundary(SESSION_BOUNDARY, ROOM_SQUARE, 4);", slamd)
         self.assertIn("room_fit((const double(*)[3])g_seen, ROOM_SQUARE, 4,", slamd)
         # A copy left from an earlier session must not count as this one's relocalisation.
-        self.assertLess(slamd.index("unlink(RELOCALISED_BOUNDARY);"), slamd.index('void *h = create("");'))
+        self.assertLess(slamd.index("unlink(RELOCALISED_BOUNDARY);"), slamd.index('void *h = t->create("");'))
         # The clean stop that saves the map, as PICO OS's service stops the tracker.
-        stop = slamd.index("prestop(h);")
-        self.assertLess(stop, slamd.index('stop(h, "non_sleep");'))
-        self.assertLess(slamd.index('stop(h, "non_sleep");'), slamd.index("destroy(h);"))
+        stop = slamd.index("t->prestop(h);")
+        self.assertLess(stop, slamd.index('t->stop(h, "non_sleep");'))
+        self.assertLess(slamd.index('t->stop(h, "non_sleep");'), slamd.index("t->destroy(h);"))
+
+    def test_slamd_restarts_a_lost_tracker_as_pico_os(self):
+        # an issue: PICO OS's tracking service restarts a tracker whose confidence fell from 1 to 0
+        # and stayed 0 for more than restart_tracking_sec (10).
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        self.assertIn("#define RESTART_DEFAULT_S 10", slamd)
+        self.assertIn("if (p->confidence == 0 && last_confidence == 1) {", slamd)
+        self.assertIn("lost_since = now_ns(CLOCK_BOOTTIME);", slamd)
+        restart = slamd.index("restarting the tracker")
+        self.assertLess(slamd.index("pthread_join(thread, 0);", restart), slamd.index("tracker_stop(&t, h);", restart))
+        self.assertLess(slamd.index("tracker_stop(&t, h);", restart), slamd.index("h = tracker_start(&t, feed);", restart))
+        self.assertIn("PICO4_SLAMD_RESTART_S", read(LIBEXEC / "stock-slam"))
 
     def test_steamvr_gets_a_universe_per_map(self):
         patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
