@@ -1,8 +1,10 @@
-# SteamVR failed for good (its start limit, see steamvr.service.d): tell the system
-# side, which owns the session, to fall back to Monado's (pico4-session-fallback.path).
+# SteamVR failed for good (its start limit, see steamvr.service.d): end Valve's session
+# target, or gamescope would stay without SteamVR and the lenses dark. Its
+# start-gamescope-session returns, and pico4-session.service starts a new session
+# (within its own start limit), which resets SteamVR's counter (docs/session.md).
 [Unit]
-Description=Report SteamVR's failure to the session
+Description=End the session after SteamVR failed
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/touch /run/pico4-session/steamvr-failed
+ExecStart=/usr/bin/systemctl --user stop gamescope-session.target

@@ -142,7 +142,6 @@ class CheckValidationTests(unittest.TestCase):
             lambda v: v["session"].update(user_state="lingering"),
             lambda v: v["session"].update(target_state="inactive"),
             lambda v: v["session"].update(service="failed"),
-            lambda v: v["session"].update(monado_socket="inactive"),
             lambda v: v["session"].update(access_denied=["/dev/spidev0.0"]),
             lambda v: v.pop("session"),
             lambda v: v["fan"].update(service="failed"),
@@ -223,79 +222,6 @@ class ImuValidationTests(unittest.TestCase):
             value = None if change is None else {**copy.deepcopy(IMU_PASSING), **change}
             with self.subTest(name), self.assertRaises(ValueError):
                 userspace.validate_imu(value)
-
-
-POSE_PASSING = {
-    "schema": 1, "status": "pass", "system": "Monado: PICO 4", "orientation_tracking": True,
-    "located": 980, "orientation_tracked": 975, "invalid_after_warmup": 0,
-    "final_tilt_from_vertical_deg": 8.6, "heading_rate_deg_per_s": -0.1,
-}
-
-
-class OpenXrPoseTests(unittest.TestCase):
-    def test_tilt_uses_imu_x_as_up(self):
-        level = {"streams": {"accel": {"mean": [9.81, 0.0, 0.0]}}}
-        self.assertAlmostEqual(userspace.imu_tilt_deg(level), 0.0)
-        tilted = {"streams": {"accel": {"mean": [9.81 * 0.5, 0.0, 9.81 * 0.75 ** 0.5]}}}
-        self.assertAlmostEqual(userspace.imu_tilt_deg(tilted), 60.0, places=4)
-        with self.assertRaises(ValueError):
-            userspace.imu_tilt_deg({"streams": {}})
-
-    def test_passing_pose(self):
-        userspace.validate_openxr_pose(POSE_PASSING, accel_tilt_deg=8.9)
-
-    def test_failures_are_rejected(self):
-        cases = [
-            ("not run", None, 8.9),
-            ("failed", {"status": "fail", "error": "xrCreateInstance failed (-51)"}, 8.9),
-            ("simulated HMD", {"system": "Monado: Simulated HMD"}, 8.9),
-            ("lost tracking", {"invalid_after_warmup": 3}, 8.9),
-            ("never tracked", {"orientation_tracked": 0}, 8.9),
-            ("wrong tilt", {}, 12.0),
-            ("drifting", {"heading_rate_deg_per_s": 2.0}, 8.9),
-        ]
-        for name, change, accel in cases:
-            value = None if change is None else {**POSE_PASSING, **change}
-            with self.subTest(name), self.assertRaises(ValueError):
-                userspace.validate_openxr_pose(value, accel_tilt_deg=accel)
-
-
-DISPLAY_PASSING = {
-    "schema": 1, "status": "pass", "system": "Monado: PICO 4", "frames": 900, "frame_hz": 90.0, "late_frames": 1,
-}
-KMS_PASSING = {
-    "target": "pico4_kms", "commits": 848, "commit_hz": 87.78, "vblank_hz": 89.998, "retire_timeouts": 0,
-    "eye_mean_rgb": [[70.2, 40.1, 25.4], [26.3, 41.4, 71.9]],
-}
-
-
-class OpenXrDisplayTests(unittest.TestCase):
-    def test_passing_display(self):
-        userspace.validate_openxr_display(DISPLAY_PASSING, KMS_PASSING)
-
-    def test_failures_are_rejected(self):
-        cases = [
-            ("not run", None, {}),
-            ("client failed", {"status": "fail"}, {}),
-            ("simulated HMD", {"system": "Monado: Simulated HMD"}, {}),
-            ("half rate", {"frame_hz": 45.0}, {}),
-            ("late frames", {"late_frames": 30}, {}),
-            ("other target", {}, {"target": "debug_image"}),
-            ("lost fences", {}, {"retire_timeouts": 2}),
-            ("72 Hz panel", {}, {"vblank_hz": 72.0}),
-            ("slow compositor", {}, {"commit_hz": 29.6}),
-            ("no frame", {}, {"eye_mean_rgb": None}),
-            ("eyes swapped", {}, {"eye_mean_rgb": [[26.3, 41.4, 71.9], [70.2, 40.1, 25.4]]}),
-            ("black", {}, {"eye_mean_rgb": [[0, 0, 0], [0, 0, 0]]}),
-        ]
-        for name, client, kms in cases:
-            value = None if client is None else {**DISPLAY_PASSING, **client}
-            with self.subTest(name), self.assertRaises(ValueError):
-                userspace.validate_openxr_display(value, {**KMS_PASSING, **kms})
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 VR_DISPLAY_PASSING = {

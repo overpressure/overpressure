@@ -317,19 +317,16 @@ Then, in this order:
 
 | Check | Runs when | Must hold |
 | --- | --- | --- |
-| Userspace check | always | `pico4-userspace-check --wait 240` passes: systemd 257 as PID 1, state `running`, no failed units; `/dev` on tmpfs with every node; root on zram and no writable block device; the USB link unchanged; logind's `seat0`; the `steamos` user's session, `pico4-session.service` and its target active; Monado's socket listening; the session user can open its devices; `pico4-fan.service` active and writing its state ([cooling.md](cooling.md#checks)); with GPU firmware in the archive, the Turnip/KGSL Vulkan readback. The stage-1 shell and storage assertions (phase 8) then hold in stage 2 too. |
+| Userspace check | always | `pico4-userspace-check --wait 240` passes: systemd 257 as PID 1, state `running`, no failed units; `/dev` on tmpfs with every node; root on zram and no writable block device; the USB link unchanged; logind's `seat0`; the `steamos` user's session, `pico4-session.service` and Valve's session target active; the session user can open its devices; `pico4-fan.service` active and writing its state ([cooling.md](cooling.md#checks)); with GPU firmware in the archive, the Turnip/KGSL Vulkan readback. The stage-1 shell and storage assertions (phase 8) then hold in stage 2 too. |
 | Head IMU | the manifest has sensor data | `pico4-imu stream --rate 500 --seconds 10 --check --orientation`: accelerometer and gyroscope samples with increasing timestamps at the requested 500 Hz; the accelerometer's mean is the tilt reference for the next check |
-| OpenXR pose | the archive has `pico4-monado` | `pico4-openxr-pose 10 10`: the PICO 4 system with orientation tracking, tracked throughout after the warm-up, tilt within 2° of the accelerometer's, heading drift at most 0.5°/s |
-| OpenXR display | the archive has `pico4-monado` | `pico4-openxr-display 30` (projection and quad layer): frames at ≥ 95 % of 90 Hz, late frames at most 1 % (or 1); Monado's `pico4_kms` target commits at ≥ 95 % of 90 Hz with vblank at 90 Hz ± 1 % and no fence timeouts; the scanned-out image is red on the left panel and blue on the right |
 | SteamVR display layer | the archive has `pico4-vrdisplay` | `pico4-vrdisplay-test 15`: display `PICO 4` acquired through DRM; frames at ≥ 95 % of 90 Hz; the swapchain's vblank counter advancing at 90 Hz ± 1 %, vblank events at ≥ 90 % of 90 Hz; the real `pico4_vrdisplay` layer commits at ≥ 95 % of 90 Hz without fence or GPU timeouts; red left, blue right |
 | Shared semaphores | the archive has `pico4-vrdisplay` | `pico4-vrsync-test` as `steamos`: one timeline semaphore shared by two processes (OPAQUE_FD, emulated over sync files) carries a GPU wait, host waits and signals, an early wait and a same-submission wait; the waiting GPU work starts after the signalling work ends |
 | Valve's session | the archive has `deckard-steamvr-rel` | after the cool-down, `pico4-valve-session-check --seconds 30`: `gamescope-session.target`, SteamVR and gamescope active and the configured session restored afterwards; SteamVR's compositor runs as a gamescope client without asserts and presents through `pico4_vrdisplay` at ≥ 36 commits/s (40 % of 90 Hz), vblank at 90 Hz ± 1 %, no fence or GPU timeouts, a non-black image; SteamVR reports the headset and both controllers with finite poses, the controllers with positions |
 
 Each check runs only after the previous one passed and only when the archive contains what it
-tests. The thresholds are in [pico4/userspace.py](../pico4/userspace.py). Each OpenXR check stops
-`pico4-monado.service` first, so its client starts a fresh service through the socket; the KMS
-target writes its statistics when the service stops. The display-layer test runs with Monado
-stopped, so the layer drives the panels.
+tests. The thresholds are in [pico4/userspace.py](../pico4/userspace.py). Before the display-layer
+test the runner stops the session and waits until SteamVR and the Steam client have exited, so
+the layer drives the panels; afterwards the session runs again, also after a failed check.
 
 The fan control ([cooling.md](cooling.md)) has not been measured with Valve's session. Before
 Valve's session, the runner reads the hottest thermal zone every 5 s (ignoring readings of 200 °C

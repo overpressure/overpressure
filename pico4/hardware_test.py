@@ -154,7 +154,6 @@ def userspace_state(archive: Path) -> dict:
             "packages": len(packages), "systemd": packages.get("systemd"),
             "gpu_firmware": bool(manifest.get("gpu_firmware")),
             "sensor_data": bool(manifest.get("sensor_data")),
-            "openxr_runtime": "pico4-monado" in packages,
             "vr_display": "pico4-vrdisplay" in packages,
             "steamvr": "deckard-steamvr-rel" in packages}
 
@@ -584,42 +583,22 @@ class Runner:
         self.save()
         require(code.strip() == "0", "Head IMU check failed")
         userspace.validate_imu(value)
-        if state["openxr_runtime"]:
-            paused = self.pause_valve_session()
+        if state.get("vr_display"):
+            paused = self.pause_session()
             try:
-                self.openxr_pose(state, userspace.imu_tilt_deg(value))
+                self.vr_display(state)
             finally:
                 if paused:
                     self.resume_session()
 
-    def pause_valve_session(self):
-        """Stops a configured Valve session for Monado's checks; True if it ran.
+    def pause_session(self):
+        """Stops the session for the display checks; True if it ran.
 
-        SteamVR's driver_monado holds the hardware that Monado's service opens
-        (pico4-monado.service), so its clients get no system while the installed
-        system's Valve session runs. The session's stop returns before the user
-        manager has stopped SteamVR and the Steam client, so this waits for them
-        (bounded): a check started earlier lost the controller radio and frames.
+        Valve's session holds the panels and the controller radio (SteamVR's
+        driver_monado). The session's stop returns before the user manager has
+        stopped SteamVR and the Steam client, so this waits for them (bounded):
+        a check started earlier lost the controller radio and frames.
         """
-        output = self.ssh(f"if grep -qs '^PICO4_SESSION_TARGET=gamescope-session.target$' {userspace.SESSION_CONF} && "
-                          "systemctl is-active -q pico4-session.service; then systemctl stop pico4-session.service; "
-                          f"for i in $(seq {userspace.SESSION_STOP_SECONDS}); do "
-                          f"pgrep -u {userspace.SESSION_USER} -x '{userspace.SESSION_PROCESSES}' >/dev/null || break; "
-                          "sleep 1; done; echo SESSION-PAUSED; fi", userspace.SESSION_STOP_SECONDS + 60)
-        return "SESSION-PAUSED" in output
-
-    def resume_session(self):
-        """Starts the configured session again, unless Valve's session check already did."""
-        self.ssh("systemctl is-active -q pico4-session.service || { systemctl reset-failed pico4-session.service; "
-                 "systemctl start pico4-session.service; }; true", 90)
-
-    def openxr_pose(self, state, accel_tilt):
-        """Head pose through the OpenXR loader and the Monado service with its PICO 4 driver (headless).
-
-        Monado runs as a system service (docs/session.md); the root clients here
-        reach its socket through MONADO_RUNTIME_DIR.
-        """
-        print(">> OpenXR head pose: Monado PICO 4 driver", flush=True)
         for name, command in (("session", "loginctl list-sessions --no-pager; loginctl user-status steamos --no-pager -l; "
                                           "runuser -u steamos -- env XDG_RUNTIME_DIR=/run/user/1000 "
                                           "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "
@@ -628,70 +607,22 @@ class Runner:
                 (self.folder / f"userspace-{name}.txt").write_text(self.ssh(command, 60), encoding="utf-8")
             except (ValueError, OSError) as exc:
                 (self.folder / f"userspace-{name}.txt").write_text(f"unavailable: {exc}\n", encoding="utf-8")
-        # The client starts the service (socket activation), a fresh one.
-        output = self.ssh(f"systemctl stop pico4-monado.service 2>/dev/null; XDG_RUNTIME_DIR={userspace.MONADO_RUNTIME_DIR} "
-                          "pico4-openxr-pose 10 10 2>/run/pico4-poc/openxr-pose.log; "
-                          "echo EXIT=$?", 180)
-        report, _, code = output.rpartition("EXIT=")
-        (self.folder / "userspace-openxr-pose.json").write_text(report.strip() + "\n", encoding="utf-8")
-        try:
-            (self.folder / "userspace-openxr-pose.log").write_text(
-                self.ssh("cat /run/pico4-poc/openxr-pose.log", 30), encoding="utf-8")
-        except (ValueError, OSError) as exc:
-            (self.folder / "userspace-openxr-pose.log").write_text(f"unavailable: {exc}\n", encoding="utf-8")
-        value = json.loads(report)
-        state["openxr"] = {**{k: value.get(k) for k in (
-            "status", "system", "runtime", "located", "orientation_tracked", "invalid_after_warmup",
-            "final_tilt_from_vertical_deg", "heading_rate_deg_per_s")}, "accel_tilt_deg": round(accel_tilt, 3)}
-        self.save()
-        require(code.strip() == "0", "OpenXR head pose check failed")
-        userspace.validate_openxr_pose(value, accel_tilt)
-        self.openxr_display(state)
+        output = self.ssh("if systemctl is-active -q pico4-session.service; then systemctl stop pico4-session.service; "
+                          f"for i in $(seq {userspace.SESSION_STOP_SECONDS}); do "
+                          f"pgrep -u {userspace.SESSION_USER} -x '{userspace.SESSION_PROCESSES}' >/dev/null || break; "
+                          "sleep 1; done; echo SESSION-PAUSED; fi", userspace.SESSION_STOP_SECONDS + 60)
+        return "SESSION-PAUSED" in output
 
-    def openxr_display(self, state):
-        """Frames from an OpenXR client through Monado's compositor to both panels (KMS target).
-
-        The client submits a projection and a quad layer, so Monado composes
-        through its layer squasher, the heavier of its two paths.
-        """
-        print(">> OpenXR display: Monado compositor on the panels", flush=True)
-        # A fresh service for this client: the KMS target's statistics cover the
-        # service's lifetime, and an idle stretch before the client's frames
-        # (the pose client above renders none) would count against the rates.
-        output = self.ssh(f"systemctl stop pico4-monado.service 2>/dev/null; XDG_RUNTIME_DIR={userspace.MONADO_RUNTIME_DIR} "
-                          f"pico4-openxr-display {userspace.DISPLAY_SECONDS} "
-                          "2>/run/pico4-poc/openxr-display.log; echo EXIT=$?", 120)
-        report, _, code = output.rpartition("EXIT=")
-        (self.folder / "userspace-openxr-display.json").write_text(report.strip() + "\n", encoding="utf-8")
-        # The service's KMS target writes its statistics when the service stops
-        # (paths from pico4-monado.service); the socket starts it again for the
-        # next client.
-        kms_report = self.ssh(f"systemctl stop pico4-monado.service 2>/dev/null; cat {userspace.MONADO_RUNTIME_DIR}/kms.json", 60)
-        (self.folder / "userspace-openxr-display-kms.json").write_text(kms_report.strip() + "\n", encoding="utf-8")
-        for name, command in (("openxr-display.log", "cat /run/pico4-poc/openxr-display.log"),
-                              ("monado-journal.txt", "journalctl -b --no-pager -o short-monotonic "
-                                                     "-u pico4-monado.service -u pico4-session.service")):
-            try:
-                (self.folder / f"userspace-{name}").write_text(self.ssh(command, 30), encoding="utf-8")
-            except (ValueError, OSError) as exc:
-                (self.folder / f"userspace-{name}").write_text(f"unavailable: {exc}\n", encoding="utf-8")
-        value, kms = json.loads(report), json.loads(kms_report)
-        state["openxr_display"] = {
-            **{k: value.get(k) for k in ("status", "system", "eye_size", "frames", "frame_hz", "late_frames",
-                                         "max_frame_interval_ms")},
-            "kms": {k: kms.get(k) for k in ("target", "mode", "format", "commits", "commit_hz", "vblank_hz",
-                                            "repeated_vblanks", "retire_timeouts", "gpu_wait_ms", "eye_mean_rgb")}}
-        self.save()
-        require(code.strip() == "0", "OpenXR display check failed")
-        userspace.validate_openxr_display(value, kms)
-        if state.get("vr_display"):
-            self.vr_display(state)
+    def resume_session(self):
+        """Starts the session again, unless Valve's session check already did."""
+        self.ssh("systemctl is-active -q pico4-session.service || { systemctl reset-failed pico4-session.service; "
+                 "systemctl start pico4-session.service; }; true", 90)
 
     def vr_display(self, state):
         """SteamVR's display path: the pico4-vrdisplay layer shows a VK_KHR_display swapchain on the panels.
 
         The test client drives the layer the way SteamVR's compositor does
-        (docs/session.md); the Monado service above has released the display.
+        (docs/session.md); the session is stopped meanwhile.
         """
         print(">> SteamVR display layer: VK_KHR_display on the panels", flush=True)
         output = self.ssh("systemctl stop pico4-monado.service 2>/dev/null; PICO4_VRDISPLAY=1 "

@@ -481,7 +481,7 @@ mkdir -p "$T/mnt/vendor/persist"
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
-    pico4-monado.socket pico4-session.service pico4-fan.service pico4-session-fallback.path \
+    pico4-monado.socket pico4-session.service pico4-fan.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
     pico4-splash.service pico4-powerkey.service pico4-persist.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,

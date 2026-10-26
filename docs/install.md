@@ -43,9 +43,8 @@ come from the image ([stage1.md](stage1.md), [xr.md](xr.md)).
   the system, about 15 s after the kernel; it survives the switch to systemd, whose
   `pico4-splash.service` takes the display from it at about 29 s. It sets the panels' 90 Hz
   mode on the six stock layers and then gives up DRM master, so the next compositor (Monado,
-  SteamVR's) becomes master as usual; its commit ends the indication. Monado's session shows
-  nothing until an OpenXR application starts, so its start ends the indication there
-  (`splash-done`, from `pico4-session.service`); after four minutes it ends in any case.
+  SteamVR's) becomes master as usual; its commit ends the indication. After four minutes it
+  ends in any case.
 - **SSH host keys.** The installed system keeps the keys of its first boot (in the `/etc`
   overlay); stage 1 makes new ones on every boot, so its few seconds before the switch answer
   with another key.
@@ -165,7 +164,7 @@ the ABL to stock (`python -m pico4 cycle --restore-only`) and entering developme
 | `dev check` on the installed system | the userspace, IMU, pose and display checks pass (the display check failed once on the first, cold run with 51 late frames, then passed with 21); Valve's session passes its integration checks, its performance verdict fails on one of the known one-second stalls (as in RAM) |
 | Development loop | `dev recovery`, `dev boot` (root on zram again), `dev reboot` (stays in maintenance), `dev normal` (installed system again) |
 | Boot without the PC (cable unplugged, power button) | stage 1 switches without waiting for a PC; systemd reaches the graphical target 1 min 53 s after power-on with no failed units; the data is there; the USB link comes up when the cable is plugged in later |
-| Boot indication | stage 1 shows it 15.3 s after the kernel started, stage 2's service takes over at 29.2 s without a gap, Monado's session ends it at 68 s; Monado and SteamVR's compositor take the display from it (it exits within 0.5 s) |
+| Boot indication | stage 1 shows it 15.3 s after the kernel started, stage 2's service takes over at 29.2 s without a gap, Monado and SteamVR's compositor take the display from it (it exits within 0.5 s) |
 | Power-off | stays off without the cable; with the cable attached the headset starts again in charger mode (`androidboot.mode=charger`), and stage 1 stays there: no system, lenses dark, amber LED, waiting on the power key; `pico4-reboot` from there starts the installed system |
 
 ## Open work

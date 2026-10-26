@@ -1203,33 +1203,22 @@ The stage-2 checks, `python -m pico4 dev check` in development mode and the same
 `python -m pico4 hwtest flash-run --userspace ARCHIVE …` and `python -m pico4 cycle --userspace
 ARCHIVE` ([hardware-testing.md](hardware-testing.md)), test an archive built with sensor data
 after the userspace check: they record the sensor units' status and `pico4-imu list accel gyro`,
-then require `pico4-imu stream --rate 500 --seconds 10 --check`. With `pico4-monado` installed
-they continue, each client on a fresh Monado service. When `session.conf` selects Valve's session
-(the installed system), they stop `pico4-session.service` first, because SteamVR's
-`driver_monado` holds the hardware the service opens, and start it again afterwards, also after a
-failed check:
+then require `pico4-imu stream --rate 500 --seconds 10 --check`. They continue with SteamVR's
+display layer and Valve's session ([session.md](session.md#acceptance)); Monado's own OpenXR
+clients are not part of them.
 
-- **`pico4-openxr-pose 10 10`.** The PICO 4 system with orientation tracking, no invalid pose after
-  the first second, a tilt within 2° of the accelerometer's (from the IMU check) and a heading
-  drift below 0.5°/s.
-- **`pico4-openxr-display 30`**, with both layers, so it exercises the layer squasher:
-  - client: the PICO 4 system, frames at 95% of 90 Hz or better, at most 1% of them late;
-  - target: the frames went through `pico4_kms`, the panels refreshed within 1% of 90 Hz, at least
-    85.5 commits per second, no retire fence timeout;
-  - eyes: in the scanned-out image the left half is red and the right half blue (mean difference
-    at least 20), so each eye's content is on its own panel.
-
-  The check runs 30 s because at session end the compositor waits up to a few hundred
-  milliseconds on the last frame's fence, which would weigh on a shorter window. The runner
-  cannot see the panels: that the image appears in the lenses needs a person looking.
-
-OpenXR clients reach the driver through the Monado service; as root (the session user's clients
-find the socket in their own runtime directory):
+OpenXR clients reach the driver through the Monado service, a development runtime, with Valve's
+session stopped (SteamVR's `driver_monado` holds the same hardware). `pico4-openxr-pose` passes
+with the PICO 4 system tracking orientation, no invalid pose after the first second;
+`pico4-openxr-display` with frames at 95% of 90 Hz or better and at most 1% of them late. As
+root:
 
 ```sh
+systemctl stop pico4-session.service
 XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-pose 10 10
 XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-display 10 [--projection-only] [--sky]
 systemctl stop pico4-monado.service; cat /run/pico4-monado/kms.json
+systemctl start pico4-session.service
 ```
 
 The service writes the KMS statistics and the frame dump when it stops; they cover its whole

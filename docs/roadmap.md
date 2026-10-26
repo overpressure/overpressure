@@ -246,9 +246,9 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
   policy ([cooling.md](cooling.md)): with the fan at 30 % the 30 s session check takes the
   hottest zone from 45 °C to 69 °C, against 47 °C to 86 °C without it. Session checks run for
   30 s.
-- **Monado service.** Outside Valve's session, the default `pico4-session.target` uses Monado's
-  service as the OpenXR runtime. The two never run together, because both own the hardware;
-  `/etc/pico4-poc/session.conf` selects the target.
+- **Session.** Valve's session is the only session; it starts at boot. Monado's service remains
+  as a development runtime for the driver's own OpenXR clients, with the session stopped (both
+  own the hardware).
 - **Acceptance.** The acceptance cycle includes 30 s of Valve's session: presenting 15 s after
   the switch at about 51 frames per second, no fence or GPU timeout, the headset and both
   controllers in SteamVR.

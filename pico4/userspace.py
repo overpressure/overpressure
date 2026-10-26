@@ -112,14 +112,10 @@ def format_compat(report: dict) -> str:
 
 
 SESSION_USER = "steamos"  # the Frame's session user, logged in by pico4-session.service (docs/session.md)
-SESSION_CONF = "/etc/pico4-poc/session.conf"  # its target (PICO4_SESSION_TARGET)
 # Valve's session's processes that still run for seconds after pico4-session.service stopped
 # (its user manager stops them), and how long the runner waits for them.
 SESSION_PROCESSES = "vrserver|vrcompositor|vrwebhelper|gamescope-wl|steam|steamwebhelper"
 SESSION_STOP_SECONDS = 60
-# Root clients of the Monado service find its socket here (the session links it
-# into the user's runtime directory).
-MONADO_RUNTIME_DIR = "/run/pico4-monado"
 # Turnip with the KGSL backend; Valve's Mesa beside it has no driver for this GPU.
 TURNIP_ICD = "/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json"
 
@@ -128,7 +124,7 @@ def validate_check(value, require_vulkan: bool = False, require_fan: bool = Fals
     """Validate pico4-userspace-check JSON from the headset or QEMU.
 
     Besides systemd, /dev and the storage policy, the session user must be
-    logged in with its target active, and Monado's socket must listen. The fan
+    logged in with Valve's session target active. The fan
     service must run wherever the lens MCU's UART exists, which require_fan
     demands (the headset), and the MCU must have acknowledged its duty without an
     error since: a session must not run without cooling.
@@ -160,8 +156,6 @@ def validate_check(value, require_vulkan: bool = False, require_fan: bool = Fals
     if (session.get("user") != SESSION_USER or session.get("user_state") != "active"
             or session.get("service") != "active" or session.get("target_state") != "active"):
         raise ValueError(f"The {SESSION_USER} session is not running: {session}")
-    if session.get("monado_socket") != "active":
-        raise ValueError("Monado's socket is not listening")
     if session.get("access_denied"):
         raise ValueError(f"The {SESSION_USER} user cannot open {', '.join(session['access_denied'])}")
     fan = value.get("fan") or {}
@@ -224,85 +218,9 @@ def validate_imu(value, rate: float = IMU_RATE_HZ) -> None:
             raise ValueError(f"IMU {name} stream is missing or not monotonic")
 
 
-def imu_tilt_deg(value) -> float:
-    """Tilt of the HMD's up axis from vertical, from `pico4-imu stream` accel means.
-
-    The HMD's up axis is the IMU's +X (factory camera extrinsics, docs/xr.md).
-    """
-    mean = ((value.get("streams") or {}).get("accel") or {}).get("mean")
-    if not mean or len(mean) != 3:
-        raise ValueError("IMU result has no accelerometer mean")
-    norm = math.sqrt(sum(v * v for v in mean))
-    if norm == 0:
-        raise ValueError("IMU accelerometer mean is zero")
-    return math.degrees(math.acos(max(-1.0, min(1.0, mean[0] / norm))))
-
-
-POSE_TILT_TOLERANCE_DEG = 2.0
-POSE_HEADING_RATE_LIMIT = 0.5  # deg/s on a still headset, uncorrected gyro bias
-
-
-def validate_openxr_pose(value, accel_tilt_deg: float) -> None:
-    """Validate `pico4-openxr-pose` JSON: head pose from Monado's PICO 4 driver.
-
-    On a still headset the pose must be valid and tracked after one second,
-    tilted like the accelerometer says, and drift slowly about the vertical.
-    """
-    if not isinstance(value, dict) or value.get("schema") != 1:
-        raise ValueError("OpenXR pose check produced no schema-1 result")
-    if value.get("status") != "pass":
-        raise ValueError("OpenXR pose check failed: " + str(value.get("error", "invalid poses after warm-up")))
-    if "PICO 4" not in str(value.get("system")) or not value.get("orientation_tracking"):
-        raise ValueError(f"OpenXR system is {value.get('system')!r}, not the PICO 4 driver with orientation tracking")
-    if not value.get("orientation_tracked") or value.get("invalid_after_warmup"):
-        raise ValueError("OpenXR head orientation was not tracked throughout")
-    tilt = value.get("final_tilt_from_vertical_deg")
-    if tilt is None or abs(tilt - accel_tilt_deg) > POSE_TILT_TOLERANCE_DEG:
-        raise ValueError(f"OpenXR tilt {tilt} deg disagrees with the accelerometer ({accel_tilt_deg:.2f} deg)")
-    rate = value.get("heading_rate_deg_per_s")
-    if rate is None or abs(rate) > POSE_HEADING_RATE_LIMIT:
-        raise ValueError(f"OpenXR heading drifts at {rate} deg/s")
-
-
 DISPLAY_HZ = 90.0
-# Long enough that the stall at session end (the compositor waits up to a few hundred
-# milliseconds on the last frame's fence, docs/xr.md) does not dominate the commit rate.
-DISPLAY_SECONDS = 30
 DISPLAY_RATE_MARGIN = 0.95   # frames and commits per second, against the display rate
 DISPLAY_EYE_CONTRAST = 20.0  # mean red/blue difference that tells the eyes apart
-
-
-def validate_openxr_display(value, kms) -> None:
-    """Validate `pico4-openxr-display` JSON and the statistics of Monado's PICO 4 KMS target.
-
-    Frames must run at the display rate through the fenced KMS path, with the
-    left eye's content (red L) on the left panel and the right eye's (blue R) on
-    the right one, measured in the image that was scanned out.
-    """
-    if not isinstance(value, dict) or value.get("schema") != 1:
-        raise ValueError("OpenXR display check produced no schema-1 result")
-    if value.get("status") != "pass":
-        raise ValueError("OpenXR display check failed: " + str(value.get("error", "frame rate or tracking")))
-    if "PICO 4" not in str(value.get("system")):
-        raise ValueError(f"OpenXR system is {value.get('system')!r}, not the PICO 4 driver")
-    if (value.get("frame_hz") or 0) < DISPLAY_RATE_MARGIN * DISPLAY_HZ:
-        raise ValueError(f"OpenXR frames ran at {value.get('frame_hz')} Hz")
-    if (value.get("late_frames") or 0) > max(1, (value.get("frames") or 0) // 100):
-        raise ValueError(f"{value.get('late_frames')} late OpenXR frames")
-    if not isinstance(kms, dict) or kms.get("target") != "pico4_kms":
-        raise ValueError("Monado did not present through the PICO 4 KMS target")
-    if kms.get("retire_timeouts") or not kms.get("commits"):
-        raise ValueError("The KMS target lost display fences or committed nothing")
-    if abs((kms.get("vblank_hz") or 0) - DISPLAY_HZ) > 0.01 * DISPLAY_HZ:
-        raise ValueError(f"Panel refresh measured at {kms.get('vblank_hz')} Hz")
-    if (kms.get("commit_hz") or 0) < DISPLAY_RATE_MARGIN * DISPLAY_HZ:
-        raise ValueError(f"Monado committed {kms.get('commit_hz')} frames per second")
-    means = kms.get("eye_mean_rgb")
-    if not means or len(means) != 2:
-        raise ValueError("The KMS target recorded no scanned-out frame")
-    (left_r, _, left_b), (right_r, _, right_b) = means
-    if left_r - left_b < DISPLAY_EYE_CONTRAST or right_b - right_r < DISPLAY_EYE_CONTRAST:
-        raise ValueError(f"Scanned-out eye colours {means} do not match the left/right test pattern")
 
 
 VR_DISPLAY_SECONDS = 15

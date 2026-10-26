@@ -53,15 +53,12 @@ class SplashTests(unittest.TestCase):
         self.assertRegex(build, r"systemctl enable [^\n]*(\\\n[^\n]*)*pico4-splash\.service")
         self.assertIn("for f in pico4-reboot pico4-splash; do", build)
 
-    def test_session_without_a_compositor_ends_it(self):
+    def test_compositor_ends_it(self):
+        # Valve's session is the only one: SteamVR's compositor takes the display and the splash
+        # exits by itself; nothing stops it earlier.
         session = (ROOTFS / "usr/lib/systemd/system/pico4-session.service").read_text(encoding="utf-8")
-        self.assertIn("ExecStartPost=-+/usr/libexec/pico4-poc/splash-done", session)
-        done = (ROOTFS / "usr/libexec/pico4-poc/splash-done").read_text(encoding="utf-8")
-        # Valve's session keeps it until SteamVR's compositor takes the display.
-        keep = re.search(r"(?m)^(gamescope-session\.target[^)]*)\) ;;$", done)
-        self.assertIsNotNone(keep)
-        self.assertIn("plasma-session.target", keep.group(1))
-        self.assertIn("systemctl stop --no-block pico4-splash.service", done)
+        self.assertNotIn("splash", session)
+        self.assertFalse((ROOTFS / "usr/libexec/pico4-poc/splash-done").exists())
 
 
 if __name__ == "__main__":

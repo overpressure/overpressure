@@ -1,13 +1,13 @@
 # The session of the Frame's user, steamos, without a display manager
-# (docs/session.md): a logind session through PAM, whose user manager runs the
-# session target. The target comes from /etc/pico4-poc/session.conf
-# (PICO4_SESSION_TARGET), default pico4-session.target; after SteamVR or the session
-# failed for good, the session script reads the fallback's /run/pico4-session/override.
+# (docs/session.md): a logind session through PAM, whose user manager runs Valve's
+# session target, gamescope-session.target unless /etc/pico4-poc/session.conf
+# (PICO4_SESSION_TARGET) names another.
 [Unit]
 Description=PICO 4 user session (steamos)
+# Valve's session needs the GPU: none in QEMU.
+ConditionPathExists=/dev/kgsl-3d0
 # After the head IMU is listed: SteamVR's driver_monado probes it when SteamVR starts.
-After=systemd-user-sessions.service systemd-logind.service pico4-monado.socket pico4-sensors.target
-Wants=pico4-monado.socket
+After=systemd-user-sessions.service systemd-logind.service pico4-sensors.target
 # PICO OS's head tracker for SteamVR's driver_monado (docs/xr.md#head-tracking).
 Wants=pico4-slamd.service
 # PICO OS's CPU limits for VR while the session runs (docs/cooling.md#vr-cpu-limits).
@@ -15,23 +15,22 @@ Wants=pico4-vr-performance.service
 After=pico4-vr-performance.service
 # A session that ends by itself starts again, as sddm's Relogin=true does on the Frame: a
 # compositor that dies in a running session makes vrserver quit everything, gamescope with
-# it, and start-gamescope-session then returns 0. Five starts in five minutes fall back to
-# Monado's session (pico4-session-failed.service); deliberate restarts reset the count.
-StartLimitIntervalSec=300
+# it, and start-gamescope-session then returns 0; a SteamVR that failed for good ends it too
+# (pico4-steamvr-failed.service). After five starts in ten minutes the session stays stopped
+# until the next boot or a deliberate start, which resets the count: a SteamVR crash loop takes
+# about 75 s per session (three starts), so the limit ends it after about 15 controller radio
+# resets.
+StartLimitIntervalSec=600
 StartLimitBurst=5
-OnFailure=pico4-session-failed.service
 
 [Service]
 User=steamos
 PAMName=pico4-session
 EnvironmentFile=-/etc/pico4-poc/session.conf
 ExecStart=/usr/libexec/pico4-poc/session
-# As root ("+"), its failure ignored ("-"): the boot indication ends when a session without a
-# compositor starts.
-ExecStartPost=-+/usr/libexec/pico4-poc/splash-done
 Restart=always
 RestartSec=5
-# Restarts do not pass through the failed state, or OnFailure= runs at the first one.
+# Restarts do not pass through the failed state.
 RestartMode=direct
 KillMode=mixed
 # Valve's units stop one after another: gamescope gets 10 s, SteamVR 20 s. The default 15 s
