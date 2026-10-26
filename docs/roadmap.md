@@ -344,8 +344,11 @@ Details: [xr.md](xr.md).
 - **Models.** SteamVR draws PICO OS's own controller models, read from the headset's firmware.
 - **Haptics.** Vibration goes to the addressed controller through the station's motor command,
   the only controller command in the allowlist; firmware and OTA commands stay excluded.
-- **SteamVR.** The dashboard bindings reach SteamVR's system UI; the menu button opens the
-  dashboard, whose content comes from the Steam client, and the laser and trigger clicks work in it.
+- **SteamVR.** The controllers are SteamVR's own PICO 4 controller type (`pico_controller`), so
+  games' bindings for it, or their Touch, Index and Vive bindings through SteamVR's remapping,
+  apply; in a game this is unchecked. A press of the PICO or menu button opens the dashboard,
+  whose content comes from the Steam client, a double press the room view, and the laser and
+  trigger clicks work in it.
 
 ### Head tracking
 
