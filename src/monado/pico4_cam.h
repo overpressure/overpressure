@@ -370,6 +370,17 @@ pico4_cam_close(struct pico4_cam *cam);
 int
 pico4_cam_get_slot_info(const struct pico4_cam *cam, int slot, struct pico4_cam_slot_info *out);
 
+/*!
+ * CLOCK_BOOTTIME less CLOCK_MONOTONIC, ns: it grows by the time the system was suspended. The
+ * QTimer, which stamps the IMU samples and the camera frames, runs on through a suspend while
+ * CLOCK_MONOTONIC stands, so a QTimer-to-monotonic offset taken before it is that much off after.
+ */
+int64_t
+pico4_slept_ns(void);
+
+//! A growth of pico4_slept_ns() beyond this is a suspend (timesyncd's steering does not change it).
+#define PICO4_SLEEP_DETECT_NS 10000000
+
 #ifdef __cplusplus
 }
 #endif

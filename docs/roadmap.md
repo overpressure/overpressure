@@ -371,11 +371,10 @@ system updates. Open:
 
 1. **The way back.** `dev restore` for an installed system (stock `super`, `boot`, `recovery`,
    wiped data) is not yet verified on the headset.
-2. **Feedback and power.** The lenses show a boot indication until the session starts; the
-   default session then shows nothing until an OpenXR application starts. The power key
-   follows PICO OS (a short press suspends, 2 s held powers off); it is not yet tried on the
-   headset. A power-off with the cable attached ends in charger mode, as on PICO OS; its power
-   key and unplug handling are not yet tried on the headset.
+2. **Power.** The lenses show a boot indication until Valve's session starts. The power key
+   follows PICO OS (a short press suspends, 2 s held powers off), and a power-off with the
+   cable attached ends in charger mode, from which the key starts the system; verified on the
+   headset. That the session continues after a resume is not yet verified.
 
 ### Other hardware
 

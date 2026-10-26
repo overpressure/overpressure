@@ -257,6 +257,7 @@ struct pico4_slam
 
 	//! CLOCK_MONOTONIC minus QTimer ns, for the hardware start-of-frame stamps.
 	int64_t qtimer_offset_ns, qtimer_measured_ns, qtimer_first_offset_ns;
+	int64_t slept_ns; //!< pico4_slept_ns() when the offset was taken.
 	uint64_t frames_boot_time; //!< Scene frames without a hardware stamp (boot-time stamp used).
 
 	//! PICO OS's tracker through pico4-slamd (PICO4_SLAM_BACKEND=stock).
@@ -608,10 +609,12 @@ frame_sof_ns(struct pico4_slam *s, const struct pico4_cam_frame *f)
 {
 	if (f->sof_qtimer_ns != 0) {
 		// Taken again each second: timesyncd steers CLOCK_MONOTONIC against the QTimer (pico4_hmd.c).
-		int64_t now = os_monotonic_get_ns();
-		if (now - s->qtimer_measured_ns >= U_TIME_1S_IN_NS) {
+		// And at once after a suspend, through which the QTimer runs on (pico4_slept_ns()).
+		int64_t now = os_monotonic_get_ns(), slept = pico4_slept_ns();
+		if (now - s->qtimer_measured_ns >= U_TIME_1S_IN_NS || slept - s->slept_ns > PICO4_SLEEP_DETECT_NS) {
 			s->qtimer_offset_ns = qtimer_offset();
 			s->qtimer_measured_ns = now;
+			s->slept_ns = slept;
 		}
 		return f->sof_qtimer_ns + s->qtimer_offset_ns;
 	}
@@ -1226,12 +1229,20 @@ camera_thread(void *ptr)
 	struct pico4_slam *s = ptr;
 	struct pico4_cam_frame f;
 	uint64_t timeouts = 0;
-	int64_t restarted_ns = 0;
+	int64_t restarted_ns = 0, slept_ns = pico4_slept_ns();
 
 	os_thread_helper_name(&s->oth, "PICO 4 cameras");
 	os_thread_helper_lock(&s->oth);
 	while (os_thread_helper_is_running_locked(&s->oth)) {
 		os_thread_helper_unlock(&s->oth);
+		// The capture streamed into a suspend and its request manager comes back in a bad state:
+		// a new capture session after it, as after an ISP error.
+		int64_t slept = pico4_slept_ns();
+		if (slept - slept_ns > PICO4_SLEEP_DETECT_NS) {
+			SLAM_INFO(s, "The system slept %.1f s: the capture starts again", (double)(slept - slept_ns) / 1e9);
+			s->restart_why = "the system slept";
+		}
+		slept_ns = slept;
 		const char *why = s->restart_why;
 		int r = s->cam != NULL ? pico4_cam_next(s->cam, &f, 200) : -ENODEV;
 		if (r == 0) {
@@ -1325,6 +1336,7 @@ pico4_slam_create(const char *calibration_dir,
 		return NULL;
 	}
 	s->qtimer_offset_ns = s->qtimer_first_offset_ns = qtimer_offset();
+	s->slept_ns = pico4_slept_ns();
 	s->qtimer_measured_ns = os_monotonic_get_ns();
 	s->stock = strcmp(debug_get_option_pico4_slam_backend(), "basalt") != 0;
 	if (s->stock && s->cam_count != PICO4_TCAM_COUNT) {

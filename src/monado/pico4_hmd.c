@@ -22,6 +22,7 @@
  */
 
 #include "pico4_blemcu.h"
+#include "pico4_cam.h"
 #include "pico4_controller.h"
 #include "pico4_ctrack.h"
 #include "pico4_fusion.h"
@@ -206,6 +207,11 @@ struct pico4_hmd
 
 	//! Lens separation read from the IPD MCU, metres.
 	double ipd_m;
+
+	//! The newest gyro sample's time: the 3DoF filter needs each one later than the last.
+	int64_t last_gyro_ns;
+	//! Gyro samples dropped for not being later than the one before (around a suspend).
+	uint64_t gyro_backwards;
 
 	// Statistics, also shown in the debug GUI.
 	uint64_t gyro_samples;
@@ -496,6 +502,12 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 	if (!suid_equal(&s->suid, &h->gyro_suid) || !h->have_accel) {
 		return;
 	}
+	// Monado's 3DoF filter asserts on a step back, which killed vrserver after a resume.
+	if (ts <= h->last_gyro_ns) {
+		h->gyro_backwards++;
+		return;
+	}
+	h->last_gyro_ns = ts;
 	h->gyro_samples++;
 	h->last_latency_ns = os_monotonic_get_ns() - ts;
 	if (h->slam != NULL) {
@@ -644,6 +656,7 @@ imu_thread(void *ptr)
 	struct pico4_ssc_sample samples[64];
 	float rate = (float)debug_get_num_option_pico4_imu_rate();
 	int64_t last_data_ns = os_monotonic_get_ns(), clock_ns = last_data_ns;
+	int64_t slept_ns = pico4_slept_ns();
 
 	os_thread_helper_name(&h->oth, "PICO 4 IMU");
 	os_thread_helper_lock(&h->oth);
@@ -663,6 +676,18 @@ imu_thread(void *ptr)
 			calibrate_clock(h);
 			clock_ns = now;
 		}
+		/*
+		 * After a suspend the QTimer is ahead of CLOCK_MONOTONIC by the time slept: the offset is
+		 * taken again before these samples are mapped, or they would land that far in the future
+		 * and the next ones step back.
+		 */
+		int64_t slept = pico4_slept_ns();
+		if (slept - slept_ns > PICO4_SLEEP_DETECT_NS) {
+			calibrate_clock(h);
+			clock_ns = now;
+			P4_INFO(h, "The system slept %.1f s: QTimer offset taken again", (double)(slept - slept_ns) / 1e9);
+		}
+		slept_ns = slept;
 		bool gone = n == -ECONNRESET, silent = now - last_data_ns > IMU_LOST_NS;
 		if (n < 0 && !gone && !silent) {
 			P4_ERROR(h, "Reading the sensor service failed: %s", strerror(-n));
