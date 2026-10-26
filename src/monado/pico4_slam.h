@@ -23,6 +23,7 @@ struct pico4_station;
 struct pico4_fusion_slam;
 struct pico4_ctrack;
 struct pico4_passthrough;
+struct pico4_depth_mesh_info;
 
 /*!
  * Origin of the HMD frame (between the eyes) in the body frame of the factory
@@ -95,6 +96,25 @@ pico4_slam_passthrough(struct pico4_slam *s);
  */
 bool
 pico4_slam_room(struct pico4_slam *s, char out_map[40]);
+
+/*!
+ * The floor PICO OS's tracker detected in its map (its ground detection, status 1): its height
+ * @p out_y in the head pose's world (OpenXR axes, the room applied, before the tracking origin's
+ * offset). False while it has detected none, or without PICO OS's tracker.
+ */
+bool
+pico4_slam_floor(struct pico4_slam *s, float *out_y);
+
+/*!
+ * PICO OS's see-through depth mesh newer than mesh @p after (pico4_passthrough.h), from
+ * pico4-slamd: up to PICO4_DEPTH_MESH_VERTICES vertices (x, y, z) into @p vertices and
+ * PICO4_DEPTH_MESH_INDICES indices into @p indices, the vertices in the head pose's world
+ * (OpenXR axes, the room applied, before the tracking origin's offset). @p out gets all but
+ * tracking_from_mesh. False if there is none newer, or without PICO OS's tracker.
+ */
+bool
+pico4_slam_depth_mesh(
+    struct pico4_slam *s, uint64_t after, float *vertices, uint32_t *indices, struct pico4_depth_mesh_info *out);
 
 #ifdef __cplusplus
 }

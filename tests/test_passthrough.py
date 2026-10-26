@@ -175,8 +175,9 @@ class RoomViewTests(unittest.TestCase):
         # 3D room view's depth projection showed (the 2D view uses only the rotation).
         self.assertIn("math_pose_transform(&xdev->tracking_origin->initial_offset, &tracked, &pose)", pose)
 
-    def test_depth_mesh_is_an_opt_in_experiment(self):
-        # an issue: the compositor's depth-mesh protocol, written only with PICO4_ROOMVIEW_DEPTH_M.
+    def test_depth_mesh_published_as_the_frame(self):
+        # an issue: PICO OS's see-through depth mesh in the compositor's 3D room view, published
+        # as the Frame's XR service publishes its own.
         patch = read(RECIPE / "monado-steamvr-roomview-mesh.patch")
         recipe = read(RECIPE / "PKGBUILD")
         self.assertIn("monado-steamvr-roomview-mesh.patch", recipe.split("sha256sums=")[0])
@@ -184,14 +185,108 @@ class RoomViewTests(unittest.TestCase):
                         recipe.index("< monado-steamvr-roomview-mesh.patch"))
         for path in ("/meshLayout/layoutId", "/meshLayout/vertexCount", "/meshLayout/indexCount", "/meshData/meshId",
                      "/meshData/layoutId", "/meshData/elementCount", "/meshData/rawFromMeshPose",
-                     "/meshData/posePredictionBaseTime", "/meshData/meshIsUpToDate"):
+                     "/meshData/posePredictionBaseTime", "/meshData/meshIsUpToDate", "/meshData/blockDataSize"):
             self.assertIn('"%s"' % path, patch)
         self.assertIn('GetGenericInterface("IVRPaths_001", &err)', patch)
-        # Properties live in a block's header: the minimum of 16 bytes refused them (OutOfMemory).
-        self.assertIn("mesh ? 4096 : 16", patch)
-        self.assertIn('return getenv("PICO4_ROOMVIEW_DEPTH_M") != nullptr;', patch)
-        self.assertRegex(patch, r"if \(DepthMeshWanted\(\)\) \{\n\+\t\t\tp->SetBoolProperty\(props, "
+        # The Frame's queues: 512-byte headers for the path properties (16 refused them), 4 data
+        # and 2 layout blocks of one size.
+        self.assertIn("mesh ? 512 : 16, mesh ? (i == 0 ? 4 : 2) : 1, 0)", patch)
+        # Per mesh: the layout, then the data with the queue's meshIsUpToDate.
+        run = patch[patch.index("+	MeshRun()"):]
+        self.assertLess(run.index("WriteLayout(layout_id"), run.index("WriteMesh(info, vertices, layout_id"))
+        self.assertIn("pico4_hmd_depth_mesh(m_xdev, info.id", run)
+        self.assertRegex(patch, r"if \(DepthMeshSupported\(\)\) \{\n\+\t\t\tp->SetBoolProperty\(props, "
                                 r"static_cast<vr::ETrackedDeviceProperty>\(2079\), true\);")
+        self.assertNotIn("PICO4_ROOMVIEW_DEPTH_M", patch)
+        self.assertNotIn("BuildSphere", patch)
+
+    def test_depth_mesh_relative_to_the_shown_frame_head(self):
+        # The compositor draws the room view in the frame of the shown camera frame's head (its
+        # camera matrix is camera-from-head alone): a mesh in raw or standing space floated above
+        # the head. The mesh goes relative to the newest frame's head, again with each frame.
+        patch = read(RECIPE / "monado-steamvr-roomview-mesh.patch")
+        self.assertNotIn("/chaperone/standing/transform", patch)
+        self.assertNotIn("IVRServerInternal", patch)
+        run = patch[patch.index("+	MeshRun()"):]
+        self.assertIn("pico4_hmd_frame_head(m_xdev, &sequence, &frame_ns, head)", run)
+        self.assertIn("(!new_mesh && sequence == frame)", run)
+        self.assertIn("WriteMesh(info, vertices, layout_id, head, frame_ns)", run)
+        write = patch[patch.index("+	WriteMesh("):]
+        self.assertIn("v += head[4 * k + r] * (m[4 * k + c] - (c == 3 ? head[4 * k + 3] : 0));", write)
+        self.assertIn("CompositorSeconds(frame_ns)", write)
+        # The head is the one the frame carries (roomview_pose: raw space, no display lead).
+        passthrough = read(ROOT / "src/monado/pico4_passthrough.c")
+        newest = passthrough[passthrough.index("\npico4_passthrough_newest_head("):]
+        self.assertIn("memcpy(out_tracking_from_head, f->tracking_from_head", newest[:newest.index("\n}\n")])
+
+    def test_head_from_mesh_inverts_the_frame_head(self):
+        # WriteMesh's arithmetic on a turned, shifted head: the mesh origin lands at the head's
+        # inverse, and a point given in raw space comes out in the head's frame.
+        import math
+        a = 0.7
+        head = [math.cos(a), 0, math.sin(a), 0.5, 0, 1, 0, 1.2, -math.sin(a), 0, math.cos(a), -0.3]
+        mesh = [1, 0, 0, 0, 0, 1, 0, 1.6, 0, 0, 1, 0]
+        out = [[sum(head[4 * k + r] * (mesh[4 * k + c] - (head[4 * k + 3] if c == 3 else 0)) for k in range(3))
+                for c in range(4)] for r in range(3)]
+        point = [0.2, -0.1, -1.5]
+        raw = [sum(mesh[4 * r + k] * point[k] for k in range(3)) + mesh[4 * r + 3] for r in range(3)]
+        in_head = [sum(out[r][k] * point[k] for k in range(3)) + out[r][3] for r in range(3)]
+        back = [sum(head[4 * r + k] * in_head[k] for k in range(3)) + head[4 * r + 3] for r in range(3)]
+        for got, want in zip(back, raw):
+            self.assertAlmostEqual(got, want)
+
+    def test_weak_driver_calls_have_c_linkage(self):
+        # Without extern "C" a weak declaration names a C++ symbol nothing defines: it stays NULL,
+        # and the feature silently never runs.
+        for name in ("monado-steamvr-roomview-mesh.patch", "monado-steamvr-floor.patch"):
+            patch = read(RECIPE / name)
+            matches = list(re.finditer(r"(?m)^\+(.*)\n\+(pico4_hmd_\w+)\(", patch))
+            self.assertTrue(matches, name)
+            for match in matches:
+                self.assertEqual(match.group(1), 'extern "C" bool', match.group(2))
+
+    def test_depth_mesh_in_the_space_of_the_reported_poses(self):
+        # The vertices are in the head pose's world; SteamVR's raw space adds the tracking origin's
+        # offset, as roomview_pose does for the frames.
+        hmd = read(ROOT / "src/monado/pico4_hmd.c")
+        mesh = hmd[hmd.index("\npico4_hmd_depth_mesh("):]
+        mesh = mesh[:mesh.index("\n}\n")]
+        self.assertIn("offset = xdev->tracking_origin->initial_offset;", mesh)
+        self.assertIn("memcpy(out->tracking_from_mesh, m, sizeof(m));", mesh)
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        reader = slam[slam.index("\npico4_slam_depth_mesh("):]
+        reader = reader[:reader.index("\n}\n")]
+        # The slot stays valid until the writer publishes the next mesh: checked after the copy.
+        self.assertLess(reader.index("memcpy(indices"),
+                        reader.index("__atomic_load_n(&feed->meshes_written, __ATOMIC_ACQUIRE) != n"))
+        # Only while the cameras are shown; asking for a mesh then keeps pico4-slamd feeding its
+        # depth pipeline.
+        self.assertLess(reader.index("feed != NULL && pico4_passthrough_streaming(s->passthrough)"),
+                        reader.index("__atomic_store_n(&feed->mesh_wanted_ns, (uint64_t)os_monotonic_get_ns()"))
+
+    def test_depth_mesh_room_turn_matches_the_poses(self):
+        # The room's turn and shift on a vertex (OpenXR axes) as stock_in_room turns a position
+        # (tracker axes x up, y left, z back) before stock_to_openxr's axis change.
+        import math
+        yaw, shift = 0.7, (0.1, -0.4, 0.25)
+        vertex = (0.3, -1.2, -2.0)  # x right, y up, z back
+        tracker = (vertex[1], -vertex[0], vertex[2])
+        c, s = math.cos(yaw), math.sin(yaw)
+        room = (tracker[0] + shift[0], c * tracker[1] - s * tracker[2] + shift[1],
+                s * tracker[1] + c * tracker[2] + shift[2])
+        expected = (-room[1], room[0], room[2])
+        # The driver's formula, as written in pico4_slam_depth_mesh.
+        ty, tz = -vertex[0], vertex[2]
+        up = vertex[1] + shift[0]
+        left = c * ty - s * tz + shift[1]
+        back = s * ty + c * tz + shift[2]
+        for a, b in zip((-left, up, back), expected):
+            self.assertAlmostEqual(a, b)
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        for line in ("const double ty = -v[0], tz = v[2];", "const double up = v[1] + feed->room_t[0];",
+                     "const double left = c * ty - sn * tz + feed->room_t[1];",
+                     "const double back = sn * ty + c * tz + feed->room_t[2];", "v[0] = (float)-left;"):
+            self.assertIn(line, slam)
 
     def test_driver_starts_the_export_for_steamvrs_camera(self):
         hmd = read(ROOT / "src/monado/pico4_hmd.c")

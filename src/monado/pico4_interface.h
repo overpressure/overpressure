@@ -100,6 +100,39 @@ pico4_hmd_camera_frame(struct xrt_device *xdev,
                        uint32_t stride,
                        struct pico4_passthrough_frame *out);
 
+/*!
+ * SteamVR's room setup (docs/xr.md#room-setup): the height of the floor PICO OS's tracker
+ * detected, in SteamVR's raw tracking space, as the Frame's XR service reports it. False for
+ * other devices and while the tracker has detected none.
+ *
+ * @ingroup drv_pico4
+ */
+bool
+pico4_hmd_floor(struct xrt_device *xdev, float *out_y);
+
+/*!
+ * SteamVR's 3D room view (docs/xr.md#passthrough): PICO OS's see-through depth mesh newer than
+ * mesh @p after, its vertices (x, y, z; up to PICO4_DEPTH_MESH_VERTICES) into @p vertices and its
+ * triangles (up to PICO4_DEPTH_MESH_INDICES indices) into @p indices, with its time and its place
+ * in SteamVR's raw tracking space. False if there is none newer, or for other devices.
+ *
+ * @ingroup drv_pico4
+ */
+bool
+pico4_hmd_depth_mesh(
+    struct xrt_device *xdev, uint64_t after, float *vertices, uint32_t *indices, struct pico4_depth_mesh_info *out);
+
+/*!
+ * SteamVR's 3D room view: the newest room view frame's sequence, exposure time (CLOCK_MONOTONIC)
+ * and head in SteamVR's raw tracking space (row-major 3x4). The compositor draws the depth mesh
+ * relative to the head of the camera frame it shows (docs/xr.md#passthrough). False before the
+ * first frame, or for other devices.
+ *
+ * @ingroup drv_pico4
+ */
+bool
+pico4_hmd_frame_head(struct xrt_device *xdev, uint64_t *out_sequence, int64_t *out_timestamp_ns, double out[12]);
+
 #ifdef __cplusplus
 }
 #endif

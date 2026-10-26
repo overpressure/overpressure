@@ -66,6 +66,7 @@
 #include "util/u_frame.h"
 #include "util/u_misc.h"
 
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
@@ -265,6 +266,7 @@ struct pico4_slam
 	struct pico4_slam_feed *feed; //!< NULL until pico4-slamd's shared memory is there.
 	uint32_t stock_generation;    //!< Ours, from the attach.
 	uint32_t stock_room_logged;   //!< The room state last logged.
+	uint32_t mesh_asking;         //!< Depth meshes asked for (pico4_slam_depth_mesh), as last logged.
 	uint64_t stock_ae_seen;       //!< pico4-slamd's auto-exposure results taken (ae_written).
 	bool stock_ae_logged;         //!< Whose auto exposure runs, as last logged.
 	int64_t feed_retry_ns;
@@ -1574,6 +1576,88 @@ pico4_slam_room(struct pico4_slam *s, char out_map[40])
 	return true;
 }
 
+bool
+pico4_slam_floor(struct pico4_slam *s, float *out_y)
+{
+	struct pico4_slam_feed_pose p;
+	if (s == NULL || !s->stock || !stock_newest(s, &p) || p.floor_status != 1) {
+		return false;
+	}
+	// The floor lies floor_height below the world's origin along its up axis (x), which is
+	// OpenXR's y; in a saved room the room's shift moves it (stock_in_room).
+	struct pico4_slam_feed *feed = s->feed;
+	double y = -p.floor_height;
+	if (__atomic_load_n(&feed->room_state, __ATOMIC_ACQUIRE) == 1 && feed->room_generation == s->stock_generation) {
+		y += feed->room_t[0];
+	}
+	*out_y = (float)y;
+	return true;
+}
+
+static_assert(PICO4_DEPTH_MESH_VERTICES == PICO4_SLAM_FEED_MESH_VERTICES, "the feed's mesh size");
+static_assert(PICO4_DEPTH_MESH_INDICES == PICO4_SLAM_FEED_MESH_INDICES, "the feed's mesh size");
+
+/*!
+ * libphotoid writes its vertices in the tracker's world turned by a fixed quarter turn about z,
+ * (x, y, z) = (-y, x, z) of the world (measured: gravity along its y): with the tracker's axes
+ * (x up, y left, z back) these are the HMD axes of stock_to_openxr. So the vertices are in the
+ * OpenXR world as they are; in a saved room they get the room's turn and shift as the poses.
+ */
+bool
+pico4_slam_depth_mesh(
+    struct pico4_slam *s, uint64_t after, float *vertices, uint32_t *indices, struct pico4_depth_mesh_info *out)
+{
+	struct pico4_slam_feed *feed = s != NULL && s->stock ? __atomic_load_n(&s->feed, __ATOMIC_ACQUIRE) : NULL;
+	// Only while the cameras are shown (the room view asks for frames): asking keeps pico4-slamd
+	// feeding its depth pipeline, which otherwise idles.
+	const uint32_t asking = feed != NULL && pico4_passthrough_streaming(s->passthrough);
+	if (s != NULL && __atomic_exchange_n(&s->mesh_asking, asking, __ATOMIC_RELAXED) != asking) {
+		SLAM_INFO(s, "Depth mesh: %s", asking ? "the cameras are shown, asking pico4-slamd for meshes" : "not asked for");
+	}
+	if (!asking) {
+		return false;
+	}
+	__atomic_store_n(&feed->mesh_wanted_ns, (uint64_t)os_monotonic_get_ns(), __ATOMIC_RELEASE);
+	for (int attempt = 0; attempt < 3; attempt++) {
+		const uint64_t n = __atomic_load_n(&feed->meshes_written, __ATOMIC_ACQUIRE);
+		if (n <= after) {
+			return false;
+		}
+		const struct pico4_slam_feed_mesh *m = &feed->meshes[(n - 1) % PICO4_SLAM_FEED_MESHES];
+		const uint32_t nv = m->vertex_count, ni = m->index_count;
+		if (nv > PICO4_DEPTH_MESH_VERTICES || ni > PICO4_DEPTH_MESH_INDICES) {
+			return false;
+		}
+		out->id = n;
+		out->timestamp_ns = m->ts_ns;
+		out->vertex_count = nv;
+		out->index_count = ni;
+		memcpy(vertices, m->vertices, (size_t)nv * 3 * sizeof(float));
+		memcpy(indices, m->indices, (size_t)ni * sizeof(uint32_t));
+		// The writer takes this slot again only after it has published the next mesh.
+		if (__atomic_load_n(&feed->meshes_written, __ATOMIC_ACQUIRE) != n) {
+			continue;
+		}
+		if (__atomic_load_n(&feed->room_state, __ATOMIC_ACQUIRE) == 1 && feed->room_generation == s->stock_generation) {
+			// The room's turn about the tracker's up axis (x), then its shift, in OpenXR axes:
+			// tracker (x, y, z) = (y, -x, z) of the vertex.
+			const double c = cos(feed->room_yaw), sn = sin(feed->room_yaw);
+			for (uint32_t i = 0; i < nv; i++) {
+				float *v = &vertices[3 * i];
+				const double ty = -v[0], tz = v[2];
+				const double up = v[1] + feed->room_t[0];
+				const double left = c * ty - sn * tz + feed->room_t[1];
+				const double back = sn * ty + c * tz + feed->room_t[2];
+				v[0] = (float)-left;
+				v[1] = (float)up;
+				v[2] = (float)back;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
 /*!
  * The stock tracker's pose at @p at_ns, which lies before its newest pose (an LED exposure for the
  * controller tracker): interpolated between the two ring entries around it. False if the ring no
@@ -1915,6 +1999,26 @@ pico4_slam_room(struct pico4_slam *s, char out_map[40])
 {
 	(void)s;
 	(void)out_map;
+	return false;
+}
+
+bool
+pico4_slam_floor(struct pico4_slam *s, float *out_y)
+{
+	(void)s;
+	(void)out_y;
+	return false;
+}
+
+bool
+pico4_slam_depth_mesh(
+    struct pico4_slam *s, uint64_t after, float *vertices, uint32_t *indices, struct pico4_depth_mesh_info *out)
+{
+	(void)s;
+	(void)after;
+	(void)vertices;
+	(void)indices;
+	(void)out;
 	return false;
 }
 

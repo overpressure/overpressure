@@ -49,6 +49,22 @@ struct pico4_passthrough_frame
 	uint32_t exposure_us;  //!< The left camera's exposure.
 };
 
+/*!
+ * PICO OS's see-through depth mesh (docs/xr.md#passthrough): the room around the head as its
+ * libphotoid computes it from each pair of the forward cameras in pico4-slamd. Triangles of three
+ * indices each, counter-clockwise seen from the head; at most a 128 x 128 hemisphere grid.
+ */
+#define PICO4_DEPTH_MESH_VERTICES 16384
+#define PICO4_DEPTH_MESH_INDICES (6 * 127 * 127)
+struct pico4_depth_mesh_info
+{
+	uint64_t id;          //!< Counts the meshes, from 1.
+	int64_t timestamp_ns; //!< CLOCK_MONOTONIC, the middle of the pair's exposure.
+	uint32_t vertex_count, index_count;
+	//! The vertices' space in SteamVR's raw tracking space, row-major 3x4 (HmdMatrix34_t).
+	double tracking_from_mesh[12];
+};
+
 struct pico4_passthrough;
 
 /*!
@@ -105,6 +121,16 @@ typedef bool (*pico4_passthrough_pose_fn)(void *ctx, int64_t timestamp_ns, doubl
  */
 bool
 pico4_passthrough_export(struct pico4_passthrough *p, const char *path, pico4_passthrough_pose_fn pose, void *ctx);
+
+/*!
+ * The newest frame in the room view's ring: its sequence, exposure time and head (raw space,
+ * row-major 3x4). False before the first frame with a valid head, or without the export.
+ */
+bool
+pico4_passthrough_newest_head(const struct pico4_passthrough *p,
+                              uint64_t *out_sequence,
+                              int64_t *out_timestamp_ns,
+                              double out_tracking_from_head[12]);
 
 //! Turns one raw image upright (pico4_tcam_upright's @p turn) into 8 bits: black level 16 off, times @p gain.
 void

@@ -1532,6 +1532,63 @@ pico4_hmd_camera_frame(struct xrt_device *xdev,
 }
 
 bool
+pico4_hmd_depth_mesh(
+    struct xrt_device *xdev, uint64_t after, float *vertices, uint32_t *indices, struct pico4_depth_mesh_info *out)
+{
+	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose ||
+	    !pico4_slam_depth_mesh(pico4_hmd(xdev)->slam, after, vertices, indices, out)) {
+		return false;
+	}
+	// The vertices are in the head pose's world: SteamVR's raw tracking space is that world with
+	// the tracking origin's offset applied, as on every reported pose (roomview_pose).
+	struct xrt_pose offset = XRT_POSE_IDENTITY;
+	if (xdev->tracking_origin != NULL) {
+		offset = xdev->tracking_origin->initial_offset;
+		math_quat_normalize(&offset.orientation);
+	}
+	const double x = offset.orientation.x, y = offset.orientation.y, z = offset.orientation.z,
+	             w = offset.orientation.w;
+	const double m[12] = {
+	    1 - 2 * (y * y + z * z), 2 * (x * y - z * w),     2 * (x * z + y * w),     offset.position.x,
+	    2 * (x * y + z * w),     1 - 2 * (x * x + z * z), 2 * (y * z - x * w),     offset.position.y,
+	    2 * (x * z - y * w),     2 * (y * z + x * w),     1 - 2 * (x * x + y * y), offset.position.z,
+	};
+	memcpy(out->tracking_from_mesh, m, sizeof(m));
+	return true;
+}
+
+bool
+pico4_hmd_frame_head(struct xrt_device *xdev, uint64_t *out_sequence, int64_t *out_timestamp_ns, double out[12])
+{
+	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose) {
+		return false;
+	}
+	struct pico4_passthrough *p = pico4_slam_passthrough(pico4_hmd(xdev)->slam);
+	return pico4_passthrough_newest_head(p, out_sequence, out_timestamp_ns, out);
+}
+
+bool
+pico4_hmd_floor(struct xrt_device *xdev, float *out_y)
+{
+	float y;
+	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose ||
+	    !pico4_slam_floor(pico4_hmd(xdev)->slam, &y)) {
+		return false;
+	}
+	// A point of the floor in SteamVR's raw tracking space: the tracking origin's offset applied,
+	// as on every reported pose.
+	const struct xrt_vec3 floor = {0, y, 0};
+	struct xrt_vec3 point = floor;
+	if (xdev->tracking_origin != NULL) {
+		struct xrt_pose offset = xdev->tracking_origin->initial_offset;
+		math_quat_normalize(&offset.orientation);
+		math_pose_transform_point(&offset, &floor, &point);
+	}
+	*out_y = point.y;
+	return true;
+}
+
+bool
 pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe)
 {
 	char map[40];
