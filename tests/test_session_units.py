@@ -154,10 +154,13 @@ class FrameSettingsTest(unittest.TestCase):
         self.assertIs(settings["driver_frame_hmd"]["enable"], False)
         # an issue: standby follows the wear sensor and pauses the compositor, as on the Frame.
         self.assertIs(settings["power"]["pauseCompositorOnStandby"], True)
-        # an issue: the dashboard's room setup in the headset needs the HMD to say it supports it.
+        # an issue: the dashboard's room setup in the headset needs the HMD to say it supports it,
+        # and its steps past the recenter need 11004 too.
         room = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch").read_text(encoding="utf-8")
-        self.assertIn("SetBoolProperty(m_ulPropertyContainer, static_cast<vr::ETrackedDeviceProperty>(11003), true)",
-                      room)
+        for prop in (11003, 11004):
+            self.assertIn(f"SetBoolProperty(m_ulPropertyContainer, static_cast<vr::ETrackedDeviceProperty>({prop}), true)",
+                          room)
+        self.assertNotIn("inHMDRoomSetupDebug", json.dumps(settings))
         # Facet builds its mesh from the driver's exact inverse distortion.
         patch = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-pico4.patch").read_text(encoding="utf-8")
         self.assertIn("IVRDisplayComponent_Version3", patch)

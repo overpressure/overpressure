@@ -358,7 +358,8 @@ Details: [xr.md](xr.md).
   without a lost pose. A covered camera and a dim room are unchecked.
 - Its inputs are PICO OS's: the lens-shading table by the camera modules' vendor and PICO
   OS's own auto exposure. Its maps persist on the data partition, and SteamVR gets a tracking
-  universe per room; SteamVR's room setup in the headset is not yet tried.
+  universe per room; SteamVR's room setup runs in the headset, its floor accuracy and the play
+  area after a reboot are unchecked.
 
 ### Standalone boot
 

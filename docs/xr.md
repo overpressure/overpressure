@@ -792,11 +792,17 @@ file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's 
   reports its hash as `Prop_CurrentUniverseId_Uint64` once the room is settled, so SteamVR keeps
   a play area per room in `chaperone_info.vrchap`, back in its place whenever the tracker
   relocalises in that room, and asks for a room setup in a new one. Until then the universe is 2.
-- **Room setup in the headset.** SteamVR's dashboard offers its room setup (floor, play area) on
-  the Play Area page only for an HMD that reports `Prop_SupportsInHMDRoomSetup_Bool` (11003), as
-  the Frame's driver does; `driver_monado` reports it. Without it the page showed only the
-  Chaperone and Environment sections; Developer › Quick Calibration (floor and standing
-  position) works either way.
+- **Room setup in the headset.** SteamVR's dashboard shows its Space Setup menu (recenter,
+  playspace setup, floor height, clear playspace) only for an HMD that reports
+  `Prop_SupportsInHMDRoomSetup_Bool` (11003). Its steps past the recenter also need
+  `Prop_VRLinkClientHMDSupportsRoomSetupRequests_Bool` (11004): without it the dashboard drops
+  them ("HMD doesnt support setRoomSetupStep") and the buttons do nothing. Away from a VR Link
+  server the steps run in SteamVR itself (`VRChaperoneSetup`), which keeps the result per
+  universe in `chaperone_info.vrchap`. `driver_monado` reports both properties; the bundled
+  `openvr_driver.h` predates their names. The playspace setup and the floor height adjustment
+  run in the headset; the floor is hard to set exactly, and the 2D room view shown
+  throughout is uncomfortable ([Passthrough](#passthrough)). Developer › Quick Calibration
+  (floor and standing position) works either way.
 
 ### Frame times
 
@@ -1398,8 +1404,8 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 
 1. **PICO OS's tracker.** Worn it tracks walking and fast turns as on PICO OS; a covered
    camera and a dim room are unchecked, and so is PICO OS's auto exposure worn.
-   [Room setup](#room-setup): the play area drawn in SteamVR's room setup, and coming back to it
-   after a reboot, are not yet tried.
+   [Room setup](#room-setup): SteamVR's room setup runs in the headset; the floor's accuracy,
+   the boundary at the play area's edge and coming back to it after a reboot are unchecked.
 2. **Controllers in applications.** SteamVR's dashboard toggles but stays hidden without the
    Steam client ([session.md](session.md)), so the laser, clicking and the grip frame are
    unchecked in it. A vibration strong enough to feel has not yet come from a SteamVR
