@@ -169,8 +169,29 @@ class RoomViewTests(unittest.TestCase):
         hmd = read(ROOT / "src/monado/pico4_hmd.c")
         pose = hmd[hmd.index("\nroomview_pose(void *ctx"):]
         pose = pose[:pose.index("\n}\n")]
-        self.assertIn("ctrack_head(pico4_hmd((struct xrt_device *)ctx), timestamp_ns, &pose)", pose)
+        self.assertIn("ctrack_head(pico4_hmd(xdev), timestamp_ns, &tracked)", pose)
         self.assertNotIn("xrt_device_get_tracked_pose", pose)
+        # But in the space of the reported poses: with the tracking origin's offset (1.6 m), which the
+        # 3D room view's depth projection showed (the 2D view uses only the rotation).
+        self.assertIn("math_pose_transform(&xdev->tracking_origin->initial_offset, &tracked, &pose)", pose)
+
+    def test_depth_mesh_is_an_opt_in_experiment(self):
+        # an issue: the compositor's depth-mesh protocol, written only with PICO4_ROOMVIEW_DEPTH_M.
+        patch = read(RECIPE / "monado-steamvr-roomview-mesh.patch")
+        recipe = read(RECIPE / "PKGBUILD")
+        self.assertIn("monado-steamvr-roomview-mesh.patch", recipe.split("sha256sums=")[0])
+        self.assertLess(recipe.index("< monado-steamvr-pico-controller.patch"),
+                        recipe.index("< monado-steamvr-roomview-mesh.patch"))
+        for path in ("/meshLayout/layoutId", "/meshLayout/vertexCount", "/meshLayout/indexCount", "/meshData/meshId",
+                     "/meshData/layoutId", "/meshData/elementCount", "/meshData/rawFromMeshPose",
+                     "/meshData/posePredictionBaseTime", "/meshData/meshIsUpToDate"):
+            self.assertIn('"%s"' % path, patch)
+        self.assertIn('GetGenericInterface("IVRPaths_001", &err)', patch)
+        # Properties live in a block's header: the minimum of 16 bytes refused them (OutOfMemory).
+        self.assertIn("mesh ? 4096 : 16", patch)
+        self.assertIn('return getenv("PICO4_ROOMVIEW_DEPTH_M") != nullptr;', patch)
+        self.assertRegex(patch, r"if \(DepthMeshWanted\(\)\) \{\n\+\t\t\tp->SetBoolProperty\(props, "
+                                r"static_cast<vr::ETrackedDeviceProperty>\(2079\), true\);")
 
     def test_driver_starts_the_export_for_steamvrs_camera(self):
         hmd = read(ROOT / "src/monado/pico4_hmd.c")

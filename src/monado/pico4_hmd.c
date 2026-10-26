@@ -1454,16 +1454,24 @@ pico4_hmd_get_presence(struct xrt_device *xdev, bool *out_worn)
 
 /*!
  * The head at the middle of the exposure @p timestamp_ns, in the space driver_monado reports to
- * SteamVR (world from driver is the identity). Without the prediction and display lead the
- * reported poses carry: with them the compositor placed each camera frame as if taken 29 ms
- * later, and the room trailed the head's turns.
+ * SteamVR: the tracking origin's offset (Monado's 1.6 m) applied, as on every reported pose
+ * (world from driver is the identity). Without it the 3D room view placed each frame 1.6 m below
+ * the head and the image stretched towards the top and bottom; the 2D view only uses rotation.
+ * Without the prediction and display lead the reported poses carry: with them the compositor
+ * placed each camera frame as if taken 29 ms later, and the room trailed the head's turns.
  */
 static bool
 roomview_pose(void *ctx, int64_t timestamp_ns, double out[12])
 {
-	struct xrt_pose pose;
-	if (!ctrack_head(pico4_hmd((struct xrt_device *)ctx), timestamp_ns, &pose)) {
+	struct xrt_device *xdev = ctx;
+	struct xrt_pose tracked;
+	if (!ctrack_head(pico4_hmd(xdev), timestamp_ns, &tracked)) {
 		return false;
+	}
+	struct xrt_pose pose = tracked;
+	if (xdev->tracking_origin != NULL) {
+		math_pose_transform(&xdev->tracking_origin->initial_offset, &tracked, &pose);
+		math_quat_normalize(&pose.orientation);
 	}
 	const struct xrt_quat q = pose.orientation; // normalized by ctrack_head
 	const double x = q.x, y = q.y, z = q.z, w = q.w;

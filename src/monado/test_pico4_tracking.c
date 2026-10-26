@@ -584,11 +584,24 @@ now_ns(void)
 	return (int64_t)ts.tv_sec * 1000000000ll + ts.tv_nsec;
 }
 
-//! Waits up to a second for the driver's export thread to reach @p written frames.
+/*!
+ * Pushes the pair until the driver's export thread reaches @p written frames, for up to a second.
+ * A push that finds the export thread holding the lock is dropped by design (the camera thread
+ * never waits), which happens now and then on a slow or emulated build machine.
+ */
 static bool
-wait_written(struct pico4_roomview *rv, uint64_t written)
+push_until_written(struct pico4_passthrough *p,
+                   struct pico4_roomview *rv,
+                   const uint16_t *left,
+                   const uint16_t *right,
+                   int64_t timestamp_ns,
+                   uint64_t written)
 {
+	// Again only after 250 ms: a second push before the first is written would replace it.
 	for (int i = 0; i < 1000; i++) {
+		if (i % 250 == 0 && __atomic_load_n(&rv->frames_written, __ATOMIC_ACQUIRE) < written) {
+			pico4_passthrough_push(p, left, right, PICO4_PASSTHROUGH_SRC_W, timestamp_ns, 100, 1.0f);
+		}
 		if (__atomic_load_n(&rv->frames_written, __ATOMIC_ACQUIRE) >= written) {
 			return true;
 		}
@@ -653,16 +666,14 @@ test_roomview(void)
 		usleep(1000);
 	}
 	EXPECT(pico4_passthrough_streaming(p));
-	pico4_passthrough_push(p, left, right, PICO4_PASSTHROUGH_SRC_W, 123456789, 100, 1.0f);
-	EXPECT(wait_written(rv, 1));
+	EXPECT(push_until_written(p, rv, left, right, 123456789, 1));
 	const struct pico4_roomview_frame *f = &rv->frames[0];
 	EXPECT(f->sequence == 1 && f->timestamp_ns == 123456789 && f->pose_valid == 1);
 	EXPECT(f->tracking_from_head[3] == 0.5 && f->tracking_from_head[11] == 789);
 	// The two cameras one after the other, each width x height.
 	EXPECT(f->pixels[0][0] == 100 && f->pixels[0][(size_t)info.width * info.height - 1] == 100);
 	EXPECT(f->pixels[1][0] == 50);
-	pico4_passthrough_push(p, left, right, PICO4_PASSTHROUGH_SRC_W, 223456789, 100, 1.0f);
-	EXPECT(wait_written(rv, 2));
+	EXPECT(push_until_written(p, rv, left, right, 223456789, 2));
 	EXPECT(rv->frames[1].sequence == 2);
 	// A producer that went quiet stops the stream.
 	__atomic_store_n(&rv->producer_ns, now_ns() - 3 * PICO4_ROOMVIEW_PRODUCER_TIMEOUT_NS, __ATOMIC_RELEASE);

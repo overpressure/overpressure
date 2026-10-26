@@ -607,7 +607,29 @@ station keep a single owner:
   `IVRBlockQueue_005`), which the Frame's XR service provides; only code inside `vrserver` may
   create block queues. The camera component creates both, empty, when the HMD activates; the
   compositor connects ("Depth mesh block queues connection successfull") and, with no mesh
-  marked up to date, renders the camera view without depth reprojection.
+  marked up to date, renders the camera view without depth reprojection: each eye sees its own
+  camera, so the room is still seen in stereo.
+- **The 3D room view.** With `camera.enableCamera`, `roomView` 2 and the HMD's
+  `Prop_SupportsRoomViewDepthProjection_Bool` (2079), the compositor projects the camera images
+  onto a depth mesh from those queues. Each value is an `IVRPaths_001` path property on the
+  queue or on a block, stored in the block's header (a 16-byte header refuses them with
+  `OutOfMemory`):
+  - the meshData queue: bool `/meshData/meshIsUpToDate`, which turns the mesh on;
+  - a meshLayout block: u64 `/meshLayout/layoutId`, int32 `vertexCount` and `indexCount`; the
+    buffer holds uint32 triangle indices, and the compositor swaps each triangle's last two;
+  - a meshData block: u64 `/meshData/meshId` and `layoutId` (the layout's), int32 `elementCount`
+    (three per vertex), `rawFromMeshPose` (`HmdMatrix34`) and double `posePredictionBaseTime`
+    (on the frames' clock); the buffer holds the vertices as float x, y, z.
+  `PICO4_ROOMVIEW_DEPTH_M=R` makes `driver_monado`
+  ([monado-steamvr-roomview-mesh.patch](../userspace/pkgbuilds/pico4-monado/monado-steamvr-roomview-mesh.patch))
+  report the property and publish a sphere of radius R around the head, 30 times a second. Worn,
+  it was worse than the room view without depth: head movements were over-corrected (looking
+  up, the top of the view came close and settled after about a second; the trailing edge of a
+  turn smeared), the more so the smaller the sphere. So it stays off by default.
+- **PICO OS's see-through.** On the PICO 4, `pxrseethroughservice` uses `libUndistort`, which
+  maps each forward camera's image onto a sphere around the head; its stereo-depth library
+  (`libSeethrough`, neural networks on the DSP) is loaded only on another platform. The tracking
+  cameras run at 50 or 60 Hz (`sys.camera.ae.fps`) while see-through is on.
 
 The room view's producer is [`pico4-roomview`](../src/xr/pico4-roomview.c), a user unit that runs
 with SteamVR ([pico4-roomview.service](../userspace/rootfs/usr/lib/systemd/user/pico4-roomview.service)):
@@ -624,9 +646,10 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   camera-to-head transforms, and a ring of four frames. While the producer reports that the
   compositor wants frames (with a fresh heartbeat), the camera thread hands each scene set over
   and a thread of the driver converts it (as for the component) into the ring, with the head pose
-  at the middle of the exposure in the space the driver reports to SteamVR, without the 29 ms of
-  prediction and display lead its reported poses carry (with it, the room trailed the head's
-  turns). Otherwise nothing is copied.
+  at the middle of the exposure in the space the driver reports to SteamVR (the tracking origin's
+  1.6 m offset included, as on every reported pose; only the 3D room view uses the position),
+  without the 29 ms of prediction and display lead its reported poses carry (with it, the room
+  trailed the head's turns). Otherwise nothing is copied.
 - **Client.** `VR_Init` as a background application, then `IVRCompositor_029`: the frames'
   import goes over `vrclient`'s connection to the compositor, which only asking for a compositor
   interface opens (without it the import request gets no answer). Then the passthrough
@@ -653,12 +676,14 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   - Turned by ±5°, the room view moves by 4.7 dump pixels per degree in pitch and 4.6 in yaw, in
     the directions the turns give. The compositor compensates head rotation between exposure and
     display equally in both axes.
-  - Moved by ±10 cm, it moves by 2 dump pixels (about 0.4°). The 2D room view projects the image
-    as if the room were 10–25 m away, so a nearby room does not follow head translation.
+  - Moved by ±10 cm, it moves by 2 dump pixels (about 0.4°). Without a depth mesh the compositor
+    projects the image as if the room were 10–25 m away, so a nearby room does not follow head
+    translation.
   - Nodding pivots about the neck, well below the eyes, and moves the cameras more than turning
     does. Up-down movement therefore shows the room trailing the head, and left-right far less.
-  - A depth mesh in the two queues (the 3D room view, `Prop_SupportsRoomViewDepthProjection_Bool`)
-    is what places the image at the room's real distance.
+- **Timing.** Worn, with turns up to 137°/s: 25 frames per second, 40 ms apart, every one with a
+  head pose; a frame reaches the ring 27–45 ms after the middle of its exposure (16–63 ms at the
+  extremes), so it is shown about 40–80 ms after it.
 
 ## Head tracking
 
