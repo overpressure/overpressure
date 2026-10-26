@@ -683,7 +683,12 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
     does. Up-down movement therefore shows the room trailing the head, and left-right far less.
 - **Timing.** Worn, with turns up to 137°/s: 25 frames per second, 40 ms apart, every one with a
   head pose; a frame reaches the ring 27–45 ms after the middle of its exposure (16–63 ms at the
-  extremes), so it is shown about 40–80 ms after it.
+  extremes), so it is shown about 40–80 ms after it. Its rotation is as timely as the virtual
+  world's: against the vblank that starts scanout, the image's shift rate follows the head's yaw
+  rate 32 ms ahead in the room view and 28 ms ahead in the virtual space (display layer motion
+  log with linear scanout, worn turns up to 170°/s). What remains is translation, which only a
+  depth mesh corrects (nodding), and the edge of the camera's view showing when a 40–80 ms old
+  frame is turned to the head's present pose.
 
 ## Head tracking
 
