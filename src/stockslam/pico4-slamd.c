@@ -15,6 +15,10 @@
  * earliest exposure middle for all four; then start6DOF. Times are CLOCK_MONOTONIC ns throughout.
  * The lens-shading table follows the camera modules' vendor, as on PICO OS (lsc_table);
  * PICO4_SLAMD_LSC names another.
+ *
+ * As PICO OS's tracking service, a tracker whose confidence fell from 1 to 0 and stays 0 for
+ * more than 10 s (PICO4_SLAMD_RESTART_S; 0 turns it off) is stopped and started again in the
+ * process: libSlam can stay in its relocalisation for good after a loss.
  */
 #include "bionic.h"
 #include "isp.h"
@@ -64,6 +68,8 @@ typedef int (*relocinfo_fn)(void *, void *);
 #define RELOCALISED_BOUNDARY BOUNDARY_DIR "stdataforalgorithm.txt"
 //! PICO OS's tracker tries to relocalise for 8 s after start6DOF.
 #define RELOCALISE_NS 10000000000LL
+//! PICO OS's tracking service restarts a tracker lost for longer than this (restart_tracking_sec).
+#define RESTART_DEFAULT_S 10
 //! The reference square, 2 m wide, 1.5 m below the start (tracker world: x up).
 static const double ROOM_SQUARE[4][3] = {{-1.5, -1, -1}, {-1.5, 1, -1}, {-1.5, 1, 1}, {-1.5, -1, 1}};
 
@@ -492,6 +498,46 @@ frame_thread(void *arg)
 	return 0;
 }
 
+//! libSlam's interface, as PICO OS's tracking service calls it.
+struct tracker
+{
+	create_fn create;
+	set_fn set;
+	start_fn start;
+	register_fn reg;
+	prestop_fn prestop;
+	stop_fn stop;
+	destroy_fn destroy;
+};
+
+//! As PICO OS's service starts it: the IMU's model, start, the result callback, then 6DoF.
+static void *
+tracker_start(const struct tracker *t, struct pico4_slam_feed *feed)
+{
+	// The tracker's copy of a saved room's boundary is this session's, if it relocalises.
+	unlink(RELOCALISED_BOUNDARY);
+	void *h = t->create("");
+	if (h == 0) {
+		return 0;
+	}
+	t->set(h, "headSensorModel", "icm4x6xx");
+	t->start(h, "");
+	t->reg(on_result);
+	__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);
+	t->set(h, "start6DOF", "6");
+	t->set(h, "bigRoom", "0"); // as PICO OS without large-space mode
+	return h;
+}
+
+//! As PICO OS's service stops it: the map is saved (with a boundary) on the way.
+static void
+tracker_stop(const struct tracker *t, void *h)
+{
+	t->prestop(h);
+	t->stop(h, "non_sleep");
+	t->destroy(h);
+}
+
 int
 main(int argc, char **argv, char **envp)
 {
@@ -521,37 +567,37 @@ main(int argc, char **argv, char **envp)
 		fprintf(stderr, "pico4-slamd: %s\n", dlerror());
 		return 1;
 	}
-	create_fn create = (create_fn)dlsym(lib, "createHandle");
-	set_fn set = (set_fn)dlsym(lib, "setAlgorithmParameters");
-	start_fn start = (start_fn)dlsym(lib, "startAlgorithm");
+	const struct tracker t = {
+	    .create = (create_fn)dlsym(lib, "createHandle"),
+	    .set = (set_fn)dlsym(lib, "setAlgorithmParameters"),
+	    .start = (start_fn)dlsym(lib, "startAlgorithm"),
+	    .reg = (register_fn)dlsym(lib, "AlgorithmResultCallbackRegister"),
+	    .prestop = (prestop_fn)dlsym(lib, "preStopAlgorithm"),
+	    .stop = (stop_fn)dlsym(lib, "stopAlgorithm"),
+	    .destroy = (destroy_fn)dlsym(lib, "destroyHandle"),
+	};
 	image_fn image = (image_fn)dlsym(lib, "updateImage");
 	imu_fn imu = (imu_fn)dlsym(lib, "update6AxisIMU");
 	result_fn result = (result_fn)dlsym(lib, "getAlgorithmResult");
-	register_fn reg = (register_fn)dlsym(lib, "AlgorithmResultCallbackRegister");
-	prestop_fn prestop = (prestop_fn)dlsym(lib, "preStopAlgorithm");
-	stop_fn stop = (stop_fn)dlsym(lib, "stopAlgorithm");
-	destroy_fn destroy = (destroy_fn)dlsym(lib, "destroyHandle");
 	relocinfo_fn relocinfo = (relocinfo_fn)dlsym(lib, "getRelocMapInfo");
-	if (!create || !set || !start || !image || !imu || !result || !reg || !prestop || !stop || !destroy) {
+	if (!t.create || !t.set || !t.start || !image || !imu || !result || !t.reg || !t.prestop || !t.stop ||
+	    !t.destroy) {
 		fprintf(stderr, "pico4-slamd: libSlam.so lacks a function of its interface\n");
 		return 1;
 	}
-	// As PICO OS's service: the IMU's model, start, the result callback, then 6DoF.
-	// The tracker's copy of a saved room's boundary is this session's, if it relocalises.
-	unlink(RELOCALISED_BOUNDARY);
-	void *h = create("");
+	void *h = tracker_start(&t, feed);
 	if (h == 0) {
 		fprintf(stderr, "pico4-slamd: createHandle failed\n");
 		return 1;
 	}
-	set(h, "headSensorModel", "icm4x6xx");
-	start(h, "");
-	reg(on_result);
-	__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);
-	set(h, "start6DOF", "6");
-	set(h, "bigRoom", "0"); // as PICO OS without large-space mode
 	int64_t started = now_ns(CLOCK_MONOTONIC);
 	bool room_settled = false;
+	const char *restart_env = getenv("PICO4_SLAMD_RESTART_S");
+	const int64_t restart_ns = (int64_t)(restart_env != 0 ? atoi(restart_env) : RESTART_DEFAULT_S) * 1000000000LL;
+	// The watchdog: the confidence before, and since when it is 0 after a 1 (0: not lost).
+	int last_confidence = 0;
+	int64_t lost_since = 0;
+	uint64_t restarts = 0;
 	signal(SIGTERM, on_stop_signal);
 	signal(SIGINT, on_stop_signal);
 	fprintf(stderr, "pico4-slamd: tracking for driver generation %u\n", generation);
@@ -601,9 +647,7 @@ main(int argc, char **argv, char **envp)
 				__atomic_store_n(&ae.stop, 1, __ATOMIC_RELEASE);
 				pthread_join(ae_th, 0);
 			}
-			prestop(h);
-			stop(h, "non_sleep");
-			destroy(h);
+			tracker_stop(&t, h);
 			fprintf(stderr, "pico4-slamd: tracker stopped\n");
 			fflush(stderr);
 			exit(0);
@@ -651,11 +695,49 @@ main(int argc, char **argv, char **envp)
 			memcpy(&p->error, res + 0x44, 4);
 			__atomic_store_n(&feed->poses_written, w + 1, __ATOMIC_RELEASE);
 			tracked += p->confidence > 0;
+			// PICO OS's watchdog: a drop from 1 to 0 starts the clock (CLOCK_BOOTTIME, as there);
+			// any confidence clears it.
+			if (p->confidence == 0 && last_confidence == 1) {
+				lost_since = now_ns(CLOCK_BOOTTIME);
+				fprintf(stderr, "pico4-slamd: tracking lost (error 0x%x)\n", (unsigned)p->error);
+			} else if (p->confidence != 0) {
+				lost_since = 0;
+			}
+			last_confidence = p->confidence;
 			int64_t wall = now_ns(CLOCK_MONOTONIC);
 			if (last_pose_wall != 0 && wall - last_pose_wall > longest_gap) {
 				longest_gap = wall - last_pose_wall;
 			}
 			last_pose_wall = wall;
+		}
+		if (restart_ns > 0 && lost_since != 0 && now_ns(CLOCK_BOOTTIME) - lost_since > restart_ns) {
+			// As PICO OS's restartTracking: stop the tracker and start it again. A new world, which
+			// relocalises in the room as at the start.
+			lost_since = 0;
+			restarts++;
+			fprintf(stderr, "pico4-slamd: lost for over %lld s; restarting the tracker (restart %llu)\n",
+			        (long long)(restart_ns / 1000000000LL), (unsigned long long)restarts);
+			fflush(stderr);
+			__atomic_store_n(&frames.stop, 1, __ATOMIC_RELEASE);
+			pthread_join(thread, 0);
+			tracker_stop(&t, h);
+			h = tracker_start(&t, feed);
+			if (h == 0) {
+				fprintf(stderr, "pico4-slamd: createHandle failed on the restart\n");
+				return 1;
+			}
+			started = now_ns(CLOCK_MONOTONIC);
+			room_settled = false;
+			last_confidence = 0;
+			frames.h = h;
+			frames.sr = __atomic_load_n(&feed->sets_written, __ATOMIC_ACQUIRE);
+			__atomic_store_n(&frames.stop, 0, __ATOMIC_RELEASE);
+			if (pthread_create(&thread, 0, frame_thread, &frames) != 0) {
+				fprintf(stderr, "pico4-slamd: cannot start the frame thread again\n");
+				return 1;
+			}
+			fprintf(stderr, "pico4-slamd: tracker started again\n");
+			fflush(stderr);
 		}
 		if (now >= report) {
 			double cpu = (double)(now_ns(CLOCK_PROCESS_CPUTIME_ID) - cpu0) / (double)(now - wall0);

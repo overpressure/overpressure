@@ -76,6 +76,7 @@ double sqrt(double);
 #define O_CLOEXEC 02000000
 #define CLOCK_MONOTONIC 1
 #define CLOCK_PROCESS_CPUTIME_ID 2
+#define CLOCK_BOOTTIME 7
 #define PROT_READ 1
 #define PROT_WRITE 2
 #define MAP_SHARED 1

@@ -740,6 +740,12 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   `pico4-slamd` serves its generation with a fresh heartbeat. With per-camera exposures a set's
   frames differ in exposure; their frame counters still decide whether they form a set.
   `PICO4_SLAMD_AE=0` leaves the exposure to the driver's median loop ([Basalt](#basalt)).
+- **Recovery.** As PICO OS's tracking service: when the tracker's confidence falls from 1 to 0
+  and stays 0 for more than 10 s (`PICO4_SLAMD_RESTART_S`, 0 turns it off), `pico4-slamd` stops
+  it and starts it again in the process (pre-stop, stop with the map saved, destroy, then the
+  start sequence), with the frame thread paused around it; libSlam otherwise can stay in its
+  relocalisation for good after a loss (error mask 16, confidence 0). The restarted tracker has
+  a new world and relocalises in the room within the same 10 s window as at a start.
 - **IMU.** The raw samples of the factory body frame, at the DSP's 1 kHz, as PICO OS feeds them
   (its uncalibrated streams carry the same values; the service applies no bias or axis change),
   each with the ICM-42688's latest die temperature, which the tracker's gyro bias table is
@@ -1258,6 +1264,7 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_SLAMD_LSC` | the vendor's | `pico4-slamd`'s lens-shading table in `/system/etc/pvr/config` instead of the one the camera modules' vendor picks; set in the unit's environment |
 | `PICO4_SLAMD_DEBUG` | unset | `pico4-slamd` passes the tracker's debug and verbose log lines to the journal |
 | `PICO4_SLAMD_AE` | on | `0`: no PICO OS auto exposure in `pico4-slamd`; the driver's own sets the exposure |
+| `PICO4_SLAMD_RESTART_S` | 10 | seconds a tracker that lost its confidence stays lost before `pico4-slamd` restarts it, as PICO OS's service; `0` turns the restart off |
 | `PICO4_SLAM_CAMS` | `0,1,2,3` | factory cameras for Basalt in tracker order, at least two; Basalt matches the first against the others |
 | `PICO4_TCAM_SLOTS` | `0,2,1,3` | CSL slot of factory cameras cam0–cam3 |
 | `PICO4_SLAM_UPRIGHT` | on | turn images that are upside down relative to the first camera's |
