@@ -620,19 +620,59 @@ station keep a single owner:
   - a meshData block: u64 `/meshData/meshId` and `layoutId` (the layout's), int32 `elementCount`
     (three per vertex), `rawFromMeshPose` (`HmdMatrix34`) and double `posePredictionBaseTime`
     (on the frames' clock); the buffer holds the vertices as float x, y, z.
-  `PICO4_ROOMVIEW_DEPTH_M=R` makes `driver_monado`
+  A geometric stand-in (a sphere around the head) was worse than no mesh when worn: head
+  movements were over-corrected. The mesh has to be the measured room, as on the Frame.
+- **PICO OS's see-through.** On the PICO 4, `pxrseethroughservice` feeds `libphotoid.so` each
+  pair of the grey forward cameras with the tracker's result at the pair's time, and the
+  tracker's map points while it tracks. Its pipeline (`vst_releaseA`, the only one it loads)
+  computes depth with a neural network (`FLNet_lite_v2`, SNPE on the Compute DSP) and also opens
+  a CVP session. It fills gaps from the map points and makes a hemisphere mesh around the head
+  that ends at the ground. The ground is the tracker's own: with ground detection on
+  (`setAlgorithmParameters("plane", "1")`), `libSlam` reports the floor's height and status in
+  each pose result, and `libphotoid` takes them from the left image's result. The guardian
+  service draws the mesh per eye, coloured from the RGB camera, with the predicted display
+  pose. (`libUndistort` serves only the undistorted RGB image to apps.)
+- **The same mesh here.** `pico4-slamd` runs `libphotoid` in the tracker's root and feeds it
+  the same way ([vst.c](../src/stockslam/vst.c)): cam3 and cam2 after each scene set, with
+  `libSlam`'s result nearest the set's time (a ring the IMU thread fills), and the map points
+  from `libSlam`'s point callback. The CVP's firmware lies in the root's `/lib/firmware`, because
+  the kernel looks for it in the root of the process that opens `/dev/cvp`. `cdsp-boot` sets the
+  CVP's restart level to RELATED, and `pico4-slamd` checks it before the start. SNPE's DSP
+  module lies in `/system/lib64`, the path SNPE gives the DSP. Each mesh goes into the shared
+  feed's two mesh slots ([pico4_slam_feed.h](../src/monado/pico4_slam_feed.h)). Measured with the
+  headset on a desk:
+  - one mesh per pair (25 Hz): 14,841 vertices and 29,400 triangles, 0.9–5 m from the head,
+    with the same triangles every time;
+  - ready 72 ms after the middle of the pair's exposure (the set waits 30 ms for the IMU before
+    `libSlam` gets it);
+  - `pico4-slamd` at 110 % of one core while it feeds the pipeline, against 60 % without.
+
+  `libphotoid` works in `libSlam`'s world (x up, y left, z back) but takes the head and the map
+  points, and returns the mesh, in that world turned a quarter turn about z, (−y, x, z), which
+  has OpenXR's axes (y up). `pico4-slamd` turns both inputs: fed `libSlam`'s result unchanged, a
+  head turned 39° to the right put the hemisphere 39° below the horizon. The hemisphere follows
+  the head: its axis is the head's forward direction at the pair's time. Gravity lies along the
+  mesh's −y, and its floor lies at y = −0.75 m (`libphotoid`'s own estimate −0.74 m,
+  `libSlam`'s 0.79 m). The triangles face the head (counter-clockwise seen from inside).
+- **Publishing it.** While the room view asks for frames, `driver_monado` asks the driver for
+  each new mesh. The driver stamps the feed, and `pico4-slamd` feeds the pipeline only within a
+  second of a stamp, so it idles otherwise. The driver returns the vertices in the head pose's
+  world (in a saved room with the room's turn and shift) and its place in SteamVR's raw space
+  (the tracking origin's offset). The compositor draws the 3D room view in the frame of the head
+  at the shown camera frame's exposure: its projection into the cameras is camera-from-head
+  alone, and its view carries that head on to the render pose. Its `rawFromMeshPose` is
+  therefore the mesh's place relative to that head. A mesh given in raw or standing space
+  floated above the head. Its own correction, inverse(reference head) × `rawFromMeshPose`,
+  applies only once vrserver has a reference (`IVRServerInternal_XXX` slot 42, which the Frame's
+  driver sends only for a non-identity transform); with one, the camera projection took the
+  reference too and the image scrambled. The camera component
   ([monado-steamvr-roomview-mesh.patch](../userspace/pkgbuilds/pico4-monado/monado-steamvr-roomview-mesh.patch))
-  report the property and publish a sphere of radius R around the head, 30 times a second. Worn,
-  it was worse than the room view without depth: head movements were over-corrected (looking
-  up, the top of the view came close and settled after about a second; the trailing edge of a
-  turn smeared), the more so the smaller the sphere. So it stays off by default.
-- **PICO OS's see-through.** On the PICO 4, `pxrseethroughservice` feeds `libphotoid.so`: depth
-  from the two grey forward cameras (the CVP's depth-from-stereo, or a neural network on the
-  DSP), gaps filled from the tracker's map points, made into a hemisphere mesh around the head that
-  ends at the ground. The ground is the tracker's own: `libSlam` detects the floor in its map and
-  reports its height and status in each pose result; the user's floor setting only refines it.
-  The guardian service draws the mesh per eye, coloured from the RGB camera, with the predicted
-  display pose. (`libUndistort` serves only the undistorted RGB image to apps.)
+  publishes each mesh as the Frame's XR service does: the layout block, the data block
+  (`rawFromMeshPose` = inverse(the newest room view frame's head) × the mesh's raw place,
+  `posePredictionBaseTime` = that frame's time on `CLOCK_MONOTONIC_RAW`), then `meshIsUpToDate`.
+  It publishes the newest mesh again with each new camera frame.
+  It creates both queues with one block size, 512-byte headers, 4 data and 2 layout blocks and
+  `/meshData/blockDataSize`, and reports `Prop_SupportsRoomViewDepthProjection_Bool`.
 - **The Frame's room view.** Without a mesh the compositor projects the cameras onto a fixed sphere
   (the Frame's "RoomView2D"). The Frame's "RoomView3D" publishes a measured mesh: its XR service
   computes depth from the stereo cameras on the CVP, smooths it, takes the floor from horizontal
@@ -846,10 +886,26 @@ file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's 
   server the steps run in SteamVR itself (`VRChaperoneSetup`), which keeps the result per
   universe in `chaperone_info.vrchap`. `driver_monado` reports both properties; the bundled
   `openvr_driver.h` predates their names. The playspace setup and the floor height adjustment
-  run in the headset. Setting the floor and drawing the play area on it are hard: the room view
-  shown throughout lags badly behind head movement ([Passthrough](#passthrough)). Developer › Quick Calibration
+  run in the headset. Developer › Quick Calibration
   (floor and standing position) works either way. Clear Playspace is offered only by SteamVR's
   main-branch builds (`m_bSteamVRMain`), not by this release.
+- **The detected floor.** The Frame's room setup takes the floor from the tracker. Its XR
+  service detects the floor plane and sends its height in raw space to the HMD driver. While
+  the dashboard's room-setup step (event 809, broadcast to drivers) is 3 (the boundary circle),
+  6 (the silent detection at start, behind `steamvr/floorDetectAtStart`, off on the Frame) or 7
+  (the playspace setup, also the required setup of a new universe), the driver hands the height
+  to `vrserver`. It passes it through the room setup's transform (`/chaperone/room_setup/transform`,
+  y′ = m₁₁·y + m₁₃) to the unversioned `IVRServerInternal_XXX`, slot 40. `vrserver` posts it to
+  the compositor (`floor_detection_result`), whose floor target snaps to it; accepting the step
+  commits it. NaN clears it when the step ends. The floor height adjustment (step 2) is manual
+  on the Frame too. Here `libSlam`'s ground detection gives the floor: `pico4-slamd` turns it on
+  (`plane` 1) and passes each result's ground status and height with the pose. The floor lies
+  that far below the tracker world's origin, measured at 0.79 m below a headset on a desk;
+  status 2 is an initial estimate (1.13 m there) and is not used. `driver_monado`
+  ([monado-steamvr-floor.patch](../userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch))
+  does what the Frame's driver does, with that floor in its raw space (room and tracking origin
+  applied). Slot 40 belongs to this `vrserver` build and has to be checked again with every new
+  SteamVR.
 - **Verified.** A drawn play area comes back after a reboot exactly where it was drawn (the
   tracker relocalises in the saved room, and SteamVR finds the room's universe in
   `chaperone_info.vrchap`), and its boundary appears when walking toward its edge. With no play
