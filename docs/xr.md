@@ -800,8 +800,8 @@ file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's 
   server the steps run in SteamVR itself (`VRChaperoneSetup`), which keeps the result per
   universe in `chaperone_info.vrchap`. `driver_monado` reports both properties; the bundled
   `openvr_driver.h` predates their names. The playspace setup and the floor height adjustment
-  run in the headset; the floor is hard to set exactly, and the 2D room view shown
-  throughout is uncomfortable ([Passthrough](#passthrough)). Developer › Quick Calibration
+  run in the headset. Setting the floor and drawing the play area on it are hard: the room view
+  shown throughout lags badly behind head movement ([Passthrough](#passthrough)). Developer › Quick Calibration
   (floor and standing position) works either way. Clear Playspace is offered only by SteamVR's
   main-branch builds (`m_bSteamVRMain`), not by this release.
 - **Verified.** A drawn play area comes back after a reboot exactly where it was drawn (the
