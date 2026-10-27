@@ -452,9 +452,15 @@ if [[ -n "$stock_slam" ]]; then
     mkdir -p "$island"
     cp -r --no-preserve=ownership "$stock_slam/root/." "$island/"
     # The CVP's image, which the kernel loads when the see-through's depth mesh opens /dev/cvp:
-    # it looks for firmware in the opening process's root, the tracker's.
+    # it reads cvpss.mdt in the opening process's root, the tracker's, but its workers load the
+    # segments (cvpss.bNN) from the system's root, so both hold it.
     mkdir -p "$island/lib/firmware"
     install -m 0644 "$stock_slam"/firmware/cvpss* "$island/lib/firmware/"
+    install -m 0644 "$stock_slam"/firmware/cvpss* "$T/usr/lib/firmware/"
+    for f in "$island"/lib/firmware/cvpss*; do
+        cmp -s "$f" "$T/usr/lib/firmware/${f##*/}" ||
+            { echo "the CVP's ${f##*/} differs between the tracker's root and /usr/lib/firmware" >&2; exit 1; }
+    done
     bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" "$llvm"
     mv "$island/pico4/libandroid.so" "$island/system/lib64/libandroid.so"
     # Mount points: the root is read-only on the headset.
@@ -463,7 +469,7 @@ if [[ -n "$stock_slam" ]]; then
     find "$island" -type d -exec chmod 0755 {} +
     find "$island" -type f -exec chmod 0644 {} +
     chmod 0755 "$island/system/bin/bootstrap/linker64" "$island/vendor/bin/cdsprpcd" "$island/pico4/pico4-slamd"
-    stock_json=$(cd "$T" && find usr/lib/firmware/cdsp* usr/lib/pico4-stock-slam -type f -print0 | sort -z |
+    stock_json=$(cd "$T" && find usr/lib/firmware/cdsp* usr/lib/firmware/cvpss* usr/lib/pico4-stock-slam -type f -print0 | sort -z |
         xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi

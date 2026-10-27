@@ -421,11 +421,14 @@ class DepthMeshTests(unittest.TestCase):
         self.assertIn("for f in libsnpe_dsp_v66_domains_v2_skel.so libsnpe_dsp_domains_v2.so; do\n"
                       '    dump "$stock/system.img" "/system/lib64/$f" "$root/system/lib64/$f"', script)
 
-    def test_cvp_firmware_in_the_trackers_root(self):
-        # The kernel looks for the CVP's image in the root of the process opening /dev/cvp.
+    def test_cvp_firmware_in_both_roots(self):
+        # The kernel reads cvpss.mdt in the root of the process opening /dev/cvp, and its workers
+        # the segments in the system's: a cold boot needs both.
         build = read(ROOT / "scripts/build-userspace.sh")
         self.assertIn('install -m 0644 "$stock_slam"/firmware/cvpss* "$island/lib/firmware/"', build)
-        self.assertNotIn("usr/lib/firmware/cvpss", build)
+        self.assertIn('install -m 0644 "$stock_slam"/firmware/cvpss* "$T/usr/lib/firmware/"', build)
+        self.assertIn('cmp -s "$f" "$T/usr/lib/firmware/${f##*/}"', build)
+        self.assertIn("find usr/lib/firmware/cdsp* usr/lib/firmware/cvpss* usr/lib/pico4-stock-slam", build)
 
     def test_slamd_feeds_it_as_pico_os(self):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
