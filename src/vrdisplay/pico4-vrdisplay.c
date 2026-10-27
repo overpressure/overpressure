@@ -33,9 +33,10 @@
  *   PICO4_VRDISPLAY_MOTION=path  per commit: commit time, the vblank it reaches
  *                                the panels at (CLOCK_MONOTONIC ns), how far the
  *                                image changed (mean luma difference of a sparse
- *                                grid against the previous commit) and its
+ *                                grid against the previous commit), its
  *                                horizontal shift in pixels (a band across the
- *                                left eye's centre); for latency measurements
+ *                                left eye's centre) and its vertical shift (a
+ *                                column through it); for latency measurements
  *                                (PICO4_LATENCY_PROBE_MS). With
  *                                PICO4_VRDISPLAY_MOTION_BAND=1 each line also
  *                                carries 16 bands over the left eye's height
@@ -1522,8 +1523,8 @@ sc_dump(struct swapchain *sc, struct sc_image *img, const char *path)
 #define MOTION_ROW_PX 512 //!< Values per logged band (every other pixel).
 
 /*!
- * The horizontal shift of @p cur against @p prev in pixels (subpixel), by the best
- * normalised correlation of the two bands' gradients.
+ * The shift of @p cur against @p prev in pixels (subpixel), by the best normalised
+ * correlation of the two bands' gradients: horizontal for a row band, vertical for a column.
  */
 static double
 band_shift(const float *prev, const float *cur)
@@ -1555,7 +1556,8 @@ band_shift(const float *prev, const float *cur)
 }
 
 static unsigned
-sc_sample(struct swapchain *sc, struct sc_image *img, uint8_t *out, unsigned max, float *band, uint8_t *rows)
+sc_sample(struct swapchain *sc, struct sc_image *img, uint8_t *out, unsigned max, float *band, float *column,
+          uint8_t *rows)
 {
 	if (img->dmabuf < 0 || img->modifier != DRM_FORMAT_MOD_LINEAR) {
 		return 0;
@@ -1584,6 +1586,20 @@ sc_sample(struct swapchain *sc, struct sc_image *img, uint8_t *out, unsigned max
 		const uint8_t *row = (const uint8_t *)m + img->offset + (size_t)y * img->pitch + (size_t)x0 * 4;
 		for (int x = 0; x < MOTION_BAND; x++) {
 			band[x] += (float)row[4 * x + 1]; // green
+		}
+	}
+	// The column: eight columns through the left eye's centre, MOTION_BAND pixels high.
+	uint32_t y0 = g_height / 2 - MOTION_BAND / 2;
+	for (int y = 0; y < MOTION_BAND; y++) {
+		if (g_height < MOTION_BAND) {
+			column[y] = 0; // a smaller (fake) display: no vertical shift
+			continue;
+		}
+		const uint8_t *row = (const uint8_t *)m + img->offset + (size_t)(y0 + y) * img->pitch +
+		                     (size_t)(g_width / 4 - 4) * 4;
+		column[y] = 0;
+		for (int x = 0; x < 8; x++) {
+			column[y] += (float)row[4 * x + 1];
 		}
 	}
 	if (rows != NULL) {
@@ -1821,7 +1837,7 @@ present_main(void *arg)
 	FILE *motion = motion_path != NULL ? fopen(motion_path, "we") : NULL;
 	enum { MOTION_SAMPLES = 2048 };
 	static uint8_t samples[2][MOTION_SAMPLES];
-	static float bands[2][MOTION_BAND];
+	static float bands[2][MOTION_BAND], columns[2][MOTION_BAND];
 	static uint8_t rows[MOTION_ROWS * MOTION_ROW_PX];
 	unsigned sampled = 0, which = 0;
 	bool log_band = env_num("PICO4_VRDISPLAY_MOTION_BAND", 0) != 0;
@@ -1835,7 +1851,7 @@ present_main(void *arg)
 	}
 	if (motion != NULL) {
 		setvbuf(motion, NULL, _IOLBF, 0);
-		fprintf(motion, "#commit_ns,display_ns,luma_change,sample_ms,shift_px\n");
+		fprintf(motion, "#commit_ns,display_ns,luma_change,sample_ms,shift_px,vshift_px\n");
 	}
 
 	pthread_mutex_lock(&d->lock);
@@ -1939,8 +1955,9 @@ present_main(void *arg)
 			}
 			pthread_mutex_unlock(&d->lock);
 			int64_t t0 = now_ns();
-			unsigned n = sc_sample(sc, img, samples[which], MOTION_SAMPLES, bands[which], log_band ? rows : NULL);
-			double change = -1, shift = 0;
+			unsigned n = sc_sample(sc, img, samples[which], MOTION_SAMPLES, bands[which], columns[which],
+			                       log_band ? rows : NULL);
+			double change = -1, shift = 0, vshift = 0;
 			if (n > 0 && n == sampled) {
 				uint64_t sum = 0;
 				for (unsigned i = 0; i < n; i++) {
@@ -1948,11 +1965,12 @@ present_main(void *arg)
 				}
 				change = (double)sum / n;
 				shift = band_shift(bands[which ^ 1], bands[which]);
+				vshift = band_shift(columns[which ^ 1], columns[which]);
 			}
 			sampled = n;
 			which ^= 1;
-			fprintf(motion, "%" PRId64 ",%" PRId64 ",%.2f,%.2f,%.2f", commit_ns, display_ns, change,
-			        (now_ns() - t0) / 1e6, shift);
+			fprintf(motion, "%" PRId64 ",%" PRId64 ",%.2f,%.2f,%.2f,%.2f", commit_ns, display_ns, change,
+			        (now_ns() - t0) / 1e6, shift, vshift);
 			if (log_band && n > 0) {
 				static const char hex[] = "0123456789abcdef";
 				static char line[2 * MOTION_ROWS * MOTION_ROW_PX + 1];

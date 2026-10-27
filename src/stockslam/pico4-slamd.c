@@ -240,7 +240,9 @@ vst_feed_set(int64_t ts, int64_t exposure_ns)
  */
 typedef int (*expo_fn)(const void *, const void *, const void *, const void *, uint16_t *, uint8_t *, void *, int,
                        int, int);
-#define AE_FPS 50       //!< The cameras' frame rate as PICO OS passes it (scene sets come at half of it).
+//! The cameras' frame rate as PICO OS passes it (scene sets come at half of it); 60 when the sets
+//! come at 30 Hz (the station at 60 Hz, PICO4_CAMERA_HZ in the driver).
+#define AE_FPS 50
 #define AE_BIT_WIDTH 16 //!< 10-bit samples in 16 bits.
 #define AE_FLAG_DETECT 1 //!< Start the mains-flicker detection, as PICO OS does once at the start.
 
@@ -249,6 +251,7 @@ struct ae_ctx
 	struct pico4_slam_feed *feed;
 	expo_fn predict;
 	int ready; //!< 1: g_linear and lines/gain hold a set for the auto exposure (frame thread -> AE thread).
+	int fps;   //!< The cameras' rate, from the sets' spacing (frame thread -> AE thread).
 	uint32_t lines[PICO4_SLAM_FEED_CAMS], gain[PICO4_SLAM_FEED_CAMS];
 	int stop;
 	uint64_t runs, sent;
@@ -275,14 +278,14 @@ ae_thread(void *arg)
 			gains[k] = (uint8_t)(c->gain[k] > 255 ? 255 : c->gain[k]);
 		}
 		struct vec unused = {0, 0, 0};
-		int ret = c->predict(g_linear[0], g_linear[1], g_linear[2], g_linear[3], lines, gains, &unused, AE_FPS,
+		int ret = c->predict(g_linear[0], g_linear[1], g_linear[2], g_linear[3], lines, gains, &unused, __atomic_load_n(&c->fps, __ATOMIC_RELAXED),
 		                     AE_BIT_WIDTH, flags);
 		flags = 0;
 		c->runs++;
 		if (ret != last_ret) {
 			fprintf(stderr, "pico4-slamd: auto exposure %s\n",
 			        ret == 0   ? "detecting the mains frequency"
-			        : ret == 1 ? "found the frame rate off the mains frequency (flicker); the station stays at 50 Hz"
+			        : ret == 1 ? "found the frame rate off the mains frequency (flicker); the station keeps its rate"
 			                   : "running");
 			last_ret = ret;
 		}
@@ -505,6 +508,7 @@ struct frames_ctx
 	uint64_t sets_fed, skipped;
 	int stop; //!< Set by the IMU thread before the tracker's stop.
 	struct ae_ctx *ae; //!< Or NULL.
+	int64_t last_set_ts; //!< The set before, for the cameras' rate.
 };
 
 static void *
@@ -557,6 +561,11 @@ frame_thread(void *arg)
 			const uint8_t *px = g_images[k];
 			memcpy(it + 0x40, &px, 8);
 		}
+		// Sets come at half the cameras' rate: 40 ms apart at 50 Hz, 33 ms at 60 Hz.
+		if (c->ae != 0 && c->last_set_ts != 0 && ts - c->last_set_ts > 25000000 && ts - c->last_set_ts < 45000000) {
+			__atomic_store_n(&c->ae->fps, ts - c->last_set_ts < 36700000 ? 60 : AE_FPS, __ATOMIC_RELAXED);
+		}
+		c->last_set_ts = ts;
 		if (to_ae) {
 			memcpy(c->ae->lines, lines, sizeof(lines));
 			memcpy(c->ae->gain, gain, sizeof(gain));
@@ -700,6 +709,7 @@ main(int argc, char **argv, char **envp)
 	static struct ae_ctx ae;
 	ae.feed = feed;
 	ae.predict = load_ae();
+	ae.fps = AE_FPS;
 	pthread_t ae_th;
 	if (ae.predict != 0 && pthread_create(&ae_th, 0, ae_thread, &ae) == 0) {
 		frames.ae = &ae;

@@ -64,6 +64,9 @@
 
 DEBUG_GET_ONCE_LOG_OPTION(pico4_log, "PICO4_LOG", U_LOGGING_INFO)
 DEBUG_GET_ONCE_NUM_OPTION(pico4_imu_rate, "PICO4_IMU_RATE", 1000)
+//! The tracking cameras' rate: 50 Hz as stock, or PICO OS's other rate, 60 Hz (scene frames at
+//! 30 Hz instead of 25 for the room view; docs/xr.md#passthrough).
+DEBUG_GET_ONCE_NUM_OPTION(pico4_camera_hz, "PICO4_CAMERA_HZ", 50)
 DEBUG_GET_ONCE_OPTION(pico4_calibration, "PICO4_CALIBRATION_DIR", "/usr/share/qcom/pico4/calibration")
 /*!
  * Correct chromatic aberration in the distortion pass. Off by default, as on
@@ -766,6 +769,7 @@ setup_station(struct pico4_hmd *h)
 {
 	int r = pico4_station_open(&h->station, NULL);
 	if (r == 0) {
+		pico4_station_set_camera_hz(h->station, (unsigned)debug_get_num_option_pico4_camera_hz());
 		r = pico4_station_reset(h->station);
 	}
 	if (r == 0 && (os_thread_helper_init(&h->station_oth) != 0 ||

@@ -56,6 +56,7 @@
 #define CAMERA_OFF 0x02
 #define CAMERA_ALL 0x00
 #define FPS_50 0x01        //!< The stock setting (sys_station_camera_fps 50).
+#define FPS_60 0x02        //!< PICO OS's other rate (sys_station_camera_fps 60).
 #define DEVICE_TYPE 0x00   //!< DeviceTypeGet() on the PICO 4.
 #define EXPOSURE_FIRST_ROW 0x02 //!< As PICO OS initialises the cameras.
 
@@ -66,6 +67,8 @@ struct pico4_station
 	//! the lock until its reply arrived, so a poller cannot take the reply.
 	pthread_mutex_t lock;
 	bool announced;
+	//! The cameras' frame rate the announcement is answered with: 50 or 60 Hz.
+	unsigned camera_hz;
 	//! The last reply to a camera command: op, status.
 	int camera_op, camera_status;
 	//! The cameras' module ids from the OTP replies (a zero byte keeps the value before).
@@ -319,7 +322,7 @@ read_one(struct pico4_station *st, int timeout_ms)
 	}
 	if (f[0] == HEADER_NOTIFY && f[1] == NOTIFY_ANNOUNCE && !st->announced) {
 		// As the stock service: the camera frame rate, after which camera commands work.
-		const uint8_t fps[3] = {FPS_50, DEVICE_TYPE, 1};
+		const uint8_t fps[3] = {st->camera_hz == 60 ? FPS_60 : FPS_50, DEVICE_TYPE, 1};
 		st->announced = true;
 		send_cmd(st, PICO4_STATION_CMD_CAMERA_FPS, fps, sizeof(fps));
 	}
@@ -354,6 +357,12 @@ read_one(struct pico4_station *st, int timeout_ms)
 	return 1;
 }
 
+void
+pico4_station_set_camera_hz(struct pico4_station *st, unsigned hz)
+{
+	st->camera_hz = hz == 60 ? 60 : 50;
+}
+
 int
 pico4_station_open(struct pico4_station **out, const char *device)
 {
@@ -379,6 +388,7 @@ pico4_station_open(struct pico4_station **out, const char *device)
 		return r;
 	}
 	pthread_mutex_init(&st->lock, NULL);
+	st->camera_hz = 50;
 	*out = st;
 	return 0;
 }
@@ -554,6 +564,10 @@ send_camera_para(struct pico4_station *st,
 	pthread_mutex_lock(&st->lock);
 	st->para_index = (st->para_index + 1) % 10; // counted before each command, as PICO OS does
 	pico4_station_camera_para_each(p, scene, leds, st->para_index);
+	if (st->camera_hz != 50) {
+		p[13] = (uint8_t)(PICO4_STATION_PARA_SYNC_OTHER & 0xff);
+		p[14] = (uint8_t)(PICO4_STATION_PARA_SYNC_OTHER >> 8);
+	}
 	int r = send_cmd(st, PICO4_STATION_CMD_CAMERA, p, sizeof(p));
 	pthread_mutex_unlock(&st->lock);
 	return r;

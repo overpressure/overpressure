@@ -171,8 +171,16 @@ void
 pico4_station_close(struct pico4_station *st);
 
 /*!
+ * The cameras' frame rate the next announcement is answered with: 50 Hz (the stock default)
+ * or 60 Hz (PICO OS's other rate); exposure commands then carry that rate's sync value. At
+ * 60 Hz an exposure plus the 9 ms readout must fit 16.7 ms, about 400 lines.
+ */
+void
+pico4_station_set_camera_hz(struct pico4_station *st, unsigned hz);
+
+/*!
  * Power-cycle the station and answer its announcement with the camera frame
- * rate (50 Hz), after which it accepts camera commands. Controllers reconnect
+ * rate (50 Hz unless set otherwise), after which it accepts camera commands. Controllers reconnect
  * on their own afterwards. Returns 0 or a negative errno (-ETIMEDOUT if no
  * announcement came).
  */
@@ -221,6 +229,8 @@ struct pico4_station_exposure
  * command at all, and neighbouring LEDs merge into one blob; with 52 they stay as without one.
  */
 #define PICO4_STATION_PARA_SYNC_50HZ 52
+//! The same value at a 60 Hz camera rate (PICO OS's gFPSInfo at other rates).
+#define PICO4_STATION_PARA_SYNC_OTHER 160
 
 /*!
  * CameraSetPara's 28-byte payload (u16 lines, u8 gain per camera): the scene phase's setting
