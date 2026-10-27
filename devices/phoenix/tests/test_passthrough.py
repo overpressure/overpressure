@@ -121,7 +121,11 @@ class RoomViewTests(unittest.TestCase):
         # The vertex shader projects in the computer-vision camera frame (looking along +z).
         self.assertIn("cv[r * 4 + 1] = -cv[r * 4 + 1];", meta)
         self.assertIn("cv[r * 4 + 2] = -cv[r * 4 + 2];", meta)
-        self.assertIn("put_matrix(m, META_CAMERA, cv);", meta)
+        # The camera in raw space at its exposure; +0x90 is a head-frame calibration: the head pose
+        # there made the compositor turn the view about the tracking origin.
+        self.assertIn("put_matrix(m, META_CAMERA, camera);", meta)
+        self.assertIn("put_matrix(m, META_CAMERA_PICK, cv);", meta)
+        self.assertIn("put_matrix(m, META_HEAD, IDENTITY);", meta)
         # The compositor's clock is CLOCK_MONOTONIC_RAW; a later time shows nothing.
         self.assertIn("f->timestamp_ns + raw_offset", meta)
         self.assertIn("clock_gettime(CLOCK_MONOTONIC_RAW, &raw);", producer)
@@ -200,40 +204,39 @@ class RoomViewTests(unittest.TestCase):
         self.assertNotIn("PICO4_ROOMVIEW_DEPTH_M", patch)
         self.assertNotIn("BuildSphere", patch)
 
-    def test_depth_mesh_relative_to_the_shown_frame_head(self):
-        # The compositor draws the room view in the frame of the shown camera frame's head (its
-        # camera matrix is camera-from-head alone): a mesh in raw or standing space floated above
-        # the head. The mesh goes relative to the newest frame's head, again with each frame.
+    def test_depth_mesh_in_raw_space(self):
+        # The compositor draws the mesh at rawFromMeshPose in raw space, as the Frame's XR service
+        # publishes it: each mesh once, with its own raw pose and its pair's time. Re-based onto
+        # the newest camera frame's head it warped with every nod.
         patch = read(RECIPE / "monado-steamvr-roomview-mesh.patch")
         self.assertNotIn("/chaperone/standing/transform", patch)
         self.assertNotIn("IVRServerInternal", patch)
-        run = patch[patch.index("+	MeshRun()"):]
-        self.assertIn("pico4_hmd_frame_head(m_xdev, &sequence, &frame_ns, head)", run)
-        self.assertIn("(!new_mesh && sequence == frame)", run)
-        self.assertIn("WriteMesh(info, vertices, layout_id, head, frame_ns)", run)
+        self.assertNotIn("pico4_hmd_frame_head", patch)
         write = patch[patch.index("+	WriteMesh("):]
-        self.assertIn("v += head[4 * k + r] * (m[4 * k + c] - (c == 3 ? head[4 * k + 3] : 0));", write)
-        self.assertIn("CompositorSeconds(frame_ns)", write)
-        # The head is the one the frame carries (roomview_pose: raw space, no display lead).
-        passthrough = read(ROOT / "src/monado/pico4_passthrough.c")
-        newest = passthrough[passthrough.index("\npico4_passthrough_newest_head("):]
-        self.assertIn("memcpy(out_tracking_from_head, f->tracking_from_head", newest[:newest.index("\n}\n")])
+        write = write[:write.index("\n+	}\n")]
+        self.assertIn("raw_from_mesh.m[r][c] = (float)info.tracking_from_mesh[4 * r + c];", write)
+        self.assertIn("CompositorSeconds(info.timestamp_ns)", write)
+        self.assertIn("&raw_from_mesh, sizeof(raw_from_mesh)", write)
 
-    def test_head_from_mesh_inverts_the_frame_head(self):
-        # WriteMesh's arithmetic on a turned, shifted head: the mesh origin lands at the head's
-        # inverse, and a point given in raw space comes out in the head's frame.
+    def test_camera_pose_is_the_head_times_the_camera(self):
+        # The producer's +0x30 on a turned, shifted head: a point seen by the camera lands where
+        # the head pose puts the camera's view of it in raw space.
         import math
         a = 0.7
         head = [math.cos(a), 0, math.sin(a), 0.5, 0, 1, 0, 1.2, -math.sin(a), 0, math.cos(a), -0.3]
-        mesh = [1, 0, 0, 0, 0, 1, 0, 1.6, 0, 0, 1, 0]
-        out = [[sum(head[4 * k + r] * (mesh[4 * k + c] - (head[4 * k + 3] if c == 3 else 0)) for k in range(3))
-                for c in range(4)] for r in range(3)]
-        point = [0.2, -0.1, -1.5]
-        raw = [sum(mesh[4 * r + k] * point[k] for k in range(3)) + mesh[4 * r + 3] for r in range(3)]
-        in_head = [sum(out[r][k] * point[k] for k in range(3)) + out[r][3] for r in range(3)]
-        back = [sum(head[4 * r + k] * in_head[k] for k in range(3)) + head[4 * r + 3] for r in range(3)]
-        for got, want in zip(back, raw):
+        cv = [1, 0, 0, 0.03, 0, -1, 0, -0.02, 0, 0, -1, -0.05]
+        camera = [(head[r * 4 + 3] if c == 3 else 0) + sum(head[r * 4 + k] * cv[k * 4 + c] for k in range(3))
+                  for r in range(3) for c in range(4)]
+
+        def apply(m, p):
+            return [sum(m[4 * r + k] * p[k] for k in range(3)) + m[4 * r + 3] for r in range(3)]
+
+        point = [0.2, -0.1, 1.5]
+        for got, want in zip(apply(camera, point), apply(head, apply(cv, point))):
             self.assertAlmostEqual(got, want)
+        producer = read(ROOT / "src/xr/pico4-roomview.c")
+        self.assertIn("double v = c == 3 ? head[r * 4 + 3] : 0;", producer)
+        self.assertIn("v += head[r * 4 + k] * cv[k * 4 + c];", producer)
 
     def test_weak_driver_calls_have_c_linkage(self):
         # Without extern "C" a weak declaration names a C++ symbol nothing defines: it stays NULL,

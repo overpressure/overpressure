@@ -130,9 +130,9 @@ struct frame_metadata
 #define META_TIME 0x08      // double, seconds
 #define META_INTRINSICS 0x10 // float fx, fy, cx, cy in pixels
 #define META_DISTORTION 0x20 // float k1..k4 (fisheye)
-#define META_CAMERA 0x30     // HmdMatrix34_t, the camera in the head frame
-#define META_CAMERA_PICK 0x60 // HmdMatrix34_t, the same: which camera serves which eye
-#define META_HEAD 0x90       // HmdMatrix34_t, the head at the exposure in tracking space
+#define META_CAMERA 0x30     // HmdMatrix34_t, the camera in raw tracking space at its exposure
+#define META_CAMERA_PICK 0x60 // HmdMatrix34_t, the camera in the head frame: which camera serves which eye
+#define META_HEAD 0x90       // HmdMatrix34_t, a head-frame calibration (identity)
 #define META_VALID 0xcc      // float u0, v0, u1, v1: the image's valid rectangle (normalized)
 #define META_SPLINE 0xe0     // u8, 1: distortion from the spline map instead of k1..k4
 
@@ -553,10 +553,25 @@ metadata(const struct pico4_roomview *rv, const struct pico4_roomview_frame *f, 
 		cv[r * 4 + 1] = -cv[r * 4 + 1];
 		cv[r * 4 + 2] = -cv[r * 4 + 2];
 	}
-	put_matrix(m, META_CAMERA, cv);
-	put_matrix(m, META_CAMERA_PICK, cv);
+	// The compositor projects into the camera with the inverse of +0x30 from raw tracking space,
+	// and its view is inverse(eye from head) x +0x90 x inverse(render head): +0x30 is the camera
+	// in tracking space at its exposure, +0x90 a head-frame calibration (none here). The head's
+	// motion since the exposure is then carried about the head, not about the tracking origin.
 	static const double IDENTITY[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
-	put_matrix(m, META_HEAD, f->pose_valid ? f->tracking_from_head : IDENTITY);
+	const double *head = f->pose_valid ? f->tracking_from_head : IDENTITY;
+	double camera[12];
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 4; c++) {
+			double v = c == 3 ? head[r * 4 + 3] : 0;
+			for (int k = 0; k < 3; k++) {
+				v += head[r * 4 + k] * cv[k * 4 + c];
+			}
+			camera[r * 4 + c] = v;
+		}
+	}
+	put_matrix(m, META_CAMERA, camera);
+	put_matrix(m, META_CAMERA_PICK, cv);
+	put_matrix(m, META_HEAD, IDENTITY);
 	// The valid part of the image: the pixel shader clamps its coordinate to it.
 	const float valid[4] = {0, 0, 1, 1};
 	memcpy(m->bytes + META_VALID, valid, sizeof(valid));

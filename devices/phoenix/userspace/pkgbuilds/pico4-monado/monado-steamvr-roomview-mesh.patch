@@ -1,6 +1,6 @@
 --- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
 +++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
-@@ -73,6 +73,17 @@
+@@ -73,6 +73,12 @@ pico4_hmd_camera_frame(struct xrt_device *xdev,
                         uint8_t *y,
                         uint32_t stride,
                         struct pico4_passthrough_frame *out) __attribute__((weak));
@@ -10,15 +10,10 @@
 +                     float *vertices,
 +                     uint32_t *indices,
 +                     struct pico4_depth_mesh_info *out) __attribute__((weak));
-+extern "C" bool
-+pico4_hmd_frame_head(struct xrt_device *xdev,
-+                     uint64_t *out_sequence,
-+                     int64_t *out_timestamp_ns,
-+                     double out[12]) __attribute__((weak));
  
  #if defined(__GNUC__)
  #pragma GCC diagnostic push
-@@ -1308,6 +1319,53 @@
+@@ -1308,6 +1314,53 @@ public:
  	Connect(vr::PropertyContainerHandle_t *queue, const char *path) = 0;
  	virtual int
  	Destroy(vr::PropertyContainerHandle_t queue) = 0;
@@ -72,7 +67,7 @@
  };
  
  /*!
-@@ -1329,10 +1387,27 @@
+@@ -1329,10 +1382,26 @@ public:
  	}
  
  	/*!
@@ -86,24 +81,23 @@
 +	 * driver, published per mesh as the Frame publishes its own: the layout block (uint32 triangle
 +	 * indices; layoutId, vertexCount, indexCount), then the data block (float x, y, z; meshId,
 +	 * layoutId, elementCount = 3 per vertex, rawFromMeshPose, posePredictionBaseTime), then the
-+	 * queue's meshIsUpToDate. The compositor draws the room view in the frame of the head at the
-+	 * shown camera frame's exposure: its projection into the cameras is camera-from-head alone,
-+	 * and its view carries that head on to the render pose. So rawFromMeshPose places the mesh
-+	 * relative to the newest camera frame's head (posePredictionBaseTime = that frame's time),
-+	 * published again with each new frame. The queues as the Frame's driver creates them (one
++	 * queue's meshIsUpToDate. The compositor draws everything in raw tracking space: the mesh at
++	 * rawFromMeshPose, each camera image from the camera's raw pose at its exposure (the frames'
++	 * metadata), the eyes at the render pose. So rawFromMeshPose is the mesh's own raw pose and
++	 * posePredictionBaseTime its pair's time. The queues as the Frame's driver creates them (one
 +	 * block size for both, 512-byte headers for the path properties, 4 data and 2 layout blocks),
 +	 * but without its flag 1 (owner is reader): here the owner writes.
  	 */
 +	static bool
 +	DepthMeshSupported()
 +	{
-+		return pico4_hmd_depth_mesh != NULL && pico4_hmd_frame_head != NULL;
++		return pico4_hmd_depth_mesh != NULL;
 +	}
 +
  	void
  	CreateMeshQueues()
  	{
-@@ -1342,19 +1417,42 @@
+@@ -1342,19 +1411,42 @@ public:
  			ovrd_log("Camera: no IVRBlockQueue_005 (%d)\n", (int)err);
  			return;
  		}
@@ -147,7 +141,7 @@
  		for (int i = 0; i < 2; i++) {
  			if (m_queues != nullptr && m_mesh_queue[i] != 0) {
  				m_queues->Destroy(m_mesh_queue[i]);
-@@ -1632,6 +1730,11 @@
+@@ -1632,6 +1724,11 @@ public:
  		               vr::k_unDoublePropertyTag);
  		p->SetProperty(props, vr::Prop_CameraWhiteBalance_Vector4_Array, white, sizeof(white),
  		               vr::k_unHmdVector4PropertyTag);
@@ -159,7 +153,7 @@
  	}
  
  private:
-@@ -1684,6 +1787,157 @@
+@@ -1684,6 +1781,134 @@ private:
  		}
  	}
  
@@ -215,16 +209,9 @@
 +		return ok;
 +	}
 +
-+	/*!
-+	 * One mesh's vertices with its place, time and layout, then the queue's meshIsUpToDate. The
-+	 * place: inverse(@p head, the shown frame's head in raw space) x the mesh's raw pose.
-+	 */
++	//! One mesh's vertices with its raw pose, time and layout, then the queue's meshIsUpToDate.
 +	bool
-+	WriteMesh(const struct pico4_depth_mesh_info &info,
-+	          const std::vector<float> &vertices,
-+	          uint64_t layout,
-+	          const double head[12],
-+	          int64_t frame_ns)
++	WriteMesh(const struct pico4_depth_mesh_info &info, const std::vector<float> &vertices, uint64_t layout)
 +	{
 +		vr::PropertyContainerHandle_t block = 0;
 +		void *buffer = nullptr;
@@ -232,20 +219,14 @@
 +			return false;
 +		}
 +		memcpy(buffer, vertices.data(), (size_t)info.vertex_count * 3 * sizeof(float));
-+		// The head is rigid: head from raw is R^T and -R^T t.
-+		const double *m = info.tracking_from_mesh;
-+		vr::HmdMatrix34_t head_from_mesh;
++		vr::HmdMatrix34_t raw_from_mesh;
 +		for (int r = 0; r < 3; r++) {
 +			for (int c = 0; c < 4; c++) {
-+				double v = 0;
-+				for (int k = 0; k < 3; k++) {
-+					v += head[4 * k + r] * (m[4 * k + c] - (c == 3 ? head[4 * k + 3] : 0));
-+				}
-+				head_from_mesh.m[r][c] = (float)v;
++				raw_from_mesh.m[r][c] = (float)info.tracking_from_mesh[4 * r + c];
 +			}
 +		}
-+		// The frame's time on the compositor's clock, as the frames' times.
-+		const double time = CompositorSeconds(frame_ns);
++		// The pair's time on the compositor's clock, as the frames' times.
++		const double time = CompositorSeconds(info.timestamp_ns);
 +		const int32_t elements = (int32_t)info.vertex_count * 3;
 +		const uint64_t id = ++m_mesh_id;
 +		PathWrite001 batch[5] = {
@@ -253,7 +234,7 @@
 +		    {0, 0, 0, &elements, sizeof(elements), vr::k_unInt32PropertyTag, 0, "/meshData/elementCount"},
 +		    {0, 0, 0, &id, sizeof(id), vr::k_unUint64PropertyTag, 0, "/meshData/meshId"},
 +		    {0, 0, 0, &layout, sizeof(layout), vr::k_unUint64PropertyTag, 0, "/meshData/layoutId"},
-+		    {0, 0, 0, &head_from_mesh, sizeof(head_from_mesh), vr::k_unHmdMatrix34PropertyTag, 0,
++		    {0, 0, 0, &raw_from_mesh, sizeof(raw_from_mesh), vr::k_unHmdMatrix34PropertyTag, 0,
 +		     "/meshData/rawFromMeshPose"},
 +		};
 +		bool ok = WritePaths(block, batch, 5);
@@ -268,42 +249,32 @@
 +	 * Each new depth mesh: the driver hands them over while the room view shows the cameras (it
 +	 * asks for frames), and asking is what keeps pico4-slamd making them, so otherwise its depth
 +	 * pipeline idles. A new layoutId only when the triangles change (PICO OS's hemisphere keeps
-+	 * them). The newest mesh again with each new camera frame, relative to that frame's head.
++	 * them), each mesh once, as the Frame's XR service publishes its own.
 +	 */
 +	void
 +	MeshRun()
 +	{
-+		std::vector<float> vertices(PICO4_DEPTH_MESH_VERTICES * 3), next_vertices(vertices.size());
++		std::vector<float> vertices(PICO4_DEPTH_MESH_VERTICES * 3);
 +		std::vector<uint32_t> indices(PICO4_DEPTH_MESH_INDICES), layout;
 +		struct pico4_depth_mesh_info info = {}, next;
-+		uint64_t layout_id = 0, frame = 0, published = 0;
-+		bool new_mesh = false;
++		uint64_t layout_id = 0, published = 0;
 +		while (m_meshing) {
-+			// A failed copy may leave a partial mesh in its buffers: kept only when it succeeds.
-+			if (pico4_hmd_depth_mesh(m_xdev, info.id, next_vertices.data(), indices.data(), &next)) {
-+				info = next;
-+				vertices.swap(next_vertices);
-+				if (layout_id == 0 || layout.size() != info.index_count ||
-+				    memcmp(layout.data(), indices.data(), layout.size() * sizeof(uint32_t)) != 0) {
-+					layout.assign(indices.begin(), indices.begin() + info.index_count);
-+					layout_id++;
-+				}
-+				new_mesh = true;
-+			}
-+			uint64_t sequence = 0;
-+			int64_t frame_ns = 0;
-+			double head[12];
-+			const bool shown = pico4_hmd_frame_head(m_xdev, &sequence, &frame_ns, head);
-+			if (info.id == 0 || !shown || (!new_mesh && sequence == frame)) {
++			// A failed copy may leave a partial mesh in its buffers; the next mesh replaces it.
++			if (!pico4_hmd_depth_mesh(m_xdev, info.id, vertices.data(), indices.data(), &next)) {
 +				std::this_thread::sleep_for(std::chrono::milliseconds(2));
 +				continue;
 +			}
-+			if (new_mesh && !WriteLayout(layout_id, (int32_t)info.vertex_count, layout)) {
-+				continue;
++			info = next;
++			if (layout_id == 0 || layout.size() != info.index_count ||
++			    memcmp(layout.data(), indices.data(), layout.size() * sizeof(uint32_t)) != 0) {
++				layout.assign(indices.begin(), indices.begin() + info.index_count);
++				layout_id++;
++				if (!WriteLayout(layout_id, (int32_t)info.vertex_count, layout)) {
++					layout.clear();
++					continue;
++				}
 +			}
-+			new_mesh = false;
-+			frame = sequence;
-+			if (!WriteMesh(info, vertices, layout_id, head, frame_ns)) {
++			if (!WriteMesh(info, vertices, layout_id)) {
 +				continue;
 +			}
 +			if (published++ % 250 == 0) {
@@ -317,7 +288,7 @@
  	//! The HMD's pose at the exposure, as GetPose reports it.
  	vr::TrackedDevicePose_t
  	HeadPoseAt(int64_t at_ns)
-@@ -1718,6 +1972,15 @@
+@@ -1718,6 +1943,15 @@ private:
  	int64_t m_start_ns = 0;
  	IVRBlockQueue005 *m_queues = nullptr;
  	vr::PropertyContainerHandle_t m_mesh_queue[2] = {0, 0};

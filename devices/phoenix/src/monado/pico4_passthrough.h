@@ -122,16 +122,6 @@ typedef bool (*pico4_passthrough_pose_fn)(void *ctx, int64_t timestamp_ns, doubl
 bool
 pico4_passthrough_export(struct pico4_passthrough *p, const char *path, pico4_passthrough_pose_fn pose, void *ctx);
 
-/*!
- * The newest frame in the room view's ring: its sequence, exposure time and head (raw space,
- * row-major 3x4). False before the first frame with a valid head, or without the export.
- */
-bool
-pico4_passthrough_newest_head(const struct pico4_passthrough *p,
-                              uint64_t *out_sequence,
-                              int64_t *out_timestamp_ns,
-                              double out_tracking_from_head[12]);
-
 //! Turns one raw image upright (pico4_tcam_upright's @p turn) into 8 bits: black level 16 off, times @p gain.
 void
 pico4_passthrough_convert(const uint16_t *src, uint32_t src_stride, int turn, float gain, uint8_t *dst,

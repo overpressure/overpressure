@@ -122,17 +122,6 @@ bool
 pico4_hmd_depth_mesh(
     struct xrt_device *xdev, uint64_t after, float *vertices, uint32_t *indices, struct pico4_depth_mesh_info *out);
 
-/*!
- * SteamVR's 3D room view: the newest room view frame's sequence, exposure time (CLOCK_MONOTONIC)
- * and head in SteamVR's raw tracking space (row-major 3x4). The compositor draws the depth mesh
- * relative to the head of the camera frame it shows (docs/xr.md#passthrough). False before the
- * first frame, or for other devices.
- *
- * @ingroup drv_pico4
- */
-bool
-pico4_hmd_frame_head(struct xrt_device *xdev, uint64_t *out_sequence, int64_t *out_timestamp_ns, double out[12]);
-
 #ifdef __cplusplus
 }
 #endif

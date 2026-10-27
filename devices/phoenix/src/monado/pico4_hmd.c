@@ -1562,16 +1562,6 @@ pico4_hmd_depth_mesh(
 }
 
 bool
-pico4_hmd_frame_head(struct xrt_device *xdev, uint64_t *out_sequence, int64_t *out_timestamp_ns, double out[12])
-{
-	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose) {
-		return false;
-	}
-	struct pico4_passthrough *p = pico4_slam_passthrough(pico4_hmd(xdev)->slam);
-	return pico4_passthrough_newest_head(p, out_sequence, out_timestamp_ns, out);
-}
-
-bool
 pico4_hmd_floor(struct xrt_device *xdev, float *out_y)
 {
 	float y;

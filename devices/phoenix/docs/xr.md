@@ -658,21 +658,17 @@ station keep a single owner:
   each new mesh. The driver stamps the feed, and `pico4-slamd` feeds the pipeline only within a
   second of a stamp, so it idles otherwise. The driver returns the vertices in the head pose's
   world (in a saved room with the room's turn and shift) and its place in SteamVR's raw space
-  (the tracking origin's offset). The compositor draws the 3D room view in the frame of the head
-  at the shown camera frame's exposure: its projection into the cameras is camera-from-head
-  alone, and its view carries that head on to the render pose. Its `rawFromMeshPose` is
-  therefore the mesh's place relative to that head. A mesh given in raw or standing space
-  floated above the head. Its own correction, inverse(reference head) × `rawFromMeshPose`,
-  applies only once vrserver has a reference (`IVRServerInternal_XXX` slot 42, which the Frame's
-  driver sends only for a non-identity transform); with one, the camera projection took the
-  reference too and the image scrambled. The camera component
+  (the tracking origin's offset). The compositor draws the mesh in raw tracking space, as PICO
+  OS draws its world-frame mesh, and takes each vertex into the shown camera frame through that
+  frame's camera pose (its metadata, below). The camera component
   ([monado-steamvr-roomview-mesh.patch](../userspace/pkgbuilds/pico4-monado/monado-steamvr-roomview-mesh.patch))
-  publishes each mesh as the Frame's XR service does: the layout block, the data block
-  (`rawFromMeshPose` = inverse(the newest room view frame's head) × the mesh's raw place,
-  `posePredictionBaseTime` = that frame's time on `CLOCK_MONOTONIC_RAW`), then `meshIsUpToDate`.
-  It publishes the newest mesh again with each new camera frame.
-  It creates both queues with one block size, 512-byte headers, 4 data and 2 layout blocks and
+  publishes each new mesh once, as the Frame's XR service does: the layout block when it
+  changes, the data block (`rawFromMeshPose` = the mesh's raw place, `posePredictionBaseTime` =
+  the middle of its pair's exposure on `CLOCK_MONOTONIC_RAW`), then `meshIsUpToDate`. It creates
+  both queues with one block size, 512-byte headers, 4 data and 2 layout blocks and
   `/meshData/blockDataSize`, and reports `Prop_SupportsRoomViewDepthProjection_Bool`.
+  `IVRServerInternal` slots 41 and 42 are not head poses: the Frame sends its plane anchors
+  through 41 and a jump of the tracking world through 42, and neither is needed here.
 - **The Frame's room view.** Without a mesh the compositor projects the cameras onto a fixed sphere
   (the Frame's "RoomView2D"). The Frame's "RoomView3D" publishes a measured mesh: its XR service
   computes depth from the stereo cameras on the CVP, smooths it, takes the floor from horizontal
@@ -711,12 +707,17 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   image per camera (the pixel shader squares each sample, so the linear luma goes out as its
   square root), then the frame's metadata and `PublishFrame`. The metadata the room view's shaders
   read: the exposure time on the compositor's clock (`CLOCK_MONOTONIC_RAW`; a time after its now
-  shows nothing), fx, fy, cx, cy in pixels, k1–k4, the camera in the head frame in the
-  computer-vision axes (x right, y down, looking along +z; the vertex shader clamps the depth to
-  0.001, so OpenVR's camera axes send every point off the image), the head at the exposure, and
-  the image's valid rectangle (0, 0, 1, 1; the pixel shader clamps its coordinate to it, so zero
-  samples one texel). The compositor picks per eye the camera nearest to it; each camera's image
-  stays its own.
+  shows nothing), fx, fy, cx, cy in pixels, k1–k4, the camera's pose in raw tracking space at
+  the exposure (+0x30: the head at the exposure × the camera in the head frame), the camera in
+  the head frame (+0x60, from which the compositor picks per eye the camera nearest to it), a
+  head-frame calibration (+0x90, identity), and the image's valid rectangle (0, 0, 1, 1; the
+  pixel shader clamps its coordinate to it, so zero samples one texel). The camera poses are in
+  the computer-vision axes (x right, y down, looking along +z; the vertex shader clamps the depth
+  to 0.001, so OpenVR's camera axes send every point off the image). The compositor's
+  reprojection (`vrcompositor`, emulated) is inverse(+0x30) × the point in raw space, with the
+  render pose carried through inverse(eye-to-head) × +0x90 × inverse(render head): with the head
+  at +0x90 instead, head motion turned about the tracking origin, 1.6 m from the head, and
+  nodding warped the view while the head moved. Each camera's image stays its own.
 - **Restarts.** A new compositor (its process changed) gets the frames set up again; without
   `vrserver` the producer exits, and the unit starts again with SteamVR.
 - **Reprojection without a depth mesh.** Measured in frame dumps with the headset lying still, with
@@ -734,13 +735,11 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   extremes), so it is shown about 40–80 ms after it. Its rotation is as timely as the virtual
   world's: against the vblank that starts scanout, the image's shift rate follows the head's yaw
   rate 32 ms ahead in the room view and 28 ms ahead in the virtual space (display layer motion
-  log with linear scanout, worn turns up to 170°/s). Pitch is as timely as yaw: with the depth
-  mesh, the image leads the tracker's pose by 16 ms in pitch and 14 ms in yaw at 28–29 pixels per
-  degree (the log's vertical and horizontal shift, worn nods up to 114°/s). What remains is the
-  edge of the camera's view: a 40–80 ms old frame lacks the part the head turned towards, and the
-  compositor stretches the frame's border into it until the next frame covers it. Nodding shows it
-  most at the top, where the downward-looking pair sees little. The rate does not change it: at
-  60 Hz (`PICO4_CAMERA_HZ=60`, 30 scene sets a second) it looked the same worn.
+  log with linear scanout, worn turns up to 170°/s). Worn with the RGB camera on the depth mesh
+  and the camera pose in raw space, turning and nodding show the room fixed in place, without
+  warp or visible lag. With colour and the mesh on for 60 s, the still headset's stock tracker
+  lost no pose and stayed within 0.5 mm and 0.10° of its start (0.4 mm and 0.04° with the room
+  view off); `pico4-slamd` then takes 104 % of one core against 54 %.
 - **Colour from the RGB camera** (`PICO4_ROOMVIEW_RGB=1`, under test). PICO OS colours its
   see-through from the IMX471 RGB camera, every frame with its own capture pose, onto the depth
   mesh; the grey pair only builds the mesh. Here:
@@ -1566,7 +1565,8 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
    unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
    which needs the Steam client in the session.
-4. **Passthrough.** The room view shows the forward cameras ([Passthrough](#passthrough)).
-   - Worn, left-right turns hold the room. Up-down movement trails, because the 2D view
-     projects the room far away. Next is a depth mesh for SteamVR's 3D room view.
-   - The upper corners of the view lie outside the cameras' field and show their edge pixels.
+4. **Passthrough.** The room view shows the RGB camera on PICO OS's depth mesh
+   ([Passthrough](#passthrough)); worn, turning and nodding hold the room. Open: colour as
+   the default, controller tracking with colour on, an auto exposure that leaves
+   out the lens ring, and the CVP firmware in the system's `/lib/firmware` (the mesh needs it
+   after a reboot).

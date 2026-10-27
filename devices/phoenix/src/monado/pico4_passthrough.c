@@ -396,35 +396,6 @@ pico4_passthrough_export(struct pico4_passthrough *p, const char *path, pico4_pa
 	return true;
 }
 
-bool
-pico4_passthrough_newest_head(const struct pico4_passthrough *p,
-                              uint64_t *out_sequence,
-                              int64_t *out_timestamp_ns,
-                              double out_tracking_from_head[12])
-{
-	const struct pico4_roomview *rv = p != NULL && p->exporting ? p->roomview : NULL;
-	if (rv == NULL) {
-		return false;
-	}
-	uint64_t n = __atomic_load_n(&rv->frames_written, __ATOMIC_ACQUIRE);
-	if (n == 0) {
-		return false;
-	}
-	const struct pico4_roomview_frame *f = &rv->frames[(n - 1) % PICO4_ROOMVIEW_FRAMES];
-	uint64_t seq = __atomic_load_n(&f->sequence, __ATOMIC_ACQUIRE);
-	int64_t timestamp_ns = f->timestamp_ns;
-	bool valid = f->pose_valid != 0;
-	memcpy(out_tracking_from_head, f->tracking_from_head, sizeof(f->tracking_from_head));
-	__atomic_thread_fence(__ATOMIC_ACQUIRE);
-	// The export writes this slot again only after three more frames; seen as a changed sequence.
-	if (seq == 0 || !valid || __atomic_load_n(&f->sequence, __ATOMIC_RELAXED) != seq) {
-		return false;
-	}
-	*out_sequence = seq;
-	*out_timestamp_ns = timestamp_ns;
-	return true;
-}
-
 void
 pico4_passthrough_srgb_table(uint8_t table[1024], double white)
 {
