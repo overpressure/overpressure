@@ -5,7 +5,7 @@ The development loop, `python -m overpressure dev`, is the everyday route: the h
 [development mode](#development-mode), with the engineering ABL and a dev image in the `boot`
 partition, so that each attempt only streams a userspace archive and runs the stage-2 checks.
 The acceptance runner, `python -m overpressure hwtest`, boots one instrumented stage-1 image, checks it
-and, on request, the native graphics or the SteamOS-compatible userspace up to Valve's VR
+and, on request, the SteamOS-compatible userspace up to Valve's VR
 session, then returns the headset to its original PICO OS. The acceptance cycle,
 `python -m overpressure cycle`, runs one `flash-run` unattended between staging the engineering ABL and
 restoring stock boot and stock ABL, both verified by EDL readback; it is the way back to stock,
@@ -18,20 +18,14 @@ headset to fastboot when the host stops answering.
 | Command | Writes | Ends in | Use |
 | --- | --- | --- | --- |
 | `hwtest preflight` | temporary files under `/data/local/tmp`, removed again | PICO OS, never left | the image's userspace binaries on the stock kernel |
-| `hwtest run` | nothing: RAM boot | the original PICO OS | acceptance where `fastboot boot` works |
 | `hwtest flash-run` | `boot`, restored afterwards | the original PICO OS | acceptance on the PICO 4 |
 | `cycle` | `abl` and `boot`, both restored | PICO OS on stock boot and stock ABL | back to stock, alone or after an acceptance run; unattended |
 | `dev` | `abl` with `dev stage-abl`; `boot` with each new dev image, until `dev restore` | development mode (stage 1, stage 2 or fastboot), kept between tasks; PICO OS after `dev restore` | everyday development |
 
-On the PICO 4, `flash-run` with the engineering ABL is the route that works. The signed Neo3
-engineering ABL answers `fastboot boot` with `unknown command` after transferring the image, and
-the stock ABL reports its unlock state as `DeviceUnlocked=true`, a form the runner's unlock check
-does not accept. `run` then fails and returns the headset to PICO OS; it never falls back to
-flashing.
-
-[scripts/boot-poc.sh](../scripts/boot-poc.sh) and `boot-poc.ps1` boot an image from RAM for
-interactive use and leave Linux running ([stage1.md](stage1.md)); their reachability check is not
-an acceptance result.
+`flash-run` needs the engineering ABL: it answers the runner's unlock check, while the stock ABL
+reports its unlock state as `DeviceUnlocked=true`, a form the check does not accept. The
+engineering ABL has no `fastboot boot` (it answers `unknown command` after the transfer), so
+every acceptance boot writes `boot` and restores it.
 
 ## Requirements
 
@@ -119,11 +113,11 @@ For an acceptance run that ends on stock, run
 
 ## Acceptance runner
 
-`python -m overpressure hwtest preflight|run|flash-run` ([tooling/hardware_test.py](../tooling/hardware_test.py)).
+`python -m overpressure hwtest preflight|flash-run` ([tooling/hardware_test.py](../tooling/hardware_test.py)).
 Without options, a pass establishes a Linux shell with USB-network diagnostics, read-only
-persistent storage and a verified return to the same stock PICO OS; `--graphics` and
-`--userspace` add graphics, XR and session checks. Audio is not tested. `run` and `flash-run`
-never unlock the bootloader or reset user data, and they never modify the source image. The full
+persistent storage and a verified return to the same stock PICO OS; `--userspace` adds the
+graphics, XR and session checks of stage 2. Audio is not tested. `flash-run` never unlocks the
+bootloader or reset user data, and they never modify the source image. The full
 acceptance on the PICO 4:
 
 ```sh
@@ -140,7 +134,7 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
 | --- | --- | --- |
 | `--serial` | required; `preflight` takes the only authorized ADB device | ADB serial |
 | `--fastboot-serial` | `--serial` | fastboot serial if it differs; also the POC gadget's USB serial |
-| `--image` | required for `run`, `flash-run` | stage-1 image |
+| `--image` | required for `flash-run` | stage-1 image |
 | `--rootfs` | required for `preflight` | `out/pico4-poc-<firmware>-rootfs.tar` |
 | `--backup` | required for `flash-run` | verified EDL backup |
 | `--confirm-device` | required for `flash-run` | repeats `--serial` to authorize the boot write |
@@ -150,9 +144,7 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
 | `--windows-ncm-python` | off | Windows only: [NCM initialization](#windows-ncm-initialization) |
 | `--userspace ARCHIVE` | off | [handoff and stage-2 checks](#userspace-checks) |
 | `--userspace-timeout` | 600 (60–1800) | seconds for the archive transfer and for stage 2's SSH, each |
-| `--graphics MODE` | off | [native graphics tests](#graphics): `kms`, `vulkan` or `all` |
-| `--graphics-seconds` | 10 (3–120) | KMS measurement per mode |
-| `--debug-session-seconds` | 0 (60–1800) | [development session](#iterate-within-one-linux-boot); excludes `--graphics` |
+| `--debug-session-seconds` | 0 (60–1800) | [development session](#iterate-within-one-linux-boot) |
 | `--boot-timeout`, `--report-timeout`, `--recovery-timeout` | 180, 180, 420 | [limits](#failure-and-timeout-behavior) in seconds |
 
 ### Phases
@@ -184,8 +176,7 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
 5. **enter unlocked fastboot.** `adb reboot bootloader`; within `--boot-timeout` the fastboot
    serial must appear, and `fastboot oem device-info` (or `getvar unlocked`) must report a known
    unlocked state.
-6. **RAM boot** (`fastboot boot`) or **flash test boot image** (`flash-run`), bounded by
-   `--boot-timeout`.
+6. **flash test boot image**, bounded by `--boot-timeout`.
 7. **SSH identity.** Within `--boot-timeout`, after the NCM initialization if enabled, SSH with
    the run's key must return this run's identifier and the baseline SoC ID before the endpoint
    counts as the headset. Only then does the runner clear the device's connection deadline.
@@ -202,8 +193,8 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
    `system.txt` (naming this run) and `dmesg.txt`, each 1 B to 16 MiB, inspected without
    extracting device-controlled paths. HTTP bypasses proxies, rejects redirects and limits each
    response to 32 MiB and 15 s. Mounting the USB log drive is not part of the test.
-10. **native graphics**, **SteamOS-compatible userspace**, **bounded development session**: with
-    [`--graphics`](#graphics), [`--userspace`](#userspace-checks) and
+10. **SteamOS-compatible userspace**, **bounded development session**: with
+    [`--userspace`](#userspace-checks) and
     [`--debug-session-seconds`](#iterate-within-one-linux-boot), in this order.
 11. **return to original PICO OS**, whenever the headset left PICO OS, after a pass or a failure
     ([recovery](#failure-and-timeout-behavior)). The headset must come back under the original
@@ -335,23 +326,11 @@ in `result.json` records the wait and the temperature. The session check waits u
 SteamVR's compositor to present, runs 30 s, records the hottest zone (`max_temp_c`) and the fan's
 state (`fan`) before and after, and is bounded to 400 s.
 
-### Graphics
-
-`--graphics MODE` (`kms`, `vulkan` or `all`) runs the native graphics tests in stage 1 and needs a
-graphics-enabled image ([graphics.md](graphics.md)). `pico4-vulkan-test` is bounded to 45 s;
-`pico4-kms-test` measures `--graphics-seconds` per mode and is bounded to twice that plus 30 s.
-[tooling/graphics.py](../tooling/graphics.py) validates the JSON results (`graphics-vulkan.json`,
-`graphics-kms.json`, stderr in `.log` files); `graphics-dmesg.txt` and
-`graphics-display-state.txt` hold the kernel log and the panel and backlight state. The phase-8
-assertions run again afterwards. A failed graphics phase fails the run even when the restore
-succeeds. The runner cannot see the panels: `graphics_visual_confirmation` stays `not_recorded`,
-and a person has to look at both of them.
-
 ### Iterate within one Linux boot
 
-`--debug-session-seconds N` (60–1800) on `run` or `flash-run` keeps the authenticated boot
+`--debug-session-seconds N` (60–1800) on `flash-run` keeps the authenticated boot
 available for N seconds after the checks, with `--userspace` after the stage-2 checks. The run is
-recorded as a development run (`run_kind: development`, `graphics_acceptance: not_evaluated`);
+recorded as a development run (`run_kind: development`);
 its success does not certify anything launched by hand. When the runner prints
 `development session ready`, use the SSH configuration in the result directory `OUT`:
 
@@ -413,7 +392,7 @@ A command counts as failed when it exits nonzero or prints the word `FAILED`.
 
 | Limit | Default | Bounds |
 | --- | --- | --- |
-| `--boot-timeout` | 180 s | reaching fastboot; the RAM boot or each flash; SSH readiness, including the NCM initialization |
+| `--boot-timeout` | 180 s | reaching fastboot; each flash; SSH readiness, including the NCM initialization |
 | `--report-timeout` | 180 s | the hardware report |
 | `--recovery-timeout` | 420 s | the wait for PICO OS; for `flash-run` also the wait for fastboot before the restore |
 | `--userspace-timeout` | 600 s | the archive transfer; the wait for stage 2's SSH |
@@ -467,11 +446,9 @@ python -m overpressure hwtest preflight --serial ADB_SERIAL --rootfs out/pico4-p
 ```
 
 Runs phases 2 and 4 only: PICO OS keeps running, and no unlock, fastboot or SSH is involved.
-`--serial` may be left out when exactly one authorized ADB device is attached.
-[scripts/preflight.ps1](../scripts/preflight.ps1) (`-RootfsTar`, `-Serial`; run it with
-PowerShell 7, since Windows PowerShell 5.1 aborts on native stderr) and
-[scripts/preflight.sh](../scripts/preflight.sh) (`[rootfs.tar] [serial]`) call it, default to the
-newest `out/pico4-poc-*-rootfs.tar` and return its exit status. The recorded fingerprint and OEM
+`--serial` may be left out when exactly one authorized ADB device is attached, and `--rootfs`
+when the newest `out/pico4-poc-*-rootfs.tar` is the one to check (the window's "Preflight on
+PICO OS" step runs it so). The recorded fingerprint and OEM
 state select the firmware entry: `python -m overpressure match --fingerprint ... --oem-state ...`.
 
 ## Acceptance cycle

@@ -210,9 +210,7 @@ Keep the engineering ABL active while working with stage 1:
 * The engineering ABL rejects `fastboot boot` with an unknown-command error, so stage 1 is
   written to `boot`: the development loop keeps it there until `dev restore`, and the runner
   restores stock boot after its run ([stage1.md](stage1.md),
-  [hardware-testing.md](hardware-testing.md)). A successful unlock alone does not establish that
-  `fastboot boot` works; the RAM-boot runner checks that on the device and never falls back to
-  flashing.
+  [hardware-testing.md](hardware-testing.md)).
 * Writing `boot` needs the engineering ABL's per-session command authorization first:
   `fastboot oem <token> unlock`, the command that `python -m overpressure device token` prints. The
   hardware runner and `python -m overpressure dev flash` send it.
@@ -236,7 +234,7 @@ With the stock ABL restored, PICO OS boots with SELinux enforcing, and the bootl
 unlocked. The hardware runner verifies the return to the original Android build while the
 engineering ABL is still installed; it neither restores the ABL nor relocks. Check a normal
 PICO OS boot after restoring the ABL; `python -m overpressure cycle` waits for it. The manual
-boot-partition sequence in [stage1.md](stage1.md#if-fastboot-boot-is-not-available) is a
+boot-partition sequence in [stage1.md](stage1.md#writing-boot-by-hand) is a
 separate, persistent operation that needs a working recovery path.
 
 ## Development mode

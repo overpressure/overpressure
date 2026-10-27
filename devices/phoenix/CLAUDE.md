@@ -48,7 +48,7 @@ README.md current.
   `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`, `PICO4_` keys),
   `userspace.py` and `graphics.py` (validators), `firmware.py`/`stock.py` (PICO's OTA), and the
-  controller data extractors. The formats it shares (boot image, cpio, AVB, sparse, super, OTA
+  controller data extractors. The formats it shares (boot image, cpio, AVB, sparse, OTA
   payload, Alpine, `elfdeps.py`, `windows_ncm.py`) are in the root package `overpressure/`.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
   the f_mass_storage kernel thread and with it the USB link. `pico4-userspace receive/switch`
@@ -62,10 +62,10 @@ README.md current.
   clients, `vrdisplay/`, `sysvsem/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
   them in. `stockslam/` is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a
   bionic root; `build-userspace.sh` builds it with clang for Android, without an NDK.
-- `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-graphics.sh`, the extraction
+- `scripts/`: `build-userspace.sh`, `build-system-image.sh`, the extraction
   scripts `extract-graphics-firmware.sh`, `extract-sensor-data.sh`, `extract-wlan.sh`,
   `extract-audio.sh`, `extract-stock-slam.sh` (from the stock directory of `python -m
-  overpressure stock`, PICO's public OTA; `stock-lib.sh`), boot and preflight helpers. The
+  overpressure stock`, PICO's public OTA; `stock-lib.sh`) and the on-headset preflight. The
   headset's own factory data is not extracted: the image links to persist, mounted read-only at
   boot (`pico4-persist`). `tests/`: unittest suites, `test_recovery_policy.sh`,
   `test_charger.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`. `device.mk`: its Makefile targets.

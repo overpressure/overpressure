@@ -5,8 +5,7 @@ kernel's KGSL GPU interface, and presentation on both panels through the stock `
 driver, with the stock kernel and device trees unchanged. Two native tests cover the two halves
 separately: an offscreen Vulkan render with pixel readback, and CPU-drawn frames on both panels
 through atomic KMS with the vendor display fences. Both pass on the headset, the KMS test at
-90 Hz and 72 Hz. They run from an optional Alpine overlay in the stage-1 image
-([stage1.md](stage1.md)) or from the userspace package `pico4-graphics-tests`
+90 Hz and 72 Hz. They come with the userspace package `pico4-graphics-tests`
 ([userspace.md](userspace.md)). Monado's KMS compositor target ([xr.md](xr.md)) and SteamVR's
 display layer ([session.md](session.md)) present GPU-rendered frames over the same display path.
 
@@ -36,8 +35,7 @@ Stock Android's live DRM properties show how PICO OS drives the panels:
 
 Plane capabilities, property enum values and object IDs are read at run time, not assumed.
 `pico4-kms-test --inspect` prints every plane's properties without becoming DRM master or
-changing the display. It also runs under PICO OS, with the musl loader and libdrm of the stage-1
-root file system.
+changing the display.
 
 Driver behaviour the tests account for:
 
@@ -54,41 +52,15 @@ Driver behaviour the tests account for:
   after boot. Stock PICO OS runs with the same supply disabled while the display is active, so
   this alone does not indicate a power fault. No regulator or device-tree change is made.
 
-## Graphics overlay for the stage-1 image
+## GPU firmware
 
-Alpine 3.24's Mesa package builds Turnip for the `msm` and virtio kernel interfaces, not KGSL.
-[scripts/build-graphics.sh](../scripts/build-graphics.sh) builds unmodified Mesa 26.1.6 with
-`-Dvulkan-drivers=freedreno -Dfreedreno-kmds=kgsl` and nothing else (no OpenGL, no window
-systems). It checks the release archive against the SHA-512 in
-[Alpine's package recipe](https://github.com/alpinelinux/aports/blob/3.24-stable/main/mesa/APKBUILD)
-and compiles the project's test programs and shaders from [src/graphics/](../src/graphics/),
-with warnings treated as errors.
-
-It runs as root on Linux or WSL, with QEMU user emulation and an enabled aarch64 binfmt handler.
-It starts from the verified Alpine minirootfs that the stage-1 build caches, so run
-`python -m overpressure build` once first:
-
-```sh
-bash devices/phoenix/scripts/build-graphics.sh /var/tmp/pico4-graphics-build "$PWD/out/graphics-overlay"
-```
-
-Use a dedicated build directory on a Linux file system. The script installs the build
-dependencies inside it and writes the overlay; it does not access the headset. The overlay holds
-Turnip (`usr/lib/libvulkan_freedreno.so`) with its ICD file
-(`usr/share/vulkan/icd.d/pico4-turnip.json`), the two tests in `usr/bin`, and in
-`usr/share/pico4-poc/graphics/` the SPIR-V shaders, the list of Alpine build packages and the
-Mesa provenance.
-
-The GPU firmware is not part of it. The kernel loads six files: `a650_gmu.bin`, `a650_sqe.fw`,
-`a650_zap.mdt`, `a650_zap.b00`, `a650_zap.b01` and `a650_zap.b02`, in `/firmware` of the
+The kernel loads six files: `a650_gmu.bin`, `a650_sqe.fw`, `a650_zap.mdt`, `a650_zap.b00`, `a650_zap.b01` and `a650_zap.b02`, in `/firmware` of the
 stock `vendor` partition of the headset's firmware. They come from PICO's public OTA
 ([development.md](development.md#stock-firmware)):
 
 ```sh
 python3 -m overpressure stock --firmware 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
 devices/phoenix/scripts/extract-graphics-firmware.sh /var/tmp/pico4-stock/5.13.7-global-seko assets/graphics-firmware-5.13.7
-mkdir -p out/graphics-overlay/lib/firmware
-cp assets/graphics-firmware-5.13.7/a650_* out/graphics-overlay/lib/firmware/
 ```
 
 The script checks the stock directory's manifest first and writes the files' SHA-256 and the
@@ -96,36 +68,11 @@ firmware build to `manifest.json`. The project distributes no vendor files; `ass
 build output stay private. The userspace build takes the same directory (`--gpu-firmware`,
 [userspace.md](userspace.md)).
 
-A stage-1 image with the overlay and the libraries the tests need:
-
-```sh
-python -m overpressure build --firmware 5.13.7-global-seko --name pico4-poc-graphics \
-    --extra-overlay out/graphics-overlay \
-    --extra-packages vulkan-loader libstdc++ spirv-tools libexpat zlib zstd-libs
-```
-
-The image's SHA-256 covers the overlay. `--extra-overlay` can replace any file of the root file
-system, so use only reviewed local files. `/etc/pico4-poc/build-info` in the image records the
-resolved Alpine packages.
-
 ## Run the tests
 
-Prepare the headset and its backup as in [device-preparation.md](device-preparation.md) and
-[hardware-testing.md](hardware-testing.md), then add `--graphics` to a `flash-run` with the
-graphics image:
-
-```sh
-python -m overpressure hwtest flash-run --serial SERIAL --confirm-device SERIAL --backup BACKUP \
-    --image out/pico4-poc-graphics.img --graphics all --graphics-seconds 45
-```
-
-`--graphics vulkan` or `--graphics kms` runs one test. `--graphics-seconds` is the KMS
-measurement per mode (3 to 120 s, default 10). The run's identity and storage checks, the
-device watchdog, failure cleanup and stock-boot restoration apply as in every hardware run.
-`--graphics` cannot be combined with `--debug-session-seconds`. In
-[development mode](hardware-testing.md#development-mode), `python -m overpressure dev check` runs the
-Vulkan test and the display checks in stage 2 instead; a `flash-run` leaves the stock boot image
-in `boot` and so ends development mode.
+Both tests are in the userspace (`pico4-graphics-tests`). In
+[development mode](hardware-testing.md#development-mode), `python -m overpressure dev check` runs
+the Vulkan test and the display checks in stage 2; `pico4-kms-test` runs by hand on the headset.
 
 - **Vulkan** (`pico4-vulkan-test`): selects the KGSL Turnip ICD explicitly (`VK_DRIVER_FILES`),
   requires the Turnip driver and an integrated GPU, renders a full-screen triangle into a
@@ -142,9 +89,8 @@ in `boot` and so ends development mode.
   vblank event stays queued throughout. The test runs SECONDS at 90 Hz, then SECONDS at 72 Hz in
   the same DRM session, then disables the display. Except with `--inspect` it runs only in the
   POC environment (`/etc/pico4-poc/build-info`).
-- **Physical output:** stable, complete images in both lenses can only be confirmed by eye; the
-  runner records `graphics_visual_confirmation: not_recorded`. The test disables the display
-  when it ends, so black output afterwards is expected: check that a mode is still active before
+- **Physical output:** stable, complete images in both lenses can only be confirmed by eye. The
+  test disables the display when it ends, so black output afterwards is expected: check that a mode is still active before
   looking.
 
 The KMS test prints one JSON object (schema 2) with the tested arrangement (`composition`,
@@ -159,14 +105,7 @@ The KMS test prints one JSON object (schema 2) with the tested arrangement (`com
 
 A mode passes with both rates within 5% of the mode, at least 90% of the expected flips and
 vblank samples, and zero vblank sequence gaps. Gaps mean the measurement is incomplete; they do
-not by themselves prove a dropped scanout. The host validator
-([tooling/graphics.py](../tooling/graphics.py)) also requires the stock arrangement: `rgb_layers`
-composition, a `combined` buffer, `sspp_layout` routing, `page_flip` presentation with the
-retire fence, and both modes, 90 Hz first.
-
-The run directory receives `graphics-vulkan.json` and `graphics-kms.json` (stdout), the matching
-`.log` files (stderr), the kernel log and the display state after the tests. A failed graphics
-phase fails the run even when stock restoration succeeds.
+not by themselves prove a dropped scanout.
 
 Diagnostic variants, given after the duration, separate scanout stability, individual buffers
 and commit timing. They report `diagnostic`, never a pass:
@@ -182,13 +121,11 @@ and commit timing. They report `diagnostic`, never a pass:
 | `--opaque-layers` | two opaque planes, one per eye, instead of the six colour layers |
 | `--no-retire-fence` | page-flip events only, without the release and retire fences |
 
-For several experiments in one Linux boot, keep the boot with a development session
-(`--debug-session-seconds`, [hardware-testing.md](hardware-testing.md)) and upload replacement
-test binaries to `/run` through the run's SSH configuration.
-
-In the userspace, `pico4-turnip-kgsl` provides Turnip under its own ICD file
-(`/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json`) and `pico4-graphics-tests` the same
-two tests, built for glibc. `pico4-userspace-check` runs the Vulkan test there
+In the userspace, `pico4-turnip-kgsl` provides Turnip, unmodified Mesa 26.1.6 with
+`-Dvulkan-drivers=freedreno -Dfreedreno-kmds=kgsl,msm` (the release archive checked against the
+SHA-512 of [Alpine's package recipe](https://github.com/alpinelinux/aports/blob/3.24-stable/main/mesa/APKBUILD)),
+under its own ICD file (`/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json`), and
+`pico4-graphics-tests` the two tests. `pico4-userspace-check` runs the Vulkan test there
 ([userspace.md](userspace.md)). It builds the `msm` backend beside KGSL
 (`-Dfreedreno-kmds=kgsl,msm`) only for libdrm ([OpenGL](#opengl)); KGSL is enumerated first,
 so the `msm` backend never runs on the stock kernel. Its two patches:
@@ -251,7 +188,7 @@ into a linear buffer exported as a dma-buf (the prime path).
 
 ## Verified results
 
-Original PICO 4, PICO OS 5.13.7, stock kernel `4.19.81-perf+`, tests from the stage-1 overlay:
+Original PICO 4, PICO OS 5.13.7, stock kernel `4.19.81-perf+`:
 
 | Check | Result |
 | --- | --- |

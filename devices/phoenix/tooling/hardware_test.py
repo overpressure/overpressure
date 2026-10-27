@@ -1,4 +1,4 @@
-"""Bounded, serial-bound PICO 4 tests; RAM boot by default, explicit flash-run opt-in."""
+"""Bounded, serial-bound PICO 4 tests: the preflight on PICO OS, and flash-run with the stock boot restored."""
 from __future__ import annotations
 
 import argparse
@@ -214,7 +214,7 @@ class Runner:
         self.ncm_initialized = False
         self.baseline = None
         self.boot_dirty = False
-        self.result.update(boot_method="flash" if self.flash_mode else "ram" if args.command == "run" else "none",
+        self.result.update(boot_method="flash" if self.flash_mode else "none",
                            boot_restore="not_needed", boot_restore_required=False)
         self.save()
 
@@ -380,19 +380,16 @@ class Runner:
     def boot(self):
         path = self.folder / "test-boot.img"
         require(device.digest(path)["sha256"] == self.result["boot_sha256"], "Test image changed before boot")
-        if self.flash_mode:
-            self.authorize_flash()
-            # A failed or timed-out write may still have changed storage. Journal first.
-            self.boot_dirty = True
-            self.result["boot_restore"] = "required"
-            self.result["boot_restore_required"] = True
-            self.save()
-            self.fastboot("flash", "boot", str(path), timeout=self.args.boot_timeout)
-            self.boot_attempted = True
-            self.fastboot("reboot")
-            return
+        require(self.flash_mode, "Only flash-run boots the test image")
+        self.authorize_flash()
+        # A failed or timed-out write may still have changed storage. Journal first.
+        self.boot_dirty = True
+        self.result["boot_restore"] = "required"
+        self.result["boot_restore_required"] = True
+        self.save()
+        self.fastboot("flash", "boot", str(path), timeout=self.args.boot_timeout)
         self.boot_attempted = True
-        self.fastboot("boot", str(path), timeout=self.args.boot_timeout)
+        self.fastboot("reboot")
 
     def connect(self, timeout):
         if getattr(self.args, "windows_ncm_python", None) and not self.ncm_initialized:
@@ -472,43 +469,6 @@ class Runner:
         (self.folder / "report.tar.gz").write_bytes(report)
         validate_report(report, self.run_id)
         (self.folder / "dmesg.txt").write_text(self.ssh("dmesg"), encoding="utf-8")
-
-    def graphics(self):
-        from .graphics import validate_kms, validate_vulkan
-        duration = self.args.graphics_seconds
-        requested = self.args.graphics
-        results, errors = {}, []
-        for name in ("vulkan", "kms"):
-            if requested not in (name, "all"):
-                continue
-            limit = 45 if name == "vulkan" else 2 * duration + 30
-            command = ("VK_DRIVER_FILES=/usr/share/vulkan/icd.d/pico4-turnip.json "
-                       f"timeout {limit} pico4-{name}-test" + (f" {duration}" if name == "kms" else ""))
-            print(f">> graphics: {name}" + (f" ({duration} seconds per mode)" if name == "kms" else ""), flush=True)
-            try:
-                # Keep stderr separate so warnings cannot masquerade as JSON evidence.
-                code = self.ssh(command + f" >/run/pico4-poc/{name}.json 2>/run/pico4-poc/{name}.log; echo EXIT=$?", limit + 10)
-                for suffix in ("json", "log"):
-                    content = self.ssh(f"cat /run/pico4-poc/{name}.{suffix}")
-                    (self.folder / f"graphics-{name}.{suffix}").write_text(content, encoding="utf-8")
-                value = json.loads((self.folder / f"graphics-{name}.json").read_text(encoding="utf-8"))
-                if isinstance(value, dict):
-                    results[name] = value
-                require(code == "EXIT=0", f"{name} test failed: {code}")
-                validate_vulkan(value) if name == "vulkan" else validate_kms(value, duration)
-                results[name] = value
-            except (ValueError, OSError) as exc:
-                results[name] = {**results.get(name, {}), "status": "failed", "error": str(exc)}
-                errors.append(f"{name}: {exc}")
-            self.result["graphics"] = results
-            self.save()
-        (self.folder / "graphics-dmesg.txt").write_text(self.ssh("dmesg"), encoding="utf-8")
-        (self.folder / "graphics-display-state.txt").write_text(self.ssh(
-            "cat /sys/class/drm/card0-DSI-1/enabled; cat /sys/class/backlight/panel0-backlight/actual_brightness"), encoding="utf-8")
-        self.result["graphics_visual_confirmation"] = "not_recorded"
-        # Graphics must preserve the same storage policy as the shell acceptance run.
-        self.assertions()
-        require(not errors, "; ".join(errors))
 
     def userspace_handoff(self):
         """Roadmap step 4: stream the userspace into zram, hand PID 1 to systemd, check it."""
@@ -740,7 +700,7 @@ class Runner:
                  "deadline": (datetime.datetime.now(datetime.timezone.utc)
                               + datetime.timedelta(seconds=duration)).isoformat(),
                  "end_session_file": str(stop_file)}
-        self.result.update(run_kind="development", graphics_acceptance="not_evaluated", development_session=state)
+        self.result.update(run_kind="development", development_session=state)
         self.save()
         print(f">> development session ready for {duration} seconds; create {stop_file} to finish", flush=True)
         deadline, next_check = time.monotonic() + duration, 0.0
@@ -844,12 +804,10 @@ class Runner:
             self.step("userspace preflight", lambda: self.preflight(rootfs))
             if self.args.command != "preflight":
                 self.step("enter unlocked fastboot", self.enter_fastboot)
-                self.step("flash test boot image" if self.flash_mode else "RAM boot", self.boot)
+                self.step("flash test boot image", self.boot)
                 self.step("SSH identity", lambda: self.wait("SSH", self.args.boot_timeout, self.connect))
                 self.step("Linux shell and read-only storage", self.assertions)
                 self.step("HTTP and diagnostic report", self.diagnostics)
-                if getattr(self.args, "graphics", None):
-                    self.step("native graphics", self.graphics)
                 if self.userspace:
                     self.step("SteamOS-compatible userspace", self.userspace_handoff)
                 if getattr(self.args, "debug_session_seconds", 0):
@@ -874,17 +832,26 @@ class Runner:
         return 1 if failed else 0
 
 
+def newest_rootfs(out: Path = REPO / "out") -> Path:
+    """The newest stage-1 root file system tar the image build wrote."""
+    tars = sorted(out.glob("pico4-poc-*-rootfs.tar"), key=lambda p: p.stat().st_mtime)
+    if not tars:
+        raise SystemExit("no rootfs tar in out/: run python -m overpressure build first")
+    return tars[-1]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python -m overpressure hwtest", description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
-    for name in ("preflight", "run", "flash-run"):
+    for name in ("preflight", "flash-run"):
         p = sub.add_parser(name)
         p.add_argument("--serial", required=name != "preflight", help="authorized ADB serial (preflight can select a sole device)")
         p.add_argument("--adb", default="adb")
         p.add_argument("--out", type=Path, default=REPO / "out" / ("hardware-" + uuid.uuid4().hex[:12]),
                        help="new result directory (never overwritten)")
         if name == "preflight":
-            p.add_argument("--rootfs", type=Path, required=True)
+            p.add_argument("--rootfs", type=Path, help="the stage-1 root file system tar (default: the newest "
+                           "out/pico4-poc-*-rootfs.tar)")
         else:
             p.add_argument("--image", type=Path, required=True)
             p.add_argument("--fastboot", default="fastboot")
@@ -892,12 +859,8 @@ def main(argv=None):
             p.add_argument("--ssh", default="ssh")
             p.add_argument("--ssh-keygen", default="ssh-keygen")
             p.add_argument("--windows-ncm-python", help="Python with the windows-ncm extra (pyproject.toml); enable UsbDk NCM initialization")
-            activity = p.add_mutually_exclusive_group()
-            activity.add_argument("--graphics", choices=("kms", "vulkan", "all"),
-                                  help="run optional native graphics tests; requires a graphics-enabled image")
-            activity.add_argument("--debug-session-seconds", type=int, default=0, metavar="SECONDS",
+            p.add_argument("--debug-session-seconds", type=int, default=0, metavar="SECONDS",
                                   help="keep Linux available for userspace iteration (60-1800 seconds), then restore")
-            p.add_argument("--graphics-seconds", type=int, default=10, help="KMS measurement duration per mode (3-120 seconds)")
             p.add_argument("--userspace", type=Path, metavar="ARCHIVE",
                            help="pico4-userspace.tar.zst from scripts/build-userspace.sh: hand over to systemd and check it")
             p.add_argument("--userspace-timeout", type=int, default=600,
@@ -909,12 +872,13 @@ def main(argv=None):
                 p.add_argument("--backup", type=Path, required=True, help="verified original device backup")
                 p.add_argument("--confirm-device", required=True, help="repeat --serial to authorize boot writes")
     args = ap.parse_args(argv)
+    if args.command == "preflight" and args.rootfs is None:
+        args.rootfs = newest_rootfs()
     try:
         for tool in ("adb", "fastboot", "ssh", "ssh_keygen"):
             if hasattr(args, tool):
                 require(shutil.which(getattr(args, tool)), f"Required executable missing: {getattr(args, tool)}")
         if args.command != "preflight":
-            require(3 <= args.graphics_seconds <= 120, "Graphics duration must be between 3 and 120 seconds")
             if args.userspace:
                 require(args.userspace.is_file() and args.userspace.with_name("pico4-userspace.manifest.json").is_file(),
                         "--userspace needs pico4-userspace.tar.zst with its manifest beside it")

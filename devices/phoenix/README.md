@@ -93,7 +93,7 @@ tooling/     host tooling (Python standard library): python -m overpressure COMM
 initramfs/   stage 1: the files added to the Alpine ramdisk
 userspace/   stage 2: package list, pacman.conf, adaptation layer, SteamVR configuration, PKGBUILDs
 src/         C sources: graphics tests, Monado's PICO 4 driver, OpenXR clients, SteamVR display layer
-scripts/     userspace and graphics builds, sensor data extraction, boot and preflight helpers
+scripts/     userspace and system image builds, stock firmware extraction, the on-headset preflight
 prebuilt/    static aarch64 helpers for stage 1
 tests/       host tests and the QEMU boot tests
 docs/        documentation

@@ -58,7 +58,7 @@ python -m overpressure dev check
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
 | [overpressure/gui.py](../overpressure/gui.py) | the window (Tk) |
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix |
-| `bootimg`, `avb`, `sparse`, `superimg`, `payload`, `cpio`, `compress`, `alpine`, `apksign`, `kernelinfo`, `elfdeps`, `windows_ncm` | the formats and helpers Android-based headsets share |
+| `bootimg`, `avb`, `sparse`, `payload`, `cpio`, `compress`, `alpine`, `apksign`, `kernelinfo`, `elfdeps`, `windows_ncm` | the formats and helpers Android-based headsets share |
 
 A step is a command line: either a command of the headset (`python -m overpressure --device
 CODENAME ...`) or a script in the headset's folder. The window adds nothing a terminal cannot

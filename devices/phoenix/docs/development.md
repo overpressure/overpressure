@@ -34,14 +34,14 @@ src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's
                   KMS target), xr/ (OpenXR test clients), vrdisplay/ (SteamVR's display layer),
                   sysvsem/ (System V semaphores), reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
-scripts/          build-userspace.sh, build-system-image.sh, build-graphics.sh, the extract-*.sh scripts
-                  (stock firmware, with stock-lib.sh), boot and preflight helpers
+scripts/          build-userspace.sh, build-system-image.sh, the extract-*.sh scripts
+                  (stock firmware, with stock-lib.sh) and the on-headset preflight
 tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, test_vrdisplay_fake.sh, qemu/ (test kernels and boot tests)
 docs/             documentation
 ```
 
 The generic modules the PICO 4 uses are in the root package: `bootimg.py`, `cpio.py`,
-`compress.py`, `alpine.py`, `apksign.py`, `payload.py`, `kernelinfo.py`, `superimg.py`,
+`compress.py`, `alpine.py`, `apksign.py`, `payload.py`, `kernelinfo.py`,
 `avb.py`, `sparse.py`, `elfdeps.py` (native ELF dependency check of the userspace root) and
 `windows_ncm.py` (Windows NCM initialization through UsbDk).
 

@@ -53,7 +53,7 @@ status in its roadmap and README current.
   registry), `runner.py` (a step's process on this host: WSL or sudo for Linux-root steps),
   `__main__.py` (the command line), `gui.py` (the Tk window), `localconfig.py` (`.env`, one key
   prefix per headset), and the shared formats: `bootimg.py`, `avb.py`, `sparse.py`,
-  `superimg.py`, `payload.py`, `cpio.py`, `compress.py`, `alpine.py`, `apksign.py`,
+  `payload.py`, `cpio.py`, `compress.py`, `alpine.py`, `apksign.py`,
   `kernelinfo.py`, `elfdeps.py`, `windows_ncm.py`.
 - `devices/<codename>/`: one headset: `tooling/` (its Python package with `HEADSET`), its
   images' sources and recipes, `scripts/`, `tests/`, `docs/`, `README.md`, `CLAUDE.md`,

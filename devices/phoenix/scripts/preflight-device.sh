@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # PICO 4 Linux POC preflight - runs ON the headset under PICO OS, as the
-# unprivileged adb shell user. Pushed and started by preflight.ps1/.sh.
+# unprivileged adb shell user. Pushed and started by python -m overpressure hwtest preflight.
 #
 # It runs the POC's Alpine userspace binaries on the real PICO kernel (through
 # the musl loader, so nothing has to be installed) and records the facts the

@@ -65,6 +65,10 @@ class Phoenix(Headset):
                  script=True, linux_root=True),
             Step("dev-image", "Dev image (maintenance stage 1)", "Image", ("dev", "image"),
                  "out/dev/dev-boot.img and the whole-partition recovery image from the stage-1 image."),
+            Step("preflight", "Preflight on PICO OS", "Headset", ("hwtest", "preflight", "{serial}"),
+                 "Runs the stage-1 image's programs on the real kernel from adb shell, without root, before any "
+                 "bootloader work; PICO OS keeps running. Takes the newest rootfs tar in out/.",
+                 (Param("serial", "ADB serial", "", help="empty: the only authorized device"),)),
             Step("stage-abl", "Enter development mode: engineering ABL", "Headset", ("dev", "stage-abl"),
                  "From PICO OS: the engineering ABL through EDL, checked against the backup.", writes=True),
             Step("flash", "Flash the dev image", "Headset", ("dev", "flash", "{partition}"),

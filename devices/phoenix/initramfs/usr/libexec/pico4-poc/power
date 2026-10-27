@@ -9,8 +9,8 @@
 
 # With Qualcomm download mode enabled (stock), a kernel panic leaves the
 # headset in crash-dump mode (USB 05c6:900e) until someone holds the power
-# button. Rebooting instead keeps every POC deadline effective: the flashed or
-# RAM-booted POC comes back and returns to fastboot. pico4poc.ramdump=1 keeps it.
+# button. Rebooting instead keeps every POC deadline effective: the flashed POC
+# comes back and returns to fastboot. pico4poc.ramdump=1 keeps it.
 dload=/sys/module/msm_poweroff/parameters/download_mode
 if [ "$(poc_arg ramdump 0)" != 1 ] && [ -e "$dload" ]; then
 	write 0 "$dload" && log "crash-dump mode disabled: a kernel panic reboots"

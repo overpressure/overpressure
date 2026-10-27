@@ -61,8 +61,7 @@ Valve's `deckard-mesa-linux-aarch64` and the preview's `vulkan-freedreno` both b
 for the upstream `msm` DRM driver; neither binary references `/dev/kgsl-3d0`. The PICO's kernel
 exposes the Adreno 650 only through Qualcomm's KGSL driver ([graphics.md](graphics.md)).
 [`pico4-turnip-kgsl`](../userspace/pkgbuilds/pico4-turnip-kgsl/PKGBUILD) therefore builds the
-same unmodified Mesa 26.1.6 release with the KGSL backend as the stage-1 graphics overlay,
-against glibc and with Wayland and X11 window-system support. It installs beside the system Mesa
+unmodified Mesa 26.1.6 with the KGSL backend, against glibc and with Wayland and X11 window-system support. It installs beside the system Mesa
 under its own names: `/usr/lib/pico4/libvulkan_freedreno_kgsl.so` with the ICD file
 `/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json`. Its split package
 `pico4-graphics-tests` carries the Vulkan and KMS tests of [graphics.md](graphics.md), built for

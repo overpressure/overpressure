@@ -46,8 +46,7 @@ Optional, and useful before any bootloader work. With USB debugging authorized (
 may still be locked), after a build:
 
 ```sh
-python -m overpressure hwtest preflight --rootfs out/pico4-poc-5.13.7-global-seko-rootfs.tar
-.\scripts\preflight.ps1          # or devices/phoenix/scripts/preflight.sh: the newest rootfs tar in out/
+python -m overpressure hwtest preflight        # the newest rootfs tar in out/, or --rootfs TAR
 ```
 
 The preflight runs the image's own binaries on the real PICO kernel from `adb shell`, without
@@ -133,8 +132,6 @@ with HTTP range requests, and checked against the CRC-32 in the zip directory.
 | --- | --- |
 | `--firmware NAME`, `--stock-boot PATH` | source of the stock image (see above) |
 | `--cmdline-append ARG...` | extra kernel arguments ([options](#kernel-command-line-options)) |
-| `--extra-packages PKG...` | more Alpine packages |
-| `--extra-overlay DIR` | merge a local overlay after the default files, repeatable (the graphics bundle of [graphics.md](graphics.md)) |
 | `--minimal` | only the minirootfs and the overlay |
 | `--name NAME`, `--out DIR` | output base name (default `pico4-poc-<firmware>`) and directory (default `out/`) |
 | `--force` | build even if the kernel checks fail |
@@ -173,39 +170,21 @@ aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector 
 
 ## Booting
 
-| Route | Writes | Bootloader | Commands |
-| --- | --- | --- | --- |
-| RAM boot | nothing; the next normal boot is PICO OS | one that implements `fastboot boot` | `scripts/boot-poc.ps1`, `scripts/boot-poc.sh` |
-| Boot partition | `boot`: the dev image stays until `dev restore`; the runner and the cycle restore the backup's image after their run | the engineering ABL (tested) | `python -m overpressure hwtest flash-run`, `python -m overpressure cycle`, `python -m overpressure dev flash` ([hardware-testing.md](hardware-testing.md)) |
+Stage 1 boots from a partition: the development loop writes the dev image to `recovery` (the
+maintenance stage 1) or to `boot` with `python -m overpressure dev flash`, and the acceptance
+runner and cycle write a test image to `boot` and restore the backup's image after their run
+(`python -m overpressure hwtest flash-run`, `python -m overpressure cycle`,
+[hardware-testing.md](hardware-testing.md)). The signed Neo3 engineering ABL used on the
+PICO 4 rejects `fastboot boot` with an unknown-command error after the image transfer, even
+after persistent normal and critical unlock, so there is no RAM boot.
 
-The signed Neo3 engineering ABL used on the PICO 4 rejects `fastboot boot` with an
-unknown-command error after the image transfer, even after persistent normal and critical
-unlock. On the tested headset, stage 1 therefore boots from the `boot` partition. The RAM-boot
-runner (`python -m overpressure hwtest run`) never falls back to flashing.
+Back to PICO OS: `python -m overpressure dev restore` ([hardware-testing.md](hardware-testing.md)).
+`pico4-reboot bootloader` in stage 1 returns to fastboot for the next attempt.
 
-### RAM boot with fastboot boot
+### Writing boot by hand
 
-```powershell
-.\scripts\boot-poc.ps1          # Windows; Linux and macOS: devices/phoenix/scripts/boot-poc.sh
-```
-
-The script reboots a headset running PICO OS into fastboot (`adb reboot bootloader`), waits up
-to 60 s for it, checks the unlock state with `python -m overpressure device check-unlocked`, runs
-`fastboot boot` with the newest `out/pico4-poc-*.img` (or the image given with `-Image` or as
-argument) and waits up to 3 minutes for `172.16.42.1` to answer a ping. It needs `fastboot` and
-Python on PATH. It leaves Linux running, and its ping is not an acceptance check; the bounded
-runner is in [hardware-testing.md](hardware-testing.md).
-
-Back to PICO OS: `pico4-reboot` in the shell, the button on the web page, or a hardware reset
-(power button held for more than 10 s). Nothing was written, so the next normal boot is PICO OS.
-`pico4-reboot bootloader` returns to fastboot for the next attempt.
-
-### If fastboot boot is not available
-
-Use the boot-partition test of [hardware-testing.md](hardware-testing.md)
-(`python -m overpressure hwtest flash-run`): it checks the headset's verified backup and the image
-before writing and restores the original boot image afterwards. The equivalent manual sequence
-replaces the only Android boot partition (the PICO 4 has no A/B slots), so PICO OS cannot start
+The tools above check the headset's verified backup and the image before writing and restore
+the original boot image afterwards. The equivalent manual sequence replaces the only Android boot partition (the PICO 4 has no A/B slots), so PICO OS cannot start
 until the original image is flashed back. Keep the engineering ABL and a working EDL recovery
 path ([device-preparation.md](device-preparation.md)) available:
 
@@ -229,7 +208,7 @@ the bootloader are separate partitions.
 
 ## Connecting
 
-About 20–40 s after `fastboot boot` the headset answers on the USB link:
+About 20–40 s after the boot the headset answers on the USB link:
 
 | How | Command |
 | --- | --- |
@@ -449,19 +428,15 @@ of `pico4-info`, the login banner, starts with `#`; and `pico4-reboot` refuses u
 * **`check-unlocked` fails although the bootloader is unlocked.** The stock ABL reports the
   state as `DeviceUnlocked=true`, which the tools do not accept; stage the engineering ABL
   ([device-preparation.md](device-preparation.md)).
-* **`fastboot boot` is refused.** With a locked bootloader (`fastboot getvar unlocked`), unlock
-  it first. With an unknown-command error, see
-  [If fastboot boot is not available](#if-fastboot-boot-is-not-available).
 * **SSH warns about a changed host key.** Stage 1 creates new host keys on every boot;
   `ssh-keygen -R 172.16.42.1` removes the old entry.
 * **The headset is stuck.** Hold the power button for more than 10 s; that is a hardware reset.
-  The next boot starts what `boot` holds: PICO OS after a RAM boot, stage 1 again while it is
-  flashed.
+  The next boot starts what `boot` holds: stage 1 while it is flashed, PICO OS after the
+  restore.
 
 ## Safety notes
 
-* `fastboot boot` writes nothing. The PICO 4 is not an A/B device: `fastboot flash boot`
-  replaces the only boot partition, and PICO OS does not start until the original image is
+* The PICO 4 is not an A/B device: `fastboot flash boot` replaces the only boot partition, and PICO OS does not start until the original image is
   back. Copies of the stock image: `cache/stock/*.boot.img` (the build's download),
   `out/stock-boot-<firmware>.img` and the boot image in the headset's own EDL backup.
 * Stage 1 switches every disk and every partition to read-only individually: the 4.19 kernel
@@ -556,8 +531,7 @@ stock-like 4.19 kernel ([userspace.md](userspace.md)).
 The hardware acceptance runner ([hardware-testing.md](hardware-testing.md)) checks stage 1 on a
 prepared headset: the preflight under PICO OS, a per-run image with its own SSH key, the SSH
 identity, the root shell, storage protection, HTTP diagnostics and the return to the original
-PICO OS. `python -m overpressure hwtest run` boots from RAM and never unlocks or flashes;
-`python -m overpressure hwtest flash-run` writes `boot` and restores it.
+PICO OS. `python -m overpressure hwtest flash-run` writes `boot` and restores it.
 
 Results on the tested headset (original PICO 4, PICO OS 5.13.7, engineering ABL, Windows 11
 host):

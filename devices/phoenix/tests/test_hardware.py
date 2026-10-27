@@ -3,6 +3,7 @@ import contextlib
 import gzip
 import io
 import json
+import os
 import subprocess
 import tarfile
 import tempfile
@@ -109,21 +110,15 @@ class HarnessTests(unittest.TestCase):
         clock = patch.object(hw, "time", self.clock)
         clock.start()
         self.addCleanup(clock.stop)
-        self.args = argparse.Namespace(command="run", serial="ABC", fastboot_serial=None, adb="adb",
+        self.args = argparse.Namespace(command="flash-run", serial="ABC", fastboot_serial=None, adb="adb",
                 fastboot="fastboot", ssh="ssh", ssh_keygen="ssh-keygen", image=self.source,
-                out=self.root / "results", host="172.16.42.1", boot_timeout=1, report_timeout=1,
-                recovery_timeout=3)
-        self.runner = hw.Runner(self.args)
+                out=self.root / "flash-results", host="172.16.42.1", boot_timeout=1, report_timeout=1,
+                recovery_timeout=3, backup=self.root / "backup", confirm_device="ABC")
         self.calls = []
         self.stock = True
         self.scenario = None
         self.restored = False
-
-    def enable_flash_mode(self):
-        self.args.command = "flash-run"
-        self.args.backup = self.root / "backup"
-        self.args.confirm_device = "ABC"
-        self.args.out = self.root / "flash-results"
+        # The verified backup that flash-run restores the stock boot image from.
         self.args.backup.mkdir()
         stock = bootimg.parse(self.source.read_bytes())
         stock.ramdisk = b"original stock ramdisk"
@@ -241,8 +236,6 @@ class HarnessTests(unittest.TestCase):
                     self.restored = True
                 elif self.scenario == "restore-tamper":
                     Path(self.runner.result["stock_boot"]["path"]).write_bytes(b"changed")
-            if "boot" in argv and self.scenario == "boot":
-                raise ValueError("boot unsupported")
             if argv[-1] == "reboot":
                 self.stock = self.restored if self.runner.flash_mode and self.runner.boot_attempted else True
             return "OKAY"
@@ -323,7 +316,7 @@ class HarnessTests(unittest.TestCase):
             if command.startswith(("pico4-imu list", "systemctl status",                                    "cat /run/pico4-poc/vrdisplay.log", "cat /run/pico4-poc/vrsync.log")):
                 return "sensor evidence"
             if "pico4-kms-test" in command:
-                return "EXIT=1" if self.scenario == "graphics" else "EXIT=0"
+                return "EXIT=0"
             if command == "cat /run/pico4-poc/kms.json":
                 return json.dumps(dict(schema=2,status="passed",presentation="page_flip",retire_fence=True,
                     composition="rgb_layers",buffer_layout="combined",eye_routing="sspp_layout",width=4320,height=2160,modes=[
@@ -389,22 +382,10 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(tree["etc/pico4-poc/test-timeout"].data, b"302\n")
         self.assertTrue(any(cmd[-1] == "touch /run/pico4-poc/test-authenticated" for cmd in self.calls))
         for cmd in self.calls:
-            self.assertNotIn("flash", cmd)
-            self.assertNotIn("unlock", cmd)
             if cmd[0] in ("adb", "fastboot") and cmd[-1] != "devices":
                 self.assertEqual(cmd[1:3], ["-s", "ABC"])
 
-    def test_graphics_phase_collects_measurements_and_restores(self):
-        self.enable_flash_mode()
-        self.args.graphics="kms"
-        self.args.graphics_seconds=10
-        self.assertEqual(self.execute(),0)
-        self.assertTrue(self.restored)
-        self.assertEqual(self.runner.result["graphics"]["kms"]["status"],"passed")
-        self.assertEqual(self.runner.result["graphics_visual_confirmation"],"not_recorded")
-
     def test_userspace_handoff_is_checked_and_restored(self):
-        self.enable_flash_mode()
         self.enable_userspace()
         self.assertEqual(self.execute(), 0)
         self.assertTrue(self.restored)
@@ -422,7 +403,6 @@ class HarnessTests(unittest.TestCase):
         for scenario, code in (("", 0), ("imu", 1)):
             with self.subTest(scenario or "passing"):
                 self.setUp()
-                self.enable_flash_mode()
                 self.enable_userspace(sensors=True)
                 self.scenario = scenario
                 self.assertEqual(self.execute(), code)
@@ -435,7 +415,6 @@ class HarnessTests(unittest.TestCase):
         for running, scenario, code in ((True, "", 0), (True, "vrdisplay", 1), (False, "", 0)):
             with self.subTest(running=running, scenario=scenario or "passing"):
                 self.setUp()
-                self.enable_flash_mode()
                 self.enable_userspace(sensors=True, vrdisplay=True)
                 self.scenario, self.session_running, self.resumed_session = scenario, running, False
                 self.assertEqual(self.execute(), code)
@@ -446,7 +425,6 @@ class HarnessTests(unittest.TestCase):
         for scenario, code in (("", 0), ("vrdisplay", 1)):
             with self.subTest(scenario or "passing"):
                 self.setUp()
-                self.enable_flash_mode()
                 self.enable_userspace(sensors=True, vrdisplay=True)
                 self.scenario = scenario
                 self.assertEqual(self.execute(), code)
@@ -459,7 +437,6 @@ class HarnessTests(unittest.TestCase):
         for scenario, code in (("", 0), ("vrsync", 1), ("valve", 1), ("slow", 1)):
             with self.subTest(scenario or "passing"):
                 self.setUp()
-                self.enable_flash_mode()
                 self.enable_userspace(sensors=True, vrdisplay=True, steamvr=True)
                 self.scenario = scenario
                 self.assertEqual(self.execute(), code)
@@ -478,7 +455,6 @@ class HarnessTests(unittest.TestCase):
                 self.assertTrue((self.runner.folder / "userspace-valve-vrcompositor.txt").exists())
 
     def test_valve_session_skipped_without_steamvr(self):
-        self.enable_flash_mode()
         self.enable_userspace(sensors=True, vrdisplay=True)
         self.assertEqual(self.execute(), 0)
         self.assertIn("vrsync", self.runner.result["userspace"])
@@ -486,14 +462,12 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(any("pico4-valve-session-check" in command[-1] for command in self.calls))
 
     def test_vr_display_skipped_without_the_layer(self):
-        self.enable_flash_mode()
         self.enable_userspace(sensors=True)
         self.assertEqual(self.execute(), 0)
         self.assertNotIn("vrdisplay", self.runner.result["userspace"])
         self.assertFalse(any("pico4-vrdisplay-test" in command[-1] for command in self.calls))
 
     def test_head_imu_skipped_without_sensor_data(self):
-        self.enable_flash_mode()
         self.enable_userspace()
         self.assertEqual(self.execute(), 0)
         self.assertNotIn("imu", self.runner.result["userspace"])
@@ -503,7 +477,6 @@ class HarnessTests(unittest.TestCase):
         for scenario in ("userspace-check", "userspace-sha"):
             with self.subTest(scenario):
                 self.setUp()
-                self.enable_flash_mode()
                 self.enable_userspace()
                 self.scenario = scenario
                 self.assertEqual(self.execute(), 1)
@@ -522,31 +495,18 @@ class HarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "handoff"):
             hw.prepare_image(self.source, self.root, "run", b"key", userspace=True)
 
-    def test_graphics_failure_still_restores_stock(self):
-        self.enable_flash_mode()
-        self.args.graphics="kms"
-        self.args.graphics_seconds=10
-        self.scenario="graphics"
-        self.assertEqual(self.execute(),1)
-        self.assertTrue(self.restored)
-        self.assertEqual(self.runner.result["recovery"],"verified")
-        self.assertFalse(self.runner.result["boot_restore_required"])
-
     def test_development_session_restores_once_after_requested_end(self):
-        self.enable_flash_mode()
         self.args.debug_session_seconds=60
         with patch.object(hw.time,"sleep",side_effect=lambda _: (self.runner.folder/"end-session").touch()):
             self.assertEqual(self.execute(),0)
         state=self.runner.result["development_session"]
         self.assertEqual((state["status"],state["end_reason"]),("completed","requested"))
-        self.assertEqual(self.runner.result["graphics_acceptance"],"not_evaluated")
         self.assertTrue(self.restored)
         self.assertEqual(len([c for c in self.calls if c[0]=="fastboot" and c[3:5]==["flash","boot"]]),2)
         self.assertEqual(self.runner.result["device_recovery"]["test_timeout"],362)
         self.assertFalse((self.runner.folder/"id_ed25519").exists())
 
     def test_development_session_identity_failure_restores(self):
-        self.enable_flash_mode()
         self.args.debug_session_seconds=60
         self.scenario="session-identity"
         self.assertEqual(self.execute(),1)
@@ -578,7 +538,6 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(any(cmd[0] in ("adb", "fastboot") for cmd in self.calls))
 
     def test_ncm_initialization_runs_once_before_ssh(self):
-        self.enable_flash_mode()
         self.args.windows_ncm_python = "ncm-python"
         self.args.boot_timeout = 3
         self.assertEqual(self.execute(), 0)
@@ -590,7 +549,6 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(self.runner.result["recovery"], "verified")
 
     def test_ncm_failure_still_restores_stock_boot(self):
-        self.enable_flash_mode()
         self.args.windows_ncm_python = "ncm-python"
         self.scenario = "ncm-device"
         self.assertEqual(self.execute(), 1)
@@ -602,12 +560,6 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(self.execute(), 1)
         self.assertFalse(self.runner.boot_attempted)
         self.assertEqual(self.runner.result["recovery"], "verified")
-
-    def test_unsupported_ram_boot_is_failure_even_after_recovery(self):
-        self.scenario = "boot"
-        self.assertEqual(self.execute(), 1)
-        self.assertEqual(self.runner.result["recovery"], "verified")
-        self.assertIn("unsupported", self.runner.result["error"])
 
     def test_writable_partition_fails_and_recovers(self):
         self.scenario = "storage"
@@ -671,7 +623,6 @@ class HarnessTests(unittest.TestCase):
             hw.Runner(self.args)
 
     def test_explicit_flash_run_restores_original_boot_and_verifies_android(self):
-        self.enable_flash_mode()
         self.assertEqual(self.execute(), 0)
         flashes = [cmd for cmd in self.calls if cmd[0] == "fastboot" and cmd[3:5] == ["flash", "boot"]]
         self.assertEqual([Path(cmd[-1]).name for cmd in flashes], ["test-boot.img", "stock-boot.img"])
@@ -684,7 +635,6 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(any("flashing" in cmd or "erase" in cmd for cmd in self.calls))
 
     def test_partial_boot_write_still_restores_stock(self):
-        self.enable_flash_mode()
         self.scenario = "flash-write"
         self.assertEqual(self.execute(), 1)
         self.assertTrue(self.restored)
@@ -692,7 +642,6 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(self.runner.result["boot_restore_required"])
 
     def test_interrupted_boot_write_still_restores_stock(self):
-        self.enable_flash_mode()
         self.scenario = "interrupted-write"
         self.assertEqual(self.execute(), 1)
         self.assertTrue(self.restored)
@@ -701,7 +650,6 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(any(check["status"] == "running" for check in self.runner.result["checks"]))
 
     def test_failed_stock_write_preserves_recovery_requirement(self):
-        self.enable_flash_mode()
         self.scenario = "restore-write"
         self.assertEqual(self.execute(), 1)
         self.assertTrue(self.runner.result["boot_restore_required"])
@@ -711,7 +659,6 @@ class HarnessTests(unittest.TestCase):
         self.assertTrue(self.runner.result["manual_restore_commands"])
 
     def test_changed_pinned_restore_image_is_never_flashed(self):
-        self.enable_flash_mode()
         self.scenario = "restore-tamper"
         self.assertEqual(self.execute(), 1)
         self.assertTrue(self.runner.result["boot_restore_required"])
@@ -719,14 +666,12 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(self.restored)
 
     def test_readback_mismatch_fails_and_restores(self):
-        self.enable_flash_mode()
         self.scenario = "readback"
         self.assertEqual(self.execute(), 1)
         self.assertIn("readback", self.runner.result["error"])
         self.assertEqual(self.runner.result["recovery"], "verified")
 
     def test_wrong_backup_identity_never_reboots(self):
-        self.enable_flash_mode()
         self.backup_manifest["identity"]["chip_id"] += 1
         self.save_backup_manifest()
         self.assertEqual(self.execute(), 1)
@@ -734,14 +679,12 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(self.runner.moved)
 
     def test_backup_tampering_never_reboots(self):
-        self.enable_flash_mode()
         (self.args.backup / "boot.bin").write_bytes(b"changed")
         self.assertEqual(self.execute(), 1)
         self.assertIn("integrity", self.runner.result["error"])
         self.assertFalse(self.runner.moved)
 
     def test_different_stock_kernel_never_reboots(self):
-        self.enable_flash_mode()
         stock = bootimg.parse((self.args.backup / "boot.bin").read_bytes())
         stock.kernel = b"different kernel"
         (self.args.backup / "boot.bin").write_bytes(stock.pack().ljust(65536, b"\0"))
@@ -752,7 +695,6 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(self.runner.moved)
 
     def test_live_partition_size_mismatch_never_flashes(self):
-        self.enable_flash_mode()
         self.scenario = "size"
         self.assertEqual(self.execute(), 1)
         self.assertIn("size", self.runner.result["error"])
@@ -760,7 +702,6 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(self.runner.result["recovery"], "verified")
 
     def test_slotted_partition_never_flashes(self):
-        self.enable_flash_mode()
         self.scenario = "slotted"
         self.assertEqual(self.execute(), 1)
         self.assertIn("non-slotted", self.runner.result["error"])
@@ -768,11 +709,23 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(self.runner.result["recovery"], "verified")
 
     def test_flash_confirmation_mismatch_never_reboots(self):
-        self.enable_flash_mode()
         self.args.confirm_device = "WRONG"
         self.assertEqual(self.execute(), 1)
         self.assertIn("confirm-device", self.runner.result["error"])
         self.assertFalse(self.runner.moved)
+
+
+class PreflightDefaultTests(unittest.TestCase):
+    def test_the_newest_rootfs_tar(self):
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp)
+            for i, name in enumerate(("pico4-poc-a-rootfs.tar", "pico4-poc-b-rootfs.tar", "other.tar")):
+                (out / name).write_bytes(b"")
+                os.utime(out / name, (1000 + i, 1000 + i))
+            os.utime(out / "pico4-poc-a-rootfs.tar", (5000, 5000))
+            self.assertEqual(hw.newest_rootfs(out).name, "pico4-poc-a-rootfs.tar")
+            with self.assertRaises(SystemExit):
+                hw.newest_rootfs(out / "missing")
 
 
 if __name__ == "__main__":

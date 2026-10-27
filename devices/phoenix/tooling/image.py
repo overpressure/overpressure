@@ -181,7 +181,7 @@ def build_rootfs(args, stock_entries, build_info: dict) -> cpio.Tree:
     log(f">> Alpine Linux {ALPINE_VERSION} ({ARCH}) minirootfs")
     alpine.unpack_tar(tree, alpine.minirootfs(CACHE, ALPINE_BRANCH, ALPINE_VERSION, ARCH, None, log))
 
-    wanted = [] if args.minimal else PACKAGES + args.extra_packages
+    wanted = [] if args.minimal else list(PACKAGES)
     if wanted:
         index = alpine.load_index(CACHE, ALPINE_BRANCH, ALPINE_REPOS, ARCH, log)
         pkgs = alpine.resolve(index, wanted, alpine.installed_db(tree))
@@ -210,14 +210,6 @@ def build_rootfs(args, stock_entries, build_info: dict) -> cpio.Tree:
     for name in ("pico4-reboot", "pico4-splash"):
         with open(os.path.join(PREBUILT, name), "rb") as f:
             tree.add_file(f"usr/sbin/{name}", f.read(), 0o755)
-
-    # Optional local experiments (for example a separately built graphics bundle).
-    # Keep these out of the default, verified shell image.
-    for extra in getattr(args, "extra_overlay", []):
-        if not os.path.isdir(extra):
-            raise ValueError(f"Extra overlay directory does not exist: {extra}")
-        log(f">> extra overlay: {extra}")
-        add_overlay(tree, extra)
 
     # Static device nodes: the stock kernel has no devtmpfs, and the kernel
     # opens /dev/console before /init runs.
@@ -337,15 +329,14 @@ def cmd_build(args) -> int:
     assert init is not None and init.is_file and init.mode & 0o111, "/init missing or not executable"
     if rep["image_size"] and len(image) > rep["image_size"]:
         log(f"!! image ({len(image)} bytes) is larger than the stock partition image ({rep['image_size']} bytes): "
-            "fine for 'fastboot boot', too big to flash")
+            "too big to flash")
 
     os.makedirs(args.out, exist_ok=True)
     name = args.name or f"pico4-poc-{label}"
     paths = {
         "image": os.path.join(args.out, f"{name}.img"),
         "ramdisk": os.path.join(args.out, f"{name}-initramfs.cpio.gz"),
-        # The unmodified stock image: what to flash back if you ever had to
-        # use "fastboot flash boot" instead of "fastboot boot".
+        # The unmodified stock image: what to flash back after a manual "fastboot flash boot".
         "stock": os.path.join(args.out, f"stock-boot-{label}.img"),
     }
     with open(paths["image"], "wb") as f:
@@ -371,7 +362,7 @@ def cmd_build(args) -> int:
         json.dump(summary, f, indent=2)
     log(f">> wrote {paths['image']} ({len(image) / 1e6:.1f} MB)")
     log(f"   sha256 {summary['image_sha256']}")
-    log("   boot it (RAM only, nothing is flashed):  fastboot boot " + os.path.relpath(paths["image"]))
+    log("   on the headset: python -m overpressure dev image, then dev flash (devices/phoenix/docs/hardware-testing.md)")
     return 0
 
 
@@ -415,10 +406,6 @@ def main(argv: list[str]) -> int:
         p.add_argument("--out", default=os.path.join(str(REPO), "out"), help="output directory")
         if name == "build":
             p.add_argument("--name", help="output base name (default: pico4-poc-<firmware>)")
-            p.add_argument("--extra-packages", nargs="*", default=[], metavar="PKG",
-                           help="additional Alpine packages to include")
-            p.add_argument("--extra-overlay", action="append", default=[], metavar="DIR",
-                           help="merge a local rootfs overlay after the default files (repeatable)")
             p.add_argument("--minimal", action="store_true", help="only the minirootfs + overlay")
             p.add_argument("--cmdline-append", nargs="*", default=[], metavar="ARG",
                            help="extra kernel arguments, e.g. pico4poc.autoreboot=0")
