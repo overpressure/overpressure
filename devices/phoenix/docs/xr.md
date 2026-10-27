@@ -1558,8 +1558,9 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 
 1. **PICO OS's tracker.** Worn it tracks walking and fast turns as on PICO OS; a covered
    camera and a dim room are unchecked, and so is PICO OS's auto exposure worn.
-   [Room setup](#room-setup): SteamVR's room setup runs in the headset and its play area
-   comes back after a reboot; the floor height is hard to set exactly.
+   [Room setup](#room-setup): SteamVR's room setup runs in the headset, the floor height and
+   the play area are set easily with the colour room view, and the play area comes back after a
+   reboot.
 2. **Controllers in applications.** SteamVR's dashboard toggles but stays hidden without the
    Steam client ([session.md](session.md)), so the laser, clicking and the grip frame are
    unchecked in it. A vibration strong enough to feel has not yet come from a SteamVR
