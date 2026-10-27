@@ -79,6 +79,8 @@ class RegistryTests(unittest.TestCase):
                 words = step.command({})
                 if step.script:
                     self.assertTrue((headset.root / words[0]).exists(), (codename, step.key))
+                elif words[0] == "ram-boot":
+                    self.assertIsNotNone(headset.ram_boot(), codename)
                 else:
                     self.assertIn(words[0], headset.commands(), (codename, step.key))
 
@@ -116,6 +118,21 @@ class CommandLineTests(unittest.TestCase):
             code, _ = self.run_cli("build", "--firmware", "x")
         self.assertEqual(code, 7)
         main.assert_called_once_with(["build", "--firmware", "x"])
+
+    def test_ram_boot_needs_a_target_and_reports_refusal_apart(self):
+        from overpressure import fastboot
+        registry = Registry({"fake": Fake()})
+        with mock.patch.object(cli, "discover", return_value=registry):
+            code, out = self.run_cli("ram-boot")
+        self.assertEqual(code, 2)
+        self.assertIn("has no RAM boot", out)
+        target = mock.Mock(spec=fastboot.RamBootTarget)
+        for effect, expected in ((fastboot.Refused("no fastboot boot"), 3), (RuntimeError("no answer"), 1),
+                                 (None, 0)):
+            with mock.patch.object(cli, "discover", return_value=registry),                     mock.patch.object(Fake, "ram_boot", return_value=target, create=True),                     mock.patch.object(fastboot, "ram_boot", side_effect=effect) as boot:
+                code, _ = self.run_cli("ram-boot", "out/x.img")
+            self.assertEqual(code, expected)
+            self.assertEqual(boot.call_args[0][1], Path("out/x.img"))
 
 
 class GuiTests(unittest.TestCase):

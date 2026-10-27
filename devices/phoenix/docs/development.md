@@ -20,6 +20,7 @@ tooling/          the PICO 4's host tooling (Python standard library): python -m
   hardware_test.py  the bounded acceptance runner (preflight, run, flash-run)
   cycle.py          the unattended acceptance cycle that ends on stock boot and ABL
   devloop.py        the development loop on the flashed dev image
+  ramboot.py        the target of overpressure's RAM boot (the engineering ABL refuses fastboot boot)
   localconfig.py    the headset's settings from .env (PICO4_ keys)
   userspace.py, graphics.py   validators of the on-device checks
   ledmodel.py, aimgrip.py, leverarm.py, controllermodel.py   controller data from PICO OS's libraries

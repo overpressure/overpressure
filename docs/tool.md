@@ -36,6 +36,7 @@ python -m overpressure [--device CODENAME] COMMAND [ARGS...]
   steps                the headset's steps and their command lines
   run STEP [NAME=VALUE...]
                        a step with parameters, as the window runs it
+  ram-boot [IMAGE]     boot an image from RAM with fastboot boot, where the bootloader allows it
   COMMAND [ARGS...]    a command of the headset
 ```
 
@@ -58,7 +59,25 @@ python -m overpressure dev check
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
 | [overpressure/gui.py](../overpressure/gui.py) | the window (Tk) |
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix |
+| [overpressure/fastboot.py](../overpressure/fastboot.py) | the RAM boot: `fastboot boot` with the headset's checks, never a write |
 | `bootimg`, `avb`, `sparse`, `payload`, `cpio`, `compress`, `alpine`, `apksign`, `kernelinfo`, `elfdeps`, `windows_ncm` | the formats and helpers Android-based headsets share |
+
+## RAM boot
+
+`python -m overpressure ram-boot [IMAGE]` boots an image from RAM with `fastboot boot`: nothing is
+written, and the next normal boot starts whatever the partitions hold, which makes it the first
+contact with a new headset. The sequence is the same for every headset: the image must be an
+Android boot image; the headset is brought into fastboot if it is not there, and must be the only
+device in fastboot; its bootloader must report an unlocked state; then `fastboot boot` and a
+bounded wait until the image answers. The headset says how each of these looks for it
+([adding-a-headset.md](adding-a-headset.md#ram-boot)), and the window shows the step when it has
+a RAM boot.
+
+A bootloader without `fastboot boot` ("unknown command" after the transfer) ends the RAM boot as
+*refused* (exit status 3), apart from a failure (1): nothing was written and the headset stays in
+fastboot. It never falls back to flashing.
+
+## How a step runs
 
 A step is a command line: either a command of the headset (`python -m overpressure --device
 CODENAME ...`) or a script in the headset's folder. The window adds nothing a terminal cannot

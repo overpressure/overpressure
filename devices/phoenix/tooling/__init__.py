@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, Sequence
 
-from overpressure.headset import Command, Headset, Info, Param, Step
+from overpressure.headset import Command, Headset, Info, Param, Step, ram_boot_step
 
 FIRMWARE = "5.13.7-global-seko"
 FIRMWARES = ("5.13.7-global-seko", "5.13.8-global-sek")
@@ -71,6 +71,9 @@ class Phoenix(Headset):
                  (Param("serial", "ADB serial", "", help="empty: the only authorized device"),)),
             Step("stage-abl", "Enter development mode: engineering ABL", "Headset", ("dev", "stage-abl"),
                  "From PICO OS: the engineering ABL through EDL, checked against the backup.", writes=True),
+            ram_boot_step("out/dev/dev-boot.img",
+                          "fastboot boot of the dev image: it runs from RAM and nothing is written. The PICO 4's "
+                          "engineering ABL has no fastboot boot and refuses it; the headset then stays in fastboot."),
             Step("flash", "Flash the dev image", "Headset", ("dev", "flash", "{partition}"),
                  "Writes the dev image (fastboot, verified by readback) and starts it.",
                  (Param("partition", "Partition", "recovery", "choice", ("recovery", "boot")),), writes=True),
@@ -100,6 +103,10 @@ class Phoenix(Headset):
             Step("restore-abl", "Back to stock: verify and restore the ABL", "Headset", ("cycle", "--restore-only"),
                  "After \"Back to stock: boot\": verified stock boot and ABL, PICO OS.", writes=True),
         )
+
+    def ram_boot(self):
+        from .ramboot import PicoRamBoot
+        return PicoRamBoot()
 
 
 HEADSET = Phoenix()

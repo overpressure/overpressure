@@ -176,7 +176,13 @@ runner and cycle write a test image to `boot` and restore the backup's image aft
 (`python -m overpressure hwtest flash-run`, `python -m overpressure cycle`,
 [hardware-testing.md](hardware-testing.md)). The signed Neo3 engineering ABL used on the
 PICO 4 rejects `fastboot boot` with an unknown-command error after the image transfer, even
-after persistent normal and critical unlock, so there is no RAM boot.
+after persistent normal and critical unlock. overpressure's RAM boot
+([tool.md](../../../docs/tool.md#ram-boot)) is there for the PICO 4 all the same, through
+[tooling/ramboot.py](../tooling/ramboot.py): `python -m overpressure ram-boot` sends the dev image
+(`out/dev/dev-boot.img`, from `dev image`) after the engineering ABL's unlock check, and with
+this ABL it ends refused (exit status 3), with nothing written and the headset in fastboot, where
+`dev reboot` starts stage 1 from its partition. With a bootloader that has `fastboot boot` it
+waits for the dev image's SSH login (after the Windows NCM initialization).
 
 Back to PICO OS: `python -m overpressure dev restore` ([hardware-testing.md](hardware-testing.md)).
 `pico4-reboot bootloader` in stage 1 returns to fastboot for the next attempt.

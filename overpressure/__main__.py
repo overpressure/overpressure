@@ -5,6 +5,8 @@
   steps                the headset's workflow steps and their command lines
   run STEP [NAME=VALUE...]
                        run a step as the GUI does, with parameters
+  ram-boot [IMAGE]     boot an image from RAM with fastboot boot (writes nothing), where the
+                       headset's bootloader allows it
   COMMAND [ARGS...]    a command of the headset (listed below once a headset is known)
 
 The headset is --device, else OVERPRESSURE_DEVICE (environment or .env), else the only one in
@@ -14,12 +16,13 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import List, Optional
 
 from . import localconfig, runner
 from .headset import Headset, Registry, discover
 
-GENERIC = ("devices", "gui", "steps", "run")
+GENERIC = ("devices", "gui", "steps", "run", "ram-boot")
 
 
 def select(registry: Registry, codename: Optional[str]) -> Optional[Headset]:
@@ -44,6 +47,27 @@ def usage(headset: Optional[Headset]) -> str:
         lines += [f"  {word:<20} {cmd.help}" for word, cmd in headset.commands().items()]
         text += "\n" + "\n".join(lines)
     return text
+
+
+def ram_boot(headset: Headset, argv: List[str]) -> int:
+    from . import fastboot
+    target = headset.ram_boot()
+    if target is None:
+        print(f"error: the {headset.info.name} has no RAM boot in overpressure", file=sys.stderr)
+        return 2
+    if argv[:1] in (["-h"], ["--help"]):
+        print("usage: python -m overpressure ram-boot [IMAGE]")
+        print(f"default image: {target.image()}")
+        return 0
+    try:
+        fastboot.ram_boot(target, Path(argv[0]) if argv else None)
+    except fastboot.Refused as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 3
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -83,6 +107,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             argv_ = runner.process(headset, step, {})
             print(f"{step.group:<8} {step.key:<20} {step.title}\n{'':<30}{runner.display(argv_)}")
         return 0
+    if word == "ram-boot":
+        return ram_boot(headset, argv[1:])
     if word == "run":
         steps = {s.key: s for s in headset.steps()}
         if len(argv) < 2 or argv[1] not in steps:

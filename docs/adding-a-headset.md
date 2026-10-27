@@ -65,6 +65,47 @@ HEADSET = Example()
   ([the PICO 4's](../devices/phoenix/tooling/localconfig.py)).
 - Output goes to the repository's `out/`, downloads to `cache/` (`overpressure.REPO`).
 
+## RAM boot
+
+A headset whose bootloader has `fastboot boot` gets `python -m overpressure ram-boot` and its
+step in the window by returning a target from `Headset.ram_boot()`: a subclass of
+[`overpressure.fastboot.RamBootTarget`](../overpressure/fastboot.py) that says how the generic
+sequence looks for it, and `ram_boot_step(default_image)` among its steps.
+
+```python
+from overpressure import REPO
+from overpressure.fastboot import Fastboot, RamBootTarget
+
+class ExampleRamBoot(RamBootTarget):
+    up_timeout = 120
+    refused_hint = "Boot stage 1 from a partition instead: python -m overpressure dev flash."
+
+    def __init__(self, settings):  # the headset's .env settings
+        self.settings = settings
+
+    @property
+    def fastboot(self):            # fastboot with the headset's serial
+        return Fastboot("fastboot", self.settings.fastboot_serial)
+
+    def image(self):               # the image to boot when none is given
+        return REPO / "out" / "example-stage1.img"
+
+    def enter(self):               # into fastboot, e.g. adb reboot bootloader
+        ...
+
+    def check_unlocked(self):      # raise unless the bootloader may boot an unsigned image
+        ...
+
+    def reached(self):             # raise until the booted image answers (network, ADB, ...)
+        ...
+```
+
+`ram_boot` checks the image and that this headset is the only device in fastboot, calls the
+target in that order, and tells a refusal (`Refused`: the bootloader has no `fastboot boot`) apart
+from a failure. The PICO 4's target is the worked example
+([devices/phoenix/tooling/ramboot.py](../devices/phoenix/tooling/ramboot.py)): its engineering
+ABL refuses, so there it ends refused.
+
 ## Checks
 
 `python -m overpressure devices` lists the new headset, and `python -m overpressure --device

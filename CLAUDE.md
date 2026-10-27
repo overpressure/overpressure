@@ -54,7 +54,8 @@ status in its roadmap and README current.
   `__main__.py` (the command line), `gui.py` (the Tk window), `localconfig.py` (`.env`, one key
   prefix per headset), and the shared formats: `bootimg.py`, `avb.py`, `sparse.py`,
   `payload.py`, `cpio.py`, `compress.py`, `alpine.py`, `apksign.py`,
-  `kernelinfo.py`, `elfdeps.py`, `windows_ncm.py`.
+  `kernelinfo.py`, `elfdeps.py`, `windows_ncm.py`, and `fastboot.py` (the RAM boot every headset
+  with `fastboot boot` gets: `python -m overpressure ram-boot`).
 - `devices/<codename>/`: one headset: `tooling/` (its Python package with `HEADSET`), its
   images' sources and recipes, `scripts/`, `tests/`, `docs/`, `README.md`, `CLAUDE.md`,
   `device.mk` (its Makefile targets).

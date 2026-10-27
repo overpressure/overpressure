@@ -47,7 +47,8 @@ README.md current.
   holds `HEADSET` (its commands and the GUI's steps). Modules: `image.py` (stage-1 image),
   `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`, `PICO4_` keys),
-  `userspace.py` and `graphics.py` (validators), `firmware.py`/`stock.py` (PICO's OTA), and the
+  `userspace.py` and `graphics.py` (validators), `firmware.py`/`stock.py` (PICO's OTA),
+  `ramboot.py` (its target for overpressure's RAM boot; the engineering ABL refuses it), and the
   controller data extractors. The formats it shares (boot image, cpio, AVB, sparse, OTA
   payload, Alpine, `elfdeps.py`, `windows_ncm.py`) are in the root package `overpressure/`.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed

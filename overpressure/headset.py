@@ -16,9 +16,12 @@ import importlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import REPO
+
+if TYPE_CHECKING:
+    from .fastboot import RamBootTarget
 
 
 @dataclass(frozen=True)
@@ -93,6 +96,14 @@ class Step:
         return words
 
 
+def ram_boot_step(image: str, help: str = "") -> Step:
+    """The window's step for overpressure's RAM boot, with the headset's default image."""
+    return Step("ram-boot", "RAM boot (writes nothing)", "Headset", ("ram-boot", "{image}"),
+                help or "fastboot boot: the image runs from RAM and the next normal boot starts what the "
+                        "partitions hold. A bootloader without fastboot boot refuses it.",
+                (Param("image", "Boot image", image, "path"),))
+
+
 class Headset(ABC):
     """A supported headset."""
 
@@ -110,6 +121,10 @@ class Headset(ABC):
     def steps(self) -> Sequence[Step]:
         """Its workflow for the GUI, in order: building its images, then working on it."""
         return ()
+
+    def ram_boot(self) -> Optional["RamBootTarget"]:
+        """How it boots an image from RAM (python -m overpressure ram-boot), or None."""
+        return None
 
     def main(self, argv: List[str]) -> int:
         """Runs a command of its command line (argv[0] is the command word)."""
