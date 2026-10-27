@@ -734,9 +734,46 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   extremes), so it is shown about 40–80 ms after it. Its rotation is as timely as the virtual
   world's: against the vblank that starts scanout, the image's shift rate follows the head's yaw
   rate 32 ms ahead in the room view and 28 ms ahead in the virtual space (display layer motion
-  log with linear scanout, worn turns up to 170°/s). What remains is translation, which only a
-  depth mesh corrects (nodding), and the edge of the camera's view showing when a 40–80 ms old
-  frame is turned to the head's present pose.
+  log with linear scanout, worn turns up to 170°/s). Pitch is as timely as yaw: with the depth
+  mesh, the image leads the tracker's pose by 16 ms in pitch and 14 ms in yaw at 28–29 pixels per
+  degree (the log's vertical and horizontal shift, worn nods up to 114°/s). What remains is the
+  edge of the camera's view: a 40–80 ms old frame lacks the part the head turned towards, and the
+  compositor stretches the frame's border into it until the next frame covers it. Nodding shows it
+  most at the top, where the downward-looking pair sees little. The rate does not change it: at
+  60 Hz (`PICO4_CAMERA_HZ=60`, 30 scene sets a second) it looked the same worn.
+- **Colour from the RGB camera** (`PICO4_ROOMVIEW_RGB=1`, under test). PICO OS colours its
+  see-through from the IMX471 RGB camera, every frame with its own capture pose, onto the depth
+  mesh; the grey pair only builds the mesh. Here:
+  - The IMX471 streams in the tracking cameras' capture as sensor slot 4
+    ([pico4_cam.c](../src/monado/pico4_cam.c)), as PICO OS's module describes it: I2C address 0x34,
+    ID 0x0471 at 0x0016, its power sequence, 2328×1748 RAW10 (RGGB, the 2×2-binned array)
+    free-running at 50 fps on four lanes of CSIPHY 1 at 2064.8 Mbit/s (settle count 17), into an
+    RDI of the free IFE-lite. The request manager has one owner, so it cannot run in a process of
+    its own. 49.9 fps measured. Exposure goes to the sensor while it streams as a CONFIG list
+    under group hold; the kernel then leaves the sensor in its CONFIG state, where
+    `CAM_STOP_DEV` is refused, so its stream-off goes the same way.
+  - The driver converts each frame on a thread of its own, pinned to the Cortex-A77 cores 4–6
+    (9 ms a frame there, 22 ms on the little cores): each 2×2 cell one pixel (1164×874), black
+    level 64 off, grey-world white balance, sRGB, full-range BT.601 NV12. The camera thread hands
+    the frame over and gets it back after the conversion. An auto exposure aims at 18 % grey: a
+    flicker-free 1/100 s first, then gain up to 16×, then up to 20 ms. 47 of the 50 frames a
+    second reach the ring, 30.5 ms (median) after the middle of their exposure at the longest
+    exposure; the conversion takes 44 % of a core.
+  - The sensor streams only while the room view shows it, as PICO OS opens the camera only for
+    its see-through: 5 s after the room view closes the driver stops the IMX471's stream
+    (0x0100 = 0 as a CONFIG list) and starts it again when the room view opens. The ISP keeps
+    its requests queued and the link stays up; the request manager's 5 s start-of-frame
+    watchdog then fires on that link and is ignored. Opened again, 42–47 frames a second reach
+    the ring at once, 28–31 ms (median) after the middle of their exposure.
+  - The lens is PICO's omni model with its "fisheye62" distortion: the unified-model step with ξ,
+    then θ = atan(|m|) of the omni-normalised point m, θd = θ(1 + k1θ² + … + k6θ¹²), the
+    tangential terms on m, and the focal lengths. [pico4_tcam.c](../src/monado/pico4_tcam.c)
+    projects it and fits KB4 for the room view's metadata.
+  - `pico4-roomview` sets the frames up as NV12 (one dma-buf for both planes, linear) with both
+    camera slots backed by the same images, and publishes each frame to both: the compositor's
+    only colour input. A colour-bar test pattern (`pico4-roomview --test-pattern`) shows in the
+    right colours.
+  - Shared memory version 2 carries the format: two grey cameras or one NV12 image.
 
 ## Head tracking
 
@@ -831,7 +868,8 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   it and starts it again in the process (pre-stop, stop with the map saved, destroy, then the
   start sequence), with the frame thread paused around it; libSlam otherwise can stay in its
   relocalisation for good after a loss (error mask 16, confidence 0). The restarted tracker has
-  a new world and relocalises in the room within the same 10 s window as at a start.
+  a new world and relocalises in the room as at a start, also when that takes longer than the
+  first 10 s (below).
 - **IMU.** The raw samples of the factory body frame, at the DSP's 1 kHz, as PICO OS feeds them
   (its uncalibrated streams carry the same values; the service applies no bias or axis change),
   each with the ICM-42688's latest die temperature, which the tracker's gyro bias table is
@@ -858,7 +896,9 @@ PICO OS keeps a room across sessions with the tracker's map: `libSlam.so` loads 
 `start6DOF`, and saves its map at the stop (`preStopAlgorithm`, `stopAlgorithm` with
 `non_sleep`, `destroyHandle`), but only while `boundary/stdata.txt` holds a boundary;
 `createHandle` and `start6DOF` empty the boundary files. After a relocalisation it writes the
-saved room's boundary, in this session's world, to `boundary/stdataforalgorithm.txt`. A boundary
+saved room's boundary, in this session's world, to `boundary/stdataforalgorithm.txt`, and calls
+the callback of `RelocResultCallbackRegister` once per tracker with the relocalisation's time
+and pose, whenever the relocalisation happens; PICO OS's service learns of it that way. A boundary
 file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's world point is
 (b, −a, c).
 
@@ -867,13 +907,16 @@ file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's 
   directories of the root, so the map survives reboots and system updates; it never leaves the
   headset.
 - **A reference square.** Every map is saved with the same boundary in its own world: a 2 m
-  square 1.5 m below where the tracker started. 10 s after `start6DOF`, `pico4-slamd` fits the
+  square 1.5 m below where the tracker started. When the relocalisation callback comes and the
+  copy is written, `pico4-slamd` fits the
   tracker's copy of it in this session's world ([room.h](../src/stockslam/room.h): a turn about
   the up axis and a shift, both worlds being gravity-aligned; accepted below 5 cm residual): that
   is the transform from the session's world to the saved room's, whichever saved map the tracker
   found. It publishes it in the shared memory and writes the copy to `stdata.txt`, so the stop
   saves the map again; the driver puts every pose of that generation into the room's world.
-  Without a relocalisation the session is a new room, saved with the square as it is.
+  Without a relocalisation 10 s after `start6DOF` the session is a new room, saved with the
+  square as it is; a later relocalisation (a covered start, a restarted tracker) moves it into
+  the saved room's world and universe then.
 - **SteamVR's universe.** The map's identity (`getRelocMapInfo`) is the room's: `driver_monado`
   reports its hash as `Prop_CurrentUniverseId_Uint64` once the room is settled, so SteamVR keeps
   a play area per room in `chaperone_info.vrchap`, back in its place whenever the tracker
