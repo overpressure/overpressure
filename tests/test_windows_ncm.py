@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from pico4.windows_ncm import initialize
+from overpressure.windows_ncm import initialize
 
 
 class NcmTests(unittest.TestCase):

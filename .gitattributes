@@ -1,12 +1,13 @@
 # Files that end up inside the Linux ramdisk must keep LF line endings,
 # even on Windows checkouts (the image build also strips CRs as a safety net).
 * text=auto eol=lf
-initramfs/** text eol=lf
-userspace/** text eol=lf
+devices/*/initramfs/** text eol=lf
+devices/*/userspace/** text eol=lf
+devices/*/tests/** text eol=lf
 tests/** text eol=lf
 *.sh text eol=lf
 *.py text eol=lf
 *.ps1 text eol=lf
 *.md text eol=lf
 *.json text eol=lf
-prebuilt/** binary
+devices/*/prebuilt/** binary

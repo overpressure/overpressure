@@ -1,0 +1,107 @@
+# PICO 4 (phoenix)
+
+Linux and a SteamOS-compatible userspace ([overpressure](../../README.md)) on the original PICO 4 (2022, codename *phoenix*,
+Snapdragon XR2), on the headset's stock Android kernel (4.19.81) and device trees. A small
+Alpine stage 1 boots from the boot partition and takes a SteamOS-compatible stage 2 over the
+USB cable into RAM, or starts it installed on the headset (system in `super`, data in
+`userdata`, PICO OS's own layout). Stage 2 runs Valve's VR session from the Steam Frame, gamescope and
+SteamVR, with a Monado driver for the PICO 4's hardware: the SteamVR environment shows in the
+lenses with 6DoF head tracking and 3DoF controllers.
+
+This is experimental work on an unlocked headset. During development it keeps an engineering
+bootloader and a development image in its boot partition; the acceptance cycle returns it to the
+stock boot image and stock bootloader, both verified by readback. Storage stays read-only
+otherwise; installing the system replaces PICO OS's system and data, and the way back restores
+them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL backup
+([docs/device-preparation.md](docs/device-preparation.md)).
+
+## Status
+
+| Step | Result |
+| --- | --- |
+| 1 Recoverable device | EDL backups, engineering ABL, unlock and stock restore |
+| 2 Linux shell | stock kernel + Alpine ramdisk, SSH and HTTP over USB, read-only storage, return to PICO OS |
+| 3 Native graphics | Turnip (Vulkan) on KGSL; both 2160 x 2160 panels at 90 and 72 Hz through the stock KMS driver |
+| 4 SteamOS-compatible userspace | Holo Core aarch64 with the Steam Frame's systemd 257.7 and SteamOS services, from RAM or installed (read-only system, 104 GiB of data); speakers and microphone through PipeWire |
+| 5 XR hardware | head IMU, Monado with KMS output, lens correction and IPD, four tracking cameras, 6DoF with PICO OS's tracker on the CDSP, controllers (inputs, 3DoF) |
+| 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path; the Steam client in the headset, games started from its library |
+
+Open: fan control over longer sessions and its tuning, performance, controller position tracking, boot feedback and power handling of the installed system. Plan and details:
+[docs/roadmap.md](docs/roadmap.md).
+
+## Quick start
+
+1. **Prepare the headset** once: identity, EDL backup, engineering ABL, unlock
+   ([docs/device-preparation.md](docs/device-preparation.md)). Copy `.env.example` to `.env`
+   and fill in the headset's serials and the paths of its backup and bootloader files.
+2. **Build stage 1** (any OS, Python 3.9+; the firmware entry must match the headset, see
+   `python -m overpressure match`):
+
+   ```sh
+   python -m overpressure build --firmware 5.13.7-global-seko
+   ```
+
+3. **Build stage 2** (Linux or WSL, as root; [docs/development.md](docs/development.md) lists
+   the requirements):
+
+   ```sh
+   make userspace
+   ```
+
+4. **Run it on the headset.** Put it into development mode once, from PICO OS; it stays there
+   between runs:
+
+   ```sh
+   python -m overpressure dev stage-abl
+   python -m overpressure dev image
+   python -m overpressure dev flash
+   python -m overpressure dev connect
+   ```
+
+   Then boot and check each new archive:
+
+   ```sh
+   python -m overpressure dev boot
+   python -m overpressure dev check
+   python -m overpressure dev reboot
+   ```
+
+   `python -m overpressure dev restore`, then `python -m overpressure cycle --restore-only`, return the
+   headset to stock boot, stock bootloader and PICO OS
+   ([docs/hardware-testing.md](docs/hardware-testing.md)).
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [docs/roadmap.md](docs/roadmap.md) | the plan, the status of each step, open work |
+| [docs/research.md](docs/research.md) | background: the PICO 4 and the Steam Frame, related projects |
+| [docs/device-preparation.md](docs/device-preparation.md) | identity, EDL backups, engineering ABL, unlock, restore |
+| [docs/stage1.md](docs/stage1.md) | the boot image: contents, boot sequence, options, troubleshooting |
+| [docs/hardware-testing.md](docs/hardware-testing.md) | acceptance runner, acceptance cycle, development loop |
+| [docs/graphics.md](docs/graphics.md) | Turnip on KGSL and fenced KMS on both panels |
+| [docs/userspace.md](docs/userspace.md) | the SteamOS-compatible userspace and the handoff |
+| [docs/xr.md](docs/xr.md) | IMU, Monado driver, display, lenses, cameras, 6DoF, controllers |
+| [docs/session.md](docs/session.md) | Valve's VR session: SteamVR, gamescope, the display layer |
+| [docs/cooling.md](docs/cooling.md) | fan control and the thermal policy |
+| [docs/development.md](docs/development.md) | layout, build system and hosts, tests, Windows and WSL |
+
+## This folder
+
+```text
+tooling/     host tooling (Python standard library): python -m overpressure COMMAND, and the GUI's steps
+initramfs/   stage 1: the files added to the Alpine ramdisk
+userspace/   stage 2: package list, pacman.conf, adaptation layer, SteamVR configuration, PKGBUILDs
+src/         C sources: graphics tests, Monado's PICO 4 driver, OpenXR clients, SteamVR display layer
+scripts/     userspace and graphics builds, sensor data extraction, boot and preflight helpers
+prebuilt/    static aarch64 helpers for stage 1
+tests/       host tests and the QEMU boot tests
+docs/        documentation
+```
+
+`make test` (or `python -m unittest` at the repository root) runs the host tests in seconds.
+Every step above is also in the GUI (`python -m overpressure gui`, [the tool](../../docs/tool.md)).
+
+Device data and vendor files never enter the repository: backups, the bootloader images,
+GPU firmware, sensor data, Valve's packages and the built archives stay private
+(`backup/`, `assets/`, `cache/`, `out/`, `.env` at the repository root).

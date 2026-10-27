@@ -6,7 +6,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from pico4 import elfdeps
+from overpressure import elfdeps
 
 AARCH64, X86_64 = 183, 62
 

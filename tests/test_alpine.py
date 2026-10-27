@@ -1,4 +1,4 @@
-"""APKINDEX signature verification (pico4/apksign.py) and its use in pico4/alpine.py.
+"""APKINDEX signature verification (overpressure/apksign.py) and its use in overpressure/alpine.py.
 
 The golden indexes are fake APKINDEX.tar.gz files whose index stream was signed once
 with a throwaway 2048-bit key by OpenSSL (``openssl dgst -sha1|-sha256 -sign``), an
@@ -14,7 +14,9 @@ import tempfile
 import unittest
 from unittest import mock
 
-from pico4 import alpine, apksign, image
+from overpressure import alpine, apksign
+
+from devices.phoenix.tooling import image
 
 TEST_KEY_NAME = "pico4-test@example.invalid-00000001.rsa.pub"
 TEST_KEY_PEM = """\

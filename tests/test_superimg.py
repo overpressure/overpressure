@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pico4 import superimg
+from overpressure import superimg
 
 
 def build_super(partitions: dict[str, list[tuple[int, bytes]]], size: int = 1 << 20) -> bytes:

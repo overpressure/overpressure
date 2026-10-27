@@ -2,7 +2,7 @@ import os
 import struct
 import unittest
 
-from pico4 import sparse
+from overpressure import sparse
 
 
 class SparseTests(unittest.TestCase):
