@@ -635,8 +635,10 @@ station keep a single owner:
 - **The same mesh here.** `pico4-slamd` runs `libphotoid` in the tracker's root and feeds it
   the same way ([vst.c](../src/stockslam/vst.c)): cam3 and cam2 after each scene set, with
   `libSlam`'s result nearest the set's time (a ring the IMU thread fills), and the map points
-  from `libSlam`'s point callback. The CVP's firmware lies in the root's `/lib/firmware`, because
-  the kernel looks for it in the root of the process that opens `/dev/cvp`. `cdsp-boot` sets the
+  from `libSlam`'s point callback. The CVP's firmware lies in the root's `/lib/firmware` and in
+  the system's `/usr/lib/firmware`: the kernel reads `cvpss.mdt` in the root of the process that
+  opens `/dev/cvp`, and its workers load the segments (`cvpss.bNN`) from the system's; with the
+  segments missing there, the CVP stays offline and the pipeline fails. `cdsp-boot` sets the
   CVP's restart level to RELATED, and `pico4-slamd` checks it before the start. SNPE's DSP
   module lies in `/system/lib64`, the path SNPE gives the DSP. Each mesh goes into the shared
   feed's two mesh slots ([pico4_slam_feed.h](../src/monado/pico4_slam_feed.h)). Measured with the
@@ -743,9 +745,9 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   warp or visible lag. With colour and the mesh on for 60 s, the still headset's stock tracker
   lost no pose and stayed within 0.5 mm and 0.10° of its start (0.4 mm and 0.04° with the room
   view off); `pico4-slamd` then takes 104 % of one core against 54 %.
-- **Colour from the RGB camera** (`PICO4_ROOMVIEW_RGB=1`, under test). PICO OS colours its
-  see-through from the IMX471 RGB camera, every frame with its own capture pose, onto the depth
-  mesh; the grey pair only builds the mesh. Here:
+- **Colour from the RGB camera** (the default; `PICO4_ROOMVIEW_RGB=0` keeps the grey pair).
+  PICO OS colours its see-through from the IMX471 RGB camera, every frame with its own capture
+  pose, onto the depth mesh; the grey pair only builds the mesh. Here:
   - The IMX471 streams in the tracking cameras' capture as sensor slot 4
     ([pico4_cam.c](../src/monado/pico4_cam.c)), as PICO OS's module describes it: I2C address 0x34,
     ID 0x0471 at 0x0016, its power sequence, 2328×1748 RAW10 (RGGB, the 2×2-binned array)

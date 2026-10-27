@@ -115,9 +115,10 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_max_exposure, "PICO4_SLAM_MAX_EXPOSURE", 40
 DEBUG_GET_ONCE_BOOL_OPTION(pico4_slam_exposure_centre, "PICO4_SLAM_EXPOSURE_CENTRE", true)
 /*!
  * SteamVR's room view in colour from the RGB camera (sensor slot 4), as PICO OS colours its
- * see-through, in place of the grey forward pair (docs/xr.md#passthrough).
+ * see-through, in place of the grey forward pair (docs/xr.md#passthrough). PICO4_ROOMVIEW_RGB=0
+ * keeps the grey pair.
  */
-DEBUG_GET_ONCE_BOOL_OPTION(pico4_roomview_rgb, "PICO4_ROOMVIEW_RGB", false)
+DEBUG_GET_ONCE_BOOL_OPTION(pico4_roomview_rgb, "PICO4_ROOMVIEW_RGB", true)
 #define LINE_NS 19069                 //!< One sensor line (stock).
 #define SOF_AFTER_EXPOSURE_NS 52000   //!< Start-of-frame interrupt after the exposure's end (stock).
 #define SOF_AFTER_LINES_NS 133483     //!< Seven more lines the stock service takes off (stock).
