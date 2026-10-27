@@ -16,7 +16,7 @@ from unittest import mock
 
 from overpressure import alpine, apksign
 
-from devices.phoenix.tooling import image
+from overpressure import REPO, stage1
 
 TEST_KEY_NAME = "pico4-test@example.invalid-00000001.rsa.pub"
 TEST_KEY_PEM = """\
@@ -211,14 +211,15 @@ class LoadIndexTest(unittest.TestCase):
         self.assertFalse(os.path.exists(path))
 
 
-REAL_CACHE = os.path.join(image.CACHE, image.ALPINE_BRANCH)
+SPEC = stage1.Spec(overlay=REPO)
+REAL_CACHE = os.path.join(str(REPO), "cache", SPEC.alpine_branch)
 
 
 class RealIndexTest(unittest.TestCase):
     """Alpine's real indexes verify against the pinned keys (when the build cached them)."""
 
     def test_cached_indexes(self):
-        paths = [os.path.join(REAL_CACHE, repo, image.ARCH, "APKINDEX.tar.gz") for repo in image.ALPINE_REPOS]
+        paths = [os.path.join(REAL_CACHE, repo, SPEC.arch, "APKINDEX.tar.gz") for repo in SPEC.alpine_repos]
         paths = [p for p in paths if os.path.exists(p)]
         if not paths:
             self.skipTest("no cached Alpine APKINDEX (run a stage-1 build first)")
@@ -226,7 +227,7 @@ class RealIndexTest(unittest.TestCase):
             with open(path, "rb") as f:
                 raw = f.read()
             with self.subTest(path=path):
-                self.assertTrue(apksign.verify_index(raw, apksign.alpine_keys(image.ARCH)).startswith("alpine-devel@"))
+                self.assertTrue(apksign.verify_index(raw, apksign.alpine_keys(SPEC.arch)).startswith("alpine-devel@"))
 
 
 def _signature_bytes(raw: bytes) -> bytes:

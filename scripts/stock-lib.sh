@@ -1,5 +1,6 @@
-# Shared by the extraction scripts (sourced): the stock firmware directory that
-# `python -m overpressure stock` builds from PICO's public OTA (docs/development.md#stock-firmware).
+# Shared by the headsets' extraction scripts (sourced): the stock firmware directory that
+# `python -m overpressure stock` builds from a vendor's public OTA (overpressure/ota.py:
+# its manifest.json holds the firmware and every file's sha256).
 #
 #   stock_dir DIR FILE...   checks DIR's manifest.json and the named files' sha256 and sets
 #                           $stock to DIR's absolute path

@@ -26,7 +26,7 @@
 # headset.
 set -euo pipefail
 project=$(cd "$(dirname "$0")/.." && pwd)
-. "$project/scripts/stock-lib.sh"
+. "$project/../../scripts/stock-lib.sh"  # overpressure's
 repo=$(cd "$project/../.." && pwd)
 stock_dir "${1:-}" system.img vendor.img modem.bin
 output=${2:?specify an output directory}

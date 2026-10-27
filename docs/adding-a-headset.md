@@ -21,6 +21,21 @@ How the images are built is the headset's own business: the PICO 4 boots an Alpi
 its stock Android kernel and builds its userspace from Valve's Holo packages; another headset
 may differ in every step.
 
+## What overpressure already does
+
+Most of what a headset on its stock Android kernel needs is generic; its tooling describes the
+headset and calls these:
+
+| Need | Module |
+| --- | --- |
+| Stock firmware: a boot image or partitions from the vendor's OTA, checked against the zip | `overpressure.ota` (a catalog of builds, the members the headset needs) |
+| A stage 1: Alpine Linux in the stock boot image, kernel and device trees untouched | `overpressure.stage1` (a `Spec`: packages, overlay, prebuilt files, kernel arguments) |
+| adb and fastboot, fail-closed, every command naming the serial | `overpressure.android`, `overpressure.fastboot` (also the RAM boot) |
+| Qualcomm: the SoC ID, EDL with edl-ng or bkerler/edl, partition sizes from the rawprogram maps | `overpressure.qualcomm` |
+| Backups that every write is checked against | `overpressure.backup` |
+| Waiting for states with a bound, running tools, SSH with the project's key, Windows' USB network | `overpressure.process`, `overpressure.ssh`, `overpressure.windows_ncm` |
+| Extraction scripts reading the stock firmware folder | `scripts/stock-lib.sh` |
+
 ## HEADSET
 
 `devices/<codename>/tooling/__init__.py` exports `HEADSET`, an instance of a subclass of

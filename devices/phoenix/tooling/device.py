@@ -2,11 +2,13 @@
 
 No upstream code or binaries are bundled. EDL is a separately installed bkerler/edl
 or edl-ng CLI; partition names must come from the device's GPT, never a guessed slot.
+The generic parts (adb/fastboot, EDL, verified backups) are overpressure's; this module adds
+the PICO 4's identity, its engineering ABL's unlock token and the backup/stage/unlock/restore
+workflow.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
@@ -14,15 +16,18 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from overpressure import android
+from overpressure.android import run
+from overpressure.backup import digest, save_new, verified_backup
+from overpressure.qualcomm import backup_commands, chip_id, edl_command, validate_native_dump
 
-def chip_id(value: str) -> int:
-    value = value.strip()
-    if not re.fullmatch(r"(?:[0-9]+|0[xX][0-9a-fA-F]+)", value):
-        raise ValueError("Chip ID must be decimal or 0x-prefixed hexadecimal")
-    number = int(value, 16 if value.lower().startswith("0x") else 10)
-    if not 0 <= number <= 0xFFFFFFFF:
-        raise ValueError("Chip ID must fit in 32 bits")
-    return number
+
+def select_device(tool: str, serial: str | None) -> str:
+    return android.select_device(tool, serial, run)
+
+
+def check_unlock(fastboot: str, serial: str, critical: bool = False) -> None:
+    android.check_unlock(fastboot, serial, critical, run)
 
 
 def unlock_token(number: int) -> str:
@@ -32,58 +37,6 @@ def unlock_token(number: int) -> str:
         raise ValueError("Chip ID must fit in 32 bits")
     return "pico" + format(number & 0xF7F3F37F, "x").translate(
         str.maketrans("0123456789abcdef", "0XD9J6FB3ATQIHNM"))
-
-
-def run(command: list[str], timeout: int = 60) -> str:
-    print(">> " + subprocess.list2cmdline(command), file=sys.stderr)
-    result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
-    output = result.stdout + "\n" + result.stderr
-    if result.returncode or re.search(r"\b(?:FAILED|ERROR)\b", output, re.I):
-        raise ValueError(f"Command failed ({result.returncode}): {output.strip()}")
-    return output.strip()
-
-
-def select_device(tool: str, serial: str | None) -> str:
-    rows = [line.split() for line in run([tool, "devices"]).splitlines()]
-    devices = {row[0]: row[1] for row in rows if len(row) >= 2
-               and row[1] in ("device", "fastboot", "unauthorized", "offline")}
-    if serial is None:
-        if len(devices) != 1:
-            raise ValueError("Connect exactly one headset or specify --serial")
-        serial = next(iter(devices))
-    if devices.get(serial) not in ("device", "fastboot"):
-        raise ValueError("Selected headset is missing, offline, or unauthorized")
-    return serial
-
-
-def unlocked(output: str, critical: bool = False) -> bool:
-    label = "Device critical unlocked" if critical else "(?:Device unlocked|unlocked)"
-    values = re.findall(r"(?:^|\n)\s*(?:\(bootloader\)\s*)?" + label
-                        + r"\s*:\s*(yes|no|true|false)\s*(?=\n|$)", output, re.I)
-    return bool(values) and all(v.lower() in ("yes", "true") for v in values)
-
-
-def check_unlock(fastboot: str, serial: str, critical: bool = False) -> None:
-    try:
-        output = run([fastboot, "-s", serial, "oem", "device-info"])
-    except ValueError:
-        if critical:
-            raise
-        output = run([fastboot, "-s", serial, "getvar", "unlocked"])
-    if not unlocked(output) or (critical and not unlocked(output, True)):
-        raise ValueError("Unlock state is locked or unknown; refusing to continue")
-    print(output)
-
-
-def digest(path: Path) -> dict:
-    size = path.stat().st_size
-    if not size:
-        raise ValueError(f"Empty backup/image: {path}")
-    sha = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            sha.update(block)
-    return {"size": size, "sha256": sha.hexdigest()}
 
 
 def read_identity(path: Path) -> dict:
@@ -98,97 +51,6 @@ def read_identity(path: Path) -> dict:
         raise ValueError("Firmware is outside the upstream reported range (through 5.13.8)")
     chip_id(str(identity["chip_id"]))
     return identity
-
-
-def save_new(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8") as stream:
-        json.dump(data, stream, indent=2)
-        stream.write("\n")
-
-
-def verified_backup(folder: Path) -> dict:
-    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("schema") != 1 or not manifest.get("files"):
-        raise ValueError("Incomplete backup manifest")
-    for name, expected in manifest["files"].items():
-        path = (folder / name).resolve()
-        if folder.resolve() not in path.parents or digest(path) != expected:
-            raise ValueError(f"Backup integrity check failed: {name}")
-    return manifest
-
-
-def executable(name: str) -> str:
-    """Absolute path for a relative tool path: Windows CreateProcess rejects
-    relative paths written with forward slashes. Bare names stay PATH lookups."""
-    if "/" not in name and "\\" not in name:
-        return name
-    return str(Path(name).resolve())
-
-
-def edl_command(args, *words: str) -> list[str]:
-    loader = Path(args.loader).resolve()
-    digest(loader)
-    if args.edl_backend == "edl-ng":
-        if args.edl_script:
-            raise ValueError("edl-ng requires its native executable via --edl")
-        operation = {"r": "read-part", "w": "write-part",
-                     "dump-rawprogram": "dump-rawprogram"}[words[0]]
-        return [executable(args.edl), "--memory", "Ufs", "--loader", str(loader), operation, *words[1:]]
-    # Windows Git checkouts may materialize edlclient's entrypoint symlink as
-    # plain text. Calling its top-level script avoids that broken entrypoint.
-    tool = [executable(args.edl)]
-    if args.edl_script:
-        tool = [executable(args.edl_python), str(Path(args.edl_script).resolve())]
-    return [*tool, *words, "--memory=ufs", f"--loader={loader}"]
-
-
-def backup_commands(args) -> list[list[str]]:
-    if args.edl_backend == "edl-ng":
-        if not args.edl_luns or len(set(args.edl_luns)) != len(args.edl_luns):
-            raise ValueError("edl-ng backup requires distinct --edl-luns from the device's GPT scan")
-        commands = [edl_command(args, "dump-rawprogram", str((args.backup / f"lun{lun}").resolve()),
-                                "--lun", str(lun)) for lun in args.edl_luns]
-        if not args.include_userdata:
-            for command in commands:
-                command.extend(["--skip", "userdata"])
-        return commands
-    if args.edl_luns:
-        raise ValueError("--edl-luns applies only to the edl-ng backend")
-    command = edl_command(args, "rl", str(args.backup.resolve()), "--genxml")
-    if not args.include_userdata:
-        command.append("--skip=userdata")
-    return [command]
-
-
-def validate_native_dump(folder: Path, luns: list[int], include_userdata: bool) -> None:
-    """Reject missing or truncated files against each native client's rawprogram map."""
-    for lun in luns:
-        directory = (folder / f"lun{lun}").resolve()
-        rows = ET.parse(directory / f"rawprogram{lun}.xml").getroot().findall("program")
-        if not rows:
-            raise ValueError(f"Empty rawprogram map for LUN {lun}")
-        for row in rows:
-            if not include_userdata and row.get("label") == "userdata":
-                continue
-            name = row.attrib["filename"]
-            path = (directory / name).resolve()
-            size = int(row.attrib["num_partition_sectors"]) * int(row.attrib["SECTOR_SIZE_IN_BYTES"])
-            if (directory not in path.parents or size <= 0
-                    or int(row.attrib["physical_partition_number"]) != lun
-                    or not path.is_file() or path.stat().st_size != size):
-                raise ValueError(f"Incomplete dump for LUN {lun}: {name}")
-
-
-def partition_size(backup: Path, label: str) -> int:
-    """A partition's size from the backup's rawprogram maps (also for userdata, which a backup
-    need not contain): exactly one partition of that name across all LUNs."""
-    sizes = [int(row.attrib["num_partition_sectors"]) * int(row.attrib["SECTOR_SIZE_IN_BYTES"])
-             for xml in sorted(backup.glob("lun*/rawprogram*.xml"))
-             for row in ET.parse(xml).getroot().findall("program") if row.get("label") == label]
-    if len(sizes) != 1 or sizes[0] <= 0:
-        raise ValueError(f"the backup's partition maps hold {len(sizes)} partitions named {label}")
-    return sizes[0]
 
 
 def confirm(args, identity: dict) -> None:

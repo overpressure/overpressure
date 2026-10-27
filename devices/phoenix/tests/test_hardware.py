@@ -126,7 +126,7 @@ class HarnessTests(unittest.TestCase):
         self.backup_manifest = {"schema": 1, "identity": {"schema": 1, "serial": "ABC",
             "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.8/test:user/dev-keys",
             "oem_state": "false", "chip_id": 1234567},
-            "files": {"boot.bin": hw.device.digest(self.args.backup / "boot.bin")}}
+            "files": {"boot.bin": hw.backups.digest(self.args.backup / "boot.bin")}}
         self.save_backup_manifest()
         self.runner = hw.Runner(self.args)
 
@@ -688,7 +688,7 @@ class HarnessTests(unittest.TestCase):
         stock = bootimg.parse((self.args.backup / "boot.bin").read_bytes())
         stock.kernel = b"different kernel"
         (self.args.backup / "boot.bin").write_bytes(stock.pack().ljust(65536, b"\0"))
-        self.backup_manifest["files"]["boot.bin"] = hw.device.digest(self.args.backup / "boot.bin")
+        self.backup_manifest["files"]["boot.bin"] = hw.backups.digest(self.args.backup / "boot.bin")
         self.save_backup_manifest()
         self.assertEqual(self.execute(), 1)
         self.assertIn("kernel", self.runner.result["error"])

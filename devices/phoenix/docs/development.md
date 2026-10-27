@@ -14,8 +14,8 @@ commands run from the repository root.
 ```text
 tooling/          the PICO 4's host tooling (Python standard library): python -m overpressure COMMAND
   __init__.py       HEADSET: its commands and the GUI's workflow steps
-  image.py          stage-1 boot image (build, inspect, match); firmware.json: PICO's OTA builds
-  firmware.py, stock.py   PICO's OTA builds and the stock firmware's partitions
+  image.py          stage-1 boot image (build, inspect, match) on overpressure/stage1.py; firmware.json: PICO's OTA builds
+  stock.py          the members of PICO's full OTA the extraction needs (overpressure/ota.py)
   device.py         identity, EDL backups, engineering ABL, unlock and restore
   hardware_test.py  the bounded acceptance runner (preflight, run, flash-run)
   cycle.py          the unattended acceptance cycle that ends on stock boot and ABL
@@ -36,15 +36,19 @@ src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's
                   sysvsem/ (System V semaphores), reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-system-image.sh, the extract-*.sh scripts
-                  (stock firmware, with stock-lib.sh) and the on-headset preflight
+                  (stock firmware, with overpressure's scripts/stock-lib.sh) and the on-headset preflight
 tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, test_vrdisplay_fake.sh, qemu/ (test kernels and boot tests)
 docs/             documentation
 ```
 
-The generic modules the PICO 4 uses are in the root package: `bootimg.py`, `cpio.py`,
-`compress.py`, `alpine.py`, `apksign.py`, `payload.py`, `kernelinfo.py`,
-`avb.py`, `sparse.py`, `elfdeps.py` (native ELF dependency check of the userspace root) and
-`windows_ncm.py` (Windows NCM initialization through UsbDk).
+The generic modules the PICO 4 uses are in the root package: `stage1.py` (the stage-1 builder),
+`ota.py` (stock images and partitions from an OTA), `android.py` (adb and fastboot),
+`qualcomm.py` (the SoC ID, EDL and its partition maps), `backup.py` (verified backups),
+`process.py` (programs and bounded waits), `ssh.py`, `fastboot.py` (the RAM boot), the formats
+(`bootimg.py`, `cpio.py`, `compress.py`, `alpine.py`, `apksign.py`, `payload.py`, `kernelinfo.py`,
+`avb.py`, `sparse.py`), `elfdeps.py` (native ELF dependency check of the userspace root) and
+`windows_ncm.py` (Windows NCM initialization through UsbDk); `scripts/stock-lib.sh` serves the
+extraction scripts.
 
 Private and generated directories stay out of Git: `backup/` (device identity and EDL
 backups), `assets/` (Firehose loader, engineering ABL, GPU firmware, sensor data), `cache/`
@@ -115,7 +119,7 @@ members it needs, each checked against the zip's CRC: `system` and `vendor` as e
 rebuilt from their brotli-compressed block images and transfer lists (the `brotli` command),
 `firmware-update/NON-HLOS.bin` as `modem.bin`, `firmware-update/dspso.bin` as `dsp.bin`, and
 `recovery.img` and `boot.img`; `manifest.json` holds their sha256, which every extraction script
-checks first ([scripts/stock-lib.sh](../scripts/stock-lib.sh)). The firmware entry is the
+checks first ([scripts/stock-lib.sh](../../../scripts/stock-lib.sh)). The firmware entry is the
 headset's (`PICO4_FIRMWARE`, `python -m overpressure match`, [stage1.md](stage1.md)). The results are
 proprietary: keep the stock directory and `assets/` private.
 

@@ -60,7 +60,12 @@ python -m overpressure dev check
 | [overpressure/gui.py](../overpressure/gui.py) | the window (Tk) |
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix |
 | [overpressure/fastboot.py](../overpressure/fastboot.py) | the RAM boot: `fastboot boot` with the headset's checks, never a write |
+| [overpressure/stage1.py](../overpressure/stage1.py) | a stage 1: an Alpine ramdisk in the stock Android boot image, from a headset's `Spec` |
+| [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), checked against the zip |
+| [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed; the SoC ID, EDL (edl-ng, bkerler/edl) and its partition maps |
+| [overpressure/backup.py](../overpressure/backup.py), [process.py](../overpressure/process.py), [ssh.py](../overpressure/ssh.py) | verified backups; programs and bounded waits; SSH with the project's key |
 | `bootimg`, `avb`, `sparse`, `payload`, `cpio`, `compress`, `alpine`, `apksign`, `kernelinfo`, `elfdeps`, `windows_ncm` | the formats and helpers Android-based headsets share |
+| [scripts/stock-lib.sh](../scripts/stock-lib.sh) | for a headset's extraction scripts: a checked stock firmware folder, files out of its ext4 images |
 
 ## RAM boot
 

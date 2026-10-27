@@ -44,13 +44,14 @@ README.md current.
 
 - `tooling/`: the PICO 4's host tooling, a standard-library Python package (3.9+), reached as
   `python -m overpressure build|inspect|match|stock|device|hwtest|dev|cycle`; `__init__.py`
-  holds `HEADSET` (its commands and the GUI's steps). Modules: `image.py` (stage-1 image),
+  holds `HEADSET` (its commands and the GUI's steps). Modules: `image.py` (stage-1 image on `overpressure/stage1.py`),
   `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`, `PICO4_` keys),
-  `userspace.py` and `graphics.py` (validators), `firmware.py`/`stock.py` (PICO's OTA),
+  `userspace.py` and `graphics.py` (validators), `stock.py` (PICO's OTA members),
   `ramboot.py` (its target for overpressure's RAM boot; the engineering ABL refuses it), and the
-  controller data extractors. The formats it shares (boot image, cpio, AVB, sparse, OTA
-  payload, Alpine, `elfdeps.py`, `windows_ncm.py`) are in the root package `overpressure/`.
+  controller data extractors. What other headsets share is in the root package `overpressure/`: the stage-1 builder,
+  OTA handling, adb/fastboot, Qualcomm EDL, verified backups, processes and waits, SSH, the RAM
+  boot, the formats, `elfdeps.py` and `windows_ncm.py`.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
   the f_mass_storage kernel thread and with it the USB link. `pico4-userspace receive/switch`
   hands over to stage 2.
@@ -66,7 +67,7 @@ README.md current.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, the extraction
   scripts `extract-graphics-firmware.sh`, `extract-sensor-data.sh`, `extract-wlan.sh`,
   `extract-audio.sh`, `extract-stock-slam.sh` (from the stock directory of `python -m
-  overpressure stock`, PICO's public OTA; `stock-lib.sh`) and the on-headset preflight. The
+  overpressure stock`, PICO's public OTA; overpressure's `scripts/stock-lib.sh`) and the on-headset preflight. The
   headset's own factory data is not extracted: the image links to persist, mounted read-only at
   boot (`pico4-persist`). `tests/`: unittest suites, `test_recovery_policy.sh`,
   `test_charger.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`. `device.mk`: its Makefile targets.

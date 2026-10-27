@@ -21,7 +21,7 @@ class ExtractionTests(unittest.TestCase):
         for name in SCRIPTS:
             script = read(ROOT / "scripts" / name)
             self.assertNotRegex(script, r"lun\d/|persist\.bin|superimg|backup", name)
-            self.assertIn('. "$project/scripts/stock-lib.sh"', script, name)
+            self.assertIn('. "$project/../../scripts/stock-lib.sh"', script, name)
             self.assertRegex(script, r'stock_dir "\$\{1:-\}"( [a-z]+\.(img|bin))+\n', name)
             self.assertNotIn(b"\r", (ROOT / "scripts" / name).read_bytes(), name)
 
@@ -58,24 +58,24 @@ class DevImageTests(unittest.TestCase):
     def test_recovery_from_the_ota(self):
         import tempfile
         import zipfile
-        from devices.phoenix.tooling import firmware
+        from overpressure import ota
         with tempfile.TemporaryDirectory() as tmp:
-            ota = Path(tmp) / "ota.zip"
-            with zipfile.ZipFile(ota, "w") as zf:
+            zip_path = Path(tmp) / "ota.zip"
+            with zipfile.ZipFile(zip_path, "w") as zf:
                 zf.writestr("boot.img", b"ANDROID!boot")
                 zf.writestr("recovery.img", b"ANDROID!recovery")
-            self.assertEqual(firmware.fetch_boot_image(str(ota), log=lambda *a: None), b"ANDROID!boot")
-            self.assertEqual(firmware.fetch_boot_image(str(ota), log=lambda *a: None, partition="recovery"),
+            self.assertEqual(ota.fetch_boot_image(str(zip_path), log=lambda *a: None), b"ANDROID!boot")
+            self.assertEqual(ota.fetch_boot_image(str(zip_path), log=lambda *a: None, partition="recovery"),
                              b"ANDROID!recovery")
         devloop = read(ROOT / "tooling/devloop.py")
         image = devloop[devloop.index("    def image(self):"):devloop.index("    def install_image(")]
-        self.assertIn('firmware.fetch_boot_image(self.stock_location(), str(ROOT / "cache"), print, "recovery")', image)
+        self.assertIn('ota.fetch_boot_image(self.stock_location(), str(ROOT / "cache"), print, "recovery")', image)
         self.assertNotIn("stock_partition", image)
 
 
 class StockLibTests(unittest.TestCase):
     def test_files_checked_before_use(self):
-        lib = read(ROOT / "scripts/stock-lib.sh")
+        lib = read(ROOT.parent.parent / "scripts/stock-lib.sh")
         self.assertIn("sha256 does not match the stock manifest", lib)
         self.assertTrue(re.search(r"stock_dir\(\) \{", lib))
 

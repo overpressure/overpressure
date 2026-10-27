@@ -19,7 +19,7 @@
 # headset.
 set -euo pipefail
 project=$(cd "$(dirname "$0")/.." && pwd)
-. "$project/scripts/stock-lib.sh"
+. "$project/../../scripts/stock-lib.sh"  # overpressure's
 stock_dir "${1:-}" vendor.img modem.bin
 output=${2:?specify an output directory}
 [[ $EUID == 0 ]] || { echo 'root is required (debugfs on image files)' >&2; exit 2; }

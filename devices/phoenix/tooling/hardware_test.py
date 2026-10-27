@@ -18,7 +18,8 @@ import uuid
 from pathlib import Path
 from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
 
-from overpressure import REPO, bootimg, compress, cpio
+from overpressure import REPO, android, backup as backups, bootimg, compress, cpio, qualcomm, windows_ncm
+from overpressure.android import fastboot_value
 
 from . import device, userspace
 
@@ -163,7 +164,7 @@ def userspace_state(archive: Path) -> dict:
 def prepare_restore_image(backup: Path, folder: Path, serial: str, identity: dict, image: Path) -> dict:
     require(backup.resolve() not in (folder.resolve(), *folder.resolve().parents),
             "Test results must be outside the immutable backup directory")
-    manifest = device.verified_backup(backup)
+    manifest = backups.verified_backup(backup)
     saved = manifest.get("identity", {})
     require(saved.get("serial") == serial and
             all(saved.get(key) == value for key, value in identity.items()),
@@ -183,15 +184,8 @@ def prepare_restore_image(backup: Path, folder: Path, serial: str, identity: dic
     target = folder / "stock-boot.img"
     with original.open("rb") as source, target.open("xb") as output:
         shutil.copyfileobj(source, output)
-    require(device.digest(target) == expected, "Restoration copy differs from the verified backup")
+    require(backups.digest(target) == expected, "Restoration copy differs from the verified backup")
     return {"source": str(original.resolve()), "path": str(target.resolve()), **expected}
-
-
-def fastboot_value(output: str, name: str) -> str:
-    values = re.findall(r"^[ \t]*(?:\(bootloader\)[ \t]*)?" + re.escape(name)
-                        + r":[ \t]*(\S+)[ \t]*\r?$", output, re.M)
-    require(len(values) == 1, f"Missing or ambiguous fastboot variable: {name}")
-    return values[0]
 
 
 class Runner:
@@ -291,7 +285,7 @@ class Runner:
         require(len(lines) == 4 and lines[3].strip() == "1", "PICO OS has not completed boot")
         require(re.fullmatch(r"Pico/[Pp]hoenix(?:_ovs)?/PICOA8110:10/\S+", lines[0]),
                 "Selected device is not an original PICO 4")
-        return {"fingerprint": lines[0], "oem_state": lines[1], "chip_id": device.chip_id(lines[2])}
+        return {"fingerprint": lines[0], "oem_state": lines[1], "chip_id": qualcomm.chip_id(lines[2])}
 
     def preflight(self, rootfs):
         remote = f"/data/local/tmp/pico4-poc-{self.run_id}"
@@ -307,8 +301,7 @@ class Runner:
 
     def prepare(self):
         if getattr(self.args, "windows_ncm_python", None):
-            readiness = json.loads(self.command([self.args.windows_ncm_python,
-                                    REPO / "overpressure/windows_ncm.py", "--check"], timeout=15))
+            readiness = json.loads(self.command(windows_ncm.command(self.args.windows_ncm_python), timeout=15))
             require(readiness.get("status") == "ready", "Windows NCM helper is not ready")
             self.result["windows_ncm"] = readiness
         self.command([self.args.ssh_keygen, "-q", "-t", "ed25519", "-N", "", "-f", self.folder / "id_ed25519"])
@@ -340,7 +333,7 @@ class Runner:
 
     def check_restore_image(self):
         saved = self.result["stock_boot"]
-        require(device.digest(Path(saved["path"])) == {key: saved[key] for key in ("size", "sha256")},
+        require(backups.digest(Path(saved["path"])) == {key: saved[key] for key in ("size", "sha256")},
                 "Pinned stock restoration image changed; refusing to flash")
 
     def check_fastboot_unlock(self):
@@ -348,7 +341,7 @@ class Runner:
             output = self.fastboot("oem", "device-info")
         except ValueError:
             output = self.fastboot("getvar", "unlocked")
-        require(device.unlocked(output), "Bootloader is locked or unlock state is unknown")
+        require(android.unlocked(output), "Bootloader is locked or unlock state is unknown")
 
     def authorize_flash(self):
         self.check_restore_image()
@@ -379,7 +372,7 @@ class Runner:
 
     def boot(self):
         path = self.folder / "test-boot.img"
-        require(device.digest(path)["sha256"] == self.result["boot_sha256"], "Test image changed before boot")
+        require(backups.digest(path)["sha256"] == self.result["boot_sha256"], "Test image changed before boot")
         require(self.flash_mode, "Only flash-run boots the test image")
         self.authorize_flash()
         # A failed or timed-out write may still have changed storage. Journal first.
@@ -394,8 +387,7 @@ class Runner:
     def connect(self, timeout):
         if getattr(self.args, "windows_ncm_python", None) and not self.ncm_initialized:
             serial = self.args.fastboot_serial or self.args.serial
-            initialized = json.loads(self.command([self.args.windows_ncm_python,
-                                     REPO / "overpressure/windows_ncm.py", "--serial", serial], timeout))
+            initialized = json.loads(self.command(windows_ncm.command(self.args.windows_ncm_python, serial), timeout))
             require(initialized.get("status") == "initialized" and initialized.get("serial") == serial,
                     "Windows NCM initialization did not identify this headset")
             self.ncm_initialized = True
@@ -409,7 +401,7 @@ class Runner:
     def authenticate(self, timeout):
         output = self.ssh("cat /etc/pico4-poc/test-run; cat /sys/devices/soc0/serial_number", timeout)
         lines = output.splitlines()
-        require(len(lines) == 2 and lines[0] == self.run_id and device.chip_id(lines[1]) == self.baseline["chip_id"],
+        require(len(lines) == 2 and lines[0] == self.run_id and qualcomm.chip_id(lines[1]) == self.baseline["chip_id"],
                 "SSH endpoint is not the expected test run and headset")
         self.authenticated = True
         # Only a verified endpoint may cancel the connection deadline. The
@@ -896,7 +888,7 @@ def main(argv=None):
             if args.command == "flash-run":
                 require(args.confirm_device == args.serial, "--confirm-device must match --serial")
         elif args.serial is None:
-            args.serial = device.select_device(args.adb, None)
+            args.serial = android.select_device(args.adb, None)
         return Runner(args).execute()
     except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)

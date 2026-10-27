@@ -14,6 +14,14 @@ import os
 import sys
 from pathlib import Path
 
+SCRIPT = Path(__file__).resolve()
+
+
+def command(python, serial: str | None = None) -> list:
+    """This script's command line for @p python, the Python with the windows-ncm extra: initialize
+    the gadget with @p serial, or (without) check the dependencies."""
+    return [python, SCRIPT, *(["--serial", serial] if serial else ["--check"])]
+
 
 def initialize(devices, serial, dispose):
     if len(devices) != 1:

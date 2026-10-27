@@ -27,41 +27,14 @@ import sys
 import time
 from pathlib import Path
 
-from . import device, localconfig
+from overpressure import backup as backups
+from overpressure.process import run, until
+from overpressure.qualcomm import EDL_USB, edl_devices
+
+from . import localconfig
 
 ROOT = localconfig.ROOT
 EDL_USB = ("05c6", "9008")  # Qualcomm HS-USB QDLoader 9008
-
-
-def run(argv, timeout=60, stdin=None, check=True, log=None) -> str:
-    """Run a program; its output goes to LOG too. A nonzero exit raises unless check is off."""
-    process = subprocess.run([str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             timeout=timeout, stdin=stdin, cwd=ROOT)
-    if log is not None:
-        Path(log).write_bytes(process.stdout)
-    output = process.stdout.decode("utf-8", "replace").strip()
-    if check and process.returncode:
-        where = f"; see {Path(log).name}" if log is not None else f": {output[-800:]}"
-        raise RuntimeError(f"{Path(str(argv[0])).name} failed ({process.returncode}){where}")
-    return output
-
-
-def edl_devices() -> int:
-    """Number of attached Qualcomm EDL (9008) devices."""
-    if sys.platform == "win32":
-        pattern = "USB\\VID_{}&PID_{}*".format(*EDL_USB).upper()
-        output = run(["powershell", "-NoProfile", "-Command",
-                      f"@(Get-PnpDevice -PresentOnly | Where-Object {{ $_.InstanceId -like '{pattern}' }}).Count"],
-                     30)
-        return int(output.split()[-1]) if output.split() else 0
-    count = 0
-    for folder in Path("/sys/bus/usb/devices").glob("*"):
-        try:
-            ids = ((folder / "idVendor").read_text().strip(), (folder / "idProduct").read_text().strip())
-        except OSError:
-            continue
-        count += ids == EDL_USB
-    return count
 
 
 class Headset:
@@ -75,14 +48,7 @@ class Headset:
         self.edl_count = edl_count
 
     def until(self, name, seconds, operation):
-        end = self.clock.monotonic() + seconds
-        while True:
-            try:
-                return operation()
-            except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
-                if self.clock.monotonic() > end:
-                    raise RuntimeError(f"timed out waiting for {name}: {exc}") from exc
-                self.clock.sleep(3)
+        return until(name, seconds, operation, self.clock)
 
     def wait_pico_os(self, seconds=300) -> str:
         def ready():
@@ -192,7 +158,7 @@ class Cycle(Headset):
                 raise RuntimeError("not in fastboot yet")
         self.until("fastboot", 45 * 60, in_fastboot)
         saved = result["stock_boot"]
-        if device.digest(Path(saved["path"])) != {"size": saved["size"], "sha256": saved["sha256"]}:
+        if backups.digest(Path(saved["path"])) != {"size": saved["size"], "sha256": saved["sha256"]}:
             raise RuntimeError("the pinned stock boot image changed; headset left in fastboot")
         with open(self.folder / "manual-restore.log", "w", encoding="utf-8") as log:
             for command in result["manual_restore_commands"]:
@@ -206,7 +172,7 @@ class Cycle(Headset):
         stock, expected = self.stock_boot()
         self.enter_edl()
         self.check_edl_serial(self.edl("read-part", "boot", self.folder / "boot-readback.bin", log="boot-readback"))
-        if device.digest(self.folder / "boot-readback.bin")["sha256"] != expected["sha256"]:
+        if backups.digest(self.folder / "boot-readback.bin")["sha256"] != expected["sha256"]:
             raise RuntimeError(f"boot differs from {stock.name} in the backup (headset in EDL)")
         self.run([sys.executable, "-m", "overpressure", "--device", "phoenix", "device", "restore-abl", *self.device_args(),
                   "--readback", self.folder / "stock-abl-readback.bin", "--execute",

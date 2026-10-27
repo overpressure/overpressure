@@ -90,9 +90,11 @@ either. The first build downloads about 17 MB of the stock OTA and about 12 MB o
 packages into `cache/`: only the zip's central directory and its `boot.img` member are fetched,
 with HTTP range requests, and checked against the CRC-32 in the zip directory.
 
-[tooling/image.py](../tooling/image.py):
+[tooling/image.py](../tooling/image.py) gives overpressure's stage-1 builder
+([overpressure/stage1.py](../../../overpressure/stage1.py)) the PICO 4's packages, overlay, prebuilt
+helpers and kernel arguments, and adds its own files (hostname, build record). The build:
 
-1. Gets the stock `boot.img` from a file, an OTA zip or a URL ([tooling/firmware.py](../tooling/firmware.py)).
+1. Gets the stock `boot.img` from a file, an OTA zip or a URL ([overpressure/ota.py](../../../overpressure/ota.py)).
    PICO 4 OTAs are non-A/B; full A/B OTAs with `payload.bin` work too ([overpressure/payload.py](../../../overpressure/payload.py)).
 2. Parses it ([overpressure/bootimg.py](../../../overpressure/bootimg.py), header versions 0–4) and analyses the
    kernel ([overpressure/kernelinfo.py](../../../overpressure/kernelinfo.py)): version, embedded configuration

@@ -1,7 +1,6 @@
 import contextlib
 import io
 import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,37 +16,6 @@ class ProtocolTests(unittest.TestCase):
                               (0xFFFFFFFF, "picoMBM9M9BM")):
             self.assertEqual(device.unlock_token(number), token)
 
-    def test_chip_input(self):
-        self.assertEqual(device.chip_id(" 00123\r\n"), 123)
-        self.assertEqual(device.chip_id("0xFFFFFFFF"), 0xFFFFFFFF)
-        for value in ("-1", "4294967296", "123abc", "", "1; reboot", "+1"):
-            with self.assertRaises(ValueError):
-                device.chip_id(value)
-
-    def test_unlock_is_fail_closed(self):
-        self.assertTrue(device.unlocked("(bootloader) unlocked: yes"))
-        self.assertTrue(device.unlocked("(bootloader) Device unlocked: true\r\n"))
-        self.assertTrue(device.unlocked("(bootloader) Device critical unlocked: true", True))
-        for output in ("", "FAILED (unknown command)", "unlocked: no", "unlocked: yes\nunlocked: no",
-                       "Device critical unlocked: true", "unlocked: yesterday"):
-            self.assertFalse(device.unlocked(output))
-
-    def test_external_failures(self):
-        for code, output in ((1, ""), (0, "FAILED (remote error)"), (0, "ERROR: missing partition")):
-            with patch.object(device.subprocess, "run", return_value=subprocess.CompletedProcess([], code, "", output)):
-                with self.assertRaises(ValueError):
-                    device.run(["fake"])
-        with patch.object(device.subprocess, "run", side_effect=subprocess.TimeoutExpired("fake", 60)):
-            with self.assertRaises(subprocess.TimeoutExpired):
-                device.run(["fake"])
-
-    def test_device_selection(self):
-        with patch.object(device, "run", return_value="List of devices attached\na device\nb unauthorized"):
-            with self.assertRaises(ValueError):
-                device.select_device("adb", None)
-            with self.assertRaises(ValueError):
-                device.select_device("adb", "b")
-            self.assertEqual(device.select_device("adb", "a"), "a")
 
 
 class WorkflowTests(unittest.TestCase):
@@ -100,10 +68,6 @@ class WorkflowTests(unittest.TestCase):
         # Relative tool paths become absolute: CreateProcess rejects "venv/python.exe".
         self.assertEqual(command[:3], [str(Path("venv/python.exe").resolve()), str(script.resolve()), "rl"])
         self.assertIn("--memory=ufs", command)
-
-    def test_bare_edl_name_stays_a_path_lookup(self):
-        self.assertEqual(device.executable("edl-ng"), "edl-ng")
-        self.assertEqual(device.executable("cache/edl-ng/edl-ng.exe"), str(Path("cache/edl-ng/edl-ng.exe").resolve()))
 
     def test_native_backend_requires_explicit_luns_and_keeps_commands_read_only(self):
         base = self.args("backup") + ["--edl-backend", "edl-ng", "--edl", "native tool.exe"]

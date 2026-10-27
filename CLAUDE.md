@@ -52,7 +52,10 @@ status in its roadmap and README current.
   `headset.py` (the `Headset` interface: `Info`, `commands()`, `steps()`; `Step`, `Param`; the
   registry), `runner.py` (a step's process on this host: WSL or sudo for Linux-root steps),
   `__main__.py` (the command line), `gui.py` (the Tk window), `localconfig.py` (`.env`, one key
-  prefix per headset), and the shared formats: `bootimg.py`, `avb.py`, `sparse.py`,
+  prefix per headset), `stage1.py` (the Alpine stage 1 in a stock Android boot image), `ota.py`
+  (stock images and partitions from a vendor OTA), `android.py` (adb/fastboot, fail-closed),
+  `qualcomm.py` (SoC ID, EDL, partition maps), `backup.py` (verified backups), `process.py`
+  (programs and bounded waits), `ssh.py`, and the shared formats: `bootimg.py`, `avb.py`, `sparse.py`,
   `payload.py`, `cpio.py`, `compress.py`, `alpine.py`, `apksign.py`,
   `kernelinfo.py`, `elfdeps.py`, `windows_ncm.py`, and `fastboot.py` (the RAM boot every headset
   with `fastboot boot` gets: `python -m overpressure ram-boot`).
@@ -60,6 +63,7 @@ status in its roadmap and README current.
   images' sources and recipes, `scripts/`, `tests/`, `docs/`, `README.md`, `CLAUDE.md`,
   `device.mk` (its Makefile targets).
 - `tests/`: host tests of the generic package. `docs/`: `tool.md`, `adding-a-headset.md`.
+  `scripts/`: shell helpers for the headsets' scripts (`stock-lib.sh`: a stock firmware folder).
 - Private and generated, ignored, at the root: `backup/`, `assets/`, `cache/`, `out/`, `.env`.
 
 ## Commands

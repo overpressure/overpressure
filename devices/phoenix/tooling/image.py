@@ -4,10 +4,10 @@
     python -m overpressure build   --firmware 5.13.8-global-sek   # -> out/pico4-poc-5.13.8-global-sek.img
     python -m overpressure build   --stock-boot my-boot.img        # from your own dump/OTA
 
-The output keeps the stock kernel, device tree, load addresses and OS
-version/patch level of the stock image byte for byte. Only the ramdisk is
-replaced (Alpine Linux aarch64 userspace + the POC init in initramfs/) and
-the kernel command line is extended. Pure Python 3.9+, no dependencies.
+overpressure's stage 1 (overpressure/stage1.py) with the PICO 4's spec: its packages, its
+overlay (initramfs/), the prebuilt pico4-reboot and pico4-splash, its kernel arguments, and its
+own files in the root (hostname, build record). The stock kernel, device tree, load addresses
+and OS version/patch level stay byte for byte. Pure Python 3.9+, no dependencies.
 """
 from __future__ import annotations
 
@@ -16,14 +16,12 @@ import datetime
 import hashlib
 import json
 import os
-import posixpath
-import re
-import stat
 import sys
+from pathlib import Path
 
-from overpressure import REPO, alpine, bootimg, compress, cpio, kernelinfo
+from overpressure import REPO, compress, cpio, ota, stage1
 
-from . import firmware, userspace
+from . import userspace
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # devices/phoenix
 
@@ -32,10 +30,6 @@ OVERLAY = os.path.join(ROOT, "initramfs")
 PREBUILT = os.path.join(ROOT, "prebuilt", "aarch64")
 CATALOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firmware.json")
 
-ALPINE_BRANCH = "v3.24"
-ALPINE_VERSION = "3.24.2"
-ALPINE_REPOS = ["main", "community"]
-ARCH = "aarch64"
 
 # Userspace on top of the Alpine minirootfs (resolved with dependencies).
 PACKAGES = [
@@ -55,14 +49,6 @@ PACKAGES = [
 #                                 dropbear's first host-key generation cannot block
 CMDLINE_APPEND = ["printk.devkmsg=on", "rng_core.default_quality=1000"]
 
-# Kernel options the POC relies on (checked against the stock kernel's IKCONFIG).
-REQUIRED_CONFIG = {
-    "BLK_DEV_INITRD": "initramfs support",
-    "RD_GZIP": "gzip-compressed ramdisk",
-    "USB_CONFIGFS": "USB gadget configfs",
-    "CONFIGFS_FS": "configfs",
-    "UNIX98_PTYS": "ptys for telnet/ssh",
-}
 INTERESTING_CONFIG = [
     "DEVTMPFS", "USB_CONFIGFS_NCM", "USB_CONFIGFS_RNDIS", "USB_CONFIGFS_ECM", "USB_CONFIGFS_ACM",
     "USB_CONFIGFS_SERIAL", "USB_CONFIGFS_MASS_STORAGE", "USB_CONFIGFS_F_FS", "USB_CONFIGFS_F_GSI",
@@ -72,6 +58,15 @@ INTERESTING_CONFIG = [
     "QCOM_WATCHDOG_V2", "PANIC_TIMEOUT", "CMDLINE", "SECURITY_SELINUX", "ANDROID_PARANOID_NETWORK",
     "HW_RANDOM", "NET_NS", "CGROUPS", "NAMESPACES",
 ]
+
+
+SPEC = stage1.Spec(
+    overlay=Path(OVERLAY),
+    packages=PACKAGES,
+    files={f"usr/sbin/{name}": Path(PREBUILT) / name for name in ("pico4-reboot", "pico4-splash")},
+    cmdline_append=CMDLINE_APPEND,
+    interesting_config=INTERESTING_CONFIG,
+)
 
 
 def log(msg: str) -> None:
@@ -84,7 +79,7 @@ def resolve_stock(args) -> tuple[str, str]:
     """Return (label, location) for the stock boot image."""
     if args.stock_boot:
         return os.path.basename(args.stock_boot.rstrip("/")), args.stock_boot
-    builds = firmware.load_catalog(CATALOG)
+    builds = ota.load_catalog(CATALOG)
     if args.firmware not in builds:
         raise SystemExit(f"unknown --firmware {args.firmware!r}; known: {', '.join(builds)}")
     return args.firmware, builds[args.firmware]["url"]
@@ -93,141 +88,15 @@ def resolve_stock(args) -> tuple[str, str]:
 def load_stock(args) -> tuple[str, bytes]:
     label, location = resolve_stock(args)
     log(f">> stock boot image: {label}")
-    data = firmware.fetch_boot_image(location, CACHE, log)
+    data = ota.fetch_boot_image(location, CACHE, log)
     return label, data
-
-
-def analyse(label: str, data: bytes):
-    """Return (report dict, BootImage, KernelInfo, stock ramdisk cpio entries)."""
-    img = bootimg.parse(data)
-    kinfo = kernelinfo.analyse(img.kernel)
-    rd_raw, _, rd_fmt = compress.decompress(img.ramdisk)
-    rd_entries = cpio.read_cpio(rd_raw) if rd_fmt in ("gzip", "lz4-legacy", "lz4-frame", "xz", "lzma",
-                                                        "bzip2", "cpio") else []
-    dtbs = kernelinfo.split_dtbs(img.dtb) or kinfo.appended_dtbs
-    report = {
-        "label": label,
-        "image_sha256": hashlib.sha256(data).hexdigest(),
-        "image_size": len(data),
-        "avb_footer": img.avb_footer,
-        "header_version": img.header_version,
-        "page_size": img.page_size,
-        "os_version": img.os_version_str,
-        "board_name": img.name.decode("ascii", "replace"),
-        "cmdline": img.full_cmdline,
-        "addresses": {
-            "kernel": hex(img.kernel_addr), "ramdisk": hex(img.ramdisk_addr), "second": hex(img.second_addr),
-            "tags": hex(img.tags_addr), "dtb": hex(img.dtb_addr),
-        },
-        "id_matches_mkbootimg": img.header_version < 3 and img.id == img.compute_id(),
-        "kernel": {
-            "size": len(img.kernel), "format": kinfo.compression, "image_size": kinfo.image_size,
-            "arm64_magic": kinfo.arm64_magic, "version": kinfo.version,
-            "sha256": hashlib.sha256(img.kernel).hexdigest(),
-            "has_ikconfig": bool(kinfo.config), "skip_initramfs_string": kinfo.has_skip_initramfs,
-            "config": {k: kinfo.opt(k) for k in INTERESTING_CONFIG},
-        },
-        "ramdisk": {
-            "size": len(img.ramdisk), "format": rd_fmt, "entries": len(rd_entries),
-            "has_init": any(p == "init" for p, _ in rd_entries),
-            "first_stage": any(p.startswith("first_stage_ramdisk") for p, _ in rd_entries),
-            "modules": sorted(p for p, n in rd_entries if p.startswith("lib/modules/") and n.is_file),
-        },
-        "dtb": {
-            "size": len(img.dtb), "sha256": hashlib.sha256(img.dtb).hexdigest(), "count": len(dtbs),
-            "trees": [kernelinfo.dtb_summary(d) for d in dtbs],
-        },
-        "second_size": len(img.second), "recovery_dtbo_size": len(img.recovery_dtbo),
-    }
-    return report, img, kinfo, rd_entries
-
-
-def print_report(rep: dict) -> None:
-    k, r, d = rep["kernel"], rep["ramdisk"], rep["dtb"]
-    log(f"   image      : {rep['image_size']} bytes, header v{rep['header_version']}, page {rep['page_size']}, "
-        f"AVB footer: {'yes' if rep['avb_footer'] else 'no'}")
-    log(f"   os version : {rep['os_version']}")
-    log(f"   kernel     : {k['size']} bytes ({k['format']}), {k['version'] or 'version string not found'}")
-    log(f"   ikconfig   : {'embedded' if k['has_ikconfig'] else 'not embedded'}")
-    log(f"   ramdisk    : {r['size']} bytes ({r['format']}), {r['entries']} entries, "
-        f"first-stage init: {'yes' if r['first_stage'] or r['has_init'] else 'no'}, modules: {len(r['modules'])}")
-    log(f"   dtb        : {d['size']} bytes, {d['count']} device trees")
-    for t in d["trees"]:
-        log(f"                {', '.join(t.get('model', ['?']))}  msm-id={t.get('qcom,msm-id')}  "
-            f"board-id={t.get('qcom,board-id')}")
-    log(f"   cmdline    : {rep['cmdline']}")
-    if k["has_ikconfig"]:
-        cfg = ", ".join(f"{name}={val}" for name, val in k["config"].items() if val is not None)
-        log(f"   config     : {cfg}")
-
-
-def check_requirements(kinfo: kernelinfo.KernelInfo) -> list[str]:
-    if not kinfo.config:
-        return ["kernel has no embedded config; cannot verify requirements (continuing)"]
-    problems = []
-    for names, what in REQUIRED_CONFIG.items():
-        if not any(kinfo.enabled(n) for n in names.split("|")):
-            problems.append(f"CONFIG_{names} not enabled ({what})")
-    if not any(kinfo.enabled(n) for n in ("USB_CONFIGFS_NCM", "USB_CONFIGFS_RNDIS", "USB_CONFIGFS_ECM")):
-        problems.append("no USB network gadget function (NCM/RNDIS/ECM) in the stock kernel")
-    return problems
 
 
 # -- rootfs -----------------------------------------------------------------------
 
 def build_rootfs(args, stock_entries, build_info: dict) -> cpio.Tree:
-    epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
-    tree = cpio.Tree(mtime=epoch)
-    log(f">> Alpine Linux {ALPINE_VERSION} ({ARCH}) minirootfs")
-    alpine.unpack_tar(tree, alpine.minirootfs(CACHE, ALPINE_BRANCH, ALPINE_VERSION, ARCH, None, log))
-
-    wanted = [] if args.minimal else list(PACKAGES)
-    if wanted:
-        index = alpine.load_index(CACHE, ALPINE_BRANCH, ALPINE_REPOS, ARCH, log)
-        pkgs = alpine.resolve(index, wanted, alpine.installed_db(tree))
-        log(f">> {len(pkgs)} packages: {' '.join(p.name for p in pkgs)}")
-        for pkg in pkgs:
-            alpine.unpack_tar(tree, alpine.fetch_package(pkg, CACHE, log))
-        build_info["packages"] = sorted(f"{p.name}-{p.version}" for p in pkgs)
-        # busybox-extras' applet links are normally created by its post-install script.
-        if any(p.name == "busybox-extras" for p in pkgs):
-            for applet in ("usr/sbin/telnetd", "usr/sbin/udhcpd", "usr/sbin/httpd", "usr/bin/telnet",
-                           "usr/bin/dumpleases", "usr/bin/tftp", "usr/sbin/tftpd", "usr/sbin/ftpd",
-                           "usr/bin/ftpget", "usr/bin/ftpput", "usr/sbin/inetd", "usr/bin/tcpsvd"):
-                if not tree.exists(applet):
-                    tree.add_symlink(applet, "/bin/busybox-extras")
-
-    # Kernel modules from the stock first-stage ramdisk (Android loads these early).
-    mods = [(p, n) for p, n in stock_entries if p.startswith("lib/modules/") and (n.is_file or n.is_symlink)]
-    for path, node in mods:
-        tree.nodes[path] = node
-        tree.mkdir(posixpath.dirname(path))
-    if mods:
-        log(f">> kept {len(mods)} files from the stock ramdisk's lib/modules")
-
-    log(">> POC overlay (initramfs/)")
-    add_overlay(tree, OVERLAY)
-    for name in ("pico4-reboot", "pico4-splash"):
-        with open(os.path.join(PREBUILT, name), "rb") as f:
-            tree.add_file(f"usr/sbin/{name}", f.read(), 0o755)
-
-    # Static device nodes: the stock kernel has no devtmpfs, and the kernel
-    # opens /dev/console before /init runs.
-    for name, major, minor, mode in (("console", 5, 1, 0o600), ("null", 1, 3, 0o666), ("zero", 1, 5, 0o666),
-                                     ("kmsg", 1, 11, 0o644), ("tty", 5, 0, 0o666), ("ptmx", 5, 2, 0o666),
-                                     ("random", 1, 8, 0o666), ("urandom", 1, 9, 0o666)):
-        tree.add_device(f"dev/{name}", "c", major, minor, mode)
-    for d in ("proc", "sys", "run", "tmp", "mnt", "root", "srv/www", "lib/firmware", "var/log"):
-        tree.mkdir(d)
-    tree.get("tmp").mode = stat.S_IFDIR | 0o1777
-    tree.get("root").mode = stat.S_IFDIR | 0o700
-
-    # Passwordless root (USB-only link-local network; see README).
-    shadow = tree.get("etc/shadow")
-    if shadow is not None:
-        lines = shadow.data.decode().splitlines()
-        lines = [re.sub(r"^root:[^:]*:", "root::", ln) for ln in lines]
-        shadow.data = ("\n".join(lines) + "\n").encode()
+    """overpressure's stage-1 root with the PICO 4's own files."""
+    tree = stage1.build_rootfs(SPEC, CACHE, stock_entries, build_info, args.minimal, log)
     tree.add_symlink("srv/www/report", "/run/pico4-poc/report")  # browsable via httpd
     tree.add_file("etc/motd", b"")  # the login banner comes from pico4-info
     tree.add_file("etc/hostname", b"pico4-poc\n")
@@ -236,31 +105,12 @@ def build_rootfs(args, stock_entries, build_info: dict) -> cpio.Tree:
     return tree
 
 
-def add_overlay(tree: cpio.Tree, root: str) -> None:
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames.sort()
-        rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
-        if rel_dir != ".":
-            tree.mkdir(rel_dir)
-        for fn in sorted(filenames):
-            if fn in (".gitkeep", ".gitattributes") or fn.endswith("~"):
-                continue
-            with open(os.path.join(dirpath, fn), "rb") as f:
-                data = f.read()
-            rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
-            is_elf = data[:4] == b"\x7fELF"
-            if not is_elf and b"\0" not in data:
-                data = data.replace(b"\r\n", b"\n")  # survive CRLF checkouts on Windows
-            executable = is_elf or data.startswith(b"#!")
-            tree.add_file(rel, data, 0o755 if executable else 0o644)
-
-
 # -- commands ---------------------------------------------------------------------
 
 def cmd_inspect(args) -> int:
     label, data = load_stock(args)
-    rep, _img, kinfo, _entries = analyse(label, data)
-    print_report(rep)
+    rep, _img, kinfo, _entries = stage1.analyse(label, data, INTERESTING_CONFIG)
+    stage1.print_report(rep, log)
     out_dir = os.path.join(args.out, "inspect", label)
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "analysis.json"), "w", encoding="utf-8") as f:
@@ -274,16 +124,16 @@ def cmd_inspect(args) -> int:
         with open(os.path.join(out_dir, "userspace-compat.json"), "w", encoding="utf-8") as f:
             json.dump(compat, f, indent=2)
     log(f">> wrote {out_dir}")
-    for p in check_requirements(kinfo):
+    for p in stage1.check_requirements(kinfo, SPEC.required_config):
         log(f"!! {p}")
     return 0
 
 
 def cmd_build(args) -> int:
     label, data = load_stock(args)
-    rep, stock, kinfo, entries = analyse(label, data)
-    print_report(rep)
-    problems = check_requirements(kinfo)
+    rep, stock, kinfo, entries = stage1.analyse(label, data, INTERESTING_CONFIG)
+    stage1.print_report(rep, log)
+    problems = stage1.check_requirements(kinfo, SPEC.required_config)
     for p in problems:
         log(f"!! {p}")
     if problems and kinfo.config and not args.force:
@@ -300,33 +150,15 @@ def cmd_build(args) -> int:
         "stock": label,
         "stock_sha256": rep["image_sha256"],
         "kernel": rep["kernel"]["version"],
-        "alpine": ALPINE_VERSION,
+        "alpine": SPEC.alpine_version,
     }
     tree = build_rootfs(args, entries, build_info)
     raw = tree.to_cpio()
     ramdisk = compress.gzip_compress(raw)
     log(f">> ramdisk: {len(tree.nodes)} entries, {len(raw) / 1e6:.1f} MB cpio, {len(ramdisk) / 1e6:.1f} MB gzip")
 
-    cmdline = stock.full_cmdline.split()
-    for word in CMDLINE_APPEND + args.cmdline_append:
-        if word not in cmdline:
-            cmdline.append(word)
-    new = stock.with_cmdline(" ".join(cmdline))
-    new.ramdisk = ramdisk
-    new.boot_signature = b""
-    image = new.pack()
-
-    # Verify the result before anyone flashes it.
-    check = bootimg.parse(image)
-    assert check.kernel == stock.kernel and check.dtb == stock.dtb and check.second == stock.second
-    assert (check.header_version, check.page_size, check.os_version) == \
-           (stock.header_version, stock.page_size, stock.os_version)
-    assert (check.kernel_addr, check.ramdisk_addr, check.tags_addr, check.dtb_addr) == \
-           (stock.kernel_addr, stock.ramdisk_addr, stock.tags_addr, stock.dtb_addr)
-    assert check.id == check.compute_id()
-    unpacked = dict(cpio.read_cpio(compress.decompress(check.ramdisk)[0]))
-    init = unpacked.get("init")
-    assert init is not None and init.is_file and init.mode & 0o111, "/init missing or not executable"
+    cmdline = stage1.kernel_cmdline(stock, list(CMDLINE_APPEND) + args.cmdline_append)
+    image = stage1.assemble(stock, ramdisk, list(CMDLINE_APPEND) + args.cmdline_append)
     if rep["image_size"] and len(image) > rep["image_size"]:
         log(f"!! image ({len(image)} bytes) is larger than the stock partition image ({rep['image_size']} bytes): "
             "too big to flash")
@@ -368,7 +200,7 @@ def cmd_build(args) -> int:
 
 def cmd_match(args) -> int:
     """Map a headset's build fingerprint + ro.oem.state to a firmware.json entry."""
-    builds = firmware.load_catalog(CATALOG)
+    builds = ota.load_catalog(CATALOG)
     for key, b in builds.items():
         if b.get("fingerprint") == args.fingerprint:
             print(key)

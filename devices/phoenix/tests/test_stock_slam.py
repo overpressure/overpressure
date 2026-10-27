@@ -89,7 +89,7 @@ class ExtractionTests(unittest.TestCase):
             self.assertIn(name, script, name)
         # From the stock firmware (PICO's public OTA), checked against its manifest first.
         self.assertIn('stock_dir "${1:-}" system.img vendor.img modem.bin dsp.bin', script)
-        self.assertIn("sha256 does not match the stock manifest", read(ROOT / "scripts/stock-lib.sh"))
+        self.assertIn("sha256 does not match the stock manifest", read(ROOT.parent.parent / "scripts/stock-lib.sh"))
         # an issue: as a fresh PICO OS install, nothing of the camera modules' ids from the backup.
         self.assertNotIn("camera_otp", script)
         self.assertNotIn("userdata", script)

@@ -9,7 +9,7 @@
 # manifest.json. The result is proprietary: keep it private (assets/ is ignored by Git).
 set -euo pipefail
 project=$(cd "$(dirname "$0")/.." && pwd)
-. "$project/scripts/stock-lib.sh"
+. "$project/../../scripts/stock-lib.sh"  # overpressure's
 stock_dir "${1:-}" vendor.img
 output=${2:?specify an output directory}
 [[ $EUID == 0 ]] || { echo 'root is required (debugfs on image files)' >&2; exit 2; }

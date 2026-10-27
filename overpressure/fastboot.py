@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import re
 import subprocess
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
 
 from . import bootimg
+from .process import Clock, until
 
 #: How bootloaders say that they do not boot from RAM.
 REFUSED = re.compile(r"unknown command|not allowed|not supported|unsupported|command not found|"
@@ -91,26 +91,9 @@ class RamBootTarget:
 
 
 @dataclass
-class Clock:
-    monotonic: Callable[[], float] = time.monotonic
-    sleep: Callable[[float], None] = time.sleep
-
-
-@dataclass
 class Result:
     image: Path
     seconds_to_up: float
-
-
-def until(what: str, seconds: float, operation: Callable[[], object], clock: Clock, interval: float = 3):
-    end = clock.monotonic() + seconds
-    while True:
-        try:
-            return operation()
-        except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
-            if clock.monotonic() > end:
-                raise RuntimeError(f"timed out waiting for {what}: {exc}") from exc
-            clock.sleep(interval)
 
 
 def ram_boot(target: RamBootTarget, image: Optional[Path] = None, log: Callable[[str], None] = print,

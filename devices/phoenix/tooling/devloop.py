@@ -31,9 +31,9 @@ import sys
 import time
 from pathlib import Path
 
-from overpressure import avb, bootimg, compress, cpio, sparse
+from overpressure import android, avb, backup as backups, bootimg, compress, cpio, ota, qualcomm, sparse, ssh, windows_ncm
 
-from . import device, firmware, hardware_test as hw, localconfig
+from . import device, hardware_test as hw, localconfig
 from .cycle import Headset, run
 
 ROOT = localconfig.ROOT
@@ -69,12 +69,8 @@ class Dev(Headset):
     def ssh_argv(self, command: str) -> list:
         """Every command renews the host contact: the dev image's maximum runtime counts from
         the last one (recovery-watch), so it ends abandoned sessions, not ones in use."""
-        known = (self.work / "known_hosts").as_posix()
         command = f"cut -d. -f1 /proc/uptime > {CONTACT} 2>/dev/null; {command}"
-        return [self.s.ssh, "-i", self.work / "id_ed25519", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
-                "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR",
-                "-o", f'UserKnownHostsFile="{known}"', "-o", f'GlobalKnownHostsFile="{known}"',
-                f"root@{HOST}", command]
+        return ssh.argv(self.s.ssh, self.work / "id_ed25519", self.work / "known_hosts", f"root@{HOST}", command)
 
     def ssh(self, command: str, timeout=30, stdin=None, check=True) -> str:
         return self.run(self.ssh_argv(command), timeout, stdin=stdin, check=check)
@@ -84,7 +80,7 @@ class Dev(Headset):
 
     def stock_location(self) -> str:
         """The headset's firmware in the OTA catalog (PICO4_FIRMWARE in .env, as for stage 1)."""
-        builds = firmware.load_catalog(str(Path(__file__).with_name("firmware.json")))
+        builds = ota.load_catalog(str(Path(__file__).with_name("firmware.json")))
         if self.s.firmware not in builds:
             raise ValueError(f"unknown firmware {self.s.firmware!r} (pico4/firmware.json)")
         return builds[self.s.firmware]["url"]
@@ -105,7 +101,7 @@ class Dev(Headset):
         # (recovery_dtbo); without one it falls back to fastboot. It comes from the stock recovery
         # of the headset's firmware (its public OTA, as stage 1's kernel), the whole partition with
         # its AVB footer, so it stays private like the rest of out/dev.
-        stock = firmware.fetch_boot_image(self.stock_location(), str(ROOT / "cache"), print, "recovery")
+        stock = ota.fetch_boot_image(self.stock_location(), str(ROOT / "cache"), print, "recovery")
         dtbo = bootimg.parse(stock).recovery_dtbo
         if not dtbo:
             raise RuntimeError("the stock recovery image has no recovery_dtbo")
@@ -172,7 +168,7 @@ class Dev(Headset):
             state = self.fastboot("oem", "device-info")
         except RuntimeError:
             state = self.fastboot("getvar", "unlocked")
-        if not device.unlocked(state):
+        if not android.unlocked(state):
             raise RuntimeError("the bootloader is locked or its state is unknown")
         inventory = self.fastboot("getvar", "all")
         names = re.findall(rf"^[ \t]*(?:\(bootloader\)[ \t]*)?partition-size:({name}(?:_[ab])?):", inventory, re.M)
@@ -205,7 +201,7 @@ class Dev(Headset):
         if name not in RESTORABLE:
             raise ValueError(f"{name} is not restored through fastboot")
         stock, expected = self.stock_partition(name)
-        if device.digest(stock) != expected:
+        if backups.digest(stock) != expected:
             raise RuntimeError(f"{stock} differs from the backup manifest")
         self.to_fastboot()
         inventory = self.fastboot("getvar", "all")
@@ -232,7 +228,7 @@ class Dev(Headset):
 
     def authenticate(self):
         lines = self.ssh("cat /etc/pico4-poc/test-run; cat /sys/devices/soc0/serial_number", 10).splitlines()
-        if len(lines) != 2 or lines[0] != RUN_ID or device.chip_id(lines[1]) != self.identity()["chip_id"]:
+        if len(lines) != 2 or lines[0] != RUN_ID or qualcomm.chip_id(lines[1]) != self.identity()["chip_id"]:
             raise RuntimeError("the SSH endpoint is not this headset's dev image")
         self.ssh("touch /run/pico4-poc/test-authenticated", 10)
 
@@ -241,7 +237,7 @@ class Dev(Headset):
         (self.work / "known_hosts").unlink(missing_ok=True)
         if self.s.ncm_python:
             self.until("NCM gadget", 120, lambda: self.run(
-                [self.s.path("ncm_python"), ROOT / "overpressure/windows_ncm.py", "--serial", self.s.fastboot_serial], 30))
+                windows_ncm.command(self.s.path("ncm_python"), self.s.fastboot_serial), 30))
         self.until("stage-1 SSH", 120, self.authenticate)
         # The partition the running stage 1 came from, by its command line.
         name = "recovery" if f"{PART_MARK}recovery" in self.ssh("cat /proc/cmdline", 10).split() else "boot"
@@ -258,8 +254,8 @@ class Dev(Headset):
     def write_partition(self, name: str, image: Path, timeout: int):
         """Stream an image to boot or super through the maintenance stage 1 (pico4-install),
         against the backup's partition size; it checks the stream and reads it back."""
-        size = device.partition_size(self.s.path("backup"), name)
-        digest = device.digest(image)
+        size = qualcomm.partition_size(self.s.path("backup"), name)
+        digest = backups.digest(image)
         # An update rewrites only what changed: the partition may hold the image already.
         held = self.ssh(f"head -c {digest['size']} /dev/block/by-name/{name} | sha256sum", timeout).split()
         if held[:1] == [digest["sha256"]]:
@@ -289,7 +285,7 @@ class Dev(Headset):
         self.write_partition("super", system, 1800)
         status = self.ssh("pico4-install status", 30)
         if format_data or "data: pico4-data" not in status.splitlines():
-            size = device.partition_size(self.s.path("backup"), "userdata")
+            size = qualcomm.partition_size(self.s.path("backup"), "userdata")
             print("formatting userdata", flush=True)
             if self.ssh(f"pico4-install format-data --size {size}", 900).splitlines()[-1:] != ["formatted userdata"]:
                 raise RuntimeError("formatting userdata failed")
@@ -322,8 +318,7 @@ class Dev(Headset):
         """The installed system's systemd, reached over the USB link (it renews stage 1's)."""
         def ncm():
             if self.s.ncm_python:
-                self.run([self.s.path("ncm_python"), ROOT / "overpressure/windows_ncm.py", "--serial",
-                          self.s.fastboot_serial], 30)
+                self.run(windows_ncm.command(self.s.path("ncm_python"), self.s.fastboot_serial), 30)
         self.until("NCM gadget", 180, ncm)
         initialized = [self.clock.monotonic()]
 
@@ -340,14 +335,14 @@ class Dev(Headset):
                     ncm()
                     initialized[0] = self.clock.monotonic()
                 raise
-            if len(lines) != 3 or lines[1] != RUN_ID or device.chip_id(lines[2]) != self.identity()["chip_id"]:
+            if len(lines) != 3 or lines[1] != RUN_ID or qualcomm.chip_id(lines[2]) != self.identity()["chip_id"]:
                 raise RuntimeError("the SSH endpoint is not this headset's installed system")
             if lines[0] != "systemd":
                 raise RuntimeError("stage 1 is still running")
         self.until("installed system", 240, installed)
         # dev check's state: the archive the system image was built from, if it is the local one.
         archive = self.ssh("cat /usr/share/pico4-poc/userspace-archive.sha256", 10).strip()
-        if ARCHIVE.exists() and device.digest(ARCHIVE)["sha256"] == archive:
+        if ARCHIVE.exists() and backups.digest(ARCHIVE)["sha256"] == archive:
             state = hw.userspace_state(ARCHIVE)
             state["installed"] = True
             state["booted"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
@@ -420,7 +415,7 @@ class Dev(Headset):
         if (self.work / INSTALLED).exists():
             return self.restore_installed()
         stock, expected = self.stock_boot()
-        if device.digest(stock) != expected:
+        if backups.digest(stock) != expected:
             raise RuntimeError(f"{stock} differs from the backup manifest")
         self.flash_boot(stock)
         (self.work / "state.json").unlink(missing_ok=True)
@@ -434,7 +429,7 @@ class Dev(Headset):
         images = {}
         for name in ("super", "boot", "recovery"):
             path, expected = self.stock_partition(name)
-            if device.digest(path) != expected:
+            if backups.digest(path) != expected:
                 raise RuntimeError(f"{path} differs from the backup manifest")
             images[name] = path
         if self.connect() != "recovery":
@@ -443,7 +438,7 @@ class Dev(Headset):
         self.write_partition("boot", images["boot"], 300)
         backup = self.s.path("backup")
         for name in ("userdata", "metadata"):
-            size = device.partition_size(backup, name)
+            size = qualcomm.partition_size(backup, name)
             if self.ssh(f"pico4-install wipe {name} --size {size}", 300).splitlines()[-1:] != [f"wiped {name}"]:
                 raise RuntimeError(f"wiping {name} failed")
         if self.ssh("pico4-install bootmode normal", 30).splitlines()[-1:] != ["bootmode normal"]:

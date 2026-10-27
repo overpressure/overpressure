@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from overpressure import android, windows_ncm
 from overpressure.fastboot import Fastboot, RamBootTarget
 
-from . import device, devloop, localconfig
+from . import devloop, localconfig
 
 
 class PicoRamBoot(RamBootTarget):
@@ -57,7 +58,7 @@ class PicoRamBoot(RamBootTarget):
             output = self.fastboot("oem", "device-info", timeout=30)
         except RuntimeError:
             output = self.fastboot("getvar", "unlocked", timeout=30)
-        if not device.unlocked(output):
+        if not android.unlocked(output):
             raise RuntimeError("the bootloader does not report an unlocked state the tools accept "
                                "(stage the engineering ABL: dev stage-abl)")
 
@@ -65,7 +66,6 @@ class PicoRamBoot(RamBootTarget):
         # Stage 1 makes new host keys on every boot; the NCM link once, then the login.
         (self.dev.work / "known_hosts").unlink(missing_ok=True)
         if self.s.ncm_python and not self.ncm_done:
-            self.dev.run([self.s.path("ncm_python"), localconfig.ROOT / "overpressure/windows_ncm.py",
-                          "--serial", self.s.fastboot_serial], 30)
+            self.dev.run(windows_ncm.command(self.s.path("ncm_python"), self.s.fastboot_serial), 30)
             self.ncm_done = True
         self.dev.authenticate()
