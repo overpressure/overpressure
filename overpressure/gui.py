@@ -17,10 +17,13 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Dict, Optional
 
-from . import REPO, runner
+from . import REPO, doctor, runner
 from .headset import Headset, Registry, Step
 
 GROUPS = ("Image", "Headset")
+DOCTOR = "doctor"  # the Setup group's item: the dependency checks
+STATUS_COLOURS = {doctor.OK: "#1a7f37", doctor.MISSING: "#cf222e", doctor.WARNING: "#9a6700",
+                  doctor.OPTIONAL: "#6e7781"}
 
 
 class App:
@@ -33,6 +36,9 @@ class App:
         self.proc: Optional[subprocess.Popen] = None
         self.running = False  # one step at a time
         self.lines: "queue.Queue[str]" = queue.Queue()
+        self.checks: Dict[str, list] = {}  # headset codename -> its last doctor checks
+        self.checking = False
+        self.doctor_results: "queue.Queue" = queue.Queue()
         root.title("overpressure")
         root.geometry("1100x760")
         root.minsize(800, 560)
@@ -62,8 +68,11 @@ class App:
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         upper.add(self.tree, weight=1)
 
-        self.detail = ttk.Frame(upper, padding=(12, 4))
-        upper.add(self.detail, weight=3)
+        right = ttk.Frame(upper, padding=(12, 4))
+        upper.add(right, weight=3)
+        self.detail = ttk.Frame(right)  # a step
+        self.detail.pack(fill="both", expand=True)
+        self.doctor_view = self._build_doctor(right)
         self.title = ttk.Label(self.detail, font=("TkDefaultFont", 12, "bold"))
         self.title.pack(anchor="w")
         self.help = ttk.Label(self.detail, wraplength=620, justify="left")
@@ -90,6 +99,36 @@ class App:
         self.status = ttk.Label(self.root, text="idle", padding=(10, 2), anchor="w")
         self.status.pack(fill="x")
 
+    def _build_doctor(self, parent) -> ttk.Frame:
+        frame = ttk.Frame(parent)
+        ttk.Label(frame, text="Dependencies", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+        self.doctor_summary = ttk.Label(frame, wraplength=620, justify="left")
+        self.doctor_summary.pack(anchor="w", pady=(4, 8))
+        columns = ("status", "needed_for", "detail")
+        self.doctor_table = ttk.Treeview(frame, columns=columns, show="tree headings", height=12)
+        self.doctor_table.heading("#0", text="Dependency")
+        self.doctor_table.heading("status", text="Status")
+        self.doctor_table.heading("needed_for", text="Needed for")
+        self.doctor_table.heading("detail", text="Found")
+        self.doctor_table.column("#0", width=190, stretch=False)
+        self.doctor_table.column("status", width=70, stretch=False)
+        self.doctor_table.column("needed_for", width=200, stretch=False)
+        self.doctor_table.column("detail", width=320)
+        for status, colour in STATUS_COLOURS.items():
+            self.doctor_table.tag_configure(status, foreground=colour)
+        self.doctor_table.bind("<<TreeviewSelect>>", self._on_check)
+        self.doctor_table.pack(fill="both", expand=True)
+        ttk.Label(frame, text="How to fix it").pack(anchor="w", pady=(8, 2))
+        self.doctor_fix = tk.Text(frame, height=3, wrap="word", relief="solid", borderwidth=1,
+                                  font=("Consolas" if sys.platform == "win32" else "Monospace", 9))
+        self.doctor_fix.pack(fill="x")
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor="w", pady=10)
+        self.doctor_button = ttk.Button(buttons, text="Check again", command=self._check)
+        self.doctor_button.pack(side="left")
+        ttk.Button(buttons, text="Copy fix", command=self._copy_fix).pack(side="left", padx=6)
+        return frame
+
     def _load_headset(self):
         codes = sorted(self.registry.headsets)
         self.device.current(codes.index(self.headset.info.codename))
@@ -97,6 +136,8 @@ class App:
         self.about.config(text=" · ".join(x for x in (info.soc, info.summary) if x))
         self.tree.delete(*self.tree.get_children())
         self.steps = {s.key: s for s in self.headset.steps()}
+        setup = self.tree.insert("", "end", iid="group:Setup", text="Setup", open=True)
+        self.tree.insert(setup, "end", iid=DOCTOR, text="Check dependencies")
         for group in GROUPS:
             parent = self.tree.insert("", "end", iid="group:" + group, text=group, open=True)
             for step in self.steps.values():
@@ -107,6 +148,7 @@ class App:
             self.tree.selection_set(first)
         else:
             self._show(None)
+        self._label_doctor()
 
     # -- a step --------------------------------------------------------------------------
     def _on_device(self, _event=None):
@@ -116,7 +158,83 @@ class App:
 
     def _on_select(self, _event=None):
         sel = self.tree.selection()
+        if sel and sel[0] == DOCTOR:
+            self.detail.pack_forget()
+            self.doctor_view.pack(fill="both", expand=True)
+            if self.headset.info.codename not in self.checks and not self.checking:
+                self._check()
+            else:
+                self._show_checks()
+            return
+        self.doctor_view.pack_forget()
+        self.detail.pack(fill="both", expand=True)
         self._show(self.steps.get(sel[0]) if sel else None)
+
+    # -- the dependency checks -------------------------------------------------------------
+    def _check(self):
+        """Runs the checks off the window's thread: some ask WSL, which can take seconds."""
+        if self.checking:
+            return
+        self.checking = True
+        self.doctor_button.config(state="disabled")
+        self.doctor_summary.config(text="checking ...")
+        self.doctor_table.delete(*self.doctor_table.get_children())
+        headset = self.headset
+
+        def work():
+            try:
+                result = doctor.run(headset)
+            except Exception as exc:  # the panel says so instead of dying silently
+                result = [doctor.Check("doctor", "?", doctor.WARNING, f"the checks failed: {exc}")]
+            self.doctor_results.put((headset.info.codename, result))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_checks(self):
+        checks = self.checks.get(self.headset.info.codename, [])
+        self.doctor_table.delete(*self.doctor_table.get_children())
+        for i, check in enumerate(checks):
+            self.doctor_table.insert("", "end", iid=str(i), text=check.name, tags=(check.status,),
+                                     values=(doctor.MARK[check.status], check.needed_for, check.detail))
+        missing = doctor.failed(checks)
+        warnings = [c for c in checks if c.status == doctor.WARNING]
+        text = (f"{len(missing)} missing: " + ", ".join(c.name for c in missing) if missing
+                else "Everything needed is there.")
+        if warnings:
+            text += f" {len(warnings)} warning{'s' if len(warnings) > 1 else ''}."
+        self.doctor_summary.config(text=text + " The checks only look; they install nothing.")
+        first = next((str(i) for i, c in enumerate(checks) if c.status != doctor.OK), None)
+        if first is not None:
+            self.doctor_table.selection_set(first)
+            self.doctor_table.see(first)
+        else:
+            self._set_fix("")
+
+    def _label_doctor(self):
+        checks = self.checks.get(self.headset.info.codename)
+        missing = len(doctor.failed(checks)) if checks is not None else None
+        label = "Check dependencies" + (f" ({missing} missing)" if missing else " (all there)" if checks else "")
+        if self.tree.exists(DOCTOR):
+            self.tree.item(DOCTOR, text=label)
+
+    def _on_check(self, _event=None):
+        sel = self.doctor_table.selection()
+        checks = self.checks.get(self.headset.info.codename, [])
+        if sel and int(sel[0]) < len(checks):
+            check = checks[int(sel[0])]
+            self._set_fix(check.fix if check.status != doctor.OK else "")
+
+    def _set_fix(self, text: str):
+        self.doctor_fix.config(state="normal")
+        self.doctor_fix.delete("1.0", "end")
+        self.doctor_fix.insert("1.0", text)
+        self.doctor_fix.config(state="disabled")
+
+    def _copy_fix(self):
+        text = self.doctor_fix.get("1.0", "end").strip()
+        if text:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
 
     def _show(self, step: Optional[Step]):
         self.step = step
@@ -222,6 +340,20 @@ class App:
             self.proc.terminate()
 
     def _drain(self):
+        try:
+            while True:
+                codename, checks = self.doctor_results.get_nowait()
+                self.checks[codename] = checks
+                self.checking = False
+                self.doctor_button.config(state="normal")
+                missing = len(doctor.failed(checks))
+                self.status.config(text=f"dependencies: {missing} missing" if missing else "dependencies: all there")
+                if codename == self.headset.info.codename:
+                    self._label_doctor()
+                    if self.tree.selection() == (DOCTOR,):
+                        self._show_checks()
+        except queue.Empty:
+            pass
         try:
             while True:
                 line = self.lines.get_nowait()

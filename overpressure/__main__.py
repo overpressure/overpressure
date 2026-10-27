@@ -5,6 +5,7 @@
   steps                the headset's workflow steps and their command lines
   run STEP [NAME=VALUE...]
                        run a step as the GUI does, with parameters
+  doctor               what this host has and lacks for the headset's workflow, with fixes
   ram-boot [IMAGE]     boot an image from RAM with fastboot boot (writes nothing), where the
                        headset's bootloader allows it
   COMMAND [ARGS...]    a command of the headset (listed below once a headset is known)
@@ -22,7 +23,7 @@ from typing import List, Optional
 from . import localconfig, runner
 from .headset import Headset, Registry, discover
 
-GENERIC = ("devices", "gui", "steps", "run", "ram-boot")
+GENERIC = ("devices", "gui", "steps", "run", "ram-boot", "doctor")
 
 
 def select(registry: Registry, codename: Optional[str]) -> Optional[Headset]:
@@ -99,6 +100,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                   file=sys.stderr)
             return 2
         return gui.main(registry, headset)
+    if word == "doctor":
+        from . import doctor
+        checks = doctor.run(headset)
+        print(doctor.report(checks))
+        return 1 if doctor.failed(checks) else 0
     if headset is None:
         print("error: choose a headset with --device (python -m overpressure devices)", file=sys.stderr)
         return 2

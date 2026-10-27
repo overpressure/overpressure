@@ -108,5 +108,9 @@ class Phoenix(Headset):
         from .ramboot import PicoRamBoot
         return PicoRamBoot()
 
+    def dependencies(self):
+        from .doctor import probes
+        return probes()
+
 
 HEADSET = Phoenix()

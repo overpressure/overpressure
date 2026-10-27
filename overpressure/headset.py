@@ -122,6 +122,11 @@ class Headset(ABC):
         """Its workflow for the GUI, in order: building its images, then working on it."""
         return ()
 
+    def dependencies(self) -> Sequence[Callable]:
+        """Its checks for python -m overpressure doctor: callables that take an
+        overpressure.doctor.Host and return overpressure.doctor.Check objects."""
+        return ()
+
     def ram_boot(self) -> Optional["RamBootTarget"]:
         """How it boots an image from RAM (python -m overpressure ram-boot), or None."""
         return None

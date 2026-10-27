@@ -51,7 +51,8 @@ status in its roadmap and README current.
 - `overpressure/`: the generic host package, standard-library Python (3.9+):
   `headset.py` (the `Headset` interface: `Info`, `commands()`, `steps()`; `Step`, `Param`; the
   registry), `runner.py` (a step's process on this host: WSL or sudo for Linux-root steps),
-  `__main__.py` (the command line), `gui.py` (the Tk window), `localconfig.py` (`.env`, one key
+  `__main__.py` (the command line), `gui.py` (the Tk window), `doctor.py` (dependency checks:
+  the host's and `Headset.dependencies()`), `localconfig.py` (`.env`, one key
   prefix per headset), `stage1.py` (the Alpine stage 1 in a stock Android boot image), `ota.py`
   (stock images and partitions from a vendor OTA), `android.py` (adb/fastboot, fail-closed),
   `qualcomm.py` (SoC ID, EDL, partition maps), `backup.py` (verified backups), `process.py`
@@ -70,6 +71,7 @@ status in its roadmap and README current.
 
 ```sh
 python -m unittest                                # every host test (generic and each headset's), seconds
+python -m overpressure doctor                     # what this host lacks for the headset, with fixes
 python -m overpressure gui                        # the window: image creation and flashing
 python -m overpressure devices                    # the headsets
 python -m overpressure [--device CODENAME] steps  # a headset's steps and their command lines

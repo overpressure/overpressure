@@ -31,6 +31,8 @@ Open: fan control over longer sessions and its tuning, performance, controller p
 
 ## Quick start
 
+0. **Check this computer**: `python -m overpressure doctor` lists what is missing for each of
+   the steps below and how to get it.
 1. **Prepare the headset** once: identity, EDL backup, engineering ABL, unlock
    ([docs/device-preparation.md](docs/device-preparation.md)). Copy `.env.example` to `.env`
    and fill in the headset's serials and the paths of its backup and bootloader files.

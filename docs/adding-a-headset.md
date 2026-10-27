@@ -80,6 +80,17 @@ HEADSET = Example()
   ([the PICO 4's](../devices/phoenix/tooling/localconfig.py)).
 - Output goes to the repository's `out/`, downloads to `cache/` (`overpressure.REPO`).
 
+## Dependencies
+
+`Headset.dependencies()` returns the headset's checks for `python -m overpressure doctor`:
+callables that take an `overpressure.doctor.Host` and return `Check` objects (name, what it is
+needed for, status, what was found, the fix). `doctor.version_check` covers programs that answer
+a version query and `doctor.linux_commands` the programs its Linux-side scripts call (one
+`command -v` round in WSL or Linux); `Host.linux(script)` runs any other probe there. The
+PICO 4's are the example ([devices/phoenix/tooling/doctor.py](../devices/phoenix/tooling/doctor.py)):
+its settings and private files, adb and fastboot, the Windows USB link, the build host
+(binfmt, LLVM, the tools of its scripts) and the extracted assets.
+
 ## RAM boot
 
 A headset whose bootloader has `fastboot boot` gets `python -m overpressure ram-boot` and its

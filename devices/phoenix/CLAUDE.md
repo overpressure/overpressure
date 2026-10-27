@@ -48,7 +48,8 @@ README.md current.
   `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`, `PICO4_` keys),
   `userspace.py` and `graphics.py` (validators), `stock.py` (PICO's OTA members),
-  `ramboot.py` (its target for overpressure's RAM boot; the engineering ABL refuses it), and the
+  `ramboot.py` (its target for overpressure's RAM boot; the engineering ABL refuses it),
+  `doctor.py` (its dependency checks), and the
   controller data extractors. What other headsets share is in the root package `overpressure/`: the stage-1 builder,
   OTA handling, adb/fastboot, Qualcomm EDL, verified backups, processes and waits, SSH, the RAM
   boot, the formats, `elfdeps.py` and `windows_ncm.py`.

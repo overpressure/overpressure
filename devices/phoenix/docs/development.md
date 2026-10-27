@@ -57,6 +57,10 @@ backups), `assets/` (Firehose loader, engineering ABL, GPU firmware, sensor data
 
 ## Build host
 
+`python -m overpressure doctor` (or *Check dependencies* in the window) checks all of this on
+the computer at hand and says how to fix what is missing
+([tooling/doctor.py](../tooling/doctor.py), [docs/tool.md](../../../docs/tool.md#dependencies)).
+
 | Task | Needs |
 | --- | --- |
 | Stage-1 image, host tests, headset commands | Python 3.9+ on Windows, Linux or macOS; Android platform-tools and OpenSSH for the headset |

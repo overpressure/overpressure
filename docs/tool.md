@@ -6,13 +6,29 @@ steps and every command of the headset. It is pure Python (3.9+, standard librar
 the window), so it runs on Windows, Linux and macOS, and it runs from the repository root:
 `.env` and the private folders (`out/`, `cache/`, `assets/`, `backup/`) live there.
 
+## Dependencies
+
+```sh
+python -m overpressure doctor
+```
+
+lists what this computer has and lacks for the headset's workflow, grouped by what each part is
+needed for (the window, working on the headset, EDL, the builds, the extracted stock files),
+with what was found and, for anything missing, how to get it. The exit status is 1 while
+something needed is missing. The window shows the same as *Check dependencies* in its Setup
+group, with the fix of the selected line to copy. The checks only look: version queries,
+`command -v` in Linux (WSL as root on Windows), settings, file sizes and small files' hashes;
+they install and change nothing. Missing but optional (Tk for the window) and warnings (a
+slower fallback, say) do not fail it.
+
 ## The window
 
 ```sh
 python -m overpressure gui
 ```
 
-- **Headset**: the headsets in `devices/`; their steps fill the list on the left.
+- **Headset**: the headsets in `devices/`; their steps fill the list on the left, below
+  *Check dependencies* ([above](#dependencies)).
 - **Steps**, in two groups: *Image* (building the images) and *Headset* (flashing, connecting,
   checking, the way back). Selecting a step shows what it does, its parameters and the command
   line it will run, which updates as the parameters change. *Copy command* puts it on the
@@ -37,6 +53,7 @@ python -m overpressure [--device CODENAME] COMMAND [ARGS...]
   run STEP [NAME=VALUE...]
                        a step with parameters, as the window runs it
   ram-boot [IMAGE]     boot an image from RAM with fastboot boot, where the bootloader allows it
+  doctor               what this computer has and lacks for the headset, with fixes
   COMMAND [ARGS...]    a command of the headset
 ```
 
@@ -60,6 +77,7 @@ python -m overpressure dev check
 | [overpressure/gui.py](../overpressure/gui.py) | the window (Tk) |
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix |
 | [overpressure/fastboot.py](../overpressure/fastboot.py) | the RAM boot: `fastboot boot` with the headset's checks, never a write |
+| [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, then the headset's (`Headset.dependencies()`) |
 | [overpressure/stage1.py](../overpressure/stage1.py) | a stage 1: an Alpine ramdisk in the stock Android boot image, from a headset's `Spec` |
 | [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), checked against the zip |
 | [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed; the SoC ID, EDL (edl-ng, bkerler/edl) and its partition maps |

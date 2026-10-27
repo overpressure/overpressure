@@ -22,6 +22,7 @@ One tool builds the images and works on the headset, as a window or on the comma
 repository root:
 
 ```sh
+python -m overpressure doctor                 # what this computer has and lacks, with fixes
 python -m overpressure gui                    # the window: image creation and flashing
 python -m overpressure devices                # the supported headsets
 python -m overpressure steps                  # the headset's steps and their command lines
