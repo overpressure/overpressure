@@ -133,5 +133,8 @@ def ram_boot(target: RamBootTarget, image: Optional[Path] = None, log: Callable[
 
 
 def _refused(target: RamBootTarget, why) -> str:
-    text = f"the bootloader refuses fastboot boot ({str(why).strip()[-200:]}); nothing was written"
+    # The bootloader's own answer (fastboot's FAILED line), not the transfer's progress around it.
+    lines = [line.strip() for line in str(why).splitlines() if line.strip()]
+    answer = next((line for line in lines if REFUSED.search(line)), lines[-1] if lines else "")
+    text = f"the bootloader refuses fastboot boot ({answer[-200:]}); nothing was written"
     return text + (f". {target.refused_hint}" if target.refused_hint else "")

@@ -100,6 +100,16 @@ class RamBootTests(unittest.TestCase):
         with self.assertRaises(fastboot.Refused):
             self.boot(target)
 
+    def test_the_refusal_quotes_the_bootloaders_answer(self):
+        # fastboot's progress lines come first; the answer is its FAILED line, quoted whole.
+        error = ("fastboot failed (1): Sending 'boot.img' (47616 KB)" + " " * 30 + "OKAY [  1.129s]\n"
+                 "Booting" + " " * 40 + "FAILED (remote: 'unknown command')\n"
+                 "fastboot: error: Command failed")
+        with self.assertRaises(fastboot.Refused) as raised:
+            self.boot(FakeTarget(self.image, boot_error=error))
+        self.assertIn("(Booting" + " " * 40 + "FAILED (remote: 'unknown command'))", str(raised.exception))
+        self.assertNotIn("Sending", str(raised.exception))
+
     def test_other_boot_failures_are_errors(self):
         target = FakeTarget(self.image, boot_error="fastboot boot failed: FAILED (remote: 'image too large')")
         with self.assertRaises(RuntimeError) as raised:
