@@ -19,6 +19,9 @@ zstd
 # SteamOS integration as on the Steam Frame
 deckard-arch-hotfixes-release-0.3/steamos-customizations-deckard
 deckard-arch-hotfixes-release-0.3/steamos-manager
+# The Frame's swap: zram at half the RAM through zram-generator (PICO OS swaps to zram
+# the same way); only the installed system, the dev boot's root is on zram0
+deckard-arch-hotfixes-release-0.3/holo-zram-swap
 networkmanager
 # NetworkManager's wpa_supplicant, patched so that WPA3 (SAE) connects on the 4.19 kernel
 pico4/pico4-wpa-supplicant

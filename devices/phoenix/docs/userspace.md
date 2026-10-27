@@ -571,6 +571,49 @@ pw-record --rate 48000 --channels 1 /tmp/mic.wav   # a few seconds, then Ctrl-C
 pw-play /tmp/mic.wav                       # through the speakers
 ```
 
+## Memory
+
+The headset has 7.6 GiB of RAM, shared with the GPU. Valve's idle VR session leaves about
+4.2 GB available: Steam's UI processes (steamwebhelper, vrwebhelper, steam) hold about 1.4 GB,
+GPU memory (KGSL) about 0.7 GB, and the page cache about 2.7 GB.
+
+- **Swap as on the Frame.** The image installs the Frame's `holo-zram-swap`: zram-generator
+  makes `zram0` a swap device of half the RAM, compressed with `lzo-rle` (which the stock
+  kernel offers), with zswap off. PICO OS swaps to zram the same way
+  (`init.qcom.post_boot.sh`: half the RAM, at most 4 GiB). GPU memory cannot be swapped.
+- **Priority 32758.** The stock kernel carries ByteDance's swap patches: its `get_swap_pages`
+  gives ordinary reclaim (kswapd, direct reclaim, `/proc/PID/reclaim anon`) swap space only on
+  a device of priority exactly 32758, the priority PICO OS's script uses; a device of any other
+  priority counts as PICO's storage swap, which only `/proc/PID/reclaim storage` uses. At the
+  Frame's priority (100) the kernel never swapped (`pswpout` 0 with 220 MB left); at 32758 it
+  swaps as soon as memory runs short. Its `/proc/swaps` has an extra `NrExtents` column, which
+  systemd cannot parse ("Failed to parse /proc/swaps:2").
+- **PICO OS's reclaim settings.**
+  [`50-pico4-memory.conf`](../userspace/rootfs/etc/sysctl.d/50-pico4-memory.conf) sets what
+  PICO OS's script sets for this kernel: `vm.swappiness` 100, `vm.watermark_scale_factor` 90,
+  `vm.watermark_boost_factor` 0.
+- **Without device units.** zram-generator's own swap unit waits for `dev-zram0.device`, and
+  systemd here never sees udev's devices as plugged (they stay "tentative"), so it timed out
+  after 90 s. The image masks the generator, and
+  [`pico4-zram-swap.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-zram-swap.service)
+  runs zram-generator's `--setup-device zram0` from the Frame's configuration (size,
+  algorithm, `mkswap`) and `swapon` at priority 32758.
+- **Only on the installed system.** In the dev boot the root file system lives on `zram0`; the
+  unit starts only with `pico4poc.root=installed` on the kernel command line.
+- **A game larger than the free memory.** POOLS under Proton and FEX takes about 3 GB of GPU
+  memory and 1.5 GB of its own. Without swap it left 76-226 MB available for about two minutes:
+  the kernel could only drop the page cache that the running processes needed again, the whole
+  headset froze (head tracking lost, the session's compositor and gamescope crashed), and the
+  OOM killer killed the game. With the swap above it starts and runs: 1.5 GB of the session's
+  and the game's memory went to zram, at most 2.3 % memory pressure, no kill. `systemd-oomd`
+  stays masked; the Frame does not enable it either.
+
+```sh
+swapon --show                              # /dev/zram0, partition, about 3.8G, prio 32758
+cat /sys/class/kgsl/kgsl/page_alloc        # GPU memory in bytes
+cat /proc/pressure/memory                  # memory pressure (PSI)
+```
+
 ## Verified results
 
 ### Audio on the headset

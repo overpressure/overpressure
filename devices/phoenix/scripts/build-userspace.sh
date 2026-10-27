@@ -501,7 +501,7 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
-    pico4-splash.service pico4-powerkey.service pico4-persist.service
+    pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
@@ -512,6 +512,10 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
 in_t systemctl mask systemd-firstboot.service systemd-pstore.service systemd-oomd.service \
     systemd-oomd.socket systemd-boot-update.service systemd-repart.service steamos-dump-info.service \
     usb-gadget.target usb-ncm-gadget@.service usb-ncm-dnsmasq@.service serial-getty@ttyMSM0.service
+# zram-generator's swap unit waits for the same kind of device unit; pico4-zram-swap.service
+# runs its setup from the Frame's configuration instead, and only on the installed system.
+mkdir -p "$T/etc/systemd/system-generators"
+ln -sfn /dev/null "$T/etc/systemd/system-generators/zram-generator"
 # Valve's VR session (docs/session.md): no display manager (pico4-session.service
 # starts the session), and none of the Frame-only system units: the controller
 # radio programmer (a firmware OTA for the Frame's nRF, never to run here),

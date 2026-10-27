@@ -1,0 +1,46 @@
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+UNITS = ROOT / "userspace/rootfs/usr/lib/systemd/system"
+GENERATOR = "/usr/lib/systemd/system-generators/zram-generator"
+
+
+class ZramSwapTests(unittest.TestCase):
+    """an issue: the Frame's zram swap on the installed system, never on the dev boot's zram root."""
+
+    def setUp(self):
+        self.unit = (UNITS / "pico4-zram-swap.service").read_text(encoding="utf-8")
+        self.build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+
+    def test_the_frames_zram_swap_is_installed(self):
+        packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
+        self.assertIn("deckard-arch-hotfixes-release-0.3/holo-zram-swap", packages)
+
+    def test_the_frames_setup_without_device_units(self):
+        # zram-generator's swap unit waits for dev-zram0.device, which never appears here.
+        self.assertIn('ln -sfn /dev/null "$T/etc/systemd/system-generators/zram-generator"', self.build)
+        self.assertIn(f"ExecStart={GENERATOR} --setup-device zram0\n", self.unit)
+        self.assertIn(f"ExecStop={GENERATOR} --reset-device zram0\n", self.unit)
+        self.assertRegex(self.build, r"pico4-persist\.service pico4-zram-swap\.service")
+
+    def test_the_priority_the_stock_kernel_swaps_to(self):
+        # ByteDance's get_swap_pages: ordinary reclaim takes only a device of priority 32758.
+        self.assertIn("ExecStart=/usr/bin/swapon --priority 32758 /dev/zram0\n", self.unit)
+        self.assertNotRegex(self.unit, r"--priority (?!32758\b)\d+")
+
+    def test_pico_os_reclaim_settings(self):
+        conf = (ROOT / "userspace/rootfs/etc/sysctl.d/50-pico4-memory.conf").read_text(encoding="utf-8")
+        for line in ("vm.swappiness = 100", "vm.watermark_scale_factor = 90", "vm.watermark_boost_factor = 0"):
+            self.assertIn(line + "\n", conf)
+        self.assertNotIn("\r", conf)
+
+    def test_only_on_the_installed_system(self):
+        # The dev boot's root file system lives on zram0.
+        self.assertIn("ConditionKernelCommandLine=pico4poc.root=installed\n", self.unit)
+        self.assertIn('"pico4poc.root=installed"', (ROOT / "tooling/devloop.py").read_text(encoding="utf-8"))
+        self.assertNotIn("\r", self.unit)
+
+
+if __name__ == "__main__":
+    unittest.main()
