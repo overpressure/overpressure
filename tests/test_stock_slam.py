@@ -348,6 +348,21 @@ class RoomTests(unittest.TestCase):
         self.assertLess(slamd.index("tracker_stop(&t, h);", restart), slamd.index("h = tracker_start(&t, feed);", restart))
         self.assertIn("PICO4_SLAMD_RESTART_S", read(LIBEXEC / "stock-slam"))
 
+    def test_slamd_takes_a_late_relocalisation(self):
+        # an issue: the room settles when libSlam reports its relocalisation (PICO OS's
+        # RelocResultCallbackRegister), also after the first 10 s, which only decide a new room.
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        self.assertIn('.reloc = (reloc_register_fn)dlsym(lib, "RelocResultCallbackRegister"),', slamd)
+        start = slamd.index("tracker_start(const struct tracker *t")
+        self.assertLess(slamd.index("__atomic_store_n(&g_relocalised, 0, __ATOMIC_RELEASE);", start),
+                        slamd.index("t->reloc(on_reloc);", start))
+        loop = slamd.index("relocalised in a saved map")
+        self.assertLess(slamd.index("access(RELOCALISED_BOUNDARY, R_OK) == 0", loop - 400), loop)
+        self.assertLess(loop, slamd.index("if (!room_settled && now - started > RELOCALISE_NS) {"))
+        settle = slamd.index("settle_room(struct pico4_slam_feed *feed")
+        self.assertLess(slamd.index("__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);", settle),
+                        slamd.index("__atomic_store_n(&feed->room_state, state, __ATOMIC_RELEASE);", settle))
+
     def test_steamvr_gets_a_universe_per_map(self):
         patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
         self.assertIn("pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe) __attribute__((weak));",

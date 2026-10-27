@@ -55,6 +55,7 @@ typedef void (*prestop_fn)(void *);
 typedef int (*stop_fn)(void *, const char *);
 typedef void (*destroy_fn)(void *);
 typedef int (*relocinfo_fn)(void *, void *);
+typedef int (*reloc_register_fn)(void (*)(const void *));
 
 /*
  * The room (docs/xr.md#room-setup), where PICO OS's tracker keeps it: /data/misc/user/0, bound
@@ -68,7 +69,8 @@ typedef int (*relocinfo_fn)(void *, void *);
 #define BOUNDARY_DIR "/data/misc/user/0/boundary/"
 #define SESSION_BOUNDARY BOUNDARY_DIR "stdata.txt"
 #define RELOCALISED_BOUNDARY BOUNDARY_DIR "stdataforalgorithm.txt"
-//! PICO OS's tracker tries to relocalise for 8 s after start6DOF.
+//! PICO OS's tracker tries to relocalise for 8 s after start6DOF; without a relocalisation by
+//! then the session is a new room until a later one (on_reloc).
 #define RELOCALISE_NS 10000000000LL
 //! PICO OS's tracking service restarts a tracker lost for longer than this (restart_tracking_sec).
 #define RESTART_DEFAULT_S 10
@@ -135,6 +137,8 @@ settle_room(struct pico4_slam_feed *feed, uint32_t generation, void *h, relocinf
 	memcpy(&info_status, info + 0x1c, 4);
 	memcpy(feed->room_uuid, info + 0x20, sizeof(feed->room_uuid) - 1);
 	feed->room_uuid[sizeof(feed->room_uuid) - 1] = '\0';
+	// The driver keeps the previous room (and universe) while the new one is written.
+	__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);
 	fprintf(stderr, "pico4-slamd: map %s (getRelocMapInfo %d, status %d); relocalised boundary %d points\n",
 	        feed->room_uuid, info_ret, info_status, seen_n);
 	uint32_t state = 2;
@@ -334,6 +338,21 @@ load_ae(void)
 static void
 on_result(void)
 {
+}
+
+/*
+ * libSlam's relocalisation result (RelocResultCallbackRegister), which PICO OS's service takes to
+ * learn of a relocalisation: called once per tracker, when it first relocalises in a saved map,
+ * at whatever time that is, with the relocalisation's time and pose. The room is settled from it
+ * (main), as at the start, also long after the first seconds.
+ */
+static int g_relocalised;
+
+static void
+on_reloc(const void *result)
+{
+	(void)result;
+	__atomic_store_n(&g_relocalised, 1, __ATOMIC_RELEASE);
 }
 
 static char g_text[4 << 20];
@@ -591,6 +610,7 @@ struct tracker
 	start_fn start;
 	register_fn reg;
 	points_register_fn points; //!< Or NULL.
+	reloc_register_fn reloc;   //!< Or NULL.
 	prestop_fn prestop;
 	stop_fn stop;
 	destroy_fn destroy;
@@ -609,6 +629,10 @@ tracker_start(const struct tracker *t, struct pico4_slam_feed *feed)
 	t->set(h, "headSensorModel", "icm4x6xx");
 	t->start(h, "");
 	t->reg(on_result);
+	__atomic_store_n(&g_relocalised, 0, __ATOMIC_RELEASE);
+	if (t->reloc != 0) {
+		t->reloc(on_reloc);
+	}
 	if (g_vst && t->points != 0) {
 		t->points(on_points);
 	}
@@ -665,6 +689,7 @@ main(int argc, char **argv, char **envp)
 	    .start = (start_fn)dlsym(lib, "startAlgorithm"),
 	    .reg = (register_fn)dlsym(lib, "AlgorithmResultCallbackRegister"),
 	    .points = (points_register_fn)dlsym(lib, "AlgorithmPointCallbackRegister"),
+	    .reloc = (reloc_register_fn)dlsym(lib, "RelocResultCallbackRegister"),
 	    .prestop = (prestop_fn)dlsym(lib, "preStopAlgorithm"),
 	    .stop = (stop_fn)dlsym(lib, "stopAlgorithm"),
 	    .destroy = (destroy_fn)dlsym(lib, "destroyHandle"),
@@ -686,7 +711,7 @@ main(int argc, char **argv, char **envp)
 		fprintf(stderr, "pico4-slamd: createHandle failed\n");
 		return 1;
 	}
-	int64_t started = now_ns(CLOCK_MONOTONIC);
+	int64_t started = now_ns(CLOCK_MONOTONIC), reloc_checked = 0;
 	bool room_settled = false;
 	const char *restart_env = getenv("PICO4_SLAMD_RESTART_S");
 	const int64_t restart_ns = (int64_t)(restart_env != 0 ? atoi(restart_env) : RESTART_DEFAULT_S) * 1000000000LL;
@@ -752,6 +777,21 @@ main(int argc, char **argv, char **envp)
 			fprintf(stderr, "pico4-slamd: tracker stopped\n");
 			fflush(stderr);
 			exit(0);
+		}
+		// The room at the tracker's relocalisation, once its copy of the saved room's boundary is
+		// written, and a new room if there was none by RELOCALISE_NS; a later relocalisation
+		// moves the session into the saved room's world then.
+		if (now - reloc_checked > 100000000LL) {
+			reloc_checked = now;
+			if (__atomic_load_n(&g_relocalised, __ATOMIC_ACQUIRE) != 0 && access(RELOCALISED_BOUNDARY, R_OK) == 0) {
+				__atomic_store_n(&g_relocalised, 0, __ATOMIC_RELEASE);
+				fprintf(stderr, "pico4-slamd: the tracker relocalised in a saved map %.1f s after its start\n",
+				        (double)(now - started) / 1e9);
+				if (__atomic_load_n(&feed->room_state, __ATOMIC_ACQUIRE) != 1) {
+					settle_room(feed, generation, h, relocinfo);
+				}
+				room_settled = true;
+			}
 		}
 		if (!room_settled && now - started > RELOCALISE_NS) {
 			settle_room(feed, generation, h, relocinfo);

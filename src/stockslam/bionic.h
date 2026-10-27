@@ -60,12 +60,14 @@ void (*signal(int, void (*)(int)))(int);
 ssize_t write(int, const void *, size_t);
 int rename(const char *, const char *);
 int unlink(const char *);
+int access(const char *, int);
 double atan2(double, double);
 double sin(double);
 double cos(double);
 double sqrt(double);
 
 #define RTLD_NOW 2
+#define R_OK 4
 #define O_RDONLY 0
 #define O_WRONLY 1
 #define O_RDWR 2
