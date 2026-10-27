@@ -58,7 +58,9 @@ backups), `assets/` (Firehose loader, engineering ABL, GPU firmware, sensor data
 ## Build host
 
 `python -m overpressure doctor` (or *Check dependencies* in the window) checks all of this on
-the computer at hand and says how to fix what is missing
+the computer at hand and says how to fix what is missing; `python -m overpressure tools` fetches
+adb, fastboot, edl-ng and (Windows) the NCM venv, and the build container
+(`OVERPRESSURE_LINUX=docker`) replaces the Linux list below with Docker
 ([tooling/doctor.py](../tooling/doctor.py), [docs/tool.md](../../../docs/tool.md#dependencies)).
 
 | Task | Needs |
@@ -107,16 +109,14 @@ the head tracker, configuration). They are the same on every PICO 4 with that fi
 come from PICO's public full OTA, not from the user's backup:
 
 ```sh
-# Linux or WSL, as root: the OTA's partitions (about 3.9 GB of OTA members, kept under
-# STOCK/download), then each asset from them
-python3 -m overpressure stock --firmware 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
-s=/var/tmp/pico4-stock/5.13.7-global-seko
-devices/phoenix/scripts/extract-graphics-firmware.sh $s assets/graphics-firmware-5.13.7
-devices/phoenix/scripts/extract-sensor-data.sh $s assets/sensor-data-5.13.7
-devices/phoenix/scripts/extract-wlan.sh $s assets/wlan-5.13.7
-devices/phoenix/scripts/extract-audio.sh $s assets/audio-5.13.7
-devices/phoenix/scripts/extract-stock-slam.sh $s assets/stock-slam-5.13.7
+# Linux or WSL as root (or the build container): the OTA's partitions (about 3.9 GB of OTA
+# members, kept under STOCK/download), then every asset from them into assets/*-5.13.7
+devices/phoenix/scripts/extract-assets.sh 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
 ```
+
+[scripts/extract-assets.sh](../scripts/extract-assets.sh) (the window's *Stock firmware and
+assets*) runs `python3 -m overpressure stock` and then each extraction script below, each into a
+fresh folder that replaces the old one only when its script succeeded.
 
 `python -m overpressure stock` ([tooling/stock.py](../tooling/stock.py)) takes from the OTA zip only the
 members it needs, each checked against the zip's CRC: `system` and `vendor` as ext4 images
@@ -272,8 +272,9 @@ port, when the battery drains while tethered, and when it charges at less than 2
 - From Git Bash, set `MSYS_NO_PATHCONV=1`; otherwise `/abs/paths` in arguments and environment
   values become `C:/Program Files/Git/...`.
 - Run project PowerShell scripts with `pwsh` (7); Windows PowerShell 5.1 aborts on native stderr.
-- `adb` and `fastboot` live in `%LOCALAPPDATA%\Android\Sdk\platform-tools` unless on PATH;
-  `PICO4_PLATFORM_TOOLS` in `.env` points the headset commands there.
+- `python -m overpressure tools` fetches `adb` and `fastboot` into `cache/tools`; an Android
+  SDK's own (`%LOCALAPPDATA%\Android\Sdk\platform-tools`) can be named with
+  `PICO4_PLATFORM_TOOLS` instead.
 - Line endings: `.gitattributes` checks out `userspace/`, `initramfs/`, scripts and sources with
   LF; PKGBUILD checksums depend on it. Python on Windows writes CRLF unless told
   `newline="\n"`.

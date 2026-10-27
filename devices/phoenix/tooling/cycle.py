@@ -70,7 +70,7 @@ class Headset:
         self.until("EDL", 30, one)
 
     def edl(self, *words, log: str, timeout=600) -> str:
-        return self.run([self.s.path("edl"), "--loader", self.s.path("loader"), "--memory", "Ufs", *words],
+        return self.run([self.s.edl_program(), "--loader", self.s.path("loader"), "--memory", "Ufs", *words],
                         timeout, log=self.folder / f"{log}.log")
 
     def reset_to_pico_os(self, log: str) -> str:
@@ -92,7 +92,7 @@ class Headset:
 
     def device_args(self) -> list:
         return ["--identity", self.s.path("identity"), "--backup", self.s.path("backup"),
-                "--loader", self.s.path("loader"), "--edl-backend", "edl-ng", "--edl", self.s.path("edl"),
+                "--loader", self.s.path("loader"), "--edl-backend", "edl-ng", "--edl", self.s.edl_program(),
                 "--partition", "abl"]
 
     def stage_abl(self):
@@ -135,8 +135,8 @@ class Cycle(Headset):
                 "--out", self.folder / "run"]
         if archive:
             argv += ["--userspace", archive.resolve()]
-        if self.s.ncm_python:
-            argv += ["--windows-ncm-python", self.s.path("ncm_python")]
+        if self.s.ncm():
+            argv += ["--windows-ncm-python", self.s.ncm()]
         try:
             self.run(argv, 4 * 3600, log=self.folder / "run.log")
             code = 0

@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from overpressure import backup, doctor
+from unittest import mock
+
+from overpressure import backup, doctor, tools
 
 from devices.phoenix.tooling import HEADSET, doctor as checks, localconfig
 
@@ -13,8 +15,8 @@ IDENTITY = {"schema": 1, "serial": "ABC", "fingerprint": "Pico/Phoenix_ovs/PICOA
 
 
 class FakeHost(doctor.Host):
-    def __init__(self, platform="linux", linux=None, runs=None):
-        super().__init__(platform=platform, run=self.fake_run, which=lambda t: f"/usr/bin/{t}")
+    def __init__(self, platform="linux", linux=None, runs=None, on_path=True):
+        super().__init__(platform=platform, run=self.fake_run, which=lambda t: f"/usr/bin/{t}" if on_path else None)
         self.linux_output, self.runs = linux or {}, runs or {}
 
     def fake_run(self, argv, timeout):
@@ -34,6 +36,10 @@ class PicoDoctorTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
+        # Tools fetched into this checkout's cache must not stand in for the fakes.
+        patcher = mock.patch.object(tools, "CACHE", self.root / "tools-cache")
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def settings(self, **values):
         s = localconfig.Settings(**values)
@@ -41,7 +47,7 @@ class PicoDoctorTests(unittest.TestCase):
         return s
 
     def test_a_fresh_checkout_names_every_missing_setting_and_file(self):
-        found = by_name(checks.settings_checks(FakeHost(), self.settings(), self.root))
+        found = by_name(checks.settings_checks(FakeHost(on_path=False), self.settings(), self.root))
         for name in (".env", "PICO4_ADB_SERIAL", "PICO4_FASTBOOT_SERIAL", "PICO4_EDL_SERIAL", "identity", "EDL backup",
                      "Firehose loader", "engineering ABL", "edl-ng"):
             self.assertEqual(found[name].status, doctor.MISSING, name)

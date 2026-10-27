@@ -6,6 +6,9 @@
   run STEP [NAME=VALUE...]
                        run a step as the GUI does, with parameters
   doctor               what this host has and lacks for the headset's workflow, with fixes
+  tools [NAME...]      fetch the pinned host tools: platform-tools, edl-ng, the NCM venv
+  container build|run -- CMD|shell
+                       the build container (OVERPRESSURE_LINUX=docker runs Linux-root steps there)
   ram-boot [IMAGE]     boot an image from RAM with fastboot boot (writes nothing), where the
                        headset's bootloader allows it
   COMMAND [ARGS...]    a command of the headset (listed below once a headset is known)
@@ -23,7 +26,7 @@ from typing import List, Optional
 from . import localconfig, runner
 from .headset import Headset, Registry, discover
 
-GENERIC = ("devices", "gui", "steps", "run", "ram-boot", "doctor")
+GENERIC = ("devices", "gui", "steps", "run", "ram-boot", "doctor", "tools", "container")
 
 
 def select(registry: Registry, codename: Optional[str]) -> Optional[Headset]:
@@ -100,6 +103,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                   file=sys.stderr)
             return 2
         return gui.main(registry, headset)
+    if word == "container":
+        from . import linux
+        return linux.main(argv[1:])
+    if word == "tools":
+        from . import tools
+        return tools.main(argv[1:])
     if word == "doctor":
         from . import doctor
         checks = doctor.run(headset)

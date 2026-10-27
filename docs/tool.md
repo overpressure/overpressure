@@ -21,6 +21,42 @@ group, with the fix of the selected line to copy. The checks only look: version 
 they install and change nothing. Missing but optional (Tk for the window) and warnings (a
 slower fallback, say) do not fail it.
 
+## Host tools
+
+```sh
+python -m overpressure tools
+```
+
+fetches the pinned programs the headsets' workflows use into `cache/tools`, each archive checked
+by its SHA-256 ([overpressure/tools.py](../overpressure/tools.py)): Android's platform-tools
+(adb, fastboot), edl-ng, and on Windows a Python environment with pyusb and libusb-package for
+the USB network link (installed by pip with every file's hash pinned). A headset's settings that
+name its own copies take precedence; without them the fetched ones are used, then PATH. The
+window has the same as *Fetch the host tools* in its Setup group. Nothing is downloaded
+anywhere else: the tools are fetched only by this command.
+
+## Linux-root steps
+
+Building a userspace mounts file systems and chroots into an aarch64 root, so those steps run
+on Linux as root, in one of three places (`OVERPRESSURE_LINUX` in the environment or `.env`;
+[overpressure/linux.py](../overpressure/linux.py)):
+
+| Backend | Where | Default on |
+| --- | --- | --- |
+| `wsl` | Windows' Linux, as root | Windows (with WSL) |
+| `sudo` | this Linux host | Linux |
+| `docker` | the build container: Docker or Podman, any host | macOS, Windows without WSL |
+
+The build container ([overpressure/container/Dockerfile](../overpressure/container/Dockerfile),
+Ubuntu 24.04 pinned by digest) holds every build tool, LLVM included, so the host needs only
+Docker: `python -m overpressure container build` builds its image (`overpressure-builder:HASH`,
+the recipe's hash), `container run -- CMD` runs a command from the repository root (built first
+if missing), `container shell` opens a shell. It runs privileged (the builds mount and chroot);
+the repository is mounted at `/work` and `/var/tmp` (build roots, stock folders) is the named
+volume `overpressure-var`. The aarch64 programs of the build root run through the host
+kernel's binfmt handler: Docker Desktop registers one; on Linux,
+`docker run --privileged --rm tonistiigi/binfmt --install arm64` does.
+
 ## The window
 
 ```sh
@@ -54,6 +90,9 @@ python -m overpressure [--device CODENAME] COMMAND [ARGS...]
                        a step with parameters, as the window runs it
   ram-boot [IMAGE]     boot an image from RAM with fastboot boot, where the bootloader allows it
   doctor               what this computer has and lacks for the headset, with fixes
+  tools [NAME...]      fetch the pinned host tools (platform-tools, edl-ng, the NCM venv)
+  container build|run -- CMD|shell
+                       the build container
   COMMAND [ARGS...]    a command of the headset
 ```
 
@@ -78,6 +117,8 @@ python -m overpressure dev check
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix |
 | [overpressure/fastboot.py](../overpressure/fastboot.py) | the RAM boot: `fastboot boot` with the headset's checks, never a write |
 | [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, then the headset's (`Headset.dependencies()`) |
+| [overpressure/tools.py](../overpressure/tools.py) | the pinned host tools in `cache/tools` |
+| [overpressure/linux.py](../overpressure/linux.py) | where Linux-root steps run: WSL, sudo or the build container |
 | [overpressure/stage1.py](../overpressure/stage1.py) | a stage 1: an Alpine ramdisk in the stock Android boot image, from a headset's `Spec` |
 | [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), checked against the zip |
 | [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed; the SoC ID, EDL (edl-ng, bkerler/edl) and its partition maps |

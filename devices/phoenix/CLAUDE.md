@@ -86,9 +86,9 @@ bash devices/phoenix/tests/test_recovery_policy.sh       # stage-1 recovery poli
 sh devices/phoenix/tests/test_charger.sh                 # stage-1 charger mode
 bash devices/phoenix/tests/test_vrdisplay_fake.sh        # display layer on lavapipe (WSL; VULKAN_INCLUDE=...)
 python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> out/
-# Linux/WSL as root: the stock firmware from PICO's public OTA, then the assets
+# Linux/WSL as root (or OVERPRESSURE_LINUX=docker): the stock firmware from PICO's public OTA, then the assets
 # (docs/development.md#stock-firmware; about 11 GB of OTA members and images, on the WSL disk):
-python3 -m overpressure stock --firmware 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
+devices/phoenix/scripts/extract-assets.sh 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
 # Linux/WSL as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
 devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
@@ -206,6 +206,6 @@ passed.
 
 ## Environment quirks
 
-The repository's CLAUDE.md lists the Windows/WSL ones. For the PICO 4: `adb`/`fastboot` are in
-`%LOCALAPPDATA%\Android\Sdk\platform-tools`, not on PATH; `PICO4_PLATFORM_TOOLS` in `.env`
-points there.
+The repository's CLAUDE.md lists the Windows/WSL ones. For the PICO 4: `adb`, `fastboot`,
+edl-ng and the NCM venv come from `python -m overpressure tools` (cache/tools) unless `.env`
+names other copies (`PICO4_PLATFORM_TOOLS`, `PICO4_EDL`, `PICO4_NCM_PYTHON`).

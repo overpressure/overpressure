@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, Sequence
 
-from overpressure.headset import Command, Headset, Info, Param, Step, ram_boot_step
+from overpressure.headset import Command, Headset, Info, Param, Step, ram_boot_step, tools_step
 
 FIRMWARE = "5.13.7-global-seko"
 FIRMWARES = ("5.13.7-global-seko", "5.13.8-global-sek")
@@ -38,11 +38,13 @@ class Phoenix(Headset):
         archive = "out/userspace/pico4-userspace.tar.zst"
         system = "out/userspace/pico4-system.img"
         return (
-            Step("stock", "Stock firmware from the OTA", "Image",
-                 ("stock", "--firmware", "{firmware}", "{output}"),
-                 "PICO's public OTA: the partitions the assets are extracted from (about 11 GB).",
-                 (_firmware, Param("output", "Output folder", "/var/tmp/pico4-stock/" + FIRMWARE, "path")),
-                 linux_root=True),
+            tools_step(),
+            Step("assets", "Stock firmware and assets", "Image",
+                 ("scripts/extract-assets.sh", "{firmware}", "{stock}"),
+                 "PICO's public OTA (about 11 GB, kept in the stock folder), then every file the userspace "
+                 "build takes from it into assets/*-VERSION.",
+                 (_firmware, Param("stock", "Stock folder (Linux)", "/var/tmp/pico4-stock/" + FIRMWARE, "path")),
+                 script=True, linux_root=True),
             Step("stage1", "Stage-1 boot image", "Image",
                  ("build", "--firmware", "{firmware}"),
                  "The Alpine initramfs with the stock kernel: out/pico4-poc-FIRMWARE.img.", (_firmware,)),

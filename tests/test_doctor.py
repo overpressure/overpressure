@@ -59,6 +59,17 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(windows["WSL (as root)"].status, doctor.MISSING)
         self.assertIn("wsl --install", windows["WSL (as root)"].fix)
 
+    def test_the_container_backend_checks_the_engine_and_the_image(self):
+        host = FakeHost(platform="darwin", tools=("docker",), runs={"docker": (0, "28.4.0")})
+        self.assertEqual(host.backend, "docker")
+        found = {c.name: c for c in doctor.host_checks(host)}
+        self.assertEqual(found["docker"].detail, "engine 28.4.0")
+        self.assertEqual(found["build container image"].status, doctor.OK)  # inspect answered 0
+        host = FakeHost(platform="darwin", tools=("docker",), runs={"docker": (1, "Cannot connect to the daemon")})
+        found = {c.name: c for c in doctor.host_checks(host)}
+        self.assertEqual(found["docker"].status, doctor.MISSING)
+        self.assertEqual(host.linux("echo a=1"), {})  # no image, no probes
+
     def test_version_and_linux_command_checks(self):
         host = FakeHost(runs={"adb": (0, "Android Debug Bridge version 1.0.41\nmore")}, linux={"curl": "/usr/bin/curl"})
         self.assertEqual(doctor.version_check(host, "adb", ["adb", "version"], "headset", "fix").detail,

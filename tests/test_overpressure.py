@@ -38,7 +38,7 @@ class RunnerTests(unittest.TestCase):
     def test_windows_runs_linux_root_steps_in_wsl(self):
         h = Fake()
         _, us = h.steps()
-        argv = runner.process(h, us, {}, platform="win32")
+        argv = runner.process(h, us, {}, platform="win32", backend="wsl")
         self.assertEqual(argv[:6], ["wsl", "-u", "root", "--cd", str(REPO), "--"])
         self.assertEqual(argv[6], "bash")
         self.assertTrue(argv[7].startswith("/mnt/") and argv[7].endswith("devices/fake/scripts/build.sh"))
@@ -46,9 +46,31 @@ class RunnerTests(unittest.TestCase):
     def test_linux_asks_sudo_unless_root(self):
         h = Fake()
         _, us = h.steps()
-        self.assertEqual(runner.process(h, us, {}, platform="linux", is_root=False)[:3],
+        self.assertEqual(runner.process(h, us, {}, platform="linux", is_root=False, backend="sudo")[:3],
                          ["sudo", "bash", "devices/fake/scripts/build.sh"])
-        self.assertEqual(runner.process(h, us, {}, platform="linux", is_root=True)[0], "bash")
+        self.assertEqual(runner.process(h, us, {}, platform="linux", is_root=True, backend="sudo")[0], "bash")
+
+    def test_the_build_container_runs_linux_root_steps_anywhere(self):
+        h = Fake()
+        img, us = h.steps()
+        for platform in ("win32", "darwin", "linux"):
+            argv = runner.process(h, us, {}, platform=platform, python="py", backend="docker")
+            self.assertEqual(argv[:6], ["py", "-m", "overpressure", "container", "run", "--"])
+            self.assertEqual(argv[6:8], ["bash", "devices/fake/scripts/build.sh"])
+        self.assertEqual(runner.process(h, img, {}, python="py", backend="docker")[0], "py")  # no Linux needed
+
+    def test_the_backend_follows_the_host_unless_configured(self):
+        from overpressure import linux
+        self.assertEqual(linux.backend("win32", which=lambda t: "wsl", environ={"OVERPRESSURE_LINUX": ""}), "wsl")
+        self.assertEqual(linux.backend("win32", which=lambda t: None, environ={"OVERPRESSURE_LINUX": ""}), "docker")
+        self.assertEqual(linux.backend("darwin", environ={"OVERPRESSURE_LINUX": ""}), "docker")
+        self.assertEqual(linux.backend("linux", environ={"OVERPRESSURE_LINUX": "docker"}), "docker")
+        with self.assertRaises(ValueError):
+            linux.backend("linux", environ={"OVERPRESSURE_LINUX": "vm"})
+        argv = linux.run_argv(["bash", "x.sh"], tool="docker")
+        self.assertIn("--privileged", argv)
+        self.assertIn(f"{linux.VOLUME}:/var/tmp", argv)
+        self.assertTrue(argv[-3].startswith("overpressure-builder:"))
 
     def test_commands_go_through_this_command_line(self):
         h = Fake()
@@ -75,12 +97,14 @@ class RegistryTests(unittest.TestCase):
             keys = [s.key for s in headset.steps()]
             self.assertEqual(len(keys), len(set(keys)), codename)
             for step in headset.steps():
-                self.assertIn(step.group, ("Image", "Headset"))
+                self.assertIn(step.group, ("Setup", "Image", "Headset"))
                 words = step.command({})
                 if step.script:
                     self.assertTrue((headset.root / words[0]).exists(), (codename, step.key))
                 elif words[0] == "ram-boot":
                     self.assertIsNotNone(headset.ram_boot(), codename)
+                elif words[0] in cli.GENERIC:
+                    pass
                 else:
                     self.assertIn(words[0], headset.commands(), (codename, step.key))
 

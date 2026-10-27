@@ -109,7 +109,7 @@ With edl-ng, first list the LUNs: `edl-ng --loader assets/firehose.elf --memory 
 Pass **all LUNs reported by that device**, for example:
 
 ```sh
-python -m overpressure device backup --identity backup/device.json --backup backup/stock --loader assets/firehose.elf --edl-backend edl-ng --edl cache/edl-ng/edl-ng.exe --edl-luns 4 1 2 3 5 0 --include-userdata
+python -m overpressure device backup --identity backup/device.json --backup backup/stock --loader assets/firehose.elf --edl-backend edl-ng --edl cache/tools/edl-ng-1.6.0/edl-ng.exe --edl-luns 4 1 2 3 5 0 --include-userdata
 ```
 
 This still previews by default. Execution captures each LUN in its own directory (`lun<N>/`
@@ -261,8 +261,8 @@ root. The keys used here:
 | `PICO4_BACKUP` | `backup/stock` | verified EDL backup |
 | `PICO4_LOADER` | `assets/firehose.elf` | signed Firehose loader |
 | `PICO4_ENGINEERING_ABL`, `PICO4_ENGINEERING_ABL_SHA256` | `assets/engineering-abl.elf` | engineering ABL and its expected SHA-256 |
-| `PICO4_EDL` | `cache/edl-ng/edl-ng` (`.exe` on Windows) | edl-ng executable |
-| `PICO4_PLATFORM_TOOLS` | (from PATH) | folder with `adb` and `fastboot` |
+| `PICO4_EDL` | empty: the fetched edl-ng (`python -m overpressure tools`), else PATH | edl-ng executable |
+| `PICO4_PLATFORM_TOOLS` | empty: the fetched platform-tools, else PATH | folder with `adb` and `fastboot` |
 
 The other keys (`PICO4_FIRMWARE`, `PICO4_NCM_PYTHON`, `PICO4_SSH`, `PICO4_SSH_KEYGEN`) serve the
 hardware runs ([hardware-testing.md](hardware-testing.md)).

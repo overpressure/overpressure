@@ -235,9 +235,9 @@ class Dev(Headset):
     def connect(self):
         # Stage 1 makes new host keys on every boot.
         (self.work / "known_hosts").unlink(missing_ok=True)
-        if self.s.ncm_python:
+        if self.s.ncm():
             self.until("NCM gadget", 120, lambda: self.run(
-                windows_ncm.command(self.s.path("ncm_python"), self.s.fastboot_serial), 30))
+                windows_ncm.command(self.s.ncm(), self.s.fastboot_serial), 30))
         self.until("stage-1 SSH", 120, self.authenticate)
         # The partition the running stage 1 came from, by its command line.
         name = "recovery" if f"{PART_MARK}recovery" in self.ssh("cat /proc/cmdline", 10).split() else "boot"
@@ -317,8 +317,8 @@ class Dev(Headset):
     def wait_installed(self):
         """The installed system's systemd, reached over the USB link (it renews stage 1's)."""
         def ncm():
-            if self.s.ncm_python:
-                self.run(windows_ncm.command(self.s.path("ncm_python"), self.s.fastboot_serial), 30)
+            if self.s.ncm():
+                self.run(windows_ncm.command(self.s.ncm(), self.s.fastboot_serial), 30)
         self.until("NCM gadget", 180, ncm)
         initialized = [self.clock.monotonic()]
 

@@ -65,7 +65,7 @@ class PicoRamBoot(RamBootTarget):
     def reached(self) -> None:
         # Stage 1 makes new host keys on every boot; the NCM link once, then the login.
         (self.dev.work / "known_hosts").unlink(missing_ok=True)
-        if self.s.ncm_python and not self.ncm_done:
-            self.dev.run(windows_ncm.command(self.s.path("ncm_python"), self.s.fastboot_serial), 30)
+        if self.s.ncm() and not self.ncm_done:
+            self.dev.run(windows_ncm.command(self.s.ncm(), self.s.fastboot_serial), 30)
             self.ncm_done = True
         self.dev.authenticate()

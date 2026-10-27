@@ -67,7 +67,7 @@ class Step:
 
     key: str
     title: str
-    group: str                    #: "Image" or "Headset"
+    group: str                    #: "Setup", "Image" or "Headset"
     argv: Tuple[str, ...]
     help: str = ""
     params: Tuple[Param, ...] = ()
@@ -94,6 +94,14 @@ class Step:
                 words.append(word.format(**{k: values.get(k, by_name[k].default) for k in by_name})
                              if "{" in word else word)
         return words
+
+
+def tools_step() -> Step:
+    """The window's step for overpressure's tool fetcher."""
+    return Step("tools", "Fetch the host tools", "Setup", ("tools",),
+                "Downloads the pinned platform-tools (adb, fastboot) and edl-ng, and on Windows the NCM "
+                "venv (pyusb, libusb-package), each checked by SHA-256, into cache/tools. Settings that "
+                "name your own copies still take precedence.")
 
 
 def ram_boot_step(image: str, help: str = "") -> Step:

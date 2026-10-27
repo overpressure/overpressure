@@ -73,7 +73,7 @@ HEADSET = Example()
   generic modules cover the Android formats.
 - **Steps** are what the window offers. A word `{name}` takes a parameter's value; braces inside
   a word are filled the same way. `script=True` runs a program from the headset's folder,
-  `linux_root=True` runs on Linux as root (WSL on Windows), and `writes=True` makes the window
+  `linux_root=True` runs on Linux as root (WSL, sudo or the build container, [tool.md](tool.md#linux-root-steps)), and `writes=True` makes the window
   ask before a step that writes to the headset.
 - **Settings** in `.env` get a dataclass derived from `overpressure.localconfig.Settings` with
   the headset's own key prefix, so headsets share one `.env`

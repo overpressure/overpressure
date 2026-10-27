@@ -42,8 +42,13 @@ class Settings:
         return value if value.is_absolute() else ROOT / value
 
     def tool(self, name: str) -> str:
-        """adb or fastboot: from the platform_tools setting when set, else from PATH."""
-        return str(Path(self.platform_tools) / (name + EXE)) if self.platform_tools else name
+        """adb or fastboot: from the platform_tools setting when set, else the fetched
+        platform-tools (python -m overpressure tools), else from PATH."""
+        if self.platform_tools:
+            return str(Path(self.platform_tools) / (name + EXE))
+        from . import tools
+        fetched = tools.program(name)
+        return str(fetched) if fetched else name
 
     def require(self, *names: str) -> None:
         missing = [self.key(n) for n in names if not getattr(self, n)]

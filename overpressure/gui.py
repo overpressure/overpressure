@@ -20,7 +20,7 @@ from typing import Dict, Optional
 from . import REPO, doctor, runner
 from .headset import Headset, Registry, Step
 
-GROUPS = ("Image", "Headset")
+GROUPS = ("Setup", "Image", "Headset")
 DOCTOR = "doctor"  # the Setup group's item: the dependency checks
 STATUS_COLOURS = {doctor.OK: "#1a7f37", doctor.MISSING: "#cf222e", doctor.WARNING: "#9a6700",
                   doctor.OPTIONAL: "#6e7781"}
@@ -136,10 +136,10 @@ class App:
         self.about.config(text=" · ".join(x for x in (info.soc, info.summary) if x))
         self.tree.delete(*self.tree.get_children())
         self.steps = {s.key: s for s in self.headset.steps()}
-        setup = self.tree.insert("", "end", iid="group:Setup", text="Setup", open=True)
-        self.tree.insert(setup, "end", iid=DOCTOR, text="Check dependencies")
         for group in GROUPS:
             parent = self.tree.insert("", "end", iid="group:" + group, text=group, open=True)
+            if group == "Setup":
+                self.tree.insert(parent, "end", iid=DOCTOR, text="Check dependencies")
             for step in self.steps.values():
                 if step.group == group:
                     self.tree.insert(parent, "end", iid=step.key, text=step.title)

@@ -66,10 +66,10 @@ settings to it.
 | `PICO4_LOADER` | `assets/firehose.elf` | signed Firehose loader |
 | `PICO4_ENGINEERING_ABL` | `assets/engineering-abl.elf` | engineering ABL image |
 | `PICO4_ENGINEERING_ABL_SHA256` | required for staging | its expected SHA-256 |
-| `PICO4_EDL` | `cache/edl-ng/edl-ng`, `.exe` on Windows | edl-ng executable |
+| `PICO4_EDL` | empty: the fetched edl-ng (`python -m overpressure tools`), else PATH | edl-ng executable |
 | `PICO4_FIRMWARE` | `5.13.8-global-sek` | entry of [tooling/firmware.json](../tooling/firmware.json); selects `out/pico4-poc-<firmware>.img` |
-| `PICO4_NCM_PYTHON` | empty: no NCM initialization | Python with the `windows-ncm` extra |
-| `PICO4_PLATFORM_TOOLS` | empty: `adb` and `fastboot` from `PATH` | folder with `adb` and `fastboot` |
+| `PICO4_NCM_PYTHON` | empty: the fetched NCM venv on Windows, else no NCM initialization | Python with the `windows-ncm` extra |
+| `PICO4_PLATFORM_TOOLS` | empty: the fetched platform-tools, else `PATH` | folder with `adb` and `fastboot` |
 | `PICO4_SSH`, `PICO4_SSH_KEYGEN` | `ssh`, `ssh-keygen` | OpenSSH executables |
 
 ## Development mode
@@ -125,7 +125,7 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
     --confirm-device ADB_SERIAL --backup backup/stock \
     --image out/pico4-poc-5.13.7-global-seko.img \
     --userspace out/userspace/pico4-userspace.tar.zst \
-    --windows-ncm-python cache/ncm-venv/Scripts/python.exe
+    --windows-ncm-python PYTHON_OF_THE_NCM_VENV   # python -m overpressure tools ncm-venv prints its folder
 ```
 
 ### Options
@@ -213,16 +213,22 @@ The stock kernel's NCM function (PICO OS 5.13.7) rejects the packets of Windows'
 `Wrong NDP SIGN` in its kernel log, so Windows gets no DHCP, SSH or HTTP. Sending the CDC request
 `SET_CRC_MODE(0)` through UsbDk and then releasing the device to Windows 11's in-box UsbNcm driver
 makes all three work without changing the kernel. [overpressure/windows_ncm.py](../../../overpressure/windows_ncm.py)
-does this; `--windows-ncm-python` (runner) or `PICO4_NCM_PYTHON` (cycle, dev) enables it.
+does this; `--windows-ncm-python` (runner) or the NCM venv (cycle, dev: `PICO4_NCM_PYTHON`, else
+the one `python -m overpressure tools` creates) enables it.
 
-Install [UsbDk](https://github.com/daynix/UsbDk/releases) separately (the helper loads
-`UsbDkHelper.dll` from `%ProgramFiles%\UsbDk Runtime Library`), then a Python environment with
-the `windows-ncm` extra of [pyproject.toml](../../../pyproject.toml):
+The request works because the 4.19 kernel's `f_ncm` recomputes the NDP signature it checks on
+every CDC class request to its control interface (and resets it with the data interface);
+Windows' UsbNcm sends none, and nothing on the gadget side triggers the recompute. The stock
+kernel has no RNDIS, ECM or EEM function to use instead, but it has FunctionFS and TUN, so an NCM
+function in userspace would let UsbNcm work without UsbDk (open work, an issue).
+
+Install [UsbDk](https://github.com/daynix/UsbDk/releases) (`winget install daynix.UsbDk`, as
+administrator; the helper loads `UsbDkHelper.dll` from `%ProgramFiles%\UsbDk Runtime Library`),
+then the NCM venv, a Python environment with the `windows-ncm` packages, every file's hash pinned:
 
 ```powershell
-python -m venv cache/ncm-venv
-cache/ncm-venv/Scripts/python.exe -m pip install "pyusb==1.3.1" "libusb-package==1.0.30.0"
-cache/ncm-venv/Scripts/python.exe overpressure/windows_ncm.py --check
+python -m overpressure tools ncm-venv
+python -m overpressure doctor        # "NCM Python and UsbDk": the venv and the UsbDk backend
 ```
 
 `--check` tests the dependencies and the UsbDk backend without opening a device;

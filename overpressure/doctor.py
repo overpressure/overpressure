@@ -14,7 +14,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from . import REPO
+from . import REPO, linux
 
 OK, MISSING, OPTIONAL, WARNING = "ok", "missing", "optional", "warning"
 MARK = {OK: "ok", MISSING: "MISSING", OPTIONAL: "optional", WARNING: "warning"}
@@ -51,12 +51,26 @@ class Host:
     run: Callable[[Sequence[str], float], Tuple[int, str]] = run_tool
     which: Callable[[str], Optional[str]] = shutil.which
     linux_cache: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    backend: str = ""  #: the Linux backend (overpressure/linux.py); empty: this host's
+
+    def __post_init__(self):
+        if not self.backend:
+            self.backend = linux.backend(self.platform, self.which)
+
+    def container_ready(self) -> bool:
+        """The build container's image is built (the docker backend)."""
+        return self.run([linux.engine(self.which), "image", "inspect", linux.image()], 30)[0] == 0
 
     def linux(self, script: str, timeout: float = 90) -> Dict[str, str]:
-        """KEY=VALUE lines that @p script prints in this host's Linux (WSL on Windows), as root where
-        the userspace build runs as root; {} when there is no Linux. Cached per script."""
+        """KEY=VALUE lines that @p script prints where the Linux-root steps run (WSL as root, this
+        Linux, or the build container); {} when there is no such Linux. Cached per script."""
         if script not in self.linux_cache:
-            if self.platform == "win32":
+            if self.backend == "docker":
+                if not self.container_ready():
+                    self.linux_cache[script] = {}
+                    return {}
+                argv = linux.run_argv(["bash", "-c", script], tool=linux.engine(self.which))
+            elif self.platform == "win32":
                 if self.which("wsl") is None:
                     self.linux_cache[script] = {}
                     return {}
@@ -114,7 +128,9 @@ def host_checks(host: Host) -> List[Check]:
         checks.append(Check(tool, "working on the headset", OK if path else MISSING, path or "not on PATH",
                             "" if path else "OpenSSH (Windows 10/11: optional feature \"OpenSSH Client\"; "
                                             "Linux: apt install openssh-client)"))
-    if host.platform == "win32":
+    if host.backend == "docker":
+        checks.extend(container_checks(host))
+    elif host.platform == "win32":
         values = host.linux("echo user=$(id -u); echo distro=$(. /etc/os-release && echo $PRETTY_NAME)")
         if values.get("user") == "0":
             checks.append(Check("WSL (as root)", "Linux-root steps", OK, values.get("distro", "")))
@@ -126,6 +142,22 @@ def host_checks(host: Host) -> List[Check]:
         sudo = host.which("sudo")
         checks.append(Check("sudo", "Linux-root steps", OK if sudo else WARNING, sudo or "not on PATH",
                             "" if sudo else "run the Linux-root steps as root, or install sudo"))
+    return checks
+
+
+def container_checks(host: Host) -> List[Check]:
+    """The docker backend: the engine answers, and the build container's image is built."""
+    needed_for = "Linux-root steps (build container)"
+    tool = linux.engine(host.which)
+    code, out = host.run([tool, "version", "--format", "{{.Server.Version}}"], 30)
+    if code != 0:
+        return [Check(tool, needed_for, MISSING, (out.splitlines() or ["no answer"])[-1][:120],
+                      "Docker Desktop (started) or Docker/Podman on Linux; OVERPRESSURE_LINUX=wsl or sudo "
+                      "uses WSL or this Linux instead")]
+    checks = [Check(tool, needed_for, OK, f"engine {out.splitlines()[-1]}")]
+    ready = host.container_ready()
+    checks.append(Check("build container image", needed_for, OK if ready else MISSING, linux.image(),
+                        "" if ready else "python -m overpressure container build"))
     return checks
 
 

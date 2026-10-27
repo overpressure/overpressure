@@ -25,6 +25,7 @@ FIRMWARE_VERSION = "5.13.7"
 ASSET_KINDS = {"graphics-firmware": "extract-graphics-firmware.sh", "sensor-data": "extract-sensor-data.sh",
                "wlan": "extract-wlan.sh", "audio": "extract-audio.sh", "stock-slam": "extract-stock-slam.sh"}
 APT = "in WSL/Linux as root: apt install "
+FETCH = "python -m overpressure tools"
 
 
 def settings_checks(host: Host, settings=None, root: Path = REPO) -> List[Check]:
@@ -59,9 +60,10 @@ def settings_checks(host: Host, settings=None, root: Path = REPO) -> List[Check]
         checks.append(Check("engineering ABL", EDL, OK if s.engineering_abl_sha256 else WARNING, abl.name +
                             ("" if s.engineering_abl_sha256 else ": no PICO4_ENGINEERING_ABL_SHA256 to check it against"),
                             "" if s.engineering_abl_sha256 else "set PICO4_ENGINEERING_ABL_SHA256 in .env"))
-    edl = s.path("edl")
-    checks.append(Check("edl-ng", EDL, OK if edl.is_file() else MISSING, str(edl) if edl.is_file() else f"no {edl}",
-                        "" if edl.is_file() else "edl-ng from its releases, path in PICO4_EDL"))
+    edl = s.edl_program()
+    found = edl.is_file() or (not edl.is_absolute() and host.which(str(edl)))
+    checks.append(Check("edl-ng", EDL, OK if found else MISSING, str(edl) if found else f"no {edl}",
+                        "" if found else FETCH))
     return checks
 
 
@@ -83,8 +85,7 @@ def backup_check(folder: Path) -> Check:
 
 def tool_checks(host: Host, settings=None) -> List[Check]:
     s = settings or localconfig.load()
-    fix = ("Android platform-tools (developer.android.com/tools/releases/platform-tools); "
-           "PICO4_PLATFORM_TOOLS in .env when they are not on PATH")
+    fix = FETCH + " (or Android platform-tools of your own, in PICO4_PLATFORM_TOOLS)"
     return [version_check(host, "adb", [s.tool("adb"), "version"], HEADSET, fix),
             version_check(host, "fastboot", [s.tool("fastboot"), "--version"], HEADSET, fix)]
 
@@ -95,11 +96,11 @@ def ncm_checks(host: Host, settings=None) -> List[Check]:
         return []
     s = settings or localconfig.load()
     needed_for = "the USB network link on Windows"
-    fix = ('a Python with pip install "pyusb==1.3.1" "libusb-package==1.0.30.0" in PICO4_NCM_PYTHON, '
-           "and UsbDk installed (github.com/daynix/UsbDk releases)")
-    if not s.ncm_python:
-        return [Check("NCM Python", needed_for, MISSING, "PICO4_NCM_PYTHON is empty", fix)]
-    code, out = host.run(windows_ncm.command(s.path("ncm_python")), 30)
+    fix = FETCH + " (the NCM venv), and UsbDk: winget install daynix.UsbDk (admin)"
+    python = s.ncm()
+    if python is None:
+        return [Check("NCM Python", needed_for, MISSING, "no NCM venv and no PICO4_NCM_PYTHON", fix)]
+    code, out = host.run(windows_ncm.command(python), 30)
     try:
         state = json.loads(out.splitlines()[-1]) if code == 0 and out else {}
     except ValueError:
@@ -116,6 +117,8 @@ def build_checks(host: Host) -> List[Check]:
                 "python3": "the build's checks", "brotli": "the stock OTA's images", "debugfs": "the extraction",
                 "mkfs.ext4": "the system image", "e2fsck": "the system image", "sha256sum": "checks"}
     packages = "curl tar zstd xz-utils coreutils python3 brotli e2fsprogs"
+    if host.backend == "docker" and not host.container_ready():
+        return []  # the host checks name the image to build; its tools are checked once it is there
     checks = linux_commands(host, BUILD, commands, APT + packages)
     if not host.linux("echo ok=1"):
         return [Check("Linux", BUILD, MISSING, "no Linux to build in", "WSL (wsl --install -d Ubuntu-24.04) or a "
