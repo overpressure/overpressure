@@ -66,10 +66,15 @@ has_value(const char *text, const char *key, const char *value)
 bool
 pico4_tcam_parse_yaml(const char *text, struct pico4_tcam_omni *out)
 {
-	double res[2], intr[5], dist[4];
-	if (!has_value(text, "camera_model", "omni") || !has_value(text, "distortion_model", "radtan") ||
+	double res[2], intr[5], dist[8] = {0};
+	memset(out, 0, sizeof(*out));
+	// PICO OS's loader takes "fisheye62" with k1..k6, p1, p2; any other model as radtan.
+	out->distortion = has_value(text, "distortion_model", "fisheye62") ? PICO4_TCAM_FISHEYE62 : PICO4_TCAM_RADTAN;
+	const int coefficients = out->distortion == PICO4_TCAM_FISHEYE62 ? 8 : 4;
+	if (!has_value(text, "camera_model", "omni") ||
+	    (out->distortion == PICO4_TCAM_RADTAN && !has_value(text, "distortion_model", "radtan")) ||
 	    parse_list(text, NULL, "resolution:", res, 2) != 2 || parse_list(text, NULL, "intrinsics:", intr, 5) != 5 ||
-	    parse_list(text, NULL, "distortion_coefficients:", dist, 4) != 4 ||
+	    parse_list(text, NULL, "distortion_coefficients:", dist, coefficients) != coefficients ||
 	    parse_list(text, "T_BS:", "data:", out->T_BS, 16) != 16) {
 		return false;
 	}
@@ -80,10 +85,21 @@ pico4_tcam_parse_yaml(const char *text, struct pico4_tcam_omni *out)
 	out->fv = intr[2];
 	out->pu = intr[3];
 	out->pv = intr[4];
-	out->k1 = dist[0];
-	out->k2 = dist[1];
-	out->p1 = dist[2];
-	out->p2 = dist[3];
+	if (out->distortion == PICO4_TCAM_FISHEYE62) {
+		out->k1 = dist[0];
+		out->k2 = dist[1];
+		out->k3 = dist[2];
+		out->k4 = dist[3];
+		out->k5 = dist[4];
+		out->k6 = dist[5];
+		out->p1 = dist[6];
+		out->p2 = dist[7];
+	} else {
+		out->k1 = dist[0];
+		out->k2 = dist[1];
+		out->p1 = dist[2];
+		out->p2 = dist[3];
+	}
 	return out->width > 0 && out->height > 0 && out->fu > 0 && out->fv > 0;
 }
 
@@ -101,6 +117,13 @@ pico4_tcam_omni_project(const struct pico4_tcam_omni *c, const double p[3], doub
 	double mx = p[0] / n / den, my = p[1] / n / den;
 	double r2 = mx * mx + my * my;
 	double radial = 1 + c->k1 * r2 + c->k2 * r2 * r2;
+	if (c->distortion == PICO4_TCAM_FISHEYE62) {
+		// PICO OS's fisheye62: the angle of the omni-normalised point (not of the ray), its
+		// polynomial in theta^2 up to theta^12, and the tangential terms on the undistorted point.
+		double rho = sqrt(r2), t = atan(rho), t2 = t * t;
+		double td = t * (1 + t2 * (c->k1 + t2 * (c->k2 + t2 * (c->k3 + t2 * (c->k4 + t2 * (c->k5 + t2 * c->k6))))));
+		radial = rho > 1e-8 ? td / rho : 1;
+	}
 	double dx = mx * radial + 2 * c->p1 * mx * my + c->p2 * (r2 + 2 * mx * mx);
 	double dy = my * radial + c->p1 * (r2 + 2 * my * my) + 2 * c->p2 * mx * my;
 	uv[0] = c->fu * dx + c->pu;

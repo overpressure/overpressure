@@ -9,7 +9,9 @@
  * distortion and gives its pose in the IMU ("body") frame, which is the raw
  * axis frame of the sensor DSP's accelerometer and gyroscope. Basalt has no
  * omni model, so pico4_tcam_fit_kb4() fits the Kannala-Brandt model (KB4) to
- * rays projected with the factory model across the image.
+ * rays projected with the factory model across the image. The RGB camera (cam4)
+ * has the omni model with PICO's "fisheye62" distortion instead, which SteamVR's
+ * room view gets through the same fit.
  *
  * @ingroup drv_pico4
  */
@@ -24,12 +26,21 @@ extern "C" {
 
 #define PICO4_TCAM_COUNT 4
 
-//! Unified omnidirectional camera with radial-tangential distortion.
+//! Distortion after the omni step (sensor.yaml's distortion_model).
+enum pico4_tcam_distortion
+{
+	PICO4_TCAM_RADTAN = 0,    //!< k1, k2 on r^2 of the omni-normalised point; p1, p2.
+	PICO4_TCAM_FISHEYE62 = 1, //!< k1..k6 on theta = atan(r) of that point; p1, p2 (PICO OS's own form).
+};
+
+//! Unified omnidirectional camera with radial-tangential or fisheye62 distortion.
 struct pico4_tcam_omni
 {
 	int width, height;
+	enum pico4_tcam_distortion distortion;
 	double xi, fu, fv, pu, pv;
 	double k1, k2, p1, p2;
+	double k3, k4, k5, k6; //!< fisheye62 only.
 	//! Camera to body (IMU) transform, row-major 4x4 (Kalibr T_BS).
 	double T_BS[16];
 };
@@ -44,7 +55,7 @@ struct pico4_tcam_kb4
 	int samples;
 };
 
-//! Parse one sensor.yaml; false unless it is an omni/radtan camera with T_BS.
+//! Parse one sensor.yaml; false unless it is an omni camera (radtan or fisheye62) with T_BS.
 bool
 pico4_tcam_parse_yaml(const char *text, struct pico4_tcam_omni *out);
 

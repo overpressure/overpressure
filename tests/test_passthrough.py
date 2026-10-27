@@ -75,7 +75,7 @@ class RoomViewTests(unittest.TestCase):
         header = read(ROOT / "src/monado/pico4_roomview.h")
         self.assertEqual(re.findall(r"(?m)^#include <([^>]+)>", header), ["stdint.h"])
         magic = int(re.search(r"PICO4_ROOMVIEW_MAGIC (0x[0-9a-f]+)ull", header).group(1), 16)
-        self.assertEqual(magic.to_bytes(8, "little"), b"PCO4RVW1")
+        self.assertEqual(magic.to_bytes(8, "little"), b"PCO4RVW2")
         producer = read(ROOT / "src/xr/pico4-roomview.c")
         self.assertIn('#include "pico4_roomview.h"', producer)
         driver = read(ROOT / "src/monado/pico4_passthrough.c")
@@ -87,7 +87,7 @@ class RoomViewTests(unittest.TestCase):
         self.assertLess(export.index("pico4_passthrough_wait("), export.index("__atomic_store_n(&f->sequence, frame.sequence"))
         newest = producer[producer.index("newest_frame(struct pico4_roomview"):]
         newest = newest[:newest.index("\n}\n")]
-        self.assertLess(newest.index("memcpy(out->pixels[1]"), newest.index("!= seq"))
+        self.assertLess(newest.index("memcpy(out->pixels, f->pixels, pixels)"), newest.index("!= seq"))
 
     def test_producer_uses_the_described_interface(self):
         producer = read(ROOT / "src/xr/pico4-roomview.c")

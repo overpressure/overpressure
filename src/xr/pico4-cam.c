@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: BSL-1.0
 /*
- * pico4-cam: the four OV7251 tracking cameras through the Spectra CSL UAPI
- * (src/monado/pico4_cam.c).
+ * pico4-cam: the four OV7251 tracking cameras and the IMX471 RGB camera through the
+ * Spectra CSL UAPI (src/monado/pico4_cam.c).
  *
  *   pico4-cam list
  *       Request manager, sync, ISP, sensor and CSIPHY nodes with the slot and
  *       PHY each one reports, the ISP's IOMMU handles and every media entity.
  *       Opens subdevs for CAM_QUERY_CAP only; powers nothing.
  *   pico4-cam probe [SLOT...]
- *       CAM_SENSOR_PROBE_CMD on the given slots (default 0-3): power up, read
+ *       CAM_SENSOR_PROBE_CMD on the given slots (default 0-3; 4 is the RGB camera): power up, read
  *       the chip ID, power down. The kernel forgets the probe again when this
  *       process closes the sensor node.
  *   pico4-cam capture [--slots 0,1,2,3] [--frames N] [--fps 60|30] [--out DIR]
@@ -61,6 +61,12 @@
  *       as in the driver: without another sensor streaming, the sensor DSP slows
  *       ble_mcu to about 90 events per second a few minutes after it started.
  *
+ *   pico4-cam buffers
+ *       The free entries of the kernel's camera buffer table (pico4_cam_free_buffers).
+ *   pico4-cam rgb [--frames N] [--out DIR] [--exposure LINES] [--gain G]
+ *       The RGB camera alone (slot 4, 2328x1748 RGGB at 50 fps, free-running: no
+ *       station); see cmd_rgb().
+ *
  * -v and -vv (before or after the command) log progress and every ioctl to
  * stderr. Exit status 0 means success: every node found (list), every probe
  * answered (probe), or every camera delivered N frames with increasing
@@ -103,7 +109,9 @@ usage(FILE *f)
 	      "                 [--ring N] [--timeout MS] [--lane-assign SLOT=LANE] [--no-station]\n"
 	      "                 [--no-station-reset] [--stats-log FILE] [--exposure LINES [--gain G]]\n"
 	      "                 [--led-exposure LINES [--led-gain G]] [--lines N] [--sensor-lines N]\n"
-	      "                 [--record-leds FILE] [--record-scene FILE] [--record-imu FILE]\n",
+	      "                 [--record-leds FILE] [--record-scene FILE] [--record-imu FILE]\n"
+	      "       pico4-cam [-v|-vv] rgb [--frames N] [--out DIR] [--exposure LINES] [--gain G]\n"
+	      "                 [--step-exposure LINES [--step-gain G]]\n",
 	      f);
 }
 
@@ -241,7 +249,7 @@ cmd_probe(struct pico4_cam_config *cfg)
 		return 1;
 	}
 	printf("{\n  \"slots\": [");
-	for (int s = 0; s < PICO4_CAM_NUM; s++) {
+	for (int s = 0; s < PICO4_CAM_SLOTS; s++) {
 		struct pico4_cam_slot_info si;
 		if (!((cfg->slots >> s) & 1) || pico4_cam_get_slot_info(cam, s, &si) < 0) {
 			continue;
@@ -893,6 +901,187 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 	return ok ? 0 : 1;
 }
 
+//! Mean of one Bayer channel (row and column parity) over a sparse grid, black level removed.
+static double
+bayer_mean(const struct pico4_cam_frame *f, unsigned dy, unsigned dx)
+{
+	double sum = 0;
+	unsigned n = 0;
+	for (unsigned y = dy; y < f->height; y += 32) {
+		const uint16_t *row = (const uint16_t *)((const uint8_t *)f->data + (size_t)y * f->stride);
+		for (unsigned x = dx; x < f->width; x += 32) {
+			sum += (double)row[x] - PICO4_CAM_RGB_BLACK;
+			n++;
+		}
+	}
+	return n > 0 ? sum / n : 0;
+}
+
+/*!
+ * The RGB frame as DIR/rgb.raw16 (the buffer, little-endian 16-bit RGGB samples) and
+ * DIR/rgb.ppm: each 2x2 cell one pixel (1164x874), black level removed, the channels
+ * balanced to their means (grey world) and scaled so their mean is a quarter of white.
+ */
+static int
+save_rgb(const struct pico4_cam_frame *f, const char *dir, const double mean[4])
+{
+	char path[512];
+	snprintf(path, sizeof(path), "%s/rgb.raw16", dir);
+	FILE *out = fopen(path, "wb");
+	if (out == NULL || fwrite(f->data, 1, f->size, out) != f->size) {
+		if (out != NULL) {
+			fclose(out);
+		}
+		return -1;
+	}
+	fclose(out);
+	double g = (mean[1] + mean[2]) / 2;
+	double scale[3] = {mean[0] > 1 ? g / mean[0] : 1, 1, mean[3] > 1 ? g / mean[3] : 1};
+	double level = g > 1 ? 255.0 / 4 / g : 1;
+	snprintf(path, sizeof(path), "%s/rgb.ppm", dir);
+	out = fopen(path, "wb");
+	if (out == NULL) {
+		return -1;
+	}
+	unsigned w = f->width / 2, h = f->height / 2;
+	fprintf(out, "P6\n%u %u\n255\n", w, h);
+	uint8_t *line = malloc((size_t)w * 3);
+	for (unsigned y = 0; y < h && line != NULL; y++) {
+		const uint16_t *r0 = (const uint16_t *)((const uint8_t *)f->data + (size_t)(2 * y) * f->stride);
+		const uint16_t *r1 = (const uint16_t *)((const uint8_t *)f->data + (size_t)(2 * y + 1) * f->stride);
+		for (unsigned x = 0; x < w; x++) {
+			double v[3] = {r0[2 * x] - (double)PICO4_CAM_RGB_BLACK,
+			               (r0[2 * x + 1] + r1[2 * x]) / 2.0 - PICO4_CAM_RGB_BLACK,
+			               r1[2 * x + 1] - (double)PICO4_CAM_RGB_BLACK};
+			for (int c = 0; c < 3; c++) {
+				double o = v[c] * scale[c] * level;
+				line[3 * x + c] = (uint8_t)(o < 0 ? 0 : o > 255 ? 255 : o);
+			}
+		}
+		fwrite(line, 3, w, out);
+	}
+	free(line);
+	fclose(out);
+	return 0;
+}
+
+/*!
+ * pico4-cam rgb [--frames N] [--out DIR] [--exposure LINES] [--gain G]: the IMX471 alone
+ * (slot 4, free-running, no station), N frames (default 100); a JSON summary with the
+ * frame rate from start-of-frame timestamps and the mean of each Bayer channel; the last
+ * frame saved as DIR/rgb.raw16 and DIR/rgb.ppm when --out is given.
+ */
+static int
+cmd_rgb(struct pico4_cam_config *cfg, int argc, char **argv)
+{
+	unsigned long frames = 100, v, step_lines = 0, step_gain = 16;
+	const char *dir = NULL;
+	for (int i = 0; i < argc; i++) {
+		const char *a = argv[i], *val = i + 1 < argc ? argv[i + 1] : NULL;
+		if (strcmp(a, "--frames") == 0 && val != NULL && parse_uint(val, 100000, &frames) && frames > 0) {
+			i++;
+		} else if (strcmp(a, "--out") == 0 && val != NULL) {
+			dir = val;
+			i++;
+		} else if (strcmp(a, "--exposure") == 0 && val != NULL && parse_uint(val, PICO4_CAM_RGB_MAX_LINES, &v)) {
+			cfg->rgb_exposure_lines = (unsigned)v;
+			i++;
+		} else if (strcmp(a, "--gain") == 0 && val != NULL && parse_uint(val, 256, &v)) {
+			cfg->rgb_gain = (unsigned)v;
+			i++;
+		} else if (strcmp(a, "--step-exposure") == 0 && val != NULL &&
+		           parse_uint(val, PICO4_CAM_RGB_MAX_LINES, &step_lines)) {
+			i++;
+		} else if (strcmp(a, "--step-gain") == 0 && val != NULL && parse_uint(val, 256, &step_gain)) {
+			i++;
+		} else {
+			usage(stderr);
+			return 2;
+		}
+	}
+	cfg->slots = 1u << PICO4_CAM_RGB_SLOT;
+	struct pico4_cam *cam;
+	int r = pico4_cam_open(&cam, cfg);
+	if (r < 0) {
+		fprintf(stderr, "pico4-cam: open: %s\n", strerror(-r));
+		return 1;
+	}
+	struct sigaction sa = {.sa_handler = on_signal};
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
+	r = pico4_cam_start(cam);
+	unsigned long got = 0, timeouts = 0, backwards = 0;
+	int64_t first_sof = 0, last_sof = 0;
+	// Each half's mean level and brightest sample (sparse grid), to see an exposure step take effect.
+	double half_mean[2] = {0}, half_peak[2] = {0};
+	unsigned long half_n[2] = {0};
+	int step_rc = 0;
+	double mean[4] = {0};
+	struct pico4_cam_frame f;
+	while (r == 0 && got < frames && !g_stop) {
+		int n = pico4_cam_next(cam, &f, 1000);
+		if (n == -ETIMEDOUT) {
+			if (++timeouts >= 3) {
+				break;
+			}
+			continue;
+		}
+		if (n < 0) {
+			r = n;
+			break;
+		}
+		got++;
+		unsigned half = got > frames / 2;
+		if (half == 1 && half_n[1] == 0 && step_lines != 0) {
+			step_rc = pico4_cam_set_rgb_exposure(cam, (unsigned)step_lines, (unsigned)step_gain);
+		}
+		double fm = 0, fp = 0;
+		unsigned fn = 0;
+		for (unsigned y = 0; y < f.height; y += 16) {
+			const uint16_t *row = (const uint16_t *)((const uint8_t *)f.data + (size_t)y * f.stride);
+			for (unsigned x = 0; x < f.width; x += 16) {
+				fm += row[x];
+				fp = row[x] > fp ? row[x] : fp;
+				fn++;
+			}
+		}
+		half_mean[half] += fn > 0 ? fm / fn : 0;
+		half_peak[half] += fp;
+		half_n[half]++;
+		if (f.sof_boottime_ns != 0) {
+			backwards += last_sof != 0 && f.sof_boottime_ns <= last_sof;
+			first_sof = first_sof != 0 ? first_sof : f.sof_boottime_ns;
+			last_sof = f.sof_boottime_ns;
+		}
+		if (got == frames || g_stop) {
+			for (int c = 0; c < 4; c++) {
+				mean[c] = bayer_mean(&f, (unsigned)c / 2, (unsigned)c % 2);
+			}
+			if (dir != NULL) {
+				mkdir(dir, 0755);
+				if (save_rgb(&f, dir, mean) < 0) {
+					fprintf(stderr, "pico4-cam: could not save to %s\n", dir);
+				}
+			}
+		}
+		pico4_cam_release(cam, &f);
+	}
+	double fps = got > 1 && last_sof > first_sof ? (got - 1) * 1e9 / (double)(last_sof - first_sof) : 0;
+	for (int h = 0; h < 2; h++) {
+		half_mean[h] = half_n[h] > 0 ? half_mean[h] / half_n[h] : 0;
+		half_peak[h] = half_n[h] > 0 ? half_peak[h] / half_n[h] : 0;
+	}
+	printf("{\"frames\": %lu, \"fps\": %.2f, \"timestamps_backwards\": %lu, \"timeouts\": %lu, "
+	       "\"mean_r\": %.1f, \"mean_gr\": %.1f, \"mean_gb\": %.1f, \"mean_b\": %.1f, "
+	       "\"first_half\": {\"mean\": %.2f, \"peak\": %.1f}, \"second_half\": {\"mean\": %.2f, \"peak\": %.1f}, "
+	       "\"step_rc\": %d}\n",
+	       got, fps, backwards, timeouts, mean[0], mean[1], mean[2], mean[3], half_mean[0], half_peak[0],
+	       half_mean[1], half_peak[1], step_rc);
+	pico4_cam_stop(cam);
+	pico4_cam_close(cam);
+	return r == 0 && got == frames && backwards == 0 ? 0 : 1;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -935,7 +1124,7 @@ main(int argc, char **argv)
 			unsigned mask = 0;
 			for (int j = i + 1; j < argc; j++) {
 				unsigned long v;
-				if (!parse_uint(argv[j], PICO4_CAM_NUM - 1, &v)) {
+				if (!parse_uint(argv[j], PICO4_CAM_SLOTS - 1, &v)) {
 					usage(stderr);
 					return 2;
 				}
@@ -947,6 +1136,14 @@ main(int argc, char **argv)
 	}
 	if (strcmp(argv[i], "capture") == 0) {
 		return cmd_capture(&cfg, argc - i - 1, argv + i + 1);
+	}
+	if (strcmp(argv[i], "rgb") == 0) {
+		return cmd_rgb(&cfg, argc - i - 1, argv + i + 1);
+	}
+	if (strcmp(argv[i], "buffers") == 0 && argc == i + 1) {
+		int n = pico4_cam_free_buffers(&cfg);
+		printf("{\"free_buffers\": %d}\n", n);
+		return n >= 0 ? 0 : 1;
 	}
 	usage(stderr);
 	return 2;

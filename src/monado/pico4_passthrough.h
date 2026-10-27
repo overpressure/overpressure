@@ -137,6 +137,82 @@ void
 pico4_passthrough_convert(const uint16_t *src, uint32_t src_stride, int turn, float gain, uint8_t *dst,
                           uint32_t dst_stride);
 
+/*
+ * The RGB camera (IMX471, factory cam4) for SteamVR's room view, as PICO OS colours its
+ * see-through: its colour image, 2x2 RGGB cells as one pixel (1164x874), in place of the grey
+ * pair. SteamVR's camera component keeps the grey pair (pico4_passthrough_info).
+ */
+#define PICO4_PASSTHROUGH_RGB_SRC_W 2328
+#define PICO4_PASSTHROUGH_RGB_SRC_H 1748
+#define PICO4_PASSTHROUGH_RGB_W (PICO4_PASSTHROUGH_RGB_SRC_W / 2)
+#define PICO4_PASSTHROUGH_RGB_H (PICO4_PASSTHROUGH_RGB_SRC_H / 2)
+#define PICO4_PASSTHROUGH_RGB_BLACK 64 //!< 10-bit black level.
+
+/*!
+ * The room view takes the RGB camera from now on: its factory calibration (cam4, omni with
+ * fisheye62) fitted to KB4 at the 2x2 cells, placed in the HMD frame. Before
+ * pico4_passthrough_export; false (and the grey pair stays) without that calibration.
+ */
+bool
+pico4_passthrough_use_rgb(struct pico4_passthrough *p, const char *calibration_dir, const double T_body_head[16]);
+
+//! The room view's RGB camera as SteamVR describes it (camera 0; camera 1 the same); false in grey mode.
+bool
+pico4_passthrough_rgb_info(const struct pico4_passthrough *p, struct pico4_passthrough_info *out);
+
+/*!
+ * One RGB frame (RGGB, 10-bit in 16, @p stride samples a row), its start of frame and exposure.
+ * Camera thread. True if taken: the buffer must then stay valid until pico4_passthrough_rgb_busy()
+ * is false. False when nobody streams or the frame before is still being converted.
+ */
+bool
+pico4_passthrough_push_rgb(struct pico4_passthrough *p,
+                           const uint16_t *rggb,
+                           uint32_t stride,
+                           int64_t sof_ns,
+                           uint32_t exposure_us);
+
+//! An RGB frame handed over is still being read.
+bool
+pico4_passthrough_rgb_busy(struct pico4_passthrough *p);
+
+//! The RGB frames handed over and converted so far, and the conversion time spent on them.
+void
+pico4_passthrough_rgb_counts(struct pico4_passthrough *p, uint64_t *taken, uint64_t *converted, int64_t *convert_ns);
+
+/*!
+ * The RGB camera's next exposure (lines of PICO4_PASSTHROUGH_RGB_LINE_NS, analog gain 16 = 1x)
+ * from the newest converted frame, given the exposure it was taken with. True if it should
+ * change; at most once per new frame.
+ */
+#define PICO4_PASSTHROUGH_RGB_LINE_NS 4425
+bool
+pico4_passthrough_rgb_exposure(struct pico4_passthrough *p,
+                               unsigned lines,
+                               unsigned gain,
+                               unsigned *out_lines,
+                               unsigned *out_gain);
+
+/*!
+ * RGGB 10-bit cells (@p src, @p src_stride samples a row) into NV12 (@p width x @p height, the
+ * luma rows then the Cb, Cr rows, @p width bytes each): black level off, times the white balance
+ * @p wb (R, G, B), through @p srgb (linear counts 0-1023 to sRGB 8 bits), full-range BT.601. The
+ * channels' means before the white balance (linear counts) go to @p mean.
+ */
+void
+pico4_passthrough_convert_rgb(const uint16_t *src,
+                              uint32_t src_stride,
+                              const float wb[3],
+                              const uint8_t srgb[1024],
+                              uint8_t *dst,
+                              uint32_t width,
+                              uint32_t height,
+                              double mean[3]);
+
+//! The sRGB encoding of linear counts (0 to @p white) as pico4_passthrough_convert_rgb takes it.
+void
+pico4_passthrough_srgb_table(uint8_t table[1024], double white);
+
 void
 pico4_passthrough_destroy(struct pico4_passthrough **p);
 

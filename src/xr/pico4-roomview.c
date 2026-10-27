@@ -13,7 +13,10 @@
  * asks for frames. The interface's layout is this project's own description of it
  * (docs/xr.md#passthrough); nothing of Valve's is linked: libopenvr_api.so is opened at run time.
  *
- *   pico4-roomview [--frames N]
+ *   pico4-roomview [--frames N] [--test-pattern]
+ *
+ * --test-pattern publishes colour bars as NV12 in place of the cameras' images, with the left
+ * camera's geometry and the frames' poses: a check of the colour path into the compositor.
  */
 #define _GNU_SOURCE
 #include "pico4_roomview.h"
@@ -43,6 +46,7 @@
 #define BLOCK 0 //!< The frame block of the plain camera view (the other one is for a second mode).
 #define MAX_FRAMES 16
 #define DRM_FORMAT_R8 0x20203852u // fourcc 'R', '8', ' ', ' '
+#define DRM_FORMAT_NV12 0x3231564eu // fourcc 'N', 'V', '1', '2'
 #define DRM_FORMAT_MOD_LINEAR 0ull
 
 // The interface's slots, in vtable order; every call takes the object first.
@@ -153,7 +157,8 @@ struct image
 	VkImage image;
 	VkDeviceMemory memory;
 	uint8_t *data;
-	VkSubresourceLayout layout;
+	VkSubresourceLayout layout; //!< The (luma) plane.
+	VkSubresourceLayout uv;     //!< NV12: the interleaved Cb, Cr plane.
 	int fd;
 };
 
@@ -374,9 +379,13 @@ vulkan_init(struct vulkan *vk)
 	return vk->get_memory_fd != NULL;
 }
 
-//! One R8 frame the CPU writes and the compositor imports: linear, mapped, exported as a dma-buf.
+/*!
+ * One frame the CPU writes and the compositor imports: linear, mapped, exported as a dma-buf.
+ * R8 for the grey cameras; NV12 (two planes in one allocation) for colour, the only colour
+ * input of the compositor's room view.
+ */
 static bool
-image_create(struct vulkan *vk, uint32_t width, uint32_t height, struct image *out)
+image_create(struct vulkan *vk, uint32_t width, uint32_t height, bool nv12, struct image *out)
 {
 	const uint64_t modifier = DRM_FORMAT_MOD_LINEAR;
 	VkImageDrmFormatModifierListCreateInfoEXT mods = {
@@ -393,7 +402,7 @@ image_create(struct vulkan *vk, uint32_t width, uint32_t height, struct image *o
 	    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 	    .pNext = &external,
 	    .imageType = VK_IMAGE_TYPE_2D,
-	    .format = VK_FORMAT_R8_UNORM,
+	    .format = nv12 ? VK_FORMAT_G8_B8R8_2PLANE_420_UNORM : VK_FORMAT_R8_UNORM,
 	    .extent = {width, height, 1},
 	    .mipLevels = 1,
 	    .arrayLayers = 1,
@@ -404,7 +413,7 @@ image_create(struct vulkan *vk, uint32_t width, uint32_t height, struct image *o
 	    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 	};
 	if (vkCreateImage(vk->device, &ici, NULL, &out->image) != VK_SUCCESS) {
-		fprintf(stderr, "pico4-roomview: no linear R8 dma-buf image\n");
+		fprintf(stderr, "pico4-roomview: no linear %s dma-buf image\n", nv12 ? "NV12" : "R8");
 		return false;
 	}
 	VkMemoryRequirements req;
@@ -446,6 +455,10 @@ image_create(struct vulkan *vk, uint32_t width, uint32_t height, struct image *o
 	}
 	VkImageSubresource sub = {.aspectMask = VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT};
 	vkGetImageSubresourceLayout(vk->device, out->image, &sub, &out->layout);
+	if (nv12) {
+		VkImageSubresource uv = {.aspectMask = VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT};
+		vkGetImageSubresourceLayout(vk->device, out->image, &uv, &out->uv);
+	}
 	VkMemoryGetFdInfoKHR fdi = {
 	    .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
 	    .memory = out->memory,
@@ -456,7 +469,36 @@ image_create(struct vulkan *vk, uint32_t width, uint32_t height, struct image *o
 		return false;
 	}
 	memset(out->data + out->layout.offset, 0, (size_t)out->layout.rowPitch * height);
+	if (nv12) {
+		memset(out->data + out->uv.offset, 128, (size_t)out->uv.rowPitch * (height / 2)); // no colour
+	}
 	return true;
+}
+
+/*!
+ * --test-pattern: eight colour bars (white, yellow, cyan, green, magenta, red, blue, black) as
+ * NV12, sRGB-encoded and full range (BT.601), as the compositor's colour shader decodes them.
+ */
+static void
+fill_bars(struct image *im, uint32_t width, uint32_t height)
+{
+	static const uint8_t bars[8][3] = {{255, 255, 255}, {255, 255, 0}, {0, 255, 255}, {0, 255, 0},
+	                                   {255, 0, 255},   {255, 0, 0},   {0, 0, 255},   {0, 0, 0}};
+	for (uint32_t y = 0; y < height; y++) {
+		uint8_t *luma = im->data + im->layout.offset + (size_t)y * im->layout.rowPitch;
+		uint8_t *uv = im->data + im->uv.offset + (size_t)(y / 2) * im->uv.rowPitch;
+		for (uint32_t x = 0; x < width; x++) {
+			const uint8_t *c = bars[x * 8 / width];
+			double r = c[0], g = c[1], b = c[2];
+			luma[x] = (uint8_t)lround(0.299 * r + 0.587 * g + 0.114 * b);
+			if (y % 2 == 0 && x % 2 == 0) {
+				double cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+				double cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+				uv[x] = (uint8_t)lround(cb < 0 ? 0 : cb > 255 ? 255 : cb);
+				uv[x + 1] = (uint8_t)lround(cr < 0 ? 0 : cr > 255 ? 255 : cr);
+			}
+		}
+	}
 }
 
 /*!
@@ -534,13 +576,14 @@ newest_frame(struct pico4_roomview *rv, uint64_t after, struct pico4_roomview_fr
 	if (seq == 0 || seq <= after) {
 		return false;
 	}
+	// Grey: both cameras' images; NV12: one image with its half-height colour rows.
 	size_t pixels = (size_t)rv->width * rv->height;
+	pixels = rv->format == PICO4_ROOMVIEW_FORMAT_NV12 ? pixels * 3 / 2 : pixels * PICO4_ROOMVIEW_CAMS;
 	out->timestamp_ns = f->timestamp_ns;
 	out->exposure_us = f->exposure_us;
 	out->pose_valid = f->pose_valid;
 	memcpy(out->tracking_from_head, f->tracking_from_head, sizeof(out->tracking_from_head));
-	memcpy(out->pixels[0], f->pixels[0], pixels);
-	memcpy(out->pixels[1], f->pixels[1], pixels);
+	memcpy(out->pixels, f->pixels, pixels);
 	__atomic_thread_fence(__ATOMIC_ACQUIRE);
 	if (__atomic_load_n(&f->sequence, __ATOMIC_RELAXED) != seq) {
 		return false;
@@ -570,11 +613,14 @@ int
 main(int argc, char **argv)
 {
 	uint32_t frames = 3;
+	bool test_pattern = false;
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
 			frames = (uint32_t)atoi(argv[++i]);
+		} else if (strcmp(argv[i], "--test-pattern") == 0) {
+			test_pattern = true;
 		} else {
-			fprintf(stderr, "usage: pico4-roomview [--frames N]\n");
+			fprintf(stderr, "usage: pico4-roomview [--frames N] [--test-pattern]\n");
 			return 2;
 		}
 	}
@@ -603,7 +649,9 @@ main(int argc, char **argv)
 		return 0;
 	}
 	const uint32_t width = rv->width, height = rv->height;
-	if ((size_t)width * height > PICO4_ROOMVIEW_PIXELS || width == 0 || height == 0) {
+	const bool colour = rv->format == PICO4_ROOMVIEW_FORMAT_NV12;
+	const size_t frame_bytes = colour ? (size_t)width * height * 3 / 2 : (size_t)width * height * PICO4_ROOMVIEW_CAMS;
+	if (frame_bytes > PICO4_ROOMVIEW_BYTES || width == 0 || height == 0 || (colour && (width % 2 || height % 2))) {
 		fprintf(stderr, "pico4-roomview: bad frame size %ux%u\n", width, height);
 		return 1;
 	}
@@ -663,12 +711,25 @@ main(int argc, char **argv)
 		return 1;
 	}
 
+	/*
+	 * Colour (NV12) has one camera image: both camera slots are backed by the same frames, and
+	 * each frame is published to both, so the compositor's per-eye pick finds the same image.
+	 * The compositor imports only plane 0's dma-buf; plane 1 names the same one.
+	 */
+	const bool nv12 = test_pattern || colour;
+	fprintf(stderr, "pico4-roomview: %s frames of %ux%u\n", test_pattern ? "colour test pattern" : colour ? "colour" : "grey",
+	        width, height);
 	static struct image images[PICO4_ROOMVIEW_CAMS][MAX_FRAMES];
 	static struct dmabuf_attributes attrs[PICO4_ROOMVIEW_CAMS][MAX_FRAMES];
 	for (int c = 0; c < PICO4_ROOMVIEW_CAMS; c++) {
 		for (uint32_t i = 0; i < frames; i++) {
 			struct image *im = &images[c][i];
-			if (!image_create(&vk, width, height, im)) {
+			if (nv12 && c > 0) {
+				images[c][i] = images[0][i];
+				attrs[c][i] = attrs[0][i];
+				continue;
+			}
+			if (!image_create(&vk, width, height, nv12, im)) {
 				vr_shutdown();
 				return 1;
 			}
@@ -679,20 +740,25 @@ main(int argc, char **argv)
 			    .mip_levels = 1,
 			    .array_layers = 1,
 			    .sample_count = 1,
-			    .format = DRM_FORMAT_R8,
+			    .format = nv12 ? DRM_FORMAT_NV12 : DRM_FORMAT_R8,
 			    .modifier = DRM_FORMAT_MOD_LINEAR,
-			    .plane_count = 1,
-			    .planes = {{(uint32_t)im->layout.offset, (uint32_t)im->layout.rowPitch, im->fd}},
+			    .plane_count = nv12 ? 2 : 1,
+			    .planes = {{(uint32_t)im->layout.offset, (uint32_t)im->layout.rowPitch, im->fd},
+			               {(uint32_t)im->uv.offset, (uint32_t)im->uv.rowPitch, im->fd}},
 			};
+			if (test_pattern) {
+				fill_bars(im, width, height);
+			}
 		}
 	}
-	// Monochrome frames with fisheye coefficients; the distortion map SteamVR always allocates
-	// stays unused (metadata META_SPLINE 0) and small.
+	// Fisheye coefficients; the distortion map SteamVR always allocates stays unused (metadata
+	// META_SPLINE 0) and small.
 	struct frames_desc desc = {
 	    .frames = frames,
 	    .width = width,
 	    .height = height,
-	    .monochrome = 1,
+	    .nv12 = nv12 ? 1 : 0,
+	    .monochrome = nv12 ? 0 : 1,
 	    .spline_width = 16,
 	    .spline_height = 16,
 	};
@@ -747,7 +813,48 @@ main(int argc, char **argv)
 			continue;
 		}
 		last = frame.sequence;
-		for (int c = 0; c < PICO4_ROOMVIEW_CAMS; c++) {
+		if (nv12) {
+			// One frame index that both cameras have free, the same image and pose for both.
+			int32_t status[PICO4_ROOMVIEW_CAMS][MAX_FRAMES];
+			bool ok = true;
+			for (int c = 0; c < PICO4_ROOMVIEW_CAMS; c++) {
+				ok = ok && CALL(pt, SLOT_GET_FRAME_STATUSES, get_frame_statuses_fn)(pt, BLOCK, (uint32_t)c, status[c],
+				                                                                    sizeof(status[c])) == 0;
+			}
+			uint32_t idx = UINT32_MAX;
+			for (uint32_t i = 0; ok && i < frames && idx == UINT32_MAX; i++) {
+				if (status[0][i] == FRAME_FREE && status[1][i] == FRAME_FREE) {
+					idx = i;
+				}
+			}
+			if (idx == UINT32_MAX) {
+				skipped++;
+				continue;
+			}
+			struct image *im = &images[0][idx];
+			if (colour && !test_pattern) {
+				// The luma rows, then the interleaved Cb, Cr rows, each into its plane.
+				for (uint32_t row = 0; row < height; row++) {
+					memcpy(im->data + im->layout.offset + (size_t)row * im->layout.rowPitch,
+					       frame.pixels + (size_t)row * width, width);
+				}
+				const uint8_t *uv = frame.pixels + (size_t)width * height;
+				for (uint32_t row = 0; row < height / 2; row++) {
+					memcpy(im->data + im->uv.offset + (size_t)row * im->uv.rowPitch, uv + (size_t)row * width, width);
+				}
+			}
+			for (int c = 0; c < PICO4_ROOMVIEW_CAMS; c++) {
+				struct frame_metadata meta;
+				metadata(rv, &frame, 0, raw_offset, &meta);
+				CALL(pt, SLOT_SET_FRAME_METADATA, set_frame_metadata_fn)(pt, BLOCK, (uint32_t)c, idx, &meta);
+			}
+			for (int c = 0; c < PICO4_ROOMVIEW_CAMS; c++) {
+				if (CALL(pt, SLOT_PUBLISH_FRAME, publish_frame_fn)(pt, BLOCK, (uint32_t)c, idx) == 0) {
+					published++;
+				}
+			}
+		}
+		for (int c = 0; c < PICO4_ROOMVIEW_CAMS && !nv12; c++) {
 			int32_t status[MAX_FRAMES];
 			if (CALL(pt, SLOT_GET_FRAME_STATUSES, get_frame_statuses_fn)(pt, BLOCK, (uint32_t)c, status,
 			                                                               sizeof(status)) != 0) {
@@ -765,7 +872,7 @@ main(int argc, char **argv)
 				continue;
 			}
 			struct image *im = &images[c][idx];
-			const uint8_t *src = frame.pixels[c];
+			const uint8_t *src = frame.pixels + (size_t)c * width * height;
 			for (uint32_t row = 0; row < height; row++) {
 				uint8_t *dst = im->data + im->layout.offset + (size_t)row * im->layout.rowPitch;
 				const uint8_t *in = src + (size_t)row * width;

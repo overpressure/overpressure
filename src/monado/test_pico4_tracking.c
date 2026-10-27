@@ -261,6 +261,33 @@ test_calibration(void)
 	pico4_tcam_kb4_project(&k, p, b);
 	EXPECT(fabs(a[0] - b[0]) < 1.0 && fabs(a[1] - b[1]) < 1.0);
 
+	// The RGB camera's model: omni with PICO's fisheye62 (k1..k6 on the angle of the
+	// omni-normalised point, tangential terms on that point). Made-up values; the expected
+	// pixel comes from an independent evaluation of the same formula.
+	static const char rgb_yaml[] = "T_BS:\n"
+	                               "  data: [ 0.0, -1.0, 0.0, 0.05,\n"
+	                               "          -1.0, 0.0, 0.0, -0.02,\n"
+	                               "          0.0, 0.0, -1.0, 0.01,\n"
+	                               "          0.0, 0.0, 0.0, 1.0]\n"
+	                               "resolution: [2328, 1748]\n"
+	                               "camera_model: omni\n"
+	                               "intrinsics: [0.77,1550.0,1551.0,1160.0,875.0]\n"
+	                               "distortion_model: fisheye62\n"
+	                               "distortion_coefficients: [0.1,-0.05,0.02,-0.01,0.003,-0.0005,0.0002,-0.0001]";
+	struct pico4_tcam_omni rgb;
+	EXPECT(pico4_tcam_parse_yaml(rgb_yaml, &rgb));
+	EXPECT(rgb.distortion == PICO4_TCAM_FISHEYE62 && rgb.width == 2328 && rgb.height == 1748);
+	EXPECT(rgb.k1 == 0.1 && rgb.k6 == -0.0005 && rgb.p1 == 0.0002 && rgb.p2 == -0.0001);
+	double q[3] = {0.3, -0.2, 0.9}, quv[2];
+	EXPECT(pico4_tcam_omni_project(&rgb, q, quv));
+	EXPECT(fabs(quv[0] - 1439.252672) < 1e-5 && fabs(quv[1] - 688.721360) < 1e-5);
+	EXPECT(pico4_tcam_omni_project(&rgb, axis, uv));
+	EXPECT(fabs(uv[0] - 1160.0) < 1e-9 && fabs(uv[1] - 875.0) < 1e-9);
+	struct pico4_tcam_kb4 rk;
+	EXPECT(pico4_tcam_fit_kb4(&rgb, &rk));
+	printf("RGB KB4 fit: rms %.3f px, max %.3f px over %d rays\n", rk.rms_px, rk.max_px, rk.samples);
+	EXPECT(rk.samples > 1000);
+
 	// A camera turned by 180 degrees sees a body point at the mirrored pixel.
 	struct pico4_tcam_kb4 r = k;
 	double T[16];
@@ -542,6 +569,36 @@ test_set_identity(void)
 	EXPECT(!pico4_cam_set_consistent(&c, ids, m, 4, why, sizeof(why)) && strstr(why, "camera 2") != NULL);
 }
 
+/*!
+ * The RGB camera's cells into NV12: black level off, white balance, sRGB, full-range BT.601.
+ * Expected values from an independent evaluation of the same steps (sRGB of 200/959 is 126).
+ */
+static void
+test_rgb_convert(void)
+{
+	enum { W = 4, H = 2 }; // output pixels; the source has twice as many in each direction
+	static uint16_t src[2 * H][2 * W];
+	for (int y = 0; y < 2 * H; y++) {
+		for (int x = 0; x < 2 * W; x++) {
+			// RGGB: R at even/even, G at even/odd and odd/even, B at odd/odd.
+			src[y][x] = (uint16_t)(64 + ((y % 2) == 0 ? ((x % 2) == 0 ? 200 : 400) : ((x % 2) == 0 ? 400 : 100)));
+		}
+	}
+	uint8_t table[1024], nv12[W * H * 3 / 2];
+	pico4_passthrough_srgb_table(table, 959);
+	EXPECT(table[0] == 0 && table[959] == 255 && table[1023] == 255 && table[200] == 126);
+	const float unity[3] = {1, 1, 1};
+	double mean[3];
+	pico4_passthrough_convert_rgb(&src[0][0], 2 * W, unity, table, nv12, W, H, mean);
+	EXPECT(mean[0] == 200 && mean[1] == 400 && mean[2] == 100);
+	EXPECT(nv12[0] == 150 && nv12[W * H - 1] == 150);
+	EXPECT(nv12[W * H] == 95 && nv12[W * H + 1] == 111); // Cb, Cr of the first 2x2 block
+	// Grey-world gains make the cells grey: no colour left.
+	const float grey[3] = {2, 1, 4};
+	pico4_passthrough_convert_rgb(&src[0][0], 2 * W, grey, table, nv12, W, H, mean);
+	EXPECT(nv12[0] == 173 && nv12[W * H] == 128 && nv12[W * H + 1] == 128);
+}
+
 static void
 test_passthrough(void)
 {
@@ -644,7 +701,8 @@ test_roomview(void)
 	struct pico4_roomview *rv = mmap(NULL, sizeof(*rv), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	close(fd);
 	EXPECT(rv != MAP_FAILED);
-	EXPECT(rv->magic == PICO4_ROOMVIEW_MAGIC && rv->version == 1 && rv->generation == 1);
+	EXPECT(rv->magic == PICO4_ROOMVIEW_MAGIC && rv->version == 2 && rv->generation == 1);
+	EXPECT(rv->format == PICO4_ROOMVIEW_FORMAT_GREY);
 	struct pico4_passthrough_info info;
 	pico4_passthrough_info(p, &info);
 	EXPECT(rv->width == info.width && rv->height == info.height && rv->fx[0] == info.fx[0]);
@@ -671,8 +729,8 @@ test_roomview(void)
 	EXPECT(f->sequence == 1 && f->timestamp_ns == 123456789 && f->pose_valid == 1);
 	EXPECT(f->tracking_from_head[3] == 0.5 && f->tracking_from_head[11] == 789);
 	// The two cameras one after the other, each width x height.
-	EXPECT(f->pixels[0][0] == 100 && f->pixels[0][(size_t)info.width * info.height - 1] == 100);
-	EXPECT(f->pixels[1][0] == 50);
+	EXPECT(f->pixels[0] == 100 && f->pixels[(size_t)info.width * info.height - 1] == 100);
+	EXPECT(f->pixels[(size_t)info.width * info.height] == 50);
 	EXPECT(push_until_written(p, rv, left, right, 223456789, 2));
 	EXPECT(rv->frames[1].sequence == 2);
 	// A producer that went quiet stops the stream.
@@ -719,6 +777,7 @@ main(void)
 	test_median();
 	test_set_assembly();
 	test_set_identity();
+	test_rgb_convert();
 	test_passthrough();
 	test_roomview();
 	if (failures != 0) {

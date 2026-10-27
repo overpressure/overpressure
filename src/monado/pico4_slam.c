@@ -113,6 +113,11 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_brightness, "PICO4_SLAM_BRIGHTNESS", 70)
 DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_max_exposure, "PICO4_SLAM_MAX_EXPOSURE", 400)
 //! Frame times at the middle of the exposure rather than at the start of frame (push_group).
 DEBUG_GET_ONCE_BOOL_OPTION(pico4_slam_exposure_centre, "PICO4_SLAM_EXPOSURE_CENTRE", true)
+/*!
+ * SteamVR's room view in colour from the RGB camera (sensor slot 4), as PICO OS colours its
+ * see-through, in place of the grey forward pair (docs/xr.md#passthrough).
+ */
+DEBUG_GET_ONCE_BOOL_OPTION(pico4_roomview_rgb, "PICO4_ROOMVIEW_RGB", false)
 #define LINE_NS 19069                 //!< One sensor line (stock).
 #define SOF_AFTER_EXPOSURE_NS 52000   //!< Start-of-frame interrupt after the exposure's end (stock).
 #define SOF_AFTER_LINES_NS 133483     //!< Seven more lines the stock service takes off (stock).
@@ -273,6 +278,14 @@ struct pico4_slam
 	uint64_t stock_sets, stock_imu, stock_lost_feed;
 	//! SteamVR's camera: the forward pair's scene sets while a client streams (NULL without).
 	struct pico4_passthrough *passthrough;
+	//! The room view's RGB camera (PICO4_ROOMVIEW_RGB): the frame the passthrough reads, if any.
+	bool rgb, rgb_holding;
+	bool rgb_paused;        //!< Its stream paused at the sensor while nobody shows it.
+	bool rgb_pause_refused; //!< The sensor refused a pause or resume: it streams on.
+	int64_t rgb_wanted_ns;  //!< When the room view last asked for frames.
+	struct pico4_cam_frame rgb_held;
+	unsigned rgb_lines, rgb_gain; //!< Its exposure as last set.
+	uint64_t rgb_frames, rgb_taken, rgb_exposures;
 };
 
 static void
@@ -769,23 +782,43 @@ stock_publish(struct pico4_slam *s)
 		          p != NULL ? p->error : 0, (unsigned long long)s->frames_boot_time,
 		          (unsigned long long)s->sets_dropped, (unsigned long long)s->sets_inconsistent,
 		          (double)(s->qtimer_offset_ns - s->qtimer_first_offset_ns) / 1e6);
+		if (s->rgb) {
+			uint64_t taken, converted;
+			int64_t convert_ns;
+			pico4_passthrough_rgb_counts(s->passthrough, &taken, &converted, &convert_ns);
+			SLAM_INFO(s,
+			          "RGB camera: %llu frames, %llu to the room view, %llu converted (%.1f ms each); exposure %u "
+			          "lines gain %u, %llu changes",
+			          (unsigned long long)s->rgb_frames, (unsigned long long)taken, (unsigned long long)converted,
+			          converted > 0 ? convert_ns / 1e6 / converted : 0.0, s->rgb_lines, s->rgb_gain,
+			          (unsigned long long)s->rgb_exposures);
+		}
 	}
+}
+
+//! The HMD frame in the body frame (row-major 4x4): its axes are Q_B_H's columns, its origin P_BODY_HMD.
+static void
+body_head(double T_body_head[16], double down_body[3])
+{
+	const struct xrt_vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+	struct xrt_vec3 col[3];
+	for (int i = 0; i < 3; i++) {
+		math_quat_rotate_vec3(&Q_B_H, &axes[i], &col[i]);
+	}
+	const double T[16] = {col[0].x, col[1].x, col[2].x, P_BODY_HMD.x, col[0].y, col[1].y, col[2].y, P_BODY_HMD.y,
+	                      col[0].z, col[1].z, col[2].z, P_BODY_HMD.z, 0,        0,        0,        1};
+	memcpy(T_body_head, T, sizeof(T));
+	down_body[0] = -col[1].x;
+	down_body[1] = -col[1].y;
+	down_body[2] = -col[1].z;
 }
 
 //! SteamVR's camera from the forward pair (docs/xr.md#passthrough), placed in the HMD frame.
 static struct pico4_passthrough *
 create_passthrough(struct pico4_slam *s, const char *calibration_dir)
 {
-	// The HMD frame in the body frame: its axes are Q_B_H's columns, its origin P_BODY_HMD.
-	const struct xrt_vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-	struct xrt_vec3 col[3];
-	for (int i = 0; i < 3; i++) {
-		math_quat_rotate_vec3(&Q_B_H, &axes[i], &col[i]);
-	}
-	const double T_body_head[16] = {col[0].x, col[1].x, col[2].x, P_BODY_HMD.x, col[0].y, col[1].y,
-	                                col[2].y, P_BODY_HMD.y, col[0].z, col[1].z, col[2].z, P_BODY_HMD.z,
-	                                0,        0,        0,        1};
-	const double down_body[3] = {-col[1].x, -col[1].y, -col[1].z};
+	double T_body_head[16], down_body[3];
+	body_head(T_body_head, down_body);
 	struct pico4_passthrough *p = pico4_passthrough_create(calibration_dir, down_body, T_body_head);
 	if (p == NULL) {
 		SLAM_WARN(s, "No passthrough: no calibration of the forward cameras in %s", calibration_dir);
@@ -971,9 +1004,84 @@ scene_stall(struct pico4_slam *s)
 	s->stall.sets_started = 0;
 }
 
+/*!
+ * An RGB frame for the room view: handed to the passthrough, which converts it on its own thread
+ * and lets go of it (rgb_service); dropped while it still converts the one before.
+ */
+static void
+handle_rgb_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
+{
+	s->rgb_frames++;
+	// The frame before may be converted already: back to the camera first, so this one is taken.
+	if (s->rgb_holding && !pico4_passthrough_rgb_busy(s->passthrough)) {
+		pico4_cam_release(s->cam, &s->rgb_held);
+		s->rgb_holding = false;
+	}
+	uint32_t exposure_us = (uint32_t)((uint64_t)s->rgb_lines * PICO4_CAM_RGB_LINE_NS / 1000);
+	if (!s->rgb_holding && f->sof_monotonic_ns != 0 &&
+	    pico4_passthrough_push_rgb(s->passthrough, f->data, f->stride / 2, frame_sof_ns(s, f), exposure_us)) {
+		s->rgb_held = *f;
+		s->rgb_holding = true;
+		s->rgb_taken++;
+		return;
+	}
+	pico4_cam_release(s->cam, f);
+}
+
+//! Camera thread: the RGB frame back once converted, and the exposure the newest one asks for.
+static void
+rgb_service(struct pico4_slam *s)
+{
+	if (!s->rgb) {
+		return;
+	}
+	if (s->rgb_holding && !pico4_passthrough_rgb_busy(s->passthrough)) {
+		pico4_cam_release(s->cam, &s->rgb_held);
+		s->rgb_holding = false;
+	}
+	// The sensor streams only while the room view shows it, and 5 s on after that.
+	int64_t now = os_monotonic_get_ns();
+	if (pico4_passthrough_streaming(s->passthrough)) {
+		s->rgb_wanted_ns = now;
+	}
+	bool want = now - s->rgb_wanted_ns < (int64_t)5 * U_TIME_1S_IN_NS;
+	if (s->cam != NULL && want == s->rgb_paused && !s->rgb_pause_refused) {
+		int r = pico4_cam_set_rgb_streaming(s->cam, want);
+		if (r == 0) {
+			s->rgb_paused = !want;
+			SLAM_INFO(s, "RGB camera %s", want ? "streams (the room view shows it)" : "paused (nobody shows it)");
+		} else {
+			s->rgb_pause_refused = true;
+			SLAM_WARN(s, "RGB camera: %s refused (%d), it stays as it is", want ? "resume" : "pause", r);
+		}
+	}
+	unsigned lines, gain;
+	if (s->cam != NULL &&
+	    pico4_passthrough_rgb_exposure(s->passthrough, s->rgb_lines, s->rgb_gain, &lines, &gain) &&
+	    pico4_cam_set_rgb_exposure(s->cam, lines, gain) == 0) {
+		s->rgb_lines = lines;
+		s->rgb_gain = gain;
+		s->rgb_exposures++;
+	}
+}
+
+//! Before the capture closes: the passthrough must be done with the RGB frame it reads.
+static void
+rgb_let_go(struct pico4_slam *s)
+{
+	for (int i = 0; i < 200 && pico4_passthrough_rgb_busy(s->passthrough); i++) {
+		os_nanosleep(U_TIME_1MS_IN_NS);
+	}
+	s->rgb_holding = false; // the close frees its buffer
+}
+
 static void
 handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 {
+	if (f->slot == PICO4_CAM_RGB_SLOT) {
+		handle_rgb_frame(s, f);
+		return;
+	}
 	if (f->sof_monotonic_ns == 0) {
 		return;
 	}
@@ -1199,6 +1307,11 @@ restart_capture(struct pico4_slam *s, const char *why)
 	s->capture_restarts++;
 	SLAM_WARN(s, "Restarting the camera capture (%llu so far): %s", (unsigned long long)s->capture_restarts, why);
 	pico4_station_camera_stop(s->station);
+	rgb_let_go(s);
+	// The RGB camera starts again where its auto exposure was.
+	s->cam_config.rgb_exposure_lines = s->rgb ? s->rgb_lines : 0;
+	s->cam_config.rgb_gain = s->rgb ? s->rgb_gain : 0;
+	s->rgb_paused = false; // a new capture streams from its start
 	pico4_cam_close(s->cam);
 	s->cam = NULL;
 	drop_group(s);
@@ -1232,6 +1345,8 @@ camera_thread(void *ptr)
 	struct pico4_cam_frame f;
 	uint64_t timeouts = 0;
 	int64_t restarted_ns = 0, slept_ns = pico4_slept_ns();
+	// The RGB camera streams on its own: the tracking cameras' silence is watched apart from it.
+	int64_t tracking_frame_ns = os_monotonic_get_ns();
 
 	os_thread_helper_name(&s->oth, "PICO 4 cameras");
 	os_thread_helper_lock(&s->oth);
@@ -1246,10 +1361,21 @@ camera_thread(void *ptr)
 		}
 		slept_ns = slept;
 		const char *why = s->restart_why;
+		rgb_service(s);
 		int r = s->cam != NULL ? pico4_cam_next(s->cam, &f, 200) : -ENODEV;
-		if (r == 0) {
-			timeouts = 0;
+		if (r == 0 && f.slot == PICO4_CAM_RGB_SLOT) {
 			handle_frame(s, &f);
+			if (os_monotonic_get_ns() - tracking_frame_ns > U_TIME_1S_IN_NS) {
+				why = "no tracking camera frames for 1 s";
+			}
+		} else if (r == 0) {
+			timeouts = 0;
+			tracking_frame_ns = os_monotonic_get_ns();
+			handle_frame(s, &f);
+			// With the RGB camera the frames are held (its own until converted): the rest at once.
+			if (s->cam_config.hold_frames && f.slot != PICO4_CAM_RGB_SLOT) {
+				pico4_cam_release(s->cam, &f);
+			}
 		} else if (r == -ETIMEDOUT) {
 			if (timeouts++ % 25 == 0) {
 				SLAM_ERROR(s, "No camera frames for 200 ms");
@@ -1273,6 +1399,7 @@ camera_thread(void *ptr)
 			restarted_ns = now;
 			timeouts = 0;
 			restart_capture(s, why);
+			tracking_frame_ns = os_monotonic_get_ns();
 		}
 		os_thread_helper_lock(&s->oth);
 	}
@@ -1403,11 +1530,52 @@ cameras:
 	cc.verbose = log_level <= U_LOGGING_DEBUG ? PICO4_CAM_LOG_INFO : PICO4_CAM_LOG_ERROR;
 	cc.log = cam_log;
 	cc.log_user = s;
+	// The RGB camera shares the request manager, which takes one owner: the same capture.
+	bool rgb = s->passthrough != NULL && debug_get_bool_option_pico4_roomview_rgb();
+	if (rgb) {
+		cc.slots |= 1u << PICO4_CAM_RGB_SLOT;
+		cc.hold_frames = true;
+		cc.rgb_exposure_lines = 2260; // 1/100 s at 4x, until the auto exposure took over
+		cc.rgb_gain = 64;
+	}
 	s->cam_config = cc;
-	if ((r = pico4_cam_open(&s->cam, &cc)) < 0 || (r = pico4_cam_start(s->cam)) < 0) {
+	r = pico4_cam_open(&s->cam, &cc);
+	if (r == 0) {
+		r = pico4_cam_start(s->cam);
+	}
+	if (r < 0 && rgb) {
+		SLAM_WARN(s, "The cameras did not start with the RGB camera (%s): the room view stays grey", strerror(-r));
+		pico4_cam_close(s->cam);
+		s->cam = NULL;
+		rgb = false;
+		cc.slots &= ~(1u << PICO4_CAM_RGB_SLOT);
+		cc.hold_frames = false;
+		s->cam_config = cc;
+		r = pico4_cam_open(&s->cam, &cc);
+		if (r == 0) {
+			r = pico4_cam_start(s->cam);
+		}
+	}
+	if (r < 0) {
 		SLAM_ERROR(s, "Tracking cameras failed to start: %s", strerror(-r));
 		goto fail;
 	}
+	if (rgb) {
+		double T_body_head[16], down_body[3];
+		body_head(T_body_head, down_body);
+		if (pico4_passthrough_use_rgb(s->passthrough, calibration_dir, T_body_head)) {
+			struct pico4_passthrough_info info;
+			pico4_passthrough_rgb_info(s->passthrough, &info);
+			const double *m = info.camera_to_head[0];
+			SLAM_INFO(s, "Room view from the RGB camera: %ux%u, at %.3f %.3f %.3f m, looking %.2f %.2f %.2f",
+			          info.width, info.height, m[3], m[7], m[11], -m[2], -m[6], -m[10]);
+		} else {
+			SLAM_WARN(s, "No calibration of the RGB camera (cam4) in %s: the room view stays grey", calibration_dir);
+		}
+	}
+	s->rgb = rgb;
+	s->rgb_lines = cc.rgb_exposure_lines;
+	s->rgb_gain = cc.rgb_gain;
 	if ((r = pico4_station_camera_start(s->station)) < 0) {
 		SLAM_ERROR(s, "The controller radio refused camera sync: %s", strerror(-r));
 		goto fail;
@@ -1893,6 +2061,7 @@ pico4_slam_destroy(struct pico4_slam **ptr)
 	if (s->station != NULL && s->cam != NULL) {
 		pico4_station_camera_stop(s->station);
 	}
+	rgb_let_go(s);
 	pico4_cam_close(s->cam);
 	drop_group(s);
 	xrt_frame_context_destroy_nodes(&s->xfctx);
