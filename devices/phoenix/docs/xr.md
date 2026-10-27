@@ -730,6 +730,9 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
     translation.
   - Nodding pivots about the neck, well below the eyes, and moves the cameras more than turning
     does. Up-down movement therefore shows the room trailing the head, and left-right far less.
+  - With the depth mesh (RGB camera, camera pose in raw space), the same 10 cm move shifts the
+    room by 10–17 dump pixels (2.1–3.6°): it follows at 1.6–2.7 m, the depth of the room
+    in view, instead of 10–25 m.
 - **Timing.** Worn, with turns up to 137°/s: 25 frames per second, 40 ms apart, every one with a
   head pose; a frame reaches the ring 27–45 ms after the middle of its exposure (16–63 ms at the
   extremes), so it is shown about 40–80 ms after it. Its rotation is as timely as the virtual
