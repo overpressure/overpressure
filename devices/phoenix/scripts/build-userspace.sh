@@ -69,7 +69,13 @@ done
 [[ $EUID == 0 && "$build_root" = /* && "$build_root" != / ]] || { echo 'Root and an absolute isolated build directory are required' >&2; exit 2; }
 host_arch=$(uname -m)
 if [[ $host_arch != aarch64 ]]; then
-    grep -qs '^flags: .*F' /proc/sys/fs/binfmt_misc/qemu-aarch64 || { echo 'An aarch64 binfmt handler with the F flag is required' >&2; exit 2; }
+    # The handler by its ELF magic (aarch64 executables), whatever it is named: qemu-aarch64 from
+    # Debian's qemu-user-static, aarch64 from Docker Desktop or tonistiigi/binfmt.
+    aarch64_binfmt=""
+    for f in /proc/sys/fs/binfmt_misc/*; do
+        grep -qs '^magic 7f454c460201010000000000000000000200b700' "$f" && grep -qs '^flags: .*F' "$f" && aarch64_binfmt=$f
+    done
+    [[ -n $aarch64_binfmt ]] || { echo 'An aarch64 binfmt handler with the F flag is required' >&2; exit 2; }
 fi
 mkdir -p "$build_root" "$output"
 build_root=$(realpath "$build_root")

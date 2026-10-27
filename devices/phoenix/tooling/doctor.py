@@ -123,8 +123,10 @@ def build_checks(host: Host) -> List[Check]:
     if not host.linux("echo ok=1"):
         return [Check("Linux", BUILD, MISSING, "no Linux to build in", "WSL (wsl --install -d Ubuntu-24.04) or a "
                       "Linux host")]
-    state = host.linux("echo arch=$(uname -m); echo binfmt=$(sed -n 's/^flags: //p' "
-                       "/proc/sys/fs/binfmt_misc/qemu-aarch64 2>/dev/null); "
+    # The aarch64 handler by its ELF magic: qemu-aarch64 (Debian) or aarch64 (Docker Desktop).
+    state = host.linux("echo arch=$(uname -m); echo binfmt=$(for f in /proc/sys/fs/binfmt_misc/*; do "
+                       "grep -qs '^magic 7f454c460201010000000000000000000200b700' $f && "
+                       "sed -n 's/^flags: //p' $f; done | head -n 1); "
                        "for v in 21 20 19; do [ -x /usr/lib/llvm-$v/bin/clang ] && [ -x /usr/lib/llvm-$v/bin/ld.lld ] "
                        "&& { echo llvm=/usr/lib/llvm-$v; break; }; done; true")
     if state.get("arch") == "x86_64":
