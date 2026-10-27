@@ -398,7 +398,9 @@ class Dev(Headset):
 
     def reboot(self):
         """Into stage 1 for the next attempt. A device deadline leaves the headset in fastboot;
-        boot still holds the dev image there, so a plain reboot is enough, without a flash."""
+        boot still holds the dev image there, so a plain reboot is enough, without a flash. With
+        the system installed, boot holds the installed system: the maintenance stage 1 starts
+        only while misc holds its request (dev recovery), else the installed system comes back."""
         (self.work / "state.json").unlink(missing_ok=True)
         fastboot = self.s.tool("fastboot")
         if self.s.fastboot_serial and self.s.fastboot_serial in self.run([fastboot, "devices"], 30, check=False):
@@ -406,7 +408,28 @@ class Dev(Headset):
         else:
             self.ssh("systemctl reboot 2>/dev/null || pico4-reboot", 15, check=False)
         self.clock.sleep(20)
+        if (self.work / INSTALLED).exists() and self.started() == "installed":
+            self.wait_installed()
+            return
         self.connect()
+
+    def started(self) -> str:
+        """After a reboot of an installed headset: "maintenance" (stage 1 from recovery) or
+        "installed" (the installed system's systemd), by PID 1 and the kernel command line."""
+        if self.s.ncm():
+            self.until("NCM gadget", 120, lambda: self.run(
+                windows_ncm.command(self.s.ncm(), self.s.fastboot_serial), 30))
+
+        def which():
+            # Each stage 1 makes new host keys, and the installed system keeps its own.
+            (self.work / "known_hosts").unlink(missing_ok=True)
+            comm, _, cmdline = self.ssh("cat /proc/1/comm /proc/cmdline", 10).partition("\n")
+            if comm.strip() == "systemd":
+                return "installed"
+            if f"{PART_MARK}recovery" in cmdline.split():
+                return "maintenance"
+            raise RuntimeError("the installed boot's stage 1 is still running")
+        return self.until("stage 1 or the installed system", 240, which)
 
     def restore(self):
         """Leave the loop: the backup's stock boot image, then PICO OS. ABL stays engineering.

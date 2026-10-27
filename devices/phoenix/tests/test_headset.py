@@ -424,6 +424,25 @@ class DevTests(HeadsetFixture):
         self.assertTrue(any("systemctl reboot" in c for c in self.texts()))
         self.assertNotIn(["fastboot", "-s", "FB1", "reboot"], self.calls)
 
+    def test_reboot_of_an_installed_headset_ends_where_the_bootloader_went(self):
+        # boot holds the installed system: without the recovery request it comes back.
+        (self.root / "dev").mkdir(exist_ok=True)
+        (self.root / "dev/installed.json").write_text("{}")
+        dev = self.make({"cat /proc/1/comm /proc/cmdline": "systemd\nconsole=x",
+                         "cat /proc/1/comm /etc/pico4-poc/install-id": "systemd\ndev-loop\n1234567",
+                         "userspace-archive.sha256": "abc"})
+        dev.reboot()
+        self.assertTrue(any(devloop.INSTALL_ID in t for t in self.texts()))
+        self.assertFalse(any("cat /etc/pico4-poc/test-run" in t for t in self.texts()))
+        # With the request in misc, the maintenance stage 1 starts from recovery.
+        self.calls.clear()
+        dev = self.make({"cat /proc/1/comm /proc/cmdline": "pico4-init\nconsole=x pico4poc.part=recovery",
+                         "cat /etc/pico4-poc/test-run": "dev-loop\n1234567",
+                         "cat /proc/cmdline": "console=x pico4poc.part=recovery"})
+        dev.reboot()
+        self.assertTrue(any("cat /etc/pico4-poc/test-run" in t for t in self.texts()))
+        self.assertFalse(any(devloop.INSTALL_ID in t for t in self.texts()))
+
     def test_restore_flashes_the_verified_backup_boot_image(self):
         dev = self.make()
         dev.restore()
