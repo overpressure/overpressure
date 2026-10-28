@@ -99,7 +99,7 @@ replaces it. The gaps and their adaptations:
 | `USER_NS`, `PID_NS`, `IPC_NS`, `UTS_NS` | unit sandboxing; Steam's pressure-vessel containers | systemd ignores these settings; `/usr/bin/bwrap` is setuid, which pressure-vessel uses for Steam Linux Runtime's containers when its own bubblewrap fails; the containers then share the host's PIDs ([session.md](session.md#the-steam-client)) |
 | `MEMCG`, `CGROUP_PIDS`, `CGROUP_DEVICE` | resource control | `systemd-oomd` masked; memory and task limits are not enforced |
 | `SYSVIPC`, `POSIX_MQUEUE` | X11 MIT-SHM (`shmget`), SteamVR's process locks (`semget`), some games | semaphores: [`pico4-sysvsem`](../src/sysvsem/pico4-sysvsem.c), preloaded for every process ([session.md](session.md)); shared memory and message queues: none, clients must use memfd and fd passing |
-| `BINFMT_MISC` | FEX for x86 games | FEX must be invoked explicitly |
+| `BINFMT_MISC` | FEX for x86 games | Windows games need none: Proton 11 (ARM64) emulates them with its own FEX; native Linux x86 programs must be started through FEX explicitly |
 | `HIDRAW` | Steam Input, SteamVR HID access | input only through evdev and uhid |
 | `VT`, `DMIID`, `AUTOFS`, ext4 POSIX ACLs | logind, udev, automounts | seat0 without VTs; device identity from the device tree; no `.automount` units; no ACLs on the zram root (device ACLs live on the `/dev` tmpfs) |
 

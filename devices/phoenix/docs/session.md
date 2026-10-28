@@ -212,9 +212,11 @@ session:
   host's process IDs. Beat Saber starts this way: the game runs under Proton, its OpenXR
   session reaches the focused state in SteamVR, and its Steam API initializes once the
   semaphore library reaches the container ([below](#system-v-semaphores-and-message-queues));
-  the game then gets to its health warning. Without it the game waited in its Steam
-  initialization and the headset stayed on SteamVR's "Waiting" screen. Under FEX the game
-  heats the headset quickly (above 88 °C within a minute in the idle session's state).
+  without that library the game waited in its Steam initialization and the headset stayed on
+  SteamVR's "Waiting" screen. It is playable with the controllers (a song played through), at
+  about 28 frames/s of its own (36.5 ms CPU and 35.6 ms GPU per frame) that SteamVR's
+  reprojection carries to 90 Hz. Under FEX the game heats the headset quickly
+  (above 88 °C within a minute without PICO OS's VR CPU limits).
   Games with an Android build (Cubism) start through Valve's
   Lepton instead, which runs the Android build in a podman container; podman is not in the
   image.
