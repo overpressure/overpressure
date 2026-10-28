@@ -87,6 +87,7 @@ Open: fan control over longer sessions and its tuning, performance, controller p
 | [docs/session.md](docs/session.md) | Valve's VR session: SteamVR, gamescope, the display layer |
 | [docs/cooling.md](docs/cooling.md) | fan control and the thermal policy |
 | [docs/development.md](docs/development.md) | layout, build system and hosts, tests, Windows and WSL |
+| [docs/stock-components.md](docs/stock-components.md) | what the images take unchanged from PICO OS, and what could replace each |
 
 ## This folder
 
