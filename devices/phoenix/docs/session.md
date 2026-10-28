@@ -229,6 +229,20 @@ session:
   about 28 frames/s of its own (36.5 ms CPU and 35.6 ms GPU per frame) that SteamVR's
   reprojection carries to 90 Hz. Under FEX the game heats the headset quickly
   (above 88 °C within a minute without PICO OS's VR CPU limits).
+- **Which Proton.** The client takes Valve's recommendation per game (its compat log's "non-user
+  mapping"): Proton stable (11.0 ARM64, DXVK 2.7) for Beat Saber and Pools, Proton Experimental
+  (ARM64) for others, The Lab among them. Experimental's DXVK 3.1 requires
+  `storageBuffer8BitAccess`, which Turnip offers only on Adreno 7xx (the Frame's GPU); on the
+  Adreno 650 it finds no adapter, DXGI hands the game a null object and it crashes in `dxgi.dll`
+  ("No displays available" from The Lab). `steam-proton-mapping` (`ExecStartPre` of
+  `steam.service`, while the client is stopped) therefore maps every game whose latest
+  recommendation is Experimental to Proton stable in `config.vdf`, as a user mapping (priority
+  250, what the per-game compatibility setting writes); games with a mapping of the user's keep
+  it, the rest of the file stays byte for byte, and a newly installed game is covered from the
+  next start of the client. On Proton stable The Lab, an OpenVR game, starts with head tracking
+  and the controllers, but far below real time. Inside a game's container SteamVR's
+  client does not see the external driver path (`/usr/share/steamvr-monado`, the container has
+  its own `/usr`) and logs "driver not found"; games start without it.
   Games with an Android build (Cubism) start through Valve's
   Lepton instead, which runs the Android build in a podman container; podman is not in the
   image.
