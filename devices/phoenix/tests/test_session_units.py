@@ -74,6 +74,13 @@ class OpenGLTest(unittest.TestCase):
         dropin = (ROOTFS / "usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(encoding="utf-8")
         self.assertRegex(dropin, r"(?m)^Environment=STEAM_EXTRA_ARGS=-cef-use-vulkan$")
 
+    def test_games_run_on_the_fast_cores(self):
+        # an issue: Valve's unit gives games cores 3-7 (0xf8, the Frame's chip); on the XR2 core 3
+        # is an A55. Cores 4-7 (0xf0) are the A77s and the prime core, PICO OS's VR app mask.
+        dropin = (ROOTFS / "usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(encoding="utf-8")
+        self.assertRegex(dropin, r"(?m)^Environment=STEAM_LAUNCH_WRAPPER_AFFINITY_LIST=0xf0$")
+        self.assertRegex(dropin, r"(?m)^Environment=STEAM_DESKTOP_APP_AFFINITY_LIST=0xf0$")
+
     def test_games_get_the_semaphore_library(self):
         # an issue: the Steam API in a game takes System V semaphores; Steam Linux Runtime's
         # container ignores the host's /etc/ld.so.preload but imports LD_PRELOAD.

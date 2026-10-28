@@ -225,10 +225,22 @@ session:
   session reaches the focused state in SteamVR, and its Steam API initializes once the
   semaphore library reaches the container ([below](#system-v-semaphores-and-message-queues));
   without that library the game waited in its Steam initialization and the headset stayed on
-  SteamVR's "Waiting" screen. It is playable with the controllers (a song played through), at
-  about 28 frames/s of its own (36.5 ms CPU and 35.6 ms GPU per frame) that SteamVR's
-  reprojection carries to 90 Hz. Under FEX the game heats the headset quickly
-  (above 88 °C within a minute without PICO OS's VR CPU limits).
+  SteamVR's "Waiting" screen. It is playable with the controllers (a song played through),
+  below real time: SteamVR's reprojection carries it to 90 Hz. Under FEX the game
+  heats the headset quickly (above 88 °C within a minute without PICO OS's VR CPU limits).
+- **Game cores.** `steam-launch-wrapper` pins each game to `STEAM_LAUNCH_WRAPPER_AFFINITY_LIST`
+  (desktop apps: `STEAM_DESKTOP_APP_AFFINITY_LIST`). Valve's `steam.service` sets `0xf8`,
+  cores 3–7, which on the Frame's chip leaves its first cores to the system; on the XR2 core 3
+  is a Cortex-A55 (`cpu_capacity` 351, the A77s 871, the prime core 1024), and Beat Saber's
+  main thread ran there. The image sets `0xf0`, cores 4–7, the mask PICO OS's VR service gives
+  a VR app's threads (`qvrservice_config.txt`, `performance_thread_attributes`). The same song,
+  the same 15 s window (KGSL tracepoints, below): the game's GPU share 39.1 % against 54.0 %
+  (212.8 against 290.5 batches/s, a third more frames), SteamVR's mean application frame
+  35.8/35.9 ms against 30.8/28.7 ms (CPU/GPU); the compositor took 27 % of the GPU (about
+  3 ms per frame) either way. The GPU then runs 81 % busy at its 587 MHz, often 99 %.
+  KGSL's 670 MHz level is a turbo level on this kernel (`normal_pwrlevel` 1): with
+  `max_pwrlevel` 0 the governor stays at 587 MHz, and with `overclock_mode` 1 as well it
+  chose 670 MHz about 9 % of the time, with no gain (55.2 % GPU share).
 - **Which Proton.** The client takes Valve's recommendation per game (its compat log's "non-user
   mapping"): Proton stable (11.0 ARM64, DXVK 2.7) for Beat Saber and Pools, Proton Experimental
   (ARM64) for others, The Lab among them. Experimental's DXVK 3.1 requires
