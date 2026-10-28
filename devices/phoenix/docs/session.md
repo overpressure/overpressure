@@ -132,6 +132,18 @@ driver) and unmutes it when the headset is worn, or when it stops. The session's
 Frame's package installs for Python 3.12 only; the module is plain Python, and the build links
 it into the image's Python.
 
+gamescope itself is the Frame's version, upstream's commit `ea3579ed` (Valve's 3.16.28-1), built
+here (`pico4-gamescope`) with one fix. Its window manager adds a window to its list on CreateNotify
+and again on ReparentNotify to the root, without checking for an entry it already has. The
+steamwebhelper's overlay windows got two to four entries each; every entry copied the window's
+shared Vulkan override surface, but only one was cleared when that surface was destroyed, and
+every vblank `handle_presented_for_window()` read the others' freed surface. Once the memory was
+reused (The Lab starting) gamescope crashed and took the session down. The patch makes `add_win()`
+skip a window it already lists; upstream's master still has the code. The build bundles
+libliftoff, vkroots, wlroots, libdisplay-info and wayland-protocols 1.47 (wlroots 0.20 needs it)
+statically, as Valve's binary does, with the SDL2 backend, AVIF screenshots, libei, PipeWire,
+DRM and OpenVR. Valve's package also has `steamos-session-shell`, which nothing in the image calls.
+
 gamescope's session starts MangoHud's `mangoapp`, the Steam client's performance overlay
 (`pico4-mangohud`). The Frame's MangoHud links libraries of the Frame's private base (spdlog 1.13,
 fmt 10, libtracefs); the image builds upstream's MangoHud 0.8.4 from its release archive with its

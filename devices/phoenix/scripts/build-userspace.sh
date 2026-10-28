@@ -160,7 +160,9 @@ in_b pacman "-S$sync" --noconfirm --needed base-devel git meson ninja cmake eige
     python-packaging glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
     wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache \
     glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage \
-    shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon libnl pcsclite
+    shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon libnl pcsclite \
+    hwdata libavif libcap libdecor libei libinput libxmu libxres libxtst libxxf86vm luajit pipewire pixman \
+    sdl2 seatd xcb-util-errors xcb-util-wm xorg-xwayland
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
 builder=$(in_b id -u builder):$(in_b id -g builder)
 # Emulated compilers: ccache (in the builder's home, kept between builds) saves repeats.
@@ -245,6 +247,7 @@ build_package pico4-sysvsem "$project"/src/sysvsem/*
 build_package pico4-vrlink "$project"/src/vrlink/*
 build_package pico4-gtk2
 build_package pico4-mangohud
+build_package pico4-gamescope
 build_package pico4-wpa-supplicant
 build_package pico4-monado "$project"/src/monado/* "$project"/src/xr/*
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
