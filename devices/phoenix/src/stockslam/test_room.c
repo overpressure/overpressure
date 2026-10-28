@@ -83,6 +83,38 @@ main(void)
 	EXPECT(fabs(got_t[0] - shift[0]) < 1e-5 && fabs(got_t[1] - shift[1]) < 1e-5 && fabs(got_t[2] - shift[2]) < 1e-5,
 	       "copy shift");
 
+	// A room's id in its shape: the plain square of the rooms from before the ids, and a new id,
+	// both back from a copy written as libSlam writes it after a turn and a shift.
+	double sq[4][3];
+	room_shape(ROOM_ID_SQUARE, sq);
+	const double old[4][3] = {{-1.5, -1, -1}, {-1.5, 1, -1}, {-1.5, 1, 1}, {-1.5, -1, 1}};
+	EXPECT(memcmp(sq, old, sizeof(old)) == 0, "the square's shape");
+	uint64_t ids[3] = {ROOM_ID_SQUARE, 0x9a3c5f0e1ull, ROOM_ID_MASK};
+	for (int k = 0; k < 3; k++) {
+		double shape[4][3];
+		room_shape(ids[k], shape);
+		len = snprintf(copy, sizeof(copy), "vertexcount 4\n");
+		for (int i = 0; i < 4; i++) {
+			double s_pt[3];
+			room_to_session(shape[i], cos(turn), sin(turn), shift, s_pt);
+			// libSlam keeps the points as floats.
+			len += snprintf(copy + len, sizeof(copy) - (size_t)len, "(%f, %f, %f)\n", (float)-s_pt[1], (float)s_pt[0],
+			                (float)s_pt[2]);
+		}
+		uint64_t got = 0;
+		EXPECT(room_parse(copy, len, seen_pts, ROOM_MAX_POINTS) == 4, "id copy");
+		EXPECT(room_decode((const double(*)[3])seen_pts, 4, &got, sqrt) == 0 && got == ids[k], "id %llx back as %llx",
+		       (unsigned long long)ids[k], (unsigned long long)got);
+		rms = room_fit((const double(*)[3])seen_pts, (const double(*)[3])shape, 4, &got_yaw, got_t, atan2, sin, cos,
+		               sqrt);
+		EXPECT(rms >= 0 && rms < 1e-5 && fabs(got_yaw - turn) < 1e-5, "id shape fit %g", rms);
+	}
+	// Not a room shape: a boundary someone drew.
+	const double drawn[4][3] = {{-1.5, 0, 0}, {-1.5, 3.1, 0.2}, {-1.5, 2.7, 2.9}, {-1.5, -0.4, 2.5}};
+	uint64_t none;
+	EXPECT(room_decode(drawn, 4, &none, sqrt) == -1, "a drawn boundary decoded");
+	EXPECT(room_decode(drawn, 3, &none, sqrt) == -1, "three points decoded");
+
 	if (failures == 0) {
 		printf("test_room: passed\n");
 	}

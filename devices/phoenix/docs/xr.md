@@ -913,21 +913,29 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   binds `/var/lib/pico4-stock-slam/{maps,boundary}` (the data partition, mode 0700) onto those
   directories of the root, so the map survives reboots and system updates; it never leaves the
   headset.
-- **A reference square.** Every map is saved with the same boundary in its own world: a 2 m
-  square 1.5 m below where the tracker started. When the relocalisation callback comes and the
-  copy is written, `pico4-slamd` fits the
-  tracker's copy of it in this session's world ([room.h](../src/stockslam/room.h): a turn about
-  the up axis and a shift, both worlds being gravity-aligned; accepted below 5 cm residual): that
-  is the transform from the session's world to the saved room's, whichever saved map the tracker
-  found. It publishes it in the shared memory and writes the copy to `stdata.txt`, so the stop
-  saves the map again; the driver puts every pose of that generation into the room's world.
-  Without a relocalisation 10 s after `start6DOF` the session is a new room, saved with the
-  square as it is; a later relocalisation (a covered start, a restarted tracker) moves it into
-  the saved room's world and universe then.
-- **SteamVR's universe.** The map's identity (`getRelocMapInfo`) is the room's: `driver_monado`
-  reports its hash as `Prop_CurrentUniverseId_Uint64` once the room is settled, so SteamVR keeps
-  a play area per room in `chaperone_info.vrchap`, back in its place whenever the tracker
-  relocalises in that room, and asks for a room setup in a new one. Until then the universe is 2.
+- **A reference shape.** Every map is saved with its room's reference quadrilateral as its
+  boundary, in the room's world, 1.5 m below where the room's first session started. The shape
+  carries the room's id ([room.h](../src/stockslam/room.h)): three sides of 1.5 m + v × 0.2 mm,
+  v 12 bits each; a turn and a shift keep the sides, and the tracker keeps a map's boundary
+  through every save and merge. When the relocalisation callback comes and the copy is written,
+  `pico4-slamd` reads the room's id from the copy's sides and fits the copy to the room's shape
+  (a turn about the up axis and a shift, both worlds being gravity-aligned; accepted below 5 cm
+  residual): that is the transform from the session's world to the saved room's, whichever saved
+  map the tracker found. It publishes it in the shared memory and writes the copy to
+  `stdata.txt`, so the stop saves the map again; the driver puts every pose of that generation
+  into the room's world. Without a relocalisation 10 s after `start6DOF` the session is a new
+  room with a new random id, saved with its shape as it is; a later relocalisation (a covered
+  start, a restarted tracker) moves it into the saved room's world and universe then.
+- **SteamVR's universe.** The room's identity is `room-` and its id; `driver_monado` reports its
+  hash as `Prop_CurrentUniverseId_Uint64` once the room is settled, so SteamVR keeps a play area
+  per room in `chaperone_info.vrchap`, back in its place whenever the tracker relocalises in that
+  room, and asks for a room setup in a new one. Until then the universe is 2. The tracker's own
+  map name (`getRelocMapInfo`, the name of its current map object) is no identity: after a merge
+  it can be the session's new map, and a saved room then came back as a new universe. Rooms saved
+  with the plain 2 m square from before the ids (it reads as a reserved id) get an id and shape at
+  their next relocalisation and keep the identity their universe came from, the map name then
+  reported, in `boundary/pico4_rooms.txt`. A tracker crashed with SIGSEGV in a session comes back
+  in the same room and universe within 13 s.
 - **Room setup in the headset.** SteamVR's dashboard shows its Space Setup menu (recenter,
   playspace setup, floor height, clear playspace) only for an HMD that reports
   `Prop_SupportsInHMDRoomSetup_Bool` (11003). Its steps past the recenter also need

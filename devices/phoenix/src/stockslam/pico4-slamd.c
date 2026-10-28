@@ -62,9 +62,10 @@ typedef int (*reloc_register_fn)(void (*)(const void *));
  * from the data partition by stock-slam. The tracker saves its map at the stop only with a
  * boundary in stdata.txt (in this session's world), and after relocalising in a saved room it
  * writes that room's boundary in this session's world to stdataforalgorithm.txt. Every map here
- * is saved with the same reference square in its own world (ROOM_SQUARE): the tracker's copy of
- * it after a relocalisation then gives the transform from this session's world to the room's,
- * whichever saved map it found. The play area itself is SteamVR's, kept per room's universe.
+ * is saved with its room's reference shape (room.h: its id in its sides) in the room's world: the
+ * tracker's copy of it after a relocalisation then gives the room and the transform from this
+ * session's world to the room's, whichever saved map it found and whatever it names it. The play
+ * area itself is SteamVR's, kept per room's universe.
  */
 #define BOUNDARY_DIR "/data/misc/user/0/boundary/"
 #define SESSION_BOUNDARY BOUNDARY_DIR "stdata.txt"
@@ -74,8 +75,6 @@ typedef int (*reloc_register_fn)(void (*)(const void *));
 #define RELOCALISE_NS 10000000000LL
 //! PICO OS's tracking service restarts a tracker lost for longer than this (restart_tracking_sec).
 #define RESTART_DEFAULT_S 10
-//! The reference square, 2 m wide, 1.5 m below the start (tracker world: x up).
-static const double ROOM_SQUARE[4][3] = {{-1.5, -1, -1}, {-1.5, 1, -1}, {-1.5, 1, 1}, {-1.5, -1, 1}};
 
 static volatile int g_stop;
 static char g_text[4 << 20];
@@ -121,10 +120,84 @@ read_boundary(const char *path, double (*out)[3])
 	return len > 0 ? room_parse(g_text, len, out, ROOM_MAX_POINTS) : -1;
 }
 
+/*
+ * Rooms from before the ids (the plain square) keep the identity their universe came from, the
+ * map name the tracker reported then: one line per room, its id in hex and that identity.
+ */
+#define ROOM_TABLE BOUNDARY_DIR "pico4_rooms.txt"
+
+//! The identity of room @p id, which the driver's universe comes from: its table entry or "room-ID".
+static void
+room_identity(uint64_t id, char *out, size_t size)
+{
+	snprintf(out, size, "room-%09llx", (unsigned long long)id);
+	long len = read_text(ROOM_TABLE);
+	for (long i = 0; i < len;) {
+		long end = i;
+		while (end < len && g_text[end] != '\n') {
+			end++;
+		}
+		uint64_t v = 0;
+		long k = i;
+		for (; k < end && g_text[k] != ' '; k++) {
+			char c = g_text[k];
+			v = v << 4 | (uint64_t)(c >= 'a' ? c - 'a' + 10 : c - '0');
+		}
+		if (v == id && k < end && end - k - 1 > 0 && (size_t)(end - k - 1) < size) {
+			memcpy(out, g_text + k + 1, (size_t)(end - k - 1));
+			out[end - k - 1] = '\0';
+			return;
+		}
+		i = end + 1;
+	}
+}
+
+//! Adds @p id's identity to the table (atomically, with the lines there).
+static void
+room_table_add(uint64_t id, const char *identity)
+{
+	long len = read_text(ROOM_TABLE);
+	static char text[1 << 16];
+	if (len < 0 || len > (long)sizeof(text) - 128) {
+		len = 0;
+	}
+	memcpy(text, g_text, (size_t)len);
+	len += snprintf(text + len, sizeof(text) - (size_t)len, "%09llx %s\n", (unsigned long long)id, identity);
+	int fd = open(ROOM_TABLE ".new", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	if (fd >= 0) {
+		int ok = write(fd, text, (size_t)len) == len;
+		close(fd);
+		if (ok) {
+			rename(ROOM_TABLE ".new", ROOM_TABLE);
+		}
+	}
+}
+
+//! A new room id: random, never the plain square's.
+static uint64_t
+new_room_id(void)
+{
+	uint64_t id = 0;
+	int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+	if (fd >= 0) {
+		if (read(fd, &id, sizeof(id)) != (ssize_t)sizeof(id)) {
+			id = 0;
+		}
+		close(fd);
+	}
+	if (id == 0) {
+		id = (uint64_t)now_ns(CLOCK_MONOTONIC) * 6364136223846793005ull;
+	}
+	id &= ROOM_ID_MASK;
+	return id == ROOM_ID_SQUARE ? id ^ 1 : id;
+}
+
 /*!
  * The room after start6DOF, once PICO OS's tracker has had its time to relocalise: in a saved room
- * the transform to its world, and the square again in this session's world so the stop saves the
- * map with it; else a new room, whose map is saved with the square as it is.
+ * its id from the shape of the tracker's copy of its boundary, the transform to its world, and the
+ * shape again in this session's world so the stop saves the map with it; else a new room with a
+ * new id, whose map is saved with its shape as it is. The driver's universe comes from the room's
+ * identity (room_identity), not from the tracker's map name, which a merge can change.
  */
 static void
 settle_room(struct pico4_slam_feed *feed, uint32_t generation, void *h, relocinfo_fn relocinfo)
@@ -135,29 +208,53 @@ settle_room(struct pico4_slam_feed *feed, uint32_t generation, void *h, relocinf
 	int info_ret = relocinfo != 0 ? relocinfo(h, info) : -99;
 	int32_t info_status;
 	memcpy(&info_status, info + 0x1c, 4);
-	memcpy(feed->room_uuid, info + 0x20, sizeof(feed->room_uuid) - 1);
-	feed->room_uuid[sizeof(feed->room_uuid) - 1] = '\0';
+	char map[sizeof(feed->room_uuid)];
+	memcpy(map, info + 0x20, sizeof(map) - 1);
+	map[sizeof(map) - 1] = '\0';
 	// The driver keeps the previous room (and universe) while the new one is written.
 	__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);
-	fprintf(stderr, "pico4-slamd: map %s (getRelocMapInfo %d, status %d); relocalised boundary %d points\n",
-	        feed->room_uuid, info_ret, info_status, seen_n);
+	fprintf(stderr, "pico4-slamd: map %s (getRelocMapInfo %d, status %d); relocalised boundary %d points\n", map,
+	        info_ret, info_status, seen_n);
 	uint32_t state = 2;
-	if (seen_n == 4) {
+	uint64_t id = 0;
+	double shape[4][3];
+	if (seen_n == 4 && room_decode((const double(*)[3])g_seen, 4, &id, sqrt) == 0) {
+		room_shape(id, shape);
 		double yaw, t[3];
-		double rms = room_fit((const double(*)[3])g_seen, ROOM_SQUARE, 4, &yaw, t, atan2, sin, cos, sqrt);
-		fprintf(stderr, "pico4-slamd: relocalised in a saved room: turn %.2f deg, shift %.3f %.3f %.3f m, residual %.4f m\n",
-		        yaw * 57.29577951308232, t[0], t[1], t[2], rms);
+		double rms = room_fit((const double(*)[3])g_seen, (const double(*)[3])shape, 4, &yaw, t, atan2, sin, cos, sqrt);
+		fprintf(stderr,
+		        "pico4-slamd: relocalised in a saved room (id %09llx): turn %.2f deg, shift %.3f %.3f %.3f m, residual "
+		        "%.4f m\n",
+		        (unsigned long long)id, yaw * 57.29577951308232, t[0], t[1], t[2], rms);
 		if (rms >= 0 && rms < 0.05) {
 			feed->room_yaw = yaw;
 			memcpy(feed->room_t, t, sizeof(t));
 			state = 1;
-			write_boundary(SESSION_BOUNDARY, (const double(*)[3])g_seen, seen_n);
+			if (id == ROOM_ID_SQUARE) {
+				// A room from before the ids: a new id and shape in the same room world, and its
+				// universe kept (the identity it came from, the map name the tracker reports).
+				id = new_room_id();
+				room_table_add(id, map);
+				room_shape(id, shape);
+				double c = cos(yaw), sn = sin(yaw);
+				for (int i = 0; i < 4; i++) {
+					room_to_session(shape[i], c, sn, t, g_seen[i]);
+				}
+				fprintf(stderr, "pico4-slamd: the room now has id %09llx (universe from %s)\n", (unsigned long long)id,
+				        map);
+			}
+			write_boundary(SESSION_BOUNDARY, (const double(*)[3])g_seen, 4);
 		}
+	} else if (seen_n > 0) {
+		fprintf(stderr, "pico4-slamd: the relocalised boundary is no room shape\n");
 	}
 	if (state != 1) {
-		fprintf(stderr, "pico4-slamd: a new room; its map is saved at the stop\n");
-		write_boundary(SESSION_BOUNDARY, ROOM_SQUARE, 4);
+		id = new_room_id();
+		room_shape(id, shape);
+		fprintf(stderr, "pico4-slamd: a new room (id %09llx); its map is saved at the stop\n", (unsigned long long)id);
+		write_boundary(SESSION_BOUNDARY, (const double(*)[3])shape, 4);
 	}
+	room_identity(id, feed->room_uuid, sizeof(feed->room_uuid));
 	feed->room_generation = generation;
 	__atomic_store_n(&feed->room_state, state, __ATOMIC_RELEASE);
 }

@@ -14,6 +14,85 @@
 
 #define ROOM_MAX_POINTS 512
 
+/*
+ * A room's id, in the shape of the reference quadrilateral its maps carry as their boundary: the
+ * tracker keeps a map's boundary through every save and merge, whatever it names the map, and a
+ * turn and a shift keep the sides' lengths. Three sides of ROOM_SIDE_MIN + v * ROOM_SIDE_STEP
+ * metres, v 12 bits each, 1.5 m below the start (tracker world: x up), in the (y, z) plane:
+ * (0, 0), (l0, 0), (l0, l1), (l0 - l2, l1), centred on (l0 / 2, l1 / 2). The plain 2 m square of
+ * the rooms from before the ids is ROOM_ID_SQUARE.
+ */
+#define ROOM_SIDE_MIN 1.5
+#define ROOM_SIDE_STEP 0.0002
+#define ROOM_HEIGHT -1.5
+#define ROOM_ID_MASK ((1ull << 36) - 1)
+#define ROOM_ID_SQUARE (2500ull << 24 | 2500ull << 12 | 2500ull)
+
+//! The reference shape of room @p id (tracker world).
+static inline void
+room_shape(uint64_t id, double out[4][3])
+{
+	double l0 = ROOM_SIDE_MIN + (double)((id >> 24) & 0xfff) * ROOM_SIDE_STEP;
+	double l1 = ROOM_SIDE_MIN + (double)((id >> 12) & 0xfff) * ROOM_SIDE_STEP;
+	double l2 = ROOM_SIDE_MIN + (double)(id & 0xfff) * ROOM_SIDE_STEP;
+	const double yz[4][2] = {{0, 0}, {l0, 0}, {l0, l1}, {l0 - l2, l1}};
+	for (int i = 0; i < 4; i++) {
+		out[i][0] = ROOM_HEIGHT;
+		out[i][1] = yz[i][0] - l0 / 2;
+		out[i][2] = yz[i][1] - l1 / 2;
+	}
+}
+
+/*!
+ * The id a reference shape carries, from its sides (in any world, turned and shifted): 0 and
+ * @p out_id, or -1 if the points are not such a shape. @p sqrt_fn is libm's.
+ */
+static inline int
+room_decode(const double (*p)[3], int n, uint64_t *out_id, double (*sqrt_fn)(double))
+{
+	if (n != 4) {
+		return -1;
+	}
+	double d[4];
+	for (int i = 0; i < 4; i++) {
+		double dy = p[(i + 1) % 4][1] - p[i][1], dz = p[(i + 1) % 4][2] - p[i][2];
+		d[i] = sqrt_fn(dy * dy + dz * dz);
+	}
+	uint64_t v[3];
+	double l[3];
+	for (int k = 0; k < 3; k++) {
+		double f = (d[k] - ROOM_SIDE_MIN) / ROOM_SIDE_STEP;
+		if (f < -0.25 || f > 4095.25) {
+			return -1;
+		}
+		v[k] = (uint64_t)(f + 0.5);
+		double off = f - (double)v[k];
+		if (off > 0.25 || off < -0.25) { // more than 50 um off a step
+			return -1;
+		}
+		l[k] = ROOM_SIDE_MIN + (double)v[k] * ROOM_SIDE_STEP;
+	}
+	double e = sqrt_fn((l[0] - l[2]) * (l[0] - l[2]) + l[1] * l[1]) - d[3];
+	if (e > 0.001 || e < -0.001) {
+		return -1;
+	}
+	*out_id = v[0] << 24 | v[1] << 12 | v[2];
+	return 0;
+}
+
+/*!
+ * The inverse of room_fit's transform: the session's point of room point @p w (w = R s + t, R a
+ * turn of @p yaw about x), with @p c = cos(yaw) and @p sn = sin(yaw).
+ */
+static inline void
+room_to_session(const double w[3], double c, double sn, const double t[3], double out[3])
+{
+	double y = w[1] - t[1], z = w[2] - t[2];
+	out[0] = w[0] - t[0];
+	out[1] = c * y + sn * z;
+	out[2] = -sn * y + c * z;
+}
+
 //! A tracker-world point (x up) from a boundary file's (a, b, c), and back.
 static inline void
 room_from_file(const double abc[3], double out[3])

@@ -324,11 +324,14 @@ class RoomTests(unittest.TestCase):
         self.assertIn('mount --bind "$state/maps" "$root/data/misc/user/0/maps"', runner)
         self.assertIn('mount --bind "$state/boundary" "$root/data/misc/user/0/boundary"', runner)
 
-    def test_slamd_saves_every_map_with_the_reference_square(self):
+    def test_slamd_saves_every_map_with_its_rooms_shape(self):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
-        self.assertIn("static const double ROOM_SQUARE[4][3]", slamd)
-        self.assertIn("write_boundary(SESSION_BOUNDARY, ROOM_SQUARE, 4);", slamd)
-        self.assertIn("room_fit((const double(*)[3])g_seen, ROOM_SQUARE, 4,", slamd)
+        self.assertIn("room_decode((const double(*)[3])g_seen, 4, &id, sqrt) == 0", slamd)
+        self.assertIn("room_fit((const double(*)[3])g_seen, (const double(*)[3])shape, 4,", slamd)
+        self.assertIn("write_boundary(SESSION_BOUNDARY, (const double(*)[3])shape, 4);", slamd)
+        # an issue: the universe comes from the room's id, not from the tracker's map name.
+        self.assertIn("room_identity(id, feed->room_uuid, sizeof(feed->room_uuid));", slamd)
+        self.assertIn("room_table_add(id, map);", slamd)
         # A copy left from an earlier session must not count as this one's relocalisation.
         self.assertLess(slamd.index("unlink(RELOCALISED_BOUNDARY);"), slamd.index('void *h = t->create("");'))
         # The clean stop that saves the map, as PICO OS's service stops the tracker.
