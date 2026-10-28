@@ -607,6 +607,12 @@ GPU memory (KGSL) about 0.7 GB, and the page cache about 2.7 GB.
   OOM killer killed the game. With the swap above it starts and runs: 1.5 GB of the session's
   and the game's memory went to zram, at most 2.3 % memory pressure, no kill. `systemd-oomd`
   stays masked; the Frame does not enable it either.
+- **A game larger than memory and swap together.** A process that fills memory with
+  incompressible data at `oom_score_adj` 900 (Steam's games run at 900) in a running VR session:
+  RAM is gone after 3 s, swap 5 s later, and the kernel's OOM killer kills it 8.6 s after its
+  start. No process waits longer than 1.3 s in the meantime; gamescope, Xwayland, SteamVR's
+  server and compositor, and the head tracker keep running. The tracker skips 77 camera sets,
+  reports tracking lost and relocalises 1.7 s later.
 
 ```sh
 swapon --show                              # /dev/zram0, partition, about 3.8G, prio 32758
