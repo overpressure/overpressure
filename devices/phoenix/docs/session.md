@@ -240,7 +240,10 @@ session:
   3 ms per frame) either way. The GPU then runs 81 % busy at its 587 MHz, often 99 %.
   KGSL's 670 MHz level is a turbo level on this kernel (`normal_pwrlevel` 1): with
   `max_pwrlevel` 0 the governor stays at 587 MHz, and with `overclock_mode` 1 as well it
-  chose 670 MHz about 9 % of the time, with no gain (55.2 % GPU share).
+  chose 670 MHz about 9 % of the time, with no gain (55.2 % GPU share). PICO OS does not use
+  it for VR apps either: only its system optimisation service's benchmark path (`sysoptservice`,
+  called from no code in 5.13.7) sets `overclock_mode`, and an app's GPU levels go through
+  `HmdServiceCore` to the boost framework, which tops out at 587 MHz (`max_pwrlevel` 1).
 - **Which Proton.** The client takes Valve's recommendation per game (its compat log's "non-user
   mapping"): Proton stable (11.0 ARM64, DXVK 2.7) for Beat Saber and Pools, Proton Experimental
   (ARM64) for others, The Lab among them. Experimental's DXVK 3.1 requires
