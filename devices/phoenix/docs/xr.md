@@ -964,12 +964,16 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   does what the Frame's driver does, with that floor in its raw space (room and tracking origin
   applied). Slot 40 belongs to this `vrserver` build and has to be checked again with every new
   SteamVR.
-- **Recenter.** Holding the PICO button (the dashboard's quick recenter) makes SteamVR reset its
-  standing zero pose (`VREvent_StandingZeroPoseReset`, manual): standing space, and the play area
-  kept in it, turn to where the head faces, and `chaperone_info.vrchap` keeps the pose of the
-  last room setup, so after a restart the recenter is gone. The Frame keeps the chaperone
-  universe (bounds and `standingAppWorldFromRawAppWorld`) in its XR service's persistent world
-  with the map instead; that is not followed yet.
+- **Recenter.** Holding the PICO button (the dashboard's quick recenter) runs room-setup step 1
+  and resets SteamVR's seated zero pose only: `chaperone_info.vrchap` gets the universe's new
+  `seated` pose, its `standing` pose stays ("Standing transform was not updated"), so the play
+  area does not turn, and after a SteamVR restart the recenter is gone. The Frame keeps the
+  chaperone universe (bounds and `standingAppWorldFromRawAppWorld`) in its XR service's
+  persistent world with the map instead; that is not followed yet.
+- **Turned relocalisations.** A play area drawn in a room stays where it was drawn after a
+  tracker restart that relocalises with any turn (checked worn at -3 and 165 deg) and after a
+  SteamVR restart. Play areas drawn before the room ids, against the plain square, can be off
+  by a quarter turn (the square fits four ways); drawing them once more fixes them.
 - **Verified.** A drawn play area comes back after a reboot exactly where it was drawn (the
   tracker relocalises in the saved room, and SteamVR finds the room's universe in
   `chaperone_info.vrchap`), and its boundary appears when walking toward its edge. With no play
