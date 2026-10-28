@@ -854,7 +854,7 @@ SteamVR. The PC's `driver_vrlink` knows the client by the model "PICO 4" (its PI
 | --- | --- |
 | Headset: the decoder through the layer, driven as `vrlink` drives it (NVENC HEVC test streams at 90 fps, Vulkan pictures as `vrlink` creates them) | steady 1280×5120, a reset, a size increase, a size decrease and a decrease with a reset: 268–269 of 270 pictures each at 90 fps, Venus stays up |
 | Headset: a decoded picture through the GPU (`vrlink`'s explicit `QCOM_COMPRESSED` import, copied to linear NV12) | identical to FFmpeg's decode of the same frame, also after a size decrease; Turnip sizes the image as Venus does (9,891,840 bytes at 1280×5120) |
-| Headset: Steam Link from a PC | the PC accepts the headset and encodes; the picture in the headset is open |
+| Headset: Steam Link from a PC | the PC accepts the headset and streams HEVC at 1280x5120, about 88 frames/s arriving; the decoded picture is wrong: green, different in the two eyes, the game's title only faintly visible |
 
 ## Build
 
