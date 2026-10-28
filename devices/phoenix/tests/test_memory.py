@@ -31,9 +31,16 @@ class ZramSwapTests(unittest.TestCase):
 
     def test_pico_os_reclaim_settings(self):
         conf = (ROOT / "userspace/rootfs/etc/sysctl.d/50-pico4-memory.conf").read_text(encoding="utf-8")
-        for line in ("vm.swappiness = 100", "vm.watermark_scale_factor = 90", "vm.watermark_boost_factor = 0"):
+        for line in ("vm.swappiness = 100", "vm.watermark_scale_factor = 90", "vm.watermark_boost_factor = 0",
+                     "vm.overcommit_memory = 1"):
             self.assertIn(line + "\n", conf)
         self.assertNotIn("\r", conf)
+
+    def test_the_tracker_outlives_a_game_that_runs_memory_out(self):
+        # As PICO OS's init runs its core services (pvrtrackingservice among them): never chosen
+        # by the OOM killer. With overcommit as PICO OS sets it its allocations do not fail either.
+        unit = (ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service").read_text(encoding="utf-8")
+        self.assertIn("OOMScoreAdjust=-1000\n", unit)
 
     def test_only_on_the_installed_system(self):
         # The dev boot's root file system lives on zram0.

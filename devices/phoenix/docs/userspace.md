@@ -607,12 +607,17 @@ GPU memory (KGSL) about 0.7 GB, and the page cache about 2.7 GB.
   OOM killer killed the game. With the swap above it starts and runs: 1.5 GB of the session's
   and the game's memory went to zram, at most 2.3 % memory pressure, no kill. `systemd-oomd`
   stays masked; the Frame does not enable it either.
+- **PICO OS's overcommit and its tracker.** `vm.overcommit_memory` 1, as PICO OS's `init.rc`
+  sets it: allocations never fail, and when memory and swap run out the OOM killer takes the
+  process with the highest score. `pico4-slamd` runs at `oom_score_adj` −1000, as Android's init
+  runs its core services (`pvrtrackingservice` among them). With the kernel's default
+  overcommit, an allocation of the tracker failed once in two tests below and `libSlam` crashed.
 - **A game larger than memory and swap together.** A process that fills memory with
   incompressible data at `oom_score_adj` 900 (Steam's games run at 900) in a running VR session:
-  RAM is gone after 3 s, swap 5 s later, and the kernel's OOM killer kills it 8.6 s after its
-  start. No process waits longer than 1.3 s in the meantime; gamescope, Xwayland, SteamVR's
-  server and compositor, and the head tracker keep running. The tracker skips 77 camera sets,
-  reports tracking lost and relocalises 1.7 s later.
+  RAM is gone after 3 s, swap 5 s later, and the kernel's OOM killer kills it 8–10 s after its
+  start. With the settings above, in two runs: no process waits longer than 4.3 s; gamescope,
+  Xwayland, SteamVR's server and compositor, and the head tracker keep running; the tracker
+  reports tracking lost once or twice and relocalises.
 
 ```sh
 swapon --show                              # /dev/zram0, partition, about 3.8G, prio 32758
