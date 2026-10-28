@@ -1,0 +1,28 @@
+#!/bin/bash
+# The Steam Frame's device lookup for the PICO 4 (docs/session.md#steam-link): SteamVR's
+# Steam Link client (vrlink) and the Frame's steam-video-codec-setup.service ask
+# `vrdevice_path video_decode|video_encode` for the hardware video codec's node. The Frame
+# finds its codec by name in `v4l2-ctl --list-devices`; here it is Qualcomm's msm_vidc
+# (Venus), whose nodes that listing skips, so this looks at the codec's own nodes by their
+# card name and never opens the cameras' nodes. Other keys are the Frame's hardware.
+set -euo pipefail
+
+case "${1:-}" in
+	video_decode) card=msm_vidc_vdec ;;
+	video_encode) card=msm_vidc_venc ;;
+	*)
+		echo "vrdevice_path: no such device on the PICO 4: ${1:-} (video_decode, video_encode)" >&2
+		exit 1
+		;;
+esac
+
+for node in /sys/class/video4linux/video*; do
+	[[ "$(readlink -f "$node/device")" == *qcom,vidc ]] || continue
+	dev=/dev/${node##*/}
+	if v4l2-ctl -d "$dev" --info 2>/dev/null | grep -Eq "^[[:space:]]*Card type[[:space:]]*: $card$"; then
+		echo "$dev"
+		exit 0
+	fi
+done
+echo "vrdevice_path: no $card node (is Venus's firmware in /usr/lib/firmware?)" >&2
+exit 1

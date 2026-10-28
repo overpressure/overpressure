@@ -1,0 +1,19 @@
+#!/bin/bash
+# The video codec's (Venus, msm_vidc) restart level, before anything can start it
+# (docs/session.md#steam-link). The kernel boots Venus when a process first opens its decoder or
+# encoder node, from /usr/lib/firmware/venus.*, at the kernel default SYSTEM: a codec crash or a
+# restart request would then reboot the whole headset. PICO OS's init sets it as well.
+. /usr/libexec/pico4-poc/lib.sh
+set -u
+
+for d in /sys/bus/msm_subsys/devices/*; do
+	[ "$(cat "$d/name" 2>/dev/null)" = venus ] || continue
+	write RELATED "$d/restart_level"
+	if [ "$(cat "$d/restart_level" 2>/dev/null)" = RELATED ]; then
+		exit 0
+	fi
+	log "venus: restart level not RELATED"
+	exit 1
+done
+log "venus: no subsystem"
+exit 1

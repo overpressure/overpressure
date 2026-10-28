@@ -76,6 +76,8 @@ deckard-arch-hotfixes-release-0.3/deckard-steamvr-rel
 pico4/pico4-vrdisplay
 # Project-built: System V semaphores, which SteamVR needs and the kernel lacks
 pico4/pico4-sysvsem
+# Project-built: Steam Link's client on the PICO 4's video decoder (V4L2 compatibility layer)
+pico4/pico4-vrlink
 jq
 # SteamVR's dashboard (vrwebhelper, CEF) links ATK and AT-SPI; gamescope-onready
 # runs xhost and xrdb before it reports the session ready

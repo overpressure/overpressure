@@ -1,0 +1,24 @@
+{
+  "action_manifest_version": 0,
+  "app_key": "vrlink.client",
+  "category": "legacy",
+  "controller_type": "pico_controller",
+  "name": "Steam Link client bindings for the PICO 4 controllers",
+  "description": "A binding of its own for SteamVR's Steam Link client, so that SteamVR does not remap it to the Index controllers and simulate an Index headset: the client sends the PC the headset it finds. Poses and haptics; the client forwards buttons for the Frame's controllers only.",
+  "options": {},
+  "simulated_actions": [],
+  "alias_info": {},
+  "bindings": {
+    "/actions/legacy": {
+      "poses": [
+        {"output": "/actions/legacy/in/Left_Pose", "path": "/user/hand/left/pose/raw"},
+        {"output": "/actions/legacy/in/Right_Pose", "path": "/user/hand/right/pose/raw"}
+      ],
+      "haptics": [
+        {"output": "/actions/legacy/out/left_haptic", "path": "/user/hand/left/output/haptic"},
+        {"output": "/actions/legacy/out/right_haptic", "path": "/user/hand/right/output/haptic"}
+      ],
+      "sources": []
+    }
+  }
+}

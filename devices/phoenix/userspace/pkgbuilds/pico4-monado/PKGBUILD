@@ -18,7 +18,7 @@
 # SteamVR's room view (docs/xr.md#passthrough).
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=9
+pkgrel=10
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -38,6 +38,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         monado-slam-prediction.patch monado-steamvr-battery.patch monado-vk-mutex-init-failure.patch
         monado-steamvr-presence.patch monado-steamvr-camera.patch monado-steamvr-room.patch
         monado-steamvr-pico-controller.patch monado-steamvr-roomview-mesh.patch monado-steamvr-floor.patch
+        monado-steamvr-frame-rates.patch
         pico4_interface.h pico4_hmd.c pico4_ssc.h pico4_ssc.c test_pico4_ssc.c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
@@ -54,7 +55,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4-ctrack-replay.cpp pico4_ctrack.h pico4_ctrack.cpp pico4_ctrack_calib.hpp pico4_ctrack_calib.cpp
         pico4_ctrack_runner.hpp pico4_ctrack_runner.cpp test_pico4_ctrack_runner.cpp test_pico4_ctrack_world.hpp
         pico4_aimgrip.h test_pico4_aimgrip.c
-        pico4-vrcompositor-bindings.json pico4-controller-profile.json)
+        pico4-vrcompositor-bindings.json pico4-controller-profile.json pico4-vrlink-bindings.json)
 # Project files (src/monado, src/xr) are SKIP: build-userspace.sh copies them in.
 sha256sums=(SKIP
             56161a34cf6d6d64dde3b804e34fc1b2b6654a060cae6544b95be9e577278c29
@@ -66,7 +67,7 @@ sha256sums=(SKIP
             7ba04fb72ef7d0fdd6abe6a044cf3586b059ae98129011086f38d30ca4fd0c6a
             a7e0b04b5fdff083e8556442f33a1ebc2cda18152bf7d4a711e9d2549d988762
             SKIP SKIP SKIP
-            SKIP SKIP SKIP
+            SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP
@@ -79,7 +80,8 @@ sha256sums=(SKIP
             SKIP SKIP
             SKIP SKIP
             f667c80d96c3251dd5e49ce10017b4fd702289ba2df5d49bacaf4465ceaee050
-            4d3f5097f8324fc7437ab127e5ad44c1e455c22324f1d21b02ebcfd58f4fe1ac)
+            c231b75202e6881295f87ec55580bb96aaf13a2637fed78bc20499ed003c6fc8
+            51a5d5acf4f167de960155baac83945d05b61afec202e49403c738f0cdb3daaa)
 
 prepare() {
   patch -d monado -p1 < monado-pico4-driver.patch
@@ -99,6 +101,8 @@ prepare() {
   # The room view's depth mesh: the camera image on a sphere around the head.
   patch -d monado -p1 < monado-steamvr-roomview-mesh.patch
   patch -d monado -p1 < monado-steamvr-floor.patch
+  # The panels' refresh rates, which Steam Link's client sends to the PC.
+  patch -d monado -p1 < monado-steamvr-frame-rates.patch
   # PICO's kernel allows four links per session where the CAF header says two.
   install -Dm644 -t monado/src/xrt/drivers/pico4/include/media "${_camheaders[@]}"
   sed -i -E 's/^(#define MAX_LINKS_PER_SESSION[[:space:]]+)2$/\14/' \
@@ -194,6 +198,8 @@ package() {
   # (pico4-controller-profile.json).
   local input="$pkgdir/usr/share/steamvr-monado/resources/input"
   install -Dm644 pico4-vrcompositor-bindings.json "$input/pico4_vrcompositor_bindings.json"
+  # Steam Link's client gets one of its own, or SteamVR simulates an Index for it (docs/session.md#steam-link).
+  install -Dm644 pico4-vrlink-bindings.json "$input/pico4_vrlink_bindings.json"
   # The controllers are SteamVR's pico_controller (monado-steamvr-pico-controller.patch); its
   # remapping of other controllers' bindings is SteamVR's own file.
   install -Dm644 pico4-controller-profile.json "$input/pico4_controller_profile.json"

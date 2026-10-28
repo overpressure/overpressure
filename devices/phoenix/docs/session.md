@@ -114,8 +114,7 @@ The build masks `sddm`, which `pico4-session.service` replaces, and the system u
 Frame hardware or would touch the PICO's: `dsp_service`, `steamvr-program-ble` (a firmware OTA
 for the Frame's controller radio, which must never run against the PICO's station),
 `steamvr-set-kernel-thread-priorities` (for the Frame's kernel; `pico4-kthread-priorities` below
-takes its place), `steamvr-v4l2loopback`,
-`steam-video-codec-setup` (the Frame's video codec nodes, from the client's package) and the debug port forwards
+takes its place), `steamvr-v4l2loopback` and the debug port forwards
 (`steamvr-web-debug-portforward`, `steam-web-debug-portforward`). It masks these user units
 globally: `steamvr-v4l2cam` (the headset-view loopback camera), `steamvr-proxmicmute` and
 `steamos-scheduler` (the sched_ext scheduler `scx_lavd` needs Linux 6.12; stage 1 already sets
@@ -809,6 +808,53 @@ within a minute, and a few minutes of it brought the GPU to about 95 °C and the
 to 96–98 °C. `pico4-valve-session-check` therefore runs the session for 30 s by default and
 records the hottest zone and the fan's state before and after, and the acceptance runner lets
 the headset cool below 70 °C first.
+
+### Steam Link
+
+Streaming PC VR to the headset uses SteamVR's Steam Link client, `vrlink` (in
+`/opt/steamvr/tools/vrlink`), as on the Frame: the PC's SteamVR renders and encodes HEVC
+(NVENC), and `vrlink` decodes it with the headset's video decoder and shows it through the local
+SteamVR. The PC's `driver_vrlink` knows the client by the model "PICO 4" (its PICO 4 profile).
+
+- **Decoder.** Venus (the `msm_vidc` driver, `/dev/video32` decoder and `/dev/video33` encoder).
+  Its firmware (`venus.mdt`, `venus.b*`) comes from the stock modem partition
+  (`extract-graphics-firmware.sh`) into `/usr/lib/firmware`; the kernel starts it when a process
+  first opens a codec node. `pico4-venus.service` sets its restart level to `RELATED` before
+  anything can (a codec crash then restarts Venus, not the headset).
+- **Finding it.** `vrlink` asks `vrdevice_path video_decode`; the image's
+  [`vrdevice_path`](../userspace/rootfs/usr/local/bin/vrdevice_path) answers with the
+  `qcom,vidc` node whose card is `msm_vidc_vdec` (or `msm_vidc_venc`). It opens only those
+  nodes: the Frame's `v4l2-ctl --list-devices` opens every video node, the cameras' too, which
+  stops head tracking. `steam-video-codec-setup.service` links `/dev/video-dec0` and
+  `/dev/video-enc0` after `pico4-venus.service`.
+- **The decoder API.** `vrlink` is written for the Frame's mainline stateful decoder; the stock
+  kernel's driver has the downstream one. `libpico4-vrlink-compat.so`
+  ([`src/vrlink`](../src/vrlink)), preloaded by `run_vrlink.sh` only, translates:
+  - Buffers: MMAP bitstream buffers, and the client's own picture buffers (DMABUF, memory from
+    its Vulkan device), become the driver's USERPTR buffers with the dma-buf fd in the plane;
+    the driver's extradata plane is allocated in the layer and hidden.
+  - Formats: the client's `V4L2_PIX_FMT_QC08C` is the driver's `NV12_UBWC` (Venus's compressed
+    NV12, which the GPU imports with `DRM_FORMAT_MOD_QCOM_COMPRESSED`).
+  - The first picture size: the driver's firmware parses only with both queues streaming, so a
+    256×256 placeholder capture queue streams with the bitstream until the driver's
+    port-settings event, which becomes `V4L2_EVENT_SOURCE_CHANGE`.
+  - Resets: `vrlink` drops pending input by streaming the bitstream off and on. The driver's
+    stream-off ends its session, and it takes a flush of the bitstream alone without doing
+    anything; the layer flushes both ports and queues the client's pictures again.
+  - Smaller pictures: after the stream's size drops (the PC sends 1536×6144 first, then
+    1280×5120), the firmware still takes only picture buffers of the largest size, and the
+    driver checks each dma-buf's size. The layer raises the client's dedicated dma-buf
+    allocations (`vkAllocateMemory`, reached through `vrlink`'s `dlsym` of
+    `vkGetInstanceProcAddr`) to that size.
+  - Display delay 0 becomes the driver's decode order and low-latency controls.
+- **Controllers.** `vrlink`'s own bindings for `pico_controller` keep SteamVR from simulating an
+  Index for it; the controllers' input over the link is open.
+
+| Check | Result |
+| --- | --- |
+| Headset: the decoder through the layer, driven as `vrlink` drives it (NVENC HEVC test streams at 90 fps, Vulkan pictures as `vrlink` creates them) | steady 1280×5120, a reset, a size increase, a size decrease and a decrease with a reset: 268–269 of 270 pictures each at 90 fps, Venus stays up |
+| Headset: a decoded picture through the GPU (`vrlink`'s explicit `QCOM_COMPRESSED` import, copied to linear NV12) | identical to FFmpeg's decode of the same frame, also after a size decrease; Turnip sizes the image as Venus does (9,891,840 bytes at 1280×5120) |
+| Headset: Steam Link from a PC | the PC accepts the headset and encodes; the picture in the headset is open |
 
 ## Build
 

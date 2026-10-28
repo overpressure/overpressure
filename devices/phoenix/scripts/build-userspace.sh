@@ -242,6 +242,7 @@ build_package pico4-sensors
 build_package pico4-basalt
 build_package pico4-vrdisplay "$project"/src/vrdisplay/*
 build_package pico4-sysvsem "$project"/src/sysvsem/*
+build_package pico4-vrlink "$project"/src/vrlink/*
 build_package pico4-gtk2
 build_package pico4-mangohud
 build_package pico4-wpa-supplicant
@@ -360,7 +361,14 @@ if [[ -n "$firmware" ]]; then
         [[ -s "$firmware/$f" ]] || { echo "missing GPU firmware $firmware/$f" >&2; exit 1; }
         install -m 0644 "$firmware/$f" "$T/usr/lib/firmware/$f"
     done
-    firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
+    # The video codec (Venus) for Steam Link's decoder (docs/session.md#steam-link); asset
+    # folders extracted before it was added lack it.
+    if [[ -s "$firmware/venus.mdt" ]]; then
+        install -m 0644 "$firmware"/venus.* "$T/usr/lib/firmware/"
+    else
+        echo "warning: no venus.mdt in $firmware (scripts/extract-graphics-firmware.sh): no video codec" >&2
+    fi
+    firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* $(ls venus.* 2>/dev/null) | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
 # Wi-Fi: the QCA6390's firmware and board data and the driver's configuration, where the
 # kernel's firmware loader looks, and the stock signed driver module, loaded by path
@@ -501,7 +509,8 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
-    pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service
+    pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service \
+    pico4-venus.service steam-video-codec-setup.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
@@ -520,11 +529,11 @@ ln -sfn /dev/null "$T/etc/systemd/system-generators/zram-generator"
 # starts the session), and none of the Frame-only system units: the controller
 # radio programmer (a firmware OTA for the Frame's nRF, never to run here),
 # the tracking DSP service, kernel-thread priorities for the Frame's kernel,
-# v4l2loopback, the Frame's video codec nodes and the debug port forwards.
+# v4l2loopback and the debug port forwards. The Frame's codec links
+# (steam-video-codec-setup) stay: the PICO 4's vrdevice_path answers them with Venus.
 in_t systemctl mask sddm.service dsp_service.service steamvr-program-ble.service \
     steamvr-set-kernel-thread-priorities.service steamvr-v4l2loopback.service \
-    steamvr-web-debug-portforward.service steam-video-codec-setup.service \
-    steam-web-debug-portforward.service
+    steamvr-web-debug-portforward.service steam-web-debug-portforward.service
 # The session's user units for Frame hardware (the headset-view loopback camera; the
 # proximity microphone mute, which cannot load this kernel's mixer: pico4-micmute does it) and
 # the sched_ext CPU scheduler (scx_lavd needs Linux 6.12; steamos-manager offers no scheduler
@@ -563,6 +572,12 @@ chown -R 1000:1000 "$T/home/$user"
 # The compositor's launcher raises its priority (as SteamVR's setup does on
 # desktops); the archive keeps file capabilities.
 in_t setcap cap_sys_nice=eip /opt/steamvr/bin/linuxarm64/vrcompositor-launcher
+# Steam Link's client drives the PICO 4's video decoder through pico4-vrlink's compatibility
+# layer (docs/session.md#steam-link), preloaded by its launcher only.
+vrlink_run=$T/opt/steamvr/tools/vrlink/bin/linuxarm64/run_vrlink.sh
+grep -qx '\./vrlink "\$@" &' "$vrlink_run" ||
+    { echo "$vrlink_run does not start vrlink as expected; check pico4-vrlink's preload" >&2; exit 1; }
+sed -i 's|^\./vrlink "\$@" &$|LD_PRELOAD=/usr/lib/libpico4-vrlink-compat.so${LD_PRELOAD:+:$LD_PRELOAD} ./vrlink "$@" \&|' "$vrlink_run"
 # Steam Linux Runtime's containers (pressure-vessel) need bubblewrap, which without user
 # namespaces (not in the stock kernel) only works setuid; pressure-vessel takes a setuid
 # /usr/bin/bwrap when its own fails (docs/session.md#the-steam-client).

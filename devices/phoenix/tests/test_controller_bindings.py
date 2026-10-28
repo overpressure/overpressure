@@ -41,9 +41,27 @@ class ControllerTypeTests(unittest.TestCase):
         bindings = json.loads(read("pico4-vrcompositor-bindings.json"))
         self.assertEqual(bindings["controller_type"], "pico_controller")
         self.assertEqual(self.profile["default_bindings"],
-                         [{"app_key": "openvr.component.vrcompositor", "binding_url": "pico4_vrcompositor_bindings.json"}])
+                         [{"app_key": "openvr.component.vrcompositor", "binding_url": "pico4_vrcompositor_bindings.json"},
+                          {"app_key": "vrlink.client", "binding_url": "pico4_vrlink_bindings.json"}])
         for path in re.findall(r'"/user/hand/(?:left|right)(/(?:input|output|pose)/[a-z_]+)', json.dumps(bindings)):
             self.assertIn(path, self.profile["input_source"])
+
+    def test_steam_link_client_gets_bindings_without_simulation(self):
+        # an issue: without them SteamVR remaps vrlink to the knuckles and simulates an Index
+        # headset, which the PC's Steam Link does not know.
+        bindings = json.loads(read("pico4-vrlink-bindings.json"))
+        self.assertEqual((bindings["app_key"], bindings["controller_type"]), ("vrlink.client", "pico_controller"))
+        self.assertEqual(bindings["simulated_actions"], [])
+        self.assertNotIn("simulate", json.dumps(bindings["options"]))
+        for path in re.findall(r'"/user/hand/(?:left|right)(/(?:input|output|pose)/[a-z_]+)', json.dumps(bindings)):
+            self.assertIn(path, self.profile["input_source"])
+        self.assertIn('install -Dm644 pico4-vrlink-bindings.json "$input/pico4_vrlink_bindings.json"', read("PKGBUILD"))
+
+    def test_the_panels_refresh_rates_for_steam_link(self):
+        patch = read("monado-steamvr-frame-rates.patch")
+        self.assertIn("+	float rates[] = {m_flDisplayFrequency};", patch)
+        self.assertIn("vr::Prop_DisplayAvailableFrameRates_Float_Array", patch)
+        self.assertIn("patch -d monado -p1 < monado-steamvr-frame-rates.patch", read("PKGBUILD"))
 
     def test_recipe_installs_the_profile_and_links_steamvrs_remapping(self):
         recipe = read("PKGBUILD")

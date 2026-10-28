@@ -28,6 +28,7 @@
     "/pose/openxr_grip": {"type": "pose", "binding_image_point": [0, 0]}
   },
   "default_bindings": [
-    {"app_key": "openvr.component.vrcompositor", "binding_url": "pico4_vrcompositor_bindings.json"}
+    {"app_key": "openvr.component.vrcompositor", "binding_url": "pico4_vrcompositor_bindings.json"},
+    {"app_key": "vrlink.client", "binding_url": "pico4_vrlink_bindings.json"}
   ]
 }
