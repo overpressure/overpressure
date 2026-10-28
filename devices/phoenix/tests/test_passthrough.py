@@ -246,7 +246,7 @@ class RoomViewTests(unittest.TestCase):
             matches = list(re.finditer(r"(?m)^\+(.*)\n\+(pico4_hmd_\w+)\(", patch))
             self.assertTrue(matches, name)
             for match in matches:
-                self.assertEqual(match.group(1), 'extern "C" bool', match.group(2))
+                self.assertRegex(match.group(1), r'^extern "C" (bool|void)$', match.group(2))
 
     def test_depth_mesh_in_the_space_of_the_reported_poses(self):
         # The vertices are in the head pose's world; SteamVR's raw space adds the tracking origin's

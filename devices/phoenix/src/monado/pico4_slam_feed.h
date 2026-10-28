@@ -19,7 +19,7 @@
 #include <stdint.h>
 
 #define PICO4_SLAM_FEED_PATH "/dev/shm/pico4-slam"
-#define PICO4_SLAM_FEED_MAGIC 0x36444546344f4350ull //!< "PCO4FED6"
+#define PICO4_SLAM_FEED_MAGIC 0x37444546344f4350ull //!< "PCO4FED7"
 #define PICO4_SLAM_FEED_W 640
 #define PICO4_SLAM_FEED_H 480
 #define PICO4_SLAM_FEED_CAMS 4
@@ -64,8 +64,9 @@ struct pico4_slam_feed_pose
 	int32_t error;           //!< The tracker's error code.
 	uint32_t type;
 	/*!
-	 * The tracker's ground detection (docs/xr.md#room-setup): 0 none, 1 the floor detected in its
-	 * map, 2 an initial estimate. The floor lies @ref floor_height below the world's origin.
+	 * The tracker's ground detection (docs/xr.md#room-setup): 0 none, 1 the floor it detected
+	 * (or 1.3 m below the head when its detection found no plane), 2 and 3 the height a saved
+	 * map carries. The floor lies @ref floor_height below the world's origin.
 	 */
 	uint32_t floor_status;
 	double floor_height;
@@ -134,4 +135,10 @@ struct pico4_slam_feed
 	uint64_t mesh_wanted_ns;
 	uint64_t meshes_written;
 	struct pico4_slam_feed_mesh meshes[PICO4_SLAM_FEED_MESHES];
+	/*!
+	 * SteamVR's room setup asks for the floor (docs/xr.md#room-setup): the driver bumps this
+	 * when a step that detects the floor begins, and pico4-slamd starts the tracker's ground
+	 * detection again, so the floor comes from what the head sees then.
+	 */
+	uint64_t floor_requests;
 };

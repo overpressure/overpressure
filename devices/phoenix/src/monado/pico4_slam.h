@@ -106,6 +106,13 @@ bool
 pico4_slam_floor(struct pico4_slam *s, float *out_y);
 
 /*!
+ * Starts PICO OS's tracker's ground detection again (through pico4-slamd): the floor from what
+ * the head sees now. Nothing without PICO OS's tracker.
+ */
+void
+pico4_slam_detect_floor(struct pico4_slam *s);
+
+/*!
  * PICO OS's see-through depth mesh newer than mesh @p after (pico4_passthrough.h), from
  * pico4-slamd: up to PICO4_DEPTH_MESH_VERTICES vertices (x, y, z) into @p vertices and
  * PICO4_DEPTH_MESH_INDICES indices into @p indices, the vertices in the head pose's world

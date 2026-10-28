@@ -1582,6 +1582,14 @@ pico4_hmd_floor(struct xrt_device *xdev, float *out_y)
 	return true;
 }
 
+void
+pico4_hmd_detect_floor(struct xrt_device *xdev)
+{
+	if (xdev != NULL && xdev->get_tracked_pose == pico4_hmd_get_tracked_pose) {
+		pico4_slam_detect_floor(pico4_hmd(xdev)->slam);
+	}
+}
+
 bool
 pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe)
 {
@@ -1595,6 +1603,8 @@ pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe)
 	for (const char *c = map; *c != '\0'; c++) {
 		h = (h ^ (uint8_t)*c) * 1099511628211ull;
 	}
-	*out_universe = h > 1 ? h : h + 2;
+	// Not 0 or 1, which vrserver gives other meanings, nor 424242, the Frame's universe without
+	// a tracker map, which vrserver never saves.
+	*out_universe = h > 1 && h != 424242 ? h : h + 2;
 	return true;
 }

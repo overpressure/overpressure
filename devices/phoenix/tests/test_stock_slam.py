@@ -374,7 +374,23 @@ class RoomTests(unittest.TestCase):
         recipe = read(ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD")
         self.assertLess(recipe.index("< monado-steamvr-camera.patch"), recipe.index("< monado-steamvr-room.patch"))
         hmd = read(ROOT / "src/monado/pico4_hmd.c")
-        self.assertIn("*out_universe = h > 1 ? h : h + 2;", hmd)  # 0 and 1 are OpenVR's
+        # 0 and 1 are OpenVR's; 424242 is the Frame's universe without a map, which is never saved.
+        self.assertIn("*out_universe = h > 1 && h != 424242 ? h : h + 2;", hmd)
+
+    def test_universes_through_vrserver_chaperone_server(self):
+        # an issue: as driver_cv, vrserver's chaperone server restores a known universe (slot 1) or
+        # creates a new one with its room setup to do (slot 0); without it a new universe never
+        # exists in vrserver and the playspace setup has no floor.
+        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
+        self.assertIn('GetGenericInterface("IVRChaperoneServerDriver_XXX", &err)', patch)
+        self.assertIn("using create_fn = void (*)(void *self, uint64_t universe, bool keep_origins);", patch)
+        self.assertIn("const vr::HmdMatrix34_t *persistent_map_from_map, bool refine);", patch)
+        switch = patch[patch.index("void **vtable = *(void ***)m_chaperone_server;"):]
+        switch = switch[:switch.index("} else {")]
+        self.assertIn("((restore_fn)vtable[1])(m_chaperone_server, universe, &identity, false);", switch)
+        self.assertIn("if (!known) {\n+\t\t\t\t\t\t((create_fn)vtable[0])(m_chaperone_server, universe, true);", switch)
+        # vrserver reports the universe itself: the property only without its chaperone server.
+        self.assertNotIn("Prop_CurrentUniverseId_Uint64", switch)
 
 
 class DepthMeshTests(unittest.TestCase):
@@ -476,7 +492,7 @@ class FloorTests(unittest.TestCase):
         slam = read(ROOT / "src/monado/pico4_slam.c")
         floor = slam[slam.index("\npico4_slam_floor(struct pico4_slam *s, float *out_y)\n{\n\tstruct"):]
         floor = floor[:floor.index("\n}\n")]
-        self.assertIn("p.floor_status != 1", floor)  # 2 is the initial estimate (1.13 m on the desk)
+        self.assertIn("p.floor_status != 1", floor)  # 2 and 3: the height a saved map carries
         self.assertIn("double y = -p.floor_height;", floor)
         self.assertIn("y += feed->room_t[0];", floor)
         hmd = read(ROOT / "src/monado/pico4_hmd.c")
@@ -499,6 +515,27 @@ class FloorTests(unittest.TestCase):
         # Off: NaN clears the compositor's value.
         off = patch[patch.index("ovrd_log(\"Room setup: floor detection %s\\n\""):]
         self.assertIn("SendFloor(NAN);", off[:off.index("m_floor_sent = NAN;")])
+
+    def test_room_setup_detects_the_floor_again(self):
+        # an issue: libSlam's ground is fitted once, in the first second after a start; a step that
+        # detects the floor starts its ground detection again (setPlaneDetect, "plane" 1).
+        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch")
+        self.assertIn("pico4_hmd_detect_floor(struct xrt_device *xdev) __attribute__((weak));", patch)
+        on = patch[patch.index("ovrd_log(\"Room setup: floor detection %s\\n\""):]
+        on = on[:on.index("m_floor_sent = NAN;")]
+        self.assertIn("if (on && pico4_hmd_detect_floor != NULL && m_xhmd != NULL)", on)
+        hmd = read(ROOT / "src/monado/pico4_hmd.c")
+        self.assertIn("pico4_slam_detect_floor(pico4_hmd(xdev)->slam);", hmd)
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        self.assertIn("__atomic_fetch_add(&feed->floor_requests, 1, __ATOMIC_ACQ_REL);", slam)
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        loop = slamd[slamd.index("uint64_t floor_requests = __atomic_load_n(&feed->floor_requests"):]
+        request = loop[loop.index("if (fr != floor_requests) {"):]
+        self.assertIn('t.set(h, "plane", "1");', request[:request.index("}")])
+        # A new field: a new feed layout, which the driver and pico4-slamd check by the magic.
+        header = read(ROOT / "src/monado/pico4_slam_feed.h")
+        self.assertIn('0x37444546344f4350ull //!< "PCO4FED7"', header)
+        self.assertGreater(header.index("uint64_t floor_requests;"), header.index("meshes[PICO4_SLAM_FEED_MESHES];"))
 
 
 class FeedHeaderTests(unittest.TestCase):

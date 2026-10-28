@@ -810,6 +810,7 @@ main(int argc, char **argv, char **envp)
 	}
 	int64_t started = now_ns(CLOCK_MONOTONIC), reloc_checked = 0;
 	bool room_settled = false;
+	uint64_t floor_requests = __atomic_load_n(&feed->floor_requests, __ATOMIC_ACQUIRE);
 	const char *restart_env = getenv("PICO4_SLAMD_RESTART_S");
 	const int64_t restart_ns = (int64_t)(restart_env != 0 ? atoi(restart_env) : RESTART_DEFAULT_S) * 1000000000LL;
 	// The watchdog: the confidence before, and since when it is 0 after a 1 (0: not lost).
@@ -888,6 +889,15 @@ main(int argc, char **argv, char **envp)
 					settle_room(feed, generation, h, relocinfo);
 				}
 				room_settled = true;
+			}
+			// SteamVR's room setup asks for the floor: the tracker's ground detection runs
+			// again (setPlaneDetect 1; each plane it fits then replaces the last), so the floor
+			// comes from what the head sees now, not from the first second after the start.
+			const uint64_t fr = __atomic_load_n(&feed->floor_requests, __ATOMIC_ACQUIRE);
+			if (fr != floor_requests) {
+				floor_requests = fr;
+				t.set(h, "plane", "1");
+				fprintf(stderr, "pico4-slamd: ground detection again (room setup)\n");
 			}
 		}
 		if (!room_settled && now - started > RELOCALISE_NS) {

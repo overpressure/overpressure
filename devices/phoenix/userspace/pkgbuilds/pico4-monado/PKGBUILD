@@ -18,7 +18,7 @@
 # SteamVR's room view (docs/xr.md#passthrough).
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=10
+pkgrel=11
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)

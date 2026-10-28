@@ -1745,6 +1745,17 @@ pico4_slam_room(struct pico4_slam *s, char out_map[40])
 	return true;
 }
 
+void
+pico4_slam_detect_floor(struct pico4_slam *s)
+{
+	struct pico4_slam_feed *feed = s != NULL ? __atomic_load_n(&s->feed, __ATOMIC_ACQUIRE) : NULL;
+	if (feed == NULL || !s->stock) {
+		return;
+	}
+	__atomic_fetch_add(&feed->floor_requests, 1, __ATOMIC_ACQ_REL);
+	SLAM_INFO(s, "Floor: the tracker's ground detection asked to run again");
+}
+
 bool
 pico4_slam_floor(struct pico4_slam *s, float *out_y)
 {
@@ -2170,6 +2181,12 @@ pico4_slam_room(struct pico4_slam *s, char out_map[40])
 	(void)s;
 	(void)out_map;
 	return false;
+}
+
+void
+pico4_slam_detect_floor(struct pico4_slam *s)
+{
+	(void)s;
 }
 
 bool

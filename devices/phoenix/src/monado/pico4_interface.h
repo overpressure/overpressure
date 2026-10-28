@@ -111,6 +111,16 @@ bool
 pico4_hmd_floor(struct xrt_device *xdev, float *out_y);
 
 /*!
+ * SteamVR's room setup begins a step that detects the floor: PICO OS's tracker detects it again
+ * from what the head sees now, as each later pico4_hmd_floor then reports. Nothing for other
+ * devices.
+ *
+ * @ingroup drv_pico4
+ */
+void
+pico4_hmd_detect_floor(struct xrt_device *xdev);
+
+/*!
  * SteamVR's 3D room view (docs/xr.md#passthrough): PICO OS's see-through depth mesh newer than
  * mesh @p after, its vertices (x, y, z; up to PICO4_DEPTH_MESH_VERTICES) into @p vertices and its
  * triangles (up to PICO4_DEPTH_MESH_INDICES indices) into @p indices, with its time and its place

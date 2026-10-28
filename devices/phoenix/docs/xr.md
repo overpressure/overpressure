@@ -926,10 +926,18 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   into the room's world. Without a relocalisation 10 s after `start6DOF` the session is a new
   room with a new random id, saved with its shape as it is; a later relocalisation (a covered
   start, a restarted tracker) moves it into the saved room's world and universe then.
-- **SteamVR's universe.** The room's identity is `room-` and its id; `driver_monado` reports its
-  hash as `Prop_CurrentUniverseId_Uint64` once the room is settled, so SteamVR keeps a play area
-  per room in `chaperone_info.vrchap`, back in its place whenever the tracker relocalises in that
-  room, and asks for a room setup in a new one. Until then the universe is 2. The tracker's own
+- **SteamVR's universe.** The room's identity is `room-` and its id; its hash is the room's
+  universe (never 0, 1 or 424242, which `vrserver` reserves). Once the room is settled,
+  `driver_monado` switches universes as the Frame's driver does, through `vrserver`'s chaperone
+  server (`IVRChaperoneServerDriver_XXX`, unversioned): slot 1 restores a universe that
+  `chaperone_info.vrchap` holds (`bool (uint64 universe, const HmdMatrix34_t *persistentMapFromMap,
+  bool refine)`, identity and false), else slot 0 creates it (`void (uint64 universe, bool
+  keepOrigins)`, true): a 1 m default play area, room setup not done, so SteamVR asks for the
+  playspace setup, and its entry written to the file. `vrserver` then sets the HMD's
+  `Prop_CurrentUniverseId_Uint64` itself; it re-reads it every frame and, for a universe the file
+  does not hold, keeps no standing space at all, so setting only the property (as before) left a
+  new room's playspace setup without a floor. SteamVR keeps a play area per room, back in its
+  place whenever the tracker relocalises in that room. Until then the universe is 2. The tracker's own
   map name (`getRelocMapInfo`, the name of its current map object) is no identity: after a merge
   it can be the session's new map, and a saved room then came back as a new universe. Rooms saved
   with the plain 2 m square from before the ids (it reads as a reserved id) get an id and shape at
@@ -956,14 +964,23 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   y′ = m₁₁·y + m₁₃) to the unversioned `IVRServerInternal_XXX`, slot 40. `vrserver` posts it to
   the compositor (`floor_detection_result`), whose floor target snaps to it; accepting the step
   commits it. NaN clears it when the step ends. The floor height adjustment (step 2) is manual
-  on the Frame too. Here `libSlam`'s ground detection gives the floor: `pico4-slamd` turns it on
-  (`plane` 1) and passes each result's ground status and height with the pose. The floor lies
-  that far below the tracker world's origin, measured at 0.79 m below a headset on a desk;
-  status 2 is an initial estimate (1.13 m there) and is not used. `driver_monado`
+  on the Frame too, and on the Frame a controller touching the floor pushes the target down
+  (the lowest controller in room-setup space); the PICO 4's controllers have no positions yet.
+  Here `libSlam`'s ground detection gives the floor: `pico4-slamd` turns it on (`plane` 1,
+  `setPlaneDetect`) and passes each result's ground status and height with the pose. The floor
+  lies that far below the tracker world's origin. While the detection runs, each plane it fits
+  replaces the last (status 1; 1.3 m below the head if it fits none). After a start the height
+  comes about a second in and then stays for the whole session. Status 2 and 3 are the height a saved map carries
+  and are not used. PICO OS's own services take the first height as it is
+  (`sys.pvr.floorheightforalgorithm`). What the cameras see in that first second decides it: with
+  the user standing in one room, starts gave 1.61–1.65 m and 1.17–1.26 m (a bed or table). So
+  each room-setup step that detects the floor (3, 6, 7) starts the ground detection again
+  (`pico4_hmd_detect_floor`, the feed's `floor_requests`), and the floor comes from what the
+  head sees during the setup. `driver_monado`
   ([monado-steamvr-floor.patch](../userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch))
   does what the Frame's driver does, with that floor in its raw space (room and tracking origin
-  applied). Slot 40 belongs to this `vrserver` build and has to be checked again with every new
-  SteamVR.
+  applied); in a known room a playspace setup committed the detected floor to the millimetre.
+  Slot 40 belongs to this `vrserver` build and has to be checked again with every new SteamVR.
 - **Recenter.** Holding the PICO button (the dashboard's quick recenter) runs room-setup step 1
   and resets SteamVR's seated zero pose only: `chaperone_info.vrchap` gets the universe's new
   `seated` pose, its `standing` pose stays ("Standing transform was not updated"), so the play
