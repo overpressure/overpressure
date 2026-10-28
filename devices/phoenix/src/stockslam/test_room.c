@@ -60,6 +60,29 @@ main(void)
 	EXPECT(room_fit((const double(*)[3])s, (const double(*)[3])w, 2, &got_yaw, got_t, atan2, sin, cos, sqrt) < 0,
 	       "two points");
 
+	// End to end, with the files as libSlam writes and reads them: its saveMap writer prints a
+	// world point (x, y, z) as (-y, x, z), its readers store (a, b, c) as (b, -a, c). A session
+	// whose world is the room's turned by -100 degrees and shifted (as relocalisations report):
+	// the tracker writes the room's square in the session's world, and the fit must give back the
+	// transform that takes a session point (a head pose) into the room's world.
+	double room[4][3] = {{-1.5, -1, -1}, {-1.5, 1, -1}, {-1.5, 1, 1}, {-1.5, -1, 1}};
+	const double turn = -100 * PI / 180, shift[3] = {0.004, 0.075, 1.427};
+	char copy[512];
+	int len = snprintf(copy, sizeof(copy), "vertexcount 4\n");
+	for (int i = 0; i < 4; i++) {
+		// The session's point of room[i]: the inverse of w = R s + t.
+		double y = room[i][1] - shift[1], z = room[i][2] - shift[2];
+		double sx = room[i][0] - shift[0], sy = cos(turn) * y + sin(turn) * z, sz = -sin(turn) * y + cos(turn) * z;
+		len += snprintf(copy + len, sizeof(copy) - (size_t)len, "(%f, %f, %f)\n", -sy, sx, sz);
+	}
+	double seen_pts[ROOM_MAX_POINTS][3];
+	EXPECT(room_parse(copy, len, seen_pts, ROOM_MAX_POINTS) == 4, "libSlam's copy");
+	rms = room_fit((const double(*)[3])seen_pts, (const double(*)[3])room, 4, &got_yaw, got_t, atan2, sin, cos, sqrt);
+	EXPECT(rms >= 0 && rms < 1e-5, "copy rms %g", rms);
+	EXPECT(fabs(got_yaw - turn) < 1e-5, "copy turn %f, not %f", got_yaw * 180 / PI, turn * 180 / PI);
+	EXPECT(fabs(got_t[0] - shift[0]) < 1e-5 && fabs(got_t[1] - shift[1]) < 1e-5 && fabs(got_t[2] - shift[2]) < 1e-5,
+	       "copy shift");
+
 	if (failures == 0) {
 		printf("test_room: passed\n");
 	}

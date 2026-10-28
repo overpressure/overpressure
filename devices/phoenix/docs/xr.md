@@ -904,7 +904,10 @@ saved room's boundary, in this session's world, to `boundary/stdataforalgorithm.
 the callback of `RelocResultCallbackRegister` once per tracker with the relocalisation's time
 and pose, whenever the relocalisation happens; PICO OS's service learns of it that way. A boundary
 file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's world point is
-(b, −a, c).
+(b, −a, c): `libSlam`'s writer prints a world point (x, y, z) as (−y, x, z), and its readers
+store (a, b, c) as (b, −a, c). The map is saved in the session's world: the tracker restarted with
+the headset untouched relocalises with the same transform (−100.45° and −100.41°, shifts within
+2 mm).
 
 - **Where it lives.** [`stock-slam`](../userspace/rootfs/usr/libexec/pico4-poc/stock-slam)
   binds `/var/lib/pico4-stock-slam/{maps,boundary}` (the data partition, mode 0700) onto those
@@ -953,6 +956,12 @@ file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's 
   does what the Frame's driver does, with that floor in its raw space (room and tracking origin
   applied). Slot 40 belongs to this `vrserver` build and has to be checked again with every new
   SteamVR.
+- **Recenter.** Holding the PICO button (the dashboard's quick recenter) makes SteamVR reset its
+  standing zero pose (`VREvent_StandingZeroPoseReset`, manual): standing space, and the play area
+  kept in it, turn to where the head faces, and `chaperone_info.vrchap` keeps the pose of the
+  last room setup, so after a restart the recenter is gone. The Frame keeps the chaperone
+  universe (bounds and `standingAppWorldFromRawAppWorld`) in its XR service's persistent world
+  with the map instead; that is not followed yet.
 - **Verified.** A drawn play area comes back after a reboot exactly where it was drawn (the
   tracker relocalises in the saved room, and SteamVR finds the room's universe in
   `chaperone_info.vrchap`), and its boundary appears when walking toward its edge. With no play
