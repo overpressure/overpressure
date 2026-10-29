@@ -6,6 +6,8 @@ Description=Wi-Fi (QCA6390)
 Requires=pico4-wlfw-client.service
 After=pico4-wlfw-client.service
 ConditionPathExists=/usr/lib/pico4-wlan/qca_cld3_qca6390.ko
+# The stock kernel only (KGSL): a mainline kernel drives the QCA6390 with ath11k.
+ConditionPathExists=/sys/class/kgsl
 
 [Service]
 Type=oneshot

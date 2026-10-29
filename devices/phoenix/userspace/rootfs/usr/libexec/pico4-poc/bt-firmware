@@ -1,0 +1,13 @@
+#!/bin/sh
+# PICO OS's bluetooth partition, read-only at /mnt/vendor/bt_firmware (PICO OS: /vendor/bt_firmware):
+# the QCA6390's Bluetooth firmware and NV data, which the image links to instead of shipping them
+# (hci_qca loads qca/htbtfw20.tlv and qca/htnv20.bin when the controller opens). The block device
+# stays read-only (the storage policy, pico4-storage-ro.service).
+set -eu
+dir=/mnt/vendor/bt_firmware
+mountpoint -q "$dir" && exit 0
+dev=$(readlink -f /dev/block/by-name/bluetooth 2>/dev/null || true)
+[ -n "$dev" ] && [ -b "$dev" ] || { echo "bt-firmware: no partition named bluetooth" >&2; exit 1; }
+blockdev --setro "$dev"
+mount -t vfat -o ro,nodev,nosuid,noexec "$dev" "$dir"
+echo "bt-firmware: $dev read-only at $dir"

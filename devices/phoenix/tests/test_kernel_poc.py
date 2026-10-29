@@ -289,6 +289,25 @@ class RecoveryImageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, gpu_firmware=firmware)
 
+    def test_wlan_firmware_goes_where_ath11k_looks(self):
+        firmware = self.tmp / "wlan" / "firmware" / "qca6390"
+        firmware.mkdir(parents=True)
+        for name in ("amss20.bin", "m3.bin", "bdwlanq.elf", "bdwlan.elf", "bdwlan.e01"):
+            (firmware / name).write_bytes(name.encode())
+        dev = self.dev_recovery("pico4poc.part=recovery")
+        image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev,
+                                                   wlan_firmware=self.tmp / "wlan"))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1"):])))
+        files = {path: node.data for path, node in added.items() if node.is_file}
+        self.assertEqual(files, {
+            "lib/firmware/ath11k/QCA6390/hw2.0/amss.bin": b"amss20.bin",
+            "lib/firmware/ath11k/QCA6390/hw2.0/m3.bin": b"m3.bin",
+            "lib/firmware/ath11k/QCA6390/hw2.0/board.bin": b"bdwlanq.elf",
+        })
+        (firmware / "bdwlanq.elf").unlink()
+        with self.assertRaises(ValueError):
+            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, wlan_firmware=self.tmp / "wlan")
+
     def test_extra_words_replace_their_keys(self):
         dev = self.dev_recovery("pico4poc.part=recovery panic=0")
         words = bootimg.parse(recovery_image.build(

@@ -387,7 +387,15 @@ if [[ -n "$wlan" ]]; then
     cp -r --no-preserve=ownership "$wlan/firmware/." "$T/usr/lib/firmware/"
     install -m 0644 "$wlan/modules/qca_cld3_qca6390.ko" "$T/usr/lib/pico4-wlan/"
     ln -sfn /mnt/vendor/persist/wlan_mac.bin "$T/usr/lib/firmware/wlan/qca_cld/qca6390/wlan_mac.bin"
-    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/wlan" "$T/usr/lib/pico4-wlan"
+    # ath11k on a mainline kernel loads the same files under its own names; the headset's board
+    # data (cnss2 picks bdwlanq.elf) is its board.bin.
+    [[ -s "$wlan/firmware/qca6390/bdwlanq.elf" ]] || { echo "missing $wlan/firmware/qca6390/bdwlanq.elf" >&2; exit 1; }
+    mkdir -p "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0"
+    ln -sfn ../../../qca6390/amss20.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin"
+    ln -sfn ../../../qca6390/m3.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/m3.bin"
+    ln -sfn ../../../qca6390/bdwlanq.elf "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/board.bin"
+    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/wlan" "$T/usr/lib/firmware/ath11k" \
+        "$T/usr/lib/pico4-wlan"
     wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 usr/lib/firmware/wlan usr/lib/pico4-wlan -type f -print0 |
         sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
@@ -507,13 +515,19 @@ rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
 in_t systemd-tmpfiles --create steamos-offload.conf
 # PICO OS's mount point of its persist partition (pico4-persist.service, read-only).
 mkdir -p "$T/mnt/vendor/persist"
+# The QCA6390's Bluetooth firmware stays on PICO OS's bluetooth partition (pico4-bt-firmware.service,
+# read-only), where hci_qca's names link.
+mkdir -p "$T/mnt/vendor/bt_firmware" "$T/usr/lib/firmware/qca"
+for f in htbtfw20.tlv htnv20.bin; do
+    ln -sfn "/mnt/vendor/bt_firmware/image/$f" "$T/usr/lib/firmware/qca/$f"
+done
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
     pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service \
-    pico4-venus.service steam-video-codec-setup.service pico4-stock-preload.service
+    pico4-venus.service steam-video-codec-setup.service pico4-stock-preload.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service
 # pico4-sysvsem for every process on the stock kernel only (pico4-stock-preload.service).
 ln -sfn /run/pico4-poc/ld.so.preload "$T/etc/ld.so.preload"
 # Units that would wait for console input, erase stage-1 evidence from pstore,

@@ -295,6 +295,9 @@ Valve's, and what Valve's kernel needs is found by the hardware, not by a kernel
 | Device nodes | udev's `devnode` helper creates them (no devtmpfs) | devtmpfs creates them; the helper stays for the block policy (every disk read-only) |
 | systemd | pinned at 257.x (258 needs Linux 5.4) | the pin stays: the Frame's own systemd is 257.7 |
 | Monado's own service | `pico4-monado` with its KMS target | skips itself (open: Monado outside SteamVR) |
+| Wi-Fi | the stock qcacld-3.0 module with `pico4-wlfw-client` | ath11k on PCIe 0 (the QCA6390's power sequencer on the stock supplies), PICO's firmware and board data (`bdwlanq.elf`) under ath11k's names, the address from persist's `wlan_mac.bin` (`pico4-wlan-address`); the stock units skip themselves |
+| Bluetooth | none | `hci_qca` on QUP0's UART 6; firmware and NV data from PICO OS's `bluetooth` partition, mounted read-only (`pico4-bt-firmware`), the address from persist's `pico_bt_mac` (`pico4-bt-address`), the Frame's BlueZ |
+| Video codec restart level, audio modules | `pico4-venus`, `pico4-audio-modules` (stock modules) | skip themselves |
 | Boot splash | KGSL's display (`msm_drm`), six layers | msm's primary plane; as the first DRM master it also probes the panels' mode |
 | Power key | `qpnp_pon` | `pm8941_pwrkey` |
 | Session | seat0 without VTs | the session takes VT 1 in getty's place, as sddm does on the Frame (logind requires a VT where the kernel has them) |
@@ -370,6 +373,7 @@ afterwards, as `pico4-valve-session-check` does.
 | 0003 root identity | the ABL's board overlay replaces the root's compatible and model with "qcom,kona-mtp"; drivers matching on the machine (msm's UBWC configuration, cpufreq-dt's blocklist) then miss "qcom,sm8250", and the display fails to bind. The tree keeps its own values in `pico4,compatible` and `pico4,model`, which the kernel puts back after unflattening it. |
 | 0004 GPU BCL | Valve's "drm/msm/a6xx: enable BCL" asks the secure world's GPU register service for Battery Current Limit on every a6xx GMU and fails the GPU when it refuses; SM8250's firmware refuses, and the failed GPU took the display with it. BCL now runs only where the secure world enabled it. |
 | 0005 writeback | Valve's "drm/msm/dpu: register all writebacks" pairs two writeback blocks whenever the DSI links are bonded; SM8250 has one, the pair's second id comes from past the catalog, the KMS initialisation fails and its error path oopses in `dpu_kms_destroy()`, which left the headset hung without a watchdog reset. The pair is formed only where a second block exists. |
+| 0006 Bluetooth firmware wait | Valve's "bluetooth: make sure firmware is avail before probe" defers every `hci_qca` probe until `qca/hmtbtfw20.tlv`, the Frame's WCN7850 firmware, loads; the QCA6390 has no such file (it loads `htbtfw20.tlv` when the device opens), so its probe deferred forever. The wait applies to the WCN7850 only. |
 
 Mainline sets RPMh regulators only to voltages on the regulator's own steps, and one invalid
 regulator node fails the whole PMIC's set. The stock tree runs L7A (the panels' VDDIO) in

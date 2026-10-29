@@ -23,6 +23,9 @@ deckard-arch-hotfixes-release-0.3/steamos-manager
 # the same way); only the installed system, the dev boot's root is on zram0
 deckard-arch-hotfixes-release-0.3/holo-zram-swap
 networkmanager
+# Bluetooth as on the Frame; btmgmt sets the controller's address (pico4-bt-address.service)
+deckard-arch-hotfixes-release-0.3/bluez
+deckard-arch-hotfixes-release-0.3/bluez-utils
 # NetworkManager's wpa_supplicant, patched so that WPA3 (SAE) connects on the 4.19 kernel
 pico4/pico4-wpa-supplicant
 # Battery level and charging state from the stock kernel's power supply (D-Bus activated)

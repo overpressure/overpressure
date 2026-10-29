@@ -5,6 +5,8 @@ Description=WLAN firmware control client
 Requires=pico4-qrtr-ns.service
 After=pico4-qrtr-ns.service
 ConditionPathExists=/usr/lib/pico4-wlan/qca_cld3_qca6390.ko
+# The stock kernel only (KGSL): a mainline kernel's ath11k is the firmware's client itself.
+ConditionPathExists=/sys/class/kgsl
 
 [Service]
 Type=notify

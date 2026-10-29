@@ -1,0 +1,18 @@
+# The Bluetooth controller's public address from persist, as PICO OS sets it (pico_bt_mac). The
+# QCA6390 has none of its own: hci_qca registers it unconfigured until one is set, and bluetoothd
+# leaves an unconfigured controller alone. btmgmt sets it through the kernel's management
+# interface, before bluetoothd starts.
+[Unit]
+Description=Bluetooth address from persist
+After=pico4-persist.service sys-subsystem-bluetooth-devices-hci0.device
+Wants=sys-subsystem-bluetooth-devices-hci0.device
+Before=bluetooth.service
+ConditionPathExists=/mnt/vendor/persist/pico_bt_mac
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'exec btmgmt --index 0 public-addr "$(cat /mnt/vendor/persist/pico_bt_mac)"'
+
+[Install]
+WantedBy=bluetooth.target

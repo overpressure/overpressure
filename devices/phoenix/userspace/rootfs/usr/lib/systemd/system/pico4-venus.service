@@ -4,6 +4,8 @@
 Description=Video codec (Venus) restart level
 DefaultDependencies=no
 ConditionPathExists=/usr/lib/firmware/venus.mdt
+# The stock kernel's subsystem restart levels only (KGSL).
+ConditionPathExists=/sys/class/kgsl
 After=systemd-modules-load.service
 Before=sysinit.target
 

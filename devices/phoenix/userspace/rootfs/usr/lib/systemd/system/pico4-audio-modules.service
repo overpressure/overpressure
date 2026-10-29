@@ -6,6 +6,8 @@ DefaultDependencies=no
 After=local-fs.target
 Before=pico4-pd-mapper.service
 ConditionPathExists=/usr/lib/pico4-audio/audio_machine_kona.ko
+# Stock kernel modules: the stock kernel only (KGSL).
+ConditionPathExists=/sys/class/kgsl
 
 [Service]
 Type=oneshot

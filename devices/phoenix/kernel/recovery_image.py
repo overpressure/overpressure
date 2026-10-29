@@ -8,10 +8,12 @@ as "dev image" builds it, because recovery is a chained AVB partition.
 Started by a reboot with reason "recovery", the ABL boots it once; any reboot after that (a
 panic, a deadline, a hard reset) starts the installed system on the stock kernel again.
 
-    python recovery_image.py [--debug] [--trace FUNCTION] [--gpu-firmware DIR] [--cmdline WORD]...
-        [--installed INSTALL_BOOT] [--stage1 DIR] KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT
+    python recovery_image.py [--debug] [--trace FUNCTION] [--gpu-firmware DIR] [--wlan-firmware DIR]
+        [--cmdline WORD]... [--installed INSTALL_BOOT] [--stage1 DIR]
+        KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT
 
 --gpu-firmware adds PICO's GPU firmware to stage 1, which msm needs while it binds the display.
+--wlan-firmware adds the QCA6390's, which ath11k loads while its PCIe device probes.
 
 --installed starts the installed system instead of the maintenance stage 1: stage 1 and its
 command line come from the installed system's boot image (out/dev/install-boot.img), and its
@@ -92,6 +94,13 @@ CONNECT_TIMEOUT = "etc/pico4-poc/test-connect-timeout"
 #: msm loads the GPU while it binds the display, before stage 1 could provide anything.
 GPU_FIRMWARE = {"a650_sqe.fw": "lib/firmware/qcom", "a650_gmu.bin": "lib/firmware/qcom",
                 "a650_zap.*": "lib/firmware/qcom/sm8250/pico/phoenix"}
+#: --wlan-firmware: the QCA6390's firmware and board data (assets/wlan-*, from the stock OTA)
+#: under ath11k's names. The headset's board data is bdwlanq.elf (cnss2 picks it); ath11k takes
+#: an ELF board file as board.bin.
+ATH11K = "lib/firmware/ath11k/QCA6390/hw2.0"
+WLAN_FIRMWARE = {"firmware/qca6390/amss20.bin": f"{ATH11K}/amss.bin",
+                 "firmware/qca6390/m3.bin": f"{ATH11K}/m3.bin",
+                 "firmware/qca6390/bdwlanq.elf": f"{ATH11K}/board.bin"}
 
 
 def tree_with_dirs(paths) -> cpio.Tree:
@@ -128,6 +137,20 @@ def firmware_archive(directory: Path) -> cpio.Tree:
         if not found:
             raise ValueError(f"{directory} has no {pattern}")
         files.update({f"{dest}/{f.name}": f for f in found})
+    return files_archive(files)
+
+
+def wlan_firmware_archive(directory: Path) -> cpio.Tree:
+    """--wlan-firmware: the QCA6390's files at ath11k's paths."""
+    files = {dest: directory / source for source, dest in WLAN_FIRMWARE.items()}
+    missing = [str(f) for f in files.values() if not f.is_file()]
+    if missing:
+        raise ValueError(f"no {', '.join(missing)}")
+    return files_archive(files)
+
+
+def files_archive(files: dict) -> cpio.Tree:
+    """An archive with each file at its path."""
     tree = tree_with_dirs(files)
     for path, source in files.items():
         tree.add_file(path, source.read_bytes())
@@ -169,7 +192,8 @@ def trace_words(function: str) -> tuple:
 
 def build(kernel_out: Path, stock_recovery: Path, dev_recovery: Path, debug: bool = False,
           trace: str | None = None, gpu_firmware: Path | None = None, cmdline_words=(),
-          installed: Path | None = None, overlay: Path | None = None) -> bytes:
+          installed: Path | None = None, overlay: Path | None = None,
+          wlan_firmware: Path | None = None) -> bytes:
     base = bootimg.parse(dev_recovery.read_bytes())
     if "pico4poc.part=recovery" not in base.full_cmdline.split():
         raise ValueError(f"{dev_recovery} is not the dev loop's recovery image")
@@ -196,7 +220,7 @@ def build(kernel_out: Path, stock_recovery: Path, dev_recovery: Path, debug: boo
     image = base.with_cmdline(cmdline)
     image.kernel, image.dtb = kernel, dtb
     archives = ([overlay_archive(overlay)] if overlay else []) + \
-        ([firmware_archive(gpu_firmware)] if gpu_firmware else []) + \
+        ([firmware_archive(gpu_firmware)] if gpu_firmware else []) +         ([wlan_firmware_archive(wlan_firmware)] if wlan_firmware else []) + \
         ([stage1_archive(stage1.ramdisk, debug, bool(installed))] if debug or installed else [])
     ramdisk = appended(stage1.ramdisk, *archives)
     image.ramdisk = ramdisk
@@ -214,6 +238,8 @@ def main(argv=None) -> int:
     ap.add_argument("--trace", metavar="FUNCTION", help="print FUNCTION's call graph on a panic")
     ap.add_argument("--gpu-firmware", metavar="DIR", type=Path,
                     help="add the GPU firmware from DIR (assets/graphics-firmware-*)")
+    ap.add_argument("--wlan-firmware", metavar="DIR", type=Path,
+                    help="add the QCA6390's firmware from DIR (assets/wlan-*)")
     ap.add_argument("--cmdline", metavar="WORD", action="append", default=[],
                     help="add a kernel command line word, replacing one with its key (repeatable)")
     ap.add_argument("--installed", metavar="INSTALL_BOOT", type=Path,
@@ -227,7 +253,7 @@ def main(argv=None) -> int:
     root = Path(__file__).resolve().parents[3]
     dev_recovery = args.paths[2] if len(args.paths) == 4 else root / "out" / "dev" / "dev-recovery.img"
     data = build(args.paths[0], args.paths[1], dev_recovery, args.debug, args.trace, args.gpu_firmware,
-                 args.cmdline, args.installed, args.stage1)
+                 args.cmdline, args.installed, args.stage1, args.wlan_firmware)
     out = args.paths[-1]
     out.write_bytes(data)
     print(f"{out} {hashlib.sha256(data).hexdigest()}")
