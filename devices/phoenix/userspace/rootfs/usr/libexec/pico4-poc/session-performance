@@ -8,7 +8,8 @@ START and END are two snapshots of the pico4-vrdisplay layer's statistics: the
 first once SteamVR's compositor presents, the last at the end of the run. The
 layer's numbers count from the first commit, so the measured window is their
 difference and SteamVR's startup stays out of it; the startup's stalls are
-reported on their own. Prints one JSON object with "status" passed or failed
+reported on their own. On a mainline kernel END is msm-frame-stats' recording of
+the window, with the same keys, and START counts nothing. Prints one JSON object with "status" passed or failed
 and the limits it was held to.
 """
 import json
@@ -67,6 +68,8 @@ def verdict(start, end, hottest_c) -> dict:
         "stalls": stalls,
         "present_wait_timeouts": timeouts,
         "gpu_wait_ms_mean": round(gpu_mean, 3),
+        # msm-frame-stats (a mainline kernel): the GPU's own time per job of the compositor.
+        "gpu_ms": end.get("gpu_ms"),
         "hottest_c": hottest_c,
         "startup": {"stalls": start.get("stalls"), "max_interval_ms": start.get("max_interval_ms")},
         "max_interval_ms": end.get("max_interval_ms"),

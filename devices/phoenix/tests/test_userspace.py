@@ -326,6 +326,14 @@ class ValveSessionTests(unittest.TestCase):
         # Without the fan daemon both states are null.
         userspace.validate_valve_session({**VALVE_SESSION_PASSING, "fan": {"before": None, "after_run": None}})
 
+    def test_msm_session_passes_without_an_image(self):
+        # A mainline kernel: msm-frame-stats' statistics; the compressed scanout is not readable.
+        msm = {"target": "msm", "commits": 2700, "commit_hz": 89.7, "late": 2, "stalls": 0,
+               "max_interval_ms": 22.3, "vblank_hz": 90.0, "gpu_jobs": 2700, "gpu_ms": {"mean": 5.9}}
+        userspace.validate_valve_session({**VALVE_SESSION_PASSING, "layer": msm})
+        with self.assertRaises(ValueError):
+            userspace.validate_valve_session({**VALVE_SESSION_PASSING, "layer": {**msm, "vblank_hz": 60.0}})
+
     def test_failures_are_rejected(self):
         devices = VALVE_SESSION_PASSING["devices"]
         cases = [

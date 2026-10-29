@@ -364,6 +364,13 @@ With nobody wearing the headset, SteamVR enters standby after `power.turnOffScre
 (5 s) and presents black frames; measurements set it to an hour with `vrcmd` first and back
 afterwards, as `pico4-valve-session-check` does.
 
+`pico4-valve-session-check` counts the frames from msm's own events on this kernel
+(`msm-frame-stats`: completed flips, vblanks and the GPU time of the compositor's jobs), with the
+display layer's statistics keys, so `session-performance` judges both kernels alike. A 10 s
+recording of SteamVR: 897 flips at 89.7 per second, 3 late, vblanks at 90.0 Hz, 5.9 ms GPU time
+per frame (p90 6.0 ms). The scanned-out image is compressed and readable only by the DRM master,
+so on this kernel the check has no image of its own.
+
 ### Patches
 
 | Patch | Why |

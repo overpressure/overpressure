@@ -2,8 +2,10 @@
 # Valve's VR session on the PICO 4 (roadmap step 6, docs/session.md): runs Valve's
 # gamescope-session.target through pico4-session.service for a short while, then
 # returns to the configured session. Checks that SteamVR's compositor drives the
-# panels through the pico4-vrdisplay layer and that SteamVR tracks the headset
-# and both controllers. Prints one JSON object; exit status 0 only if it passed.
+# panels (on the stock kernel through the pico4-vrdisplay layer, which counts its
+# frames; on a mainline kernel's msm directly, counted from the kernel's own events by
+# msm-frame-stats) and that SteamVR tracks the headset and both controllers. Prints one
+# JSON object; exit status 0 only if it passed.
 # "status" is that integration verdict. "performance" is a verdict of its own
 # (session-performance): frame rate and pacing over the run after startup,
 # against the limits it lists.
@@ -44,6 +46,9 @@ json_list() {
 }
 
 user=steamos
+# The stock kernel's KGSL: the display layer's statistics; otherwise msm's events.
+frames=layer
+[ -e /dev/kgsl-3d0 ] || frames=msm
 uid=$(id -u "$user")
 home=$(getent passwd "$user" | cut -d: -f6)
 logs=$home/.local/share/Steam/logs
@@ -100,7 +105,8 @@ for i in $(seq 180); do
 		vrcmd --set-settings-float power.turnOffScreensTimeout 3600 >/dev/null 2>&1; then
 		standby_off=true
 	fi
-	if grep -qs "Startup Complete" "$logs/vrcompositor.txt" && [ -s "$work/vrdisplay.json" ]; then
+	if grep -qs "Startup Complete" "$logs/vrcompositor.txt" &&
+		{ [ "$frames" = msm ] || [ -s "$work/vrdisplay.json" ]; }; then
 		startup=$i
 		break
 	fi
@@ -113,7 +119,14 @@ done
 stalls() { sed -n 's/.*"stalls":\([0-9]*\).*/\1/p' "$1" 2>/dev/null; }
 cp -p "$work/vrdisplay.json" "$work/vrdisplay-start.json" 2>/dev/null
 settle=0
-while [ "$startup" -ge 0 ] && [ "$settle" -lt 60 ]; do
+# On msm the window is a recording of its own: it starts after the startup's stalls (as
+# the layer's first quiet update would, 20 s), and the start counts nothing.
+if [ "$frames" = msm ] && [ "$startup" -ge 0 ]; then
+	settle=20
+	sleep "$settle"
+	echo '{"target":"msm","commits":0,"commit_hz":0,"late":0,"stalls":0}' > "$work/vrdisplay-start.json"
+fi
+while [ "$frames" = layer ] && [ "$startup" -ge 0 ] && [ "$settle" -lt 60 ]; do
 	previous=$(stat -c %Y "$work/vrdisplay-start.json" 2>/dev/null)
 	while [ "$(stat -c %Y "$work/vrdisplay.json" 2>/dev/null)" = "$previous" ] && [ "$settle" -lt 60 ]; do
 		sleep 1
@@ -123,7 +136,12 @@ while [ "$startup" -ge 0 ] && [ "$settle" -lt 60 ]; do
 	cp -p "$work/vrdisplay.json" "$work/vrdisplay-start.json" 2>/dev/null
 	[ "$(stalls "$work/vrdisplay-start.json")" != "$before" ] || break
 done
-[ "$startup" -lt 0 ] || sleep "$seconds"
+if [ "$startup" -ge 0 ] && [ "$frames" = msm ]; then
+	/usr/libexec/pico4-poc/msm-frame-stats record "$seconds" "$(pgrep -u "$user" -x vrcompositor | head -n 1)" \
+		"$work/vrdisplay.json" >/dev/null 2>&1 || errors+=("msm's frame events could not be recorded")
+elif [ "$startup" -ge 0 ]; then
+	sleep "$seconds"
+fi
 
 target_state=$(user_systemctl is-active gamescope-session.target 2>/dev/null)
 steamvr_state=$(user_systemctl is-active steamvr.service 2>/dev/null)
@@ -159,7 +177,7 @@ grep -q '^{' <<<"$performance" || performance='{"status":"failed","failures":["n
 [ "$started" = true ] || errors+=("SteamVR's compositor did not complete its startup")
 [ "$gamescope_client" = true ] || errors+=("gamescope did not connect to SteamVR")
 [ "${asserts:-0}" = 0 ] || errors+=("SteamVR's compositor asserted")
-[ "$stats" != null ] || errors+=("the display layer wrote no statistics")
+[ "$stats" != null ] || errors+=("no frame statistics (the display layer's or msm's events)")
 grep -q '"index":2' <<<"$devices" || errors+=("SteamVR does not report the headset and both controllers")
 
 # Back to the configured session, with SteamVR's standby timeout.

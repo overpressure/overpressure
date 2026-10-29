@@ -325,17 +325,20 @@ def validate_valve_session(value) -> None:
     compositor = value.get("compositor") or {}
     if not compositor.get("started") or not compositor.get("gamescope_client") or compositor.get("asserts"):
         raise ValueError(f"SteamVR's compositor did not run with gamescope: {compositor}")
+    # The stock kernel: the display layer's statistics. A mainline kernel's msm: its own events
+    # (msm-frame-stats), without an image: the compressed scanout is readable only by the master.
     layer = value.get("layer")
-    if not isinstance(layer, dict) or layer.get("target") != "pico4_vrdisplay" or layer.get("fake"):
-        raise ValueError("SteamVR's compositor did not present through the pico4-vrdisplay layer")
+    target = layer.get("target") if isinstance(layer, dict) else None
+    if target not in ("pico4_vrdisplay", "msm") or layer.get("fake"):
+        raise ValueError("SteamVR's compositor did not present through the pico4-vrdisplay layer or msm")
     if not layer.get("commits") or layer.get("retire_timeouts") or layer.get("gpu_timeouts"):
-        raise ValueError("The display layer lost fences or committed nothing in Valve's session")
+        raise ValueError("The display lost fences or committed nothing in Valve's session")
     if (layer.get("commit_hz") or 0) < VALVE_SESSION_MIN_HZ:
         raise ValueError(f"SteamVR's compositor presented {layer.get('commit_hz')} frames per second")
     if abs((layer.get("vblank_hz") or 0) - DISPLAY_HZ) > 0.01 * DISPLAY_HZ:
         raise ValueError(f"The panels' vblanks ran at {layer.get('vblank_hz')} Hz")
     means = layer.get("eye_mean_rgb")
-    if not means or len(means) != 2 or any(max(eye) < 2.0 for eye in means):
+    if target == "pico4_vrdisplay" and (not means or len(means) != 2 or any(max(eye) < 2.0 for eye in means)):
         raise ValueError(f"SteamVR's scanned-out image is black or missing: {means}")
     devices = {d.get("index"): d for d in value.get("devices") or [] if isinstance(d, dict)}
     if not {0, 1, 2} <= devices.keys():
