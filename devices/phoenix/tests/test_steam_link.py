@@ -50,7 +50,7 @@ class SteamLinkTests(unittest.TestCase):
         self.assertIn("pico4/pico4-vrlink", read(ROOT / "userspace/packages.txt").split())
         self.assertIn("grep -qx '\\./vrlink \"\\$@\" &' \"$vrlink_run\"", self.build)
         self.assertIn("LD_PRELOAD=/usr/lib/libpico4-vrlink-compat.so${LD_PRELOAD:+:$LD_PRELOAD} ./vrlink", self.build)
-        self.assertNotIn("libpico4-vrlink-compat", read(ROOTFS / "etc/ld.so.preload"))
+        self.assertNotIn("libpico4-vrlink-compat", read(ROOTFS / "usr/lib/systemd/system/pico4-stock-preload.service"))
 
     def test_the_wrappers_are_exported(self):
         # Built with -fvisibility=hidden: unexported wrappers interpose nothing.

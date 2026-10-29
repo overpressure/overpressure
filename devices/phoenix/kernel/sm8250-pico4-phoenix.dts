@@ -386,6 +386,156 @@
 	firmware-name = "qcom/sm8250/pico/phoenix/a650_zap.mdt";
 };
 
+/*
+ * The stock tree's kernel throttling, on mainline's zones: the GPU from 95 °C (gpuss-max-step;
+ * mainline throttles at 85 °C, which a VR session reaches), the big and prime cores from a DDR
+ * at 95 °C (pop-mem-step), and the GPU held at its second-lowest level, 400 MHz, from 100 °C at
+ * the WLAN, video, DDR, DSP, camera, compute and NPU sensors (their -step zones; the stock tree
+ * also caps the CDSP, the modem and the NPU there, which have no cooling devices here). The
+ * CPUs keep mainline's frequency trips at 90 and 95 °C: the stock kernel only isolates cores at
+ * 110 °C and leaves the rest to the CPUs' limits hardware, and 90 °C is this project's limit.
+ */
+&gpu_top_alert0 {
+	temperature = <95000>;
+	hysteresis = <0>;
+};
+
+&gpu_bottom_alert0 {
+	temperature = <95000>;
+	hysteresis = <0>;
+};
+
+&{/thermal-zones/mem-thermal} {
+	trips {
+		mem_pop: trip-pop {
+			temperature = <95000>;
+			hysteresis = <0>;
+			type = "passive";
+		};
+
+		mem_step: trip-step {
+			temperature = <100000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map-pop {
+			trip = <&mem_pop>;
+			cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+					 <&cpu7 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+		};
+
+		map-step {
+			trip = <&mem_step>;
+			cooling-device = <&gpu 4 4>;
+		};
+	};
+};
+
+&{/thermal-zones/wlan-thermal} {
+	trips {
+		wlan_step: trip-step {
+			temperature = <100000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map-step {
+			trip = <&wlan_step>;
+			cooling-device = <&gpu 4 4>;
+		};
+	};
+};
+
+&{/thermal-zones/video-thermal} {
+	trips {
+		video_step: trip-step {
+			temperature = <100000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map-step {
+			trip = <&video_step>;
+			cooling-device = <&gpu 4 4>;
+		};
+	};
+};
+
+&{/thermal-zones/q6-hvx-thermal} {
+	trips {
+		q6_hvx_step: trip-step {
+			temperature = <100000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map-step {
+			trip = <&q6_hvx_step>;
+			cooling-device = <&gpu 4 4>;
+		};
+	};
+};
+
+&{/thermal-zones/camera-thermal} {
+	trips {
+		camera_step: trip-step {
+			temperature = <100000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map-step {
+			trip = <&camera_step>;
+			cooling-device = <&gpu 4 4>;
+		};
+	};
+};
+
+&{/thermal-zones/compute-thermal} {
+	trips {
+		compute_step: trip-step {
+			temperature = <100000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map-step {
+			trip = <&compute_step>;
+			cooling-device = <&gpu 4 4>;
+		};
+	};
+};
+
+&{/thermal-zones/npu-thermal} {
+	trips {
+		npu_step: trip-step {
+			temperature = <100000>;
+			hysteresis = <5000>;
+			type = "passive";
+		};
+	};
+
+	cooling-maps {
+		map-step {
+			trip = <&npu_step>;
+			cooling-device = <&gpu 4 4>;
+		};
+	};
+};
+
 &mdss {
 	status = "okay";
 };

@@ -134,12 +134,23 @@ def firmware_archive(directory: Path) -> cpio.Tree:
     return tree
 
 
+#: --stage1 also carries the prebuilt boot splash beside the overlay (prebuilt/aarch64), as the
+#: stage-1 image does; pico4-reboot stays the base image's (--debug and --installed wrap it).
+PREBUILT = ("pico4-splash",)
+
+
 def overlay_archive(directory: Path) -> cpio.Tree:
     """--stage1: a stage-1 overlay's files, which replace the base ramdisk's."""
     tree = cpio.Tree()
     stage1_overlay.add_overlay(tree, directory)
     if "init" not in tree.nodes:
         raise ValueError(f"{directory} is no stage-1 overlay (no init)")
+    for name in PREBUILT:
+        program = directory.parent / "prebuilt" / "aarch64" / name
+        if program.is_file():
+            if not tree.exists("usr/sbin"):
+                tree.mkdir("usr/sbin")
+            tree.add_file(f"usr/sbin/{name}", program.read_bytes(), 0o755)
     return tree
 
 

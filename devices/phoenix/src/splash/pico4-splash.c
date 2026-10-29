@@ -3,8 +3,12 @@
  * pico4-splash: a sign of life in the lenses while the headset starts (docs/install.md).
  *
  * Shows a turning ring of dots in the middle of both eyes from stage 1 until a compositor takes
- * the display. It sets the panels' native 90 Hz mode with the same six colour-component layers
- * as Monado's KMS target and SteamVR's display layer (docs/graphics.md), then gives up DRM
+ * the display. It sets the panels' native 90 Hz mode: on the stock kernel's msm_drm with the same
+ * six colour-component layers as Monado's KMS target and SteamVR's display layer
+ * (docs/graphics.md), on a mainline kernel's msm with its primary plane over the whole mode,
+ * which the display controller splits between the two links. As the first master it is also
+ * what makes the kernel probe the panels' connector, so that a compositor that starts later
+ * finds their mode (mainline probes a connector only for its master). Then it gives up DRM
  * master at once: whoever starts next (Monado, SteamVR's compositor) must become master, and
  * the kernel has no way to take master from a running program. Without master there are no
  * more commits, so the ring turns by drawing into the framebuffer the panels scan out. When a
@@ -211,10 +215,14 @@ static int has_xrgb(struct drm_mode_get_plane *plane, __u32 *formats)
 
 /* -- the display ------------------------------------------------------------------------ */
 
+#define DRM_PLANE_TYPE_PRIMARY 1
+
 static __u32 connector, crtc, crtc_index, planes[LAYERS];
 static struct drm_mode_modeinfo mode;
+/* A mainline kernel's msm: one primary plane, no stock layer properties. */
+static int mainline;
 
-/* Opens the stock display device, waiting for it (msm_drm probes late in stage 1). */
+/* Opens the display device, waiting for it (msm probes late in stage 1). */
 static void open_display(long wait_ms)
 {
 	long until = now_ms() + wait_ms;
@@ -223,9 +231,11 @@ static void open_display(long wait_ms)
 		if (fd >= 0) {
 			char name[16] = {0};
 			struct drm_version v = {.name_len = sizeof(name) - 1, .name = name};
-			if (ioc(DRM_IOCTL_VERSION, &v) == 0 && eq(name, "msm_drm"))
+			if (ioc(DRM_IOCTL_VERSION, &v) == 0 && (eq(name, "msm_drm") || eq(name, "msm"))) {
+				mainline = eq(name, "msm");
 				return;
-			quit("/dev/dri/card0 is not the stock msm_drm", 1);
+			}
+			quit("/dev/dri/card0 is not msm", 1);
 		}
 		if (now_ms() > until)
 			quit("no /dev/dri/card0", 1);
@@ -281,6 +291,35 @@ static void find_output(void)
 	}
 	if (!connector)
 		quit("no connected DSI output with the 4320x2160 90 Hz mode", 1);
+}
+
+/* Mainline: the CRTC's primary plane. */
+static void find_primary(void)
+{
+	__u32 ids[MAX_OBJECTS];
+	struct drm_mode_get_plane_res res = {0};
+	if (ioc(DRM_IOCTL_MODE_GETPLANERESOURCES, &res) || res.count_planes > MAX_OBJECTS)
+		quit("no planes", 1);
+	res.plane_id_ptr = (__u64)(unsigned long)ids;
+	if (ioc(DRM_IOCTL_MODE_GETPLANERESOURCES, &res))
+		quit("no planes", 1);
+	for (__u32 i = 0; i < res.count_planes; i++) {
+		__u32 formats[128];
+		struct drm_mode_get_plane p = {.plane_id = ids[i]};
+		if (ioc(DRM_IOCTL_MODE_GETPLANE, &p) || p.count_format_types > 128)
+			continue;
+		p.format_type_ptr = (__u64)(unsigned long)formats;
+		if (ioc(DRM_IOCTL_MODE_GETPLANE, &p))
+			continue;
+		__u64 type = 0;
+		property(p.plane_id, DRM_MODE_OBJECT_PLANE, "type", &type);
+		if (type == DRM_PLANE_TYPE_PRIMARY && has_xrgb(&p, formats) &&
+		    (p.possible_crtcs & (1u << crtc_index))) {
+			planes[0] = p.plane_id;
+			return;
+		}
+	}
+	quit("no primary plane for the panels", 1);
 }
 
 /* The stock layers: four VIG (scaler) and two DMA planes. */
@@ -451,7 +490,10 @@ long pico4_main(long argc, char **argv)
 	if (ioc(DRM_IOCTL_SET_MASTER, 0))
 		quit("another program drives the display", 0);
 	find_output();
-	find_planes();
+	if (mainline)
+		find_primary();
+	else
+		find_planes();
 	allocate(&buffer);
 	draw(&buffer, 0);
 
@@ -468,7 +510,15 @@ long pico4_main(long argc, char **argv)
 	add(connector, property(connector, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID", 0), crtc);
 	add(crtc, property(crtc, DRM_MODE_OBJECT_CRTC, "MODE_ID", 0), blob.blob_id);
 	add(crtc, property(crtc, DRM_MODE_OBJECT_CRTC, "ACTIVE", 0), 1);
-	for (int i = 0; i < LAYERS; i++) {
+	if (mainline) {
+		/* One plane over both eyes, at the mode's size; the controller splits it. */
+		static const char *plain[] = {"FB_ID", "CRTC_ID", "CRTC_X", "CRTC_Y", "CRTC_W", "CRTC_H",
+					      "SRC_X", "SRC_Y", "SRC_W", "SRC_H"};
+		__u64 state[] = {buffer.fb, crtc, 0, 0, 2 * EYE, EYE, 0, 0, (__u64)2 * EYE << 16, (__u64)EYE << 16};
+		for (unsigned j = 0; j < sizeof(state) / sizeof(state[0]); j++)
+			add(planes[0], property(planes[0], DRM_MODE_OBJECT_PLANE, plain[j], 0), state[j]);
+	}
+	for (int i = 0; !mainline && i < LAYERS; i++) {
 		__u64 layout, component, blend;
 		if (!enum_value(planes[i], "sspp_layout", eye[i] ? "right" : "left", &layout) ||
 		    !enum_value(planes[i], "layer_color_component", color[i], &component) ||

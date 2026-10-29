@@ -1,0 +1,10 @@
+#!/bin/sh
+# Valve's session on the stock kernel (docs/session.md): games run in Steam Linux Runtime's
+# container, which ignores the host's /etc/ld.so.preload but imports LD_PRELOAD, so the Steam
+# client carries pico4-sysvsem (System V IPC, which the stock kernel lacks) into it. A mainline
+# kernel has System V IPC: there the client gets no preload.
+#   50-pico4-stock-kernel NORMAL_DIR EARLY_DIR LATE_DIR
+[ -e /sys/class/kgsl ] || exit 0
+dir=$1/steam.service.d
+mkdir -p "$dir"
+printf '[Service]\nEnvironment=LD_PRELOAD=/usr/lib/libpico4-sysvsem.so\n' > "$dir/50-pico4-stock-kernel.conf"

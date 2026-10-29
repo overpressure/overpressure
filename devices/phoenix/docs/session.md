@@ -487,7 +487,9 @@ The stock kernel has no `CONFIG_SYSVIPC`. SteamVR's processes take their named l
 `Global\VRBootstrapper`, which keeps a second SteamVR from starting) with
 `semget`/`semop`/`semctl`; with `ENOSYS` they report a "DuplicateBootstrapper" and quit.
 [`pico4-sysvsem`](../src/sysvsem/pico4-sysvsem.c), preloaded for every process through
-[`/etc/ld.so.preload`](../userspace/rootfs/etc/ld.so.preload), implements these calls and
+`/etc/ld.so.preload` (a link to `/run/pico4-poc/ld.so.preload`, which
+[`pico4-stock-preload.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-stock-preload.service)
+writes on the stock kernel only; a mainline kernel has System V IPC), implements these calls and
 `semtimedop` on a table in `/dev/shm/pico4-sysvsem` (128 sets of up to 32 semaphores):
 
 - a robust, process-shared mutex guards the table, so a process that dies holding it blocks no
@@ -499,8 +501,9 @@ The stock kernel has no `CONFIG_SYSVIPC`. SteamVR's processes take their named l
 The Steam API in a game takes such semaphores too (`steamclient.so`; with `ENOSYS` it asserts
 in `threadtools.cpp` and the game waits in its Steam initialization). Games run in Steam Linux
 Runtime's container, whose `/etc` has no `ld.so.preload`; pressure-vessel imports `LD_PRELOAD`
-instead, as `/run/host/usr/lib/...`, so the Steam client's unit sets
-`LD_PRELOAD=/usr/lib/libpico4-sysvsem.so` for everything it starts. `/dev/shm` is shared with
+instead, as `/run/host/usr/lib/...`, so on the stock kernel the user generator
+[`50-pico4-stock-kernel`](../userspace/rootfs/usr/lib/systemd/user-generators/50-pico4-stock-kernel)
+gives the Steam client's unit `LD_PRELOAD=/usr/lib/libpico4-sysvsem.so` for everything it starts. `/dev/shm` is shared with
 the container, and with it the table.
 
 The library is inert until a program calls it, PID 1 included. Its

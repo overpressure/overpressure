@@ -287,6 +287,15 @@ Valve's, and what Valve's kernel needs is found by the hardware, not by a kernel
 | DSPs | `/sys/kernel/boot_*`, restart level `RELATED`, userspace `qrtr-ns` and `pd-mapper` | `/sys/class/remoteproc` (crash recovery restarts only that DSP), the kernel's name service and PD mapper; the stock units skip themselves |
 | Sensor service | `hexagonrpcd` on `/dev/adsprpc-smd-secure`, socinfo from sysfs | `/dev/fastrpc-sdsp`, socinfo from debugfs (above) |
 | Fan | `cpu-0-N-usr`, `cpu-1-N-usr`, `gpuss-N-usr` | `cpuN-thermal`, `cpuN-top/bottom-thermal`, `gpu-top/bottom-thermal`: the same TSENS channels |
+| Kernel throttling | the stock tree's `-step` zones | the same trip points on mainline's zones (below) |
+| VR performance hint | `msm_performance` frequency limits and `core_ctl`'s online cores | the same frequency limits on the cpufreq policies; every core stays online |
+| System V IPC | `pico4-sysvsem` preloaded into every process and the Steam client | the kernel's own; `pico4-stock-preload.service` and the user generator `50-pico4-stock-kernel` skip themselves |
+| OpenGL | zink on Turnip for gamescope and Steam: Mesa's msm driver finds no GPU behind `msm_drm` | zink too, as on the Frame, whose Mesa has no other OpenGL driver (the userspace's Mesa would run freedreno: FD650, OpenGL 4.6) |
+| GPU clock floor, kernel thread priorities | KGSL's `min_pwrlevel` while presenting; `pico4-kthread-priorities` | msm's devfreq governor; both skip themselves |
+| Device nodes | udev's `devnode` helper creates them (no devtmpfs) | devtmpfs creates them; the helper stays for the block policy (every disk read-only) |
+| systemd | pinned at 257.x (258 needs Linux 5.4) | the pin stays: the Frame's own systemd is 257.7 |
+| Monado's own service | `pico4-monado` with its KMS target | skips itself (open: Monado outside SteamVR) |
+| Boot splash | KGSL's display (`msm_drm`), six layers | msm's primary plane; as the first DRM master it also probes the panels' mode |
 | Power key | `qpnp_pon` | `pm8941_pwrkey` |
 | Session | seat0 without VTs | the session takes VT 1 in getty's place, as sddm does on the Frame (logind requires a VT where the kernel has them) |
 | GPU | `/dev/kgsl-3d0`; `pico4-vrdisplay` provides SteamVR's direct mode and shared semaphores | msm's render node; the layer stays unloaded (`PICO4_VRDISPLAY_DISABLE` from a user environment generator), Turnip and msm provide both, as on the Frame |
@@ -294,6 +303,21 @@ Valve's, and what Valve's kernel needs is found by the hardware, not by a kernel
 
 The userspace changes run on the headset from a bind mount over the installed files; the
 installed image still has the stock-kernel versions.
+
+### Thermal throttling
+
+The tree takes the stock tree's kernel throttling onto mainline's thermal zones (step_wise):
+
+| Sensor | Stock zone | From | Throttles |
+| --- | --- | --- | --- |
+| GPU (both) | `gpuss-max-step` | 95 °C | the GPU, every level (mainline: 85 °C) |
+| DDR | `pop-mem-step` | 95 °C | the big cores and the prime core, every level |
+| WLAN, video, DDR, Q6/HVX, camera, compute, NPU | their `-step` zones | 100 °C | the GPU to its second-lowest level, 400 MHz |
+
+The stock tree also caps the CDSP, the modem and the NPU at 100 °C; they have no cooling devices
+on mainline. The CPUs keep mainline's frequency trips (90 and 95 °C, critical at 110 °C): the
+stock kernel isolates cores only at 110 °C and leaves the rest to the CPUs' limits hardware, and
+90 °C is the project's limit.
 
 ### SteamVR's direct mode
 
@@ -328,10 +352,10 @@ between 5.9 and 6.0 ms. The OPP core reads bandwidths only when the first OPP ha
 670 MHz OPP, which this speed bin does not use, carries the top level too.
 
 Only the DRM master makes the kernel probe a connector's modes; anyone else gets the list a
-probe left. On the stock kernel the boot splash and the display layer probe first. On Valve's
-kernel nothing does yet (the splash refuses a display that is not the stock one, and the kernel
-has no fbdev client), so a compositor that starts first sees no real mode ("1024x768") and finds
-no headset display; a probe by root before the session avoids it.
+probe left. Without one, a compositor that starts first sees no real mode ("1024x768") and finds
+no headset display (the kernel has no fbdev client that would probe). On both kernels the boot
+splash in stage 1 is the first master and probes; on Valve's kernel it shows its picture on msm's
+primary plane, across both panels.
 
 With nobody wearing the headset, SteamVR enters standby after `power.turnOffScreensTimeout`
 (5 s) and presents black frames; measurements set it to an hour with `vrcmd` first and back

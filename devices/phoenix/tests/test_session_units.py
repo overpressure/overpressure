@@ -1,7 +1,11 @@
 """The session's units: SteamVR's restart limit and the fallback to Monado's session."""
 import configparser
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -61,12 +65,21 @@ class SteamvrStopTest(unittest.TestCase):
 class OpenGLTest(unittest.TestCase):
     def test_gl_clients_use_zink(self):
         # an issue: Mesa's loader would pick msm for msm_drm's render node and fall back to
-        # llvmpipe; zink on Turnip is the GPU's OpenGL.
+        # llvmpipe; zink on Turnip is the GPU's OpenGL. On a mainline kernel it is the Frame's.
         for name in ("gamescope-session", "steam"):
             dropin = (ROOTFS / f"usr/lib/systemd/user/{name}.service.d/50-pico4.conf").read_text(encoding="utf-8")
             self.assertRegex(dropin, r"(?m)^Environment=MESA_LOADER_DRIVER_OVERRIDE=zink$", name)
             # Zink finds the GPU for the render node through the layer's DRM nodes.
             self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY=1$", name)
+
+    @unittest.skipIf(shutil.which("sh") is None, "needs sh")
+    def test_stock_kernel_generator_writes_nothing_on_mainline(self):
+        script = ROOTFS / "usr/lib/systemd/user-generators/50-pico4-stock-kernel"
+        with tempfile.TemporaryDirectory() as out:
+            r = subprocess.run([shutil.which("sh"), script.as_posix(), out, out, out], capture_output=True)
+            self.assertEqual(r.returncode, 0)
+            # This host has no /sys/class/kgsl: the generator leaves the directory empty.
+            self.assertEqual(os.listdir(out), [])
 
     def test_web_helper_composites_on_vulkan(self):
         # an issue: on ANGLE's OpenGL backend (zink) the client's VR overlays flicker between
@@ -84,10 +97,18 @@ class OpenGLTest(unittest.TestCase):
     def test_games_get_the_semaphore_library(self):
         # an issue: the Steam API in a game takes System V semaphores; Steam Linux Runtime's
         # container ignores the host's /etc/ld.so.preload but imports LD_PRELOAD.
-        preload = (ROOTFS / "etc/ld.so.preload").read_text(encoding="utf-8").split()
+        # Both on the stock kernel only (KGSL): a mainline kernel has System V IPC.
+        unit = (ROOTFS / "usr/lib/systemd/system/pico4-stock-preload.service").read_text(encoding="utf-8")
+        self.assertIn("ConditionPathExists=/sys/class/kgsl", unit)
+        self.assertIn("echo /usr/lib/libpico4-sysvsem.so > /run/pico4-poc/ld.so.preload", unit)
+        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+        self.assertIn('ln -sfn /run/pico4-poc/ld.so.preload "$T/etc/ld.so.preload"', build)
+        self.assertIn("pico4-stock-preload.service", build[build.index("in_t systemctl enable"):])
+        generator = (ROOTFS / "usr/lib/systemd/user-generators/50-pico4-stock-kernel").read_text(encoding="utf-8")
+        self.assertIn("[ -e /sys/class/kgsl ] || exit 0", generator)
+        self.assertIn("Environment=LD_PRELOAD=/usr/lib/libpico4-sysvsem.so", generator)
         dropin = (ROOTFS / "usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=LD_PRELOAD=/usr/lib/libpico4-sysvsem\.so$")
-        self.assertIn("/usr/lib/libpico4-sysvsem.so", preload)
+        self.assertNotIn("LD_PRELOAD", dropin.split("[Service]")[1])
 
     def test_turnip_keeps_the_drm_wsi(self):
         # A KGSL-only Turnip builds without libdrm, and its swapchains read DRM image

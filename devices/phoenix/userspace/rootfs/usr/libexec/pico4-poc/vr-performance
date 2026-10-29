@@ -9,6 +9,10 @@
 #   vr-performance on|off
 #
 # "on" saves the current limits and applies the hint's; "off" puts the saved ones back.
+#
+# A mainline kernel has neither msm_performance nor core_ctl: the same frequency limits go to the
+# cpufreq policies (policy0 the little cores, policy4 the big ones, policy7 the prime core), and
+# every core stays online, which meets core_ctl's minimum.
 # PICO4_SYSFS and PICO4_VR_PERFORMANCE_STATE replace /sys and the state file for tests.
 set -euo pipefail
 S=${PICO4_SYSFS:-/sys}
@@ -20,6 +24,45 @@ MAX_FREQ="4:2016000 5:2016000 6:2016000 7:2054000"
 MIN_FREQ="0:576000 1:576000 2:576000 3:576000 4:864000 5:864000 6:864000 7:941000"
 BIG_MIN_CPUS=3
 PRIME_MIN_CPUS=1
+
+# mainline_limits on|off: the hint's limits on a mainline kernel's cpufreq policies.
+POLICIES="0:576000: 4:864000:2016000 7:941000:2054000"
+mainline_limits() {
+	local entry policy min max
+	case $1 in
+	on)
+		if [[ ! -s $STATE ]]; then
+			mkdir -p "$(dirname "$STATE")"
+			for entry in $POLICIES; do
+				policy=${entry%%:*}
+				echo "policy$policy=$(cat "$CPU/cpufreq/policy$policy/scaling_min_freq"):$(cat "$CPU/cpufreq/policy$policy/scaling_max_freq")"
+			done > "$STATE.new"
+			mv "$STATE.new" "$STATE"
+		fi
+		for entry in $POLICIES; do
+			IFS=: read -r policy min max <<< "$entry"
+			# The maximum first where it drops, the minimum first where it rises: never min > max.
+			[[ -z $max ]] || echo "$max" > "$CPU/cpufreq/policy$policy/scaling_max_freq"
+			echo "$min" > "$CPU/cpufreq/policy$policy/scaling_min_freq"
+		done
+		;;
+	off)
+		[[ -s $STATE ]] || return 0
+		while IFS='=' read -r key value; do
+			min=${value%%:*} max=${value#*:}
+			echo "$max" > "$CPU/cpufreq/$key/scaling_max_freq"
+			echo "$min" > "$CPU/cpufreq/$key/scaling_min_freq"
+		done < "$STATE"
+		rm -f "$STATE"
+		;;
+	esac
+}
+
+if [[ ! -e $P/cpu_max_freq && -e $CPU/cpufreq/policy0/scaling_min_freq ]]; then
+	case "${1:-}" in
+	on | off) mainline_limits "$1"; exit 0 ;;
+	esac
+fi
 
 case "${1:-}" in
 on)

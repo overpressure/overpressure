@@ -33,6 +33,13 @@ class SplashTests(unittest.TestCase):
             self.assertIn(color, source)
         self.assertIn('quit("a compositor took the display", 0)', source)
 
+    def test_source_drives_a_mainline_kernels_msm_too(self):
+        source = (ROOT / "src/splash/pico4-splash.c").read_text(encoding="utf-8")
+        # Valve's kernel: the device is "msm", one primary plane over the whole mode.
+        self.assertIn('eq(name, "msm_drm") || eq(name, "msm")', source)
+        self.assertIn("find_primary();", source)
+        self.assertIn("DRM_PLANE_TYPE_PRIMARY", source)
+
     def test_stage_one_starts_it_for_the_installed_system_only(self):
         init = (ROOT / "initramfs/init").read_text(encoding="utf-8")
         branch = init[init.index('if [ "$(poc_arg root "")" = installed ]'):]

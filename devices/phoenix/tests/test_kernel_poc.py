@@ -257,6 +257,14 @@ class RecoveryImageTests(unittest.TestCase):
         added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1"):])))
         self.assertEqual(added["init"].data, b"#!/bin/sh\necho new\n")
         self.assertTrue(added["usr/bin/pico4-userspace"].mode & 0o111)
+        self.assertNotIn("usr/sbin/pico4-splash", added)
+        # The prebuilt splash beside the overlay comes along.
+        (self.tmp / "prebuilt" / "aarch64").mkdir(parents=True)
+        (self.tmp / "prebuilt" / "aarch64" / "pico4-splash").write_bytes(b"ELF splash")
+        image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, overlay=overlay))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1"):])))
+        self.assertEqual(added["usr/sbin/pico4-splash"].data, b"ELF splash")
+        self.assertTrue(added["usr/sbin/pico4-splash"].mode & 0o111)
         with self.assertRaises(ValueError):
             recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, overlay=overlay / "usr")
 

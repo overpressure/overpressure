@@ -4,7 +4,9 @@
 [Unit]
 Description=PICO OS's VR CPU frequency limits
 StopWhenUnneeded=yes
-ConditionPathExists=/sys/module/msm_performance/parameters/cpu_max_freq
+# The stock kernel's msm_performance, or a mainline kernel's cpufreq policies.
+ConditionPathExists=|/sys/module/msm_performance/parameters/cpu_max_freq
+ConditionPathExists=|/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq
 
 [Service]
 Type=oneshot
