@@ -3,20 +3,26 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CONF = ROOT / "userspace/rootfs/etc/NetworkManager/conf.d"
+ROOTFS = ROOT / "userspace/rootfs"
 
 
 class WifiBackendTests(unittest.TestCase):
-    def test_wpa_supplicant_wins_over_valves_iwd_setting(self):
+    def test_wpa_supplicant_wins_over_valves_iwd_setting_on_the_stock_kernel(self):
         # steamos-manager writes 99-valve-wifi-backend.conf (iwd), which the stock kernel cannot
         # run; NetworkManager applies conf.d files in name order, the last value winning.
-        ours = CONF / "99-zz-pico4-wifi-backend.conf"
+        ours = ROOTFS / "usr/share/pico4-poc/99-zz-pico4-wifi-backend.conf"
         self.assertGreater(ours.name, "99-valve-wifi-backend.conf")
         config = configparser.ConfigParser()
         config.read_string(ours.read_text(encoding="utf-8"))
         self.assertEqual(config["device"]["wifi.backend"], "wpa_supplicant")
+        unit = (ROOTFS / "usr/lib/systemd/system/pico4-wifi-backend.service").read_text(encoding="utf-8")
+        self.assertIn("ConditionPathExists=/sys/class/kgsl", unit)
+        self.assertIn("/run/NetworkManager/conf.d/99-zz-pico4-wifi-backend.conf", unit)
+        self.assertIn("Before=NetworkManager.service", unit)
+        self.assertFalse((ROOTFS / "etc/NetworkManager/conf.d" / ours.name).exists())
+        # A mainline kernel runs the Frame's iwd.
         packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
-        self.assertNotIn("iwd", packages)
+        self.assertIn("iwd", packages)
 
 
 class WpaSupplicantTests(unittest.TestCase):

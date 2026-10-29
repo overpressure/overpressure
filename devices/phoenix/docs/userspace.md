@@ -440,9 +440,11 @@ kernel's interface names. NetworkManager manages `wlan0` with `wpa_supplicant`; 
 live in RAM and are gone after a reboot. The Steam client switches NetworkManager to the Frame's
 iwd backend through steamos-manager (`99-valve-wifi-backend.conf` in `/etc`). iwd cannot run on
 the stock kernel, which lacks the AF_ALG crypto sockets (`CONFIG_CRYPTO_USER_API_*`), and with
-that backend `wlan0` stayed "unavailable" and listed no network.
-[`99-zz-pico4-wifi-backend.conf`](../userspace/rootfs/etc/NetworkManager/conf.d/99-zz-pico4-wifi-backend.conf)
-sorts after Valve's file and keeps `wpa_supplicant`.
+that backend `wlan0` stayed "unavailable" and listed no network. On the stock kernel
+`pico4-wifi-backend.service` links
+[`99-zz-pico4-wifi-backend.conf`](../userspace/rootfs/usr/share/pico4-poc/99-zz-pico4-wifi-backend.conf)
+into `/run/NetworkManager/conf.d`, where it sorts after Valve's file and keeps `wpa_supplicant`;
+a mainline kernel runs the Frame's iwd.
 
 WPA3 (SAE) works through the driver's external authentication: the driver connects in
 firmware and asks `wpa_supplicant` (`NL80211_CMD_EXTERNAL_AUTH`) for the SAE handshake. The
