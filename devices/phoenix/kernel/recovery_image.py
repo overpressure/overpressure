@@ -9,9 +9,17 @@ Started by a reboot with reason "recovery", the ABL boots it once; any reboot af
 panic, a deadline, a hard reset) starts the installed system on the stock kernel again.
 
     python recovery_image.py [--debug] [--trace FUNCTION] [--gpu-firmware DIR] [--cmdline WORD]...
-        KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT
+        [--installed INSTALL_BOOT] [--stage1 DIR] KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT
 
 --gpu-firmware adds PICO's GPU firmware to stage 1, which msm needs while it binds the display.
+
+--installed starts the installed system instead of the maintenance stage 1: stage 1 and its
+command line come from the installed system's boot image (out/dev/install-boot.img), and its
+reboot into recovery after a failed start becomes a plain reboot, since recovery would start
+this image again.
+
+--stage1 puts the files of a stage-1 overlay (devices/phoenix/initramfs) over the base image's,
+so that the test image carries this tree's stage 1 without a new dev image.
 
 --debug logs every driver probe, so the RAM console (read by the stock kernel after the reboot)
 ends with the probe a stalled boot waits for, the panic shows every task and CPU, and stage 1
@@ -29,7 +37,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from overpressure import avb, bootimg, compress, cpio  # noqa: E402
+from overpressure import avb, bootimg, compress, cpio, stage1 as stage1_overlay  # noqa: E402
 
 DTB = "sm8250-pico4-phoenix.dtb"
 #: The ABL passes only the boot image header's first command line field (512 bytes with its
@@ -42,11 +50,12 @@ STOCK_ONLY = ("androidboot.", "lpm_levels.", "video=", "msm_rtb.", "service_loca
 #: Words for the new kernel: keep what the bootloader left on (clocks, power domains and
 #: regulators no driver claims yet, such as the display's), reboot shortly after a panic, no stock
 #: modules, which this kernel cannot load, stage 1 waits up to 5 minutes for the USB controller,
-#: whose probe may wait for others on this kernel, and the GPU is a DRM device of its own, so
-#: that a GPU that fails to start does not take the display with it.
+#: whose probe may wait for others on this kernel. The GPU and the display are one DRM device,
+#: as on the Frame, where Turnip finds the panels for SteamVR's direct mode
+#: (--cmdline msm.separate_gpu_kms=1 parts them, so that a GPU that fails to start does not take
+#: the display with it).
 EXTRA = ("clk_ignore_unused", "pd_ignore_unused", "regulator_ignore_unused", "panic=5",
-         "pico4poc.modules=0", "pico4poc.kernel=valve", "pico4poc.udc_timeout=300",
-         "msm.separate_gpu_kms=1")
+         "pico4poc.modules=0", "pico4poc.kernel=valve", "pico4poc.udc_timeout=300")
 #: --debug: each probe before it starts (dd.c's dynamic debug) and with its result, all levels
 #: on the console, and on a panic every task's stack (a probe asleep in a killable or idle wait,
 #: which the hung-task detector skips) and the backtraces of all CPUs, and the DRM drivers' and
@@ -60,16 +69,21 @@ DEBUG = ("initcall_debug", "dd.dyndbg=+p", "ignore_loglevel", "panic_sys_info=ta
 #: the test runner drops from 600 s to the USB controller wait plus 30 s.
 REBOOT = "usr/sbin/pico4-reboot"
 REBOOT_REAL = "usr/libexec/pico4-poc/pico4-reboot-real"
-REBOOT_WRAPPER = f"""#!/bin/sh
-# Test image of Valve's kernel: a return to fastboot panics instead, so that the RAM console
-# survives the reset and the installed system can read this boot's kernel log.
-if [ "$1" = bootloader ]; then
+REBOOT_HEADER = "#!/bin/sh\n# Test image of Valve's kernel.\n"
+#: --debug: a return to fastboot panics instead, so that the RAM console survives the reset and
+#: the installed system can read this boot's kernel log.
+REBOOT_PANIC = """if [ "$1" = bootloader ]; then
 	echo "pico4-reboot bootloader: panicking instead (kernel test image)" > /dev/kmsg
 	sync
 	echo c > /proc/sysrq-trigger
 fi
-exec /{REBOOT_REAL} "$@"
-""".encode()
+"""
+#: --installed: recovery holds this image, so a reboot into recovery would start it again.
+REBOOT_PLAIN = f"""if [ "$1" = recovery ]; then
+	echo "pico4-reboot recovery: a plain reboot instead (kernel test image)" > /dev/kmsg
+	exec /{REBOOT_REAL}
+fi
+"""
 CONNECT_TIMEOUT = "etc/pico4-poc/test-connect-timeout"
 
 
@@ -91,16 +105,18 @@ def tree_with_dirs(paths) -> cpio.Tree:
     return tree
 
 
-def debug_archive(ramdisk: bytes) -> cpio.Tree:
-    """The --debug changes to stage 1."""
+def stage1_archive(ramdisk: bytes, debug: bool, installed: bool) -> cpio.Tree:
+    """The --debug and --installed changes to stage 1."""
     nodes = dict(cpio.read_cpio(compress.decompress(ramdisk)[0]))
-    if REBOOT not in nodes or CONNECT_TIMEOUT not in nodes:
+    if REBOOT not in nodes or (debug and CONNECT_TIMEOUT not in nodes):
         raise ValueError("stage 1's ramdisk has no pico4-reboot or test runner timeout")
-    tree = tree_with_dirs((REBOOT, REBOOT_REAL, CONNECT_TIMEOUT))
+    tree = tree_with_dirs((REBOOT, REBOOT_REAL) + ((CONNECT_TIMEOUT,) if debug else ()))
     tree.add_file(REBOOT_REAL, nodes[REBOOT].data, 0o755)
-    tree.add_file(REBOOT, REBOOT_WRAPPER, 0o755)
-    udc = int(dict(e.split("=") for e in EXTRA if "=" in e)["pico4poc.udc_timeout"])
-    tree.add_file(CONNECT_TIMEOUT, f"{udc + 30}\n".encode())
+    wrapper = REBOOT_HEADER + (REBOOT_PANIC if debug else "") + (REBOOT_PLAIN if installed else "")
+    tree.add_file(REBOOT, f'{wrapper}exec /{REBOOT_REAL} "$@"\n'.encode(), 0o755)
+    if debug:
+        udc = int(dict(e.split("=") for e in EXTRA if "=" in e)["pico4poc.udc_timeout"])
+        tree.add_file(CONNECT_TIMEOUT, f"{udc + 30}\n".encode())
     return tree
 
 
@@ -118,6 +134,15 @@ def firmware_archive(directory: Path) -> cpio.Tree:
     return tree
 
 
+def overlay_archive(directory: Path) -> cpio.Tree:
+    """--stage1: a stage-1 overlay's files, which replace the base ramdisk's."""
+    tree = cpio.Tree()
+    stage1_overlay.add_overlay(tree, directory)
+    if "init" not in tree.nodes:
+        raise ValueError(f"{directory} is no stage-1 overlay (no init)")
+    return tree
+
+
 def appended(ramdisk: bytes, *trees: cpio.Tree) -> bytes:
     """The ramdisk with each archive appended; the kernel unpacks them in order."""
     return ramdisk + b"".join(gzip.compress(tree.to_cpio(), mtime=0) for tree in trees)
@@ -132,10 +157,18 @@ def trace_words(function: str) -> tuple:
 
 
 def build(kernel_out: Path, stock_recovery: Path, dev_recovery: Path, debug: bool = False,
-          trace: str | None = None, gpu_firmware: Path | None = None, cmdline_words=()) -> bytes:
+          trace: str | None = None, gpu_firmware: Path | None = None, cmdline_words=(),
+          installed: Path | None = None, overlay: Path | None = None) -> bytes:
     base = bootimg.parse(dev_recovery.read_bytes())
     if "pico4poc.part=recovery" not in base.full_cmdline.split():
         raise ValueError(f"{dev_recovery} is not the dev loop's recovery image")
+    # The header and the recovery_dtbo stay the recovery partition's; stage 1 and its words can
+    # be the installed system's.
+    stage1 = base
+    if installed:
+        stage1 = bootimg.parse(installed.read_bytes())
+        if "pico4poc.root=installed" not in stage1.full_cmdline.split():
+            raise ValueError(f"{installed} is not the installed system's boot image")
     kernel = (kernel_out / "Image.gz").read_bytes()
     dtb = (kernel_out / DTB).read_bytes()
     # A later word replaces an earlier one with its key: the given words win over the defaults.
@@ -144,16 +177,17 @@ def build(kernel_out: Path, stock_recovery: Path, dev_recovery: Path, debug: boo
         keyed.pop(word.split("=")[0], None)
         keyed[word.split("=")[0]] = word
     extra = tuple(keyed.values())
-    words = [w for w in base.full_cmdline.split()
+    words = [w for w in stage1.full_cmdline.split()
              if w.split("=")[0] not in {e.split("=")[0] for e in extra} and not w.startswith(STOCK_ONLY)]
     cmdline = " ".join(words + list(extra))
     if len(cmdline) > MAX_CMDLINE:
         raise ValueError(f"the command line has {len(cmdline)} bytes; the ABL passes only {MAX_CMDLINE}")
     image = base.with_cmdline(cmdline)
     image.kernel, image.dtb = kernel, dtb
-    archives = ([firmware_archive(gpu_firmware)] if gpu_firmware else []) + \
-        ([debug_archive(base.ramdisk)] if debug else [])
-    ramdisk = appended(base.ramdisk, *archives)
+    archives = ([overlay_archive(overlay)] if overlay else []) + \
+        ([firmware_archive(gpu_firmware)] if gpu_firmware else []) + \
+        ([stage1_archive(stage1.ramdisk, debug, bool(installed))] if debug or installed else [])
+    ramdisk = appended(stage1.ramdisk, *archives)
     image.ramdisk = ramdisk
     image.boot_signature = b""
     data = image.pack()
@@ -171,6 +205,10 @@ def main(argv=None) -> int:
                     help="add the GPU firmware from DIR (assets/graphics-firmware-*)")
     ap.add_argument("--cmdline", metavar="WORD", action="append", default=[],
                     help="add a kernel command line word, replacing one with its key (repeatable)")
+    ap.add_argument("--installed", metavar="INSTALL_BOOT", type=Path,
+                    help="start the installed system with INSTALL_BOOT's stage 1 (out/dev/install-boot.img)")
+    ap.add_argument("--stage1", metavar="DIR", type=Path,
+                    help="put the stage-1 overlay DIR (devices/phoenix/initramfs) over the base's files")
     ap.add_argument("paths", nargs="+", type=Path, metavar="KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT")
     args = ap.parse_args(argv)
     if len(args.paths) not in (3, 4):
@@ -178,7 +216,7 @@ def main(argv=None) -> int:
     root = Path(__file__).resolve().parents[3]
     dev_recovery = args.paths[2] if len(args.paths) == 4 else root / "out" / "dev" / "dev-recovery.img"
     data = build(args.paths[0], args.paths[1], dev_recovery, args.debug, args.trace, args.gpu_firmware,
-                 args.cmdline)
+                 args.cmdline, args.installed, args.stage1)
     out = args.paths[-1]
     out.write_bytes(data)
     print(f"{out} {hashlib.sha256(data).hexdigest()}")

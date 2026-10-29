@@ -89,7 +89,7 @@ receive() {
 # keeps what changes: /etc's changes (an overlay), /var, /home and /root. On the first boot, and
 # for /var/lib/pacman after each new system image, they start as the image has them.
 installed() {
-	local system data image dir
+	local system data disk image dir
 	system=$(readlink -f /dev/block/by-name/super 2>/dev/null)
 	data=$(readlink -f /dev/block/by-name/userdata 2>/dev/null)
 	[ -b "$system" ] && [ -b "$data" ] || die "super or userdata missing"
@@ -100,8 +100,14 @@ installed() {
 	rm -f "$STATE"/*
 	mount -t ext4 -o ro,noatime "$system" "$NEW" || die "mounting the system image failed"
 	[ -d "$NEW/data" ] || die "the system image has no /data"
-	# The 4.19 kernel keeps a partition's read-only flag apart from its disk's.
+	# The 4.19 kernel keeps a partition's read-only flag apart from its disk's. A mainline kernel
+	# also counts its disk's, so there the disk becomes writable too; its other partitions keep
+	# their own flags.
 	blockdev --setrw "$data" || die "could not make userdata writable"
+	if [ "$(cat "/sys/class/block/${data##*/}/ro")" != 0 ]; then
+		disk=$(readlink -f "/sys/class/block/${data##*/}/..")
+		blockdev --setrw "/dev/${disk##*/}" || die "could not make ${disk##*/} writable"
+	fi
 	mount -t ext4 -o noatime "$data" "$NEW/data" || die "mounting the data partition failed"
 	image=$(cat "$NEW/usr/share/pico4-poc/system-image" 2>/dev/null)
 	if [ ! -e "$NEW/data/.pico4-initialized" ]; then

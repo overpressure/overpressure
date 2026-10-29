@@ -29,12 +29,16 @@ def slept():
     return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
 
 
-def key_device():
-    """The PMIC's power-on key (qpnp_pon)."""
-    for name in sorted(glob.glob("/sys/class/input/event*/device/name")):
+#: The PMIC's power-on key: the stock kernel's qpnp_pon, a mainline kernel's pm8941_pwrkey.
+KEY_DEVICES = ("qpnp_pon", "pm8941_pwrkey")
+
+
+def key_device(pattern="/sys/class/input/event*/device/name"):
+    """The PMIC's power-on key."""
+    for name in sorted(glob.glob(pattern)):
         with open(name, encoding="ascii", errors="replace") as f:
-            if f.read().strip() == "qpnp_pon":
-                return "/dev/input/" + name.split("/")[4]
+            if f.read().strip() in KEY_DEVICES:
+                return "/dev/input/" + os.path.basename(os.path.dirname(os.path.dirname(name)))
     return None
 
 
@@ -76,7 +80,7 @@ def main(argv):
     dry_run = "--dry-run" in argv
     path = key_device()
     if path is None:
-        print("powerkey: no qpnp_pon input device", file=sys.stderr)
+        print(f"powerkey: no input device {' or '.join(KEY_DEVICES)}", file=sys.stderr)
         return 1
     fd = os.open(path, os.O_RDONLY)
     key = Key()

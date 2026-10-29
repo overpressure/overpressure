@@ -28,6 +28,19 @@ class LogindTests(unittest.TestCase):
         self.assertNotIn(b"\r", PATH.read_bytes())
 
 
+class DeviceTests(unittest.TestCase):
+    def test_the_pmic_key_of_either_kernel(self):
+        import tempfile
+        for name in ("qpnp_pon", "pm8941_pwrkey"):
+            with tempfile.TemporaryDirectory() as tmp:
+                for event, device in (("event0", "gpio-keys"), ("event2", name), ("event3", "pm8941_resin")):
+                    (Path(tmp) / event / "device").mkdir(parents=True)
+                    (Path(tmp) / event / "device/name").write_text(device + "\n")
+                self.assertEqual(tool.key_device(f"{tmp}/event*/device/name"), "/dev/input/event2")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(tool.key_device(f"{tmp}/event*/device/name"))
+
+
 class KeyTests(unittest.TestCase):
     """PICO OS: a short press goes to sleep, 2 s held shuts down without asking."""
 

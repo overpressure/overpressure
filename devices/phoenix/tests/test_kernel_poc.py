@@ -216,6 +216,50 @@ class RecoveryImageTests(unittest.TestCase):
         self.assertNotIn("initcall_debug", plain.full_cmdline.split())
         self.assertEqual(plain.ramdisk, stage1)
 
+    def test_installed_takes_the_installed_stage1_and_reboots_plain_for_recovery(self):
+        def stage1(marker: bytes) -> bytes:
+            tree = cpio.Tree()
+            for directory in ("usr", "usr/sbin"):
+                tree.mkdir(directory)
+            tree.add_file("usr/sbin/pico4-reboot", b"ELF reboot", 0o755)
+            tree.add_file("init", marker)
+            return gzip.compress(tree.to_cpio(), mtime=0)
+        dev = self.dev_recovery("pico4poc.test_run=dev-loop pico4poc.part=recovery", stage1(b"maintenance"))
+        install = bootimg.BootImage(header_version=2, page_size=4096, kernel=b"stock kernel",
+                                    ramdisk=stage1(b"installed"), dtb=b"stock dtb").with_cmdline(
+            "androidboot.hardware=qcom pico4poc.root=installed pico4poc.autoreboot=0")
+        (self.tmp / "install-boot.img").write_bytes(install.pack())
+        image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev,
+                                                   installed=self.tmp / "install-boot.img"))
+        words = image.full_cmdline.split()
+        self.assertIn("pico4poc.root=installed", words)
+        self.assertNotIn("pico4poc.test_run=dev-loop", words)
+        # The recovery partition's own overlays stay.
+        self.assertEqual(image.recovery_dtbo, b"overlays")
+        self.assertTrue(image.ramdisk.startswith(install.ramdisk))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(install.ramdisk):])))
+        wrapper = added["usr/sbin/pico4-reboot"].data
+        self.assertIn(b'"$1" = recovery', wrapper)
+        self.assertNotIn(b"/proc/sysrq-trigger", wrapper)
+        self.assertEqual(added["usr/libexec/pico4-poc/pico4-reboot-real"].data, b"ELF reboot")
+        # The maintenance stage 1 is no installed system's boot image.
+        with self.assertRaises(ValueError):
+            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, installed=dev)
+
+    def test_stage1_overlay_replaces_the_bases_files(self):
+        overlay = self.tmp / "initramfs"
+        (overlay / "usr" / "bin").mkdir(parents=True)
+        (overlay / "init").write_bytes(b"#!/bin/sh\r\necho new\r\n")
+        (overlay / "usr" / "bin" / "pico4-userspace").write_bytes(b"#!/bin/sh\n")
+        dev = self.dev_recovery("pico4poc.part=recovery")
+        image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, overlay=overlay))
+        self.assertTrue(image.ramdisk.startswith(b"stage 1"))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1"):])))
+        self.assertEqual(added["init"].data, b"#!/bin/sh\necho new\n")
+        self.assertTrue(added["usr/bin/pico4-userspace"].mode & 0o111)
+        with self.assertRaises(ValueError):
+            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, overlay=overlay / "usr")
+
     def test_gpu_firmware_goes_where_msm_and_the_tree_look(self):
         firmware = self.tmp / "graphics-firmware"
         firmware.mkdir()

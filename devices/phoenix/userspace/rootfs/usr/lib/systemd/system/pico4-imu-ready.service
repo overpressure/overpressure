@@ -5,7 +5,9 @@
 [Unit]
 Description=PICO 4 head IMU listed by the Qualcomm Sensor Core
 ConditionPathExists=/usr/lib/firmware/slpi.mdt
-ConditionPathExists=/sys/kernel/boot_slpi
+# The stock kernel's subsystem interface, or a mainline kernel's remoteproc.
+ConditionPathExists=|/sys/kernel/boot_slpi
+ConditionPathExists=|/sys/class/remoteproc
 Requires=pico4-sensorspd.service
 After=pico4-sensorspd.service
 

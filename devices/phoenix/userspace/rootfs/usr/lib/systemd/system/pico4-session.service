@@ -4,8 +4,10 @@
 # (PICO4_SESSION_TARGET) names another.
 [Unit]
 Description=PICO 4 user session (steamos)
-# Valve's session needs the GPU: none in QEMU.
-ConditionPathExists=/dev/kgsl-3d0
+# Valve's session needs the GPU, KGSL on the stock kernel or msm's render node on a mainline
+# kernel: none in QEMU.
+ConditionPathExists=|/dev/kgsl-3d0
+ConditionPathExists=|/dev/dri/renderD128
 # After the head IMU is listed: SteamVR's driver_monado probes it when SteamVR starts.
 After=systemd-user-sessions.service systemd-logind.service pico4-sensors.target
 # PICO OS's head tracker for SteamVR's driver_monado (docs/xr.md#head-tracking).
@@ -13,6 +15,10 @@ Wants=pico4-slamd.service
 # PICO OS's CPU limits for VR while the session runs (docs/cooling.md#vr-cpu-limits).
 Wants=pico4-vr-performance.service
 After=pico4-vr-performance.service
+# On a kernel with virtual terminals (a mainline kernel) the session takes VT 1 in getty's place,
+# as sddm does on the Frame; the stock kernel has none.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
 # A session that ends by itself starts again, as sddm's Relogin=true does on the Frame: a
 # compositor that dies in a running session makes vrserver quit everything, gamescope with
 # it, and start-gamescope-session then returns 0; a SteamVR that failed for good ends it too
@@ -27,6 +33,11 @@ StartLimitBurst=5
 User=steamos
 PAMName=pico4-session
 EnvironmentFile=-/etc/pico4-poc/session.conf
+# logind gives seat0's sessions a VT where the kernel has them (VT numbers 1-63) and refuses a VT
+# number where it has none: pam_systemd takes it from the environment, which this file holds
+# when the session starts.
+ExecStartPre=+/bin/sh -c 'mkdir -p /run/pico4-poc; if [ -e /dev/tty0 ]; then echo XDG_VTNR=1; fi > /run/pico4-poc/session-vt.env'
+EnvironmentFile=-/run/pico4-poc/session-vt.env
 ExecStart=/usr/libexec/pico4-poc/session
 Restart=always
 RestartSec=5

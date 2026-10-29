@@ -1,7 +1,9 @@
 [Unit]
 Description=Boot the sensor DSP (SLPI)
 ConditionPathExists=/usr/lib/firmware/slpi.mdt
-ConditionPathExists=/sys/kernel/boot_slpi
+# The stock kernel's subsystem interface, or a mainline kernel's remoteproc.
+ConditionPathExists=|/sys/kernel/boot_slpi
+ConditionPathExists=|/sys/class/remoteproc
 Requires=pico4-qrtr-ns.service
 After=pico4-qrtr-ns.service systemd-udev-trigger.service
 

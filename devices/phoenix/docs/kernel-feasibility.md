@@ -172,19 +172,19 @@ kernel with both panels and Valve's Mesa shows whether the rest is worth doing.
 
 ## Prototype
 
-Phases 0 to 2 run as a prototype beside the stock kernel; the stock-kernel rule is lifted for
-it only. Its files are in [kernel/](../kernel/):
+Phases 0 to 2 and the installed system with Valve's session run as a prototype beside the stock
+kernel; the stock-kernel rule is lifted for it only. Its files are in [kernel/](../kernel/):
 
 | File | Purpose |
 | --- | --- |
-| [sm8250-pico4-phoenix.dts](../kernel/sm8250-pico4-phoenix.dts) | the PICO 4's device tree on mainline's `sm8250.dtsi`: the stock tree's supplies for UFS, USB and the panels, its memory carve-outs, its unused GPIOs reserved, reboot modes, a RAM console, both DSI links with the panels, the GPU, the GD32 MCU's UART, the three DSPs, the head IMU's supplies and clock |
+| [sm8250-pico4-phoenix.dts](../kernel/sm8250-pico4-phoenix.dts) | the PICO 4's device tree on mainline's `sm8250.dtsi`: the stock tree's supplies for UFS, USB and the panels, its memory carve-outs, its unused GPIOs reserved, reboot modes, a RAM console, both DSI links with the panels, the GPU with its DDR vote, the GD32 MCU's UART, the three DSPs, the head IMU's supplies and clock, the keys |
 | [pico4.config](../kernel/pico4.config) | merged over Valve's `gabe_defconfig`: the SM8250 drivers (with the display and GPU clock controllers, QFPROM, REFGEN), the panel driver, stage 1's USB gadget functions, the PON reboot modes, pstore, QRTR over GLINK |
 | [patches/](../kernel/patches/) | fixes to Valve's tree that the PICO 4 needs (below) |
 | [src/](../kernel/src/) | the PICO 4's own kernel sources, at their paths in the tree: the panel driver |
 | [build-kernel.sh](../kernel/build-kernel.sh) | Valve's 7.2 source package (pinned by hash and commit), the patches and the own sources to `Image.gz` and the device tree |
 | [dtbo_sink.py](../kernel/dtbo_sink.py) | the include that absorbs the ABL's board overlay (below) |
 | [panel_sequence.py](../kernel/panel_sequence.py) | the include with the panels' command sequences, from the stock board overlay (below) |
-| [recovery_image.py](../kernel/recovery_image.py) | the maintenance stage 1 on the new kernel as a whole recovery partition; `--gpu-firmware` for the GPU; `--cmdline` for extra kernel words (such as the panel driver's parameters); `--debug` and `--trace` for failed boots (below) |
+| [recovery_image.py](../kernel/recovery_image.py) | the maintenance stage 1 on the new kernel as a whole recovery partition; `--installed` starts the installed system instead, `--stage1` carries this tree's stage-1 files; `--gpu-firmware` for the GPU; `--cmdline` for extra kernel words (such as the panel driver's parameters); `--debug` and `--trace` for failed boots (below) |
 | [build-mesa-deps.sh](../kernel/build-mesa-deps.sh) | the two libraries Valve's Mesa links that the userspace lacks, from their pinned sources (below) |
 | [tools/pico4-kmstest.c](../kernel/tools/pico4-kmstest.c) | a static KMS check for stage 1: the msm cards and their GPU, the connectors and modes, a test frame, the refresh rate |
 
@@ -200,17 +200,27 @@ it only. Its files are in [kernel/](../kernel/):
 
 | Phase 1 | Result on the headset |
 | --- | --- |
-| Display | the display subsystem, DPU, both DSI controllers and PHYs and the panel driver bind as one DSI connector (`msm-kms`); the driver's DSC configuration equals the parameter set in the panels' stock power-on sequence byte for byte; the panels' full power-on (supplies, VIO, reset, the 20 stock commands on both links, backlight) completes, and both panels answer the DCS power mode read with 0x0c (normal mode, display on); a mode set of 4320x2160 at 90 Hz follows, with vblanks at 90.00 Hz |
-| GPU | its own DRM device (`msm.separate_gpu_kms`): Adreno 650 (chip id 0x06050002), the microcode, the GMU firmware (v2.1.8) and PICO's zap shader load, the ring runs, devfreq at 305 MHz; the display keeps 90 Hz meanwhile |
+| Display | the display subsystem, DPU, both DSI controllers and PHYs and the panel driver bind as one DSI connector (`msm-kms`); the driver's DSC configuration equals the parameter set in the panels' stock power-on sequence byte for byte; the panels' full power-on (supplies, VIO, reset, the 20 stock commands on both links, backlight) completes, and both panels answer the DCS power mode read with 0x0c: display on and normal mode, but sleep out and the booster off; a mode set of 4320x2160 at 90 Hz follows, with vblanks at 90.00 Hz |
+| GPU | Adreno 650 (chip id 0x06050002), the microcode, the GMU firmware (v2.1.8) and PICO's zap shader load, the ring runs; devfreq from 305 MHz to 587 MHz (the chip's speed bin; PICO OS's VR level) with the stock DDR vote per level; one DRM device with the display, as on the Frame |
 | Mesa | the userspace's Mesa 25.2.7 (Holo preview) in a chroot on this kernel: EGL on the surfaceless and GBM platforms, freedreno on the FD650, OpenGL 4.6 core and compatibility, OpenGL ES 3.2 |
 | Valve's Mesa | the Frame's `deckard-mesa-linux-aarch64` 26.3.0-devel over the userspace in a chroot on this kernel: Turnip on msm ("Turnip Adreno (TM) 650", Vulkan 1.3, conformance 1.2.7.1) renders `pico4-vulkan-test`'s frame with all 65536 pixels correct; OpenGL 4.6 core and compatibility and OpenGL ES 3.2 through zink on Turnip, surfaceless and on GBM. The package has no freedreno gallium driver: on the Frame, OpenGL is zink. |
-| Open | whether the panels show the frame (not looked at yet); the DSI PHY's PLL fails to lock once at probe while the clock framework adopts the bootloader's display clocks (a warning, the display works after it) |
+| In the lenses | kmstest's test frame and vkcube (compressed scanout) show on both panels; Valve's session in SteamVR's direct mode, seen worn: fluid, IMU head tracking without lag or freezes, "just like stock" (user). The panels' status byte reads 0x0c after our power-on and 0x1c as the bootloader leaves them, with the picture shown either way. The LCDB stays on throughout |
+| Open | in one boot the lenses stayed dark with SteamVR presenting, when its mode set was the first after power-on (not yet reproduced); the DSI PHY's PLL fails to lock once at probe while the clock framework adopts the bootloader's display clocks (a warning, the display works after it) |
 
 | Phase 2 | Result on the headset |
 | --- | --- |
 | GD32 MCU | QUP0's serial engine 1 as `ttyHS1` (its stock name); `pico4-fan status` reads duty, RPM, version ("BOOT02", as on the stock kernel) and fan info; the MCU's reset and boot lines stay as the bootloader set them, as on the stock kernel |
 | DSPs | the SLPI, CDSP and ADSP run under mainline's remoteproc with PICO's signed images from the headset's modem partition; each brings up its IPC router, FastRPC (`/dev/fastrpc-sdsp`, `-cdsp`, `-cdsp-secure`, `-adsp`) and its own channels (the ADSP's `apr_audio_svc`, the CDSP's `cvp-glink-apps-dsp` and `cdsprmglink-apps-dsp`) |
 | Head IMU | the sensors process on the SLPI attaches to `hexagonrpcd` over upstream FastRPC (`/dev/fastrpc-sdsp`), reads the headset's registry from `persist` and lists the sensors over QRTR (the kernel's own name service and PD mapper); `pico4-imu stream --rate 1000 --check` passes: accelerometer and gyroscope (TDK ICM-4x6xx) at 1023.89 Hz each over 10 s, no gaps, no out-of-order timestamps, gravity 9.805 m/s², gyro bias 0.006 rad/s |
+| Keys | the stock tree's keys: PM8150's power key (`pm8941_pwrkey`) and RESIN key, and the GPIO keys (volume, confirm, home, app) with the stock codes; `pico4-powerkey` runs |
+
+| Installed system | Result on the headset |
+| --- | --- |
+| Boot | the installed system (`super`, `userdata`) on Valve's kernel from `recovery` (`--installed`): `graphical.target` 13.2 s after power-on (8.8 s kernel, 4.4 s userspace); the data partition writable, every other block device read-only |
+| Fan | `pico4-fan` runs PICO OS's policy on the same 14 TSENS channels under mainline's names; 30 % at 30–53 °C |
+| DSPs, head IMU | `pico4-slpi` and `pico4-cdsp` start the DSPs through remoteproc; `pico4-sensors.target` is reached once the IMU is listed (35 s); the 1 kHz stream check passes |
+| SteamVR | Valve's session (`gamescope-session.target`) with `driver_monado` and the PICO 4 headset; `vrcompositor` in direct mode through Turnip's own display WSI on msm, 4320×2160 at 90 Hz, compressed scanout images; 89.7 frames per second in a steady 10 s window with the CPUs' own governor (894 of 896 frames in one refresh), 5.9 ms of the compositor's GPU time per frame, hottest zone 42 °C |
+| Not on this kernel yet | PICO OS's head tracker (`libSlam` speaks the downstream FastRPC ABI), cameras, the controller station, audio, Wi-Fi, video decode, charging; a client that probes the panels' connector at boot (below) |
 
 ### Display
 
@@ -261,8 +271,71 @@ controller's default state. Without the clock the IMU takes its configuration bu
 samples. On the userspace side the sensors process needs `CONFIG_QRTR_SMD` (QRTR over the DSPs'
 GLINK channels), the registry in `persist`, and the downstream socinfo attributes mainline's
 `/sys/devices/soc0` lacks (`hw_platform` MTP, `platform_subtype` Unknown, `platform_subtype_id`
-0, `platform_version` 65536): `hexagonrpcd` serves them from `/usr/share/qcom/pico4/socinfo`,
-which on this kernel has to be a directory with the stock values instead of the link to sysfs.
+0, `platform_version` 65536). Mainline has the same SMEM values in debugfs
+(`qcom_socinfo/hardware_platform` 8, `hardware_platform_subtype` 0, `platform_version`);
+`sensorspd` names them as the stock kernel does and serves them from a runtime copy of
+`hexagonrpcd`'s root.
+
+### The installed system
+
+The installed system runs on both kernels; what only the stock kernel needs stays off on
+Valve's, and what Valve's kernel needs is found by the hardware, not by a kernel switch:
+
+| Part | Stock kernel | Valve's kernel |
+| --- | --- | --- |
+| Data partition | stage 1 makes `userdata` writable | a partition counts its disk's read-only flag too: stage 1 makes the disk writable, its other partitions keep their own flag, and stage 2's block policy leaves that disk alone |
+| DSPs | `/sys/kernel/boot_*`, restart level `RELATED`, userspace `qrtr-ns` and `pd-mapper` | `/sys/class/remoteproc` (crash recovery restarts only that DSP), the kernel's name service and PD mapper; the stock units skip themselves |
+| Sensor service | `hexagonrpcd` on `/dev/adsprpc-smd-secure`, socinfo from sysfs | `/dev/fastrpc-sdsp`, socinfo from debugfs (above) |
+| Fan | `cpu-0-N-usr`, `cpu-1-N-usr`, `gpuss-N-usr` | `cpuN-thermal`, `cpuN-top/bottom-thermal`, `gpu-top/bottom-thermal`: the same TSENS channels |
+| Power key | `qpnp_pon` | `pm8941_pwrkey` |
+| Session | seat0 without VTs | the session takes VT 1 in getty's place, as sddm does on the Frame (logind requires a VT where the kernel has them) |
+| GPU | `/dev/kgsl-3d0`; `pico4-vrdisplay` provides SteamVR's direct mode and shared semaphores | msm's render node; the layer stays unloaded (`PICO4_VRDISPLAY_DISABLE` from a user environment generator), Turnip and msm provide both, as on the Frame |
+| PICO 4 driver | finds the headset by the SLPI subsystem | or by the remoteproc named `slpi` |
+
+The userspace changes run on the headset from a bind mount over the installed files; the
+installed image still has the stock-kernel versions.
+
+### SteamVR's direct mode
+
+`vrcompositor` finds the panels through Vulkan (`VK_KHR_display`), acquires them with the DRM
+fd and paces itself with `VK_EXT_display_control`, which Turnip's display WSI provides on msm.
+It asks for storage usage on its swapchain images and never uses it; the A650 cannot compress
+storage images (Turnip refuses the compressed modifier with storage usage), so the display
+scanned out linear images and the compositor needed about 11 ms of GPU time per frame, 60–66
+frames per second. The display takes compressed XRGB8888 (`DRM_FORMAT_MOD_QCOM_COMPRESSED`),
+which the stock kernel's display refused. `pico4-turnip-kgsl`'s `wsi-compressed-scanout.patch`
+adds two things to Mesa's display WSI:
+- where the application's usage rules out a modifier the display takes, the application
+  renders into ordinary images and each present copies them into compressed scanout images
+  (Mesa's image blit, which Metal and DXGI use): 9.5 ms per frame, the copy 1.5 ms;
+- the driconf option `vk_wsi_ignore_storage_usage`, set for `vrcompositor` in
+  `/usr/share/drirc.d/50-pico4-steamvr.conf`, creates the swapchain images without the unused
+  storage usage, so that SteamVR resolves straight into compressed images: 7.0 ms per frame, as
+  on the stock kernel.
+
+The rest was the DDR. The compositor submits each frame as one GPU job right after the previous
+flip; the job has to finish, and msm's commit to start, before the next vblank. In a recording of
+the kernel's own events (GPU submit, flush and retire, atomic commit, DPU kickoff, flip, vblank)
+the frames that missed it ran 7.8 ms on the GPU instead of 5.9 ms, at the same 587 MHz, and
+started 1.8 ms after their submit instead of 0.4 ms: 84.5 frames per second. Mainline's tree
+gives the A650 no interconnect and its OPPs no bandwidth (msm's own bandwidth vote through the
+GMU is for the A7xx), so the DDR ran at what the CPUs asked for. With the CPUs at their highest
+frequencies the same session ran 89.8 frames per second without a late frame. The tree now votes
+for the GPU what the stock driver does: its bus table for LPDDR4X (the bootloader's
+`ddr_device_type` 7) at each level's `bus-freq-ddr7`, 8,171,875 kB/s at 587 MHz. With the CPUs'
+own governor: 89.7 frames per second, 894 of 896 frames in one refresh, the GPU's time per frame
+between 5.9 and 6.0 ms. The OPP core reads bandwidths only when the first OPP has one, so the
+670 MHz OPP, which this speed bin does not use, carries the top level too.
+
+Only the DRM master makes the kernel probe a connector's modes; anyone else gets the list a
+probe left. On the stock kernel the boot splash and the display layer probe first. On Valve's
+kernel nothing does yet (the splash refuses a display that is not the stock one, and the kernel
+has no fbdev client), so a compositor that starts first sees no real mode ("1024x768") and finds
+no headset display; a probe by root before the session avoids it.
+
+With nobody wearing the headset, SteamVR enters standby after `power.turnOffScreensTimeout`
+(5 s) and presents black frames; measurements set it to an hour with `vrcmd` first and back
+afterwards, as `pico4-valve-session-check` does.
 
 ### Patches
 
@@ -365,7 +438,9 @@ shows up only as `deferred_probe_initcall` waiting.
    (Valve's kernel runs stage 1 from `recovery`, see [Results](#results)), most of phase 1
    (both panels at 90 Hz through DPU, and the GPU under Valve's own Mesa: Turnip on msm and
    OpenGL through zink, as on the Frame) and the first part of phase 2: the GD32 MCU, the three
-   DSPs with PICO's images, and the head IMU at 1 kHz over upstream FastRPC and QRTR.
+   DSPs with PICO's images, and the head IMU at 1 kHz over upstream FastRPC and QRTR. The
+   installed system runs on it, and Valve's session presents through SteamVR's direct mode at
+   89.7 frames per second without the stock kernel's display layer.
 3. Decide early how charging is handled (phase 5): without it the headset is not usable away
    from development, whatever else works.
 

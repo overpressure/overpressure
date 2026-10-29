@@ -12,6 +12,7 @@
 /dts-v1/;
 
 #include <dt-bindings/arm/qcom,ids.h>
+#include <dt-bindings/input/input.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include "sm8250.dtsi"
 #include "pm8150.dtsi"
@@ -45,6 +46,58 @@
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
+	};
+
+	/*
+	 * The stock tree's GPIO keys, with its labels and codes (its "volume_up" sends
+	 * KEY_VOLUMEDOWN, as on PICO OS).
+	 */
+	gpio-keys {
+		compatible = "gpio-keys";
+		label = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&key_vol_up_default>, <&key_home_default>, <&key_confirm_default>,
+			    <&app_key_default>;
+
+		key-volume-up {
+			label = "volume_up";
+			gpios = <&pm8150_gpios 6 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_KEY>;
+			linux,code = <KEY_VOLUMEDOWN>;
+			wakeup-source;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+
+		key-confirm {
+			label = "confirm_key";
+			gpios = <&pm8150_gpios 7 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_KEY>;
+			linux,code = <KEY_ENTER>;
+			wakeup-source;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+
+		key-home {
+			label = "home";
+			gpios = <&pm8150_gpios 1 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_KEY>;
+			linux,code = <KEY_HOME>;
+			wakeup-source;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+
+		key-app {
+			label = "app_key";
+			gpios = <&tlmm 40 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_KEY>;
+			linux,code = <KEY_BACK>;
+			wakeup-source;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
 	};
 
 	reserved-memory {
@@ -238,6 +291,31 @@
 		bias-disable;
 		input-disable;
 	};
+
+	/* The keys' pins as the stock tree configures them. */
+	key_home_default: key-home-default-state {
+		pins = "gpio1";
+		function = "normal";
+		input-enable;
+		bias-pull-up;
+		power-source = <0>;
+	};
+
+	key_vol_up_default: key-vol-up-default-state {
+		pins = "gpio6";
+		function = "normal";
+		input-enable;
+		bias-pull-up;
+		power-source = <1>;
+	};
+
+	key_confirm_default: key-confirm-default-state {
+		pins = "gpio7";
+		function = "normal";
+		input-enable;
+		bias-pull-up;
+		power-source = <1>;
+	};
 };
 
 /*
@@ -255,8 +333,52 @@
 	status = "okay";
 };
 
+/*
+ * The GPU's own DDR vote, as the stock driver casts it: mainline's tree gives the A650 no
+ * interconnect, so the DDR ran at what the CPUs asked for and the GPU's frames took up to a third
+ * longer whenever they asked little. The stock tree's GPU bus table for LPDDR4X (the bootloader's
+ * ddr_device_type 7) at each level's bus-freq-ddr7; KGSL's bus scaling between the levels'
+ * bus-min and bus-max is not carried over. msm applies the OPP, and with it this vote, on every
+ * frequency change.
+ */
 &gpu {
+	interconnects = <&gem_noc MASTER_GRAPHICS_3D 0 &mc_virt SLAVE_EBI_CH0 0>;
+	interconnect-names = "gfx-mem";
 	status = "okay";
+};
+
+&gpu_opp_table {
+	/*
+	 * Not this headset's speed bin, but the OPP core looks for bandwidths in the first OPP only
+	 * and without one there takes the table for one without them; the stock top level.
+	 */
+	opp-670000000 {
+		opp-peak-kBps = <8171875>;	/* bus level 11 */
+	};
+
+	opp-587000000 {
+		opp-peak-kBps = <8171875>;	/* bus level 11 */
+	};
+
+	opp-525000000 {
+		opp-peak-kBps = <6074218>;	/* bus level 9 */
+	};
+
+	opp-490000000 {
+		opp-peak-kBps = <6074218>;	/* bus level 9 */
+	};
+
+	opp-441600000 {
+		opp-peak-kBps = <6074218>;	/* bus level 9 */
+	};
+
+	opp-400000000 {
+		opp-peak-kBps = <3972656>;	/* bus level 7 */
+	};
+
+	opp-305000000 {
+		opp-peak-kBps = <1761718>;	/* bus level 3 */
+	};
 };
 
 /* PICO's signed zap shader, from the stock firmware (split .mdt with its segments). */
@@ -344,6 +466,16 @@
 	mode-recovery = <0x1>;
 };
 
+/* The stock tree's power-on keys: KPDPWR is the power key, RESIN sends KEY_VOLUMEUP. */
+&pon_pwrkey {
+	status = "okay";
+};
+
+&pon_resin {
+	linux,code = <KEY_VOLUMEUP>;
+	status = "okay";
+};
+
 &slpi {
 	firmware-name = "slpi.mdt";
 	status = "okay";
@@ -374,6 +506,14 @@
 		function = "qup1";
 		drive-strength = <2>;
 		bias-disable;
+	};
+
+	/* The app key's pin as the stock tree configures it. */
+	app_key_default: app-key-default-state {
+		pins = "gpio40";
+		function = "gpio";
+		drive-strength = <6>;
+		bias-pull-up;
 	};
 
 	/* The stock panel pins: the reset (75) and its neighbour 60, driven at 8 mA. */

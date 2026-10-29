@@ -8,7 +8,8 @@ requests A0 cmd p1 p2 p3 xor; replies start with 79 and end with the XOR of the
 bytes before. PICO OS's pxrfanservice sets the duty with SetFanSpeed (0x0E,
 0-100 %) through gd32ipdservice:
 
-- it samples the CPU core and GPU sensors (cpu-*-usr, gpuss-*-usr) every 200 ms
+- it samples the CPU core and GPU sensors (cpu-*-usr, gpuss-*-usr; a mainline kernel's
+  cpu*-thermal and gpu-*-thermal) every 200 ms
   and keeps each sensor's mean over its last 50 readings (10 s);
 - the hottest mean picks the duty from a six-step table. On the way down a duty
   holds until the temperature falls one more step; between the two lowest
@@ -59,8 +60,11 @@ GENI_CLOCK_VOTE = 0x544D  # TIOCPMGET: the stock service votes the UART's clocks
 REPLY_TIMEOUT = 0.1  # s
 LOCK_TIMEOUT = 2.0   # s
 
-# The control loop, as pxrfanservice runs it.
-SENSORS = re.compile(r"cpu-0-[0-3]-usr|cpu-1-[0-7]-usr|gpuss-[01]-usr")
+# The control loop, as pxrfanservice runs it. A mainline kernel names the same 14 TSENS
+# channels differently: cpu-0-N-usr is cpuN-thermal, cpu-1-0..3-usr the top and cpu-1-4..7-usr
+# the bottom sensors of cpu4-7, gpuss-0/1-usr gpu-top/bottom-thermal.
+SENSORS = re.compile(r"cpu-0-[0-3]-usr|cpu-1-[0-7]-usr|gpuss-[01]-usr"
+                     r"|cpu[0-3]-thermal|cpu[4-7]-(top|bottom)-thermal|gpu-(top|bottom)-thermal")
 PERIOD = 0.2       # s between readings
 WINDOW = 50        # readings per mean: 10 s
 REFRESH = 10.0     # s before an unchanged duty is sent again

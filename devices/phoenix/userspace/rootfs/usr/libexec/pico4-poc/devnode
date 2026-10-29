@@ -19,7 +19,7 @@ block_policy() {
 	[ -e "/sys/class/block/$name" ] || return 0
 	. /usr/libexec/pico4-poc/lib.sh
 	partname=$(sed -n 's/^PARTNAME=//p' "/sys/class/block/$name/uevent" 2>/dev/null)
-	if [ "$(poc_arg rw 0)" != 1 ] && ! installed_data "$name" "$partname"; then
+	if [ "$(poc_arg rw 0)" != 1 ] && ! installed_data "$name" "$partname" && ! installed_data_disk "$name"; then
 		blockdev --setro "/dev/$name" 2>/dev/null || log "could not set /dev/$name read-only"
 	fi
 	if [ -n "$partname" ]; then
@@ -33,6 +33,19 @@ block_policy() {
 installed_data() {
 	[ "$2" = userdata ] && [ "$(poc_arg root '')" = installed ] &&
 		[ "$(ext_label "/dev/$1" 2>/dev/null)" = pico4-data ]
+}
+
+# installed_data_disk NAME: true for the disk of the installed system's data partition when stage 1
+# left it writable: a mainline kernel counts a disk's read-only flag for its partitions too (the
+# 4.19 kernel keeps them apart, and there the disk stays read-only).
+installed_data_disk() {
+	local part
+	[ "$(poc_arg root '')" = installed ] && [ "$(cat "/sys/class/block/$1/ro" 2>/dev/null)" = 0 ] || return 1
+	for part in "/sys/class/block/$1/$1"*; do
+		[ -e "$part/partition" ] || continue
+		installed_data "${part##*/}" "$(sed -n 's/^PARTNAME=//p' "$part/uevent" 2>/dev/null)" && return 0
+	done
+	return 1
 }
 
 # matches NODE TYPE: true if NODE is a TYPE (b/c) node with $MAJOR:$MINOR.

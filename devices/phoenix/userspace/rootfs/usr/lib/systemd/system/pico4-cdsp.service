@@ -2,7 +2,9 @@
 [Unit]
 Description=Boot the Compute DSP (CDSP)
 ConditionPathExists=/usr/lib/firmware/cdsp.mdt
-ConditionPathExists=/sys/kernel/boot_cdsp
+# The stock kernel's subsystem interface, or a mainline kernel's remoteproc.
+ConditionPathExists=|/sys/kernel/boot_cdsp
+ConditionPathExists=|/sys/class/remoteproc
 After=systemd-udev-trigger.service pico4-pd-mapper.service
 
 [Service]

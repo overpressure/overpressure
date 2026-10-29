@@ -243,6 +243,28 @@ class ZonesTest(unittest.TestCase):
     def test_the_stock_sensors_in_zone_order(self):
         self.assertEqual([s.name for s in self.zones.sensors()], STOCK_SENSORS)
 
+    def test_the_same_channels_under_mainline_names(self):
+        # Mainline's sm8250 zones as Valve's kernel lists them, with their TSENS channels; the
+        # stock sensors are TSENS0 1-4 and 7-15 and TSENS1 8.
+        mainline = ["aoss0-thermal", "cpu0-thermal", "cpu1-thermal", "cpu2-thermal", "cpu3-thermal",
+                    "cluster0-thermal", "cluster1-thermal", "cpu4-top-thermal", "cpu5-top-thermal",
+                    "cpu6-top-thermal", "cpu7-top-thermal", "cpu4-bottom-thermal", "cpu5-bottom-thermal",
+                    "cpu6-bottom-thermal", "cpu7-bottom-thermal", "gpu-top-thermal", "aoss1-thermal",
+                    "wlan-thermal", "video-thermal", "mem-thermal", "q6-hvx-thermal", "camera-thermal",
+                    "compute-thermal", "npu-thermal", "gpu-bottom-thermal", "pm8150-thermal"]
+        with tempfile.TemporaryDirectory() as tmp:
+            for i, kind in enumerate(mainline):
+                (Path(tmp) / f"thermal_zone{i}").mkdir()
+                (Path(tmp) / f"thermal_zone{i}/type").write_text(kind + "\n")
+                (Path(tmp) / f"thermal_zone{i}/temp").write_text("40000\n")
+            zones = fan.Zones(Path(tmp))
+            try:
+                names = [s.name for s in zones.sensors()]
+            finally:
+                for fd in zones.fds.values():
+                    os.close(fd)
+        self.assertEqual(names, mainline[1:5] + mainline[7:16] + ["gpu-bottom-thermal"])
+
     def test_reads_again_through_the_open_descriptor(self):
         path = str(self.root / "thermal_zone11/temp")
         self.assertEqual(self.zones.read(path), 40011)

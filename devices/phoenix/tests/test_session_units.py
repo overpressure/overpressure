@@ -236,8 +236,10 @@ class SessionTest(unittest.TestCase):
         burst = int(session["Unit"]["StartLimitBurst"])
         self.assertGreaterEqual(interval, burst * (restart + 30))
         self.assertNotIn("OnFailure", session["Unit"])
-        # Valve's session needs the GPU (none in QEMU), and no longer the Monado service.
-        self.assertEqual(session["Unit"]["ConditionPathExists"], "/dev/kgsl-3d0")
+        # Valve's session needs the GPU of either kernel (none in QEMU), and no longer the
+        # Monado service.
+        text = (ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-session.service").read_text(encoding="utf-8")
+        self.assertIn("\nConditionPathExists=|/dev/kgsl-3d0\nConditionPathExists=|/dev/dri/renderD128\n", text)
         self.assertNotIn("pico4-monado.socket", session["Unit"].get("Wants", ""))
 
     def test_deliberate_stop_stays_stopped(self):

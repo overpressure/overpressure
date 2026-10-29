@@ -1,15 +1,16 @@
 [Unit]
 Description=FastRPC file server for the SLPI sensors process (sensor registry and config)
 ConditionPathExists=/usr/share/qcom/pico4/sensors/config
-ConditionPathExists=/sys/kernel/boot_slpi
+# The stock kernel's subsystem interface, or a mainline kernel's remoteproc.
+ConditionPathExists=|/sys/kernel/boot_slpi
+ConditionPathExists=|/sys/class/remoteproc
 Requires=pico4-slpi.service
-After=pico4-slpi.service pico4-pd-mapper.service
+# A mainline kernel's SoC values come from debugfs.
+After=pico4-slpi.service pico4-pd-mapper.service sys-kernel-debug.mount
 
 [Service]
-# The driver marks the SLPI channel secure: the plain adsprpc-smd node gets
-# EACCES. udev creates the node during coldplug (no devtmpfs on this kernel).
-ExecStartPre=/bin/sh -c 'for i in $$(seq 100); do [ -c /dev/adsprpc-smd-secure ] && exit 0; sleep 0.1; done; exit 1'
-ExecStart=/usr/bin/hexagonrpcd -f /dev/adsprpc-smd-secure -d sdsp -s -R /usr/share/qcom/pico4
+# The FastRPC node and the root for the kernel that runs (the script says why).
+ExecStart=/usr/libexec/pico4-poc/sensorspd
 # When the SLPI restarts (subsystem restart, level RELATED) hexagonrpcd loses its FastRPC
 # channel and exits successfully; the restarted sensors process needs it again, and the
 # head IMU only comes back once it runs (docs/xr.md).

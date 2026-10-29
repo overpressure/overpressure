@@ -56,6 +56,7 @@
 #include "util/u_var.h"
 #include "util/u_visibility_mask.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1399,6 +1400,36 @@ fail:
  *
  */
 
+/*!
+ * A headset with a sensor DSP: the stock kernel's SLPI subsystem, or a mainline kernel's
+ * remoteproc named "slpi".
+ */
+static bool
+pico4_has_sensor_dsp(void)
+{
+	if (access("/sys/kernel/boot_slpi", F_OK) == 0) {
+		return true;
+	}
+	DIR *dir = opendir("/sys/class/remoteproc");
+	if (dir == NULL) {
+		return false;
+	}
+	bool found = false;
+	struct dirent *e;
+	while (!found && (e = readdir(dir)) != NULL) {
+		char path[300], name[16] = {0};
+		snprintf(path, sizeof(path), "/sys/class/remoteproc/%s/name", e->d_name);
+		FILE *f = fopen(path, "r");
+		if (f == NULL) {
+			continue;
+		}
+		found = fgets(name, sizeof(name), f) != NULL && strcmp(name, "slpi\n") == 0;
+		fclose(f);
+	}
+	closedir(dir);
+	return found;
+}
+
 static int
 pico4_autoprobe(struct xrt_auto_prober *xap,
                 cJSON *attached_data,
@@ -1407,7 +1438,7 @@ pico4_autoprobe(struct xrt_auto_prober *xap,
                 struct xrt_device **out_xdevs)
 {
 	// Only on a headset with a sensor DSP; the device create checks the service.
-	if (no_hmds || access("/sys/kernel/boot_slpi", F_OK) != 0) {
+	if (no_hmds || !pico4_has_sensor_dsp()) {
 		return 0;
 	}
 	struct xrt_device *xdev = pico4_hmd_create();
