@@ -364,6 +364,14 @@ if [[ -n "$firmware" ]]; then
         [[ -s "$firmware/$f" ]] || { echo "missing GPU firmware $firmware/$f" >&2; exit 1; }
         install -m 0644 "$firmware/$f" "$T/usr/lib/firmware/$f"
     done
+    # A mainline kernel's msm (Valve's) loads them again after a GPU recovery: at its paths, the
+    # zap shader where the device tree names it.
+    mkdir -p "$T/usr/lib/firmware/qcom/sm8250/pico/phoenix"
+    ln -sfn ../a650_sqe.fw "$T/usr/lib/firmware/qcom/a650_sqe.fw"
+    ln -sfn ../a650_gmu.bin "$T/usr/lib/firmware/qcom/a650_gmu.bin"
+    for f in a650_zap.mdt a650_zap.b00 a650_zap.b01 a650_zap.b02; do
+        ln -sfn "../../../../$f" "$T/usr/lib/firmware/qcom/sm8250/pico/phoenix/$f"
+    done
     # The video codec (Venus) for Steam Link's decoder (docs/session.md#steam-link); asset
     # folders extracted before it was added lack it.
     if [[ -s "$firmware/venus.mdt" ]]; then
