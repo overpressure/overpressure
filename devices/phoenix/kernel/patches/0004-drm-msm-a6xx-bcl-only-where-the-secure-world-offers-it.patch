@@ -1,0 +1,85 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] drm/msm/a6xx: Battery Current Limit only where the secure world offers it
+
+"drm/msm/a6xx: enable BCL" asks the secure world's GPU register service for BCL on every a6xx
+GMU and fails the GPU's initialisation when it refuses. SM8650's firmware offers the service;
+the PICO 4's SM8250 firmware does not, and the failed GPU takes the whole msm card with it
+(the display binds as one component set). Keep BCL, its HFI feature message and its counter
+selections for GMUs whose secure world enabled it, and run the others as mainline does.
+---
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 25db59fd8d55..7b91d631d2c5 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -1065,7 +1065,8 @@ static int a6xx_gmu_fw_start(struct a6xx_gmu *gmu, unsigned int state)
+ 	 * POWER_CONTROL_SELECT_0 controls counters 0 - 3, each selector
+ 	 * is 8 bits wide.
+ 	 */
+-	gmu_rmw(gmu, REG_A6XX_GMU_CX_GMU_POWER_COUNTER_SELECT_0,
++	if (gmu->bcl)
++		gmu_rmw(gmu, REG_A6XX_GMU_CX_GMU_POWER_COUNTER_SELECT_0,
+ 			0xffffff00, FIELD_PREP(GENMASK(31, 24), 0x19) |
+ 			FIELD_PREP(GENMASK(23, 16), 0x17) |
+ 			FIELD_PREP(GENMASK(15, 8), 0x13));
+@@ -2467,9 +2468,14 @@ int a6xx_gmu_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
+ 	if (ret)
+ 		goto detach_gxpd;
+ 
++	/*
++	 * BCL needs the secure world's GPU register service, which SM8650's firmware offers and
++	 * older SoCs' (SM8250's) refuse: without it the GPU runs as mainline drives it.
++	 */
+ 	ret = qcom_scm_kgsl_init_regs(GMU_BCL_EN_REQ);
++	gmu->bcl = !ret;
+ 	if (ret)
+-		goto detach_gxpd;
++		dev_info(gmu->dev, "no Battery Current Limit (secure world: %d)\n", ret);
+ 
+ 	/* Set up the HFI queues */
+ 	a6xx_hfi_init(gmu);
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+index de7ea4f94287..ba1a45432266 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.h
+@@ -116,6 +116,8 @@ struct a6xx_gmu {
+ 	struct a6xx_hfi_queue queues[HFI_MAX_QUEUES];
+ 
+ 	bool initialized;
++	/* the secure world enabled Battery Current Limit (not every SoC's offers it) */
++	bool bcl;
+ 	bool hung;
+ 	bool legacy; /* a618 or a630 */
+ 
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index 75cacd5ef7c7..6f44e0839609 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -1522,7 +1522,8 @@ static int hw_init(struct msm_gpu *gpu)
+ 			  FIELD_PREP(GENMASK(7, 0), 0x4));
+ 
+ 		/* Enable time counter in BCL throthling */
+-		gmu_rmw(&a6xx_gpu->gmu, REG_A6XX_GMU_CX_GMU_POWER_COUNTER_SELECT_1,
++		if (a6xx_gpu->gmu.bcl)
++			gmu_rmw(&a6xx_gpu->gmu, REG_A6XX_GMU_CX_GMU_POWER_COUNTER_SELECT_1,
+ 				GENMASK(15, 8), FIELD_PREP(GENMASK(15, 8), 0x26));
+ 	}
+ 
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+index 2e0be592856d..67d9249082e0 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_hfi.c
+@@ -1005,9 +1005,11 @@ int a6xx_hfi_start(struct a6xx_gmu *gmu, int boot_state)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = a6xx_hfi_enable_bcl(gmu);
+-	if (ret)
+-		return ret;
++	if (gmu->bcl) {
++		ret = a6xx_hfi_enable_bcl(gmu);
++		if (ret)
++			return ret;
++	}
+ 
+ 	ret = a6xx_hfi_enable_ifpc(gmu);
+ 	if (ret)

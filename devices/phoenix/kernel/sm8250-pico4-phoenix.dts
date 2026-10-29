@@ -1,0 +1,358 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * PICO 4 (phoenix) on a mainline-based kernel: the prototype of a Steam Frame-level kernel
+ * (docs/kernel-feasibility.md). Phase 0: storage, the USB gadget, reboot modes and a RAM
+ * console. Phase 1: the two panels on the bonded DSI links, and the GPU.
+ *
+ * The board is Qualcomm's "kona MTP" design (the stock tree is kona v2.1 with the MTP overlay,
+ * board-id 0x10008). Supplies, memory carve-outs and GPIOs follow the headset's own stock tree,
+ * read from the running stock kernel, not mainline's MTP where the two differ.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/arm/qcom,ids.h>
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include "sm8250.dtsi"
+#include "pm8150.dtsi"
+
+/ {
+	model = "PICO 4 (phoenix)";
+	compatible = "pico,phoenix", "qcom,sm8250";
+	chassis-type = "embedded";
+
+	/*
+	 * The ABL's board overlay replaces the root's compatible and model with downstream ones
+	 * ("qcom,kona-mtp"); the kernel puts these back (patches/0003), so that drivers matching
+	 * on the machine find "qcom,sm8250".
+	 */
+	pico4,compatible = "pico,phoenix", "qcom,sm8250";
+	pico4,model = "PICO 4 (phoenix)";
+
+	/*
+	 * The ABL picks the base tree by SoC (SM8250 v2.1); the stock base trees carry board-id 0,
+	 * the board comes from the dtbo overlay.
+	 */
+	qcom,msm-id = <QCOM_ID_SM8250 0x20001>;
+	qcom,board-id = <0 0>;
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+	};
+
+	/* The panels' AVDD (5.5 V), switched by GPIO 71; the bootloader leaves it on. */
+	vreg_display_avdd: regulator-display-avdd {
+		compatible = "regulator-fixed";
+		regulator-name = "display_avdd";
+		regulator-min-microvolt = <5500000>;
+		regulator-max-microvolt = <5500000>;
+		gpio = <&tlmm 71 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-enable-ramp-delay = <233>;
+		regulator-boot-on;
+	};
+
+	reserved-memory {
+		/*
+		 * A RAM console that survives a warm reboot, laid out exactly as the stock kernel's
+		 * (ramoops_memreserve=2M: 1 MiB console, 1 MiB pmsg, no dump records, no ECC), so
+		 * that what a failed boot printed is in /sys/fs/pstore of the installed system on
+		 * the stock kernel. Directly above the ABL's ramdisk and device tree.
+		 */
+		ramoops@b0000000 {
+			compatible = "ramoops";
+			reg = <0x0 0xb0000000 0x0 0x200000>;
+			console-size = <0x100000>;
+			pmsg-size = <0x100000>;
+			record-size = <0>;
+			no-map;
+		};
+
+		/* The stock tree's spss region (mainline's sits inside the stock adsp region). */
+		spss_region: memory@8c900000 {
+			reg = <0x0 0x8c900000 0x0 0x100000>;
+			no-map;
+		};
+
+		/* Kept reserved like mainline's cdsp_secure_heap, moved behind the stock spss region. */
+		cdsp_secure_region: memory@8ca00000 {
+			reg = <0x0 0x8ca00000 0x0 0x4600000>;
+			no-map;
+		};
+
+		/* The ABL's boot splash, still scanned out when the kernel starts. */
+		cont_splash_region: memory@9c000000 {
+			reg = <0x0 0x9c000000 0x0 0x3400000>;
+			no-map;
+		};
+
+		dfps_data_region: memory@9f400000 {
+			reg = <0x0 0x9f400000 0x0 0x40000>;
+			no-map;
+		};
+	};
+};
+
+/delete-node/ &spss_mem;
+/delete-node/ &cdsp_secure_heap;
+
+/* The stock tree's adsp carve-out is 40 MiB (mainline: 29 MiB). */
+&adsp_mem {
+	reg = <0x0 0x8a100000 0x0 0x2800000>;
+};
+
+&apps_rsc {
+	regulators-0 {
+		compatible = "qcom,pm8150-rpmh-regulators";
+		qcom,pmic-id = "a";
+
+		/* Only the supplies the enabled blocks use; the voltages are the stock tree's. */
+		vreg_s4a_1p8: smps4 {
+			regulator-name = "vreg_s4a_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1920000>;
+		};
+
+		vreg_l2a_3p1: ldo2 {
+			regulator-name = "vreg_l2a_3p1";
+			regulator-min-microvolt = <3072000>;
+			regulator-max-microvolt = <3072000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l5a_0p88: ldo5 {
+			regulator-name = "vreg_l5a_0p88";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <880000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l6a_1p2: ldo6 {
+			regulator-name = "vreg_l6a_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
+		 * The panels' VDDIO: the stock tree allows 1.8-1.9 V and its panel driver asks RPMh
+		 * for 1.9 V. Mainline needs an exact LDO step (8 mV from 1.504 V): 1.896 V is the
+		 * closest within the stock range. Enabling it at 1.904 V, above the range, stalled
+		 * CPU 0.
+		 */
+		vreg_l7a_1p9: ldo7 {
+			regulator-name = "vreg_l7a_1p9";
+			regulator-min-microvolt = <1896000>;
+			regulator-max-microvolt = <1896000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l9a_1p2: ldo9 {
+			regulator-name = "vreg_l9a_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l12a_1p8: ldo12 {
+			regulator-name = "vreg_l12a_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* UFS 3.1 VCC: the stock driver asks for 2.504-2.95 V. */
+		vreg_l17a_2p5: ldo17 {
+			regulator-name = "vreg_l17a_2p5";
+			regulator-min-microvolt = <2504000>;
+			regulator-max-microvolt = <2952000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l18a_0p9: ldo18 {
+			regulator-name = "vreg_l18a_0p9";
+			regulator-min-microvolt = <912000>;
+			regulator-max-microvolt = <920000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	regulators-1 {
+		compatible = "qcom,pm8150l-rpmh-regulators";
+		qcom,pmic-id = "c";
+
+		/* The panels' gd-vdd at the stock initial 3.0 V. */
+		vreg_l10c_3p0: ldo10 {
+			regulator-name = "vreg_l10c_3p0";
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+};
+
+&gmu {
+	status = "okay";
+};
+
+&gpu {
+	status = "okay";
+};
+
+/* PICO's signed zap shader, from the stock firmware (split .mdt with its segments). */
+&gpu_zap_shader {
+	firmware-name = "qcom/sm8250/pico/phoenix/a650_zap.mdt";
+};
+
+&mdss {
+	status = "okay";
+};
+
+/*
+ * Two Sharp LS026B3SA panels, one per DSI link, as one bonded output: the first link is the
+ * master, and both run from its PLL (the stock display's dsi-ctrl-num <0 1>).
+ */
+&mdss_dsi0 {
+	vdda-supply = <&vreg_l9a_1p2>;
+	qcom,dual-dsi-mode;
+	qcom,master-dsi;
+	status = "okay";
+
+	display_panel: panel@0 {
+		compatible = "pico,phoenix-ls026b3sa";
+		reg = <0>;
+
+		reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+		vio-gpios = <&tlmm 133 GPIO_ACTIVE_HIGH>;
+		backlight-gpios = <&tlmm 29 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&display_reset_default>;
+		pinctrl-names = "default";
+
+		vddio-supply = <&vreg_l7a_1p9>;
+		gd-vdd-supply = <&vreg_l10c_3p0>;
+		avdd-supply = <&vreg_display_avdd>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+				panel_in0: endpoint {
+					remote-endpoint = <&mdss_dsi0_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+				panel_in1: endpoint {
+					remote-endpoint = <&mdss_dsi1_out>;
+				};
+			};
+		};
+	};
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&panel_in0>;
+	data-lanes = <0 1 2 3>;
+};
+
+&mdss_dsi0_phy {
+	vdds-supply = <&vreg_l5a_0p88>;
+	status = "okay";
+};
+
+&mdss_dsi1 {
+	vdda-supply = <&vreg_l9a_1p2>;
+	qcom,dual-dsi-mode;
+	assigned-clocks = <&dispcc DISP_CC_MDSS_BYTE1_CLK_SRC>, <&dispcc DISP_CC_MDSS_PCLK1_CLK_SRC>;
+	assigned-clock-parents = <&mdss_dsi0_phy DSI_BYTE_PLL_CLK>, <&mdss_dsi0_phy DSI_PIXEL_PLL_CLK>;
+	status = "okay";
+};
+
+&mdss_dsi1_out {
+	remote-endpoint = <&panel_in1>;
+	data-lanes = <0 1 2 3>;
+};
+
+&mdss_dsi1_phy {
+	vdds-supply = <&vreg_l5a_0p88>;
+	status = "okay";
+};
+
+&pon {
+	mode-bootloader = <0x2>;
+	mode-recovery = <0x1>;
+};
+
+&tlmm {
+	/*
+	 * Every GPIO the stock tree leaves unused (no pin configuration, no consumer) stays
+	 * untouched, which covers the secure ones whose registers fault when read.
+	 */
+	gpio-reserved-ranges = <14 1>, <24 2>, <27 2>, <30 2>, <64 1>, <66 1>, <73 1>,
+			       <88 3>, <112 2>, <120 5>, <146 34>;
+
+	/* The stock panel pins: the reset (75) and its neighbour 60, driven at 8 mA. */
+	display_reset_default: display-reset-default-state {
+		pins = "gpio75", "gpio60";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+};
+
+&ufs_mem_hc {
+	status = "okay";
+
+	vcc-supply = <&vreg_l17a_2p5>;
+	vcc-max-microamp = <800000>;
+	vccq-supply = <&vreg_l6a_1p2>;
+	vccq-max-microamp = <800000>;
+	vccq2-supply = <&vreg_s4a_1p8>;
+	vccq2-max-microamp = <800000>;
+};
+
+&ufs_mem_phy {
+	status = "okay";
+
+	vdda-phy-supply = <&vreg_l5a_0p88>;
+	vdda-pll-supply = <&vreg_l9a_1p2>;
+};
+
+&usb_1 {
+	status = "okay";
+};
+
+/* Device mode only: the headset is the PC's network adapter, as in stage 1 on the stock kernel. */
+&usb_1_dwc3 {
+	dr_mode = "peripheral";
+};
+
+&usb_1_hsphy {
+	status = "okay";
+
+	vdda-pll-supply = <&vreg_l5a_0p88>;
+	vdda18-supply = <&vreg_l12a_1p8>;
+	vdda33-supply = <&vreg_l2a_3p1>;
+};
+
+&usb_1_qmpphy {
+	status = "okay";
+
+	vdda-phy-supply = <&vreg_l9a_1p2>;
+	vdda-pll-supply = <&vreg_l18a_0p9>;
+};
+
+/*
+ * The ABL lays the board overlay over this tree (from the dtbo partition, or the image's
+ * recovery_dtbo). Its fragments target downstream labels; the build appends a node that
+ * resolves every one of them to a node of its own, which no driver ever sees.
+ */
+#include "sm8250-pico4-phoenix-dtbo-sink.dtsi"
+
+/* The panels' command sequences, which the build copies from the stock board overlay. */
+#include "sm8250-pico4-phoenix-panel.dtsi"

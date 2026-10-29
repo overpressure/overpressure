@@ -1,0 +1,40 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] drm/panel: build the PICO 4's LS026B3SA panel driver
+
+The driver itself (panel-pico4-ls026b3sa.c) is the PICO 4's own source, which build-kernel.sh
+copies into the tree; this adds its configuration option and its object.
+---
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+index 3f37b245ac8a..92f707aa8fe1 100644
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -402,6 +402,17 @@ config DRM_PANEL_JDI_LPM026M648C
+ 	  The panel has a 2160x2160 resolution. It provides a MIPI DSI interface
+ 	  to the host.
+ 
++config DRM_PANEL_PICO4_LS026B3SA
++	tristate "PICO 4 display: two Sharp LS026B3SA panels on bonded DSI"
++	depends on OF && GPIOLIB
++	depends on DRM_MIPI_DSI
++	select DRM_DISPLAY_DSC_HELPER
++	select DRM_DISPLAY_HELPER
++	help
++	  Say Y here to drive the PICO 4's two 2160x2160 LCD panels, one on each of the SM8250's
++	  DSI links, as one bonded 4320x2160 output with DSC. The panels' command sequences come
++	  from the device tree.
++
+ config DRM_PANEL_DECKARD
+ 	tristate "Deckard multi-panel support"
+ 	depends on OF && GPIOLIB
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index 4e5cb6175b5d..84d8fe4a1219 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -41,6 +41,7 @@ obj-$(CONFIG_DRM_PANEL_JDI_4K) += panel-jdi4k.o
+ obj-$(CONFIG_DRM_PANEL_JDI_LT070ME05000) += panel-jdi-lt070me05000.o
+ obj-$(CONFIG_DRM_PANEL_JDI_LPM026M648C) += panel-jdi-lpm026m648c.o
+ obj-$(CONFIG_DRM_PANEL_DECKARD) += panel-deckard.o
++obj-$(CONFIG_DRM_PANEL_PICO4_LS026B3SA) += panel-pico4-ls026b3sa.o
+ obj-$(CONFIG_DRM_PANEL_DECKARD) += panel-deckard-plano.o
+ obj-$(CONFIG_DRM_PANEL_JDI_LPM102A188A) += panel-jdi-lpm102a188a.o
+ obj-$(CONFIG_DRM_PANEL_JDI_R63452) += panel-jdi-fhd-r63452.o

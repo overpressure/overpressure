@@ -1,0 +1,341 @@
+# Feasibility: a kernel at the Steam Frame's level
+
+Can the PICO 4's kernel be brought to the level of the Steam Frame's, so that Valve's Frame
+userspace runs with the kernel features it was built for instead of the project's userspace
+adaptations? This study compares the two kernels' configurations, examines whether the stock
+kernel can be extended in place, and assesses the three ways to a newer kernel. The project's
+rule so far is the stock kernel only ([roadmap.md](roadmap.md#constraints)); every way that
+reaches the Frame's level changes that rule, which is the user's decision.
+
+## Result
+
+- **The stock kernel cannot be raised in place.** It loads only modules signed with PICO's
+  per-build key, has no kexec, no `/dev/mem` and no BPF override. What it lacks is compiled
+  out; nothing running on it can add it.
+- **A rebuilt 4.19 does not reach the Frame's level.** Most missing options are configuration
+  flags in 4.19, but the Frame's userspace also needs features that 4.19 does not have at all
+  (systemd 258's minimum of 5.4, `io_uring`, `ntsync`, the msm DRM GPU driver with syncobjs),
+  and PICO's kernel sources are not public.
+- **The Frame's own kernel tree is the way to the Frame's level.** Valve's kernel,
+  `linux-valve` 7.2.0, is a close-to-mainline tree, not a Qualcomm vendor kernel, and it
+  already builds mainline's SM8250 (XR2) device trees. Mainline covers the XR2's SoC blocks
+  (GPU, display over bonded DSI links with DSC, DSPs, camera subsystem, Wi-Fi, audio, storage,
+  USB), and another XR2 headset, the Lynx R1, runs a close-to-mainline kernel under
+  postmarketOS. What remains is board support for the PICO 4: its device tree, a panel driver,
+  the camera synchronisation, the FastRPC interface of PICO OS's tracker, and power management.
+- **Assessment.** Technically feasible, with a large but bounded effort (an estimated five to
+  eight months of focused work, see [Effort](#effort)). The highest risks are charging and the
+  fuel gauge (no mainline driver for the PM8150B's charger and fuel gauge is known), PICO OS's
+  tracker on the mainline FastRPC driver, and the camera timestamps the tracker depends on.
+
+## The two kernels
+
+| | PICO 4 (stock) | Steam Frame |
+| --- | --- | --- |
+| Kernel | 4.19.81-perf+ (PICO OS 5.13.8), clang 8.0.12 (Android NDK) | 7.2.0 (`linux-72-deckard`, Valve's hotfix repository, built 2026-09-28), GCC 15.1 |
+| Source | Qualcomm vendor kernel (Android, `kona`), not published by PICO | Valve's `linux-valve` tree on gitlab.steamos.cloud, close to mainline |
+| Built-in options (`=y`) | 1,669 | 2,545 |
+| Modules | 11 in the kernel's own build; vendor modules on `vendor` (audio, WLAN, ...); signature required (`MODULE_SIG_FORCE`, SHA-512, per-build key) | 30; no signature required |
+| Device trees | PICO's, in the boot image (`kona`, header v2) and `dtbo` | mainline's arm64 Qualcomm trees, including the SM8250 boards (`qrb5165-rb5`, `sm8250-hdk`, ...) and the Frame's SM8650 boards |
+| GPU | KGSL (`/dev/kgsl-3d0`), not a DRM device | msm DRM (`DRM_MSM`, DPU, DSI); Turnip on its msm backend |
+| Display | vendor SDE `msm_drm` with vendor fences and `sspp_layout` | mainline DPU, atomic KMS |
+| DSPs | downstream `adsprpc` FastRPC, downstream subsystem restart | upstream `fastrpc`, remoteproc (`QCOM_Q6V5_PAS`), PDR helpers |
+| Wi-Fi | `cnss2` with the vendor `qca_cld3` module | ath12k (the Frame's chip); ath11k, which the XR2's QCA6390 needs, is not enabled |
+| Security | SELinux, `ANDROID_PARANOID_NETWORK` | AppArmor, Yama, LoadPin, SafeSetID |
+| Scheduler | `HZ=100`, WALT, `RT_GROUP_SCHED` | `HZ=1000`, `SCHED_CLASS_EXT`, no `RT_GROUP_SCHED` |
+
+The Frame's configuration enables SM8650 drivers; for an SM8250 board it needs the SM8250
+clock, pinctrl and interconnect drivers and ath11k added. These are configuration changes,
+not new code.
+
+## What the Frame's userspace expects
+
+Each gap, how the project bridges it on the stock kernel today, and whether a rebuilt 4.19
+would close it:
+
+| Feature (Frame: on) | Stock kernel | Bridge today | Rebuilt 4.19 |
+| --- | --- | --- | --- |
+| `USER_NS`, `PID_NS`, `IPC_NS`, `UTS_NS` | off | setuid bubblewrap for Steam Linux Runtime, containers share the host's PIDs; Lepton's Android container blocked | config |
+| `MEMCG`, `CGROUP_PIDS`, `CGROUP_DEVICE` | off | `systemd-oomd` masked; no memory limits, a game that exhausts memory takes the session down | config |
+| `SYSVIPC`, `POSIX_MQUEUE` | off | `pico4-sysvsem` preloaded into every process (semaphores, message queues); no System V shared memory | config |
+| `BINFMT_MISC` | off | x86 Linux programs only through FEX started explicitly | config |
+| `HIDRAW` | off | input only through evdev and uhid; no Steam Input on HID devices | config |
+| `DEVTMPFS`, `FHANDLE` | off | udev rule creates every device node | config |
+| `RT_GROUP_SCHED` | on | systemd's `cpu` controller kept off so real-time threads work | config |
+| `ANDROID_PARANOID_NETWORK` | on | Android network groups for every user that opens sockets | config |
+| zstd/LZ4, squashfs, erofs, btrfs | off (zram LZO only) | ext4 on zram with LZO | config |
+| `USERFAULTFD`, `FANOTIFY`, `CHECKPOINT_RESTORE`, THP | off | none | config |
+| systemd 258 and later (needs Linux 5.4) | 4.19 | systemd pinned at 257.7 (`IgnorePkg`) | no |
+| `io_uring` (5.1) | absent | none | no |
+| `NTSYNC` (6.14; Proton's synchronisation) | absent | Proton falls back to esync or the wineserver (`futex_waitv` for fsync needs 5.16); `systemd-modules-load` asks for `ntsync` in vain | no |
+| `SCHED_CLASS_EXT` (6.12; Valve's `scx-scheds`) | absent | none | no |
+| msm DRM GPU, DRM syncobjs, timeline semaphores | KGSL | `pico4-turnip-kgsl` (Mesa built with the KGSL backend), `pico4-vrdisplay` emulates SteamVR's shared semaphores over sync files, OpenGL through zink with a blit per swapchain image | no |
+| Standard atomic KMS (DPU) | vendor SDE | `pico4-vrdisplay` drives the vendor fence contract and its own vblank timing | no |
+| Upstream FastRPC ABI | downstream `adsprpc` | hexagonrpc translated to the downstream ABI | no |
+
+With a Frame-level kernel the project's adaptation layer shrinks to what is specific to the
+headset: `pico4-turnip-kgsl`, `pico4-sysvsem`, the semaphore emulation and most of the timing
+work in `pico4-vrdisplay`, the devnode rule, the network groups, the systemd pin and the
+`cpu`-controller drop-ins all go, and Valve's own Mesa runs the GPU as on the Frame.
+
+## Extending the stock kernel in place
+
+Every in-place route was checked against the stock configuration:
+
+| Route | Stock kernel | Result |
+| --- | --- | --- |
+| Loadable modules | `MODULE_SIG_FORCE=y`, SHA-512, PICO's per-build key | only PICO's own modules load |
+| kexec into another kernel | `KEXEC` off | impossible (and unnecessary: `boot` can be flashed) |
+| Kernel memory from user space | `DEVMEM` off, no `/dev/kmem`, `STRICT_KERNEL_RWX` | impossible |
+| BPF | `BPF_SYSCALL`, kprobes, uprobes, `BPF_EVENTS` on; no `BPF_KPROBE_OVERRIDE`, no `FUNCTION_ERROR_INJECTION` | observation only; cannot change kernel behaviour |
+| Patched kernel image that accepts unsigned modules | the signature check is code in `Image`; `boot` is ours to flash | possible, but only tristate features can come as modules (`BINFMT_MISC`, a backported `ntsync`); namespaces, memcg, System V IPC, hidraw and devtmpfs are built into the core. Modules must match the stock build's symbol versions (`MODVERSIONS`) without its sources. Small gain, high risk |
+
+The stock kernel's gaps are compiled out. Raising the kernel means replacing it.
+
+## Way 1: a rebuilt 4.19
+
+Rebuild the 4.19 vendor kernel with the Frame's options switched on.
+
+- **Sources.** PICO has not published the phoenix kernel's sources (no public release found;
+  a GPL request is possible). Qualcomm's public `kona` 4.19 trees on CodeLinaro are the closest
+  base, without PICO's changes.
+- **Vendor modules.** The audio techpack, `qca_cld3` and others on `vendor` are built against
+  the stock kernel's exact symbol versions. A rebuilt kernel needs them rebuilt from the
+  public Qualcomm sources too, configured like PICO's.
+- **Ceiling.** It closes the configuration rows above, but not systemd 258, `io_uring`,
+  `ntsync`, `sched_ext`, the msm DRM GPU path or the upstream DSP interfaces: Valve's Mesa,
+  gamescope and SteamVR would still run on the project's KGSL and display layers.
+
+Assessment: feasible in principle, months of work on an unpublished base, and it ends below
+the Frame's level. Not recommended.
+
+## Way 2: Valve's kernel tree with PICO 4 board support
+
+Build `linux-valve` (7.2, the Frame's own tree) for SM8250 with a PICO 4 device tree.
+
+### Precedents
+
+- Valve's 7.2 package already contains mainline's SM8250 device trees; the tree builds for the
+  XR2's SoC as it is.
+- Mainline supports SM8250 boards (Qualcomm's RB5 and HDK, phones from Sony, Xiaomi and
+  Samsung). The Xiaomi Pad 5 Pro (`sm8250-xiaomi-elish`) drives one panel over two bonded DSI
+  links, as the PICO 4 does; DSC on bonded links is in the DPU driver, but no SM8250 board in
+  mainline was found to use the two together.
+- The Lynx R1, an XR2 headset, is a postmarketOS device on a close-to-mainline kernel
+  (`linux-lynx-r1`; postmarketOS lists its audio codec and speaker amplifier as not working).
+
+### Subsystems
+
+| Subsystem | PICO 4 hardware (stock device tree) | Mainline | PICO 4 work | Risk |
+| --- | --- | --- | --- | --- |
+| Boot, UFS, USB gadget (NCM) | SM8250, UFS 3.1, DWC3 | supported | device tree; `qcom,msm-id`/`qcom,board-id` for the ABL's tree selection | low |
+| GPU | Adreno 650 | msm DRM (a650 with GMU) | zap shader from the headset's firmware; clock and thermal tuning; Turnip's msm backend is Valve's Mesa | low–medium |
+| Display | Sharp LS026B3SA, video mode, two DSI links, DSC, 4320×2160 at 72/90 Hz | DPU, bonded DSI, DSC | a panel driver from the stock tree's on-commands and timings; the GD32 MCU's backlight stays in user space | medium |
+| SLPI (head IMU, controllers through `ble_mcu`, proximity) | SLPI with PICO's sensor registry | remoteproc and upstream FastRPC | `hexagonrpcd` runs on the upstream ABI it was written for (the downstream translation goes) | low |
+| CDSP (PICO OS's tracker `libSlam`) | CDSP, PICO's signed DSP modules | upstream FastRPC, signed protection domains | `libSlam` calls Qualcomm's Android `libcdsprpc`, which speaks the downstream ABI: a translation to the upstream driver (the reverse of today's hexagonrpc layer) or a bionic build of an upstream-ABI FastRPC library | high |
+| Tracking cameras | four OV7251 (of six camera sensor nodes), station-driven FSIN at 50 Hz | CAMSS for SM8250 (CSIPHY, CSID, VFE and VFE-lite raw paths); OV7251 driver | sensor slave mode for FSIN, four streams at once, start-of-frame timestamps as precise as the stock CSL's (the tracker depends on them) | medium–high |
+| CVP (depth mesh of the see-through view) | `/dev/cvp`, signed CVP firmware | no driver | depth mesh unavailable unless a driver is written | high (feature loss) |
+| Video decode (Steam Link) | Venus | iris (SM8250 support) | firmware from the headset | low–medium |
+| Wi-Fi, Bluetooth | QCA6390 on PCIe, Bluetooth on UART | ath11k (QCA6390 hw2.0), `hci_qca` | board data from PICO's calibration in ath11k's format; enable ath11k in the configuration | low–medium |
+| Audio | WCD938x codec, two WSA881x on SoundWire, LPASS macros | SM8250 machine driver, WCD938x, WSA881x, macros | machine routing in the device tree; PICO OS's calibration and the speakers' protection are not applied by mainline's DSP drivers, so output levels need limits | medium |
+| Charging, fuel gauge | PM8150B charger (`qpnp-smb5`), its fuel gauge (`qpnp,fg`), SMB1390 charge pump | no driver known | drivers for charger and fuel gauge, or the hardware's defaults without battery data; an issue's battery level depends on it | high |
+| Thermal, CPU frequency | TSENS, LMh, EPSS | supported | thermal zones and trip points from the stock tree; fan policy stays in user space | low |
+| Station (controller radio), GD32 MCU | SPI with a vendor spidev power ioctl; UART | spidev, GENI serial | the station's power as a regulator or GPIO in the device tree instead of the vendor ioctl | low |
+| Suspend | stock suspend works | SM8250 suspend partly | measure | medium |
+
+### Boot and recovery
+
+The way back stays as it is: the engineering ABL, `boot` flashed through the verified paths,
+`dev restore` and EDL. The ABL boots any boot image on the unlocked headset; it picks the
+device tree by the Qualcomm IDs, which the PICO 4's tree must carry. The new kernel has no
+console on its first boots (no serial port; USB is up only once the gadget driver runs), so
+early failures are read from a RAM console (ramoops) after a warm reboot into the stock
+kernel. A wrong regulator or charger setting is the main hardware risk; the device tree takes
+voltages and limits from the stock tree, not from guesses.
+
+### Effort
+
+Estimates for one experienced developer, in the order the work depends on:
+
+| Phase | Exit criterion | Estimate |
+| --- | --- | --- |
+| 0. Boot | Valve's 7.2 kernel boots stage 1 from `boot`; SSH over USB NCM; read-only storage | 1–2 weeks |
+| 1. Display and GPU | both panels at 90 Hz through DPU; Valve's Mesa on msm; SteamVR in direct mode through gamescope | 3–6 weeks |
+| 2. SLPI and CDSP | head IMU, controllers and proximity through upstream FastRPC; PICO OS's tracker on the CDSP | 3–6 weeks |
+| 3. Cameras | four OV7251 at 50 Hz with FSIN, timestamps within the tracker's tolerance; the still-headset gate passes | 3–6 weeks |
+| 4. Wi-Fi, Bluetooth, audio, thermal, suspend | Wi-Fi joins, speakers and microphone, thermal throttling, suspend and resume | 3–5 weeks |
+| 5. Power | charging at the charger's current, battery level in UPower and SteamVR | 4–8 weeks |
+| 6. Integration | Valve's userspace without the stock-kernel adaptations; systemd from Valve's repository; the acceptance cycle passes | 2–3 weeks |
+
+Together about five to eight months. Phases 0 and 1 settle the question cheaply: a booting
+kernel with both panels and Valve's Mesa shows whether the rest is worth doing.
+
+## Prototype
+
+Phases 0 and 1 run as a prototype beside the stock kernel; the stock-kernel rule is lifted for
+it only. Its files are in [kernel/](../kernel/):
+
+| File | Purpose |
+| --- | --- |
+| [sm8250-pico4-phoenix.dts](../kernel/sm8250-pico4-phoenix.dts) | the PICO 4's device tree on mainline's `sm8250.dtsi`: the stock tree's supplies for UFS, USB and the panels, its memory carve-outs, its unused GPIOs reserved, reboot modes, a RAM console, both DSI links with the panels, the GPU |
+| [pico4.config](../kernel/pico4.config) | merged over Valve's `gabe_defconfig`: the SM8250 drivers (with the display and GPU clock controllers, QFPROM, REFGEN), the panel driver, stage 1's USB gadget functions, the PON reboot modes, pstore |
+| [patches/](../kernel/patches/) | fixes to Valve's tree that the PICO 4 needs (below) |
+| [src/](../kernel/src/) | the PICO 4's own kernel sources, at their paths in the tree: the panel driver |
+| [build-kernel.sh](../kernel/build-kernel.sh) | Valve's 7.2 source package (pinned by hash and commit), the patches and the own sources to `Image.gz` and the device tree |
+| [dtbo_sink.py](../kernel/dtbo_sink.py) | the include that absorbs the ABL's board overlay (below) |
+| [panel_sequence.py](../kernel/panel_sequence.py) | the include with the panels' command sequences, from the stock board overlay (below) |
+| [recovery_image.py](../kernel/recovery_image.py) | the maintenance stage 1 on the new kernel as a whole recovery partition; `--gpu-firmware` for the GPU; `--cmdline` for extra kernel words (such as the panel driver's parameters); `--debug` and `--trace` for failed boots (below) |
+| [build-mesa-deps.sh](../kernel/build-mesa-deps.sh) | the two libraries Valve's Mesa links that the userspace lacks, from their pinned sources (below) |
+| [tools/pico4-kmstest.c](../kernel/tools/pico4-kmstest.c) | a static KMS check for stage 1: the msm cards and their GPU, the connectors and modes, a test frame, the refresh rate |
+
+### Results
+
+| Phase 0 | Result on the headset |
+| --- | --- |
+| Boot | Valve's 7.2 kernel boots the maintenance stage 1 from `recovery`; SSH over USB NCM answers 13 s after the reboot |
+| Storage | UFS with all six LUNs and their partitions; stage 1 switches every block device read-only |
+| SoC | 8 CPUs, 7.4 GB RAM; CPU frequencies through `cpufreq-hw` (three policies, up to 2.84 GHz); TSENS thermal zones; RPMh regulators at the stock voltages; SPMI, PMIC RTC, watchdog, `socinfo` |
+| Reboots | `pico4-reboot bootloader` reaches fastboot; a panic's warm reset fails ("Reboot failed"); the watchdog usually resets the headset about a minute later, with the RAM console kept, but not always: after one panic the headset stayed hung (no USB device answered) until a forced restart. Leaving a test boot therefore takes a plain reboot, never a panic |
+| Open | audio (`va_macro` waits for its clock) |
+
+| Phase 1 | Result on the headset |
+| --- | --- |
+| Display | the display subsystem, DPU, both DSI controllers and PHYs and the panel driver bind as one DSI connector (`msm-kms`); the driver's DSC configuration equals the parameter set in the panels' stock power-on sequence byte for byte; the panels' full power-on (supplies, VIO, reset, the 20 stock commands on both links, backlight) completes, and both panels answer the DCS power mode read with 0x0c (normal mode, display on); a mode set of 4320x2160 at 90 Hz follows, with vblanks at 90.00 Hz |
+| GPU | its own DRM device (`msm.separate_gpu_kms`): Adreno 650 (chip id 0x06050002), the microcode, the GMU firmware (v2.1.8) and PICO's zap shader load, the ring runs, devfreq at 305 MHz; the display keeps 90 Hz meanwhile |
+| Mesa | the userspace's Mesa 25.2.7 (Holo preview) in a chroot on this kernel: EGL on the surfaceless and GBM platforms, freedreno on the FD650, OpenGL 4.6 core and compatibility, OpenGL ES 3.2 |
+| Valve's Mesa | the Frame's `deckard-mesa-linux-aarch64` 26.3.0-devel over the userspace in a chroot on this kernel: Turnip on msm ("Turnip Adreno (TM) 650", Vulkan 1.3, conformance 1.2.7.1) renders `pico4-vulkan-test`'s frame with all 65536 pixels correct; OpenGL 4.6 core and compatibility and OpenGL ES 3.2 through zink on Turnip, surfaceless and on GBM. The package has no freedreno gallium driver: on the Frame, OpenGL is zink. |
+| Open | whether the panels show the frame (not looked at yet); the DSI PHY's PLL fails to lock once at probe while the clock framework adopts the bootloader's display clocks (a warning, the display works after it) |
+
+### Display
+
+The stock tree drives both panels as one display: its panel node (Sharp LS026B3SA, 90 Hz video
+mode) names both DSI controllers and both PHYs, 2160x2160 per link, with DSC (four 540x16
+slices per line, 8 bits per component, 8 bits per pixel, two slices per packet). Valve's Frame
+does the same with its two panels (`sm8650-mp.dts`): one panel node on the first DSI link,
+which is the master of the bonded pair, a second port to the second link, and a mode twice as
+wide, which msm splits between the links. The PICO 4 follows that model with a panel driver of
+its own (`src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c`): 4320x2160 at 90 Hz from the stock
+timings, the stock supplies (VDDIO from L7A, gd-vdd from L10C, AVDD switched by GPIO 71), reset
+(GPIO 75 with the stock 20/20/30 ms sequence), VIO enable (GPIO 133) and backlight enable
+(GPIO 29). The ±5.8 V bias comes from PM8150L's LCDB, for which mainline has no driver; it stays
+as the bootloader set it. The panels' command sequences are PICO's data: the build copies them
+from the stock board overlay into the tree (`panel_sequence.py`, as `pico4,on-command` and
+`pico4,off-command`), and the driver sends each command with its stock data type to both links.
+The module parameter `keep_boot_state` leaves the panels as the bootloader set them up, and
+`keep_supplies` (a comma-separated list) leaves single supplies alone; the driver logs every
+step of the power-on, since a stall leaves only the RAM console.
+
+### Patches
+
+| Patch | Why |
+| --- | --- |
+| 0001 `smem_dram` | SM8250's DDR information is the 14-frequency variant of the v3 layout, which the 7.2 parser reads as entry 13 of a 13-entry table; GCC treats that as undefined ("iteration 13 invokes undefined behavior") and drops the loop's exit, so the `qcom-smem` probe never returns and the boot stalls in `deferred_probe_initcall`. Valve builds with GCC too; the Frame's SM8650 has the v7 layout. The patch indexes the table from the raw data. |
+| 0002 panel | the panel driver's configuration option and object |
+| 0003 root identity | the ABL's board overlay replaces the root's compatible and model with "qcom,kona-mtp"; drivers matching on the machine (msm's UBWC configuration, cpufreq-dt's blocklist) then miss "qcom,sm8250", and the display fails to bind. The tree keeps its own values in `pico4,compatible` and `pico4,model`, which the kernel puts back after unflattening it. |
+| 0004 GPU BCL | Valve's "drm/msm/a6xx: enable BCL" asks the secure world's GPU register service for Battery Current Limit on every a6xx GMU and fails the GPU when it refuses; SM8250's firmware refuses, and the failed GPU took the display with it. BCL now runs only where the secure world enabled it. |
+| 0005 writeback | Valve's "drm/msm/dpu: register all writebacks" pairs two writeback blocks whenever the DSI links are bonded; SM8250 has one, the pair's second id comes from past the catalog, the KMS initialisation fails and its error path oopses in `dpu_kms_destroy()`, which left the headset hung without a watchdog reset. The pair is formed only where a second block exists. |
+
+Mainline sets RPMh regulators only to voltages on the regulator's own steps, and one invalid
+regulator node fails the whole PMIC's set. The stock tree runs L7A (the panels' VDDIO) in
+1.8–1.9 V and its panel driver asks for 1.9 V, which is no step (8 mV from 1.504 V): enabling the
+next step up, 1.904 V, stalled CPU 0 (a hard lockup); 1.896 V, the closest step within the stock
+range, works.
+
+### Valve's Mesa
+
+The Frame's Mesa (`deckard-mesa-linux-aarch64`) links two libraries that the userspace does not
+have: `libdisplay-info.so.1` (Turnip's display code) and `libsensors.so.5` (gallium's HUD).
+`build-mesa-deps.sh` cross-builds them from their pinned sources, libdisplay-info 0.1.1 and
+lm_sensors 3.6.0 (only its library), with the userspace's `pnp.ids`, into a tar to unpack over
+the userspace root:
+
+```sh
+# Linux/WSL: hwdata's pnp.ids (the userspace build root's), work and output folders
+devices/phoenix/kernel/build-mesa-deps.sh <root>/usr/share/hwdata/pnp.ids \
+    /var/tmp/pico4-kernel/mesa-deps /var/tmp/pico4-kernel/out
+```
+
+### Source
+
+Valve's `linux-valve` repository needs a login, but Valve publishes each kernel package's GPL
+source package, which carries the repository: `linux-72-deckard-7.2.0+g509b71a1bdcd-1.src.tar.gz`
+(2.5 GiB) from `steamdeck-packages.steamos.cloud/archlinux-deckard-hotfixes/source/`, branch
+`sm8650-7.2`, built with `gabe_defconfig`.
+
+```sh
+# Linux/WSL: the source package, the stock recovery image (python -m overpressure stock), work and output folders
+devices/phoenix/kernel/build-kernel.sh linux-72-deckard-7.2.0+g509b71a1bdcd-1.src.tar.gz \
+    cache/stock/<firmware>.recovery.img /var/tmp/pico4-kernel/work /var/tmp/pico4-kernel/out
+python devices/phoenix/kernel/recovery_image.py /var/tmp/pico4-kernel/out \
+    cache/stock/<firmware>.recovery.img out/dev/dev-recovery.img out/kernel/test-recovery.img
+```
+
+### The ABL's board overlay
+
+Booting, the ABL lays a board overlay over the kernel's tree: from the `dtbo` partition, or for
+recovery from the image's `recovery_dtbo`. The PICO 4's is Qualcomm's "kona MTP" overlay
+(board-id 0x10008), 635 fragments addressed through 222 downstream labels. Several of these
+labels (`spmi_bus`, `tlmm`, `soc`, `pdc`, `intc`) exist in mainline's tree too; applied there,
+the overlay would add downstream PMIC, pinctrl and SoC nodes to live mainline nodes. The tree is
+therefore built without dtc's symbol table and gets its own from `dtbo_sink.py`: every label of
+the stock overlays resolves to an empty node below `/pico4-dtbo-sink`, which has no compatible,
+so no driver sees what the overlay puts there. None of the overlays' nodes carries a compatible
+that mainline searches for across the whole tree (`ramoops`, `qcom,cmd-db`, `qcom,smem`, ...).
+The `dtbo` partition stays untouched.
+
+### Kernel size
+
+Valve's configuration builds a large kernel: 24.7 MB `Image.gz`, 141 MiB in memory with its BSS
+(the stock kernel: 35 MB), mostly a 16 MiB log buffer with its index tables. The ABL checks the
+decompressed kernel against a region of its own (from UEFI's `KernelBaseAddr` and `KernelSize`).
+On the headset it loads the kernel at 0xA0080000 and the device tree and the ramdisk directly
+below 0xB0000000, which leaves about 245 MB for the kernel; Valve's configuration fits
+unchanged.
+
+### A one-shot test boot
+
+The test image goes to `recovery` (the whole partition with the stock vbmeta, as `dev image`
+builds it), never to `boot`. With an empty bootloader message the ABL starts `boot`, the
+installed system on the stock kernel; a reboot with reason `recovery` starts the test kernel
+once. Whatever happens then, a panic (`panic=5`), a stage-1 deadline or a hard reset, the next
+boot is the installed system again. Afterwards `dev image`'s recovery image goes back to
+`recovery`.
+
+The ABL passes only the boot image header's first command line field (512 bytes with its
+terminator) and drops the extra one. `recovery_image.py` therefore leaves out the base image's
+words for Android and the downstream kernel, which stage 1 does not read, and refuses a longer
+line.
+
+The new kernel prints nowhere on its first boots (no serial port, USB only once the gadget
+runs). Its RAM console has the stock kernel's layout (ramoops at 0xB0000000: 2 MiB, 1 MiB
+console, 1 MiB pmsg, no dump records, no ECC), so after the reboot the installed system on the
+stock kernel reads the failed boot's log from `/sys/fs/pstore/console-ramoops-0`. Only a
+panic's reset keeps it: stage 1's return to fastboot leaves it corrupted (stage 1's own log in
+`pmsg-ramoops-0` survives with bit errors). For a boot that stalls, `recovery_image.py --debug`
+logs every driver probe before it starts, prints every task's stack and every CPU's backtrace on
+the panic, and makes stage 1 panic where it would return to fastboot; `--trace FUNCTION` records a
+function's call graph and prints it on the panic. The hung-task detector skips killable and idle
+waits, and this preemptible kernel reports no soft lockup for a busy loop, so a stalled probe
+shows up only as `deferred_probe_initcall` waiting.
+
+## Recommendation
+
+1. Keep the stock kernel as the supported base until a new kernel passes the acceptance cycle;
+   the two can coexist, since the kernel lives in the boot image.
+2. If the Frame's level is the goal, take Way 2, not Way 1. Its prototype has passed phase 0
+   (Valve's kernel runs stage 1 from `recovery`, see [Results](#results)) and most of phase 1:
+   both panels at 90 Hz through DPU, and the GPU under Valve's own Mesa: Turnip on msm and
+   OpenGL through zink, as on the Frame.
+3. Decide early how charging is handled (phase 5): without it the headset is not usable away
+   from development, whatever else works.
+
+## Sources
+
+- The stock kernel's configuration: embedded in the PICO OS 5.13.8 boot image (`IKCONFIG`),
+  read with `python -m overpressure inspect`.
+- The Frame's kernel: `linux-72-deckard` 7.2.0 and `deckard-linux-6.16-sm8650` from Valve's
+  hotfix repository (`archlinux-deckard-hotfixes/release/0.3.x`), configuration embedded in
+  their images.
+- The PICO 4's hardware: the stock device tree and `dtbo`.
+- [postmarketOS: Lynx R1](https://wiki.postmarketos.org/wiki/Lynx_R1_(lynx-r1)),
+  [postmarketOS SM8250 kernel](https://pkgs.postmarketos.org/package/main/postmarketos/aarch64/linux-postmarketos-qcom-sm8250).
