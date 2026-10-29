@@ -38,7 +38,7 @@ MODULE_PARM_DESC(keep_boot_state,
 static char *keep_supplies = "";
 module_param(keep_supplies, charp, 0444);
 MODULE_PARM_DESC(keep_supplies,
-		 "supplies to leave as the bootloader set them (comma-separated: vddio, gd-vdd, avdd)");
+		 "supplies to leave as the bootloader set them (comma-separated: vddio)");
 
 /* The stock timings of one panel at 90 Hz; the bonded mode puts two side by side. */
 static const struct drm_display_mode panel_mode = {
@@ -55,7 +55,11 @@ static const struct drm_display_mode panel_mode = {
 	.height_mm = 46,
 };
 
-static const char * const supply_names[] = { "vddio", "gd-vdd", "avdd" };
+/*
+ * The stock display's one switched supply. Its ±5.8 V bias stays as the bootloader set it; the
+ * GD32 MCU, which drives the backlight, has its own supply.
+ */
+static const char * const supply_names[] = { "vddio" };
 
 struct pico4_panel {
 	struct drm_panel panel;
@@ -153,11 +157,15 @@ static int pico4_prepare(struct drm_panel *panel)
 	/* vddio settles 20 ms (the stock supply table) */
 	msleep(20);
 	dev_info(ctx->dev, "supplies on, VIO enable\n");
-	gpiod_set_value_cansleep(ctx->vio, 1);
+	/*
+	 * The lines were taken as the bootloader left them, and it leaves VIO an input: a plain
+	 * set would only latch the value, so each line becomes an output on its first use.
+	 */
+	gpiod_direction_output(ctx->vio, 1);
 
 	/* The stock reset sequence: released 20 ms, held 20 ms, released 30 ms. */
 	dev_info(ctx->dev, "reset\n");
-	gpiod_set_value_cansleep(ctx->reset, 0);
+	gpiod_direction_output(ctx->reset, 0);
 	msleep(20);
 	gpiod_set_value_cansleep(ctx->reset, 1);
 	msleep(20);
@@ -185,7 +193,7 @@ static int pico4_prepare(struct drm_panel *panel)
 static int pico4_enable(struct drm_panel *panel)
 {
 	dev_info(to_pico4_panel(panel)->dev, "backlight on\n");
-	gpiod_set_value_cansleep(to_pico4_panel(panel)->backlight, 1);
+	gpiod_direction_output(to_pico4_panel(panel)->backlight, 1);
 	return 0;
 }
 

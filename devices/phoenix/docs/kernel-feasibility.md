@@ -172,13 +172,13 @@ kernel with both panels and Valve's Mesa shows whether the rest is worth doing.
 
 ## Prototype
 
-Phases 0 and 1 run as a prototype beside the stock kernel; the stock-kernel rule is lifted for
+Phases 0 to 2 run as a prototype beside the stock kernel; the stock-kernel rule is lifted for
 it only. Its files are in [kernel/](../kernel/):
 
 | File | Purpose |
 | --- | --- |
-| [sm8250-pico4-phoenix.dts](../kernel/sm8250-pico4-phoenix.dts) | the PICO 4's device tree on mainline's `sm8250.dtsi`: the stock tree's supplies for UFS, USB and the panels, its memory carve-outs, its unused GPIOs reserved, reboot modes, a RAM console, both DSI links with the panels, the GPU |
-| [pico4.config](../kernel/pico4.config) | merged over Valve's `gabe_defconfig`: the SM8250 drivers (with the display and GPU clock controllers, QFPROM, REFGEN), the panel driver, stage 1's USB gadget functions, the PON reboot modes, pstore |
+| [sm8250-pico4-phoenix.dts](../kernel/sm8250-pico4-phoenix.dts) | the PICO 4's device tree on mainline's `sm8250.dtsi`: the stock tree's supplies for UFS, USB and the panels, its memory carve-outs, its unused GPIOs reserved, reboot modes, a RAM console, both DSI links with the panels, the GPU, the GD32 MCU's UART, the three DSPs, the head IMU's supplies and clock |
+| [pico4.config](../kernel/pico4.config) | merged over Valve's `gabe_defconfig`: the SM8250 drivers (with the display and GPU clock controllers, QFPROM, REFGEN), the panel driver, stage 1's USB gadget functions, the PON reboot modes, pstore, QRTR over GLINK |
 | [patches/](../kernel/patches/) | fixes to Valve's tree that the PICO 4 needs (below) |
 | [src/](../kernel/src/) | the PICO 4's own kernel sources, at their paths in the tree: the panel driver |
 | [build-kernel.sh](../kernel/build-kernel.sh) | Valve's 7.2 source package (pinned by hash and commit), the patches and the own sources to `Image.gz` and the device tree |
@@ -206,6 +206,12 @@ it only. Its files are in [kernel/](../kernel/):
 | Valve's Mesa | the Frame's `deckard-mesa-linux-aarch64` 26.3.0-devel over the userspace in a chroot on this kernel: Turnip on msm ("Turnip Adreno (TM) 650", Vulkan 1.3, conformance 1.2.7.1) renders `pico4-vulkan-test`'s frame with all 65536 pixels correct; OpenGL 4.6 core and compatibility and OpenGL ES 3.2 through zink on Turnip, surfaceless and on GBM. The package has no freedreno gallium driver: on the Frame, OpenGL is zink. |
 | Open | whether the panels show the frame (not looked at yet); the DSI PHY's PLL fails to lock once at probe while the clock framework adopts the bootloader's display clocks (a warning, the display works after it) |
 
+| Phase 2 | Result on the headset |
+| --- | --- |
+| GD32 MCU | QUP0's serial engine 1 as `ttyHS1` (its stock name); `pico4-fan status` reads duty, RPM, version ("BOOT02", as on the stock kernel) and fan info; the MCU's reset and boot lines stay as the bootloader set them, as on the stock kernel |
+| DSPs | the SLPI, CDSP and ADSP run under mainline's remoteproc with PICO's signed images from the headset's modem partition; each brings up its IPC router, FastRPC (`/dev/fastrpc-sdsp`, `-cdsp`, `-cdsp-secure`, `-adsp`) and its own channels (the ADSP's `apr_audio_svc`, the CDSP's `cvp-glink-apps-dsp` and `cdsprmglink-apps-dsp`) |
+| Head IMU | the sensors process on the SLPI attaches to `hexagonrpcd` over upstream FastRPC (`/dev/fastrpc-sdsp`), reads the headset's registry from `persist` and lists the sensors over QRTR (the kernel's own name service and PD mapper); `pico4-imu stream --rate 1000 --check` passes: accelerometer and gyroscope (TDK ICM-4x6xx) at 1023.89 Hz each over 10 s, no gaps, no out-of-order timestamps, gravity 9.805 m/s², gyro bias 0.006 rad/s |
+
 ### Display
 
 The stock tree drives both panels as one display: its panel node (Sharp LS026B3SA, 90 Hz video
@@ -215,15 +221,48 @@ does the same with its two panels (`sm8650-mp.dts`): one panel node on the first
 which is the master of the bonded pair, a second port to the second link, and a mode twice as
 wide, which msm splits between the links. The PICO 4 follows that model with a panel driver of
 its own (`src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c`): 4320x2160 at 90 Hz from the stock
-timings, the stock supplies (VDDIO from L7A, gd-vdd from L10C, AVDD switched by GPIO 71), reset
-(GPIO 75 with the stock 20/20/30 ms sequence), VIO enable (GPIO 133) and backlight enable
-(GPIO 29). The ±5.8 V bias comes from PM8150L's LCDB, for which mainline has no driver; it stays
-as the bootloader set it. The panels' command sequences are PICO's data: the build copies them
+timings, the stock display's one switched supply (VDDIO from L7A), reset (GPIO 75 with the
+stock 20/20/30 ms sequence), VIO enable (GPIO 133) and backlight enable (GPIO 29). The
+bootloader leaves VIO an input, so each line becomes an output on its first use; a value set on
+an input pin does nothing, which kept the panels dark. The ±5.8 V bias comes from PM8150L's
+LCDB, for which mainline has no driver; it stays as the bootloader set it. With the stock
+picture on, the stock kernel holds GPIOs 29, 75 and 133 high and GPIO 71 low: the 5.5 V that
+GPIO 71 switches has no user there and is off, and the tree holds it off too. L10C (3.0 V) is
+the GD32 MCU's supply, which drives the backlight; the stock tree gives it to the MCU's UART,
+and the tree keeps it always on. The panels' command sequences are PICO's data: the build copies them
 from the stock board overlay into the tree (`panel_sequence.py`, as `pico4,on-command` and
 `pico4,off-command`), and the driver sends each command with its stock data type to both links.
 The module parameter `keep_boot_state` leaves the panels as the bootloader set them up, and
 `keep_supplies` (a comma-separated list) leaves single supplies alone; the driver logs every
 step of the power-on, since a stall leaves only the RAM console.
+
+### DSPs and the GD32 MCU
+
+Mainline's `qcom_q6v5_pas` loads PICO's own signed images (`slpi.mdt`, `cdsp.mdt`,
+`adsp.mdt`, with their `.bNN` segments) through TrustZone, as the stock PIL does: the same PAS
+IDs, the stock carve-outs (mainline's CDSP and SLPI regions equal the stock ones; the ADSP and
+SPSS regions are moved to the stock layout), the CX vote and the AOP signal. The compute DSP
+also needs the bus vote the stock loader holds while it starts (master 154 to slave 10070, in
+mainline the compute NoC's `qnm_npu` to `qns_cdsp_mem_noc`): without it TrustZone refuses the
+start ("failed to authenticate image and release reset"). The images come from the userspace's
+`/usr/lib/firmware`; stage 1 has none, so each DSP stays offline there until it is started
+through `/sys/class/remoteproc`.
+
+The MCU (fan, lens motor, backlight) hangs off QUP0's serial engine 1, which mainline describes
+only as I2C and SPI; the tree adds the UART there, two wires on GPIOs 6 and 7 as in the stock
+tree, aliased to `ttyHS1`. Its reset (GPIO 12), boot (GPIO 13) and sync (GPIO 14) lines stay
+unused, as the stock kernel leaves them. L10C (3.0 V), its supply, is always on.
+
+The head IMU (TDK ICM-4x6xx on the sensor DSP's bus) needs three things from the apps side,
+which the stock kernel's XR driver (`qcom,xr-stdalonevwr-misc`) provides and mainline has no
+driver for: its VDDIO (L8C, 1.8 V) and VDD (L11C, 3.008 V), which the tree keeps always on, and
+its CLKIN from PM8150's GPIO 3 in its first special function, which the tree sets as the GPIO
+controller's default state. Without the clock the IMU takes its configuration but sends no
+samples. On the userspace side the sensors process needs `CONFIG_QRTR_SMD` (QRTR over the DSPs'
+GLINK channels), the registry in `persist`, and the downstream socinfo attributes mainline's
+`/sys/devices/soc0` lacks (`hw_platform` MTP, `platform_subtype` Unknown, `platform_subtype_id`
+0, `platform_version` 65536): `hexagonrpcd` serves them from `/usr/share/qcom/pico4/socinfo`,
+which on this kernel has to be a directory with the stock values instead of the link to sysfs.
 
 ### Patches
 
@@ -323,9 +362,10 @@ shows up only as `deferred_probe_initcall` waiting.
 1. Keep the stock kernel as the supported base until a new kernel passes the acceptance cycle;
    the two can coexist, since the kernel lives in the boot image.
 2. If the Frame's level is the goal, take Way 2, not Way 1. Its prototype has passed phase 0
-   (Valve's kernel runs stage 1 from `recovery`, see [Results](#results)) and most of phase 1:
-   both panels at 90 Hz through DPU, and the GPU under Valve's own Mesa: Turnip on msm and
-   OpenGL through zink, as on the Frame.
+   (Valve's kernel runs stage 1 from `recovery`, see [Results](#results)), most of phase 1
+   (both panels at 90 Hz through DPU, and the GPU under Valve's own Mesa: Turnip on msm and
+   OpenGL through zink, as on the Frame) and the first part of phase 2: the GD32 MCU, the three
+   DSPs with PICO's images, and the head IMU at 1 kHz over upstream FastRPC and QRTR.
 3. Decide early how charging is handled (phase 5): without it the headset is not usable away
    from development, whatever else works.
 

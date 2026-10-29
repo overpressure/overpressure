@@ -30,8 +30,9 @@ Each step's document holds its design, measurements and reproduction steps.
   GPU semaphores between processes over sync files. systemd stays at 257.x: 258 needs Linux
   5.4. Whether a kernel at the Steam Frame's level is feasible, and how, is assessed in
   [kernel-feasibility.md](kernel-feasibility.md); its prototype runs stage 1 on Valve's 7.2
-  kernel with both panels at 90 Hz and the GPU under Valve's own Mesa (Turnip on msm, OpenGL
-  through zink); the rest of the hardware is open.
+  kernel with both panels at 90 Hz, the GPU under Valve's own Mesa (Turnip on msm, OpenGL
+  through zink), the GD32 MCU, the three DSPs and the head IMU at 1 kHz; the rest of the
+  hardware is open.
 - **Read-only storage.** Both stages switch every physical block device read-only. Only the
   explicit, backup-validated flash and restore paths write to the headset's storage (`boot`
   for the dev image or a test run, ABL through EDL); each write is checked against the

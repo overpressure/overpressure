@@ -36,22 +36,15 @@
 	qcom,msm-id = <QCOM_ID_SM8250 0x20001>;
 	qcom,board-id = <0 0>;
 
+	/* The GD32 MCU's UART keeps its stock name, which the fan, IPD and lens tools open. */
+	aliases {
+		serial1 = &uart1;
+	};
+
 	chosen {
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
-	};
-
-	/* The panels' AVDD (5.5 V), switched by GPIO 71; the bootloader leaves it on. */
-	vreg_display_avdd: regulator-display-avdd {
-		compatible = "regulator-fixed";
-		regulator-name = "display_avdd";
-		regulator-min-microvolt = <5500000>;
-		regulator-max-microvolt = <5500000>;
-		gpio = <&tlmm 71 GPIO_ACTIVE_HIGH>;
-		enable-active-high;
-		regulator-enable-ramp-delay = <233>;
-		regulator-boot-on;
 	};
 
 	reserved-memory {
@@ -101,6 +94,17 @@
 /* The stock tree's adsp carve-out is 40 MiB (mainline: 29 MiB). */
 &adsp_mem {
 	reg = <0x0 0x8a100000 0x0 0x2800000>;
+};
+
+/*
+ * The three DSPs with PICO's own signed images from the headset's modem partition, which the
+ * userspace installs in /usr/lib/firmware: the audio DSP, the sensor DSP (head IMU, controllers
+ * through ble_mcu, proximity) and the compute DSP (PICO OS's tracker). Their carve-outs are the
+ * stock tree's. Without the files at probe (stage 1), each stays offline until it is started.
+ */
+&adsp {
+	firmware-name = "adsp.mdt";
+	status = "okay";
 };
 
 &apps_rsc {
@@ -183,14 +187,68 @@
 		compatible = "qcom,pm8150l-rpmh-regulators";
 		qcom,pmic-id = "c";
 
-		/* The panels' gd-vdd at the stock initial 3.0 V. */
+		/*
+		 * The GD32 MCU's supply at the stock initial 3.0 V: the stock tree gives it to the
+		 * MCU's UART, which keeps it on. The MCU drives the backlight, the fan and the
+		 * lens motor, so it stays on here too.
+		 */
 		vreg_l10c_3p0: ldo10 {
 			regulator-name = "vreg_l10c_3p0";
 			regulator-min-microvolt = <3000000>;
 			regulator-max-microvolt = <3000000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		/*
+		 * The head IMU's (TDK ICM-4x6xx on the sensor DSP) VDDIO and VDD at the stock voltages:
+		 * the stock kernel's XR driver (qcom,xr-stdalonevwr-misc) holds both on.
+		 */
+		vreg_l8c_1p8: ldo8 {
+			regulator-name = "vreg_l8c_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		vreg_l11c_3p0: ldo11 {
+			regulator-name = "vreg_l11c_3p0";
+			regulator-min-microvolt = <3008000>;
+			regulator-max-microvolt = <3008000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
 		};
 	};
+};
+
+/*
+ * The head IMU's CLKIN: PM8150's GPIO 3 in its first special function, the clock the IMU runs
+ * from, as the stock XR driver sets it ("imu_clkin_enable").
+ */
+&pm8150_gpios {
+	pinctrl-names = "default";
+	pinctrl-0 = <&imu_clkin_enable>;
+
+	imu_clkin_enable: imu-clkin-enable-state {
+		pins = "gpio3";
+		function = "func1";
+		power-source = <0>;
+		output-low;
+		bias-disable;
+		input-disable;
+	};
+};
+
+/*
+ * The stock loader holds a bus vote from the compute DSP to its memory NoC while it starts
+ * (master 154 to slave 10070, the path mainline names qnm_npu to qns_cdsp_mem_noc); without
+ * it, TrustZone refuses the start ("failed to authenticate image and release reset").
+ */
+&cdsp {
+	firmware-name = "cdsp.mdt";
+	interconnects = <&compute_noc MASTER_NPU 0 &compute_noc SLAVE_CDSP_MEM_NOC 0>;
+	status = "okay";
 };
 
 &gmu {
@@ -231,8 +289,6 @@
 		pinctrl-names = "default";
 
 		vddio-supply = <&vreg_l7a_1p9>;
-		gd-vdd-supply = <&vreg_l10c_3p0>;
-		avdd-supply = <&vreg_display_avdd>;
 
 		ports {
 			#address-cells = <1>;
@@ -288,6 +344,11 @@
 	mode-recovery = <0x1>;
 };
 
+&slpi {
+	firmware-name = "slpi.mdt";
+	status = "okay";
+};
+
 &tlmm {
 	/*
 	 * Every GPIO the stock tree leaves unused (no pin configuration, no consumer) stays
@@ -296,12 +357,52 @@
 	gpio-reserved-ranges = <14 1>, <24 2>, <27 2>, <30 2>, <64 1>, <66 1>, <73 1>,
 			       <88 3>, <112 2>, <120 5>, <146 34>;
 
+	/*
+	 * GPIO 71 switches a 5.5 V supply that the bootloader leaves on. The stock display does
+	 * not use it, and the stock kernel switches it off as unused.
+	 */
+	display-avdd-off-hog {
+		gpio-hog;
+		gpios = <71 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "display-avdd-off";
+	};
+
+	/* The GD32 MCU's UART, two wires as in the stock tree (its reset and boot lines stay unused). */
+	qup_uart1_default: qup-uart1-default-state {
+		pins = "gpio6", "gpio7";
+		function = "qup1";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
 	/* The stock panel pins: the reset (75) and its neighbour 60, driven at 8 mA. */
 	display_reset_default: display-reset-default-state {
 		pins = "gpio75", "gpio60";
 		function = "gpio";
 		drive-strength = <8>;
 		bias-disable;
+	};
+};
+
+&qupv3_id_0 {
+	status = "okay";
+
+	/* QUP0's serial engine 1 as the stock tree uses it: the GD32 MCU at 115200 baud. */
+	uart1: serial@984000 {
+		compatible = "qcom,geni-uart";
+		reg = <0 0x00984000 0 0x4000>;
+		clock-names = "se";
+		clocks = <&gcc GCC_QUPV3_WRAP0_S1_CLK>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&qup_uart1_default>;
+		interrupts = <GIC_SPI 602 IRQ_TYPE_LEVEL_HIGH>;
+		power-domains = <&rpmhpd RPMHPD_CX>;
+		operating-points-v2 = <&qup_opp_table>;
+		interconnects = <&qup_virt MASTER_QUP_CORE_0 0 &qup_virt SLAVE_QUP_CORE_0 0>,
+				<&gem_noc MASTER_AMPSS_M0 0 &config_noc SLAVE_QUP_0 0>;
+		interconnect-names = "qup-core",
+				     "qup-config";
 	};
 };
 
