@@ -354,6 +354,14 @@ own governor: 89.7 frames per second, 894 of 896 frames in one refresh, the GPU'
 between 5.9 and 6.0 ms. The OPP core reads bandwidths only when the first OPP has one, so the
 670 MHz OPP, which this speed bin does not use, carries the top level too.
 
+Every boot logs "DSI PLL(0) lock failed" and a warning that `dsi0_phy_pll_out_dsiclk` was
+already disabled, from `dsi_phy_driver_probe`. It is harmless: when the PHY registers its clock
+provider, the clock core adopts the display clock controller's orphaned pixel clock source,
+which has `CLK_OPS_PARENT_ENABLE`, and enables its new parent, the PHY's PLL, for the switch.
+The PHY's supplies and power domain are not on yet, so the lock status reads 0 and the enable
+fails; the core then disables the clock that never enabled. The DSI driver configures and locks
+the PLL itself when it enables the display, and the panels work on every boot.
+
 Only the DRM master makes the kernel probe a connector's modes; anyone else gets the list a
 probe left. Without one, a compositor that starts first sees no real mode ("1024x768") and finds
 no headset display (the kernel has no fbdev client that would probe). On both kernels the boot
