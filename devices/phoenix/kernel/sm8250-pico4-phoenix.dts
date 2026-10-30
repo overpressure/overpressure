@@ -303,15 +303,8 @@
 		};
 
 		/*
-		 * The controller station's supply at the stock initial 1.8 V: the stock tree gives it
-		 * to the station's SPI bus (vdd-supply), whose vendor spidev switches it with a power
-		 * ioctl. Here station-power hands that switch to userspace. On at boot: RPMh reports
-		 * a regulator's state only once it has been set, and the switch needs to know it.
-		 */
-		/*
-		 * PM8150L's BOB at the stock range and initial voltage: the stock camera driver
-		 * switches it on for every camera sensor (cam_bob-supply), the tracking cameras'
-		 * supply.
+		 * PM8150L's BOB at the stock range: the stock tree's supply for the codec's
+		 * microphone bias and a supply every camera sensor node names (cam_bob-supply).
 		 */
 		vreg_bob: bob {
 			regulator-name = "vreg_bob";
@@ -320,6 +313,12 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
 		};
 
+		/*
+		 * The controller station's supply at the stock initial 1.8 V: the stock tree gives it
+		 * to the station's SPI bus (vdd-supply), whose vendor spidev switches it with a power
+		 * ioctl. Here station-power hands that switch to userspace. On at boot: RPMh reports
+		 * a regulator's state only once it has been set, and the switch needs to know it.
+		 */
 		vreg_l5c_1p8: ldo5 {
 			regulator-name = "vreg_l5c_1p8";
 			regulator-min-microvolt = <1800000>;
@@ -1022,31 +1021,32 @@
 		bias-disable;
 	};
 
+	/* The MCLK pins at 16 mA, as the stock camera stack drives them while the sensors run. */
 	cam_mclk2_default: cam-mclk2-default-state {
 		pins = "gpio96";
 		function = "cam_mclk";
-		drive-strength = <2>;
+		drive-strength = <16>;
 		bias-disable;
 	};
 
 	cam_mclk3_default: cam-mclk3-default-state {
 		pins = "gpio97";
 		function = "cam_mclk";
-		drive-strength = <2>;
+		drive-strength = <16>;
 		bias-disable;
 	};
 
 	cam_mclk4_default: cam-mclk4-default-state {
 		pins = "gpio98";
 		function = "cam_mclk";
-		drive-strength = <2>;
+		drive-strength = <16>;
 		bias-disable;
 	};
 
 	cam_mclk5_default: cam-mclk5-default-state {
 		pins = "gpio99";
 		function = "cam_mclk";
-		drive-strength = <2>;
+		drive-strength = <16>;
 		bias-disable;
 	};
 };
@@ -1095,11 +1095,20 @@
 	};
 };
 
+/*
+ * The sensors' MCLKs run only while the camera clock controller's TITAN_TOP GDSC is on: the stock
+ * sensors name it as their cam_clk supply, here each sensor holds it as its power domain. The
+ * CCIs run at the stock 37.5 MHz, the clock their I2C timings are made for (the default is 19.2).
+ */
 &cci0 {
+	assigned-clocks = <&camcc CAM_CC_CCI_0_CLK_SRC>;
+	assigned-clock-rates = <37500000>;
 	status = "okay";
 };
 
 &cci1 {
+	assigned-clocks = <&camcc CAM_CC_CCI_1_CLK_SRC>;
+	assigned-clock-rates = <37500000>;
 	status = "okay";
 };
 
@@ -1115,6 +1124,7 @@
 		reg = <0x73>;
 		clocks = <&camcc CAM_CC_MCLK2_CLK>;
 		clock-names = "xclk";
+		power-domains = <&camcc TITAN_TOP_GDSC>;
 		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
 		assigned-clock-rates = <24000000>;
 		pinctrl-names = "default";
@@ -1137,6 +1147,7 @@
 		reg = <0x74>;
 		clocks = <&camcc CAM_CC_MCLK5_CLK>;
 		clock-names = "xclk";
+		power-domains = <&camcc TITAN_TOP_GDSC>;
 		assigned-clocks = <&camcc CAM_CC_MCLK5_CLK>;
 		assigned-clock-rates = <24000000>;
 		pinctrl-names = "default";
@@ -1164,6 +1175,7 @@
 		reg = <0x71>;
 		clocks = <&camcc CAM_CC_MCLK3_CLK>;
 		clock-names = "xclk";
+		power-domains = <&camcc TITAN_TOP_GDSC>;
 		assigned-clocks = <&camcc CAM_CC_MCLK3_CLK>;
 		assigned-clock-rates = <24000000>;
 		pinctrl-names = "default";
@@ -1186,6 +1198,7 @@
 		reg = <0x72>;
 		clocks = <&camcc CAM_CC_MCLK4_CLK>;
 		clock-names = "xclk";
+		power-domains = <&camcc TITAN_TOP_GDSC>;
 		assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
 		assigned-clock-rates = <24000000>;
 		pinctrl-names = "default";
