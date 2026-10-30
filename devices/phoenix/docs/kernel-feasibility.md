@@ -220,7 +220,8 @@ kernel; the stock-kernel rule is lifted for it only. Its files are in [kernel/](
 | Fan | `pico4-fan` runs PICO OS's policy on the same 14 TSENS channels under mainline's names; 30 % at 30–53 °C |
 | DSPs, head IMU | `pico4-slpi` and `pico4-cdsp` start the DSPs through remoteproc; `pico4-sensors.target` is reached once the IMU is listed (35 s); the 1 kHz stream check passes |
 | SteamVR | Valve's session (`gamescope-session.target`) with `driver_monado` and the PICO 4 headset; `vrcompositor` in direct mode through Turnip's own display WSI on msm, 4320×2160 at 90 Hz, compressed scanout images; 89.7 frames per second in a steady 10 s window with the CPUs' own governor (894 of 896 frames in one refresh), 5.9 ms of the compositor's GPU time per frame, hottest zone 42 °C |
-| Not on this kernel yet | PICO OS's head tracker (`libSlam` speaks the downstream FastRPC ABI), cameras, the controller station, audio, Wi-Fi, video decode, charging; a client that probes the panels' connector at boot (below) |
+| `dev check` | on a RAM boot of the userspace from the maintenance stage 1 on Valve's kernel: the userspace check (devtmpfs, storage policy, systemd running without failed units, Turnip's Vulkan test on msm, fan), the head IMU at 500 Hz, and Valve's session check's performance part: 90.03 frames per second over 30 s, none late, no stalls, 5.9 ms of GPU time per compositor job, hottest zone 43 °C. It fails only on the controllers, which need the station |
+| Not on this kernel yet | PICO OS's head tracker (`libSlam` speaks the downstream FastRPC ABI; `pico4-slamd` and `pico4-cdsprpcd` skip themselves), cameras, the controller station, audio, video decode, charging |
 
 ### Display
 
@@ -298,7 +299,7 @@ Valve's, and what Valve's kernel needs is found by the hardware, not by a kernel
 | Wi-Fi | the stock qcacld-3.0 module with `pico4-wlfw-client` | ath11k on PCIe 0 (the QCA6390's power sequencer on the stock supplies), PICO's firmware and board data (`bdwlanq.elf`) under ath11k's names, the address from persist's `wlan_mac.bin` (`pico4-wlan-address`); the stock units skip themselves |
 | Bluetooth | none | `hci_qca` on QUP0's UART 6; firmware and NV data from PICO OS's `bluetooth` partition, mounted read-only (`pico4-bt-firmware`), the address from persist's `pico_bt_mac` (`pico4-bt-address`, the management interface's Set Public Address), the Frame's BlueZ. `hci_qca` is built in and sets the controller up before the partition is mounted; `pico4-bt-firmware` probes it again once the firmware is there, since the kernel offers a controller to bluetoothd only after a setup that succeeded |
 | Video codec restart level, audio modules, ADSP | `pico4-venus`, `pico4-audio-modules` (stock modules), `pico4-adsp` (the stock loader) | skip themselves |
-| Boot splash | KGSL's display (`msm_drm`), six layers | msm's primary plane; as the first DRM master it also probes the panels' mode |
+| Boot splash, panel probe | KGSL's display (`msm_drm`), six layers | msm's primary plane; `pico4-panel-probe` probes the panels' connector on every boot (`detect` in its sysfs status), also where the splash does not run: msm leaves it unprobed until a DRM master asks, and SteamVR's compositor then finds no direct-mode display |
 | Power key | `qpnp_pon` | `pm8941_pwrkey` |
 | Session | seat0 without VTs | the session takes VT 1 in getty's place, as sddm does on the Frame (logind requires a VT where the kernel has them) |
 | GPU | `/dev/kgsl-3d0`; `pico4-vrdisplay` provides SteamVR's direct mode and shared semaphores | msm's render node; the layer stays unloaded (`PICO4_VRDISPLAY_DISABLE` from a user environment generator), Turnip and msm provide both, as on the Frame |
@@ -366,7 +367,9 @@ Only the DRM master makes the kernel probe a connector's modes; anyone else gets
 probe left. Without one, a compositor that starts first sees no real mode ("1024x768") and finds
 no headset display (the kernel has no fbdev client that would probe). On both kernels the boot
 splash in stage 1 is the first master and probes; on Valve's kernel it shows its picture on msm's
-primary plane, across both panels.
+primary plane, across both panels. The splash runs only when the installed system starts, so on
+msm `pico4-panel-probe` probes on every boot: writing `detect` to the connector's sysfs status
+fills its modes (4320x2160) without a master.
 
 With nobody wearing the headset, SteamVR enters standby after `power.turnOffScreensTimeout`
 (5 s) and presents black frames; measurements set it to an hour with `vrcmd` first and back

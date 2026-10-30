@@ -535,7 +535,7 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-monado.socket pico4-session.service pico4-fan.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
     pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service \
-    pico4-venus.service steam-video-codec-setup.service pico4-stock-preload.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service     pico4-wifi-backend.service
+    pico4-venus.service steam-video-codec-setup.service pico4-stock-preload.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service     pico4-wifi-backend.service pico4-panel-probe.service
 # pico4-sysvsem for every process on the stock kernel only (pico4-stock-preload.service).
 ln -sfn /run/pico4-poc/ld.so.preload "$T/etc/ld.so.preload"
 # Units that would wait for console input, erase stage-1 evidence from pstore,

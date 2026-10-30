@@ -225,6 +225,17 @@ class ConsoleQuietTest(unittest.TestCase):
         self.assertIn("pico4-console-quiet.service", build)  # ... so the unit must be enabled
 
 
+class PanelProbeTest(unittest.TestCase):
+    def test_msm_probes_the_panels_before_the_session(self):
+        # Without the probe msm's DSI connector has no modes and SteamVR finds no display.
+        probe = unit("usr/lib/systemd/system/pico4-panel-probe.service")
+        self.assertIn("pico4-session.service", probe["Unit"]["Before"])
+        self.assertEqual(probe["Unit"]["ConditionPathExists"], "!/sys/class/kgsl")
+        self.assertIn('echo detect > "$c"', probe["Service"]["ExecStart"])
+        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+        self.assertIn("pico4-panel-probe.service", build[build.index("in_t systemctl enable"):])
+
+
 class SessionTest(unittest.TestCase):
     def test_valves_session_only(self):
         # Monado's session and its fallback are gone: the session is Valve's target, or another
