@@ -225,6 +225,21 @@ class ConsoleQuietTest(unittest.TestCase):
         self.assertIn("pico4-console-quiet.service", build)  # ... so the unit must be enabled
 
 
+class MonadoServiceTest(unittest.TestCase):
+    def test_monado_takes_vulkans_display_on_msm(self):
+        # Turnip's display WSI hands an image back only once the next flip completed: with
+        # Monado's default of two images every second refresh was missed (45 Hz).
+        unit = (ROOTFS / "usr/lib/systemd/system/pico4-monado.service").read_text(encoding="utf-8")
+        self.assertIn("ExecStart=/usr/libexec/pico4-poc/monado-service", unit)
+        self.assertIn("ConditionPathExists=|/dev/kgsl-3d0\nConditionPathExists=|/dev/dri/renderD128\n", unit)
+        script = (ROOTFS / "usr/libexec/pico4-poc/monado-service").read_text(encoding="utf-8")
+        mainline = script[script.index("if [ ! -e /dev/kgsl-3d0 ]"):script.index("\nfi\n")]
+        for setting in ("PICO4_KMS=0", "XRT_COMPOSITOR_FORCE_VK_DISPLAY=0", "XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3"):
+            self.assertIn(setting, mainline)
+        self.assertIn("unset U_PACING_COMP_MIN_TIME_MS", mainline)
+        self.assertIn('exec /usr/bin/monado-service "$@"', script)
+
+
 class PanelProbeTest(unittest.TestCase):
     def test_msm_probes_the_panels_before_the_session(self):
         # Without the probe msm's DSI connector has no modes and SteamVR finds no display.

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Monado's service for the kernel that runs (pico4-monado.service). The stock kernel's KGSL has no
+# Vulkan display path, so there Monado drives the panels through its pico4 KMS target. A mainline
+# kernel's msm gives Turnip VK_KHR_display, so there Monado takes Vulkan's display (direct mode, as
+# SteamVR's compositor does) with three swapchain images: Turnip's display WSI hands an image back
+# only once the next flip completed, and with Monado's default of two every second refresh was
+# missed (45 Hz). The KMS target's pacing settings belong to that target.
+if [ ! -e /dev/kgsl-3d0 ]; then
+	export PICO4_KMS=0 XRT_COMPOSITOR_FORCE_VK_DISPLAY=0 XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3
+	unset U_PACING_COMP_MIN_TIME_MS PICO4_KMS_STATS PICO4_KMS_DUMP
+fi
+exec /usr/bin/monado-service "$@"
