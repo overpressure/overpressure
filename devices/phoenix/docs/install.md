@@ -143,6 +143,15 @@ already holds its image (by a readback hash), and formats `userdata` only when i
 `pico4-data` file system (or with `--format-data`). An update is the same command with a new
 system image: `boot` and the data stay.
 
+**Valve's kernel in `boot`.** `--boot IMAGE` installs another boot image in place of
+`out/dev/install-boot.img`: the installed system's own boot image with Valve's kernel and tree
+([kernel-feasibility.md](kernel-feasibility.md)), made from it by `recovery_image.py --installed
+out/dev/install-boot.img --boot --stage1 devices/phoenix/initramfs ...`. It carries the install
+boot image's stage 1 in installed mode with this tree's files and the GPU and Wi-Fi firmware, no
+AVB footer (the bootloader applies the `dtbo` partition's overlay, as on every normal boot), and
+its stage 1 still reboots into `recovery` after a failed start, where the maintenance stage 1 on
+the stock kernel waits. The way back to the stock kernel is `dev install` without `--boot`.
+
 | Command | Purpose |
 | --- | --- |
 | `python -m overpressure dev recovery` | into the maintenance stage 1 (through fastboot), which stays until `dev normal` |

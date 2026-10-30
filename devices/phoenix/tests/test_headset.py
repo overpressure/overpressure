@@ -327,7 +327,8 @@ class DevTests(HeadsetFixture):
         self.assertTrue(any("/dev/block/by-name/recovery | sha256sum" in t for t in self.texts()))
         self.assertFalse(any("/dev/block/by-name/boot | sha256sum" in t for t in self.texts()))
 
-    def install_setup(self, cmdline="console=x pico4poc.part=recovery", data="none", held=None):
+    def install_setup(self, cmdline="console=x pico4poc.part=recovery", data="none", held=None,
+                      confirmed_boot=b"install boot"):
         backup = Path(self.settings.backup)
         (backup / "lun0").mkdir(exist_ok=True)
         rows = "".join(f'<program label="{n}" num_partition_sectors="{s}" SECTOR_SIZE_IN_BYTES="4096" '
@@ -339,7 +340,7 @@ class DevTests(HeadsetFixture):
         (dev_dir / "install-boot.img").write_bytes(b"install boot")
         system = self.root / "pico4-system.img"
         system.write_bytes(b"system image")
-        boot_sha = hashlib.sha256(b"install boot").hexdigest()
+        boot_sha = hashlib.sha256(confirmed_boot).hexdigest()
         system_sha = hashlib.sha256(b"system image").hexdigest()
         responses = {f"by-name/{name} | sha256sum": f"{sha}  -" for name, sha in
                      (("boot", boot_sha), ("super", system_sha)) if name in (held or ())}
@@ -363,6 +364,16 @@ class DevTests(HeadsetFixture):
         self.assertIn("--size 100663296 --bytes 12 ", steps[0])
         self.assertIn(f"--size {2097152 * 4096} ", steps[1])
         self.assertIn(f"--size {27804115 * 4096}", steps[3])
+
+    def test_install_takes_another_boot_image(self):
+        # Such as the installed system's boot image with Valve's kernel (recovery_image.py --boot).
+        dev, system = self.install_setup(confirmed_boot=b"valve boot image")
+        other = self.root / "install-boot-valve.img"
+        other.write_bytes(b"valve boot image")
+        dev.install(system, boot=other)
+        write = next(t for t in self.texts() if "pico4-install write boot" in t)
+        self.assertIn(f"--bytes {len(b'valve boot image')} ", write)
+        self.assertIn(hashlib.sha256(b"valve boot image").hexdigest(), write)
 
     def test_install_skips_a_partition_that_holds_its_image(self):
         dev, system = self.install_setup(data="pico4-data", held=("super",))

@@ -216,7 +216,8 @@ kernel; the stock-kernel rule is lifted for it only. Its files are in [kernel/](
 
 | Installed system | Result on the headset |
 | --- | --- |
-| Boot | the installed system (`super`, `userdata`) on Valve's kernel from `recovery` (`--installed`): `graphical.target` 13.2 s after power-on (8.8 s kernel, 4.4 s userspace); the data partition writable, every other block device read-only |
+| Boot | the installed system (`super`, `userdata`) on Valve's kernel from `boot` (`dev install --boot`, the image from `recovery_image.py --installed --boot`), the maintenance stage 1 on the stock kernel in `recovery`; earlier as a one-shot from `recovery` (`--installed`): `graphical.target` 13.2 s after power-on (8.8 s kernel, 4.4 s userspace); the data partition and its disk writable, every other block device read-only; the `/etc` overlay without the inodes index, so that an update's new image is taken |
+| `dev check`, installed | on the installed system booting Valve's kernel from `boot`, after a cold start: passed, Valve's session with the headset and both controllers in SteamVR, 89.9 frames per second over 30 s, 0.15 % late, no stalls, hottest zone 48 °C |
 | Fan | `pico4-fan` runs PICO OS's policy on the same 14 TSENS channels under mainline's names; 30 % at 30–53 °C |
 | DSPs, head IMU | `pico4-slpi` and `pico4-cdsp` start the DSPs through remoteproc; `pico4-sensors.target` is reached once the IMU is listed (35 s); the 1 kHz stream check passes |
 | SteamVR | Valve's session (`gamescope-session.target`) with `driver_monado` and the PICO 4 headset; `vrcompositor` in direct mode through Turnip's own display WSI on msm, 4320×2160 at 90 Hz, compressed scanout images; 89.7 frames per second in a steady 10 s window with the CPUs' own governor (894 of 896 frames in one refresh), 5.9 ms of the compositor's GPU time per frame, hottest zone 42 °C |
