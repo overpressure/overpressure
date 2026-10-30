@@ -1424,6 +1424,15 @@
 };
 
 /*
+ * The video codec (Venus) with PICO's own firmware from the headset's modem partition, which the
+ * userspace installs in /usr/lib/firmware; its carve-out is the stock tree's (video_mem).
+ */
+&venus {
+	firmware-name = "venus.mdt";
+	status = "okay";
+};
+
+/*
  * The battery: PM8150B's fuel gauge (its battery-SOC block) and charger with its USB input. They run
  * as PICO's boot loader set them up; the driver reports the level and the charger's state.
  */

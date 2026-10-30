@@ -47,6 +47,8 @@ fi
 cat /dev/null "$here"/patches/*.patch > "$work/patches.wanted"
 if ! cmp -s "$work/patches.wanted" "$work/patches.applied" 2>/dev/null; then
 	git -C "$src" reset -q --hard "$COMMIT"
+	# Files a patch added are untracked: without this its next application finds them there.
+	git -C "$src" clean -q -fd
 	for patch in "$here"/patches/*.patch; do
 		[ -e "$patch" ] && git -C "$src" apply "$patch"
 	done

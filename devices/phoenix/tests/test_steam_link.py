@@ -31,19 +31,33 @@ class SteamLinkTests(unittest.TestCase):
         self.assertIn("DefaultDependencies=no\n", unit)
         self.assertIn("Before=sysinit.target\n", unit)
         setup = read(UNITS / "steam-video-codec-setup.service.d/pico4-venus.conf")
-        self.assertIn("Requires=pico4-venus.service\nAfter=pico4-venus.service\n", setup)
-        self.assertIn("pico4-venus.service steam-video-codec-setup.service", self.build)
+        self.assertIn("Requires=pico4-venus.service\n", setup)
+        self.assertIn("After=pico4-venus.service pico4-venus-probe.service\n", setup)
+        self.assertIn("pico4-venus.service pico4-venus-probe.service steam-video-codec-setup.service", self.build)
         mask = re.search(r"in_t systemctl mask sddm\.service.*?\n(?!\s)", self.build, re.S).group(0)
         self.assertNotIn("steam-video-codec-setup", mask)
+
+    def test_mainline_probes_venus_once_its_firmware_is_there(self):
+        unit = read(UNITS / "pico4-venus-probe.service")
+        self.assertIn("ConditionPathExists=/sys/bus/platform/drivers/qcom-venus\n", unit)
+        self.assertIn("ConditionPathExists=/usr/lib/firmware/venus.mdt\n", unit)
+        script = read(ROOTFS / "usr/libexec/pico4-poc/venus-probe")
+        self.assertIn('echo "$DEV" > /sys/bus/platform/drivers/qcom-venus/bind', script)
+        self.assertIn('firmware-name = "venus.mdt";', read(ROOT / "kernel/sm8250-pico4-phoenix.dts"))
+        config = read(ROOT / "kernel/pico4.config")
+        self.assertIn("CONFIG_VIDEO_QCOM_VENUS=y", config)
+        # Venus leaves SM8250 to iris whenever iris is built.
+        self.assertIn("# CONFIG_VIDEO_QCOM_IRIS is not set", config)
 
     def test_vrdevice_path_never_opens_the_cameras(self):
         # The Frame's lookup (v4l2-ctl --list-devices) opens every node and broke head tracking.
         script = read(ROOTFS / "usr/local/bin/vrdevice_path")
         commands = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
         self.assertNotIn("--list-devices", commands)
-        self.assertIn('[[ "$(readlink -f "$node/device")" == *qcom,vidc ]] || continue', script)
-        self.assertIn("video_decode) card=msm_vidc_vdec ;;", script)
-        self.assertIn("video_encode) card=msm_vidc_venc ;;", script)
+        # Only the codec's own device: the stock kernel's msm_vidc or a mainline kernel's Venus.
+        self.assertIn("*qcom,vidc | *.video-codec) ;;", script)
+        self.assertIn('video_decode) cards=("msm_vidc_vdec" "Qualcomm Venus video decoder") ;;', script)
+        self.assertIn('video_encode) cards=("msm_vidc_venc" "Qualcomm Venus video encoder") ;;', script)
 
     def test_the_compatibility_layer_reaches_vrlink_only(self):
         self.assertIn('build_package pico4-vrlink "$project"/src/vrlink/*', self.build)

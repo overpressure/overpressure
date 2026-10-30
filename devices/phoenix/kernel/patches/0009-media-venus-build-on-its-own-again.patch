@@ -1,0 +1,1687 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] media: venus: build on its own again
+
+Valve's squashed iris series moves Venus under vcodec/ and switches it to the queue and firmware
+code it shares with iris, but leaves hfi_venus.c and core.c on the old names: Venus no longer
+compiles, and only iris is built for the Frame. This gives Venus back its own files as they were
+before the series (its firmware loader and queues), in their new place; iris keeps the shared
+code. SM8250's codec is Venus (the series' iris knows only SM8550).
+---
+diff --git a/drivers/media/platform/qcom/vcodec/venus/Makefile b/drivers/media/platform/qcom/vcodec/venus/Makefile
+index 6abd54a97f4b..91ee6be10292 100644
+--- a/drivers/media/platform/qcom/vcodec/venus/Makefile
++++ b/drivers/media/platform/qcom/vcodec/venus/Makefile
+@@ -1,15 +1,12 @@
+ # SPDX-License-Identifier: GPL-2.0
+ # Makefile for Qualcomm Venus driver
+ 
+-venus-core-objs += ../firmware.o ../hfi_queue.o ../buffers.o
+-
+-venus-core-objs += core.o helpers.o firmware_no_tz.o \
++venus-core-objs += core.o helpers.o firmware.o \
+ 		   hfi_venus.o hfi_msgs.o hfi_cmds.o hfi.o \
+ 		   hfi_parser.o pm_helpers.o dbgfs.o \
+ 		   hfi_platform.o hfi_platform_v4.o \
+ 		   hfi_platform_v6.o hfi_plat_bufs_v6.o \
+ 
+-venus-dec-objs += ../buffers.o
+ venus-dec-objs += vdec.o vdec_ctrls.o
+ venus-enc-objs += venc.o venc_ctrls.o
+ 
+diff --git a/drivers/media/platform/qcom/vcodec/venus/core.c b/drivers/media/platform/qcom/vcodec/venus/core.c
+index 9f80c58fdc75..243e342b0ae7 100644
+--- a/drivers/media/platform/qcom/vcodec/venus/core.c
++++ b/drivers/media/platform/qcom/vcodec/venus/core.c
+@@ -25,8 +25,7 @@
+ #include <media/v4l2-ioctl.h>
+ 
+ #include "core.h"
+-#include "../firmware.h"
+-#include "firmware_no_tz.h"
++#include "firmware.h"
+ #include "pm_helpers.h"
+ #include "hfi_venus_io.h"
+ 
+@@ -91,8 +90,6 @@ static void venus_sys_error_handler(struct work_struct *work)
+ 	struct venus_core *core =
+ 			container_of(work, struct venus_core, work.work);
+ 	int ret, i, max_attempts = RPM_WAIT_FOR_IDLE_MAX_ATTEMPTS;
+-	const struct venus_resources *res = core->res;
+-	const char *fwpath = NULL;
+ 	const char *err_msg = "";
+ 	bool failed = false;
+ 
+@@ -114,10 +111,7 @@ static void venus_sys_error_handler(struct work_struct *work)
+ 
+ 	mutex_lock(&core->lock);
+ 
+-	if (core->use_tz)
+-		unload_fw(VENUS_PAS_ID);
+-	else
+-		unload_fw_no_tz(core);
++	venus_shutdown(core);
+ 
+ 	if (test_bit(0, &core->dump_core)) {
+ 		venus_coredump(core);
+@@ -141,39 +135,12 @@ static void venus_sys_error_handler(struct work_struct *work)
+ 		failed = true;
+ 	}
+ 
+-	ret = of_property_read_string_index(core->dev->of_node, "firmware-name", 0,
+-					    &fwpath);
+-	if (ret)
+-		fwpath = core->res->fwname;
+-
+-	ret = load_fw(core->dev, fwpath, &core->fw.mem_phys, &core->fw.mem_size,
+-		      VENUS_PAS_ID, core->use_tz);
+-	if (ret && !failed) {
+-		err_msg = "load FW";
+-		failed = true;
+-	}
+-
+-	if (core->use_tz)
+-		ret = auth_reset_fw(VENUS_PAS_ID);
+-	else
+-		ret = auth_reset_fw_no_tz(core, core->fw.mem_phys, core->fw.mem_size);
++	ret = venus_boot(core);
+ 	if (ret && !failed) {
+-		err_msg = "Auth and Reset";
++		err_msg = "boot Venus";
+ 		failed = true;
+ 	}
+ 
+-	if (core->use_tz && res->cp_size) {
+-		ret = protect_secure_region(res->cp_start,
+-					    res->cp_size,
+-					    res->cp_nonpixel_start,
+-					    res->cp_nonpixel_size,
+-					    VENUS_PAS_ID);
+-		if (ret && !failed) {
+-			err_msg = "Protect CP Mem";
+-			failed = true;
+-		}
+-	}
+-
+ 	ret = hfi_core_resume(core, true);
+ 	if (ret && !failed) {
+ 		err_msg = "resume HFI";
+@@ -412,9 +379,7 @@ static void venus_remove_dynamic_nodes(struct venus_core *core) {}
+ 
+ static int venus_probe(struct platform_device *pdev)
+ {
+-	const struct venus_resources *res;
+ 	struct device *dev = &pdev->dev;
+-	const char *fwpath = NULL;
+ 	struct venus_core *core;
+ 	int ret;
+ 
+@@ -495,19 +460,7 @@ static int venus_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_runtime_disable;
+ 
+-	if (!core->use_tz) {
+-		ret = init_fw_no_tz(core);
+-		if (ret)
+-			goto err_of_depopulate;
+-	}
+-
+-	ret = of_property_read_string_index(dev->of_node, "firmware-name", 0,
+-					    &fwpath);
+-	if (ret)
+-		fwpath = core->res->fwname;
+-
+-	ret = load_fw(core->dev, fwpath, &core->fw.mem_phys, &core->fw.mem_size,
+-		      VENUS_PAS_ID, core->use_tz);
++	ret = venus_boot(core);
+ 	if (ret)
+ 		goto err_firmware_deinit;
+ 
+@@ -562,10 +515,7 @@ static int venus_probe(struct platform_device *pdev)
+ err_core_deinit:
+ 	hfi_core_deinit(core, false);
+ err_venus_shutdown:
+-	if (core->use_tz)
+-		unload_fw(VENUS_PAS_ID);
+-	else
+-		unload_fw_no_tz(core);
++	venus_shutdown(core);
+ err_firmware_deinit:
+ 	venus_firmware_deinit(core);
+ err_runtime_disable:
+@@ -595,15 +545,10 @@ static void venus_remove(struct platform_device *pdev)
+ 	ret = hfi_core_deinit(core, true);
+ 	WARN_ON(ret);
+ 
+-	if (core->use_tz)
+-		unload_fw(VENUS_PAS_ID);
+-	else
+-		unload_fw_no_tz(core);
+-
++	venus_shutdown(core);
+ 	of_platform_depopulate(dev);
+ 
+-	if (!core->use_tz)
+-		deinit_fw_no_tz(core);
++	venus_firmware_deinit(core);
+ 
+ 	venus_remove_dynamic_nodes(core);
+ 
+@@ -627,12 +572,8 @@ static void venus_core_shutdown(struct platform_device *pdev)
+ 	struct venus_core *core = platform_get_drvdata(pdev);
+ 
+ 	pm_runtime_get_sync(core->dev);
+-	if (core->use_tz) {
+-		unload_fw(VENUS_PAS_ID);
+-	} else {
+-		unload_fw_no_tz(core);
+-		deinit_fw_no_tz(core);
+-	}
++	venus_shutdown(core);
++	venus_firmware_deinit(core);
+ 	pm_runtime_put_sync(core->dev);
+ }
+ 
+diff --git a/drivers/media/platform/qcom/vcodec/venus/firmware.c b/drivers/media/platform/qcom/vcodec/venus/firmware.c
+new file mode 100644
+index 000000000000..1de7436713ed
+--- /dev/null
++++ b/drivers/media/platform/qcom/vcodec/venus/firmware.c
+@@ -0,0 +1,384 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (C) 2017 Linaro Ltd.
++ */
++
++#include <linux/device.h>
++#include <linux/firmware.h>
++#include <linux/kernel.h>
++#include <linux/iommu.h>
++#include <linux/io.h>
++#include <linux/of.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++#include <linux/of_device.h>
++#include <linux/firmware/qcom/qcom_scm.h>
++#include <linux/sizes.h>
++#include <linux/soc/qcom/mdt_loader.h>
++
++#include "core.h"
++#include "firmware.h"
++#include "hfi_venus_io.h"
++
++#define VENUS_PAS_ID			9
++#define VENUS_FW_MEM_SIZE		(6 * SZ_1M)
++#define VENUS_FW_START_ADDR		0x0
++
++static void venus_reset_cpu(struct venus_core *core)
++{
++	u32 fw_size = core->fw.mapped_mem_size;
++	void __iomem *wrapper_base;
++
++	if (IS_IRIS2(core) || IS_IRIS2_1(core))
++		wrapper_base = core->wrapper_tz_base;
++	else
++		wrapper_base = core->wrapper_base;
++
++	writel(0, wrapper_base + WRAPPER_FW_START_ADDR);
++	writel(fw_size, wrapper_base + WRAPPER_FW_END_ADDR);
++	writel(0, wrapper_base + WRAPPER_CPA_START_ADDR);
++	writel(fw_size, wrapper_base + WRAPPER_CPA_END_ADDR);
++	writel(fw_size, wrapper_base + WRAPPER_NONPIX_START_ADDR);
++	writel(fw_size, wrapper_base + WRAPPER_NONPIX_END_ADDR);
++
++	if (IS_IRIS2(core) || IS_IRIS2_1(core)) {
++		/* Bring XTSS out of reset */
++		writel(0, wrapper_base + WRAPPER_TZ_XTSS_SW_RESET);
++	} else {
++		writel(0x0, wrapper_base + WRAPPER_CPU_CGC_DIS);
++		writel(0x0, wrapper_base + WRAPPER_CPU_CLOCK_CONFIG);
++
++		/* Bring ARM9 out of reset */
++		writel(0, wrapper_base + WRAPPER_A9SS_SW_RESET);
++	}
++}
++
++int venus_set_hw_state(struct venus_core *core, bool resume)
++{
++	int ret;
++
++	if (core->use_tz) {
++		ret = qcom_scm_set_remote_state(resume, 0);
++		if (resume && ret == -EINVAL)
++			ret = 0;
++		return ret;
++	}
++
++	if (resume) {
++		venus_reset_cpu(core);
++	} else {
++		if (IS_IRIS2(core) || IS_IRIS2_1(core))
++			writel(WRAPPER_XTSS_SW_RESET_BIT,
++			       core->wrapper_tz_base + WRAPPER_TZ_XTSS_SW_RESET);
++		else
++			writel(WRAPPER_A9SS_SW_RESET_BIT,
++			       core->wrapper_base + WRAPPER_A9SS_SW_RESET);
++	}
++
++	return 0;
++}
++
++static int venus_load_fw(struct venus_core *core, const char *fwname,
++			 phys_addr_t *mem_phys, size_t *mem_size)
++{
++	const struct firmware *mdt;
++	struct resource res;
++	struct device *dev;
++	ssize_t fw_size;
++	void *mem_va;
++	int ret;
++
++	*mem_phys = 0;
++	*mem_size = 0;
++
++	dev = core->dev;
++	ret = of_reserved_mem_region_to_resource(dev->of_node, 0, &res);
++	if (ret) {
++		dev_err(dev, "failed to lookup reserved memory-region\n");
++		return -EINVAL;
++	}
++
++	ret = request_firmware(&mdt, fwname, dev);
++	if (ret < 0)
++		return ret;
++
++	fw_size = qcom_mdt_get_size(mdt);
++	if (fw_size < 0) {
++		ret = fw_size;
++		goto err_release_fw;
++	}
++
++	*mem_phys = res.start;
++	*mem_size = resource_size(&res);
++
++	if (*mem_size < fw_size || fw_size > VENUS_FW_MEM_SIZE) {
++		ret = -EINVAL;
++		goto err_release_fw;
++	}
++
++	mem_va = memremap(*mem_phys, *mem_size, MEMREMAP_WC);
++	if (!mem_va) {
++		dev_err(dev, "unable to map memory region %pa size %#zx\n", mem_phys, *mem_size);
++		ret = -ENOMEM;
++		goto err_release_fw;
++	}
++
++	if (core->use_tz)
++		ret = qcom_mdt_load(dev, mdt, fwname, VENUS_PAS_ID,
++				    mem_va, *mem_phys, *mem_size, NULL);
++	else
++		ret = qcom_mdt_load_no_init(dev, mdt, fwname, mem_va,
++					    *mem_phys, *mem_size, NULL);
++
++	memunmap(mem_va);
++err_release_fw:
++	release_firmware(mdt);
++	return ret;
++}
++
++static int venus_boot_no_tz(struct venus_core *core, phys_addr_t mem_phys,
++			    size_t mem_size)
++{
++	struct iommu_domain *iommu;
++	struct device *dev;
++	int ret;
++
++	dev = core->fw.dev;
++	if (!dev)
++		return -EPROBE_DEFER;
++
++	iommu = core->fw.iommu_domain;
++	core->fw.mapped_mem_size = mem_size;
++
++	ret = iommu_map(iommu, VENUS_FW_START_ADDR, mem_phys, mem_size,
++			IOMMU_READ | IOMMU_WRITE | IOMMU_PRIV, GFP_KERNEL);
++	if (ret) {
++		dev_err(dev, "could not map video firmware region\n");
++		return ret;
++	}
++
++	venus_reset_cpu(core);
++
++	return 0;
++}
++
++static int venus_shutdown_no_tz(struct venus_core *core)
++{
++	const size_t mapped = core->fw.mapped_mem_size;
++	struct iommu_domain *iommu;
++	size_t unmapped;
++	u32 reg;
++	struct device *dev = core->fw.dev;
++	void __iomem *wrapper_base = core->wrapper_base;
++	void __iomem *wrapper_tz_base = core->wrapper_tz_base;
++
++	if (IS_IRIS2(core) || IS_IRIS2_1(core)) {
++		/* Assert the reset to XTSS */
++		reg = readl(wrapper_tz_base + WRAPPER_TZ_XTSS_SW_RESET);
++		reg |= WRAPPER_XTSS_SW_RESET_BIT;
++		writel(reg, wrapper_tz_base + WRAPPER_TZ_XTSS_SW_RESET);
++	} else {
++		/* Assert the reset to ARM9 */
++		reg = readl(wrapper_base + WRAPPER_A9SS_SW_RESET);
++		reg |= WRAPPER_A9SS_SW_RESET_BIT;
++		writel(reg, wrapper_base + WRAPPER_A9SS_SW_RESET);
++	}
++
++	iommu = core->fw.iommu_domain;
++
++	if (core->fw.mapped_mem_size && iommu) {
++		unmapped = iommu_unmap(iommu, VENUS_FW_START_ADDR, mapped);
++
++		if (unmapped != mapped)
++			dev_err(dev, "failed to unmap firmware\n");
++		else
++			core->fw.mapped_mem_size = 0;
++	}
++
++	return 0;
++}
++
++int venus_firmware_cfg(struct venus_core *core)
++{
++	void __iomem *cpu_cs_base = core->cpu_cs_base;
++
++	if (IS_AR50_LITE(core))
++		writel(CPU_CS_VCICMD_ARP_OFF, cpu_cs_base + CPU_CS_VCICMD);
++
++	return 0;
++}
++
++int venus_boot(struct venus_core *core)
++{
++	struct device *dev = core->dev;
++	const struct venus_resources *res = core->res;
++	const char *fwpath = NULL;
++	phys_addr_t mem_phys;
++	size_t mem_size;
++	int ret;
++
++	if (!IS_ENABLED(CONFIG_QCOM_MDT_LOADER) ||
++	    (core->use_tz && !qcom_scm_is_available()))
++		return -EPROBE_DEFER;
++
++	ret = of_property_read_string_index(dev->of_node, "firmware-name", 0,
++					    &fwpath);
++	if (ret)
++		fwpath = core->res->fwname;
++
++	ret = venus_load_fw(core, fwpath, &mem_phys, &mem_size);
++	if (ret) {
++		dev_err(dev, "fail to load video firmware\n");
++		return -EINVAL;
++	}
++
++	core->fw.mem_size = mem_size;
++	core->fw.mem_phys = mem_phys;
++
++	if (core->use_tz)
++		ret = qcom_scm_pas_auth_and_reset(VENUS_PAS_ID);
++	else
++		ret = venus_boot_no_tz(core, mem_phys, mem_size);
++
++	if (ret)
++		return ret;
++
++	if (core->use_tz && res->cp_size) {
++		/*
++		 * Clues for porting using downstream data:
++		 * cp_start = 0
++		 * cp_size = venus_ns/virtual-addr-pool[0] - yes, address and not size!
++		 *   This works, as the non-secure context bank is placed
++		 *   contiguously right after the Content Protection region.
++		 *
++		 * cp_nonpixel_start = venus_sec_non_pixel/virtual-addr-pool[0]
++		 * cp_nonpixel_size = venus_sec_non_pixel/virtual-addr-pool[1]
++		 */
++		ret = qcom_scm_mem_protect_video_var(res->cp_start,
++						     res->cp_size,
++						     res->cp_nonpixel_start,
++						     res->cp_nonpixel_size);
++		if (ret) {
++			qcom_scm_pas_shutdown(VENUS_PAS_ID);
++			dev_err(dev, "set virtual address ranges fail (%d)\n",
++				ret);
++			return ret;
++		}
++	}
++
++	return 0;
++}
++
++int venus_shutdown(struct venus_core *core)
++{
++	int ret;
++
++	if (core->use_tz)
++		ret = qcom_scm_pas_shutdown(VENUS_PAS_ID);
++	else
++		ret = venus_shutdown_no_tz(core);
++
++	return ret;
++}
++
++int venus_firmware_check(struct venus_core *core)
++{
++	const struct firmware_version *req = core->res->min_fw;
++	const struct firmware_version *run = &core->venus_ver;
++
++	if (!req)
++		return 0;
++
++	if (!is_fw_rev_or_newer(core, req->major, req->minor, req->rev))
++		goto error;
++
++	return 0;
++error:
++	dev_err(core->dev, "Firmware v%d.%d.%d < v%d.%d.%d\n",
++		run->major, run->minor, run->rev,
++		req->major, req->minor, req->rev);
++
++	return -EINVAL;
++}
++
++int venus_firmware_init(struct venus_core *core)
++{
++	struct platform_device_info info;
++	struct iommu_domain *iommu_dom;
++	struct platform_device *pdev;
++	struct device_node *np;
++	int ret;
++
++	np = of_get_child_by_name(core->dev->of_node, "video-firmware");
++	if (!np) {
++		core->use_tz = true;
++		return 0;
++	}
++
++	memset(&info, 0, sizeof(info));
++	info.fwnode = &np->fwnode;
++	info.parent = core->dev;
++	info.name = np->name;
++	info.dma_mask = DMA_BIT_MASK(32);
++
++	pdev = platform_device_register_full(&info);
++	if (IS_ERR(pdev)) {
++		of_node_put(np);
++		return PTR_ERR(pdev);
++	}
++
++	pdev->dev.of_node = np;
++
++	ret = of_dma_configure(&pdev->dev, np, true);
++	if (ret) {
++		dev_err(core->dev, "dma configure fail\n");
++		goto err_unregister;
++	}
++
++	core->fw.dev = &pdev->dev;
++
++	iommu_dom = iommu_paging_domain_alloc(core->fw.dev);
++	if (IS_ERR(iommu_dom)) {
++		dev_err(core->fw.dev, "Failed to allocate iommu domain\n");
++		ret = PTR_ERR(iommu_dom);
++		goto err_unregister;
++	}
++
++	ret = iommu_attach_device(iommu_dom, core->fw.dev);
++	if (ret) {
++		dev_err(core->fw.dev, "could not attach device\n");
++		goto err_iommu_free;
++	}
++
++	core->fw.iommu_domain = iommu_dom;
++
++	of_node_put(np);
++
++	return 0;
++
++err_iommu_free:
++	iommu_domain_free(iommu_dom);
++err_unregister:
++	platform_device_unregister(pdev);
++	of_node_put(np);
++	return ret;
++}
++
++void venus_firmware_deinit(struct venus_core *core)
++{
++	struct iommu_domain *iommu;
++
++	if (!core->fw.dev)
++		return;
++
++	iommu = core->fw.iommu_domain;
++
++	iommu_detach_device(iommu, core->fw.dev);
++
++	if (core->fw.iommu_domain) {
++		iommu_domain_free(iommu);
++		core->fw.iommu_domain = NULL;
++	}
++
++	platform_device_unregister(to_platform_device(core->fw.dev));
++}
+diff --git a/drivers/media/platform/qcom/vcodec/venus/firmware.h b/drivers/media/platform/qcom/vcodec/venus/firmware.h
+new file mode 100644
+index 000000000000..87e1d922b369
+--- /dev/null
++++ b/drivers/media/platform/qcom/vcodec/venus/firmware.h
+@@ -0,0 +1,28 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Copyright (C) 2017 Linaro Ltd.
++ */
++#ifndef __VENUS_FIRMWARE_H__
++#define __VENUS_FIRMWARE_H__
++
++struct device;
++
++int venus_firmware_init(struct venus_core *core);
++void venus_firmware_deinit(struct venus_core *core);
++int venus_firmware_check(struct venus_core *core);
++int venus_firmware_cfg(struct venus_core *core);
++int venus_boot(struct venus_core *core);
++int venus_shutdown(struct venus_core *core);
++int venus_set_hw_state(struct venus_core *core, bool suspend);
++
++static inline int venus_set_hw_state_suspend(struct venus_core *core)
++{
++	return venus_set_hw_state(core, false);
++}
++
++static inline int venus_set_hw_state_resume(struct venus_core *core)
++{
++	return venus_set_hw_state(core, true);
++}
++
++#endif
+diff --git a/drivers/media/platform/qcom/vcodec/venus/firmware_no_tz.c b/drivers/media/platform/qcom/vcodec/venus/firmware_no_tz.c
+deleted file mode 100644
+index bfd252a6c941..000000000000
+--- a/drivers/media/platform/qcom/vcodec/venus/firmware_no_tz.c
++++ /dev/null
+@@ -1,194 +0,0 @@
+-// SPDX-License-Identifier: GPL-2.0-only
+-/*
+- * Copyright (C) 2017 Linaro Ltd.
+- */
+-
+-#include <linux/iommu.h>
+-#include <linux/of_device.h>
+-#include "core.h"
+-#include "firmware_no_tz.h"
+-#include "hfi_venus_io.h"
+-
+-#define VENUS_FW_MEM_SIZE		(6 * SZ_1M)
+-#define VENUS_FW_START_ADDR		0x0
+-
+-int init_fw_no_tz(struct venus_core *core)
+-{
+-	struct platform_device_info info;
+-	struct iommu_domain *iommu_dom;
+-	struct platform_device *pdev;
+-	struct device_node *np;
+-	int ret;
+-
+-	np = of_get_child_by_name(core->dev->of_node, "video-firmware");
+-
+-	memset(&info, 0, sizeof(info));
+-	info.fwnode = &np->fwnode;
+-	info.parent = core->dev;
+-	info.name = np->name;
+-	info.dma_mask = DMA_BIT_MASK(32);
+-
+-	pdev = platform_device_register_full(&info);
+-	if (IS_ERR(pdev)) {
+-		of_node_put(np);
+-		return PTR_ERR(pdev);
+-	}
+-
+-	pdev->dev.of_node = np;
+-
+-	ret = of_dma_configure(&pdev->dev, np, true);
+-	if (ret) {
+-		dev_err(core->dev, "dma configure fail\n");
+-		goto err_unregister;
+-	}
+-
+-	core->fw.dev = &pdev->dev;
+-
+-	iommu_dom = iommu_paging_domain_alloc(core->fw.dev);
+-	if (!iommu_dom) {
+-		dev_err(core->fw.dev, "Failed to allocate iommu domain\n");
+-		ret = -ENOMEM;
+-		goto err_unregister;
+-	}
+-
+-	ret = iommu_attach_device(iommu_dom, core->fw.dev);
+-	if (ret) {
+-		dev_err(core->fw.dev, "could not attach device\n");
+-		goto err_iommu_free;
+-	}
+-
+-	core->fw.iommu_domain = iommu_dom;
+-
+-	of_node_put(np);
+-
+-	return 0;
+-
+-err_iommu_free:
+-	iommu_domain_free(iommu_dom);
+-err_unregister:
+-	platform_device_unregister(pdev);
+-	of_node_put(np);
+-	return ret;
+-}
+-
+-void deinit_fw_no_tz(struct venus_core *core)
+-{
+-	struct iommu_domain *iommu;
+-
+-	if (!core->fw.dev)
+-		return;
+-
+-	iommu = core->fw.iommu_domain;
+-
+-	iommu_detach_device(iommu, core->fw.dev);
+-
+-	if (iommu) {
+-		iommu_domain_free(iommu);
+-		iommu = NULL;
+-	}
+-
+-	platform_device_unregister(to_platform_device(core->fw.dev));
+-}
+-
+-static void reset_cpu_no_tz(struct venus_core *core)
+-{
+-	u32 fw_size = core->fw.mapped_mem_size;
+-	void __iomem *wrapper_base;
+-
+-	if (IS_IRIS2_1(core))
+-		wrapper_base = core->wrapper_tz_base;
+-	else
+-		wrapper_base = core->wrapper_base;
+-
+-	writel(0, wrapper_base + WRAPPER_FW_START_ADDR);
+-	writel(fw_size, wrapper_base + WRAPPER_FW_END_ADDR);
+-	writel(0, wrapper_base + WRAPPER_CPA_START_ADDR);
+-	writel(fw_size, wrapper_base + WRAPPER_CPA_END_ADDR);
+-	writel(fw_size, wrapper_base + WRAPPER_NONPIX_START_ADDR);
+-	writel(fw_size, wrapper_base + WRAPPER_NONPIX_END_ADDR);
+-
+-	if (IS_IRIS2_1(core)) {
+-		/* Bring XTSS out of reset */
+-		writel(0, wrapper_base + WRAPPER_TZ_XTSS_SW_RESET);
+-	} else {
+-		writel(0x0, wrapper_base + WRAPPER_CPU_CGC_DIS);
+-		writel(0x0, wrapper_base + WRAPPER_CPU_CLOCK_CONFIG);
+-
+-		/* Bring ARM9 out of reset */
+-		writel(0, wrapper_base + WRAPPER_A9SS_SW_RESET);
+-	}
+-}
+-
+-void set_hw_state_no_tz(struct venus_core *core, bool resume)
+-{
+-	if (resume) {
+-		reset_cpu_no_tz(core);
+-	} else {
+-		if (IS_IRIS2_1(core))
+-			writel(WRAPPER_XTSS_SW_RESET_BIT,
+-			       core->wrapper_tz_base + WRAPPER_TZ_XTSS_SW_RESET);
+-		else
+-			writel(WRAPPER_A9SS_SW_RESET_BIT,
+-			       core->wrapper_base + WRAPPER_A9SS_SW_RESET);
+-	}
+-}
+-
+-int auth_reset_fw_no_tz(struct venus_core *core, phys_addr_t mem_phys,
+-			size_t mem_size)
+-{
+-	struct iommu_domain *iommu;
+-	struct device *dev;
+-	int ret;
+-
+-	dev = core->fw.dev;
+-	if (!dev)
+-		return -EPROBE_DEFER;
+-
+-	iommu = core->fw.iommu_domain;
+-	core->fw.mapped_mem_size = mem_size;
+-
+-	ret = iommu_map(iommu, VENUS_FW_START_ADDR, mem_phys, mem_size,
+-			IOMMU_READ | IOMMU_WRITE | IOMMU_PRIV, GFP_KERNEL);
+-	if (ret) {
+-		dev_err(dev, "could not map video firmware region\n");
+-		return ret;
+-	}
+-
+-	reset_cpu_no_tz(core);
+-
+-	return 0;
+-}
+-
+-void unload_fw_no_tz(struct venus_core *core)
+-{
+-	const size_t mapped = core->fw.mapped_mem_size;
+-	struct iommu_domain *iommu;
+-	size_t unmapped;
+-	u32 reg;
+-	struct device *dev = core->fw.dev;
+-	void __iomem *wrapper_base = core->wrapper_base;
+-	void __iomem *wrapper_tz_base = core->wrapper_tz_base;
+-
+-	if (IS_IRIS2_1(core)) {
+-		/* Assert the reset to XTSS */
+-		reg = readl(wrapper_tz_base + WRAPPER_TZ_XTSS_SW_RESET);
+-		reg |= WRAPPER_XTSS_SW_RESET_BIT;
+-		writel(reg, wrapper_tz_base + WRAPPER_TZ_XTSS_SW_RESET);
+-	} else {
+-		/* Assert the reset to ARM9 */
+-		reg = readl(wrapper_base + WRAPPER_A9SS_SW_RESET);
+-		reg |= WRAPPER_A9SS_SW_RESET_BIT;
+-		writel(reg, wrapper_base + WRAPPER_A9SS_SW_RESET);
+-	}
+-
+-	iommu = core->fw.iommu_domain;
+-
+-	if (core->fw.mapped_mem_size && iommu) {
+-		unmapped = iommu_unmap(iommu, VENUS_FW_START_ADDR, mapped);
+-
+-		if (unmapped != mapped)
+-			dev_err(dev, "failed to unmap firmware\n");
+-		else
+-			core->fw.mapped_mem_size = 0;
+-	}
+-}
+diff --git a/drivers/media/platform/qcom/vcodec/venus/firmware_no_tz.h b/drivers/media/platform/qcom/vcodec/venus/firmware_no_tz.h
+deleted file mode 100644
+index 5f008ef17d54..000000000000
+--- a/drivers/media/platform/qcom/vcodec/venus/firmware_no_tz.h
++++ /dev/null
+@@ -1,19 +0,0 @@
+-/* SPDX-License-Identifier: GPL-2.0-only */
+-/*
+- * Copyright (C) 2017 Linaro Ltd.
+- */
+-#ifndef __FIRMWARE_NO_TZ_H__
+-#define __FIRMWARE_NO_TZ_H__
+-
+-struct device;
+-
+-#define VENUS_PAS_ID	9
+-
+-int init_fw_no_tz(struct venus_core *core);
+-void deinit_fw_no_tz(struct venus_core *core);
+-int auth_reset_fw_no_tz(struct venus_core *core, phys_addr_t mem_phys,
+-			size_t mem_size);
+-void unload_fw_no_tz(struct venus_core *core);
+-void set_hw_state_no_tz(struct venus_core *core, bool resume);
+-
+-#endif
+diff --git a/drivers/media/platform/qcom/vcodec/venus/helpers.c b/drivers/media/platform/qcom/vcodec/venus/helpers.c
+index 0423640c240f..59eee3dd9e06 100644
+--- a/drivers/media/platform/qcom/vcodec/venus/helpers.c
++++ b/drivers/media/platform/qcom/vcodec/venus/helpers.c
+@@ -12,7 +12,6 @@
+ #include <media/v4l2-mem2mem.h>
+ #include <asm/div64.h>
+ 
+-#include "../buffers.h"
+ #include "core.h"
+ #include "helpers.h"
+ #include "hfi_helper.h"
+@@ -617,27 +616,6 @@ static u32 to_hfi_raw_fmt(u32 v4l2_fmt)
+ 	return 0;
+ }
+ 
+-u32 to_v4l2_raw_fmt(u32 hfi_color_fmt)
+-{
+-	switch (hfi_color_fmt) {
+-	case HFI_COLOR_FORMAT_NV12:
+-		return V4L2_PIX_FMT_NV12;
+-	case HFI_COLOR_FORMAT_NV21:
+-		return V4L2_PIX_FMT_NV21;
+-	case HFI_COLOR_FORMAT_NV12_UBWC:
+-		return V4L2_PIX_FMT_QC08C;
+-	case HFI_COLOR_FORMAT_YUV420_TP10_UBWC:
+-		return V4L2_PIX_FMT_QC10C;
+-	case HFI_COLOR_FORMAT_P010:
+-		return V4L2_PIX_FMT_P010;
+-	default:
+-		break;
+-	}
+-
+-	return 0;
+-}
+-EXPORT_SYMBOL_GPL(to_v4l2_raw_fmt);
+-
+ static int platform_get_bufreq(struct venus_inst *inst, u32 buftype,
+ 			       struct hfi_buffer_requirements *req)
+ {
+@@ -661,20 +639,20 @@ static int platform_get_bufreq(struct venus_inst *inst, u32 buftype,
+ 		params.out_width = inst->out_width;
+ 		params.out_height = inst->out_height;
+ 		params.codec = inst->fmt_out->pixfmt;
+-		params.color_fmt = inst->fmt_cap->pixfmt;
++		params.hfi_color_fmt = to_hfi_raw_fmt(inst->fmt_cap->pixfmt);
+ 		params.dec.max_mbs_per_frame = mbs_per_frame_max(inst);
+ 		params.dec.buffer_size_limit = 0;
+ 		params.dec.is_secondary_output =
+ 			inst->opb_buftype == HFI_BUFFER_OUTPUT2;
+ 		if (params.dec.is_secondary_output)
+-			params.dpb_color_fmt = to_v4l2_raw_fmt(inst->dpb_fmt);
++			params.hfi_dpb_color_fmt = inst->dpb_fmt;
+ 		params.dec.is_interlaced =
+ 			inst->pic_struct != HFI_INTERLACE_FRAME_PROGRESSIVE;
+ 	} else {
+ 		params.width = inst->out_width;
+ 		params.height = inst->out_height;
+ 		params.codec = inst->fmt_cap->pixfmt;
+-		params.color_fmt = inst->fmt_out->pixfmt;
++		params.hfi_color_fmt = to_hfi_raw_fmt(inst->fmt_out->pixfmt);
+ 		params.enc.work_mode = VIDC_WORK_MODE_2;
+ 		params.enc.rc_type = HFI_RATE_CONTROL_OFF;
+ 		if (enc_ctr->bitrate_mode == V4L2_MPEG_VIDEO_BITRATE_MODE_CQ)
+@@ -1102,8 +1080,8 @@ EXPORT_SYMBOL_GPL(venus_helper_get_framesz_raw);
+ 
+ u32 venus_helper_get_framesz(u32 v4l2_fmt, u32 width, u32 height)
+ {
++	u32 hfi_fmt, sz;
+ 	bool compressed;
+-	u32 sz;
+ 
+ 	switch (v4l2_fmt) {
+ 	case V4L2_PIX_FMT_MPEG:
+@@ -1134,7 +1112,11 @@ u32 venus_helper_get_framesz(u32 v4l2_fmt, u32 width, u32 height)
+ 		return ALIGN(sz, SZ_4K);
+ 	}
+ 
+-	return video_raw_buffer_size(v4l2_fmt, width, height);
++	hfi_fmt = to_hfi_raw_fmt(v4l2_fmt);
++	if (!hfi_fmt)
++		return 0;
++
++	return venus_helper_get_framesz_raw(hfi_fmt, width, height);
+ }
+ EXPORT_SYMBOL_GPL(venus_helper_get_framesz);
+ 
+diff --git a/drivers/media/platform/qcom/vcodec/venus/helpers.h b/drivers/media/platform/qcom/vcodec/venus/helpers.h
+index 9b72d189ebaf..358e4f39c9c0 100644
+--- a/drivers/media/platform/qcom/vcodec/venus/helpers.h
++++ b/drivers/media/platform/qcom/vcodec/venus/helpers.h
+@@ -11,7 +11,6 @@
+ struct venus_inst;
+ struct venus_core;
+ 
+-u32 to_v4l2_raw_fmt(u32 hfi_color_fmt);
+ bool venus_helper_check_codec(struct venus_inst *inst, u32 v4l2_pixfmt);
+ struct vb2_v4l2_buffer *venus_helper_find_buf(struct venus_inst *inst,
+ 					      unsigned int type, u32 idx);
+@@ -30,6 +29,7 @@ void venus_helper_m2m_device_run(void *priv);
+ void venus_helper_m2m_job_abort(void *priv);
+ int venus_helper_get_bufreq(struct venus_inst *inst, u32 type,
+ 			    struct hfi_buffer_requirements *req);
++u32 venus_helper_get_framesz_raw(u32 hfi_fmt, u32 width, u32 height);
+ u32 venus_helper_get_framesz(u32 v4l2_fmt, u32 width, u32 height);
+ int venus_helper_set_input_resolution(struct venus_inst *inst,
+ 				      unsigned int width, unsigned int height);
+diff --git a/drivers/media/platform/qcom/vcodec/venus/hfi_plat_bufs.h b/drivers/media/platform/qcom/vcodec/venus/hfi_plat_bufs.h
+index 20f684e921c8..25e607452096 100644
+--- a/drivers/media/platform/qcom/vcodec/venus/hfi_plat_bufs.h
++++ b/drivers/media/platform/qcom/vcodec/venus/hfi_plat_bufs.h
+@@ -15,8 +15,8 @@ struct hfi_plat_buffers_params {
+ 	u32 out_width;
+ 	u32 out_height;
+ 	u32 codec;
+-	u32 color_fmt;
+-	u32 dpb_color_fmt;
++	u32 hfi_color_fmt;
++	u32 hfi_dpb_color_fmt;
+ 	enum hfi_version version;
+ 	u32 num_vpp_pipes;
+ 	union {
+diff --git a/drivers/media/platform/qcom/vcodec/venus/hfi_plat_bufs_v6.c b/drivers/media/platform/qcom/vcodec/venus/hfi_plat_bufs_v6.c
+index a367ec371856..6289166786ec 100644
+--- a/drivers/media/platform/qcom/vcodec/venus/hfi_plat_bufs_v6.c
++++ b/drivers/media/platform/qcom/vcodec/venus/hfi_plat_bufs_v6.c
+@@ -6,7 +6,6 @@
+ #include <linux/sizes.h>
+ #include <linux/videodev2.h>
+ 
+-#include "../buffers.h"
+ #include "hfi.h"
+ #include "hfi_plat_bufs.h"
+ #include "helpers.h"
+@@ -1234,11 +1233,13 @@ static int bufreq_dec(struct hfi_plat_buffers_params *params, u32 buftype,
+ 						       buffer_size_limit);
+ 	} else if (buftype == HFI_BUFFER_OUTPUT || buftype == HFI_BUFFER_OUTPUT2) {
+ 		hfi_bufreq_set_count_min(bufreq, version, out_min_count);
+-		bufreq->size = video_raw_buffer_size(params->color_fmt,
++		bufreq->size =
++			venus_helper_get_framesz_raw(params->hfi_color_fmt,
+ 						     out_width, out_height);
+ 		if (buftype == HFI_BUFFER_OUTPUT &&
+ 		    params->dec.is_secondary_output)
+-			bufreq->size = video_raw_buffer_size(params->dpb_color_fmt,
++			bufreq->size =
++				venus_helper_get_framesz_raw(params->hfi_dpb_color_fmt,
+ 							     out_width, out_height);
+ 	} else if (buftype == HFI_BUFFER_INTERNAL_SCRATCH(version)) {
+ 		bufreq->size = dec_ops->scratch(width, height, is_interlaced);
+@@ -1296,7 +1297,8 @@ static int bufreq_enc(struct hfi_plat_buffers_params *params, u32 buftype,
+ 
+ 	if (buftype == HFI_BUFFER_INPUT) {
+ 		hfi_bufreq_set_count_min(bufreq, version, MIN_INPUT_BUFFERS);
+-		bufreq->size = video_raw_buffer_size(params->color_fmt,
++		bufreq->size =
++			venus_helper_get_framesz_raw(params->hfi_color_fmt,
+ 						     width, height);
+ 	} else if (buftype == HFI_BUFFER_OUTPUT ||
+ 		   buftype == HFI_BUFFER_OUTPUT2) {
+diff --git a/drivers/media/platform/qcom/vcodec/venus/hfi_venus.c b/drivers/media/platform/qcom/vcodec/venus/hfi_venus.c
+index 051166f137e3..bd82066bb6e7 100644
+--- a/drivers/media/platform/qcom/vcodec/venus/hfi_venus.c
++++ b/drivers/media/platform/qcom/vcodec/venus/hfi_venus.c
+@@ -13,13 +13,11 @@
+ #include <linux/slab.h>
+ 
+ #include "core.h"
+-#include "../firmware.h"
+ #include "hfi_cmds.h"
+ #include "hfi_msgs.h"
+-#include "../hfi_queue.h"
+ #include "hfi_venus.h"
+ #include "hfi_venus_io.h"
+-#include "firmware_no_tz.h"
++#include "firmware.h"
+ 
+ #define HFI_MASK_QHDR_TX_TYPE		0xff000000
+ #define HFI_MASK_QHDR_RX_TYPE		0x00ff0000
+@@ -35,13 +33,79 @@
+ #define IFACEQ_CMD_IDX			0
+ #define IFACEQ_MSG_IDX			1
+ #define IFACEQ_DBG_IDX			2
++#define IFACEQ_MAX_BUF_COUNT		50
++#define IFACEQ_MAX_PARALLEL_CLNTS	16
++#define IFACEQ_DFLT_QHDR		0x01010000
+ 
+ #define POLL_INTERVAL_US		50
+ 
++#define IFACEQ_MAX_PKT_SIZE		1024
++#define IFACEQ_MED_PKT_SIZE		768
++#define IFACEQ_MIN_PKT_SIZE		8
+ #define IFACEQ_VAR_SMALL_PKT_SIZE	100
+ #define IFACEQ_VAR_LARGE_PKT_SIZE	512
+ #define IFACEQ_VAR_HUGE_PKT_SIZE	(1024 * 12)
+ 
++struct hfi_queue_table_header {
++	u32 version;
++	u32 size;
++	u32 qhdr0_offset;
++	u32 qhdr_size;
++	u32 num_q;
++	u32 num_active_q;
++};
++
++struct hfi_queue_header {
++	u32 status;
++	u32 start_addr;
++	u32 type;
++	u32 q_size;
++	u32 pkt_size;
++	u32 pkt_drop_cnt;
++	u32 rx_wm;
++	u32 tx_wm;
++	u32 rx_req;
++	u32 tx_req;
++	u32 rx_irq_status;
++	u32 tx_irq_status;
++	u32 read_idx;
++	u32 write_idx;
++};
++
++#define IFACEQ_TABLE_SIZE	\
++	(sizeof(struct hfi_queue_table_header) +	\
++	 sizeof(struct hfi_queue_header) * IFACEQ_NUM)
++
++#define IFACEQ_QUEUE_SIZE	(IFACEQ_MAX_PKT_SIZE *	\
++	IFACEQ_MAX_BUF_COUNT * IFACEQ_MAX_PARALLEL_CLNTS)
++
++#define IFACEQ_GET_QHDR_START_ADDR(ptr, i)	\
++	(void *)(((ptr) + sizeof(struct hfi_queue_table_header)) +	\
++		((i) * sizeof(struct hfi_queue_header)))
++
++#define QDSS_SIZE		SZ_4K
++#define SFR_SIZE		SZ_4K
++#define QUEUE_SIZE		\
++	(IFACEQ_TABLE_SIZE + (IFACEQ_QUEUE_SIZE * IFACEQ_NUM))
++
++#define ALIGNED_QDSS_SIZE	ALIGN(QDSS_SIZE, SZ_4K)
++#define ALIGNED_SFR_SIZE	ALIGN(SFR_SIZE, SZ_4K)
++#define ALIGNED_QUEUE_SIZE	ALIGN(QUEUE_SIZE, SZ_4K)
++#define SHARED_QSIZE		ALIGN(ALIGNED_SFR_SIZE + ALIGNED_QUEUE_SIZE + \
++				      ALIGNED_QDSS_SIZE, SZ_1M)
++
++struct mem_desc {
++	dma_addr_t da;	/* device address */
++	void *kva;	/* kernel virtual address */
++	u32 size;
++	unsigned long attrs;
++};
++
++struct iface_queue {
++	struct hfi_queue_header *qhdr;
++	struct mem_desc qmem;
++};
++
+ enum venus_state {
+ 	VENUS_STATE_DEINIT = 1,
+ 	VENUS_STATE_INIT,
+@@ -60,11 +124,12 @@ struct venus_hfi_device {
+ 	struct completion release_resource;
+ 	struct mem_desc ifaceq_table;
+ 	struct mem_desc sfr;
+-	struct iface_q_info queues[IFACEQ_NUM];
++	struct iface_queue queues[IFACEQ_NUM];
+ 	u8 pkt_buf[IFACEQ_VAR_HUGE_PKT_SIZE];
+ 	u8 dbg_buf[IFACEQ_VAR_HUGE_PKT_SIZE];
+ };
+ 
++static bool venus_pkt_debug;
+ int venus_fw_debug = HFI_DEBUG_MSG_ERROR | HFI_DEBUG_MSG_FATAL;
+ static bool venus_fw_low_power_mode = true;
+ static int venus_hw_rsp_timeout = 1000;
+@@ -324,11 +389,11 @@ static void venus_soft_int(struct venus_hfi_device *hdev)
+ }
+ 
+ static int venus_iface_cmdq_write_nolock(struct venus_hfi_device *hdev,
+-					 void *pkt, u32 pkt_size, bool sync)
++					 void *pkt, bool sync)
+ {
+ 	struct device *dev = hdev->core->dev;
+ 	struct hfi_pkt_hdr *cmd_packet;
+-	struct iface_q_info *queue;
++	struct iface_queue *queue;
+ 	u32 rx_req;
+ 	int ret;
+ 
+@@ -340,7 +405,7 @@ static int venus_iface_cmdq_write_nolock(struct venus_hfi_device *hdev,
+ 
+ 	queue = &hdev->queues[IFACEQ_CMD_IDX];
+ 
+-	ret = write_queue(queue, pkt, pkt_size, &rx_req);
++	ret = venus_write_queue(hdev, queue, pkt, &rx_req);
+ 	if (ret) {
+ 		dev_err(dev, "write to iface cmd queue failed (%d)\n", ret);
+ 		return ret;
+@@ -352,7 +417,7 @@ static int venus_iface_cmdq_write_nolock(struct venus_hfi_device *hdev,
+ 		 * commands
+ 		 */
+ 		queue = &hdev->queues[IFACEQ_MSG_IDX];
+-		queue->qhdr->qhdr_rx_req = 1;
++		queue->qhdr->rx_req = 1;
+ 		/* ensure rx_req is updated in memory */
+ 		wmb();
+ 	}
+@@ -363,12 +428,12 @@ static int venus_iface_cmdq_write_nolock(struct venus_hfi_device *hdev,
+ 	return 0;
+ }
+ 
+-static int venus_iface_cmdq_write(struct venus_hfi_device *hdev, void *pkt, u32 pkt_size, bool sync)
++static int venus_iface_cmdq_write(struct venus_hfi_device *hdev, void *pkt, bool sync)
+ {
+ 	int ret;
+ 
+ 	mutex_lock(&hdev->lock);
+-	ret = venus_iface_cmdq_write_nolock(hdev, pkt, pkt_size, sync);
++	ret = venus_iface_cmdq_write_nolock(hdev, pkt, sync);
+ 	mutex_unlock(&hdev->lock);
+ 
+ 	return ret;
+@@ -391,7 +456,7 @@ static int venus_hfi_core_set_resource(struct venus_core *core, u32 id,
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = venus_iface_cmdq_write(hdev, pkt, pkt->hdr.size, false);
++	ret = venus_iface_cmdq_write(hdev, pkt, false);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -477,12 +542,12 @@ static int venus_run(struct venus_hfi_device *hdev)
+ 	 */
+ 	venus_set_registers(hdev);
+ 
+-	writel(hdev->ifaceq_table.device_addr, cpu_cs_base + UC_REGION_ADDR);
++	writel(hdev->ifaceq_table.da, cpu_cs_base + UC_REGION_ADDR);
+ 	writel(SHARED_QSIZE, cpu_cs_base + UC_REGION_SIZE);
+-	writel(hdev->ifaceq_table.device_addr, cpu_cs_base + CPU_CS_SCIACMDARG2);
++	writel(hdev->ifaceq_table.da, cpu_cs_base + CPU_CS_SCIACMDARG2);
+ 	writel(0x01, cpu_cs_base + CPU_CS_SCIACMDARG1);
+-	if (hdev->sfr.device_addr)
+-		writel(hdev->sfr.device_addr, cpu_cs_base + SFR_ADDR);
++	if (hdev->sfr.da)
++		writel(hdev->sfr.da, cpu_cs_base + SFR_ADDR);
+ 
+ 	ret = venus_boot_core(hdev);
+ 	if (ret) {
+@@ -585,10 +650,7 @@ static int venus_power_off(struct venus_hfi_device *hdev)
+ 	if (!hdev->power_enabled)
+ 		return 0;
+ 
+-	if (hdev->core->use_tz)
+-		ret = set_hw_state(false);
+-	else
+-		set_hw_state_no_tz(hdev->core, false);
++	ret = venus_set_hw_state_suspend(hdev->core);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -608,13 +670,7 @@ static int venus_power_on(struct venus_hfi_device *hdev)
+ 	if (hdev->power_enabled)
+ 		return 0;
+ 
+-	if (hdev->core->use_tz) {
+-		ret = set_hw_state(true);
+-		if (ret == -EINVAL)
+-			ret = 0;
+-	} else {
+-		set_hw_state_no_tz(hdev->core, true);
+-	}
++	ret = venus_set_hw_state_resume(hdev->core);
+ 	if (ret)
+ 		goto err;
+ 
+@@ -627,10 +683,7 @@ static int venus_power_on(struct venus_hfi_device *hdev)
+ 	return 0;
+ 
+ err_suspend:
+-	if (hdev->core->use_tz)
+-		set_hw_state(false);
+-	else
+-		set_hw_state_no_tz(hdev->core, false);
++	venus_set_hw_state_suspend(hdev->core);
+ err:
+ 	hdev->power_enabled = false;
+ 	return ret;
+@@ -639,7 +692,7 @@ static int venus_power_on(struct venus_hfi_device *hdev)
+ static int venus_iface_msgq_read_nolock(struct venus_hfi_device *hdev,
+ 					void *pkt)
+ {
+-	struct iface_q_info *queue;
++	struct iface_queue *queue;
+ 	u32 tx_req;
+ 	int ret;
+ 
+@@ -648,7 +701,7 @@ static int venus_iface_msgq_read_nolock(struct venus_hfi_device *hdev,
+ 
+ 	queue = &hdev->queues[IFACEQ_MSG_IDX];
+ 
+-	ret = read_queue(queue, pkt, &tx_req);
++	ret = venus_read_queue(hdev, queue, pkt, &tx_req);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -672,7 +725,7 @@ static int venus_iface_msgq_read(struct venus_hfi_device *hdev, void *pkt)
+ static int venus_iface_dbgq_read_nolock(struct venus_hfi_device *hdev,
+ 					void *pkt)
+ {
+-	struct iface_q_info *queue;
++	struct iface_queue *queue;
+ 	u32 tx_req;
+ 	int ret;
+ 
+@@ -682,7 +735,7 @@ static int venus_iface_dbgq_read_nolock(struct venus_hfi_device *hdev,
+ 
+ 	queue = &hdev->queues[IFACEQ_DBG_IDX];
+ 
+-	ret = read_queue(queue, pkt, &tx_req);
++	ret = venus_read_queue(hdev, queue, pkt, &tx_req);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -708,18 +761,100 @@ static int venus_iface_dbgq_read(struct venus_hfi_device *hdev, void *pkt)
+ 
+ static void venus_set_qhdr_defaults(struct hfi_queue_header *qhdr)
+ {
+-	qhdr->qhdr_status = 1;
+-	qhdr->qhdr_type = IFACEQ_DFLT_QHDR;
+-	qhdr->qhdr_q_size = IFACEQ_QUEUE_SIZE / 4;
+-	qhdr->qhdr_pkt_size = 0;
+-	qhdr->qhdr_rx_wm = 1;
+-	qhdr->qhdr_tx_wm = 1;
+-	qhdr->qhdr_rx_req = 1;
+-	qhdr->qhdr_tx_req = 0;
+-	qhdr->qhdr_rx_irq_status = 0;
+-	qhdr->qhdr_tx_irq_status = 0;
+-	qhdr->qhdr_read_idx = 0;
+-	qhdr->qhdr_write_idx = 0;
++	qhdr->status = 1;
++	qhdr->type = IFACEQ_DFLT_QHDR;
++	qhdr->q_size = IFACEQ_QUEUE_SIZE / 4;
++	qhdr->pkt_size = 0;
++	qhdr->rx_wm = 1;
++	qhdr->tx_wm = 1;
++	qhdr->rx_req = 1;
++	qhdr->tx_req = 0;
++	qhdr->rx_irq_status = 0;
++	qhdr->tx_irq_status = 0;
++	qhdr->read_idx = 0;
++	qhdr->write_idx = 0;
++}
++
++static void venus_interface_queues_release(struct venus_hfi_device *hdev)
++{
++	mutex_lock(&hdev->lock);
++
++	venus_free(hdev, &hdev->ifaceq_table);
++	venus_free(hdev, &hdev->sfr);
++
++	memset(hdev->queues, 0, sizeof(hdev->queues));
++	memset(&hdev->ifaceq_table, 0, sizeof(hdev->ifaceq_table));
++	memset(&hdev->sfr, 0, sizeof(hdev->sfr));
++
++	mutex_unlock(&hdev->lock);
++}
++
++static int venus_interface_queues_init(struct venus_hfi_device *hdev)
++{
++	struct hfi_queue_table_header *tbl_hdr;
++	struct iface_queue *queue;
++	struct hfi_sfr *sfr;
++	struct mem_desc desc = {0};
++	unsigned int offset;
++	unsigned int i;
++	int ret;
++
++	ret = venus_alloc(hdev, &desc, ALIGNED_QUEUE_SIZE);
++	if (ret)
++		return ret;
++
++	hdev->ifaceq_table = desc;
++	offset = IFACEQ_TABLE_SIZE;
++
++	for (i = 0; i < IFACEQ_NUM; i++) {
++		queue = &hdev->queues[i];
++		queue->qmem.da = desc.da + offset;
++		queue->qmem.kva = desc.kva + offset;
++		queue->qmem.size = IFACEQ_QUEUE_SIZE;
++		offset += queue->qmem.size;
++		queue->qhdr =
++			IFACEQ_GET_QHDR_START_ADDR(hdev->ifaceq_table.kva, i);
++
++		venus_set_qhdr_defaults(queue->qhdr);
++
++		queue->qhdr->start_addr = queue->qmem.da;
++
++		if (i == IFACEQ_CMD_IDX)
++			queue->qhdr->type |= HFI_HOST_TO_CTRL_CMD_Q;
++		else if (i == IFACEQ_MSG_IDX)
++			queue->qhdr->type |= HFI_CTRL_TO_HOST_MSG_Q;
++		else if (i == IFACEQ_DBG_IDX)
++			queue->qhdr->type |= HFI_CTRL_TO_HOST_DBG_Q;
++	}
++
++	tbl_hdr = hdev->ifaceq_table.kva;
++	tbl_hdr->version = 0;
++	tbl_hdr->size = IFACEQ_TABLE_SIZE;
++	tbl_hdr->qhdr0_offset = sizeof(struct hfi_queue_table_header);
++	tbl_hdr->qhdr_size = sizeof(struct hfi_queue_header);
++	tbl_hdr->num_q = IFACEQ_NUM;
++	tbl_hdr->num_active_q = IFACEQ_NUM;
++
++	/*
++	 * Set receive request to zero on debug queue as there is no
++	 * need of interrupt from video hardware for debug messages
++	 */
++	queue = &hdev->queues[IFACEQ_DBG_IDX];
++	queue->qhdr->rx_req = 0;
++
++	ret = venus_alloc(hdev, &desc, ALIGNED_SFR_SIZE);
++	if (ret) {
++		hdev->sfr.da = 0;
++	} else {
++		hdev->sfr = desc;
++		sfr = hdev->sfr.kva;
++		sfr->buf_size = ALIGNED_SFR_SIZE;
++	}
++
++	/* ensure table and queue header structs are settled in memory */
++	wmb();
++
++	return 0;
+ }
+ 
+ static int venus_sys_set_debug(struct venus_hfi_device *hdev, u32 debug)
+@@ -731,7 +866,7 @@ static int venus_sys_set_debug(struct venus_hfi_device *hdev, u32 debug)
+ 
+ 	pkt_sys_debug_config(pkt, HFI_DEBUG_MODE_QUEUE, debug);
+ 
+-	return venus_iface_cmdq_write(hdev, pkt, pkt->hdr.size, false);
++	return venus_iface_cmdq_write(hdev, pkt, false);
+ }
+ 
+ static int venus_sys_set_coverage(struct venus_hfi_device *hdev, u32 mode)
+@@ -743,7 +878,7 @@ static int venus_sys_set_coverage(struct venus_hfi_device *hdev, u32 mode)
+ 
+ 	pkt_sys_coverage_config(pkt, mode);
+ 
+-	return venus_iface_cmdq_write(hdev, pkt, pkt->hdr.size, false);
++	return venus_iface_cmdq_write(hdev, pkt, false);
+ }
+ 
+ static int venus_sys_set_idle_message(struct venus_hfi_device *hdev,
+@@ -759,7 +894,7 @@ static int venus_sys_set_idle_message(struct venus_hfi_device *hdev,
+ 
+ 	pkt_sys_idle_indicator(pkt, enable);
+ 
+-	return venus_iface_cmdq_write(hdev, pkt, pkt->hdr.size, false);
++	return venus_iface_cmdq_write(hdev, pkt, false);
+ }
+ 
+ static int venus_sys_set_power_control(struct venus_hfi_device *hdev,
+@@ -772,7 +907,7 @@ static int venus_sys_set_power_control(struct venus_hfi_device *hdev,
+ 
+ 	pkt_sys_power_control(pkt, enable);
+ 
+-	return venus_iface_cmdq_write(hdev, pkt, pkt->hdr.size, false);
++	return venus_iface_cmdq_write(hdev, pkt, false);
+ }
+ 
+ static int venus_sys_set_ubwc_config(struct venus_hfi_device *hdev)
+@@ -786,7 +921,7 @@ static int venus_sys_set_ubwc_config(struct venus_hfi_device *hdev)
+ 
+ 	pkt_sys_ubwc_config(pkt, res->ubwc_conf);
+ 
+-	ret = venus_iface_cmdq_write(hdev, pkt, pkt->hdr.size, false);
++	ret = venus_iface_cmdq_write(hdev, pkt, false);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -805,7 +940,7 @@ static int venus_get_queue_size(struct venus_hfi_device *hdev,
+ 	if (!qhdr)
+ 		return -EINVAL;
+ 
+-	return abs(qhdr->qhdr_read_idx - qhdr->qhdr_write_idx);
++	return abs(qhdr->read_idx - qhdr->write_idx);
+ }
+ 
+ static int venus_sys_set_default_properties(struct venus_hfi_device *hdev)
+@@ -847,7 +982,7 @@ static int venus_session_cmd(struct venus_inst *inst, u32 pkt_type, bool sync)
+ 
+ 	pkt_session_cmd(&pkt, pkt_type, inst);
+ 
+-	return venus_iface_cmdq_write(hdev, &pkt, pkt.shdr.hdr.size, sync);
++	return venus_iface_cmdq_write(hdev, &pkt, sync);
+ }
+ 
+ static void venus_flush_debug_queue(struct venus_hfi_device *hdev)
+@@ -877,7 +1012,7 @@ static int venus_prepare_power_collapse(struct venus_hfi_device *hdev,
+ 
+ 	pkt_sys_pc_prep(&pkt);
+ 
+-	ret = venus_iface_cmdq_write(hdev, &pkt, pkt.hdr.size, false);
++	ret = venus_iface_cmdq_write(hdev, &pkt, false);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1044,13 +1179,13 @@ static int venus_core_init(struct venus_core *core)
+ 
+ 	venus_set_state(hdev, VENUS_STATE_INIT);
+ 
+-	ret = venus_iface_cmdq_write(hdev, &pkt, pkt.hdr.size, false);
++	ret = venus_iface_cmdq_write(hdev, &pkt, false);
+ 	if (ret)
+ 		return ret;
+ 
+ 	pkt_sys_image_version(&version_pkt);
+ 
+-	ret = venus_iface_cmdq_write(hdev, &version_pkt, version_pkt.hdr.size, false);
++	ret = venus_iface_cmdq_write(hdev, &version_pkt, false);
+ 	if (ret)
+ 		dev_warn(dev, "failed to send image version pkt to fw\n");
+ 
+@@ -1072,16 +1207,6 @@ static int venus_core_deinit(struct venus_core *core)
+ 	return 0;
+ }
+ 
+-static int venus_core_ping(struct venus_core *core, u32 cookie)
+-{
+-	struct venus_hfi_device *hdev = to_hfi_priv(core);
+-	struct hfi_sys_ping_pkt pkt;
+-
+-	pkt_sys_ping(&pkt, cookie);
+-
+-	return venus_iface_cmdq_write(hdev, &pkt, pkt.hdr.size, false);
+-}
+-
+ static int venus_core_trigger_ssr(struct venus_core *core, u32 trigger_type)
+ {
+ 	struct venus_hfi_device *hdev = to_hfi_priv(core);
+@@ -1092,7 +1217,7 @@ static int venus_core_trigger_ssr(struct venus_core *core, u32 trigger_type)
+ 	if (ret)
+ 		return ret;
+ 
+-	return venus_iface_cmdq_write(hdev, &pkt, pkt.hdr.size, false);
++	return venus_iface_cmdq_write(hdev, &pkt, false);
+ }
+ 
+ static int venus_session_init(struct venus_inst *inst, u32 session_type,
+@@ -1110,7 +1235,7 @@ static int venus_session_init(struct venus_inst *inst, u32 session_type,
+ 	if (ret)
+ 		goto err;
+ 
+-	ret = venus_iface_cmdq_write(hdev, &pkt, pkt.shdr.hdr.size, true);
++	ret = venus_iface_cmdq_write(hdev, &pkt, true);
+ 	if (ret)
+ 		goto err;
+ 
+@@ -1153,7 +1278,7 @@ static int venus_session_flush(struct venus_inst *inst, u32 flush_mode)
+ 	if (ret)
+ 		return ret;
+ 
+-	return venus_iface_cmdq_write(hdev, &pkt, pkt.shdr.hdr.size, true);
++	return venus_iface_cmdq_write(hdev, &pkt, true);
+ }
+ 
+ static int venus_session_start(struct venus_inst *inst)
+@@ -1185,7 +1310,7 @@ static int venus_session_etb(struct venus_inst *inst,
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = venus_iface_cmdq_write(hdev, &pkt, pkt.shdr.hdr.size, false);
++		ret = venus_iface_cmdq_write(hdev, &pkt, false);
+ 	} else if (session_type == VIDC_SESSION_TYPE_ENC) {
+ 		struct hfi_session_empty_buffer_uncompressed_plane0_pkt pkt;
+ 
+@@ -1193,7 +1318,7 @@ static int venus_session_etb(struct venus_inst *inst,
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = venus_iface_cmdq_write(hdev, &pkt, pkt.shdr.hdr.size, false);
++		ret = venus_iface_cmdq_write(hdev, &pkt, false);
+ 	} else {
+ 		ret = -EINVAL;
+ 	}
+@@ -1212,7 +1337,7 @@ static int venus_session_ftb(struct venus_inst *inst,
+ 	if (ret)
+ 		return ret;
+ 
+-	return venus_iface_cmdq_write(hdev, &pkt, pkt.shdr.hdr.size, false);
++	return venus_iface_cmdq_write(hdev, &pkt, false);
+ }
+ 
+ static int venus_session_set_buffers(struct venus_inst *inst,
+@@ -1232,7 +1357,7 @@ static int venus_session_set_buffers(struct venus_inst *inst,
+ 	if (ret)
+ 		return ret;
+ 
+-	return venus_iface_cmdq_write(hdev, pkt, pkt->shdr.hdr.size, false);
++	return venus_iface_cmdq_write(hdev, pkt, false);
+ }
+ 
+ static int venus_session_unset_buffers(struct venus_inst *inst,
+@@ -1252,7 +1377,7 @@ static int venus_session_unset_buffers(struct venus_inst *inst,
+ 	if (ret)
+ 		return ret;
+ 
+-	return venus_iface_cmdq_write(hdev, pkt, pkt->shdr.hdr.size, true);
++	return venus_iface_cmdq_write(hdev, pkt, true);
+ }
+ 
+ static int venus_session_load_res(struct venus_inst *inst)
+@@ -1279,7 +1404,7 @@ static int venus_session_parse_seq_hdr(struct venus_inst *inst, u32 seq_hdr,
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = venus_iface_cmdq_write(hdev, pkt, pkt->shdr.hdr.size, false);
++	ret = venus_iface_cmdq_write(hdev, pkt, false);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1300,7 +1425,7 @@ static int venus_session_get_seq_hdr(struct venus_inst *inst, u32 seq_hdr,
+ 	if (ret)
+ 		return ret;
+ 
+-	return venus_iface_cmdq_write(hdev, pkt, pkt->shdr.hdr.size, false);
++	return venus_iface_cmdq_write(hdev, pkt, false);
+ }
+ 
+ static int venus_session_set_property(struct venus_inst *inst, u32 ptype,
+@@ -1319,7 +1444,7 @@ static int venus_session_set_property(struct venus_inst *inst, u32 ptype,
+ 	if (ret)
+ 		return ret;
+ 
+-	return venus_iface_cmdq_write(hdev, pkt, pkt->shdr.hdr.size, false);
++	return venus_iface_cmdq_write(hdev, pkt, false);
+ }
+ 
+ static int venus_session_get_property(struct venus_inst *inst, u32 ptype)
+@@ -1332,7 +1457,7 @@ static int venus_session_get_property(struct venus_inst *inst, u32 ptype)
+ 	if (ret)
+ 		return ret;
+ 
+-	return venus_iface_cmdq_write(hdev, &pkt, pkt.shdr.hdr.size, true);
++	return venus_iface_cmdq_write(hdev, &pkt, true);
+ }
+ 
+ static int venus_resume(struct venus_core *core)
+@@ -1565,11 +1690,7 @@ void venus_hfi_destroy(struct venus_core *core)
+ 	struct venus_hfi_device *hdev = to_hfi_priv(core);
+ 
+ 	core->priv = NULL;
+-	mutex_lock(&hdev->lock);
+-	hfi_queue_deinit(hdev->core->dev, &hdev->ifaceq_table, &hdev->sfr,
+-			 &hdev->queues[0], &hdev->queues[1],
+-			 &hdev->queues[2]);
+-	mutex_unlock(&hdev->lock);
++	venus_interface_queues_release(hdev);
+ 	mutex_destroy(&hdev->lock);
+ 	kfree(hdev);
+ 	disable_irq(core->irq);
+@@ -1592,9 +1713,7 @@ int venus_hfi_create(struct venus_core *core)
+ 	core->priv = hdev;
+ 	core->ops = &venus_hfi_ops;
+ 
+-	ret = hfi_queue_init(hdev->core->dev, &hdev->ifaceq_table, &hdev->sfr,
+-			     &hdev->queues[0], &hdev->queues[1],
+-			     &hdev->queues[2], &hdev->core);
++	ret = venus_interface_queues_init(hdev);
+ 	if (ret)
+ 		goto err_kfree;
+ 
+@@ -1611,7 +1730,7 @@ void venus_hfi_queues_reinit(struct venus_core *core)
+ {
+ 	struct venus_hfi_device *hdev = to_hfi_priv(core);
+ 	struct hfi_queue_table_header *tbl_hdr;
+-	struct iface_q_info *queue;
++	struct iface_queue *queue;
+ 	struct hfi_sfr *sfr;
+ 	unsigned int i;
+ 
+@@ -1620,36 +1739,36 @@ void venus_hfi_queues_reinit(struct venus_core *core)
+ 	for (i = 0; i < IFACEQ_NUM; i++) {
+ 		queue = &hdev->queues[i];
+ 		queue->qhdr =
+-			IFACEQ_GET_QHDR_START_ADDR(hdev->ifaceq_table.kernel_vaddr, i);
++			IFACEQ_GET_QHDR_START_ADDR(hdev->ifaceq_table.kva, i);
+ 
+ 		venus_set_qhdr_defaults(queue->qhdr);
+ 
+-		queue->qhdr->qhdr_start_addr = queue->q_array.device_addr;
++		queue->qhdr->start_addr = queue->qmem.da;
+ 
+ 		if (i == IFACEQ_CMD_IDX)
+-			queue->qhdr->qhdr_type |= HFI_HOST_TO_CTRL_CMD_Q;
++			queue->qhdr->type |= HFI_HOST_TO_CTRL_CMD_Q;
+ 		else if (i == IFACEQ_MSG_IDX)
+-			queue->qhdr->qhdr_type |= HFI_CTRL_TO_HOST_MSG_Q;
++			queue->qhdr->type |= HFI_CTRL_TO_HOST_MSG_Q;
+ 		else if (i == IFACEQ_DBG_IDX)
+-			queue->qhdr->qhdr_type |= HFI_CTRL_TO_HOST_DBG_Q;
++			queue->qhdr->type |= HFI_CTRL_TO_HOST_DBG_Q;
+ 	}
+ 
+-	tbl_hdr = hdev->ifaceq_table.kernel_vaddr;
+-	tbl_hdr->qtbl_version = 0;
+-	tbl_hdr->qtbl_size = IFACEQ_TABLE_SIZE;
+-	tbl_hdr->qtbl_qhdr0_offset = sizeof(struct hfi_queue_table_header);
+-	tbl_hdr->qtbl_qhdr_size = sizeof(struct hfi_queue_header);
+-	tbl_hdr->qtbl_num_q = IFACEQ_NUM;
+-	tbl_hdr->qtbl_num_active_q = IFACEQ_NUM;
++	tbl_hdr = hdev->ifaceq_table.kva;
++	tbl_hdr->version = 0;
++	tbl_hdr->size = IFACEQ_TABLE_SIZE;
++	tbl_hdr->qhdr0_offset = sizeof(struct hfi_queue_table_header);
++	tbl_hdr->qhdr_size = sizeof(struct hfi_queue_header);
++	tbl_hdr->num_q = IFACEQ_NUM;
++	tbl_hdr->num_active_q = IFACEQ_NUM;
+ 
+ 	/*
+ 	 * Set receive request to zero on debug queue as there is no
+ 	 * need of interrupt from video hardware for debug messages
+ 	 */
+ 	queue = &hdev->queues[IFACEQ_DBG_IDX];
+-	queue->qhdr->qhdr_rx_req = 0;
++	queue->qhdr->rx_req = 0;
+ 
+-	sfr = hdev->sfr.kernel_vaddr;
++	sfr = hdev->sfr.kva;
+ 	sfr->buf_size = ALIGNED_SFR_SIZE;
+ 
+ 	/* ensure table and queue header structs are settled in memory */
+diff --git a/drivers/media/platform/qcom/vcodec/venus/vdec.c b/drivers/media/platform/qcom/vcodec/venus/vdec.c
+index 8ed222e7d952..6a43ea191da1 100644
+--- a/drivers/media/platform/qcom/vcodec/venus/vdec.c
++++ b/drivers/media/platform/qcom/vcodec/venus/vdec.c
+@@ -14,7 +14,6 @@
+ #include <media/v4l2-mem2mem.h>
+ #include <media/videobuf2-dma-contig.h>
+ 
+-#include "../buffers.h"
+ #include "hfi_venus_io.h"
+ #include "hfi_parser.h"
+ #include "core.h"
+@@ -783,9 +782,9 @@ static int vdec_output_conf(struct venus_inst *inst)
+ 		return ret;
+ 
+ 	inst->output_buf_size =
+-			video_raw_buffer_size(to_v4l2_raw_fmt(out_fmt), width, height);
++			venus_helper_get_framesz_raw(out_fmt, width, height);
+ 	inst->output2_buf_size =
+-			video_raw_buffer_size(to_v4l2_raw_fmt(out2_fmt), width, height);
++			venus_helper_get_framesz_raw(out2_fmt, width, height);
+ 
+ 	if (is_ubwc_fmt(out_fmt)) {
+ 		inst->opb_buftype = HFI_BUFFER_OUTPUT2;
