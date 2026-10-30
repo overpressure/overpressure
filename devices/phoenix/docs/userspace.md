@@ -576,6 +576,34 @@ pw-record --rate 48000 --channels 1 /tmp/mic.wav   # a few seconds, then Ctrl-C
 pw-play /tmp/mic.wav                       # through the speakers
 ```
 
+### Audio on a mainline kernel
+
+On Valve's kernel the card is mainline's SM8250 machine driver with the PICO's routing in the
+device tree ([kernel-feasibility.md](kernel-feasibility.md)): the two WSA8810 speakers on the WSA
+macro's SoundWire (units 1 and 2), the WCD9380 on the RX and TX SoundWire buses (units 4 and 3),
+the LPASS macros and the DSP's APR services (AFE, ASM, ADM). The card is named `PICO4`. Its
+bring-up:
+
+1. `pico4-audio-modules` and `pico4-audiocal` skip themselves (stock modules, the stock
+   kernel's calibration store).
+2. `pico4-adsp` boots the ADSP through remoteproc (`audio boot` hands over to `remoteproc-boot`).
+3. `pico4-audiopd` starts the audio process on upstream FastRPC
+   ([`audiopd`](../userspace/rootfs/usr/libexec/pico4-poc/audiopd), `/dev/fastrpc-adsp`):
+   `hexagonrpcd -P` creates it with `FASTRPC_IOCTL_INIT_CREATE_STATIC`, and the driver backs it
+   with the stock remote heap (12 MiB of CMA), which it gives to the DSP's VMs (LPASS,
+   ADSP heap) as the stock tree does.
+4. [`pico4-lpass-macros`](../userspace/rootfs/usr/libexec/pico4-poc/lpass-macros) probes the VA
+   macro again once the audio process runs. The macro's probe votes the LPASS hardware through
+   the AFE, which refuses the vote until then, and a failed probe is final. The driver has no bind
+   file, so the platform bus probes it again (`drivers_probe`). The other macros, the SoundWire
+   buses and the card follow it.
+
+Its UCM profile ([`ucm2/conf.d/sm8250/PICO4.conf`](../userspace/rootfs/usr/share/alsa/ucm2/conf.d/sm8250/PICO4.conf))
+has PICO OS's routes and levels under mainline's control names. Playback is on MultiMedia1
+(PCM 0) and capture on MultiMedia2 (PCM 1): mainline's ASM front end runs one stream at a time.
+The speakers' voltage and current sense stays off, because PICO OS feeds it to its speaker
+protection and mainline has none. Mainline's DSP drivers send no calibration (ACDB).
+
 ## Memory
 
 The headset has 7.6 GiB of RAM, shared with the GPU. Valve's idle VR session leaves about

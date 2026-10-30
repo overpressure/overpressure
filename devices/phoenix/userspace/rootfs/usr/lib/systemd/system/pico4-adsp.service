@@ -1,8 +1,10 @@
 [Unit]
 Description=Boot the audio DSP (ADSP)
 ConditionPathExists=/usr/lib/firmware/adsp.mdt
-# The stock kernel's ADSP loader; a mainline kernel boots the ADSP through remoteproc.
-ConditionPathExists=/sys/class/kgsl
+# The stock kernel's subsystem interface, or a mainline kernel's remoteproc. The modules unit
+# skips itself on mainline.
+ConditionPathExists=|/sys/kernel/boot_adsp
+ConditionPathExists=|/sys/class/remoteproc
 Requires=pico4-audio-modules.service pico4-qrtr-ns.service
 Wants=pico4-pd-mapper.service
 After=pico4-audio-modules.service pico4-qrtr-ns.service pico4-pd-mapper.service

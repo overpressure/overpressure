@@ -25,9 +25,10 @@ def text(path: Path) -> str:
 class StockDriverUnitsTests(unittest.TestCase):
     def test_stock_modules_load_on_the_stock_kernel_only(self):
         # ath11k is the firmware's QMI client on a mainline kernel; the stock driver, our
-        # WLFW client, the stock audio modules and restart levels would only fail or interfere.
+        # WLFW client and the stock audio modules would only fail or interfere. (The ADSP boots
+        # on both kernels: test_audio_units.)
         for name in ("pico4-wlfw-client.service", "pico4-wlan.service", "pico4-venus.service",
-                     "pico4-audio-modules.service", "pico4-adsp.service"):
+                     "pico4-audio-modules.service"):
             self.assertIn("ConditionPathExists=/sys/class/kgsl\n", text(UNITS / name), name)
 
 

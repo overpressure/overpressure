@@ -7,6 +7,7 @@
 #                   while the mapper runs, before the notifier module has subscribed.
 #   audio boot      boot the audio DSP (early-boot there) at restart level RELATED: at the kernel's
 #                   default, SYSTEM, a DSP crash would reboot the headset.
+#                   A mainline kernel boots it through remoteproc.
 #
 # The modules are the stock signed ones, loaded by path in the order PICO OS's modprobe gives
 # them: PICO OS's list, each module after the modules it depends on (modules.dep). Modules are
@@ -59,6 +60,7 @@ modules)
 	done
 	;;
 boot)
+	[ -e /sys/kernel/boot_adsp ] || exec /usr/libexec/pico4-poc/remoteproc-boot adsp
 	d=$(subsystem) || { echo "audio: no ADSP subsystem" >&2; exit 1; }
 	echo RELATED > "$d/restart_level"
 	[ "$(cat "$d/state")" = ONLINE ] && exit 0

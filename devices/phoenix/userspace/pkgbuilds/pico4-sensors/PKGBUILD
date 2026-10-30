@@ -9,12 +9,13 @@
 #   hexagonrpcd  FastRPC file server the sensors process loads its registry and
 #                config through. Patched for the downstream adsprpc ioctl ABI, to
 #                serve the registry's version file, to start the ADSP's static
-#                audio process (-P audiopd), as PICO OS's "adsprpcd audiopd" does,
+#                audio process (-P audiopd, on either ABI: the upstream driver's
+#                INIT_CREATE_STATIC), as PICO OS's "adsprpcd audiopd" does,
 #                and to answer ftell, which that process reads its files with.
 # Sources are pinned by commit; the patches are this project's own.
 pkgname=pico4-sensors
 pkgver=0.1
-pkgrel=1
+pkgrel=2
 arch=(aarch64)
 url="https://github.com/linux-msm"
 license=(BSD-3-Clause GPL-3.0-or-later)
@@ -29,7 +30,7 @@ source=("qrtr::git+https://github.com/linux-msm/qrtr.git#commit=$_qrtr"
         hexagonrpc-vendor-kernel.patch
         pd-mapper-jsn-dirs.patch)
 sha256sums=(SKIP SKIP SKIP
-            '63a32050f86ca0a4392aece7445abc483f74c50025a515598934f4bedd447f6e'
+            '1022eb5f4d9ee24968224fe357c38f2f23acc91f7dbfd5715594a925d1a6b8dd'
             '6de989aaa80ca73bd53ba3a7c6192e7f8eba577e222dc95541cb8dc29e903dd3')
 
 prepare() {

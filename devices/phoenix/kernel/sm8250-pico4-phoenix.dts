@@ -12,6 +12,7 @@
 /dts-v1/;
 
 #include <dt-bindings/arm/qcom,ids.h>
+#include <dt-bindings/firmware/qcom,scm.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include "sm8250.dtsi"
@@ -140,6 +141,18 @@
 			reg = <0x0 0x9f400000 0x0 0x40000>;
 			no-map;
 		};
+
+		/*
+		 * The stock remote heap for the audio DSP's static process (its adsp_region: 12 MiB
+		 * of CMA below 4 GiB, 4 MiB aligned), which FastRPC hands to the DSP.
+		 */
+		adsp_rpc_heap: adsp-rpc-heap {
+			compatible = "shared-dma-pool";
+			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
+			reusable;
+			alignment = <0x0 0x400000>;
+			size = <0x0 0xc00000>;
+		};
 	};
 };
 
@@ -160,6 +173,16 @@
 &adsp {
 	firmware-name = "adsp.mdt";
 	status = "okay";
+};
+
+/*
+ * The audio DSP's FastRPC channel: PICO OS's audio process (audiopd, which the userspace starts)
+ * gets the stock remote heap, given to the DSP's VMs as the stock tree gives it
+ * (qcom,adsp-remoteheap-vmid).
+ */
+&{/soc@0/remoteproc@17300000/glink-edge/fastrpc} {
+	memory-region = <&adsp_rpc_heap>;
+	qcom,vmids = <QCOM_SCM_VMID_LPASS QCOM_SCM_VMID_ADSP_HEAP>;
 };
 
 &apps_rsc {
@@ -1214,6 +1237,187 @@
 				remote-endpoint = <&csiphy3_cam1_ep>;
 			};
 		};
+	};
+};
+
+/*
+ * Audio, as the stock tree wires it (kona-mtp-snd-card): two WSA8810 amplifiers, one per speaker,
+ * on the WSA macro's SoundWire, and the WCD9380 codec (RX and TX SoundWire) whose ADC1 carries
+ * the analog microphone (PICO OS's amic1, on MIC BIAS1). The DSP side is the audio DSP's APR
+ * services (q6afe, q6asm, q6adm) in sm8250.dtsi.
+ */
+#include <dt-bindings/sound/qcom,q6afe.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
+
+/ {
+	wcd938x: audio-codec {
+		compatible = "qcom,wcd9380-codec";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&wcd938x_reset_default>;
+		reset-gpios = <&tlmm 32 GPIO_ACTIVE_LOW>;
+
+		/* The stock supplies: S4A for the codec, BOB for the microphone bias. */
+		vdd-buck-supply = <&vreg_s4a_1p8>;
+		vdd-rxtx-supply = <&vreg_s4a_1p8>;
+		vdd-io-supply = <&vreg_s4a_1p8>;
+		vdd-mic-bias-supply = <&vreg_bob>;
+
+		/* The stock 2.7 V on every bias. */
+		qcom,micbias1-microvolt = <2700000>;
+		qcom,micbias2-microvolt = <2700000>;
+		qcom,micbias3-microvolt = <2700000>;
+		qcom,micbias4-microvolt = <2700000>;
+		/* The stock headphone switch (msm-mbhc-hphl-swh = 0); no jack is fitted. */
+		qcom,hphl-jack-type-normally-closed;
+
+		qcom,rx-device = <&wcd938x_rx>;
+		qcom,tx-device = <&wcd938x_tx>;
+
+		#sound-dai-cells = <1>;
+	};
+};
+
+&sound {
+	compatible = "qcom,sm8250-sndcard";
+	model = "PICO4";
+	audio-routing =
+		"SpkrLeft IN", "WSA_SPK1 OUT",
+		"SpkrRight IN", "WSA_SPK2 OUT",
+		"AMIC1", "MIC BIAS1",
+		"TX SWR_ADC0", "ADC1_OUTPUT";
+
+	mm1-dai-link {
+		link-name = "MultiMedia1";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+		};
+	};
+
+	mm2-dai-link {
+		link-name = "MultiMedia2";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+		};
+	};
+
+	wsa-dai-link {
+		link-name = "WSA Playback";
+
+		cpu {
+			sound-dai = <&q6afedai WSA_CODEC_DMA_RX_0>;
+		};
+
+		codec {
+			sound-dai = <&left_spkr>, <&right_spkr>, <&swr0 0>, <&wsamacro 0>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+	};
+
+	wcd-capture-dai-link {
+		link-name = "WCD Capture";
+
+		cpu {
+			sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
+		};
+
+		codec {
+			sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+	};
+};
+
+/* The two front ends the card's links use: playback and capture. */
+&q6asmdai {
+	dai@0 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
+	};
+
+	dai@1 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
+	};
+};
+
+&wsamacro {
+	status = "okay";
+};
+
+&rxmacro {
+	status = "okay";
+};
+
+&txmacro {
+	status = "okay";
+};
+
+/* The stock VA macro's digital-microphone rate and bias supply. */
+&vamacro {
+	qcom,dmic-sample-rate = <600000>;
+	vdd-micb-supply = <&vreg_s4a_1p8>;
+};
+
+/*
+ * The speakers: WSA8810 units 1 (right, shutdown GPIO 127) and 2 (left, GPIO 129), the stock
+ * 0x1020170211 and 0x1020170212.
+ */
+&swr0 {
+	status = "okay";
+
+	left_spkr: speaker@0,2 {
+		compatible = "sdw10217201000";
+		reg = <0 2>;
+		powerdown-gpios = <&tlmm 129 GPIO_ACTIVE_LOW>;
+		#thermal-sensor-cells = <0>;
+		sound-name-prefix = "SpkrLeft";
+		#sound-dai-cells = <0>;
+	};
+
+	right_spkr: speaker@0,1 {
+		compatible = "sdw10217201000";
+		reg = <0 1>;
+		powerdown-gpios = <&tlmm 127 GPIO_ACTIVE_LOW>;
+		#thermal-sensor-cells = <0>;
+		sound-name-prefix = "SpkrRight";
+		#sound-dai-cells = <0>;
+	};
+};
+
+/* The codec's SoundWire units: RX 4 and TX 3 (the stock 0x...224 and 0x...223). */
+&swr1 {
+	status = "okay";
+
+	wcd938x_rx: codec@0,4 {
+		compatible = "sdw20217010d00";
+		reg = <0 4>;
+		qcom,rx-port-mapping = <1 2 3 4 5>;
+	};
+};
+
+&swr2 {
+	status = "okay";
+
+	wcd938x_tx: codec@0,3 {
+		compatible = "sdw20217010d00";
+		reg = <0 3>;
+		qcom,tx-port-mapping = <2 3 4 5>;
+	};
+};
+
+&tlmm {
+	wcd938x_reset_default: wcd938x-reset-default-state {
+		pins = "gpio32";
+		function = "gpio";
+		drive-strength = <16>;
+		output-high;
 	};
 };
 

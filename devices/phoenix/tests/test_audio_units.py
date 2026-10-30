@@ -30,8 +30,20 @@ class AudioUnitTests(unittest.TestCase):
     def test_audio_process_is_started_as_on_pico_os(self):
         pd = unit("pico4-audiopd.service")
         self.assertIn("Requires=pico4-adsp.service", pd)
-        self.assertIn("-f /dev/adsprpc-smd-secure -d adsp -P audiopd -R /usr/share/qcom/pico4-audio", pd)
+        self.assertIn("ExecStart=/usr/libexec/pico4-poc/audiopd", pd)
         self.assertIn("Restart=always", pd)
+        script = (ROOTFS / "usr/libexec/pico4-poc/audiopd").read_text(encoding="utf-8")
+        # The stock kernel's secure channel (downstream ABI), or a mainline kernel's node.
+        self.assertIn("node=/dev/adsprpc-smd-secure", script)
+        self.assertIn("node=/dev/fastrpc-adsp", script)
+        self.assertIn('-f "$node" -d adsp -P audiopd -R /usr/share/qcom/pico4-audio', script)
+
+    def test_dsp_boots_on_either_kernel(self):
+        adsp = unit("pico4-adsp.service")
+        self.assertIn("ConditionPathExists=|/sys/kernel/boot_adsp", adsp)
+        self.assertIn("ConditionPathExists=|/sys/class/remoteproc", adsp)
+        script = (ROOTFS / "usr/libexec/pico4-poc/audio").read_text(encoding="utf-8")
+        self.assertIn("[ -e /sys/kernel/boot_adsp ] || exec /usr/libexec/pico4-poc/remoteproc-boot adsp", script)
 
     def test_target_pulls_in_all_units(self):
         target = unit("pico4-audio.target")
@@ -127,6 +139,38 @@ class AudioTimingTests(unittest.TestCase):
         period = int(re.search(r"api\.alsa\.period-size = (\d+)", rule).group(1))
         headroom = int(re.search(r"api\.alsa\.headroom = (\d+)", rule).group(1))
         self.assertEqual((period, headroom), (1024, 2 * period))
+
+
+class MainlineAudioTests(unittest.TestCase):
+    def test_va_macro_binds_after_the_audio_process(self):
+        # Its probe votes the LPASS hardware through the AFE, which refuses until audiopd runs.
+        u = unit("pico4-lpass-macros.service")
+        self.assertIn("ConditionPathExists=/sys/bus/platform/drivers/va_macro", u)
+        self.assertRegex(u, r"(?m)^After=.*pico4-audiopd\.service")
+        self.assertIn("pico4-lpass-macros.service", unit("pico4-audio.target"))
+        script = (ROOTFS / "usr/libexec/pico4-poc/lpass-macros").read_text(encoding="utf-8")
+        self.assertIn("DEV=3370000.codec", script)
+        self.assertIn('echo "$DEV" > /sys/bus/platform/drivers_probe', script)
+
+    def test_calibration_store_is_the_stock_kernels(self):
+        self.assertIn("ConditionPathExists=/sys/class/kgsl\n", unit("pico4-audiocal.service"))
+
+    def test_ucm_profile_uses_mainline_names(self):
+        d = ROOTFS / "usr/share/alsa/ucm2/conf.d/sm8250"
+        card = (d / "PICO4.conf").read_text(encoding="utf-8")
+        self.assertIn('File "/conf.d/sm8250/PICO4-HiFi.conf"', card)
+        verb = (d / "PICO4-HiFi.conf").read_text(encoding="utf-8")
+        for name in ("WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia1", "MultiMedia2 Mixer TX_CODEC_DMA_TX_3",
+                     "SpkrLeft DAC Switch", "SpkrRight DAC Switch", "ADC1 Switch"):
+            self.assertIn(f"name='{name}'", verb)
+        # The stock kernel's names have no place in the mainline profile.
+        self.assertNotIn("CDC_DMA", verb)
+        self.assertNotIn("DAC_Port", verb)
+        # PICO OS's levels, as in the stock profile.
+        stock = UCM / "kona-mtp-snd-ca.conf"
+        for line in stock.read_text(encoding="utf-8").splitlines():
+            if "Volume" in line and "cset" in line:
+                self.assertIn(line.strip(), card)
 
 
 if __name__ == "__main__":
