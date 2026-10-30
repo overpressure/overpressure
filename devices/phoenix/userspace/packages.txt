@@ -106,6 +106,22 @@ deckard-arch-hotfixes-release-0.3/libibus
 deckard-arch-hotfixes-release-0.3/ibus
 # The client polls processes with lsof.
 lsof
+# Android games through Valve's Lepton, as on the Frame (docs/kernel-feasibility.md): rootless
+# podman (user, PID, UTS and IPC namespaces, binderfs, which a mainline kernel has) with the
+# Frame's passt, Lepton's compatibility files, Valve's Android Mesa (Turnip on msm), the Android
+# and Linux Vulkan layers whose manifests Lepton names, adb, with which it installs and starts the
+# game, "which", with which it finds podman, and inotifywait, with which it waits for Android's
+# boot and the game's exit. Lepton itself comes with Steam, as a compatibility tool. Arch's
+# podman: the Frame's 5.5.2 links gpgme 11, which the base does not have.
+podman
+deckard-arch-hotfixes-release-0.3/passt
+deckard-arch-hotfixes-release-0.3/lepton-compat
+deckard-arch-hotfixes-release-0.3/deckard-mesa-android-aarch64
+deckard-arch-hotfixes-release-0.3/deckard-vulkan-layers-android-aarch64
+deckard-arch-hotfixes-release-0.3/deckard-vulkan-layers-linux-aarch64
+deckard-arch-hotfixes-release-0.3/android-platform-tools
+which
+inotify-tools
 # "!name" satisfies dependencies on name without installing it:
 # pico4-session.service replaces sddm.
 !sddm

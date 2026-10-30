@@ -319,6 +319,15 @@ if [[ ${#changed[@]} -gt 0 ]]; then
     phase "installing ${#changed[@]} changed project packages"
     in_b pacman --config /etc/pico4/pacman.conf -r /target --cachedir /var/cache/pico4-pkgs -U --noconfirm "${changed[@]}"
 fi
+# adb (android-platform-tools, with which Lepton installs Android games) was built against
+# protobuf 25; the base has 33. The Frame repository's protobuf 25 libraries go where adb's
+# own libraries are (its RUNPATH), not over the base's; only its libraries are wanted, so its
+# dependencies are not resolved (the ELF check below covers what the libraries need).
+in_b pacman --config /etc/pico4/pacman.conf -r /target --cachedir /var/cache/pico4-pkgs -Sw -dd --noconfirm \
+    deckard-arch-hotfixes-release-0.3/protobuf >/dev/null
+protobuf=$(cd "$B/var/cache/pico4-pkgs" && ls protobuf-25.*-aarch64.pkg.tar.zst | sort -V | tail -n 1)
+in_b bsdtar -xf "/var/cache/pico4-pkgs/$protobuf" -C /target/usr/lib/aarch64/android \
+    --strip-components 2 'usr/lib/libprotobuf.so.25*'
 # Same repositories on the headset, but an upgrade must never pull systemd 258+.
 sed -e '/^\[options\]/a IgnorePkg = systemd systemd-libs systemd-sysvcompat systemd-resolvconf' \
     -e '/^\[pico4\]/,/^$/d' "$project/userspace/pacman.conf" > "$T/etc/pacman.conf"
@@ -335,6 +344,10 @@ optional='^(systemd /usr/lib/systemd/systemd-journal-(gatewayd|remote)|libinput 
 optional+='|v4l-utils /usr/bin/qv4l2|v4l-utils /usr/bin/qvidcap'
 optional+='|deckard-steamvr-rel /opt/steamvr/bin/linuxarm64/(vrmonitor|overlay_viewer|hellovr_sdl)):'
 optional+='|^deckard-steamvr-rel /opt/steamvr/[^:]*:\s*(\./)?lib(openvr_api|steam_api)\.so '
+# Bionic programs and libraries, run in Lepton's Android: SteamVR's Android client, Valve's
+# Android Mesa and Vulkan layers.
+optional+='|^deckard-steamvr-rel /opt/steamvr/bin/androidarm64/'
+optional+='|^deckard-(mesa|vulkan-layers)-android-aarch64 '
 PYTHONPATH=$project python3 -m overpressure.elfdeps "$T" "${foreign[@]}" --ignore "$optional" >&2 ||
     { echo "unresolved ELF dependencies (above)" >&2; exit 1; }
 log "${#foreign[@]} Frame/project packages: all ELF dependencies resolve"
@@ -512,6 +525,9 @@ if [[ ! -d "$T/home/$user" ]]; then
     in_t chown -R "$user:$user" "/home/$user"
 fi
 in_t usermod -a -G wheel,video,render,input,audio,aid_inet,aid_net_raw,aid_bt,aid_bt_net "$user"
+# Subordinate IDs for rootless podman (Lepton's Android runs in it), as useradd gives a user
+# from login.defs; sysusers created this one without them.
+grep -q "^$user:" "$T/etc/subuid" 2>/dev/null || in_t usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$user"
 in_t passwd -d root >/dev/null
 in_t passwd -d "$user" >/dev/null
 echo pico4-steamos > "$T/etc/hostname"
