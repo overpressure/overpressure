@@ -842,8 +842,13 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   the INVOKE family becomes the upstream INVOKE with 24-byte arguments, MMAP and MUNMAP keep their
   layouts, CONTROL, SETMODE and MUNMAP_FD are answered, and ION allocations come from
   `/dev/dma_heap/system` (the legacy ION probe fails, so libion takes the new ABI). Its translations
-  are tested natively before the bionic library is built; on the headset it has not run yet, and
-  `pico4-slamd` and `pico4-cdsprpcd` stay stock-kernel units until it has.
+  are tested natively before the bionic library is built. The DSP asks `cdsprpcd` for memory
+  (`apps_mem`), which the library maps by descriptor at its own address with flags 0; Valve's kernel
+  maps such a client buffer through patch 0012, as the vendor driver does. On the headset
+  `cdsprpcd` attaches to the CDSP's guest OS through the bridge, maps the DSP's memory and opens
+  its listener, uses no measurable CPU, and the IMU keeps its 1 kHz stream beside it;
+  `pico4-cdsprpcd` runs on either kernel. `pico4-slamd` stays a stock-kernel unit while the cameras
+  do not stream on Valve's kernel: libSlam starts with the first frame sets.
 - **pico4-slamd.** [`pico4-slamd`](../src/stockslam/pico4-slamd.c)
   ([`pico4-slamd.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service),
   wanted by Valve's session and Monado) creates `/dev/shm/pico4-slam` (group video, mode 0660)

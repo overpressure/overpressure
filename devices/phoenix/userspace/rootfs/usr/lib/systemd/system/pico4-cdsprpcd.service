@@ -3,9 +3,10 @@
 [Unit]
 Description=Compute DSP root listener (cdsprpcd)
 ConditionPathExists=/usr/lib/pico4-stock-slam/vendor/bin/cdsprpcd
-# PICO OS's FastRPC needs the stock kernel's ION and adsprpc nodes; on a mainline kernel the
-# tracker waits for upstream FastRPC (docs/kernel-feasibility.md) and skips itself.
-ConditionPathExists=/sys/class/kgsl
+# PICO OS's FastRPC speaks the stock kernel's ION and adsprpc nodes; on a mainline kernel
+# stock-slam preloads the FastRPC bridge onto upstream FastRPC (docs/xr.md#head-tracking).
+ConditionPathExists=|/sys/class/kgsl
+ConditionPathExists=|/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge.so
 Requires=pico4-cdsp.service
 After=pico4-cdsp.service
 

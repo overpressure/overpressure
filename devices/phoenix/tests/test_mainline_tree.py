@@ -124,6 +124,17 @@ class FastRpcTests(unittest.TestCase):
         self.assertLess(resume.index("ctx->args = args;"), resume.index("goto wait;"))
         self.assertIn("wait:\n\tif (kernel) {", patch.replace("\n+", "\n").replace("\n ", "\n"))
 
+    def test_client_buffer_mmap_uses_the_remote_mmap_method(self):
+        patch = text(KERNEL / "patches/0012-misc-fastrpc-map-a-clients-buffer-through-mmap.patch")
+        added = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+"))
+        # The client's DMA-BUF at its address, with its flags, as the vendor driver sends it.
+        self.assertIn("fastrpc_map_create(fl, req->fd, req->size, 0, &map);", added)
+        self.assertIn("req_msg.flags = req->flags;\n\treq_msg.vaddr = req->vaddrin;", added)
+        self.assertIn("FASTRPC_SCALARS(FASTRPC_RMID_INIT_MMAP, 2, 1)", added)
+        self.assertIn("FASTRPC_SCALARS(FASTRPC_RMID_INIT_MUNMAP, 1, 0)", added)
+        # Only a request with a descriptor; the driver's own allocations stay as they were.
+        self.assertIn("if (req.fd < 0) {", added)
+
 
 if __name__ == "__main__":
     unittest.main()
