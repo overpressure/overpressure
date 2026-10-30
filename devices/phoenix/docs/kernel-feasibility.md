@@ -292,12 +292,12 @@ Valve's, and what Valve's kernel needs is found by the hardware, not by a kernel
 | System V IPC | `pico4-sysvsem` preloaded into every process and the Steam client | the kernel's own; `pico4-stock-preload.service` and the user generator `50-pico4-stock-kernel` skip themselves |
 | OpenGL | zink on Turnip for gamescope and Steam: Mesa's msm driver finds no GPU behind `msm_drm` | zink too, as on the Frame, whose Mesa has no other OpenGL driver (the userspace's Mesa would run freedreno: FD650, OpenGL 4.6) |
 | GPU clock floor, kernel thread priorities | KGSL's `min_pwrlevel` while presenting; `pico4-kthread-priorities` | msm's devfreq governor; both skip themselves |
-| Device nodes | udev's `devnode` helper creates them (no devtmpfs) | devtmpfs creates them; the helper stays for the block policy (every disk read-only) |
+| Device nodes | udev's `devnode` helper creates them in the tmpfs `/dev` that stage 1 hands over (no devtmpfs) | devtmpfs creates them, and stage 1 hands its devtmpfs over as it is: systemd's device monitor follows udev only when `/dev` is a devtmpfs or udev already runs, and without it no device starts a unit; the helper stays for the block policy (every disk read-only) |
 | systemd | pinned at 257.x (258 needs Linux 5.4) | the pin stays: the Frame's own systemd is 257.7 |
 | Monado's own service | `pico4-monado` with its KMS target | skips itself (open: Monado outside SteamVR) |
 | Wi-Fi | the stock qcacld-3.0 module with `pico4-wlfw-client` | ath11k on PCIe 0 (the QCA6390's power sequencer on the stock supplies), PICO's firmware and board data (`bdwlanq.elf`) under ath11k's names, the address from persist's `wlan_mac.bin` (`pico4-wlan-address`); the stock units skip themselves |
-| Bluetooth | none | `hci_qca` on QUP0's UART 6; firmware and NV data from PICO OS's `bluetooth` partition, mounted read-only (`pico4-bt-firmware`), the address from persist's `pico_bt_mac` (`pico4-bt-address`), the Frame's BlueZ |
-| Video codec restart level, audio modules | `pico4-venus`, `pico4-audio-modules` (stock modules) | skip themselves |
+| Bluetooth | none | `hci_qca` on QUP0's UART 6; firmware and NV data from PICO OS's `bluetooth` partition, mounted read-only (`pico4-bt-firmware`), the address from persist's `pico_bt_mac` (`pico4-bt-address`, the management interface's Set Public Address), the Frame's BlueZ. `hci_qca` is built in and sets the controller up before the partition is mounted; `pico4-bt-firmware` probes it again once the firmware is there, since the kernel offers a controller to bluetoothd only after a setup that succeeded |
+| Video codec restart level, audio modules, ADSP | `pico4-venus`, `pico4-audio-modules` (stock modules), `pico4-adsp` (the stock loader) | skip themselves |
 | Boot splash | KGSL's display (`msm_drm`), six layers | msm's primary plane; as the first DRM master it also probes the panels' mode |
 | Power key | `qpnp_pon` | `pm8941_pwrkey` |
 | Session | seat0 without VTs | the session takes VT 1 in getty's place, as sddm does on the Frame (logind requires a VT where the kernel has them) |

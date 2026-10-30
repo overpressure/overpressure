@@ -71,7 +71,10 @@ missing_nodes=$(
 	done
 )
 udev_devices=$(udevadm info --export-db 2>/dev/null | grep -c '^P:')
-need "/dev is a tmpfs (no devtmpfs on this kernel)" [ "$dev_fs" = tmpfs ]
+# Stage 1 hands over a mainline kernel's devtmpfs, and a tmpfs copy on the stock kernel.
+dev_want=tmpfs
+grep -qw devtmpfs /proc/filesystems && dev_want=devtmpfs
+need "/dev is a $dev_want (the kernel's own)" [ "$dev_fs" = "$dev_want" ]
 need "every kernel device has a node (but the sound card's unused PCMs)" [ -z "$missing_nodes" ]
 need "udev database populated" [ "${udev_devices:-0}" -gt 0 ]
 

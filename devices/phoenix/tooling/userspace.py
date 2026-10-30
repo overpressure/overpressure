@@ -139,7 +139,8 @@ def validate_check(value, require_vulkan: bool = False, require_fan: bool = Fals
             or systemd.get("failed_units") or not str(systemd.get("version", "")).startswith(f"{SYSTEMD_MAX_MAJOR}")):
         raise ValueError("systemd is not running cleanly as PID 1")
     dev = value.get("dev") or {}
-    if dev.get("fstype") != "tmpfs" or dev.get("missing_nodes") or not dev.get("udev_devices"):
+    # The check holds /dev to the kernel's kind: a tmpfs copy on the stock kernel, devtmpfs on mainline.
+    if dev.get("fstype") not in ("tmpfs", "devtmpfs") or dev.get("missing_nodes") or not dev.get("udev_devices"):
         raise ValueError("/dev is incomplete")
     storage = value.get("storage") or {}
     # The installed system's root is super, read-only; the check verified it and lists every

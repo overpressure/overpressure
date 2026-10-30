@@ -141,7 +141,7 @@ class CheckValidationTests(unittest.TestCase):
             lambda v: v["systemd"].update(version="258.2"),
             lambda v: v["systemd"].update(pid1="/sbin/init"),
             lambda v: v["dev"].update(missing_nodes=["kgsl-3d0"]),
-            lambda v: v["dev"].update(fstype="devtmpfs"),
+            lambda v: v["dev"].update(fstype="ramfs"),
             lambda v: v["storage"].update(writable_block_devices=["sda"]),
             lambda v: v["storage"].update(root="/dev/sda5"),
             lambda v: v["storage"].update(root="/dev/sda7", installed=False),
