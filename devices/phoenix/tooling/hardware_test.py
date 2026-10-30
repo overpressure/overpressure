@@ -49,13 +49,16 @@ def validate_preflight(output: str) -> None:
 def validate_storage(output: str, data: str = "") -> None:
     """Every physical block device read-only; on the installed system its data partition
     (@p data, e.g. sda16) is the one exception and must be writable: read-only under the
-    mounted file system, its writeback fails and the data is lost."""
+    mounted file system, its writeback fails and the data is lost. A mainline kernel counts
+    a disk's read-only flag for its partitions too, so there the data partition's disk is
+    writable as well; its other partitions keep their own flags."""
     rows = [line.split() for line in output.splitlines()]
     require(rows and all(len(r) == 3 and r[0] == "BLOCK" and r[2] in ("0", "1") for r in rows),
             "Storage protection failed: missing or invalid block-device inventory")
     physical = [r for r in rows if not r[1].startswith(("loop", "ram", "zram", "nbd"))]
     require(physical, "No physical storage detected")
-    require(all(r[2] == "1" for r in physical if r[1] != data),
+    data_disk = re.sub(r"\d+$", "", data) if data else ""
+    require(all(r[2] == "1" for r in physical if r[1] not in (data, data_disk)),
             "Storage protection failed: writable disk or partition")
     if data:
         require([r[2] for r in physical if r[1] == data] == ["0"],

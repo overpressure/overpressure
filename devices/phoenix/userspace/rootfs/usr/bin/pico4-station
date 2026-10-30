@@ -191,7 +191,7 @@ class Station:
         # transfers on the station's interrupt): each transfer is full duplex, and the
         # station's next frame comes back with whatever goes out, a command or zeros (no
         # header, which the station ignores). Frames that come back wait in the queue.
-        self.spidev = os.access(STATION_POWER, os.W_OK)
+        self.spidev = os.path.exists(STATION_POWER)
         self.queue = []
         # The station repeats its last frame on every transfer until it has another one (the
         # vendor driver read only on the station's interrupt): a frame equal to the last is no new one.

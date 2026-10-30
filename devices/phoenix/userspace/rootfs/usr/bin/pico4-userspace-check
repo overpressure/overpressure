@@ -100,7 +100,10 @@ data_dev=$(part_dev userdata)
 if [ -n "$system_dev" ] && [ "$root_src" = "$system_dev" ]; then
 	# The installed system: the image in super read-only, data on userdata, the only writable partition.
 	installed=true
-	writable=$(grep -vx "${data_dev##*/}" <<<"$writable")
+	# A mainline kernel counts a disk's read-only flag for its partitions too, so stage 1 makes
+	# userdata's disk writable; its other partitions keep their own flags and are checked here.
+	data_disk=$(basename "$(readlink -f "/sys/class/block/${data_dev##*/}/..")")
+	writable=$(grep -vx -e "${data_dev##*/}" -e "$data_disk" <<<"$writable")
 	need "every physical block device but userdata read-only" [ -z "$writable" ]
 	# Read-only under the mounted file system, its writeback fails and data is lost.
 	need "userdata writable" [ "$(cat "/sys/class/block/${data_dev##*/}/ro" 2>/dev/null)" = 0 ]

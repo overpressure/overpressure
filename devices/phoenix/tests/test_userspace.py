@@ -193,6 +193,10 @@ class MountPolicyTests(unittest.TestCase):
         mounts = "/dev/sda7 / ext4 ro,noatime 0 0\n/dev/sda16 /data ext4 rw,noatime 0 0"
         self.assertEqual(hw.data_device(mounts), "sda16")
         hw.validate_storage("BLOCK sda 1\nBLOCK sda7 1\nBLOCK sda16 0\nBLOCK loop0 0", "sda16")
+        # A mainline kernel: the data partition's disk is writable too, its other partitions not.
+        hw.validate_storage("BLOCK sda 0\nBLOCK sda7 1\nBLOCK sda16 0\nBLOCK sdb 1", "sda16")
+        with self.assertRaises(ValueError):
+            hw.validate_storage("BLOCK sda 1\nBLOCK sdb 0\nBLOCK sda16 0", "sda16")
         for bad in ("BLOCK sda 1\nBLOCK sda7 1\nBLOCK sda16 1",  # writeback would fail
                     "BLOCK sda 1\nBLOCK sda7 0\nBLOCK sda16 0"):  # another partition writable
             with self.assertRaises(ValueError):

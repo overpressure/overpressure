@@ -133,13 +133,6 @@ static int eq(const char *a, const char *b)
 	return *a == *b;
 }
 
-static int starts(const char *s, const char *prefix)
-{
-	while (*prefix && *s == *prefix)
-		s++, prefix++;
-	return !*prefix;
-}
-
 /* Some compilers emit calls to these even when freestanding. */
 void *memset(void *d, int c, unsigned long n)
 {
@@ -270,8 +263,9 @@ static void find_output(void)
 			continue;
 		int found = 0;
 		for (__u32 m = 0; m < c.count_modes && !found; m++)
-			if (modes[m].hdisplay == 2 * EYE && modes[m].vdisplay == EYE &&
-			    starts(modes[m].name, "4320x2160x90x")) {
+			/* By its refresh rate: the stock driver names the mode "4320x2160x90x...",
+			 * mainline's msm "4320x2160". */
+			if (modes[m].hdisplay == 2 * EYE && modes[m].vdisplay == EYE && modes[m].vrefresh == 90) {
 				mode = modes[m];
 				found = 1;
 			}

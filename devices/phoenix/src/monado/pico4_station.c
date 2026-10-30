@@ -473,7 +473,7 @@ pico4_station_open(struct pico4_station **out, const char *device)
 	pthread_mutex_init(&st->lock, NULL);
 	st->camera_hz = 50;
 	// A mainline kernel gives the station's supply its own switch and the bus a plain spidev.
-	st->spidev = access(STATION_POWER, W_OK) == 0;
+	st->spidev = access(STATION_POWER, F_OK) == 0;
 	*out = st;
 	return 0;
 }

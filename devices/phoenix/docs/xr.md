@@ -384,6 +384,12 @@ moves whole frames on the station's interrupt, so userspace only `write()`s, `se
   50 Hz as stock, device type 0) before it accepts camera commands. The controllers reconnect on
   their own.
 - **Firmware.** The station reports firmware 2.96, the version PICO OS ships.
+- **Mainline kernels.** Without the vendor spidev the bus is a plain spidev, whose every transfer
+  is full duplex: commands go out as transfers, zeros (no header, which the station ignores) ask
+  for the station's next frame, polled every 2 ms. The station returns its last frame on every
+  transfer until it has another, so only a frame that differs from the last is new. Its supply
+  is the `station-power` regulator output's sysfs state (`enabled`, `disabled`) in place of the
+  power ioctl. Both station modules pick this on their own where that switch exists.
 
 The same link carries station and controller firmware updates. The C module
 ([pico4_station.c](../src/monado/pico4_station.c)) and the `pico4-station` tool therefore build
