@@ -1,0 +1,21 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] media: ov7251: the enable GPIO is optional
+
+On the PICO 4 the four OV7251 tracking cameras share their shutdown line
+(and their standby line); the board switches it once for all of them, so no
+sensor can own it. Without the GPIO the driver leaves the line to the board
+(gpiod_set_value_cansleep() accepts a NULL descriptor).
+---
+diff --git a/drivers/media/i2c/ov7251.c b/drivers/media/i2c/ov7251.c
+index 311c61d9e25d..fa5c96e1683e 100644
+--- a/drivers/media/i2c/ov7251.c
++++ b/drivers/media/i2c/ov7251.c
+@@ -1680,7 +1680,7 @@ static int ov7251_probe(struct i2c_client *client)
+ 		return PTR_ERR(ov7251->analog_regulator);
+ 	}
+ 
+-	ov7251->enable_gpio = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
++	ov7251->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_LOW);
+ 	if (IS_ERR(ov7251->enable_gpio)) {
+ 		dev_err(dev, "cannot get enable gpio\n");
+ 		return PTR_ERR(ov7251->enable_gpio);

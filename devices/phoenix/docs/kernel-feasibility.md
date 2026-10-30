@@ -395,6 +395,7 @@ so on this kernel the check has no image of its own.
 | 0004 GPU BCL | Valve's "drm/msm/a6xx: enable BCL" asks the secure world's GPU register service for Battery Current Limit on every a6xx GMU and fails the GPU when it refuses; SM8250's firmware refuses, and the failed GPU took the display with it. BCL now runs only where the secure world enabled it. |
 | 0005 writeback | Valve's "drm/msm/dpu: register all writebacks" pairs two writeback blocks whenever the DSI links are bonded; SM8250 has one, the pair's second id comes from past the catalog, the KMS initialisation fails and its error path oopses in `dpu_kms_destroy()`, which left the headset hung without a watchdog reset. The pair is formed only where a second block exists. |
 | 0006 Bluetooth firmware wait | Valve's "bluetooth: make sure firmware is avail before probe" defers every `hci_qca` probe until `qca/hmtbtfw20.tlv`, the Frame's WCN7850 firmware, loads; the QCA6390 has no such file (it loads `htbtfw20.tlv` when the device opens), so its probe deferred forever. The wait applies to the WCN7850 only. |
+| 0007 OV7251 enable GPIO | the four tracking cameras share their shutdown and standby lines, which the tree switches once as fixed regulators for all of them; mainline's OV7251 driver requires an enable GPIO of its own and claims it exclusively, so it takes the GPIO as optional |
 
 Mainline sets RPMh regulators only to voltages on the regulator's own steps, and one invalid
 regulator node fails the whole PMIC's set. The stock tree runs L7A (the panels' VDDIO) in
