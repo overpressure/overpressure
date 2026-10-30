@@ -17,6 +17,8 @@
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include "sm8250.dtsi"
 #include "pm8150.dtsi"
+/* PM8150B: the charger and fuel gauge's PMIC (its temperature alarm, ADC and GPIOs here). */
+#include "pm8150b.dtsi"
 
 / {
 	model = "PICO 4 (phoenix)";
@@ -1418,6 +1420,19 @@
 		function = "gpio";
 		drive-strength = <16>;
 		output-high;
+	};
+};
+
+/*
+ * The battery: PM8150B's fuel gauge (its battery-SOC block) and charger with its USB input. They run
+ * as PICO's boot loader set them up; the driver reports the level and the charger's state.
+ */
+&spmi_bus {
+	pmic@2 {
+		battery@4000 {
+			compatible = "pico,phoenix-pm8150b-battery";
+			reg = <0x4000>, <0x1000>, <0x1300>;
+		};
 	};
 };
 

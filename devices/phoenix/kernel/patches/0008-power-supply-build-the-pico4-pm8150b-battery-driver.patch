@@ -1,0 +1,37 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] power: supply: build the PICO 4's PM8150B battery driver
+
+The driver itself (pico4-pm8150b-battery.c) is the PICO 4's own source, which build-kernel.sh
+copies into the tree; this adds its configuration option and its object.
+---
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index b9b106c36ff6..dbc41ba09822 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -1170,6 +1170,14 @@ config BATTERY_CHARGER_SURFACE_RT
+ 	  This driver can also be built as a module. If so, the module
+ 	  will be called surface-rt-ec.
+ 
++config BATTERY_PICO4_PM8150B
++	tristate "PICO 4 battery level and charger state from PM8150B"
++	depends on MFD_SPMI_PMIC || COMPILE_TEST
++	help
++	  Say Y here to report the PICO 4's battery: the PM8150B fuel gauge's
++	  state of charge, the charger's state and the USB input, read from the
++	  PMIC's registers as the stock kernel reads them.
++
+ config CHARGER_QCOM_SMB2
+ 	tristate "Qualcomm PMI8998 PMIC charger driver"
+ 	depends on MFD_SPMI_PMIC
+diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
+index 026ce7c77d52..efbab2df80ee 100644
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -129,6 +129,7 @@ obj-$(CONFIG_BATTERY_SURFACE)	+= surface_battery.o
+ obj-$(CONFIG_CHARGER_SURFACE)	+= surface_charger.o
+ obj-$(CONFIG_BATTERY_CHARGER_SURFACE_RT) += surface-rt-ec.o
+ obj-$(CONFIG_BATTERY_UG3105)	+= ug3105_battery.o
++obj-$(CONFIG_BATTERY_PICO4_PM8150B)	+= pico4-pm8150b-battery.o
+ obj-$(CONFIG_CHARGER_QCOM_SMB2)	+= qcom_smbx.o
+ obj-$(CONFIG_CHARGER_QCOM_PM8550B)	+= qcom_pm8550b_charger.o
+ obj-$(CONFIG_FUEL_GAUGE_MM8013)	+= mm8013.o
