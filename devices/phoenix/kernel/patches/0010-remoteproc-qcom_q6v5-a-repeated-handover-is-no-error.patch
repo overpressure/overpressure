@@ -1,0 +1,26 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] remoteproc: qcom_q6v5: a repeated handover is no error
+
+PICO's SLPI firmware raises its handover bit (the vendor kernel's proxy
+unvote) about five times a second for as long as it runs, and every edge
+logged an error. The vendor kernel acts on the first proxy unvote and
+ignores the rest; the handover is issued once here too, and a repeat is
+logged at debug level only.
+---
+diff --git a/drivers/remoteproc/qcom_q6v5.c b/drivers/remoteproc/qcom_q6v5.c
+index 58d5b85e58cd..8d0fa090b78c 100644
+--- a/drivers/remoteproc/qcom_q6v5.c
++++ b/drivers/remoteproc/qcom_q6v5.c
+@@ -165,7 +165,11 @@ static irqreturn_t q6v5_handover_interrupt(int irq, void *data)
+ 	struct qcom_q6v5 *q6v5 = data;
+ 
+ 	if (q6v5->handover_issued) {
+-		dev_err(q6v5->dev, "Handover signaled, but it already happened\n");
++		/*
++		 * The PICO 4's SLPI raises its handover (proxy unvote) bit again about five
++		 * times a second while it runs; like the vendor kernel, take only the first.
++		 */
++		dev_dbg(q6v5->dev, "Handover signaled, but it already happened\n");
+ 		return IRQ_HANDLED;
+ 	}
+ 

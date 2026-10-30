@@ -401,6 +401,7 @@ so on this kernel the check has no image of its own.
 | 0007 OV7251 enable GPIO | the four tracking cameras share their shutdown and standby lines, which the tree switches once as fixed regulators for all of them; mainline's OV7251 driver requires an enable GPIO of its own and claims it exclusively, so it takes the GPIO as optional |
 | 0008 battery | the battery driver's configuration option and object (mainline has no driver for PM8150B's charger or fuel gauge) |
 | 0009 Venus | Valve's squashed iris series moves Venus under `vcodec/` and onto the code it shares with iris, but leaves `hfi_venus.c` and `core.c` on the old names, so Venus no longer compiles; this gives Venus back its own files as they were before the series |
+| 0010 repeated handover | PICO's SLPI firmware raises its handover bit (the vendor kernel's proxy unvote) about five times a second while it runs; mainline logged each edge as an error, the vendor kernel acts on the first and ignores the rest. The handover is still issued once; a repeat is logged at debug level |
 
 Mainline sets RPMh regulators only to voltages on the regulator's own steps, and one invalid
 regulator node fails the whole PMIC's set. The stock tree runs L7A (the panels' VDDIO) in
