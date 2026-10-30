@@ -9,7 +9,7 @@ Started by a reboot with reason "recovery", the ABL boots it once; any reboot af
 panic, a deadline, a hard reset) starts the installed system on the stock kernel again.
 
     python recovery_image.py [--debug] [--trace FUNCTION] [--gpu-firmware DIR] [--wlan-firmware DIR]
-        [--cmdline WORD]... [--installed INSTALL_BOOT] [--stage1 DIR]
+        [--cmdline WORD]... [--installed INSTALL_BOOT [--boot]] [--stage1 DIR]
         KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT
 
 --gpu-firmware adds PICO's GPU firmware to stage 1, which msm needs while it binds the display.
@@ -18,7 +18,9 @@ panic, a deadline, a hard reset) starts the installed system on the stock kernel
 --installed starts the installed system instead of the maintenance stage 1: stage 1 and its
 command line come from the installed system's boot image (out/dev/install-boot.img), and its
 reboot into recovery after a failed start becomes a plain reboot, since recovery would start
-this image again.
+this image again. With --boot it is the boot partition's image of the installed system
+instead: no AVB footer, the dtbo partition's overlay, and stage 1's reboot into recovery after a
+failed start reaches the dev image.
 
 --stage1 puts the files of a stage-1 overlay (devices/phoenix/initramfs) over the base image's,
 so that the test image carries this tree's stage 1 without a new dev image.
@@ -230,10 +232,15 @@ def trace_words(function: str) -> tuple:
 def build(kernel_out: Path, stock_recovery: Path, dev_recovery: Path, debug: bool = False,
           trace: str | None = None, gpu_firmware: Path | None = None, cmdline_words=(),
           installed: Path | None = None, overlay: Path | None = None,
-          wlan_firmware: Path | None = None) -> bytes:
+          wlan_firmware: Path | None = None, boot: bool = False) -> bytes:
     # The header and the recovery_dtbo stay the recovery partition's; stage 1 and its words can
-    # be the installed system's.
+    # be the installed system's. --boot: the boot partition's image, all of it the installed
+    # system's (the ABL applies the dtbo partition's overlay on a normal boot), without AVB.
     base, stage1 = stage1_image(dev_recovery, installed)
+    if boot:
+        if not installed:
+            raise ValueError("--boot needs --installed (the installed system's boot image)")
+        base = stage1
     kernel = (kernel_out / "Image.gz").read_bytes()
     dtb = (kernel_out / DTB).read_bytes()
     # A later word replaces an earlier one with its key: the given words win over the defaults.
@@ -250,10 +257,13 @@ def build(kernel_out: Path, stock_recovery: Path, dev_recovery: Path, debug: boo
     image = base.with_cmdline(cmdline)
     image.kernel, image.dtb = kernel, dtb
     info = build_info(stage1.ramdisk, kernel)
+    # In boot, stage 1's reboot into recovery after a failed start reaches the dev image, as it
+    # should: only the one-shot recovery image needs the plain reboot instead.
+    plain_reboot = bool(installed) and not boot
     archives = ([overlay_archive(overlay)] if overlay else []) + \
         ([firmware_archive(gpu_firmware)] if gpu_firmware else []) + \
         ([wlan_firmware_archive(wlan_firmware)] if wlan_firmware else []) + \
-        ([stage1_archive(stage1.ramdisk, debug, bool(installed))] if debug or installed else []) + \
+        ([stage1_archive(stage1.ramdisk, debug, plain_reboot)] if debug or plain_reboot else []) + \
         ([build_info_archive(info)] if info else [])
     ramdisk = appended(stage1.ramdisk, *archives)
     image.ramdisk = ramdisk
@@ -262,7 +272,7 @@ def build(kernel_out: Path, stock_recovery: Path, dev_recovery: Path, debug: boo
     check = bootimg.parse(data)
     if (check.kernel, check.dtb, check.ramdisk, check.recovery_dtbo) != (kernel, dtb, ramdisk, base.recovery_dtbo):
         raise RuntimeError("the test image failed validation")
-    return avb.with_stock_vbmeta(stock_recovery.read_bytes(), data)
+    return data if boot else avb.with_stock_vbmeta(stock_recovery.read_bytes(), data)
 
 
 def main(argv=None) -> int:
@@ -279,6 +289,8 @@ def main(argv=None) -> int:
                     help="start the installed system with INSTALL_BOOT's stage 1 (out/dev/install-boot.img)")
     ap.add_argument("--stage1", metavar="DIR", type=Path,
                     help="put the stage-1 overlay DIR (devices/phoenix/initramfs) over the base's files")
+    ap.add_argument("--boot", action="store_true",
+                    help="the boot partition's image of the installed system (with --installed)")
     ap.add_argument("paths", nargs="+", type=Path, metavar="KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT")
     args = ap.parse_args(argv)
     if len(args.paths) not in (3, 4):
@@ -286,13 +298,14 @@ def main(argv=None) -> int:
     root = Path(__file__).resolve().parents[3]
     dev_recovery = args.paths[2] if len(args.paths) == 4 else root / "out" / "dev" / "dev-recovery.img"
     data = build(args.paths[0], args.paths[1], dev_recovery, args.debug, args.trace, args.gpu_firmware,
-                 args.cmdline, args.installed, args.stage1, args.wlan_firmware)
+                 args.cmdline, args.installed, args.stage1, args.wlan_firmware, args.boot)
     out = args.paths[-1]
     out.write_bytes(data)
     digest = hashlib.sha256(data).hexdigest()
     stage1 = stage1_image(dev_recovery, args.installed)[1]
     info = build_info(stage1.ramdisk, (args.paths[0] / "Image.gz").read_bytes())
-    Path(f"{out}.json").write_text(json.dumps({"recovery_sha256": digest, "build_info": info}, indent=2) + "\n",
+    key = "boot_sha256" if args.boot else "recovery_sha256"
+    Path(f"{out}.json").write_text(json.dumps({key: digest, "build_info": info}, indent=2) + "\n",
                                    encoding="utf-8", newline="\n")
     print(f"{out} {digest}")
     return 0

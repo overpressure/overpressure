@@ -248,6 +248,32 @@ class RecoveryImageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, installed=dev)
 
+    def test_boot_is_the_installed_systems_own_image(self):
+        def stage1(marker: bytes) -> bytes:
+            tree = cpio.Tree()
+            for directory in ("usr", "usr/sbin"):
+                tree.mkdir(directory)
+            tree.add_file("usr/sbin/pico4-reboot", b"ELF reboot", 0o755)
+            tree.add_file("init", marker)
+            return gzip.compress(tree.to_cpio(), mtime=0)
+        dev = self.dev_recovery("pico4poc.test_run=dev-loop pico4poc.part=recovery", stage1(b"maintenance"))
+        install = bootimg.BootImage(header_version=2, page_size=4096, kernel=b"stock kernel",
+                                    ramdisk=stage1(b"installed"), dtb=b"stock dtb").with_cmdline(
+            "androidboot.hardware=qcom pico4poc.root=installed pico4poc.autoreboot=0")
+        (self.tmp / "install-boot.img").write_bytes(install.pack())
+        data = recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev,
+                                    installed=self.tmp / "install-boot.img", boot=True)
+        image = bootimg.parse(data)
+        # A plain boot image (no AVB footer), the installed system's header, words and stage 1.
+        self.assertEqual(data, image.pack())
+        self.assertEqual((image.kernel, image.dtb, image.recovery_dtbo), (b"new kernel", b"new dtb", b""))
+        self.assertIn("pico4poc.root=installed", image.full_cmdline.split())
+        self.assertIn("pico4poc.kernel=valve", image.full_cmdline.split())
+        # stage 1's reboot into recovery after a failed start stays: recovery holds the dev image.
+        self.assertEqual(image.ramdisk, install.ramdisk)
+        with self.assertRaises(ValueError):
+            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, boot=True)
+
     def test_stage1_overlay_replaces_the_bases_files(self):
         overlay = self.tmp / "initramfs"
         (overlay / "usr" / "bin").mkdir(parents=True)
