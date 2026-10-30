@@ -340,10 +340,13 @@ class Dev(Headset):
             if lines[0] != "systemd":
                 raise RuntimeError("stage 1 is still running")
         self.until("installed system", 240, installed)
-        # dev check's state: the archive the system image was built from, if it is the local one.
+        # dev check's state: the archive the system image was built from, if it is a local one
+        # (out/userspace, or another build's output folder such as a kernel branch's).
         archive = self.ssh("cat /usr/share/pico4-poc/userspace-archive.sha256", 10).strip()
-        if ARCHIVE.exists() and backups.digest(ARCHIVE)["sha256"] == archive:
-            state = hw.userspace_state(ARCHIVE)
+        local = [ARCHIVE] + sorted(p for p in (ROOT / "out").glob("*/pico4-userspace.tar.zst") if p != ARCHIVE)
+        found = next((p for p in local if p.exists() and backups.digest(p)["sha256"] == archive), None)
+        if found is not None:
+            state = hw.userspace_state(found)
             state["installed"] = True
             state["booted"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
             (self.work / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")

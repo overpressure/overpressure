@@ -89,6 +89,9 @@ struct pico4_station
 	bool spidev;
 	uint8_t queue[SPIDEV_QUEUE][PICO4_STATION_FRAME];
 	unsigned queued;
+	//! The last frame that came back: the station repeats it on every transfer until it has
+	//! another one (the vendor driver read only on the station's interrupt).
+	uint8_t last[PICO4_STATION_FRAME];
 };
 
 uint8_t
@@ -309,7 +312,8 @@ spidev_transfer(struct pico4_station *st, const uint8_t tx[PICO4_STATION_FRAME])
 	if (ioctl(st->fd, SPI_IOC_MESSAGE(1), &t) < 0) {
 		return -errno;
 	}
-	if (pico4_station_valid(rx)) {
+	if (pico4_station_valid(rx) && memcmp(rx, st->last, sizeof(rx)) != 0) {
+		memcpy(st->last, rx, sizeof(rx));
 		if (st->queued == SPIDEV_QUEUE) { // the oldest goes, as the vendor driver's buffer
 			memmove(st->queue[0], st->queue[1], sizeof(st->queue) - sizeof(st->queue[0]));
 			st->queued--;
@@ -499,6 +503,7 @@ power(struct pico4_station *st, int on)
 	int r = w < 0 ? -errno : 0;
 	close(fd);
 	st->queued = 0; // frames from before the power cycle
+	memset(st->last, 0, sizeof(st->last));
 	return r;
 }
 

@@ -193,6 +193,9 @@ class Station:
         # header, which the station ignores). Frames that come back wait in the queue.
         self.spidev = os.access(STATION_POWER, os.W_OK)
         self.queue = []
+        # The station repeats its last frame on every transfer until it has another one (the
+        # vendor driver read only on the station's interrupt): a frame equal to the last is no new one.
+        self.last = None
         self._tx = ctypes.create_string_buffer(FRAME)
         self._rx = ctypes.create_string_buffer(FRAME)
 
@@ -206,6 +209,7 @@ class Station:
         with open(STATION_POWER, "w") as f:
             f.write("enabled" if on else "disabled")
         self.queue.clear()
+        self.last = None
 
     def _transfer(self, data: bytes):
         self._tx.raw = data
@@ -213,7 +217,8 @@ class Station:
         xfer = struct.pack("<QQIIHBBBBBB", ctypes.addressof(self._tx), ctypes.addressof(self._rx), FRAME,
                            0, 0, 0, 0, 0, 0, 0, 0)
         fcntl.ioctl(self.fd, SPI_IOC_MESSAGE_1, xfer)
-        if valid_reply(self._rx.raw):
+        if valid_reply(self._rx.raw) and self._rx.raw != self.last:
+            self.last = self._rx.raw
             self.queue.append(self._rx.raw)
 
     def send(self, data: bytes):

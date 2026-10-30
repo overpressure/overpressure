@@ -165,6 +165,23 @@ class PlainSpidevTests(unittest.TestCase):
         self.assertEqual(len(st.sent), 1)
         self.assertEqual(st.sent[0][0], station.HEADER_SEND)
 
+    def test_a_repeated_frame_is_no_new_one(self):
+        # The station returns its last frame on every transfer until it has another.
+        import ctypes
+        from unittest import mock
+        st = station.Station.__new__(station.Station)
+        st.fd, st.spidev, st.queue, st.last = 3, True, [], None
+        st._tx, st._rx = ctypes.create_string_buffer(40), ctypes.create_string_buffer(40)
+        frames = [reply(1, station.CMD_VERSION, bytes([1])), reply(1, station.CMD_VERSION, bytes([1])),
+                  reply(1, station.CMD_VERSION, bytes([2]))]
+
+        def ioctl(fd, request, arg):
+            ctypes.memmove(st._rx, frames.pop(0), 40)
+        with mock.patch.object(station.fcntl, "ioctl", ioctl, create=True):
+            for _ in range(3):
+                st._transfer(bytes(40))
+        self.assertEqual([f[3] for f in st.queue], [1, 2])
+
     def test_nothing_within_the_timeout(self):
         st = self.station([])
         self.assertIsNone(st._next(0.01))
