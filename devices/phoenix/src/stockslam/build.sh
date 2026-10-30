@@ -6,7 +6,7 @@
 #
 #   src/stockslam/build.sh ROOT OUTPUT_DIR [LLVM_DIR]
 #
-# OUTPUT_DIR receives pico4-slamd, libpico4-slam-stubs.so and libandroid.so.
+# OUTPUT_DIR receives pico4-slamd, libpico4-slam-stubs.so, libpico4-fastrpc-bridge.so and libandroid.so.
 set -euo pipefail
 src=$(cd "$(dirname "$0")" && pwd)
 root=${1:?specify the tracker root (system/lib64, system/lib64/bootstrap)}
@@ -25,11 +25,15 @@ trap 'rm -rf "$work"' EXIT
 "$work/test_isp"
 "$clang" -std=c11 -O2 -Wall -Wextra -Werror -o "$work/test_room" "$src/test_room.c" -lm
 "$work/test_room"
+"$clang" -std=c11 -O2 -Wall -Wextra -Werror -o "$work/test_fastrpc_bridge" "$src/test_fastrpc_bridge.c"
+"$work/test_fastrpc_bridge"
 
 cc=("$clang" --target=aarch64-linux-android29 -fuse-ld=lld -O2 -fPIC -fno-stack-protector -nostdlib -ffreestanding
     -Wall -Wextra -Werror -I"$src/../monado")
 libs=(-L"$root/system/lib64/bootstrap" -L"$root/system/lib64")
 "${cc[@]}" -shared -Wl,-soname,libpico4-slam-stubs.so -o "$out/libpico4-slam-stubs.so" "$src/stubs.c" "${libs[@]}" -lc
 "${cc[@]}" -shared -Wl,-soname,libandroid.so -o "$out/libandroid.so" "$src/android.c"
+"${cc[@]}" -shared -Wl,-soname,libpico4-fastrpc-bridge.so -o "$out/libpico4-fastrpc-bridge.so" \
+    "$src/fastrpc-bridge.c" "${libs[@]}" -lc
 "${cc[@]}" -fPIE -pie -Wl,--dynamic-linker=/system/bin/bootstrap/linker64 -Wl,-z,max-page-size=4096 \
     -o "$out/pico4-slamd" "$src/crt.c" "$src/pico4-slamd.c" "$src/vst.c" "${libs[@]}" -lc -lm -ldl

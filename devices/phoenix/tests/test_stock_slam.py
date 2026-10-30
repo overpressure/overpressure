@@ -74,9 +74,24 @@ class RootRunnerTests(unittest.TestCase):
         self.assertIn('mount --bind "$calibration" "$root/mnt/vendor/pvr"', script)
         self.assertIn("unshare -m --propagation private", script)
         self.assertIn("exec env -i", script)
-        self.assertIn("LD_PRELOAD=/pico4/libpico4-slam-stubs.so", script)
+        self.assertIn("preload=/pico4/libpico4-slam-stubs.so\n", script)
+        self.assertIn('LD_PRELOAD="$preload"', script)
         self.assertIn('/usr/bin/chroot "$root" /system/bin/bootstrap/linker64 "$@"', script)
         self.assertIn("ADSP_LIBRARY_PATH=/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp", script)
+
+    def test_mainline_kernel_gets_the_fastrpc_bridge(self):
+        # The stock libraries' vendor FastRPC and ION calls, carried over to the upstream driver.
+        script = read(LIBEXEC / "stock-slam")
+        self.assertIn("if [ ! -e /dev/adsprpc-smd ] && [ -e /dev/fastrpc-cdsp ]; then\n"
+                      "\tpreload=$preload:/pico4/libpico4-fastrpc-bridge.so\n", script)
+        build = read(ROOT / "src/stockslam/build.sh")
+        # Its translations are tested natively before the bionic library is built.
+        self.assertLess(build.index('"$work/test_fastrpc_bridge"'), build.index("libpico4-fastrpc-bridge.so\" \\"))
+        bridge = read(ROOT / "src/stockslam/fastrpc-bridge.c")
+        for symbol in ("\nopen(", "\n__open_2(", "\nopenat(", "\n__openat_2(", "\nioctl(", "\nclose("):
+            self.assertIn(symbol, bridge)
+        # The bridge reaches the kernel by system calls, never through the functions it replaces.
+        self.assertNotIn("dlsym", bridge)
 
     def test_files_stay_lf(self):
         for path in (LIBEXEC / "stock-slam", LIBEXEC / "cdsp-boot", UNITS / "pico4-slamd.service",

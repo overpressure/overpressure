@@ -832,6 +832,18 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   DSP's loader stalls on the tracker's first module. The tracker then opens a signed user PD on
   the CDSP (`fastrpc_shell_3`) and loads its modules there itself, through the stock
   `libcdsprpc.so` on this kernel's own FastRPC driver.
+- **On a mainline kernel.** The stock libcdsprpc speaks the vendor kernel's FastRPC ioctls on
+  `/dev/adsprpc-smd` and allocates through ION on `/dev/ion`; a mainline kernel has the upstream
+  FastRPC driver (`/dev/fastrpc-cdsp`) and DMA-BUF heaps. `stock-slam` then preloads
+  `libpico4-fastrpc-bridge.so` ([fastrpc_bridge.h](../src/stockslam/fastrpc_bridge.h)), which gives
+  the vendor nodes descriptors of their own and translates the requests the stock libraries build
+  (read from the stock `libcdsprpc.so` and `libion.so`): GETINFO opens the domain's upstream node
+  onto the descriptor, INIT and INIT_ATTRS become INIT_ATTACH, INIT_CREATE or INIT_CREATE_STATIC,
+  the INVOKE family becomes the upstream INVOKE with 24-byte arguments, MMAP and MUNMAP keep their
+  layouts, CONTROL, SETMODE and MUNMAP_FD are answered, and ION allocations come from
+  `/dev/dma_heap/system` (the legacy ION probe fails, so libion takes the new ABI). Its translations
+  are tested natively before the bionic library is built; on the headset it has not run yet, and
+  `pico4-slamd` and `pico4-cdsprpcd` stay stock-kernel units until it has.
 - **pico4-slamd.** [`pico4-slamd`](../src/stockslam/pico4-slamd.c)
   ([`pico4-slamd.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service),
   wanted by Valve's session and Monado) creates `/dev/shm/pico4-slam` (group video, mode 0660)

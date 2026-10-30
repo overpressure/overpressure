@@ -13,6 +13,9 @@
 #
 # --vendor puts the vendor libraries first (the DSP's root listener, cdsprpcd). The root has no
 # Android runtime: programs start through bionic's bootstrap linker.
+# On a mainline kernel (upstream FastRPC, no /dev/adsprpc-smd) the FastRPC bridge is preloaded as
+# well: it carries the stock libraries' vendor FastRPC and ION calls over to the upstream driver
+# and the DMA-BUF heap (src/stockslam/fastrpc_bridge.h).
 set -euo pipefail
 root=/usr/lib/pico4-stock-slam
 calibration=/usr/share/qcom/pico4/calibration/pvr
@@ -24,10 +27,14 @@ libs=/system/lib64/bootstrap:/system/lib64
 [ "${1:-}" = --vendor ] && { libs=/vendor/lib64:$libs; shift; }
 [ -x "$root/system/bin/bootstrap/linker64" ] || { echo "stock-slam: no tracker root in $root" >&2; exit 1; }
 [ -d "$calibration/mav0" ] || { echo "stock-slam: no factory calibration in $calibration" >&2; exit 1; }
+preload=/pico4/libpico4-slam-stubs.so
+if [ ! -e /dev/adsprpc-smd ] && [ -e /dev/fastrpc-cdsp ]; then
+	preload=$preload:/pico4/libpico4-fastrpc-bridge.so
+fi
 exec unshare -m --propagation private /bin/bash -c '
 	set -e
-	root=$1 calibration=$2 libs=$3 state=$4
-	shift 4
+	root=$1 calibration=$2 libs=$3 state=$4 preload=$5
+	shift 5
 	mount --rbind /dev "$root/dev"
 	mount -t proc proc "$root/proc"
 	mount --rbind /sys "$root/sys"
@@ -40,9 +47,9 @@ exec unshare -m --propagation private /bin/bash -c '
 	mount --bind "$state/maps" "$root/data/misc/user/0/maps"
 	mount --bind "$state/boundary" "$root/data/misc/user/0/boundary"
 	mount --bind "$state/stationservice" "$root/data/stationservice"
-	exec env -i PATH=/system/bin LD_LIBRARY_PATH="$libs" LD_PRELOAD=/pico4/libpico4-slam-stubs.so \
+	exec env -i PATH=/system/bin LD_LIBRARY_PATH="$libs" LD_PRELOAD="$preload" \
 		"ADSP_LIBRARY_PATH=/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp" \
 		${PICO4_SLAMD_DEBUG:+PICO4_SLAMD_DEBUG=$PICO4_SLAMD_DEBUG} ${PICO4_SLAMD_LSC:+PICO4_SLAMD_LSC=$PICO4_SLAMD_LSC} \
 		${PICO4_SLAMD_AE:+PICO4_SLAMD_AE=$PICO4_SLAMD_AE} ${PICO4_SLAMD_RESTART_S:+PICO4_SLAMD_RESTART_S=$PICO4_SLAMD_RESTART_S} \
 		/usr/bin/chroot "$root" /system/bin/bootstrap/linker64 "$@"
-' stock-slam "$root" "$calibration" "$libs" "$state" "$@"
+' stock-slam "$root" "$calibration" "$libs" "$state" "$preload" "$@"
