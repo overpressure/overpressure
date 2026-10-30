@@ -361,6 +361,8 @@ shipping a copy:
 | `/usr/share/qcom/pico4/calibration/pvr/` | `persist/pvr/` (camera, IMU and lens calibration, gyro bias tables) | Monado's driver, PICO OS's tracker |
 | `/usr/lib/firmware/wlan/qca_cld/qca6390/wlan_mac.bin` | `persist/wlan_mac.bin` | the Wi-Fi driver |
 | (read directly) | `persist/falcon/sn` | `pico4-fan`'s `auto` profile (the production batch, [cooling.md](cooling.md)) |
+| (read directly) | `persist/time/ats_2` (the wall clock's offset to the PMIC's RTC, ms) | `pico4-clock`: the clock at boot is RTC + offset, as PICO OS's time daemon keeps it, before timesyncd; only forward |
+| (read directly) | `persist/pico_bt_mac` | `pico4-bt-address` (Bluetooth on a mainline kernel) |
 
 The files belong to Android's `system` user, uid 1000, which is `steamos` here, so the driver in
 `vrserver` reads them; root reads all of them. Writes stay refused: the sensor DSP's attempt to

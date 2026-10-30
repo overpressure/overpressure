@@ -413,6 +413,12 @@ devices/phoenix/kernel/build-mesa-deps.sh <root>/usr/share/hwdata/pnp.ids \
     /var/tmp/pico4-kernel/mesa-deps /var/tmp/pico4-kernel/out
 ```
 
+Decision: Vulkan on Valve's kernel stays `pico4-turnip-kgsl` (Mesa 26.1.6 with its msm backend),
+OpenGL is zink on it, as on the Frame. Valve's Mesa has no path for SteamVR's storage-usage
+swapchains into compressed scanout images; without that path the compositor needs about 11 ms of
+GPU time per frame (60–66 frames per second), with it 5.9 ms (90 frames per second, the session
+check). Valve's Mesa replaces ours once it carries an equivalent of `wsi-compressed-scanout.patch`.
+
 ### Source
 
 Valve's `linux-valve` repository needs a login, but Valve publishes each kernel package's GPL
