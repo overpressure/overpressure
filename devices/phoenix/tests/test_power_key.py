@@ -60,6 +60,21 @@ class KeyTests(unittest.TestCase):
     def test_release_without_press_does_nothing(self):
         self.assertIsNone(tool.Key().event(0, 1.0))
 
+    def test_wake_up_press_is_ignored(self):
+        # Woken by the key: its events arrive with the resume and belong to the wake-up press.
+        waking = tool.Waking(asleep=0.0)
+        self.assertTrue(waking.update(100.0, asleep=12.0))
+        self.assertTrue(waking.quiet(100.2))
+        self.assertFalse(waking.quiet(101.5))
+
+    def test_press_after_another_wake_source_counts(self):
+        # Woken by the RTC: the idle poll notices the resume; a press a minute later suspends.
+        waking = tool.Waking(asleep=0.0)
+        self.assertTrue(waking.update(200.0, asleep=20.0))   # the poll after the resume
+        self.assertFalse(waking.update(260.0, asleep=20.0))  # the press: no new sleep
+        self.assertFalse(waking.quiet(260.0))
+        self.assertLessEqual(tool.POLL_S, tool.SETTLE_S)
+
     def test_event_layout(self):
         # struct input_event on aarch64: two longs of time, type, code, value.
         self.assertEqual(tool.EVENT.size, 24)
