@@ -109,5 +109,21 @@ class CameraClockTests(unittest.TestCase):
             self.assertIn("assigned-clock-rates = <37500000>;", cci)
 
 
+class FastRpcTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0011-misc-fastrpc-resume-an-interrupted-invocation.patch"
+
+    def test_interrupted_call_is_resumed_not_sent_again(self):
+        patch = text(self.PATCH)
+        added = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+"))
+        # Marked on -ERESTARTSYS, found again by the same thread, handle and scalars.
+        self.assertIn("ctx->interrupted = true;", added)
+        self.assertIn("ctx->pid != current->pid", added)
+        self.assertIn("ctx->msg.handle == handle && ctx->sc == sc", added)
+        # The resumed context waits without a second send, on the restarted call's arguments.
+        resume = added[added.index("ctx = fastrpc_context_resume"):]
+        self.assertLess(resume.index("ctx->args = args;"), resume.index("goto wait;"))
+        self.assertIn("wait:\n\tif (kernel) {", patch.replace("\n+", "\n").replace("\n ", "\n"))
+
+
 if __name__ == "__main__":
     unittest.main()
