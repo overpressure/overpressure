@@ -20,9 +20,12 @@ class WifiBackendTests(unittest.TestCase):
         self.assertIn("/run/NetworkManager/conf.d/99-zz-pico4-wifi-backend.conf", unit)
         self.assertIn("Before=NetworkManager.service", unit)
         self.assertFalse((ROOTFS / "etc/NetworkManager/conf.d" / ours.name).exists())
-        # A mainline kernel runs the Frame's iwd.
+        # A mainline kernel runs the Frame's iwd; on the stock kernel it skips itself, also when
+        # the setting above came from a boot on a mainline kernel.
         packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
         self.assertIn("iwd", packages)
+        dropin = (ROOTFS / "usr/lib/systemd/system/iwd.service.d/50-pico4-stock-kernel.conf").read_text(encoding="utf-8")
+        self.assertIn("ConditionPathExists=!/sys/class/kgsl", dropin)
 
 
 class WpaSupplicantTests(unittest.TestCase):
