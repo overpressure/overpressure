@@ -174,7 +174,7 @@ def validate_check(value, require_vulkan: bool = False, require_fan: bool = Fals
     if require_vulkan:
         vk = value.get("vulkan") or {}
         if vk.get("status") != "passed":
-            raise ValueError("Turnip/KGSL Vulkan test did not pass in the userspace")
+            raise ValueError("Turnip Vulkan test did not pass in the userspace")
         validate_vulkan(vk.get("result"))
 
 

@@ -266,6 +266,8 @@ class HarnessTests(unittest.TestCase):
             if command.startswith("systemctl is-active -q pico4-session.service ||"):
                 self.resumed_session = True
                 return ""
+            if command.startswith("[ -e /dev/kgsl-3d0 ]"):
+                return getattr(self, "gpu", "kgsl")
             if "pico4-vrdisplay-test" in command:
                 self.assertIn("PICO4_VRDISPLAY=1", command)
                 failed = self.scenario == "vrdisplay"
@@ -460,6 +462,18 @@ class HarnessTests(unittest.TestCase):
         self.assertIn("vrsync", self.runner.result["userspace"])
         self.assertNotIn("valve_session", self.runner.result["userspace"])
         self.assertFalse(any("pico4-valve-session-check" in command[-1] for command in self.calls))
+
+    def test_msm_goes_from_the_imu_to_valves_session(self):
+        # A mainline kernel's msm drives the panels without the layer, as on the Frame.
+        self.enable_userspace(sensors=True, vrdisplay=True, steamvr=True)
+        self.gpu = "msm"
+        self.assertEqual(self.execute(), 0)
+        state = self.runner.result["userspace"]
+        self.assertEqual(state["vrdisplay"], {"status": "not-used", "gpu": "msm"})
+        self.assertNotIn("vrsync", state)
+        self.assertIn("valve_session", state)
+        self.assertFalse(any("pico4-vrdisplay-test" in command[-1] or "pico4-vrsync-test" in command[-1]
+                             for command in self.calls))
 
     def test_vr_display_skipped_without_the_layer(self):
         self.enable_userspace(sensors=True)

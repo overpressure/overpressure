@@ -152,8 +152,8 @@ stage 2   systemd 257.7: udev devnode rules, read-only sweep, recovery-watch,
 
 **Receive.** [`pico4-userspace receive`](../initramfs/usr/bin/pico4-userspace) unpacks the
 archive from stdin (or `--from FILE --bytes N`) and hashes it on the way; with `--sha256` a
-mismatch refuses the switch. It sizes `zram0` at 6144 MiB virtual (`--size-mb`), of which only
-written data takes RAM, formats it as ext4 without a journal and mounts it at `/newroot` with
+mismatch refuses the switch. It sizes `zram0` at 8192 MiB virtual (`--size-mb`), of which only
+written data takes RAM (the image takes 5.6 GiB, the rest is room for the session), formats it as ext4 without a journal and mounts it at `/newroot` with
 `discard`. Before PID 1 depends on the new root, its systemd must run on this kernel
 (`systemd --version` in a chroot). A second attempt needs a reboot. Stage 1's dropbear runs
 with a 4 MiB receive window (`-W 4194304` in [svc](../initramfs/usr/libexec/pico4-poc/svc)):
@@ -316,7 +316,8 @@ checks:
   XR device nodes accessible to the session user ([session.md](session.md));
 - `steamos-customizations-deckard`, `steamos-manager`, gamescope, PipeWire and
   `pico4-turnip-kgsl` installed;
-- with `/dev/kgsl-3d0` present, the Turnip/KGSL Vulkan test ([graphics.md](graphics.md)).
+- with a GPU node present (`/dev/kgsl-3d0`, or msm's render node on a mainline kernel), the Turnip
+  Vulkan test ([graphics.md](graphics.md)).
 
 `pico4.userspace.validate_check` validates the JSON on the host. As a bounded acceptance run,
 which restores PICO OS afterwards:

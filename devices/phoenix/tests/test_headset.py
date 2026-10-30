@@ -233,6 +233,20 @@ class DevTests(HeadsetFixture):
             "gpu_firmware": [{}], "sensor_data": []}))
         return archive, digest
 
+    def test_check_knows_the_stage1_of_a_kernel_test_image(self):
+        stock = {"kernel": "Linux version 4.19.81-perf+", "stock": "5.13.7"}
+        valve = {"kernel": "Linux version 7.2.0-pico4", "stock": "5.13.7"}
+        (self.root / "kernel").mkdir()
+        (self.root / "kernel" / "test-recovery.img.json").write_text(json.dumps({"build_info": valve}))
+        running = {"info": stock}
+        dev = self.make({"cat /etc/pico4-poc/build-info": lambda: json.dumps(running["info"])})
+        self.assertEqual(dev.known_build_info(stock), stock)
+        running["info"] = valve
+        self.assertEqual(dev.known_build_info(stock), valve)
+        # An unknown stage 1 keeps the dev image's, which the check then refuses.
+        running["info"] = {"kernel": "Linux version 9"}
+        self.assertEqual(dev.known_build_info(stock), stock)
+
     def test_boot_streams_switches_and_records_the_archive(self):
         archive, digest = self.archive()
         comm = iter(["init", "systemd"])

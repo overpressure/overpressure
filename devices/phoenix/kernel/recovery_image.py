@@ -23,6 +23,9 @@ this image again.
 --stage1 puts the files of a stage-1 overlay (devices/phoenix/initramfs) over the base image's,
 so that the test image carries this tree's stage 1 without a new dev image.
 
+Stage 1's build information names the new kernel, and OUT.json beside the image records it, so
+that `dev check` recognises the test image's stage 1 as a known build.
+
 --debug logs every driver probe, so the RAM console (read by the stock kernel after the reboot)
 ends with the probe a stalled boot waits for, the panic shows every task and CPU, and stage 1
 panics where it would return to fastboot. --trace records FUNCTION and everything it calls
@@ -34,12 +37,13 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from overpressure import avb, bootimg, compress, cpio, stage1 as stage1_overlay  # noqa: E402
+from overpressure import avb, bootimg, compress, cpio, kernelinfo, stage1 as stage1_overlay  # noqa: E402
 
 DTB = "sm8250-pico4-phoenix.dtb"
 #: The ABL passes only the boot image header's first command line field (512 bytes with its
@@ -87,6 +91,7 @@ REBOOT_PLAIN = f"""if [ "$1" = recovery ]; then
 fi
 """
 CONNECT_TIMEOUT = "etc/pico4-poc/test-connect-timeout"
+BUILD_INFO = "etc/pico4-poc/build-info"
 
 
 #: --gpu-firmware: PICO's Adreno 650 firmware (assets/graphics-firmware-*, from the stock OTA)
@@ -177,6 +182,38 @@ def overlay_archive(directory: Path) -> cpio.Tree:
     return tree
 
 
+def build_info(ramdisk: bytes, kernel: bytes) -> dict | None:
+    """Stage 1's build information with the new kernel's version (None without any)."""
+    try:
+        nodes = dict(cpio.read_cpio(compress.decompress(ramdisk)[0]))
+    except (ValueError, EOFError, OSError):
+        return None
+    if BUILD_INFO not in nodes:
+        return None
+    info = json.loads(nodes[BUILD_INFO].data)
+    info["kernel"] = kernelinfo.analyse(kernel).version
+    return info
+
+
+def build_info_archive(info: dict) -> cpio.Tree:
+    tree = tree_with_dirs((BUILD_INFO,))
+    tree.add_file(BUILD_INFO, json.dumps(info, indent=2).encode() + b"\n", 0o644)
+    return tree
+
+
+def stage1_image(dev_recovery: Path, installed: Path | None):
+    """The recovery partition's image and the one stage 1 and its words come from."""
+    base = bootimg.parse(dev_recovery.read_bytes())
+    if "pico4poc.part=recovery" not in base.full_cmdline.split():
+        raise ValueError(f"{dev_recovery} is not the dev loop's recovery image")
+    stage1 = base
+    if installed:
+        stage1 = bootimg.parse(installed.read_bytes())
+        if "pico4poc.root=installed" not in stage1.full_cmdline.split():
+            raise ValueError(f"{installed} is not the installed system's boot image")
+    return base, stage1
+
+
 def appended(ramdisk: bytes, *trees: cpio.Tree) -> bytes:
     """The ramdisk with each archive appended; the kernel unpacks them in order."""
     return ramdisk + b"".join(gzip.compress(tree.to_cpio(), mtime=0) for tree in trees)
@@ -194,16 +231,9 @@ def build(kernel_out: Path, stock_recovery: Path, dev_recovery: Path, debug: boo
           trace: str | None = None, gpu_firmware: Path | None = None, cmdline_words=(),
           installed: Path | None = None, overlay: Path | None = None,
           wlan_firmware: Path | None = None) -> bytes:
-    base = bootimg.parse(dev_recovery.read_bytes())
-    if "pico4poc.part=recovery" not in base.full_cmdline.split():
-        raise ValueError(f"{dev_recovery} is not the dev loop's recovery image")
     # The header and the recovery_dtbo stay the recovery partition's; stage 1 and its words can
     # be the installed system's.
-    stage1 = base
-    if installed:
-        stage1 = bootimg.parse(installed.read_bytes())
-        if "pico4poc.root=installed" not in stage1.full_cmdline.split():
-            raise ValueError(f"{installed} is not the installed system's boot image")
+    base, stage1 = stage1_image(dev_recovery, installed)
     kernel = (kernel_out / "Image.gz").read_bytes()
     dtb = (kernel_out / DTB).read_bytes()
     # A later word replaces an earlier one with its key: the given words win over the defaults.
@@ -219,9 +249,12 @@ def build(kernel_out: Path, stock_recovery: Path, dev_recovery: Path, debug: boo
         raise ValueError(f"the command line has {len(cmdline)} bytes; the ABL passes only {MAX_CMDLINE}")
     image = base.with_cmdline(cmdline)
     image.kernel, image.dtb = kernel, dtb
+    info = build_info(stage1.ramdisk, kernel)
     archives = ([overlay_archive(overlay)] if overlay else []) + \
-        ([firmware_archive(gpu_firmware)] if gpu_firmware else []) +         ([wlan_firmware_archive(wlan_firmware)] if wlan_firmware else []) + \
-        ([stage1_archive(stage1.ramdisk, debug, bool(installed))] if debug or installed else [])
+        ([firmware_archive(gpu_firmware)] if gpu_firmware else []) + \
+        ([wlan_firmware_archive(wlan_firmware)] if wlan_firmware else []) + \
+        ([stage1_archive(stage1.ramdisk, debug, bool(installed))] if debug or installed else []) + \
+        ([build_info_archive(info)] if info else [])
     ramdisk = appended(stage1.ramdisk, *archives)
     image.ramdisk = ramdisk
     image.boot_signature = b""
@@ -256,7 +289,12 @@ def main(argv=None) -> int:
                  args.cmdline, args.installed, args.stage1, args.wlan_firmware)
     out = args.paths[-1]
     out.write_bytes(data)
-    print(f"{out} {hashlib.sha256(data).hexdigest()}")
+    digest = hashlib.sha256(data).hexdigest()
+    stage1 = stage1_image(dev_recovery, args.installed)[1]
+    info = build_info(stage1.ramdisk, (args.paths[0] / "Image.gz").read_bytes())
+    Path(f"{out}.json").write_text(json.dumps({"recovery_sha256": digest, "build_info": info}, indent=2) + "\n",
+                                   encoding="utf-8", newline="\n")
+    print(f"{out} {digest}")
     return 0
 
 

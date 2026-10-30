@@ -382,11 +382,26 @@ class Dev(Headset):
         print(f"stage 2 answered {state['ssh_seconds']:.0f} s after the switch")
         return state
 
+    def known_build_info(self, dev_image: dict) -> dict:
+        """The build information of the running stage 1: the dev image's, or a kernel test image's
+        (recovery_image.py records it in out/kernel/*.img.json) when that one runs."""
+        try:
+            running = json.loads(self.ssh("cat /etc/pico4-poc/build-info", 10))
+        except (RuntimeError, ValueError):
+            return dev_image
+        if running != dev_image:
+            for record in sorted((self.work.parent / "kernel").glob("*.img.json")):
+                info = json.loads(record.read_text(encoding="utf-8")).get("build_info")
+                if info == running:
+                    print(f"stage 1 of the kernel test image {record.name[:-5]}")
+                    return info
+        return dev_image
+
     def check(self) -> int:
         state = json.loads((self.work / "state.json").read_text(encoding="utf-8"))
         image = json.loads((self.work / "dev-image.json").read_text(encoding="utf-8"))
         folder = self.work / ("check-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
-        checks = DevChecks(self, folder, image["build_info"], self.identity())
+        checks = DevChecks(self, folder, self.known_build_info(image["build_info"]), self.identity())
         try:
             checks.step("stage-2 checks", lambda: checks.userspace_checks(dict(state)))
             checks.result["status"] = "passed"

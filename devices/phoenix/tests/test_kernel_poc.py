@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
+import json
 import struct
 import tempfile
 import unittest
@@ -324,6 +326,25 @@ class RecoveryImageTests(unittest.TestCase):
         self.assertIn("ftrace_dump_on_oops", words)
         with self.assertRaises(ValueError):
             recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, trace="a b")
+
+    def test_stage1_build_info_names_the_new_kernel(self):
+        tree = cpio.Tree()
+        tree.mkdir("etc")
+        tree.mkdir("etc/pico4-poc")
+        tree.add_file("etc/pico4-poc/build-info", json.dumps({"kernel": "Linux version 4.19.81-perf+ (stock)",
+                                                               "stock": "5.13.7"}).encode())
+        kernel = gzip.compress(b"\0" * 64 + b"Linux version 7.2.0-pico4 (valve) #1 SMP\n\0", mtime=0)
+        (self.tmp / "out" / "Image.gz").write_bytes(kernel)
+        dev = self.dev_recovery("pico4poc.part=recovery", gzip.compress(tree.to_cpio(), mtime=0))
+        image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev))
+        expected = {"kernel": "Linux version 7.2.0-pico4 (valve) #1 SMP", "stock": "5.13.7"}
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(gzip.compress(tree.to_cpio(), mtime=0)):])))
+        self.assertEqual(json.loads(added["etc/pico4-poc/build-info"].data), expected)
+        out = self.tmp / "test.img"
+        recovery_image.main([str(self.tmp / "out"), str(self.tmp / "stock.img"), str(dev), str(out)])
+        record = json.loads(Path(f"{out}.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["build_info"], expected)
+        self.assertEqual(record["recovery_sha256"], hashlib.sha256(out.read_bytes()).hexdigest())
 
     def test_only_the_dev_loops_recovery_image_is_a_base(self):
         dev = self.dev_recovery("androidboot.hardware=qcom pico4poc.test_run=dev-loop")

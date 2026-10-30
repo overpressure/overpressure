@@ -576,8 +576,17 @@ class Runner:
         """SteamVR's display path: the pico4-vrdisplay layer shows a VK_KHR_display swapchain on the panels.
 
         The test client drives the layer the way SteamVR's compositor does
-        (docs/session.md); the session is stopped meanwhile.
+        (docs/session.md); the session is stopped meanwhile. On a mainline kernel's msm the layer
+        stays unloaded: Turnip and msm drive the panels and share semaphores themselves, as on the
+        Frame, and Valve's session check measures msm's frames.
         """
+        if self.ssh("[ -e /dev/kgsl-3d0 ] && echo kgsl || echo msm", 30).strip() == "msm":
+            print(">> SteamVR display layer: not used on msm", flush=True)
+            state["vrdisplay"] = {"status": "not-used", "gpu": "msm"}
+            self.save()
+            if state.get("steamvr"):
+                self.valve_session(state)
+            return
         print(">> SteamVR display layer: VK_KHR_display on the panels", flush=True)
         output = self.ssh("systemctl stop pico4-monado.service 2>/dev/null; PICO4_VRDISPLAY=1 "
                           "PICO4_VRDISPLAY_STATS=/run/pico4-poc/vrdisplay.json "

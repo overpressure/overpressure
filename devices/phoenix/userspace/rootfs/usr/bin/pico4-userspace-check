@@ -136,7 +136,16 @@ fi
 # The handoff must stop every stage-1 process (their executables were deleted
 # with the initramfs) but no kernel thread: the USB mass-storage thread
 # serves the log drive, and losing it resets the PC's view of the device.
-stale=$(for e in /proc/[0-9]*/exe; do readlink "$e" 2>/dev/null; done | grep -c ' (deleted)$')
+# A stage-1 executable lives on the initramfs, which is no longer mounted;
+# a program replaced while it runs (SteamVR's first start unpacks its runtime
+# again) stays on a mounted file system and does not count.
+mounted=" $(awk '{printf "%s ", $3}' /proc/self/mountinfo)"
+stale=$(for e in /proc/[0-9]*/exe; do
+	case "$(readlink "$e" 2>/dev/null)" in *' (deleted)') ;; *) continue ;; esac
+	d=$(stat -L -c %d "$e" 2>/dev/null) || continue
+	dev="$(((d >> 8) & 0xfff | (d >> 32) & ~0xfff)):$(((d & 0xff) | (d >> 12) & ~0xff))"
+	[[ $mounted == *" $dev "* ]] || echo "$e"
+done | grep -c .)
 need "no stage-1 process survived the handoff ($stale found)" [ "$stale" = 0 ]
 if [ -d /sys/kernel/config/usb_gadget/pico4/functions/mass_storage.0 ]; then
 	need "USB mass-storage thread alive" grep -qx file-storage /proc/[0-9]*/comm
@@ -231,16 +240,17 @@ done
 os_id=$(. /etc/os-release && echo "${ID:-}")
 os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-}")
 
-# -- Vulkan through Turnip/KGSL (needs the GPU firmware from your own backup) ---
+# -- Vulkan through Turnip (needs the GPU firmware from your own backup) --------
+# One driver for both kernels: KGSL on the stock kernel, msm's render node on mainline.
 vk_status=skipped
 vk_json=null
-if [ "$vulkan" = 1 ] && [ -c /dev/kgsl-3d0 ]; then
+if [ "$vulkan" = 1 ] && { [ -c /dev/kgsl-3d0 ] || [ -c /dev/dri/renderD128 ]; }; then
 	if out=$(VK_DRIVER_FILES=/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json \
 		timeout 45 pico4-vulkan-test 2>/run/pico4-vulkan-test.log); then
 		vk_status=passed
 	else
 		vk_status=failed
-		errors+=("Turnip/KGSL Vulkan test")
+		errors+=("Turnip Vulkan test")
 	fi
 	vk_json=${out:-null}
 	grep -q '^{' <<<"$vk_json" || vk_json=null

@@ -184,7 +184,7 @@ kernel; the stock-kernel rule is lifted for it only. Its files are in [kernel/](
 | [build-kernel.sh](../kernel/build-kernel.sh) | Valve's 7.2 source package (pinned by hash and commit), the patches and the own sources to `Image.gz` and the device tree |
 | [dtbo_sink.py](../kernel/dtbo_sink.py) | the include that absorbs the ABL's board overlay (below) |
 | [panel_sequence.py](../kernel/panel_sequence.py) | the include with the panels' command sequences, from the stock board overlay (below) |
-| [recovery_image.py](../kernel/recovery_image.py) | the maintenance stage 1 on the new kernel as a whole recovery partition; `--installed` starts the installed system instead, `--stage1` carries this tree's stage-1 files; `--gpu-firmware` for the GPU; `--cmdline` for extra kernel words (such as the panel driver's parameters); `--debug` and `--trace` for failed boots (below) |
+| [recovery_image.py](../kernel/recovery_image.py) | the maintenance stage 1 on the new kernel as a whole recovery partition; `--installed` starts the installed system instead, `--stage1` carries this tree's stage-1 files; stage 1's build information names the new kernel and `OUT.json` records it, so that `dev check` accepts the image's stage 1; `--gpu-firmware` for the GPU, `--wlan-firmware` for the QCA6390; `--cmdline` for extra kernel words (such as the panel driver's parameters); `--debug` and `--trace` for failed boots (below) |
 | [build-mesa-deps.sh](../kernel/build-mesa-deps.sh) | the two libraries Valve's Mesa links that the userspace lacks, from their pinned sources (below) |
 | [tools/pico4-kmstest.c](../kernel/tools/pico4-kmstest.c) | a static KMS check for stage 1: the msm cards and their GPU, the connectors and modes, a test frame, the refresh rate |
 

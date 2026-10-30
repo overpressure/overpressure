@@ -54,6 +54,12 @@ class TrackerUnitTests(unittest.TestCase):
         for name in ("pico4-slamd", "pico4-cdsprpcd", "pico4-cdsp"):
             self.assertNotRegex(read(UNITS / f"{name}.service"), r"(?m)^(CPUWeight|CPUQuota)=", name)
 
+    def test_tracker_runs_on_the_stock_kernels_fastrpc_only(self):
+        # On a mainline kernel PICO OS's FastRPC finds no ION or adsprpc node and restarts its
+        # listener every 100 ms, which also changes the IMU's rate for every other client.
+        for name in ("pico4-slamd", "pico4-cdsprpcd"):
+            self.assertRegex(read(UNITS / f"{name}.service"), r"(?m)^ConditionPathExists=/sys/class/kgsl$", name)
+
     def test_session_and_monado_want_the_tracker(self):
         for name in ("pico4-session", "pico4-monado"):
             self.assertRegex(read(UNITS / f"{name}.service"), r"(?m)^Wants=pico4-slamd\.service$", name)

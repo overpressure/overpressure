@@ -27,7 +27,7 @@ STATE=$POC_RUN/userspace
 die() { log "userspace: $*"; echo "pico4-userspace: $*" >&2; exit 1; }
 
 receive() {
-	local sha="" size_mb=6144 from="" bytes="" dev=/dev/zram0 zram=/sys/block/zram0 got
+	local sha="" size_mb=8192 from="" bytes="" dev=/dev/zram0 zram=/sys/block/zram0 got
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--sha256) sha=$2; shift ;;
@@ -49,6 +49,8 @@ receive() {
 
 	# zram stores pages compressed; the stock kernel offers lzo. Only the
 	# data actually written takes RAM. ext4 without journal: nothing to recover.
+	# The image takes 5.6 GiB unpacked; the rest is the session's room (SteamVR's
+	# first start unpacks its runtime into home).
 	echo lzo > "$zram/comp_algorithm" 2>/dev/null
 	echo "${size_mb}M" > "$zram/disksize" || die "could not size zram0"
 	[ -b "$dev" ] || mknod "$dev" b "$(cut -d: -f1 "$zram/dev")" "$(cut -d: -f2 "$zram/dev")"
