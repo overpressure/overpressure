@@ -602,7 +602,29 @@ Its UCM profile ([`ucm2/conf.d/sm8250/PICO4.conf`](../userspace/rootfs/usr/share
 has PICO OS's routes and levels under mainline's control names. Playback is on MultiMedia1
 (PCM 0) and capture on MultiMedia2 (PCM 1): mainline's ASM front end runs one stream at a time.
 The speakers' voltage and current sense stays off, because PICO OS feeds it to its speaker
-protection and mainline has none. Mainline's DSP drivers send no calibration (ACDB).
+protection and mainline has none.
+
+PICO OS's calibration reaches the ADSP through the PICO's own q6 calibration driver
+([`q6calibration-pico4.c`](../kernel/src/sound/soc/qcom/qdsp6/q6calibration-pico4.c), patch 0013),
+which does what the stock kernel does with the blocks PICO OS's HAL hands it:
+
+1. At image build, `pico4-audiocal export` reads the same database `pico4-audiocal` loads on the
+   stock kernel and writes `/usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin`: the custom
+   topologies, and per path its AFE port, its ADM topology and its parameters (the processing
+   blocks and the volume table's step 0). The speakers (WSA_CODEC_DMA_RX_0) get topology
+   0x11000003 with 1376 bytes of parameters, the microphone (TX_CODEC_DMA_TX_3) 0x10010315 with
+   728.
+2. The driver maps a buffer through the audio SMMU stream and registers the custom topologies with
+   the ADSP core (all earlier ones dropped first, as the stock driver does). The ADSP maps it only
+   once PICO OS's audio process runs, after the ADM service's first probe, so
+   `pico4-lpass-macros` probes the driver again once the card is up.
+3. q6routing opens each calibrated path with its topology and sends its parameters in band after
+   the open. A path without calibration, or one whose topology the ADSP refuses, keeps the null
+   topology.
+
+Its effect, measured with the microphone at the headset: a quiet tone (−20 dBFS) plays at the same
+level with and without the calibration, while a loud one (−6 dBFS), steady without it, is pulled
+down by about 7 dB within a second with it, PICO's limiting of sustained loud output.
 
 ## Memory
 

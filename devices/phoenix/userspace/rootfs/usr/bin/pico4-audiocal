@@ -10,6 +10,8 @@ microphone (record, acdb device 4).
 
   pico4-audiocal show [--acdb DIR]   the topologies and blocks it would send, as JSON
   pico4-audiocal run  [--acdb DIR]   send them, set the app-type controls and stay
+  pico4-audiocal export [--acdb DIR] [FILE]   the same for a mainline kernel, as the file
+                                     its q6 calibration driver loads (at image build)
 
 `run` stays running: the kernel drops every calibration block when the last process
 that opened /dev/msm_audio_cal closes it.
@@ -66,6 +68,13 @@ PATHS = [
     {"name": "handset-mic", "acdb_id": 4, "path": 1, "app_type": 0x11132, "rate": 48000, "bits": 16,
      "backend": "TX_CDC_DMA_TX_3", "stream_control": "Audio Stream Capture 0 App Type Cfg"},
 ]
+
+# On a mainline kernel (q6calibration-pico4.c): each path's AFE port and ADM path
+# (WSA_CODEC_DMA_RX_0 playback, TX_CODEC_DMA_TX_3 record) and the file the kernel loads.
+MAINLINE_PORTS = {"speaker": (0xB000, 1), "handset-mic": (0xB037, 2)}
+MAINLINE_MAGIC = b"P4AC"
+MAINLINE_VERSION = 1
+MAINLINE_FILE = "/usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin"
 
 
 def u32s(data: bytes) -> list[int]:
@@ -293,6 +302,31 @@ def describe(cal: dict) -> dict:
     return out
 
 
+def pad4(data: bytes) -> bytes:
+    return data + b"\0" * (-len(data) % 4)
+
+
+def mainline_file(cal: dict) -> bytes:
+    """The kernel's calibration file on a mainline kernel: the custom topologies, then per path
+    its port, ADM path, device topology and the parameters PICO OS sends after the open (the
+    processing blocks, then the volume table's step 0), as the database packs them."""
+    out = MAINLINE_MAGIC + struct.pack("<III", MAINLINE_VERSION, len(cal["custom_topologies"]), len(cal["paths"]))
+    out += pad4(cal["custom_topologies"])
+    for p in cal["paths"]:
+        port, path = MAINLINE_PORTS[p["name"]]
+        params = (p["audproc"] or b"") + (p["audvol"] or b"")
+        out += struct.pack("<HHII", port, path, p["adm_topology"], len(params)) + pad4(params)
+    return out
+
+
+def cmd_export(args) -> int:
+    data = mainline_file(lookup(args.acdb))
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    with open(args.output, "wb") as f:
+        f.write(data)
+    return 0
+
+
 def cmd_run(args) -> int:
     cal = lookup(args.acdb)
     wait_for_card(args.timeout)
@@ -366,16 +400,20 @@ def follow_streams(store: Calibration):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("show", "run"):
+    for name in ("show", "run", "export"):
         p = sub.add_parser(name)
         p.add_argument("--acdb", default=ACDB_DIR, help="directory of the .acdb files")
         if name == "run":
             p.add_argument("--timeout", type=float, default=120.0, help="seconds to wait for the card")
             p.add_argument("--once", action="store_true", help="exit after loading (drops the blocks)")
+        if name == "export":
+            p.add_argument("output", nargs="?", default=MAINLINE_FILE, help="the mainline kernel's file")
     args = parser.parse_args(argv)
     if args.command == "show":
         print(json.dumps(describe(lookup(args.acdb)), indent=2))
         return 0
+    if args.command == "export":
+        return cmd_export(args)
     return cmd_run(args)
 
 

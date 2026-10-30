@@ -93,6 +93,33 @@ class AudioTreeTests(unittest.TestCase):
         self.assertIn("qcom,vmids = <QCOM_SCM_VMID_LPASS QCOM_SCM_VMID_ADSP_HEAP>;", fastrpc)
 
 
+class AudioCalibrationTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0013-asoc-qcom-q6-pico-os-audio-calibration.patch"
+
+    def test_core_commands_are_the_stock_drivers(self):
+        # Opcodes as PICO's audio_q6.ko builds them (q6core_set_cal, q6core_map_memory_regions).
+        patch = text(self.PATCH)
+        for define in ("AVCS_CMD_SHARED_MEM_MAP_REGIONS\t\t0x00012924", "AVCS_CMD_REGISTER_TOPOLOGIES\t\t0x00012923",
+                       "AVCS_CMD_DEREGISTER_TOPOLOGIES\t\t0x0001292a", "ADM_CMD_SET_PP_PARAMS_V6\t0x0001035d"):
+            self.assertIn(define, patch)
+
+    def test_routing_opens_with_the_paths_topology_and_falls_back(self):
+        added = "\n".join(line[1:] for line in text(self.PATCH).splitlines() if line.startswith("+"))
+        self.assertIn("topology = q6calibration_topology(afe_port, session->path_type);", added)
+        self.assertIn("topology = NULL_COPP_TOPOLOGY;", added)
+        self.assertIn("q6calibration_apply(routing_data->dev, copp, afe_port, session->path_type);", added)
+        # The driver is built with the routing driver.
+        self.assertIn("+obj-$(CONFIG_SND_SOC_QDSP6_ROUTING) += q6routing.o q6calibration-pico4.o", text(self.PATCH))
+
+    def test_tree_gives_the_driver_the_audio_smmu_stream(self):
+        node = re.search(r"&q6adm \{\s*calibration \{(.*?)\};", tree(), re.S).group(1)
+        driver = text(KERNEL / "src/sound/soc/qcom/qdsp6/q6calibration-pico4.c")
+        compatible = re.search(r'\.compatible = "([^"]+)"', driver).group(1)
+        self.assertIn(f'compatible = "{compatible}";', node)
+        # The stream q6asm-dai's buffers use (sm8250.dtsi), which the ADSP reads them through.
+        self.assertIn("iommus = <&apps_smmu 0x1801 0x0>;", node)
+
+
 class CameraClockTests(unittest.TestCase):
     def test_sensors_hold_the_camera_gdsc(self):
         t = tree()

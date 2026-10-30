@@ -152,6 +152,13 @@ class MainlineAudioTests(unittest.TestCase):
         self.assertIn("DEV=3370000.codec", script)
         self.assertIn('echo "$DEV" > /sys/bus/platform/drivers_probe', script)
 
+    def test_calibration_binds_once_the_card_is_up(self):
+        # The ADSP maps the calibration's buffer only once the audio process runs; the card shows it.
+        script = (ROOTFS / "usr/libexec/pico4-poc/lpass-macros").read_text(encoding="utf-8")
+        up = script.index('log "lpass-macros: sound card up"')
+        self.assertLess(up, script.index("\t\tcalibration\n", up))
+        self.assertIn('echo "${dev##*/}" > /sys/bus/platform/drivers_probe', script)
+
     def test_calibration_store_is_the_stock_kernels(self):
         self.assertIn("ConditionPathExists=/sys/class/kgsl\n", unit("pico4-audiocal.service"))
 

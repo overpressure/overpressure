@@ -1351,6 +1351,18 @@
 	};
 };
 
+/*
+ * PICO OS's calibration (q6calibration-pico4.c, patch 0013): the custom topologies and each
+ * path's ADM topology and parameters from its database. The ADSP reads the topologies through
+ * the audio SMMU stream, as it reads the stream buffers.
+ */
+&q6adm {
+	calibration {
+		compatible = "pico,phoenix-q6-calibration";
+		iommus = <&apps_smmu 0x1801 0x0>;
+	};
+};
+
 &wsamacro {
 	status = "okay";
 };

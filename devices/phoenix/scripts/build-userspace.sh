@@ -425,7 +425,8 @@ fi
 # the stock signed modules with their modules.dep, loaded by path (pico4-audio-modules.service),
 # the tree hexagonrpcd serves to the audio process (pico4-audiopd.service) and the calibration
 # database pico4-audiocal.service loads. The modules are installed byte for byte: their
-# signatures are appended.
+# signatures are appended. On a mainline kernel the q6 calibration driver loads the same database's
+# blocks from one file that pico4-audiocal builds here.
 audio_json="[]"
 if [[ -n "$audio" ]]; then
     for f in modules/audio_machine_kona.ko modules/modules.dep firmware/adsp.mdt firmware/adspr.jsn \
@@ -437,8 +438,11 @@ if [[ -n "$audio" ]]; then
     install -m 0644 "$audio"/modules/* "$T/usr/lib/pico4-audio/"
     install -D -m 0644 -t "$T/usr/lib/pico4-audio/acdb" "$audio"/calibration/*.acdb
     cp -r --no-preserve=ownership "$audio/audiopd/." "$T/usr/share/qcom/pico4-audio/"
-    chown -R 0:0 "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio"
-    audio_json=$(cd "$T" && find usr/lib/firmware/adsp* usr/lib/pico4-audio usr/share/qcom/pico4-audio -type f -print0 |
+    python3 "$project/userspace/rootfs/usr/bin/pico4-audiocal" export --acdb "$audio/calibration" \
+        "$T/usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin"
+    chown -R 0:0 "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio" "$T/usr/lib/firmware/qcom/sm8250/pico4"
+    audio_json=$(cd "$T" && find usr/lib/firmware/adsp* usr/lib/firmware/qcom/sm8250/pico4 usr/lib/pico4-audio \
+        usr/share/qcom/pico4-audio -type f -print0 |
         sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
