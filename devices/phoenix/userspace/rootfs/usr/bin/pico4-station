@@ -18,6 +18,7 @@ never touches the boot pin.
 """
 
 import argparse
+import ctypes
 import fcntl
 import json
 import os
@@ -32,6 +33,10 @@ HEADER_SEND = 0xAA
 HEADERS_RECV = (0xBB, 0xA5)
 TARGET_STATION = 0x01
 IOCTL_POWER = 0x80046B09  # _IOW('k', 9, int): 1 = on, 0 = off
+# A mainline kernel: a plain spidev, and the station's supply as station-power (device tree).
+STATION_POWER = "/sys/devices/platform/station-power/state"
+SPI_IOC_MESSAGE_1 = 0x40206B00  # _IOW('k', 0, struct spi_ioc_transfer)
+SPIDEV_POLL_S = 0.002
 
 # The only commands this tool builds.
 CMD_VERSION = 0x01
@@ -182,23 +187,59 @@ class Station:
         self.seq = 0
         self.log = []
         self.announced = False
+        # A mainline kernel's plain spidev moves no frames on its own (the stock vendor spidev
+        # transfers on the station's interrupt): each transfer is full duplex, and the
+        # station's next frame comes back with whatever goes out, a command or zeros (no
+        # header, which the station ignores). Frames that come back wait in the queue.
+        self.spidev = os.access(STATION_POWER, os.W_OK)
+        self.queue = []
+        self._tx = ctypes.create_string_buffer(FRAME)
+        self._rx = ctypes.create_string_buffer(FRAME)
 
     def close(self):
         os.close(self.fd)
 
     def power(self, on: bool):
-        fcntl.ioctl(self.fd, IOCTL_POWER, struct.pack("i", 1 if on else 0))
+        if not self.spidev:
+            fcntl.ioctl(self.fd, IOCTL_POWER, struct.pack("i", 1 if on else 0))
+            return
+        with open(STATION_POWER, "w") as f:
+            f.write("enabled" if on else "disabled")
+        self.queue.clear()
+
+    def _transfer(self, data: bytes):
+        self._tx.raw = data
+        ctypes.memset(self._rx, 0, FRAME)
+        xfer = struct.pack("<QQIIHBBBBBB", ctypes.addressof(self._tx), ctypes.addressof(self._rx), FRAME,
+                           0, 0, 0, 0, 0, 0, 0, 0)
+        fcntl.ioctl(self.fd, SPI_IOC_MESSAGE_1, xfer)
+        if valid_reply(self._rx.raw):
+            self.queue.append(self._rx.raw)
 
     def send(self, data: bytes):
-        if os.write(self.fd, data) != FRAME:
+        if self.spidev:
+            self._transfer(data)
+        elif os.write(self.fd, data) != FRAME:
             raise OSError("short write to the station")
+
+    def _next(self, timeout: float):
+        """The station's next frame within the timeout, or None."""
+        if not self.spidev:
+            ready, _, _ = select.select([self.fd], [], [], timeout)
+            return os.read(self.fd, FRAME) if ready else None
+        end = time.monotonic() + timeout
+        while not self.queue:
+            self._transfer(bytes(FRAME))
+            if self.queue or time.monotonic() >= end:
+                break
+            time.sleep(SPIDEV_POLL_S)
+        return self.queue.pop(0) if self.queue else None
 
     def read(self, timeout: float):
         """One valid frame or None; acknowledges replies as the stock service does."""
-        ready, _, _ = select.select([self.fd], [], [], timeout)
-        if not ready:
+        buf = self._next(timeout)
+        if buf is None:
             return None
-        buf = os.read(self.fd, FRAME)
         entry = {"t": round(time.monotonic(), 4), "hex": buf.hex()}
         self.log.append(entry)
         if not valid_reply(buf):

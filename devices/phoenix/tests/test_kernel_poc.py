@@ -163,6 +163,14 @@ def stock_partition(total=64 * 4096) -> bytes:
     return bytes(data)
 
 
+class InstalledStage1Tests(unittest.TestCase):
+    def test_etc_overlay_takes_a_new_system_image(self):
+        # A mainline kernel's overlay index ties the upper /etc to the image it was made with.
+        stage1 = (Path(__file__).resolve().parents[1] / "initramfs/usr/bin/pico4-userspace").read_text(encoding="utf-8")
+        mount = next(line for line in stage1.splitlines() if "lowerdir=$NEW/etc" in line)
+        self.assertIn(",index=off", mount)
+
+
 class RecoveryImageTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

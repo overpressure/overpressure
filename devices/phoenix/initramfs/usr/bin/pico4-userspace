@@ -127,7 +127,10 @@ installed() {
 		cp -a "$NEW/var/lib/pacman" "$NEW/data/var/lib/" || die "copying the package database"
 	fi
 	echo "$image" > "$NEW/data/.pico4-system-image"
-	mount -t overlay overlay -o "lowerdir=$NEW/etc,upperdir=$NEW/data/etc/upper,workdir=$NEW/data/etc/work" \
+	# Without the inodes index: an update replaces the lower /etc whole, and with the index (a
+	# mainline kernel's default here) the upper directory stays tied to the image it was made
+	# with ("failed to verify upper root origin").
+	mount -t overlay overlay -o "lowerdir=$NEW/etc,upperdir=$NEW/data/etc/upper,workdir=$NEW/data/etc/work,index=off" \
 		"$NEW/etc" || die "mounting the /etc overlay failed"
 	for dir in var root home; do
 		mount --bind "$NEW/data/$dir" "$NEW/$dir" || die "mounting /$dir"

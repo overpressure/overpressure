@@ -136,6 +136,40 @@ class StationToolTests(unittest.TestCase):
             fake.controller_calibration("left")
 
 
+class PlainSpidevTests(unittest.TestCase):
+    """A mainline kernel: full-duplex transfers instead of the vendor spidev's reads and writes."""
+
+    def station(self, replies):
+        st = station.Station.__new__(station.Station)
+        st.spidev, st.queue, st.sent, st.seq, st.log, st.announced = True, [], [], 0, [], False
+
+        def transfer(data):
+            # Each transfer brings the station's next frame back, or nothing (None).
+            st.sent.append(data)
+            if replies:
+                frame = replies.pop(0)
+                if frame is not None:
+                    st.queue.append(frame)
+        st._transfer = transfer
+        return st
+
+    def test_reads_send_zeros_until_a_frame_comes_back(self):
+        frame = reply(1, station.CMD_VERSION, bytes([2, 0x60]))
+        st = self.station([None, None, frame])
+        self.assertEqual(st._next(1.0), frame)
+        self.assertEqual(st.sent, [bytes(40)] * 3)
+
+    def test_commands_go_out_as_transfers(self):
+        st = self.station([])
+        st.send(station.frame(station.CMD_VERSION, b"", 1))
+        self.assertEqual(len(st.sent), 1)
+        self.assertEqual(st.sent[0][0], station.HEADER_SEND)
+
+    def test_nothing_within_the_timeout(self):
+        st = self.station([])
+        self.assertIsNone(st._next(0.01))
+
+
 class StationLockTests(unittest.TestCase):
     """One owner of the station: a second runtime must not reset it under the first."""
 
