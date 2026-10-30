@@ -14,11 +14,15 @@ UNPLUGGED_OFF=10
 KEY_POWER=116
 EV_KEY=1
 
-# The power key's event device (the PMIC's power-on key, qpnp_pon).
+# The power key's event device: the PMIC's power-on key, qpnp_pon on the stock kernel and
+# pm8941_pwrkey on a mainline kernel (boot holds either).
 power_key_device() {
-	local d
+	local d name
 	for d in /sys/class/input/event*; do
-		[ "$(cat "$d/device/name" 2>/dev/null)" = qpnp_pon ] && { echo "/dev/input/${d##*/}"; return 0; }
+		name=$(cat "$d/device/name" 2>/dev/null)
+		case "$name" in
+		qpnp_pon|pm8941_pwrkey) echo "/dev/input/${d##*/}"; return 0 ;;
+		esac
 	done
 	return 1
 }

@@ -75,6 +75,11 @@ class KeyTests(unittest.TestCase):
         self.assertFalse(waking.quiet(260.0))
         self.assertLessEqual(tool.POLL_S, tool.SETTLE_S)
 
+    def test_charger_mode_knows_the_same_keys(self):
+        # Stage 1's charger waits for the power key on whichever kernel boot holds.
+        charger = (ROOT / "initramfs/usr/libexec/pico4-poc/charger").read_text(encoding="utf-8")
+        self.assertIn("|".join(tool.KEY_DEVICES) + ")", charger)
+
     def test_event_layout(self):
         # struct input_event on aarch64: two longs of time, type, code, value.
         self.assertEqual(tool.EVENT.size, 24)
