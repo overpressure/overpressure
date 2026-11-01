@@ -446,11 +446,13 @@ a pinned public kernel tree, the closest public match of the stock kernel):
   from fixed node numbers.
 - **Probe.** All four sensors are probed (`CAM_SENSOR_PROBE_CMD`: I2C address, chip-ID check
   `0x300A` = `0x7750`, power sequence) before any is powered for streaming: reset and standby
-  are shared GPIOs, and a probe ends with a power-down.
+  are shared GPIOs, and a probe ends with a power-down. PICO's kernel answers these probes
+  without touching the bus: the sensors' control port belongs to the station.
 - **Sessions.** One CSL session per camera:
-  - the sensor through the CCI driver: acquire (power-up) and the stock OV7251 register table
-    (mainline's VGA 60 fps table with PICO's module differences, 24 MHz MCLK), including the
-    stock per-module flip and mirror;
+  - the sensor through the CCI driver: acquire (power-up) and the stock OV7251 register table,
+    which PICO's kernel drops for a camera marked as a tracking camera in its I2C info (the
+    `reserved` byte): only the stream-on register reaches its stream-state bits, and the station
+    configures the sensor over its own I2C;
   - its CSIPHY: one lane at 480 Mbit/s, settle count 14, combo mode where two sensors share a
     PHY;
   - an IFE-lite with one RDI output (raw data, no pixel pipeline, no ISP firmware), on a free

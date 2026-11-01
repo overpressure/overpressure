@@ -1000,14 +1000,11 @@
 
 /*
  * The four tracking cameras (OmniVision OV7251, 640x480 mono, one CSI-2 lane each), as the stock
- * board overlay wires them (its cam-sensor cells 0-3 and the I2C addresses of PICO OS's camera
- * modules): MCLK 24 MHz from the camera clock controller, the control bus on the CCIs, one lane
- * at 480 Mbit/s. Cells 1 and 2 share CSIPHY 3 in combo mode. The station puts the sensors into
- * frame-sync slave mode over its own bus once they stream (docs/xr.md).
+ * board overlay wires them (its cam-sensor cells 0-3): MCLK 24 MHz from the camera clock
+ * controller, one lane at 480 Mbit/s. Cells 1 and 2 share CSIPHY 3 in combo mode.
  * All four share their reset (GPIO 115) and standby (GPIO 42) lines; as fixed regulators the
- * two lines are switched once for all sensors. Power-up as the stock module's sequence: BOB,
- * standby and 18 ms, MCLK, reset and 18 ms (the reset comes before the clock here: the driver
- * enables its supplies first).
+ * two lines are switched once for all sensors. Power-up as the stock module's sequence: standby
+ * and 18 ms, MCLK and 1 ms, reset and 18 ms.
  */
 #include <dt-bindings/clock/qcom,camcc-sm8250.h>
 
@@ -1095,11 +1092,11 @@
 				remote-endpoint = <&cam1_ep>;
 			};
 
-			/* The second sensor on the PHY (combo mode): its own lane and clock lane. */
+			/* The second sensor on the PHY (combo mode): data lane 2, lane 3 its clock. */
 			csiphy3_cam2_ep: endpoint@1 {
 				reg = <1>;
-				clock-lanes = <4>;
-				data-lanes = <3>;
+				clock-lanes = <3>;
+				data-lanes = <2>;
 				remote-endpoint = <&cam2_ep>;
 			};
 		};
@@ -1122,11 +1119,7 @@
 	};
 };
 
-/*
- * The sensors' MCLKs run only while the camera clock controller's TITAN_TOP GDSC is on: the stock
- * sensors name it as their cam_clk supply, here each sensor holds it as its power domain. The
- * CCIs run at the stock 37.5 MHz, the clock their I2C timings are made for (the default is 19.2).
- */
+/* The CCIs run at the stock 37.5 MHz, the clock their I2C timings are made for (the default is 19.2). */
 &cci0 {
 	assigned-clocks = <&camcc CAM_CC_CCI_0_CLK_SRC>;
 	assigned-clock-rates = <37500000>;
@@ -1140,15 +1133,63 @@
 };
 
 /*
- * Cells 2 ("slave", 0xE6) and 3 ("master", 0xE8) on CCI 0, master 1. Fast mode (400 kHz), as the
- * stock camera stack probes them: the OV7251's control port goes no faster.
+ * The four tracking cameras (OV7251), each on its stock MCLK and CSIPHY. Their control port belongs
+ * to the controller radio, which configures them and triggers each frame: PICO's stock kernel never
+ * talks to them either (it takes their probes without reading a chip ID and drops their register
+ * writes), so they are no I2C clients. Each holds the camera clock controller's TITAN_TOP GDSC, its
+ * stock cam_clk supply, without which its MCLK does not run.
  */
-&cci0_i2c1 {
-	clock-frequency = <400000>;
+/ {
+	camera-0 {
+		/* left, stock address 0xE2 */
+		compatible = "pico,phoenix-ov7251";
+		pico,camera-slot = <0>;
+		clocks = <&camcc CAM_CC_MCLK3_CLK>;
+		clock-names = "xclk";
+		power-domains = <&camcc TITAN_TOP_GDSC>;
+		assigned-clocks = <&camcc CAM_CC_MCLK3_CLK>;
+		assigned-clock-rates = <24000000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk3_default>;
+		standby-supply = <&cam_standby>;
+		reset-supply = <&cam_reset>;
 
-	camera@73 {
-		compatible = "ovti,ov7251";
-		reg = <0x73>;
+		port {
+			cam0_ep: endpoint {
+				data-lanes = <1>;
+				link-frequencies = /bits/ 64 <240000000>;
+				remote-endpoint = <&csiphy5_ep>;
+			};
+		};
+	};
+
+	camera-1 {
+		/* right, 0xE4 */
+		compatible = "pico,phoenix-ov7251";
+		pico,camera-slot = <1>;
+		clocks = <&camcc CAM_CC_MCLK4_CLK>;
+		clock-names = "xclk";
+		power-domains = <&camcc TITAN_TOP_GDSC>;
+		assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
+		assigned-clock-rates = <24000000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk4_default>;
+		standby-supply = <&cam_standby>;
+		reset-supply = <&cam_reset>;
+
+		port {
+			cam1_ep: endpoint {
+				data-lanes = <1>;
+				link-frequencies = /bits/ 64 <240000000>;
+				remote-endpoint = <&csiphy3_cam1_ep>;
+			};
+		};
+	};
+
+	camera-2 {
+		/* "slave", 0xE6 */
+		compatible = "pico,phoenix-ov7251";
+		pico,camera-slot = <2>;
 		clocks = <&camcc CAM_CC_MCLK2_CLK>;
 		clock-names = "xclk";
 		power-domains = <&camcc TITAN_TOP_GDSC>;
@@ -1156,9 +1197,8 @@
 		assigned-clock-rates = <24000000>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&cam_mclk2_default>;
-		vdddo-supply = <&vreg_bob>;
-		vdda-supply = <&cam_standby>;
-		vddd-supply = <&cam_reset>;
+		standby-supply = <&cam_standby>;
+		reset-supply = <&cam_reset>;
 
 		port {
 			cam2_ep: endpoint {
@@ -1169,9 +1209,10 @@
 		};
 	};
 
-	camera@74 {
-		compatible = "ovti,ov7251";
-		reg = <0x74>;
+	camera-3 {
+		/* "master", 0xE8 */
+		compatible = "pico,phoenix-ov7251";
+		pico,camera-slot = <3>;
 		clocks = <&camcc CAM_CC_MCLK5_CLK>;
 		clock-names = "xclk";
 		power-domains = <&camcc TITAN_TOP_GDSC>;
@@ -1179,9 +1220,8 @@
 		assigned-clock-rates = <24000000>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&cam_mclk5_default>;
-		vdddo-supply = <&vreg_bob>;
-		vdda-supply = <&cam_standby>;
-		vddd-supply = <&cam_reset>;
+		standby-supply = <&cam_standby>;
+		reset-supply = <&cam_reset>;
 
 		port {
 			cam3_ep: endpoint {
@@ -1193,57 +1233,8 @@
 	};
 };
 
+
 /* Cells 0 (left, 0xE2) and 1 (right, 0xE4) on CCI 1, master 0, in fast mode as well. */
-&cci1_i2c0 {
-	clock-frequency = <400000>;
-
-	camera@71 {
-		compatible = "ovti,ov7251";
-		reg = <0x71>;
-		clocks = <&camcc CAM_CC_MCLK3_CLK>;
-		clock-names = "xclk";
-		power-domains = <&camcc TITAN_TOP_GDSC>;
-		assigned-clocks = <&camcc CAM_CC_MCLK3_CLK>;
-		assigned-clock-rates = <24000000>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&cam_mclk3_default>;
-		vdddo-supply = <&vreg_bob>;
-		vdda-supply = <&cam_standby>;
-		vddd-supply = <&cam_reset>;
-
-		port {
-			cam0_ep: endpoint {
-				data-lanes = <1>;
-				link-frequencies = /bits/ 64 <240000000>;
-				remote-endpoint = <&csiphy5_ep>;
-			};
-		};
-	};
-
-	camera@72 {
-		compatible = "ovti,ov7251";
-		reg = <0x72>;
-		clocks = <&camcc CAM_CC_MCLK4_CLK>;
-		clock-names = "xclk";
-		power-domains = <&camcc TITAN_TOP_GDSC>;
-		assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
-		assigned-clock-rates = <24000000>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&cam_mclk4_default>;
-		vdddo-supply = <&vreg_bob>;
-		vdda-supply = <&cam_standby>;
-		vddd-supply = <&cam_reset>;
-
-		port {
-			cam1_ep: endpoint {
-				data-lanes = <1>;
-				link-frequencies = /bits/ 64 <240000000>;
-				remote-endpoint = <&csiphy3_cam1_ep>;
-			};
-		};
-	};
-};
-
 /*
  * Audio, as the stock tree wires it (kona-mtp-snd-card): two WSA8810 amplifiers, one per speaker,
  * on the WSA macro's SoundWire, and the WCD9380 codec (RX and TX SoundWire) whose ADC1 carries

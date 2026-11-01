@@ -1,4 +1,4 @@
-"""The PICO 4's tree and configuration for Valve's kernel: battery, audio and the cameras' clocks."""
+"""The PICO 4's tree and configuration for Valve's kernel: battery, audio and the cameras."""
 import re
 import unittest
 from pathlib import Path
@@ -120,13 +120,53 @@ class AudioCalibrationTests(unittest.TestCase):
         self.assertIn("iommus = <&apps_smmu 0x1801 0x0>;", node)
 
 
-class CameraClockTests(unittest.TestCase):
+class CameraTests(unittest.TestCase):
+    DRIVER = KERNEL / "src/drivers/media/i2c/pico4-ov7251.c"
+
+    def sensors(self):
+        return re.findall(r"camera-([0-3]) \{(.*?)\n\t\};", tree(), re.S)
+
+    def test_sensors_are_no_i2c_clients(self):
+        # The station owns their control port: the stock kernel never talks to them either.
+        self.assertNotIn("ovti,ov7251", tree())
+        self.assertIn("CONFIG_VIDEO_PICO4_OV7251=y", config())
+        self.assertNotIn("CONFIG_VIDEO_OV7251=y", config())
+        compatible = re.search(r'\.compatible = "([^"]+)"', text(self.DRIVER)).group(1)
+        for slot, sensor in self.sensors():
+            self.assertIn(f'compatible = "{compatible}";', sensor)
+            self.assertIn(f"pico,camera-slot = <{slot}>;", sensor)
+
     def test_sensors_hold_the_camera_gdsc(self):
-        t = tree()
-        sensors = re.findall(r"camera@7[1-4] \{(.*?)\n\t\};", t, re.S)
+        sensors = self.sensors()
         self.assertEqual(len(sensors), 4)
-        for sensor in sensors:
+        for _, sensor in sensors:
             self.assertIn("power-domains = <&camcc TITAN_TOP_GDSC>;", sensor)
+            self.assertIn("standby-supply = <&cam_standby>;", sensor)
+            self.assertIn("reset-supply = <&cam_reset>;", sensor)
+
+    def test_stock_wiring(self):
+        # Each slot's MCLK and CSIPHY endpoint, as the stock overlay's cells 0-3.
+        wiring = {"0": ("3", "csiphy5_ep"), "1": ("4", "csiphy3_cam1_ep"), "2": ("2", "csiphy3_cam2_ep"),
+                  "3": ("5", "csiphy4_ep")}
+        for slot, sensor in self.sensors():
+            mclk, remote = wiring[slot]
+            self.assertIn(f"clocks = <&camcc CAM_CC_MCLK{mclk}_CLK>;", sensor)
+            self.assertIn(f"remote-endpoint = <&{remote}>;", sensor)
+
+    def test_combo_phy_uses_the_stock_lanes(self):
+        # On CSIPHY 3: one sensor on data lane 0 with the clock lane, the other on lane 2, lane 3 its clock.
+        t = tree()
+        first = re.search(r"csiphy3_cam1_ep: endpoint@0 \{(.*?)\};", t, re.S).group(1)
+        second = re.search(r"csiphy3_cam2_ep: endpoint@1 \{(.*?)\};", t, re.S).group(1)
+        self.assertIn("data-lanes = <0>;", first)
+        self.assertIn("clock-lanes = <3>;", second)
+        self.assertIn("data-lanes = <2>;", second)
+
+    def test_camss_has_sm8250s_phy_tables(self):
+        patch = text(KERNEL / "patches/0015-media-camss-sm8250-phy-settings-and-combo-mode.patch")
+        self.assertIn("csiphy_lane_regs lane_regs_sm8250_combo[] = {", patch)
+        self.assertIn("version == CAMSS_8250 ? 0x02 : 0x7a", patch)
+        self.assertIn("+\t\t} else if (csiphy->combo_subdev == sd) {", patch)
 
     def test_ccis_run_at_the_stock_rate(self):
         t = tree()
