@@ -1,0 +1,34 @@
+# Valve's Turnip on a mainline kernel: the Vulkan driver of the Frame's deckard-mesa-linux-aarch64
+# as it is, beside the system's OpenGL. That package conflicts with Arch's Mesa, which the stock
+# kernel's OpenGL still needs, so only its driver comes along, under its own name, and
+# pico4-vulkan-icd.service picks it by the kernel. It links libdisplay-info 0.1, which the userspace
+# lacks; only the runtime library is installed, beside the newer one gamescope may use.
+pkgname=pico4-valve-turnip
+_mesa=26.3.0_devel+git8aa73b4b
+_ldi=0.1.1
+pkgver=26.3.0.devel.git8aa73b4b
+pkgrel=1
+pkgdesc="Valve's Turnip Vulkan driver for msm, for a mainline kernel on the PICO 4"
+arch=(aarch64)
+license=(custom)
+depends=(libdrm libxcb libx11 libxshmfence wayland spirv-tools dbus expat systemd-libs zlib zstd gcc-libs glibc)
+makedepends=(meson ninja hwdata)
+source=("https://steamdeck-packages.steamos.cloud/archlinux-deckard-hotfixes/release/0.3.x/deckard-mesa-linux-aarch64-26.3.0_devel%2Bgit8aa73b4b-1-aarch64.pkg.tar.zst"
+        "libdisplay-info-$_ldi.tar.gz::https://gitlab.freedesktop.org/emersion/libdisplay-info/-/archive/$_ldi/libdisplay-info-$_ldi.tar.gz")
+sha256sums=(b8f98b3db57ed45aefd06b2b540dc8b67a86c784345661f9aec39d9c5dfbf76d
+            a5aeef57817916286526292ec816a5338c4d3c0094ce91e584fc82b57070a44f)
+options=(!strip !debug)
+
+build() {
+  [[ -f ldi/build.ninja ]] || meson setup "libdisplay-info-$_ldi" ldi --prefix /usr --libdir lib --buildtype release
+  meson compile -C ldi
+}
+
+package() {
+  install -Dm755 usr/lib/libvulkan_freedreno.so "$pkgdir/usr/lib/pico4/libvulkan_freedreno_valve.so"
+  install -dm755 "$pkgdir/usr/share/pico4/vulkan"
+  printf '%s\n' '{"file_format_version":"1.0.0","ICD":{"library_path":"/usr/lib/pico4/libvulkan_freedreno_valve.so","api_version":"1.4.359"}}' \
+    > "$pkgdir/usr/share/pico4/vulkan/turnip-valve.json"
+  DESTDIR="$PWD/ldi-root" meson install -C ldi --no-rebuild
+  cp -a ldi-root/usr/lib/libdisplay-info.so.1 ldi-root/usr/lib/libdisplay-info.so.$_ldi "$pkgdir/usr/lib/"
+}

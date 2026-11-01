@@ -57,6 +57,7 @@ mesa-utils
 
 # Project-built: Turnip with the KGSL backend and the step-3 graphics tests
 pico4/pico4-turnip-kgsl
+pico4/pico4-valve-turnip
 pico4/pico4-graphics-tests
 
 # Project-built: host daemons for the sensor DSP (head IMU, docs/xr.md); python runs

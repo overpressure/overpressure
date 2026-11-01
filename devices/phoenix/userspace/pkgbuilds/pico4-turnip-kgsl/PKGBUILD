@@ -71,9 +71,9 @@ package_pico4-turnip-kgsl() {
   provides=(vulkan-driver)
   install -Dm755 build/src/freedreno/vulkan/libvulkan_freedreno.so \
     "$pkgdir/usr/lib/pico4/libvulkan_freedreno_kgsl.so"
-  install -dm755 "$pkgdir/usr/share/vulkan/icd.d"
+  install -dm755 "$pkgdir/usr/share/pico4/vulkan"
   printf '%s\n' '{"file_format_version":"1.0.0","ICD":{"library_path":"/usr/lib/pico4/libvulkan_freedreno_kgsl.so","api_version":"1.3.0"}}' \
-    > "$pkgdir/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json"
+    > "$pkgdir/usr/share/pico4/vulkan/turnip-kgsl.json"
   install -Dm644 "mesa-$pkgver/docs/license.rst" "$pkgdir/usr/share/licenses/$pkgname/license.rst"
 }
 

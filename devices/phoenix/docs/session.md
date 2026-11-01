@@ -950,7 +950,7 @@ beside it has no driver for this GPU):
 ```sh
 PICO4_VRDISPLAY=1 PICO4_VRDISPLAY_STATS=/run/vrdisplay.json pico4-vrdisplay-test 15
 runuser -u steamos -- env PICO4_VRDISPLAY=1 \
-  VK_DRIVER_FILES=/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json pico4-vrsync-test
+  VK_DRIVER_FILES=/usr/share/vulkan/icd.d/pico4_turnip.aarch64.json pico4-vrsync-test
 ```
 
 ### pico4-valve-session-check

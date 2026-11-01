@@ -18,21 +18,24 @@ license=(BSL-1.0)
 depends=(glibc libdrm vulkan-icd-loader)
 makedepends=(vulkan-headers)
 source=(pico4-vrdisplay.c pico4-vrsync.c pico4-vrsync.h pico4-vrdisplay-test.c pico4-vrsync-test.c
-        VkLayer_PICO4_vrdisplay.json)
-sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP)
+        VkLayer_PICO4_vrdisplay.json pico4-swapchain-usage.c VkLayer_PICO4_swapchain_usage.json)
+sha256sums=(SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP)
 
 build() {
   # Vulkan entry points leave many parameters unused.
   ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror -fPIC -shared -fvisibility=hidden \
     -I/usr/include/libdrm $LDFLAGS -o libVkLayer_PICO4_vrdisplay.so pico4-vrdisplay.c pico4-vrsync.c \
     -ldrm -lpthread -lm
+  ${CC:-cc} $CFLAGS -D_GNU_SOURCE -std=c11 -Wall -Wextra -Werror -fvisibility=hidden -shared -fPIC $LDFLAGS \
+    -o libVkLayer_PICO4_swapchain_usage.so pico4-swapchain-usage.c -lpthread
   ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror -I/usr/include/libdrm $LDFLAGS -o pico4-vrdisplay-test \
     pico4-vrdisplay-test.c -lvulkan -ldrm -lpthread
   ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror $LDFLAGS -o pico4-vrsync-test pico4-vrsync-test.c -lvulkan
 }
 
 package() {
-  install -Dm755 libVkLayer_PICO4_vrdisplay.so -t "$pkgdir/usr/lib"
-  install -Dm644 VkLayer_PICO4_vrdisplay.json -t "$pkgdir/usr/share/vulkan/implicit_layer.d"
+  install -Dm755 libVkLayer_PICO4_vrdisplay.so libVkLayer_PICO4_swapchain_usage.so -t "$pkgdir/usr/lib"
+  install -Dm644 VkLayer_PICO4_vrdisplay.json VkLayer_PICO4_swapchain_usage.json \
+    -t "$pkgdir/usr/share/vulkan/implicit_layer.d"
   install -Dm755 pico4-vrdisplay-test pico4-vrsync-test -t "$pkgdir/usr/bin"
 }

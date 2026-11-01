@@ -231,6 +231,7 @@ kernel; the stock-kernel rule is lifted for it only. Its files are in [kernel/](
 | Suspend | s2idle only (`/sys/power/mem_sleep`); the RTC alarm, the power key and the GPIO keys are wake sources. With the stock DSP processes running, the freezer stopped their FastRPC server and the DSPs lost their reverse calls (patch 0011). Suspend and resume themselves are not verified; a reboot that hung in shutdown after this needed a forced restart |
 | CDSP root listener | PICO OS's `cdsprpcd` in the tracker's root through the FastRPC bridge ([xr.md](xr.md#head-tracking)) on upstream FastRPC: it attaches to the CDSP's guest OS, maps the DSP's memory request (patch 0012) and opens its listener and event handles; no measurable CPU, and the IMU's 1 kHz check passes beside it (1023.89 Hz, no gaps) |
 | Backlight in standby | SteamVR's standby keeps the panels on with black frames and its compositor holds the display, so the display layer's panel power-down has no place here. The panel driver's enable line (GPIO 29) is also a backlight device, `pico4-panel`; `driver_monado` writes its `bl_power` on `VREvent_EnterStandbyMode` and `VREvent_LeaveStandbyMode`. The GD32's `SetBrightness` is acked at every level but changed neither the MCU's display report nor the input current. Whether the lenses go dark needs an eye check |
+| Heat | 10 minutes of Valve's session out of standby with the head tracker running and no game, on a table: hottest zone 53 °C at the fan's 30 %, the tracker at 40 % of a core, the compositor at 88.7 frames per second and 6.9 ms of GPU time |
 | Not on this kernel yet | The speakers' protection (voltage and current sense), the charger's configuration (it runs as the boot loader set it up) |
 
 ### Display
@@ -344,7 +345,8 @@ storage images (Turnip refuses the compressed modifier with storage usage), so t
 scanned out linear images and the compositor needed about 11 ms of GPU time per frame, 60–66
 frames per second. The display takes compressed XRGB8888 (`DRM_FORMAT_MOD_QCOM_COMPRESSED`),
 which the stock kernel's display refused. `pico4-turnip-kgsl`'s `wsi-compressed-scanout.patch`
-adds two things to Mesa's display WSI:
+(the stock kernel's Mesa; on Valve's Mesa the layer `pico4-swapchain-usage` removes the usage
+instead) adds two things to Mesa's display WSI:
 - where the application's usage rules out a modifier the display takes, the application
   renders into ordinary images and each present copies them into compressed scanout images
   (Mesa's image blit, which Metal and DXGI use): 9.5 ms per frame, the copy 1.5 ms;
@@ -434,11 +436,22 @@ devices/phoenix/kernel/build-mesa-deps.sh <root>/usr/share/hwdata/pnp.ids \
     /var/tmp/pico4-kernel/mesa-deps /var/tmp/pico4-kernel/out
 ```
 
-Decision: Vulkan on Valve's kernel stays `pico4-turnip-kgsl` (Mesa 26.1.6 with its msm backend),
-OpenGL is zink on it, as on the Frame. Valve's Mesa has no path for SteamVR's storage-usage
-swapchains into compressed scanout images; without that path the compositor needs about 11 ms of
-GPU time per frame (60–66 frames per second), with it 5.9 ms (90 frames per second, the session
-check). Valve's Mesa replaces ours once it carries an equivalent of `wsi-compressed-scanout.patch`.
+Decision: Vulkan on Valve's kernel is Valve's Turnip, the driver of `deckard-mesa-linux-aarch64`
+unchanged ([`pico4-valve-turnip`](../userspace/pkgbuilds/pico4-valve-turnip/PKGBUILD)), the same
+commit as the Android driver Lepton uses. `libVkLayer_PICO4_swapchain_usage` removes the storage
+usage from `vrcompositor`'s swapchains, which it asks for and never uses, so that it resolves
+straight into compressed scanout images. OpenGL stays the system Mesa's zink on Turnip, as on the
+Frame, but not yet the Frame's Mesa: that package conflicts with the system Mesa the stock kernel
+needs.
+
+| SteamVR's compositor, headset on a table, out of standby | Frames per second | GPU time per frame |
+| --- | --- | --- |
+| Mesa 26.1.6 with `wsi-compressed-scanout.patch` | 89.76 | 6.5 ms |
+| Valve's Turnip as it is | 89.93 | 8.0 ms |
+| Valve's Turnip with the layer, installed | 89.4 | 6.4 ms |
+
+On this path 0.71 % of frames came late in the session check, 0.45 % on Mesa 26.1.6, from a hotter
+start. Open: Steam Link, FEX and Lepton's games on it, which need a network.
 
 ### Source
 

@@ -63,7 +63,11 @@ exposes the Adreno 650 only through Qualcomm's KGSL driver ([graphics.md](graphi
 [`pico4-turnip-kgsl`](../userspace/pkgbuilds/pico4-turnip-kgsl/PKGBUILD) therefore builds the
 unmodified Mesa 26.1.6 with the KGSL backend, against glibc and with Wayland and X11 window-system support. It installs beside the system Mesa
 under its own names: `/usr/lib/pico4/libvulkan_freedreno_kgsl.so` with the ICD file
-`/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json`. Its split package
+`/usr/share/pico4/vulkan/turnip-kgsl.json`. On a mainline kernel the driver is Valve's own Turnip
+([kernel-feasibility.md](kernel-feasibility.md#valves-mesa)), from
+[`pico4-valve-turnip`](../userspace/pkgbuilds/pico4-valve-turnip/PKGBUILD). The loader's ICD file
+`/usr/share/vulkan/icd.d/pico4_turnip.aarch64.json` links to `/run/pico4-poc/vulkan-icd.json`, which
+`pico4-vulkan-icd.service` points at one or the other by the kernel. Its split package
 `pico4-graphics-tests` carries the Vulkan and KMS tests of [graphics.md](graphics.md), built for
 glibc. `/dev/kgsl-3d0` is open to every user (mode 0666, as on Android).
 

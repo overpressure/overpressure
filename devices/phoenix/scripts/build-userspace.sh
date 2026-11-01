@@ -240,6 +240,7 @@ build_package() {
     cp "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst "$B/var/cache/pico4-repo/"
 }
 build_package pico4-turnip-kgsl "$project"/src/graphics/*
+build_package pico4-valve-turnip
 build_package pico4-sensors
 build_package pico4-basalt
 build_package pico4-vrdisplay "$project"/src/vrdisplay/*
@@ -552,12 +553,15 @@ done
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
-    pico4-monado.socket pico4-session.service pico4-fan.service \
+    pico4-monado.socket pico4-session.service pico4-fan.service pico4-vulkan-icd.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
     pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service \
     pico4-venus.service pico4-venus-probe.service steam-video-codec-setup.service pico4-stock-preload.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service     pico4-wifi-backend.service pico4-panel-probe.service pico4-clock.service
 # pico4-sysvsem for every process on the stock kernel only (pico4-stock-preload.service).
 ln -sfn /run/pico4-poc/ld.so.preload "$T/etc/ld.so.preload"
+# The Vulkan driver for the running kernel (pico4-vulkan-icd.service).
+mkdir -p "$T/usr/share/vulkan/icd.d"
+ln -sfn /run/pico4-poc/vulkan-icd.json "$T/usr/share/vulkan/icd.d/pico4_turnip.aarch64.json"
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration

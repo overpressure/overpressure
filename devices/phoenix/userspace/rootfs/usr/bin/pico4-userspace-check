@@ -248,7 +248,7 @@ os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-}")
 vk_status=skipped
 vk_json=null
 if [ "$vulkan" = 1 ] && { [ -c /dev/kgsl-3d0 ] || [ -c /dev/dri/renderD128 ]; }; then
-	if out=$(VK_DRIVER_FILES=/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json \
+	if out=$(VK_DRIVER_FILES=/usr/share/vulkan/icd.d/pico4_turnip.aarch64.json \
 		timeout 45 pico4-vulkan-test 2>/run/pico4-vulkan-test.log); then
 		vk_status=passed
 	else

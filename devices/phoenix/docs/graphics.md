@@ -124,7 +124,7 @@ and commit timing. They report `diagnostic`, never a pass:
 In the userspace, `pico4-turnip-kgsl` provides Turnip, unmodified Mesa 26.1.6 with
 `-Dvulkan-drivers=freedreno -Dfreedreno-kmds=kgsl,msm` (the release archive checked against the
 SHA-512 of [Alpine's package recipe](https://github.com/alpinelinux/aports/blob/3.24-stable/main/mesa/APKBUILD)),
-under its own ICD file (`/usr/share/vulkan/icd.d/pico4_turnip_kgsl.aarch64.json`), and
+under its own ICD file (`/usr/share/pico4/vulkan/turnip-kgsl.json`), and
 `pico4-graphics-tests` the two tests. `pico4-userspace-check` runs the Vulkan test there
 ([userspace.md](userspace.md)). It builds the `msm` backend beside KGSL
 (`-Dfreedreno-kmds=kgsl,msm`) only for libdrm ([OpenGL](#opengl)); KGSL is enumerated first,
