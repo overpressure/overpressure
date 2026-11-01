@@ -442,6 +442,11 @@ camera stack (CSL), which has no V4L2 capture path. [pico4_cam.c](../src/monado/
 rebuilds the stock tracking pipeline from the public CSL UAPI headers (CAF LA.UM.9.12 kona, from
 a pinned public kernel tree, the closest public match of the stock kernel):
 
+- **A mainline kernel.** Without KGSL's node the same functions run on V4L2 through CAMSS: the
+  media links and formats per slot (CSIPHY, CSID, VFE RDI, 640×481 Y10), multi-planar buffers in
+  a ring, Y10P unpacked to 16 bits. A frame's time comes from its buffer (the CSID's hardware
+  start of frame); the QTimer time follows from an offset measured once a second. The sections
+  below describe the stock kernel's path; the metadata line and the station's role are the same.
 - **Discovery.** The nodes are found at run time from the media graph and `CAM_QUERY_CAP`, not
   from fixed node numbers.
 - **Probe.** All four sensors are probed (`CAM_SENSOR_PROBE_CMD`: I2C address, chip-ID check
@@ -842,15 +847,16 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   (read from the stock `libcdsprpc.so` and `libion.so`): GETINFO opens the domain's upstream node
   onto the descriptor, INIT and INIT_ATTRS become INIT_ATTACH, INIT_CREATE or INIT_CREATE_STATIC,
   the INVOKE family becomes the upstream INVOKE with 24-byte arguments, MMAP and MUNMAP keep their
-  layouts, CONTROL, SETMODE and MUNMAP_FD are answered, and ION allocations come from
+  layouts, CONTROL, SETMODE and MUNMAP_FD are answered (CONTROL says the kernel allocates:
+  `FASTRPC_CONTROL_KALLOC`, so the library maps without a buffer of its own and upstream's MMAP allocates), and ION allocations come from
   `/dev/dma_heap/system` (the legacy ION probe fails, so libion takes the new ABI). Its translations
   are tested natively before the bionic library is built. The DSP asks `cdsprpcd` for memory
   (`apps_mem`), which the library maps by descriptor at its own address with flags 0; Valve's kernel
   maps such a client buffer through patch 0012, as the vendor driver does. On the headset
   `cdsprpcd` attaches to the CDSP's guest OS through the bridge, maps the DSP's memory and opens
   its listener, uses no measurable CPU, and the IMU keeps its 1 kHz stream beside it;
-  `pico4-cdsprpcd` runs on either kernel. `pico4-slamd` stays a stock-kernel unit while the cameras
-  do not stream on Valve's kernel: libSlam starts with the first frame sets.
+  `pico4-cdsprpcd` and `pico4-slamd` run on either kernel; the DSP's context banks are coherent
+  there as in the stock device tree, or it reads stale frames.
 - **pico4-slamd.** [`pico4-slamd`](../src/stockslam/pico4-slamd.c)
   ([`pico4-slamd.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service),
   wanted by Valve's session and Monado) creates `/dev/shm/pico4-slam` (group video, mode 0660)
@@ -1305,6 +1311,11 @@ library:
   chi-square and box gates; tilt comes from the IMU. The output is predicted 41 ms ahead of the
   newest IMU sample. A hand is lost after 1.2 s still or 3 s moving without optical updates, and
   on any gap of more than 35 ms between IMU samples.
+- **Controllers at rest.** A hand that was still for 3 s, or came back from an IMU gap, tries no
+  P3P until it has moved for 3 s without pause or is tracked (as in PICO OS's library). P5P stays
+  on, but controllers lying side by side look like one cluster of 17 LEDs or more, which only P3P
+  takes. So controllers put down together are found when they are picked up, not before; one
+  that stays tracked remains tracked at rest.
 
 In the driver, `pico4_slam.c` collects the LED exposures of the four cameras as sets. It converts
 them to 8 bits by dropping the two lowest bits, as `pico4-cam capture --record-leds` stores them,

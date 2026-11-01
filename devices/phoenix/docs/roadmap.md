@@ -33,7 +33,8 @@ Each step's document holds its design, measurements and reproduction steps.
   system on Valve's 7.2 kernel with both panels at 90 Hz, the GPU under Valve's own Mesa (Turnip
   on msm, OpenGL through zink), the GD32 MCU with fan control, the three DSPs, the head IMU at
   1 kHz and the keys; Valve's session presents in SteamVR's direct mode at 89.7 frames per
-  second, in the lenses as fluid as on the stock kernel. Head tracking, cameras, controllers, audio, Wi-Fi and charging are open there.
+  second, in the lenses as fluid as on the stock kernel. The tracking cameras stream through CAMSS
+  and PICO OS's head tracker and the controller tracker run there; both still need a worn check.
 - **Read-only storage.** Both stages switch every physical block device read-only. Only the
   explicit, backup-validated flash and restore paths write to the headset's storage (`boot`
   for the dev image or a test run, ABL through EDL); each write is checked against the
