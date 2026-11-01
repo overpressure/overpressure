@@ -346,7 +346,7 @@ struct pico4_cam;
 void
 pico4_cam_config_init(struct pico4_cam_config *cfg);
 
-//! Finds the CSL nodes and queries sensors, CSIPHYs and the ISP. Powers nothing.
+//! Finds the CSL nodes and queries sensors, CSIPHYs and the ISP. Powers nothing. -ENOTSUP on a mainline kernel.
 int
 pico4_cam_discover(struct pico4_cam_devices *out, const struct pico4_cam_config *cfg);
 
@@ -354,6 +354,9 @@ pico4_cam_discover(struct pico4_cam_devices *out, const struct pico4_cam_config 
  * Opens the request manager, probes the selected sensors and sets up one
  * session per camera: sensor acquire (power-up) and register tables, CSIPHY,
  * IFE-lite RDI and buffers. Streaming starts with pico4_cam_start().
+ *
+ * On a mainline kernel: one V4L2 pipeline per camera through CAMSS; the sensors power up with
+ * pico4_cam_start(). The RGB camera and sensor probes are -ENOTSUP there.
  */
 int
 pico4_cam_open(struct pico4_cam **out, const struct pico4_cam_config *cfg);

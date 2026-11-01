@@ -1,0 +1,176 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] media: camss: the hardware start of frame as a buffer's time
+
+A buffer was stamped when its write master finished, a frame's readout
+after its start and however long the interrupt waited later. The CSID
+stamps each stream's start of frame on the system counter in hardware (the
+registers the stock camera stack reads, its table's RDI offsets 0x390 and
+0x394, 0x290 and 0x294 on the lite CSIDs), which a tracker needs to match
+frames to the IMU. Where a CSID has the stamp, it dates the buffer on
+CLOCK_MONOTONIC.
+---
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-gen2.c b/drivers/media/platform/qcom/camss/camss-csid-gen2.c
+index eadcb2f7e3aa..87e8594c1cc9 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-gen2.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-gen2.c
+@@ -111,6 +111,11 @@
+ 							+ 0x100 * (rdi))
+ #define CSID_RDI_IRQ_SUBSAMPLE_PERIOD(rdi)		((csid_is_lite(csid) ? 0x218 : 0x318)\
+ 							+ 0x100 * (rdi))
++#define CSID_RDI_TIMESTAMP_CURR0_SOF(rdi)	((csid_is_lite(csid) ? 0x290 : 0x390)\
++						+ 0x100 * (rdi))
++#define CSID_RDI_TIMESTAMP_CURR1_SOF(rdi)	((csid_is_lite(csid) ? 0x294 : 0x394)\
++						+ 0x100 * (rdi))
++
+ #define CSID_RDI_RPP_PIX_DROP_PATTERN(rdi)		((csid_is_lite(csid) ? 0x224 : 0x324)\
+ 							+ 0x100 * (rdi))
+ #define CSID_RDI_RPP_PIX_DROP_PERIOD(rdi)		((csid_is_lite(csid) ? 0x228 : 0x328)\
+@@ -422,12 +427,21 @@ static void csid_subdev_init(struct csid_device *csid)
+ 	csid->testgen.nmodes = CSID_PAYLOAD_MODE_NUM_SUPPORTED_GEN2;
+ }
+ 
++static u64 csid_sof_ticks(struct csid_device *csid, u8 rdi)
++{
++	u32 hi = readl_relaxed(csid->base + CSID_RDI_TIMESTAMP_CURR1_SOF(rdi));
++	u32 lo = readl_relaxed(csid->base + CSID_RDI_TIMESTAMP_CURR0_SOF(rdi));
++
++	return (u64)hi << 32 | lo;
++}
++
+ const struct csid_hw_ops csid_ops_gen2 = {
+ 	.configure_stream = csid_configure_stream,
+ 	.configure_testgen_pattern = csid_configure_testgen_pattern,
+ 	.hw_version = csid_hw_version,
+ 	.isr = csid_isr,
+ 	.reset = csid_reset,
++	.sof_ticks = csid_sof_ticks,
+ 	.src_pad_code = csid_src_pad_code,
+ 	.subdev_init = csid_subdev_init,
+ };
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.h b/drivers/media/platform/qcom/camss/camss-csid.h
+index b0985790578f..d6a1834b1ce2 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.h
++++ b/drivers/media/platform/qcom/camss/camss-csid.h
+@@ -135,6 +135,15 @@ struct csid_hw_ops {
+ 	 */
+ 	irqreturn_t (*isr)(int irq, void *dev);
+ 
++	/*
++	 * sof_ticks - The hardware's stamp of a stream's last start of frame
++	 * @csid: CSID device
++	 * @rdi: RDI of the stream
++	 *
++	 * Return the system counter's value at the start of frame (optional)
++	 */
++	u64 (*sof_ticks)(struct csid_device *csid, u8 rdi);
++
+ 	/*
+ 	 * reset - Trigger reset on CSID module and wait to complete
+ 	 * @csid: CSID device
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 34e4319d8f80..c5240bb01bd6 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -7,6 +7,7 @@
+  * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+  * Copyright (C) 2015-2018 Linaro Ltd.
+  */
++#include <clocksource/arm_arch_timer.h>
+ #include <linux/clk.h>
+ #include <linux/completion.h>
+ #include <linux/delay.h>
+@@ -453,6 +454,29 @@ u32 vfe_hw_version(struct vfe_device *vfe)
+  * @vfe: VFE Device
+  * @wm: Write master id
+  */
++/*
++ * A buffer's timestamp: its frame's start in hardware, as the CSID stamped it on the system counter,
++ * on CLOCK_MONOTONIC. The write master finishes a frame's readout later, by however long the
++ * interrupt waited too. A tracker wants the start of frame, which the stock camera stack reports.
++ */
++static u64 vfe_buf_timestamp(struct camss_video *video, u64 now)
++{
++	struct csid_device *csid = video->sof_csid;
++	u64 sof, counter;
++	u32 rate;
++
++	if (!csid)
++		return now;
++	sof = csid->res->hw_ops->sof_ticks(csid, video->sof_rdi);
++	counter = arch_timer_read_counter();
++	rate = arch_timer_get_rate();
++	/* Not stamped yet, or no stamp of this frame. */
++	if (!sof || !rate || counter < sof || counter - sof > rate / 10)
++		return now;
++
++	return now - mul_u64_u32_div(counter - sof, NSEC_PER_SEC, rate);
++}
++
+ void vfe_buf_done(struct vfe_device *vfe, int wm, struct camss_buf_done_info *buf_done_info)
+ {
+ 	struct vfe_line *line = &vfe->line[vfe->wm_output_map[wm]];
+@@ -479,7 +503,7 @@ void vfe_buf_done(struct vfe_device *vfe, int wm, struct camss_buf_done_info *bu
+ 		goto out_unlock;
+ 	}
+ 
+-	ready_buf->vb.vb2_buf.timestamp = ts;
++	ready_buf->vb.vb2_buf.timestamp = vfe_buf_timestamp(&line->video_out, ts);
+ 	ready_buf->vb.sequence = output->sequence++;
+ 
+ 	index = 0;
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 5b16f8bc30df..470df689c6ae 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -348,6 +348,26 @@ static int video_check_format(struct camss_video *video)
+ 	return 0;
+ }
+ 
++/* The CSID whose start-of-frame stamp dates this video device's buffers, if it has one. */
++static void video_set_sof_source(struct camss_video *video)
++{
++	struct media_pad *vfe_pad, *csid_pad;
++	struct csid_device *csid;
++
++	video->sof_csid = NULL;
++	vfe_pad = media_entity_remote_source_pad_unique(&video->vdev.entity);
++	if (IS_ERR(vfe_pad))
++		return;
++	csid_pad = media_entity_remote_source_pad_unique(vfe_pad->entity);
++	if (IS_ERR(csid_pad) || !is_csid_subdev(media_entity_to_v4l2_subdev(csid_pad->entity)))
++		return;
++	csid = v4l2_get_subdevdata(media_entity_to_v4l2_subdev(csid_pad->entity));
++	if (!csid->res->hw_ops->sof_ticks)
++		return;
++	video->sof_rdi = csid_pad->index - MSM_CSID_PAD_FIRST_SRC;
++	video->sof_csid = csid;
++}
++
+ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ {
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+@@ -363,6 +383,8 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 		goto flush_buffers;
+ 	}
+ 
++	video_set_sof_source(video);
++
+ 	// Ignore this check when using an extra plane
+ 	if(!video->has_extra_output_plane_cfg) {
+ 		ret = video_check_format(video);
+diff --git a/drivers/media/platform/qcom/camss/camss-video.h b/drivers/media/platform/qcom/camss/camss-video.h
+index 4d7ce1157801..924bfe6dbd04 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.h
++++ b/drivers/media/platform/qcom/camss/camss-video.h
+@@ -151,7 +151,11 @@ struct camss_video_ops {
+ 			     enum vb2_buffer_state state);
+ };
+ 
++struct csid_device;
++
+ struct camss_video {
++	struct csid_device *sof_csid;	/* where the stream's start-of-frame stamp comes from */
++	u8 sof_rdi;
+ 	struct camss *camss;
+ 	struct vb2_queue vb2_q;
+ 	struct video_device vdev;

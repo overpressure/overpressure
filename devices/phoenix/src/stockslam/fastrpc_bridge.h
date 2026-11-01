@@ -97,6 +97,8 @@ struct fb_ds_munmap
 #define FB_DS_CONTROL FB_IOWR('R', 12, 12)
 #define FB_DS_MUNMAP_FD FB_IOWR('R', 13, 24)
 
+#define FB_DS_CONTROL_KALLOC 3
+
 #define FB_DS_INIT_ATTACH 0
 #define FB_DS_INIT_CREATE 1
 #define FB_DS_INIT_CREATE_STATIC 2
@@ -306,8 +308,17 @@ fb_fastrpc(const struct fb_ops *ops, int fd, uint32_t req, void *arg)
 		return ops->ioctl(fd, FB_UP_MMAP, arg);
 	case FB_DS_MUNMAP:
 		return ops->ioctl(fd, FB_UP_MUNMAP, arg);
+	case FB_DS_CONTROL: {
+		// The library asks whether the kernel allocates what it maps for the DSP (the vendor driver's
+		// FASTRPC_CONTROL_KALLOC). It does, here too: upstream's MMAP allocates by itself, and
+		// refuses the user-allocated pages the library would map otherwise.
+		uint32_t *control = (uint32_t *)arg;
+		if (control[0] == FB_DS_CONTROL_KALLOC) {
+			control[1] = 1;
+		}
+		return 0;
+	}
 	case FB_DS_SETMODE:
-	case FB_DS_CONTROL:
 	case FB_DS_MUNMAP_FD:
 		// Session modes, latency and wake-lock hints, and unmapping by fd, which the upstream
 		// driver handles on its own (mappings go with their buffers).

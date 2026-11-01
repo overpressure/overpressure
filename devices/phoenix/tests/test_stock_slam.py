@@ -54,16 +54,13 @@ class TrackerUnitTests(unittest.TestCase):
         for name in ("pico4-slamd", "pico4-cdsprpcd", "pico4-cdsp"):
             self.assertNotRegex(read(UNITS / f"{name}.service"), r"(?m)^(CPUWeight|CPUQuota)=", name)
 
-    def test_tracker_runs_on_the_stock_kernels_fastrpc_only(self):
-        # Without cameras on a mainline kernel the tracker has nothing to track.
-        self.assertRegex(read(UNITS / "pico4-slamd.service"), r"(?m)^ConditionPathExists=/sys/class/kgsl$")
-
-    def test_root_listener_runs_on_either_kernels_fastrpc(self):
+    def test_tracker_runs_on_either_kernels_fastrpc(self):
         # Without the bridge PICO OS's FastRPC finds no ION or adsprpc node on a mainline kernel
         # and restarts its listener every 100 ms, which also changes the IMU's rate.
-        unit = read(UNITS / "pico4-cdsprpcd.service")
-        self.assertRegex(unit, r"(?m)^ConditionPathExists=\|/sys/class/kgsl$")
-        self.assertRegex(unit, r"(?m)^ConditionPathExists=\|/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge\.so$")
+        for name in ("pico4-slamd", "pico4-cdsprpcd"):
+            unit = read(UNITS / f"{name}.service")
+            self.assertRegex(unit, r"(?m)^ConditionPathExists=\|/sys/class/kgsl$", name)
+            self.assertRegex(unit, r"(?m)^ConditionPathExists=\|/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge\.so$", name)
         # The bridge's path in the root is the one stock-slam preloads.
         self.assertIn("/pico4/libpico4-fastrpc-bridge.so", read(ROOT / "userspace/rootfs/usr/libexec/pico4-poc/stock-slam"))
 

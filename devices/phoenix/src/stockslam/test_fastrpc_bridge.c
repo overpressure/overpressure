@@ -164,10 +164,15 @@ main(void)
 
 	// Hints the upstream driver has no use for; and a request it has no counterpart for.
 	reset();
-	unsigned char ctl[24] = {0};
+	uint32_t ctl[6] = {0};
 	assert(fb_fastrpc(&ops, 7, FB_DS_CONTROL, ctl) == 0 && rec.calls == 0);
 	assert(fb_fastrpc(&ops, 7, FB_DS_SETMODE, ctl) == 0 && rec.calls == 0);
 	assert(fb_fastrpc(&ops, 7, FB_DS_MUNMAP_FD, ctl) == 0 && rec.calls == 0);
+	// Asked whether the kernel allocates what it maps: yes, so the library sends no user pages.
+	uint32_t kalloc[3] = {FB_DS_CONTROL_KALLOC, 0, 0};
+	assert(fb_fastrpc(&ops, 7, FB_DS_CONTROL, kalloc) == 0 && kalloc[1] == 1 && rec.calls == 0);
+	uint32_t latency[3] = {1, 0, 0};
+	assert(fb_fastrpc(&ops, 7, FB_DS_CONTROL, latency) == 0 && latency[1] == 0);
 	assert(fb_fastrpc(&ops, 7, FB_DS_GETPERF, ctl) == -FB_ENOTTY);
 
 	// ION: the legacy probe fails, allocations come from the system heap, one heap is listed.
