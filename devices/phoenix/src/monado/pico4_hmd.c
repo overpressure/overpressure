@@ -833,6 +833,11 @@ pico4_hmd_destroy(struct xrt_device *xdev)
 			pico4_controller_release(h->controllers[i]);
 		}
 	}
+	// Nobody serves the controllers now: they wait for the next start in slow advertising.
+	int station_sleep = pico4_station_sleep(h->station);
+	if (station_sleep < 0) {
+		P4_WARN(h, "Controller radio to sleep: %s", strerror(-station_sleep));
+	}
 	pico4_station_close(h->station);
 	// No frames (SLAM) or packets (IMU thread) any more, and the controllers let go of it.
 	pico4_ctrack_destroy(&h->ctrack);

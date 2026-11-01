@@ -51,6 +51,22 @@ class FakeStation(station.Station):
 
 
 class StationToolTests(unittest.TestCase):
+    def test_slow_advertising_frame_as_the_stock_sleep(self):
+        buf = station.frame(station.CMD_SLOW_ADV, bytes([0, 0]))
+        self.assertEqual(buf[:5], bytes([0xAA, 0x01, 0x0D, 0, 0]))
+        for payload in (b"", bytes([4, 0]), bytes([0, 1]), bytes([0, 0, 0])):
+            with self.assertRaises(ValueError):
+                station.frame(station.CMD_SLOW_ADV, payload)
+
+    def test_slow_advertising_reads_the_status_and_tries_twice(self):
+        confirmed = reply(1, station.CMD_SLOW_ADV, bytes([0, 1]))
+        self.assertTrue(FakeStation({(station.CMD_SLOW_ADV, 0): [confirmed]}).controllers_slow_adv())
+        refused = reply(1, station.CMD_SLOW_ADV, bytes([0, 0]))
+        self.assertFalse(FakeStation({(station.CMD_SLOW_ADV, 0): [refused]}).controllers_slow_adv())
+        silent = FakeStation({})
+        self.assertFalse(silent.controllers_slow_adv())
+        self.assertEqual(sum(1 for s in silent.sent if s[2] == station.CMD_SLOW_ADV), 2)
+
     def test_controller_queries_exactly_as_pico_os(self):
         info = station.controller_query_frame("left", station.CMD_CONTROLLER_INFO)
         self.assertEqual(info[:4], bytes([0xAA, 0x02, 0x03, 0x00]))

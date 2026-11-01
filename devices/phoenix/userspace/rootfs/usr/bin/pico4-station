@@ -11,7 +11,7 @@ station's interrupt; userspace writes and reads whole frames.
 
 Safety: the station and controller firmware can be updated over this link. This
 tool can only build the frames listed in COMMANDS (version query, camera frame
-sync, IMU stream on/off, acknowledge), the controller motor, the two read-only
+sync, IMU stream on/off, the controllers' slow advertising, acknowledge), the controller motor, the two read-only
 controller queries PICO OS sends on every connect (info, calibration) and the
 power ioctl; it has no way to send firmware, bootloader or flash commands, and it
 never touches the boot pin.
@@ -53,7 +53,11 @@ QUERY_PAYLOAD = {CMD_GET_WORK_MODE: bytes([1, 0])}
 CMD_STATION_FPS = 0x19
 STATION_FPS_50 = 1  # the stock configuration (sys_station_camera_fps 50)
 DEVICE_TYPE = 0      # DeviceTypeGet() on the PICO 4
-COMMANDS = (CMD_VERSION, CMD_CAMERA, CMD_IMU_STREAM, CMD_ACK, CMD_STATION_FPS) + QUERIES
+# The controllers advertise slowly, so that they stay reachable while the station's power is off
+# (the stock service's goToSleep). Payload 00 00; other first bytes are trackers.
+CMD_SLOW_ADV = 0x0D
+SLOW_ADV_CONTROLLERS = bytes([0, 0])
+COMMANDS = (CMD_VERSION, CMD_CAMERA, CMD_IMU_STREAM, CMD_ACK, CMD_STATION_FPS, CMD_SLOW_ADV) + QUERIES
 CAMERA_INIT, CAMERA_STREAM, CAMERA_SET_PARA, CAMERA_FPS = 0x01, 0x02, 0x03, 0x07
 CAMERA_OPS = (CAMERA_INIT, CAMERA_STREAM, CAMERA_SET_PARA, CAMERA_FPS)
 # Set parameters (the stock CameraSetPara): op, 8 x (u16 exposure, u8 gain) with
@@ -104,6 +108,8 @@ def frame(command: int, payload: bytes = b"", seq: int = None) -> bytes:
         allowed = bool(payload) and payload[0] in CAMERA_OPS
         if allowed and payload[0] == CAMERA_SET_PARA:
             allowed = len(payload) == CAMERA_SET_PARA_LEN
+    elif command == CMD_SLOW_ADV:
+        allowed = payload == SLOW_ADV_CONTROLLERS
     elif command in QUERY_PAYLOAD:
         allowed = payload == QUERY_PAYLOAD[command]
     elif command == CMD_STATION_FPS:
@@ -277,6 +283,14 @@ class Station:
         self.send(frame(command, payload, seq))
         return self.collect(seconds)
 
+    def controllers_slow_adv(self) -> bool:
+        """As the stock service before the power goes: two tries of 100 ms, byte 4 of the reply 1."""
+        for _ in range(2):
+            for reply in self.request(CMD_SLOW_ADV, SLOW_ADV_CONTROLLERS, 0.1):
+                if reply[0] == 0xBB and reply[2] == CMD_SLOW_ADV:
+                    return reply[4] == 1
+        return False
+
     def drain(self):
         """Read (and acknowledge) what is already queued, so late replies cannot be taken for new ones."""
         while self.read(0.0) is not None:
@@ -366,6 +380,8 @@ def main(argv=None) -> int:
     out = {"command": args.command}
     try:
         if args.command == "power":
+            if args.state == "off":
+                out["controllers_slow_adv"] = st.controllers_slow_adv()
             if args.state == "cycle":
                 st.power(False)
                 time.sleep(0.1)

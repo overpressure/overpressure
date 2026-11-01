@@ -46,6 +46,7 @@ enum pico4_station_cmd
 {
 	PICO4_STATION_CMD_CAMERA = 0x04,     //!< Payload [op, ...]: 01 init, 02 stream.
 	PICO4_STATION_CMD_CAMERA_FPS = 0x19, //!< Answer to the power-on announcement.
+	PICO4_STATION_CMD_SLOW_ADV = 0x0D,   //!< Payload 00 00: the controllers advertise slowly.
 	PICO4_STATION_CMD_ACK = 0xFA,        //!< Payload: the acknowledged frame's bytes 37..38.
 	//! To a controller only: [play, amplitude, u16 duration ms].
 	PICO4_STATION_CMD_MOTOR = 0x01,
@@ -186,6 +187,15 @@ pico4_station_set_camera_hz(struct pico4_station *st, unsigned hz);
  */
 int
 pico4_station_reset(struct pico4_station *st);
+
+/*!
+ * Put the station to sleep as PICO OS does: the controllers are told to advertise slowly, which
+ * leaves them reachable, then its power goes off. The next pico4_station_reset() brings it back
+ * and the controllers reconnect without a button press. Returns 0, -ETIMEDOUT if the station did
+ * not confirm the controllers' mode (the power is off all the same), or a negative errno.
+ */
+int
+pico4_station_sleep(struct pico4_station *st);
 
 /*!
  * Read frames for up to @p timeout_ms, acknowledging them as the stock service

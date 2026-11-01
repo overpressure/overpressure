@@ -52,6 +52,14 @@ test_station(void)
 	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_ACK, ack, sizeof(ack)));
 	EXPECT(f[2] == 0xFA && f[3] == 0x12 && f[4] == 0x34 && f[39] == 0x28);
 
+	// The controllers' slow advertising as PICO OS's goToSleep sends it, and only that.
+	const uint8_t slow_adv[2] = {0, 0}, slow_tracker[2] = {4, 0}, slow_other[2] = {0, 1};
+	EXPECT(pico4_station_frame(f, PICO4_STATION_CMD_SLOW_ADV, slow_adv, sizeof(slow_adv)));
+	EXPECT(f[0] == 0xAA && f[1] == 0x01 && f[2] == 0x0D && f[3] == 0 && f[4] == 0 && f[39] == 0x0A);
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_SLOW_ADV, slow_tracker, sizeof(slow_tracker)));
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_SLOW_ADV, slow_other, sizeof(slow_other)));
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_SLOW_ADV, slow_adv, 1));
+
 	// Nothing outside the allowlist: other commands, camera ops and payload shapes.
 	const uint8_t version[1] = {0};
 	const uint8_t cam_fps[3] = {0x07, 0x00, 0x01}, bad_stream[3] = {0x02, 0x00, 0x03}, short_init[2] = {0x01, 0x00};

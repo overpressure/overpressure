@@ -383,6 +383,11 @@ moves whole frames on the station's interrupt, so userspace only `write()`s, `se
   radio type) within 3 s and waits for the camera frame rate (command `19`, payload `01 00 01`:
   50 Hz as stock, device type 0) before it accepts camera commands. The controllers reconnect on
   their own.
+- **Sleep.** PICO OS has no command that wakes a controller. Its `goToSleep` sends `0D 00 00`
+  (two tries of 100 ms; the reply `BB 01 0D` has 1 in byte 4), which leaves the controllers
+  advertising slowly, and then cuts the station's power; `wakeUp` only powers the station on again,
+  and the controllers reconnect. The driver does the same when it closes
+  (`pico4_station_sleep`), as does `pico4-station power off`.
 - **Firmware.** The station reports firmware 2.96, the version PICO OS ships.
 - **Mainline kernels.** Without the vendor spidev the bus is a plain spidev, whose every transfer
   is full duplex: commands go out as transfers, zeros (no header, which the station ignores) ask
@@ -398,6 +403,7 @@ frames only from an allowlist:
 | Command | Payload | Purpose | C module | `pico4-station` |
 | --- | --- | --- | --- | --- |
 | `FA` | bytes 37–38 of the acknowledged frame | acknowledge | yes | yes |
+| `0D` | exactly `00 00` (the controllers; other first bytes are trackers) | controllers to slow advertising, before the station's power goes | yes | yes |
 | `19` | `01` (50 Hz) or `02`, device type, `01` | answer to the announcement | yes | yes |
 | `04` | `01 00 02 00` (exposure-first-row flag 2 as on PICO OS, resolution 0) | camera init | yes | yes |
 | `04` | `02`, camera (0 all, 1–4), `01` on / `02` off | camera stream | yes | yes |

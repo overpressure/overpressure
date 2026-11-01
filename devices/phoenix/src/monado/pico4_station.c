@@ -76,6 +76,7 @@ struct pico4_station
 	unsigned camera_hz;
 	//! The last reply to a camera command: op, status.
 	int camera_op, camera_status;
+	int slow_adv_status; //!< 0 no reply yet, 1 confirmed, -1 refused.
 	//! The cameras' module ids from the OTP replies (a zero byte keeps the value before).
 	uint8_t otp[4];
 	//! CameraSetPara's event index of the last command (0-9).
@@ -113,6 +114,7 @@ allowed(uint8_t cmd, const uint8_t *p, size_t n)
 	switch (cmd) {
 	case PICO4_STATION_CMD_ACK: return n == 2;
 	case PICO4_STATION_CMD_CAMERA_FPS: return n == 3 && (p[0] == 1 || p[0] == 2) && p[2] == 1;
+	case PICO4_STATION_CMD_SLOW_ADV: return n == 2 && p[0] == 0 && p[1] == 0; // the controllers; never the trackers
 	case PICO4_STATION_CMD_CAMERA:
 		if (n == 4 && p[0] == CAMERA_INIT) {
 			return p[2] <= 2 && p[3] <= 1;
@@ -416,6 +418,9 @@ read_one(struct pico4_station *st, int timeout_ms)
 			pico4_station_parse_otp(f, st->otp);
 		}
 	}
+	if (f[0] == HEADER_REPLY && f[1] == TARGET_STATION && f[2] == PICO4_STATION_CMD_SLOW_ADV) {
+		st->slow_adv_status = f[4] == 1 ? 1 : -1;
+	}
 	if (f[0] == HEADER_REPLY && (f[1] == TARGET_LEFT || f[1] == TARGET_RIGHT) &&
 	    f[2] == PICO4_STATION_CMD_CALIBRATION) {
 		st->calib_target = f[1];
@@ -536,6 +541,31 @@ reset_locked(struct pico4_station *st)
 		}
 	}
 	return 0;
+}
+
+int
+pico4_station_sleep(struct pico4_station *st)
+{
+	if (st == NULL) {
+		return 0;
+	}
+	const uint8_t controllers[2] = {0, 0};
+	pthread_mutex_lock(&st->lock);
+	// As the stock service's goToSleep: two tries of 100 ms each, then the power goes either way.
+	st->slow_adv_status = 0;
+	for (int attempt = 0; attempt < 2 && st->slow_adv_status != 1; attempt++) {
+		st->slow_adv_status = 0;
+		int sent = send_cmd(st, PICO4_STATION_CMD_SLOW_ADV, controllers, sizeof(controllers));
+		for (int64_t end = now_ms() + 100; sent == 0 && st->slow_adv_status == 0 && now_ms() < end;) {
+			if (read_one(st, 10) < 0) {
+				break;
+			}
+		}
+	}
+	int status = st->slow_adv_status;
+	int r = power(st, 0);
+	pthread_mutex_unlock(&st->lock);
+	return r < 0 ? r : status == 1 ? 0 : -ETIMEDOUT;
 }
 
 int
