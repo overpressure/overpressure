@@ -374,12 +374,14 @@ other call passes through; without the panels, the layer stays out of the way.
 - **The compositor's crash at a stop.** `vrcompositor` ends with SIGSEGV about 40 ms after logging
   `Cleaning up`, when the render thread has ended and every client has gone: its cleanup calls a
   virtual method of a freed object (`vrcompositor+0x106a10`, the function that holds "Unable to release
-  resource of unknown type"). It needs a client's overlay that has had an image, through
-  `SetOverlayRaw` or `SetOverlayFromFile`, whether or not that client destroyed the overlay and shut
-  down cleanly first. The lens panel's dashboard tile is such an image, so every stop crashes; sessions
-  without it (0 of 6) did not, and long sessions before the panel existed did, on both Mesas, with
-  the Steam client's overlays the likely cause. It is in SteamVR's own binary and costs a core dump of
-  about 6 MB and no data: Valve's health check counts `steamvr.service`'s result, which stays clean.
+  resource of unknown type"). A client's overlay that has had an image through `SetOverlayRaw` or
+  `SetOverlayFromFile` is enough, also a 1x1 blank one, and also when the client cleared it long
+  before, destroyed the overlay and shut down cleanly. An overlay with a Vulkan image through
+  `SetOverlayTexture`, as other overlay applications set theirs, stops cleanly (2 of 2), as does a
+  client without an image. The lens panel's dashboard tile uses `SetOverlayRaw`, so every stop crashes.
+  Long sessions before the panel existed crashed too, on both Mesas, probably from the Steam client's
+  overlays. It costs a core dump of about 6 MB and no data: Valve's health check reads
+  `steamvr.service`'s result, which stays clean. Whether other SteamVR installations do this is not known.
 - **Panels off when idle.** SteamVR's standby stops presenting, but it never asks for the
   display's power (`vkDisplayPowerControlEXT`), and the panels would show the last frame at the
   587 MHz floor. After 5 s without a present (`PICO4_VRDISPLAY_IDLE_OFF_MS`) the layer turns
