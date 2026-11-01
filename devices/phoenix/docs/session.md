@@ -377,8 +377,8 @@ other call passes through; without the panels, the layer stays out of the way.
   resource of unknown type"). A client's overlay that has had an image through `SetOverlayRaw` or
   `SetOverlayFromFile` is enough, also a 1x1 blank one, and also when the client cleared it long
   before, destroyed the overlay and shut down cleanly. An overlay with a Vulkan image through
-  `SetOverlayTexture`, as other overlay applications set theirs, stops cleanly (2 of 2), as does a
-  client without an image. The lens panel's dashboard tile uses `SetOverlayRaw`, so every stop crashes.
+  `SetOverlayTexture`, as other overlay applications set theirs, stops cleanly, as does a client
+  without an image, so the lens panel's images are Vulkan textures.
   Long sessions before the panel existed crashed too, on both Mesas, probably from the Steam client's
   overlays. It costs a core dump of about 6 MB and no data: Valve's health check reads
   `steamvr.service`'s result, which stays clean. Whether other SteamVR installations do this is not known.

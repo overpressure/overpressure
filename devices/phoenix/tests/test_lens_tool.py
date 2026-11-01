@@ -152,6 +152,10 @@ class LensPanelTests(unittest.TestCase):
         panel = self.read("src/xr/pico4-lens-panel.cpp")
         self.assertIn('execlp("pico4-lens", "pico4-lens", "set", value', panel)
         self.assertIn("y = PICO4_PANEL_H - e.data.mouse.y", panel)
+        # With an image through these two, the compositor crashes at every stop (docs/session.md).
+        self.assertIn("overlay->SetOverlayTexture(handle, &texture)", panel)
+        self.assertNotIn("overlay->SetOverlayRaw(", panel)
+        self.assertNotIn("overlay->SetOverlayFromFile(", panel)
         conf = self.read("userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/53-pico4-lens-panel.conf")
         self.assertIn("Wants=pico4-lens-panel.service", conf)
         self.assertIn("pico4-lens-panel pico4-lens-panel.cpp", self.read("userspace/pkgbuilds/pico4-monado/PKGBUILD"))

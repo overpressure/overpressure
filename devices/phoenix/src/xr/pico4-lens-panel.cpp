@@ -9,9 +9,12 @@
  * and the driver hands the new distance to SteamVR, whose own display shows it. Nothing of Valve's
  * is linked: libopenvr_api.so is opened at run time.
  *
- *   pico4-lens-panel [--render FILE.png MM]
+ * The images go to SteamVR as Vulkan textures: with one through SetOverlayRaw or SetOverlayFromFile
+ * alive, the compositor crashes in its cleanup at every stop (docs/session.md).
  *
- * --render draws the panel into a file, without SteamVR.
+ *   pico4-lens-panel [--open] [--render FILE.png MM]
+ *
+ * --open opens the dashboard on the panel. --render draws it into a file, without SteamVR.
  */
 #include "pico4_lens_panel.h"
 
@@ -23,6 +26,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <vulkan/vulkan.h>
 
 #include <cmath>
 #include <cstdint>
@@ -261,6 +265,223 @@ to_rgba(cairo_surface_t *surface, std::vector<uint8_t> &out)
 	}
 }
 
+std::vector<std::string>
+split_words(const char *text)
+{
+	std::vector<std::string> words;
+	std::string word;
+	for (const char *c = text;; c++) {
+		if (*c == ' ' || *c == '\0') {
+			if (!word.empty()) {
+				words.push_back(word);
+			}
+			word.clear();
+			if (*c == '\0') {
+				return words;
+			}
+		} else {
+			word += *c;
+		}
+	}
+}
+
+//! What every overlay image shares: the device SteamVR asks for, and a command buffer.
+struct Gpu
+{
+	VkInstance instance = VK_NULL_HANDLE;
+	VkPhysicalDevice physical = VK_NULL_HANDLE;
+	VkDevice device = VK_NULL_HANDLE;
+	VkQueue queue = VK_NULL_HANDLE;
+	uint32_t family = 0;
+	VkCommandBuffer commands = VK_NULL_HANDLE;
+};
+
+bool
+gpu_create(Gpu &g, vr::IVRCompositor *compositor)
+{
+	char names[4096] = "";
+	compositor->GetVulkanInstanceExtensionsRequired(names, sizeof(names));
+	const std::vector<std::string> instance_words = split_words(names);
+	std::vector<const char *> instance_extensions;
+	for (const std::string &w : instance_words) {
+		instance_extensions.push_back(w.c_str());
+	}
+	VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+	app.pApplicationName = "pico4-lens-panel";
+	app.apiVersion = VK_API_VERSION_1_1;
+	VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+	instance_info.pApplicationInfo = &app;
+	instance_info.enabledExtensionCount = (uint32_t)instance_extensions.size();
+	instance_info.ppEnabledExtensionNames = instance_extensions.data();
+	if (vkCreateInstance(&instance_info, nullptr, &g.instance) != VK_SUCCESS) {
+		return false;
+	}
+	uint32_t count = 1;
+	if (vkEnumeratePhysicalDevices(g.instance, &count, &g.physical) < 0 || count == 0) {
+		return false;
+	}
+	uint32_t families = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties(g.physical, &families, nullptr);
+	std::vector<VkQueueFamilyProperties> family_properties(families);
+	vkGetPhysicalDeviceQueueFamilyProperties(g.physical, &families, family_properties.data());
+	while (g.family < families && !(family_properties[g.family].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+		g.family++;
+	}
+	if (g.family == families) {
+		return false;
+	}
+	names[0] = '\0';
+	compositor->GetVulkanDeviceExtensionsRequired(g.physical, names, sizeof(names));
+	const std::vector<std::string> device_words = split_words(names);
+	std::vector<const char *> device_extensions;
+	for (const std::string &w : device_words) {
+		device_extensions.push_back(w.c_str());
+	}
+	const float priority = 0;
+	VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+	queue_info.queueFamilyIndex = g.family;
+	queue_info.queueCount = 1;
+	queue_info.pQueuePriorities = &priority;
+	VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+	device_info.queueCreateInfoCount = 1;
+	device_info.pQueueCreateInfos = &queue_info;
+	device_info.enabledExtensionCount = (uint32_t)device_extensions.size();
+	device_info.ppEnabledExtensionNames = device_extensions.data();
+	if (vkCreateDevice(g.physical, &device_info, nullptr, &g.device) != VK_SUCCESS) {
+		return false;
+	}
+	vkGetDeviceQueue(g.device, g.family, 0, &g.queue);
+	VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+	pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+	pool_info.queueFamilyIndex = g.family;
+	VkCommandPool pool;
+	if (vkCreateCommandPool(g.device, &pool_info, nullptr, &pool) != VK_SUCCESS) {
+		return false;
+	}
+	VkCommandBufferAllocateInfo command_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+	command_info.commandPool = pool;
+	command_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	command_info.commandBufferCount = 1;
+	return vkAllocateCommandBuffers(g.device, &command_info, &g.commands) == VK_SUCCESS;
+}
+
+bool
+allocate(const Gpu &g, const VkMemoryRequirements &needs, VkMemoryPropertyFlags flags, VkDeviceMemory *out)
+{
+	VkPhysicalDeviceMemoryProperties properties;
+	vkGetPhysicalDeviceMemoryProperties(g.physical, &properties);
+	for (uint32_t i = 0; i < properties.memoryTypeCount; i++) {
+		if ((needs.memoryTypeBits & (1u << i)) && (properties.memoryTypes[i].propertyFlags & flags) == flags) {
+			VkMemoryAllocateInfo info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+			info.allocationSize = needs.size;
+			info.memoryTypeIndex = i;
+			return vkAllocateMemory(g.device, &info, nullptr, out) == VK_SUCCESS;
+		}
+	}
+	return false;
+}
+
+//! One overlay's image on the GPU and the buffer each redraw is copied through.
+struct Texture
+{
+	uint32_t width = 0, height = 0;
+	VkImage image = VK_NULL_HANDLE;
+	VkBuffer staging = VK_NULL_HANDLE;
+	void *mapped = nullptr;
+	bool written = false;
+};
+
+bool
+texture_create(const Gpu &g, Texture &t, uint32_t width, uint32_t height)
+{
+	t.width = width;
+	t.height = height;
+	VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+	image_info.imageType = VK_IMAGE_TYPE_2D;
+	image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+	image_info.extent = {width, height, 1};
+	image_info.mipLevels = 1;
+	image_info.arrayLayers = 1;
+	image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+	image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+	image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+	if (vkCreateImage(g.device, &image_info, nullptr, &t.image) != VK_SUCCESS) {
+		return false;
+	}
+	VkMemoryRequirements needs;
+	vkGetImageMemoryRequirements(g.device, t.image, &needs);
+	VkDeviceMemory image_memory, staging_memory;
+	if (!allocate(g, needs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &image_memory) ||
+	    vkBindImageMemory(g.device, t.image, image_memory, 0) != VK_SUCCESS) {
+		return false;
+	}
+	VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+	buffer_info.size = (VkDeviceSize)width * height * 4;
+	buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+	if (vkCreateBuffer(g.device, &buffer_info, nullptr, &t.staging) != VK_SUCCESS) {
+		return false;
+	}
+	vkGetBufferMemoryRequirements(g.device, t.staging, &needs);
+	return allocate(g, needs, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &staging_memory) &&
+	       vkBindBufferMemory(g.device, t.staging, staging_memory, 0) == VK_SUCCESS &&
+	       vkMapMemory(g.device, staging_memory, 0, VK_WHOLE_SIZE, 0, &t.mapped) == VK_SUCCESS;
+}
+
+void
+image_barrier(VkCommandBuffer commands, VkImage image, VkImageLayout from, VkImageLayout to, VkAccessFlags src, VkAccessFlags dst)
+{
+	VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+	barrier.srcAccessMask = src;
+	barrier.dstAccessMask = dst;
+	barrier.oldLayout = from;
+	barrier.newLayout = to;
+	barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = image;
+	barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+	vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+//! The surface's pixels into the texture, then the texture to SteamVR, in the layout it takes them.
+bool
+texture_show(const Gpu &g, Texture &t, cairo_surface_t *surface, vr::IVROverlay *overlay, vr::VROverlayHandle_t handle)
+{
+	std::vector<uint8_t> rgba;
+	to_rgba(surface, rgba);
+	memcpy(t.mapped, rgba.data(), rgba.size());
+	VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	vkBeginCommandBuffer(g.commands, &begin);
+	image_barrier(g.commands, t.image, t.written ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+	              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+	VkBufferImageCopy copy{};
+	copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+	copy.imageExtent = {t.width, t.height, 1};
+	vkCmdCopyBufferToImage(g.commands, t.staging, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+	image_barrier(g.commands, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	              VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+	vkEndCommandBuffer(g.commands);
+	VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+	submit.commandBufferCount = 1;
+	submit.pCommandBuffers = &g.commands;
+	if (vkQueueSubmit(g.queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS || vkQueueWaitIdle(g.queue) != VK_SUCCESS) {
+		return false;
+	}
+	t.written = true;
+	vr::VRVulkanTextureData_t data{};
+	data.m_nImage = (uint64_t)t.image;
+	data.m_pDevice = g.device;
+	data.m_pPhysicalDevice = g.physical;
+	data.m_pInstance = g.instance;
+	data.m_pQueue = g.queue;
+	data.m_nQueueFamilyIndex = g.family;
+	data.m_nWidth = t.width;
+	data.m_nHeight = t.height;
+	data.m_nFormat = VK_FORMAT_R8G8B8A8_UNORM;
+	data.m_nSampleCount = 1;
+	vr::Texture_t texture{&data, vr::TextureType_Vulkan, vr::ColorSpace_Auto};
+	return overlay->SetOverlayTexture(handle, &texture) == vr::VROverlayError_None;
+}
+
 bool
 handle_event(State &s, const vr::VREvent_t &e)
 {
@@ -360,7 +581,8 @@ main(int argc, char **argv)
 	}
 	auto *overlay = static_cast<vr::IVROverlay *>(vr_interface(vr::IVROverlay_Version, &err));
 	auto *system = static_cast<vr::IVRSystem *>(vr_interface(vr::IVRSystem_Version, &err));
-	if (overlay == nullptr || system == nullptr) {
+	auto *compositor = static_cast<vr::IVRCompositor *>(vr_interface(vr::IVRCompositor_Version, &err));
+	if (overlay == nullptr || system == nullptr || compositor == nullptr) {
 		fprintf(stderr, "pico4-lens-panel: no overlay interface: %d\n", err);
 		return 1;
 	}
@@ -379,18 +601,28 @@ main(int argc, char **argv)
 	const std::string path = presets_path();
 	pico4_panel_presets_load(path.c_str(), s.presets);
 	cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, PICO4_PANEL_W, PICO4_PANEL_H);
-	std::vector<uint8_t> rgba;
+	Gpu gpu;
+	Texture main_texture, thumbnail_texture;
+	if (!gpu_create(gpu, compositor) || !texture_create(gpu, thumbnail_texture, 256, 256) ||
+	    !texture_create(gpu, main_texture, PICO4_PANEL_W, PICO4_PANEL_H)) {
+		fprintf(stderr, "pico4-lens-panel: no Vulkan textures\n");
+		return 1;
+	}
 	{
 		cairo_surface_t *small = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 256, 256);
 		draw_thumbnail(small);
-		to_rgba(small, rgba);
-		overlay->SetOverlayRaw(thumbnail, rgba.data(), 256, 256, 4);
+		if (!texture_show(gpu, thumbnail_texture, small, overlay, thumbnail)) {
+			fprintf(stderr, "pico4-lens-panel: thumbnail not accepted\n");
+		}
 		cairo_surface_destroy(small);
+	}
+	if (argc == 2 && strcmp(argv[1], "--open") == 0) {
+		overlay->ShowDashboard("pico4.lens.panel");
 	}
 	printf("pico4-lens-panel: in the dashboard\n");
 	fflush(stdout);
 
-	bool dirty = true, running = true;
+	bool dirty = true, running = true, drawn = false;
 	double next_read = 0;
 	while (running && !g_stop) {
 		vr::VREvent_t e;
@@ -432,10 +664,13 @@ main(int argc, char **argv)
 			}
 		}
 		const bool visible = overlay->IsOverlayVisible(main_overlay);
-		if (dirty && visible) {
+		// Once before anyone looks, as soon as the distance is known, so that the tab never opens blank.
+		if (dirty && (visible || (!drawn && s.mm > 0))) {
+			drawn = true;
 			draw(surface, s);
-			to_rgba(surface, rgba);
-			overlay->SetOverlayRaw(main_overlay, rgba.data(), PICO4_PANEL_W, PICO4_PANEL_H, 4);
+			if (!texture_show(gpu, main_texture, surface, overlay, main_overlay)) {
+				fprintf(stderr, "pico4-lens-panel: image not accepted\n");
+			}
 			dirty = false;
 		}
 		usleep(visible ? 16000 : 200000);

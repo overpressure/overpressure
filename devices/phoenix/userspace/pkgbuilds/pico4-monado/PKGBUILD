@@ -183,8 +183,8 @@ build() {
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -Imonado/src/xrt/drivers/pico4/include -o pico4-cam pico4-cam.c \
     pico4_cam.c pico4_station.c pico4_ssc.c -lpthread
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-roomview pico4-roomview.c -lvulkan -ldl -lm
-  ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -isystem monado/src/external/openvr_includes \
-    -o pico4-lens-panel pico4-lens-panel.cpp -lcairo -ldl -lm
+  ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \
+    -o pico4-lens-panel pico4-lens-panel.cpp -lcairo -lvulkan -ldl -lm
   ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -isystem /usr/include/eigen3 -o pico4-ctrack-replay \
     pico4-ctrack-replay.cpp "${objs[@]}" pico4_blemcu.o -lpthread -lm
 }
