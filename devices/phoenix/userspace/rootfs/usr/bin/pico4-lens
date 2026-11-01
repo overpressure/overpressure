@@ -4,7 +4,7 @@
 
 The lens motor hangs off the GD32 MCU on /dev/ttyHS1, which also runs the fan and takes firmware
 updates. This tool can only build the frames listed here: the position and move-state queries, the
-timestamp report's switch (always off) and a move within the stock range. A running session
+timestamp report's switch (always off) and a move within the headset's range. A running session
 follows the position (docs/xr.md#lens-distortion-and-ipd).
 
     pico4-lens              the separation in mm
@@ -20,7 +20,9 @@ DEVICE = "/dev/ttyHS1"
 REQUEST, REPLY = 0xA0, 0x79
 GET_POSITION, GET_MOVE_STATE, MOVE, REPORT_ENABLE = 0x08, 0x11, 0x07, 0x22
 MOVING = 1
-MIN_POSITION, MAX_POSITION = 5800, 7200  # 0.01 mm; SetIPDPosition refuses anything else
+# 0.01 mm: the PICO 4's specified range. Below it PICO OS asks to accept the risk of the lenses
+# pressing on the nose, and the motor stops by itself at 59.4-59.9 mm.
+MIN_POSITION, MAX_POSITION = 6200, 7200
 TOLERANCE = 30  # 0.01 mm between the target and where a finished move ended
 GENI_CLOCK_VOTE = 0x544D  # as pico4-fan
 LOCK_TIMEOUT, REPLY_TIMEOUT, MOVE_TIMEOUT = 1.0, 0.2, 15.0

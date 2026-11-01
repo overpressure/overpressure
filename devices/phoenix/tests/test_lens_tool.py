@@ -43,7 +43,7 @@ class FrameTests(unittest.TestCase):
         self.assertEqual(lens.frame(lens.MOVE, 6350).hex(), "a00700ce18" "71")
 
     def test_nothing_else_can_be_built(self):
-        for position in (5799, 7201, 0, 63.5, None):
+        for position in (6199, 7201, 5800, 0, 63.5, None):
             with self.assertRaises(ValueError):
                 lens.frame(lens.MOVE, position)
         for command in set(range(256)) - {lens.GET_POSITION, lens.GET_MOVE_STATE, lens.REPORT_ENABLE}:
@@ -138,6 +138,19 @@ class ValveMesaTests(unittest.TestCase):
         self.assertNotIn("pico4/pico4-turnip-kgsl", packages)
         self.assertIn("pico4/pico4-libdisplay-info", packages)
 
+    def test_steams_wifi_connections_are_understood(self):
+        packages = self.read("userspace/packages.txt").splitlines()
+        for package in ("networkmanager", "libnm"):
+            self.assertIn(f"deckard-arch-hotfixes-release-0.3/{package}", packages)
+            self.assertNotIn(package, packages)
+
+    def test_iwd_keeps_the_interface_with_its_address(self):
+        self.assertIn("DefaultInterface=ath11k_pci", self.read("userspace/rootfs/etc/iwd/main.conf"))
+
+    def test_no_depth_projection_without_a_mesh(self):
+        patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-roomview-mesh.patch")
+        self.assertIn('return pico4_hmd_depth_mesh != NULL && ::access("/dev/cvp", F_OK) == 0;', patch)
+
     def test_only_the_compositor_loses_storage_usage(self):
         layer = self.read("src/vrdisplay/pico4-swapchain-usage.c")
         self.assertIn('"vrcompositor"', layer)
@@ -162,7 +175,7 @@ class LensPanelTests(unittest.TestCase):
 
     def test_steamvrs_display_covers_the_motors_range(self):
         patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-lenses-standby.patch")
-        self.assertIn("Prop_IpdUIRangeMinMeters_Float, 0.058f", patch)
+        self.assertIn("Prop_IpdUIRangeMinMeters_Float, 0.062f", patch)
         self.assertIn("Prop_IpdUIRangeMaxMeters_Float, 0.072f", patch)
 
 

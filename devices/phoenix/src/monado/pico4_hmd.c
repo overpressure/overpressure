@@ -87,7 +87,7 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_fusion_smoothing_ms, "PICO4_FUSION_SMOOTHING_MS"
  * pose reaches the panels 33 ms after it was handed out (latency probe, docs/xr.md); the
  * rest showed as lag on head turns and as the world swimming with small head motion.
  */
-DEBUG_GET_ONCE_NUM_OPTION(pico4_predict_ms, "PICO4_PREDICT_MS", 24)
+DEBUG_GET_ONCE_NUM_OPTION(pico4_predict_ms, "PICO4_PREDICT_MS", 12)
 /*!
  * Latency probe, with the fusion: periods of this many milliseconds cycle
  * through four phases. In phase 1 the head pose handed out is turned by 5 degrees about
@@ -1017,6 +1017,32 @@ log_pose(struct pico4_hmd *h, int64_t at_ns, const struct xrt_space_relation *re
 	        v->y, v->z, w->x, w->y, w->z);
 }
 
+//! PICO4_LATENCY_PROBE_MS: known steps in the handed-out pose, for a headset lying still.
+static void
+latency_probe(struct pico4_hmd *h, int64_t at_timestamp_ns, struct xrt_space_relation *rel)
+{
+	int64_t probe_ns = debug_get_num_option_pico4_latency_probe_ms() * U_TIME_1MS_IN_NS;
+	if (probe_ns <= 0) {
+		return;
+	}
+	if (h->probe_start_ns == 0) {
+		h->probe_start_ns = at_timestamp_ns;
+		P4_INFO(h,
+		        "latency probe: phases of %lld ns from %lld ns (CLOCK_MONOTONIC): 1 = 5 deg step, "
+		        "3 = 30 deg/s reported turn",
+		        (long long)probe_ns, (long long)at_timestamp_ns);
+	}
+	int64_t phase = ((at_timestamp_ns - h->probe_start_ns) / probe_ns) % 4;
+	if (phase == 1) {
+		const struct xrt_quat step = {0, 0.04361939f, 0, 0.99904822f}; // 5 degrees about +Y
+		struct xrt_quat q = rel->pose.orientation;
+		math_quat_rotate(&step, &q, &rel->pose.orientation);
+	} else if (phase == 3) {
+		rel->angular_velocity.y += 0.52359878f; // 30 deg/s about +Y
+		rel->relation_flags |= XRT_SPACE_RELATION_ANGULAR_VELOCITY_VALID_BIT;
+	}
+}
+
 static xrt_result_t
 get_head_pose(struct xrt_device *xdev,
               enum xrt_input_name name,
@@ -1034,25 +1060,7 @@ get_head_pose(struct xrt_device *xdev,
 		// Interpolated between IMU steps, or predicted from the newest one.
 		int64_t ahead = debug_get_num_option_pico4_predict_ms() * U_TIME_1MS_IN_NS + display_lead_ns(h);
 		m_relation_history_get(h->relation_hist, at_timestamp_ns + ahead, out_relation);
-		int64_t probe_ns = debug_get_num_option_pico4_latency_probe_ms() * U_TIME_1MS_IN_NS;
-		if (probe_ns > 0) {
-			if (h->probe_start_ns == 0) {
-				h->probe_start_ns = at_timestamp_ns;
-				P4_INFO(h,
-				        "latency probe: phases of %lld ns from %lld ns (CLOCK_MONOTONIC): 1 = 5 deg step, "
-				        "3 = 30 deg/s reported turn",
-				        (long long)probe_ns, (long long)at_timestamp_ns);
-			}
-			int64_t phase = ((at_timestamp_ns - h->probe_start_ns) / probe_ns) % 4;
-			if (phase == 1) {
-				const struct xrt_quat step = {0, 0.04361939f, 0, 0.99904822f}; // 5 degrees about +Y
-				struct xrt_quat q = out_relation->pose.orientation;
-				math_quat_rotate(&step, &q, &out_relation->pose.orientation);
-			} else if (phase == 3) {
-				out_relation->angular_velocity.y += 0.52359878f; // 30 deg/s about +Y
-				out_relation->relation_flags |= XRT_SPACE_RELATION_ANGULAR_VELOCITY_VALID_BIT;
-			}
-		}
+		latency_probe(h, at_timestamp_ns, out_relation);
 		log_pose(h, at_timestamp_ns, out_relation);
 		return XRT_SUCCESS;
 	}
@@ -1079,6 +1087,7 @@ get_head_pose(struct xrt_device *xdev,
 			h->have_slam_position = true;
 		}
 		*out_relation = rel;
+		latency_probe(h, at_timestamp_ns, out_relation);
 		log_pose(h, at_timestamp_ns, out_relation);
 		return XRT_SUCCESS;
 	}
@@ -1552,8 +1561,8 @@ pico4_hmd_get_presence(struct xrt_device *xdev, bool *out_worn)
  * SteamVR: the tracking origin's offset (Monado's 1.6 m) applied, as on every reported pose
  * (world from driver is the identity). Without it the 3D room view placed each frame 1.6 m below
  * the head and the image stretched towards the top and bottom; the 2D view only uses rotation.
- * Without the prediction and display lead the reported poses carry: with them the compositor
- * placed each camera frame as if taken 29 ms later, and the room trailed the head's turns.
+ * Without the prediction the reported poses carry: with it the compositor placed each camera
+ * frame as if taken that much later, and the room trailed the head's turns.
  */
 static bool
 roomview_pose(void *ctx, int64_t timestamp_ns, double out[12])

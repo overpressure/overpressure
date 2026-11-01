@@ -77,8 +77,8 @@
  	vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_ManufacturerName_String, "Monado");
  	vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_ModelNumber_String, m_xdev->str);
  	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_UserIpdMeters_Float, m_flIPD);
-+	// SteamVR's IPD display over the motor's range.
-+	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_IpdUIRangeMinMeters_Float, 0.058f);
++	// SteamVR's IPD display over the headset's range.
++	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_IpdUIRangeMinMeters_Float, 0.062f);
 +	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_IpdUIRangeMaxMeters_Float, 0.072f);
  	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_UserHeadToEyeDepthMeters_Float, 0.f);
  	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_DisplayFrequency_Float, m_flDisplayFrequency);

@@ -363,10 +363,13 @@ again every second; after a move, SteamVR gets the new eye positions and its `Pr
 
 The headset has no IPD wheel: the motor moves the lenses, from a setting. [`pico4-lens`](../userspace/rootfs/usr/bin/pico4-lens)
 `set MM` does what PICO OS's `gd32ipdservice` does with `SetIPDPosition`: `A0 22 00 00 00 82` (no
-timestamp reports; stock's reply `79`), `A0 07 00 lo hi xor` (the separation in 0.01 mm, 58.00–72.00),
+timestamp reports; stock's reply `79`), `A0 07 00 lo hi xor` (the separation in 0.01 mm, 62.00–72.00),
 then `A0 11 00 00 00 B1` every 50 ms, whose reply `79 state xor` says 1 while moving and 0 at the end.
 The tool builds only these frames and the position query, and the lenses stay where they are until
-the next move. 0.9 mm take 0.17 s and end within 0.05 mm of the target.
+the next move. 0.9 mm take 0.17 s and end within 0.05 mm of the target. The range is the PICO 4's
+specified 62–72 mm. PICO OS's service takes 58–72 mm and its settings offer that range with a 0.5 mm
+step, but below 62 mm they ask the user to accept the risk of the lenses pressing on the nose; the
+motor stops by itself between 59.4 and 59.9 mm and reports its near end (state 2).
 
 SteamVR shows the IPD when it changes but has no control that sets it, so
 [`pico4-lens-panel`](../src/xr/pico4-lens-panel.cpp) adds one to its dashboard, for people taking
@@ -639,9 +642,11 @@ station keep a single owner:
   `/xrservice/roomview3d/meshData` and `/xrservice/roomview3d/meshLayout` (OpenVR's
   `IVRBlockQueue_005`), which the Frame's XR service provides; only code inside `vrserver` may
   create block queues. The camera component creates both, empty, when the HMD activates; the
-  compositor connects ("Depth mesh block queues connection successfull") and, with no mesh
-  marked up to date, renders the camera view without depth reprojection: each eye sees its own
-  camera, so the room is still seen in stereo.
+  compositor connects ("Depth mesh block queues connection successfull"). Without the HMD's
+  `Prop_SupportsRoomViewDepthProjection_Bool` it renders the camera view without depth
+  reprojection: each eye sees its own camera, so the room is still seen in stereo. With the
+  property and no mesh, it draws black: on Valve's kernel, which has no CVP driver and so no mesh
+  (no `/dev/cvp`), the HMD does not report the property.
 - **The 3D room view.** With `camera.enableCamera`, `roomView` 2 and the HMD's
   `Prop_SupportsRoomViewDepthProjection_Bool` (2079), the compositor projects the camera images
   onto a depth mesh from those queues. Each value is an `IVRPaths_001` path property on the
@@ -727,7 +732,7 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   and a thread of the driver converts it (as for the component) into the ring, with the head pose
   at the middle of the exposure in the space the driver reports to SteamVR (the tracking origin's
   1.6 m offset included, as on every reported pose; only the 3D room view uses the position),
-  without the 29 ms of prediction and display lead its reported poses carry (with it, the room
+  without the prediction its reported poses carry (with it, the room
   trailed the head's turns). Otherwise nothing is copied.
 - **Client.** `VR_Init` as a background application, then `IVRCompositor_029`: the frames'
   import goes over `vrclient`'s connection to the compositor, which only asking for a compositor
@@ -1170,20 +1175,19 @@ pinned by commit).
   - without a Basalt pose for 500 ms the position comes to rest and is held, untracked, and the
     orientation keeps its offset; the next pose is taken in full, and the output slides there.
 
-  The HMD hands out the pose 24 ms later than the requested time (`PICO4_PREDICT_MS`), plus
-  the display layer's vsync lead (5 ms in Valve's session), which the layer publishes in
-  `$XDG_RUNTIME_DIR/pico4-vrdisplay-lead-us` ([session.md](session.md)), predicted from the
-  newest state with its velocities.
-- **Prediction.** SteamVR asks `driver_monado` for the present pose and extrapolates it to the
-  panels itself, by only about 9 ms. A latency probe measured the rest of the pipeline: the
-  driver turns the pose it hands out by 5° at known times (`PICO4_LATENCY_PROBE_MS`), and the
-  display layer finds each step in the committed images and the vblank that shows it
-  (`PICO4_VRDISPLAY_MOTION`); a reported 30°/s turn without turning shows how far SteamVR
-  extrapolates. A pose reaches the panels 33 ms after it is handed out (32.6–33.5 ms for most
-  steps), so about 24 ms went unpredicted: at 100°/s the image trailed the head by 2.4°, seen as
-  lag on turns and as the world swimming with the head's small motions. The driver predicts
-  those 24 ms from the fusion's IMU-rate state; in a blind worn A/B the user found it "almost
-  flawless" against "horrible" without (Basalt also ran away three times in the latter).
+  The HMD hands out the pose 12 ms later than the requested time (`PICO4_PREDICT_MS`), predicted
+  from the newest state with its velocities.
+- **Prediction.** SteamVR asks `driver_monado` for the present pose and extrapolates it itself by
+  the HMD's `SecondsFromVsyncToPhotons`, 11 ms (10.6–12.1 ms measured). The driver predicts the
+  rest: the time from handing out a pose to the vblank that starts its scanout. A latency probe
+  measures it: the driver turns the pose it hands out by 5° at known times
+  (`PICO4_LATENCY_PROBE_MS`, a period that is no multiple of the refresh sweeps the steps across
+  it), and the image on the plane shows each step at a vblank. A pose handed out just before the
+  compositor takes one reaches the vblank 12 ms later; steps arrive 12–23 ms after they start,
+  18 ms in the median. The compositor commits about 10 ms before the vblank. An
+  image in the panel's flash is thus 23 ms old, of which the driver predicts 12 ms and SteamVR 11
+  ms. Too much prediction overshoots at the end of a fast turn and the view springs back, too
+  little trails the head: a 10 ms error is 2° at 200°/s.
 - **Anchor.** Basalt's world is mapped onto the filter's by a heading and an offset, at first
   the identity. A pose more than 15 cm or 10° off is skipped as an outlier; when five in a row
   are, Basalt has jumped and stays there, and the anchor moves instead of the view.
@@ -1532,7 +1536,7 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_FUSION_POSITION_MS` | 150 | time constant pulling position and velocity to Basalt's |
 | `PICO4_FUSION_SMOOTHING_MS` | 50 | time over which a correction reaches the output |
 | `PICO4_FUSION_CSV` | unset | directory for `fusion_slam.csv` (each Basalt pose: latency, disagreement, outcome, velocity disagreement with the IMU, speed) and `fusion_pose.csv` (each pose handed out) |
-| `PICO4_PREDICT_MS` | 24 | hand out the head pose this much later than asked for (with the fusion), to cover the pipeline SteamVR does not predict; the vsync lead the display layer publishes is added |
+| `PICO4_PREDICT_MS` | 12 | hand out the head pose this much later than asked for, to cover the time to the vblank that SteamVR does not predict |
 | `PICO4_LATENCY_PROBE_MS` | 0 (off) | latency probe for a headset lying still: 1 s phases (with 1000) of a 5° yaw step and of a reported 30°/s turn without turning; with `PICO4_VRDISPLAY_MOTION` and linear scanout (`PICO4_VRDISPLAY_UBWC=0`, session.md) |
 | `PICO4_SLAM_RESET_AFTER_S` | 0 (off) | test of the runaway path: reset Basalt once, this many seconds after the fusion started |
 | `SLAM_PREDICTION_TYPE` | 3 (gyro and acceleration) | without the fusion, Monado's prediction between Basalt's poses: 0 none, 1 pose only, 2 gyro, 4 dead reckoning |
@@ -1623,7 +1627,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | IMU noise A/B (ours against PICO OS's values), still and worn blind | Basalt with PICO OS's values: 0.49–3.02 mm jiggle against 0.10–0.29 mm, two runaways worn against none; the user found ours calmer |
 | Latency probe, headless, 13 steps | pose handed out to scanout 33.0 ms (median; 32.6–33.5 ms for most); SteamVR extrapolates a reported turn by 9.2 ms (median); 21.6 px per degree at the eye's centre |
 | Latency probe in Valve's session check with the published 5 ms display lead (linear scanout, 74 commits/s), 36 phase changes | pose handed out to scanout 32.2–32.6 ms (medians of step on, step off and reported turn); 24 at 30.5–34.2 ms, 9 one frame earlier (19.3–22.1 ms), 3 later; SteamVR extrapolates a reported turn by 10.4 ms; 22.0 px per degree |
-| Prediction 24 ms against none, worn blind A/B | user: "almost flawless" against "horrible" (Basalt ran away three times in the latter) |
+| Latency probe on Valve's kernel and Mesa, compressed scanout, 89 flips/s, period 1003 ms, 23 steps | pose handed out to the vblank that shows it 12–23 ms, 18 ms median; commit to vblank 10 ms; SteamVR extrapolates a reported turn by 10.6–12.1 ms (linear scanout) |
 | Head pose worn, standing still | 0.035° RMS around its 200 ms average at 1.7°/s, as in Basalt: the head's own motion (0.001° on a table) |
 | Runaway handling, seven worn sessions of about a minute | Basalt within 0.55–1.51 m of the start (before: 13.6 m and 1,750 m in two of four sessions); three sessions had runaways in Basalt's first seconds, each held, reset and re-anchored; no pose above 3 m/s afterwards in five; correction size 4.6–8.0 mm (median) |
 | 6DoF, lower cameras about 15 cm from a surface | 1.6–4.8 m drift in 30 s (6.5 m in a 10 s run): no stereo depth, not an accuracy test |
@@ -1667,8 +1671,6 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
    unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
    which needs the Steam client in the session.
-4. **Passthrough.** The room view shows the RGB camera on PICO OS's depth mesh
-   ([Passthrough](#passthrough)); worn, turning and nodding hold the room. Open: colour as
-   the default, controller tracking with colour on, an auto exposure that leaves
-   out the lens ring, and the CVP firmware in the system's `/lib/firmware` (the mesh needs it
-   after a reboot).
+4. **Passthrough.** On Valve's kernel the room view shows the grey forward cameras without a depth
+   mesh ([Passthrough](#passthrough)). Open: the RGB camera and the CVP (no drivers on that kernel),
+   the area above the cameras' field of view, and a worn check.

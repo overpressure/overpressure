@@ -36,11 +36,11 @@ main(void)
 	EXPECT(pico4_panel_hit(400, 100) == PICO4_PANEL_NONE);
 
 	// The slider's scale.
-	EXPECT(pico4_panel_slider_mm(PICO4_PANEL_SLIDER_X0) == 58.0);
+	EXPECT(pico4_panel_slider_mm(PICO4_PANEL_SLIDER_X0) == 62.0);
 	EXPECT(pico4_panel_slider_mm(PICO4_PANEL_SLIDER_X1) == 72.0);
-	EXPECT(pico4_panel_slider_mm(0) == 58.0 && pico4_panel_slider_mm(800) == 72.0);
-	EXPECT(fabs(pico4_panel_slider_x(65.0) - (PICO4_PANEL_SLIDER_X0 + PICO4_PANEL_SLIDER_X1) / 2) < 1e-9);
-	EXPECT(pico4_panel_clamp(50) == 58.0 && pico4_panel_clamp(80) == 72.0 && pico4_panel_clamp(63.5) == 63.5);
+	EXPECT(pico4_panel_slider_mm(0) == 62.0 && pico4_panel_slider_mm(800) == 72.0);
+	EXPECT(fabs(pico4_panel_slider_x(67.0) - (PICO4_PANEL_SLIDER_X0 + PICO4_PANEL_SLIDER_X1) / 2) < 1e-9);
+	EXPECT(pico4_panel_clamp(50) == 62.0 && pico4_panel_clamp(80) == 72.0 && pico4_panel_clamp(63.5) == 63.5);
 
 	// Presets across a restart; anything out of range is an empty one.
 	char path[] = "test_pico4_presets_XXXXXX";

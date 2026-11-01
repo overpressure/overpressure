@@ -199,7 +199,7 @@ draw(cairo_surface_t *surface, const State &s)
 		cairo_fill(c);
 	}
 	cairo_set_source_rgb(c, 0.60, 0.63, 0.67);
-	text_centered(c, "58", PICO4_PANEL_SLIDER_X0 + 8, row + h + 12, 18, CAIRO_FONT_WEIGHT_NORMAL);
+	text_centered(c, "62", PICO4_PANEL_SLIDER_X0 + 8, row + h + 12, 18, CAIRO_FONT_WEIGHT_NORMAL);
 	text_centered(c, "72", PICO4_PANEL_SLIDER_X1 - 8, row + h + 12, 18, CAIRO_FONT_WEIGHT_NORMAL);
 
 	for (int i = 0; i < PICO4_PANEL_PRESETS; i++) {
