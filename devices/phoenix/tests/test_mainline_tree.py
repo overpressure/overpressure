@@ -177,6 +177,14 @@ class CameraTests(unittest.TestCase):
 
 
 class FastRpcTests(unittest.TestCase):
+    def test_context_banks_are_coherent_as_on_stock(self):
+        # The stock tree's banks of all three DSPs; the tracker loses its features without it.
+        t = tree()
+        for base, banks in (("5c00000", (1, 2, 3)), ("8300000", range(1, 9)), ("17300000", (3, 4, 5))):
+            for cb in banks:
+                node = rf"&\{{/soc@0/remoteproc@{base}/glink-edge/fastrpc/compute-cb@{cb}\}} \{{\s*dma-coherent;\s*\}};"
+                self.assertRegex(t, node)
+
     PATCH = KERNEL / "patches/0011-misc-fastrpc-resume-an-interrupted-invocation.patch"
 
     def test_interrupted_call_is_resumed_not_sent_again(self):

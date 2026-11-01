@@ -187,6 +187,68 @@
 	qcom,vmids = <QCOM_SCM_VMID_LPASS QCOM_SCM_VMID_ADSP_HEAP>;
 };
 
+/*
+ * The DSPs' FastRPC context banks are coherent with the CPUs' caches, as the stock tree has them:
+ * without it the DSP reads buffers the CPU just wrote from memory, stale where the cache still holds
+ * them (the vendor driver's other way out, cache maintenance per call, upstream does not do for
+ * mapped buffers), which the tracker on the CDSP shows as frames without a single feature.
+ */
+&{/soc@0/remoteproc@5c00000/glink-edge/fastrpc/compute-cb@1} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@5c00000/glink-edge/fastrpc/compute-cb@2} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@5c00000/glink-edge/fastrpc/compute-cb@3} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@8300000/glink-edge/fastrpc/compute-cb@1} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@8300000/glink-edge/fastrpc/compute-cb@2} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@8300000/glink-edge/fastrpc/compute-cb@3} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@8300000/glink-edge/fastrpc/compute-cb@4} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@8300000/glink-edge/fastrpc/compute-cb@5} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@8300000/glink-edge/fastrpc/compute-cb@6} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@8300000/glink-edge/fastrpc/compute-cb@7} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@8300000/glink-edge/fastrpc/compute-cb@8} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@17300000/glink-edge/fastrpc/compute-cb@3} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@17300000/glink-edge/fastrpc/compute-cb@4} {
+	dma-coherent;
+};
+
+&{/soc@0/remoteproc@17300000/glink-edge/fastrpc/compute-cb@5} {
+	dma-coherent;
+};
+
 &apps_rsc {
 	regulators-0 {
 		compatible = "qcom,pm8150-rpmh-regulators";
