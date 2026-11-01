@@ -1273,7 +1273,8 @@ and hands it to the tracker with the serial from the connect notification:
 - the controller's own 20 LED positions, which replace the nominal ones (normals and the
   identification table stay);
 - its temperature-binned gyro bias table, `calibration/pvr/<serial>.txt` from persist, read
-  only (PICO OS also writes it back).
+  only (PICO OS also writes it back). The files there are root's alone, so `pico4-persist` copies
+  them to `/run/pico4-controllers/` for SteamVR's driver, which runs as the session's user.
 
 Left and right are read separately. The serial is not logged.
 

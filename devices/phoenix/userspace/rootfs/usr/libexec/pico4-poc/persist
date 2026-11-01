@@ -13,3 +13,9 @@ dev=$(readlink -f /dev/block/by-name/persist 2>/dev/null || true)
 blockdev --setro "$dev"
 mount -t ext4 -o ro,noload,nodev,nosuid,noexec "$dev" "$dir"
 echo "persist: $dev read-only at $dir"
+# The controllers' gyro bias tables (pvr/<serial>.txt) are root's alone on persist; SteamVR's
+# driver runs as the session's user and reads a copy.
+mkdir -p /run/pico4-controllers
+for table in "$dir"/pvr/?????????????????.txt; do
+	[ -f "$table" ] && install -m 644 "$table" /run/pico4-controllers/
+done

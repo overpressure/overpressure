@@ -291,7 +291,9 @@ pico4_ctrack_set_unit(struct pico4_ctrack *t, int device, const uint8_t (*chunks
 	             std::all_of(sn.begin(), sn.end(), [](char c) { return std::isalnum((unsigned char)c) != 0; });
 	if (!plain) {
 		U_LOG_IFL_W(t->log_level, "Controller %s: no serial, no gyro bias table", name);
-	} else if (!load_bias_table(t->dir + "/pvr/" + sn + ".txt", unit.bias, error)) {
+	} else if (!load_bias_table(t->dir + "/pvr/" + sn + ".txt", unit.bias, error) &&
+	           // On persist they are root's alone; a session's user reads the copy (pico4-poc/persist).
+	           !load_bias_table("/run/pico4-controllers/" + sn + ".txt", unit.bias, error)) {
 		U_LOG_IFL_W(t->log_level, "Controller %s: no gyro bias table for its serial", name);
 	} else {
 		unit.bias_valid = true;

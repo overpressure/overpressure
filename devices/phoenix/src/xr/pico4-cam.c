@@ -768,8 +768,11 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 				pico4_station_camera_set_exposures(station, scene, leds);
 			}
 			polling = pthread_create(&poller, NULL, station_thread, station) == 0;
-			imu_running = imu.out != NULL && pthread_create(&imu_thread, NULL, imu_record_thread, &imu) == 0;
 		}
+	}
+	// With --no-station someone else runs the station; its controllers still reach the sensor service.
+	if (r == 0 && imu.out != NULL) {
+		imu_running = pthread_create(&imu_thread, NULL, imu_record_thread, &imu) == 0;
 	}
 	while (r == 0 && !g_stop) {
 		struct pico4_cam_frame f;
