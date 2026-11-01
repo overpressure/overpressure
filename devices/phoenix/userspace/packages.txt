@@ -40,7 +40,8 @@ upower
 # lacks KGSL anyway.
 pico4/pico4-gamescope
 libxxf86vm
-mesa
+deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64
+lm_sensors
 xorg-xwayland
 pipewire
 pipewire-pulse
@@ -56,8 +57,7 @@ vulkan-tools
 mesa-utils
 
 # Project-built: Turnip with the KGSL backend and the step-3 graphics tests
-pico4/pico4-turnip-kgsl
-pico4/pico4-valve-turnip
+pico4/pico4-libdisplay-info
 pico4/pico4-graphics-tests
 
 # Project-built: host daemons for the sensor DSP (head IMU, docs/xr.md); python runs

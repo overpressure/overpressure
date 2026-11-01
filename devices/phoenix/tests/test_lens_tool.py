@@ -127,29 +127,39 @@ class SessionTests(unittest.TestCase):
         self.assertNotIn("get_battery_status", controller)
 
 
-class VulkanDriverTests(unittest.TestCase):
+class ValveMesaTests(unittest.TestCase):
     def read(self, path):
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_the_driver_is_chosen_by_the_kernel(self):
-        unit = self.read("userspace/rootfs/usr/lib/systemd/system/pico4-vulkan-icd.service")
-        self.assertIn("/sys/class/kgsl", unit)
-        self.assertIn("turnip-$d.json /run/pico4-poc/vulkan-icd.json", unit)
-        build = self.read("scripts/build-userspace.sh")
-        self.assertIn("pico4-vulkan-icd.service", build)
-        self.assertIn("/run/pico4-poc/vulkan-icd.json", build)
-        self.assertIn("usr/share/pico4/vulkan/turnip-kgsl.json", self.read("userspace/pkgbuilds/pico4-turnip-kgsl/PKGBUILD"))
-        self.assertIn("usr/share/pico4/vulkan/turnip-valve.json", self.read("userspace/pkgbuilds/pico4-valve-turnip/PKGBUILD"))
+    def test_the_systems_mesa_is_valves(self):
+        packages = self.read("userspace/packages.txt").splitlines()
+        self.assertIn("deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64", packages)
+        self.assertNotIn("mesa", packages)
+        self.assertNotIn("pico4/pico4-turnip-kgsl", packages)
+        self.assertIn("pico4/pico4-libdisplay-info", packages)
 
-    def test_only_the_compositor_loses_storage_usage_and_only_on_mainline(self):
+    def test_only_the_compositor_loses_storage_usage(self):
         layer = self.read("src/vrdisplay/pico4-swapchain-usage.c")
         self.assertIn('"vrcompositor"', layer)
-        self.assertIn('access("/dev/kgsl-3d0", F_OK) != 0', layer)
         self.assertIn("info.imageUsage &= ~VK_IMAGE_USAGE_STORAGE_BIT;", layer)
 
-    def test_valves_package_is_pinned_by_hash(self):
-        recipe = self.read("userspace/pkgbuilds/pico4-valve-turnip/PKGBUILD")
-        self.assertIn("b8f98b3db57ed45aefd06b2b540dc8b67a86c784345661f9aec39d9c5dfbf76d", recipe)
+
+class LensPanelTests(unittest.TestCase):
+    def read(self, path):
+        return (ROOT / path).read_text(encoding="utf-8")
+
+    def test_it_moves_through_the_tool_and_runs_with_steamvr(self):
+        panel = self.read("src/xr/pico4-lens-panel.cpp")
+        self.assertIn('execlp("pico4-lens", "pico4-lens", "set", value', panel)
+        self.assertIn("y = PICO4_PANEL_H - e.data.mouse.y", panel)
+        conf = self.read("userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/53-pico4-lens-panel.conf")
+        self.assertIn("Wants=pico4-lens-panel.service", conf)
+        self.assertIn("pico4-lens-panel pico4-lens-panel.cpp", self.read("userspace/pkgbuilds/pico4-monado/PKGBUILD"))
+
+    def test_steamvrs_display_covers_the_motors_range(self):
+        patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-lenses-standby.patch")
+        self.assertIn("Prop_IpdUIRangeMinMeters_Float, 0.058f", patch)
+        self.assertIn("Prop_IpdUIRangeMaxMeters_Float, 0.072f", patch)
 
 
 if __name__ == "__main__":

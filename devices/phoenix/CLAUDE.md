@@ -2,9 +2,12 @@
 
 Guidance for working on the PICO 4 in overpressure (the repository's [CLAUDE.md](../../CLAUDE.md)
 has the general rules): Linux and a SteamOS-compatible userspace on the original PICO 4 (2022,
-codename *phoenix*, Snapdragon XR2), always on its **stock** Android kernel (4.19.81-perf+,
-PICO OS 5.13.7/5.13.8) and stock device trees. Paths are relative to this folder
-(`devices/phoenix/`); commands run from the repository root.
+codename *phoenix*, Snapdragon XR2), on **Valve's kernel** (the Steam Frame's 7.2, built by
+`kernel/build-kernel.sh`, [docs/kernel-feasibility.md](docs/kernel-feasibility.md)) with Valve's Mesa.
+The stock Android kernel (4.19.81-perf+, PICO OS 5.13.7/5.13.8) is no longer pursued: the way back
+to PICO OS stays, the image no longer drives the GPU there, and the documents' stock-kernel paths are
+history until they are removed. Paths are relative to this folder (`devices/phoenix/`); commands run
+from the repository root.
 
 ## Where things stand
 
@@ -119,11 +122,10 @@ python -m overpressure cycle --restore-only              # verified stock boot a
   `assets/` (engineering ABL, firehose, GPU firmware, sensor data), `out/`, `cache/` and `.env`
   are ignored on purpose. Valve's packages and the built userspace archives are private too.
   Docs and code must not contain device serials or similar identifiers; they belong in `.env`.
-- **Stock kernel only.** No kernel or DTB changes; work around the 4.19 kernel in userspace.
-  - systemd must stay at 257.x (258 needs Linux 5.4), pinned with `IgnorePkg` on the device.
-  - There is no devtmpfs; udev creates device nodes through a PROGRAM rule.
-  - The QRTR name service runs in userspace.
-  - FastRPC uses the downstream `adsprpc` ABI.
+- **Valve's kernel.** The kernel and device tree are ours to change, as patches and sources under
+  `kernel/`, following the stock kernel's behaviour where it is the reference. A new boot image goes
+  through `dev recovery` and `dev install --boot`.
+  - systemd stays at 257.x, pinned with `IgnorePkg` on the device (the Frame's version).
   - Real-time threads (Monado's compositor) need cgroups without the `cpu` controller:
     `CONFIG_RT_GROUP_SCHED` on cgroup v2 refuses `SCHED_FIFO` otherwise, even to root. The
     drop-ins in `userspace/rootfs/etc/systemd` keep it off; units added later must not set

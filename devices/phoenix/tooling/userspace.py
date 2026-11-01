@@ -116,8 +116,8 @@ SESSION_USER = "steamos"  # the Frame's session user, logged in by pico4-session
 # (its user manager stops them), and how long the runner waits for them.
 SESSION_PROCESSES = "vrserver|vrcompositor|vrwebhelper|gamescope-wl|steam|steamwebhelper"
 SESSION_STOP_SECONDS = 60
-# The running kernel's Turnip: the KGSL build, or Valve's on a mainline kernel.
-TURNIP_ICD = "/usr/share/vulkan/icd.d/pico4_turnip.aarch64.json"
+# Valve's Turnip.
+TURNIP_ICD = "/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json"
 
 
 def validate_check(value, require_vulkan: bool = False, require_fan: bool = False) -> None:

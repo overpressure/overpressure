@@ -73,7 +73,17 @@
  		bool worn = false;
  		if (m_proximity != vr::k_ulInvalidInputComponentHandle && pico4_hmd_get_presence(m_xdev, &worn) &&
  		    (int)worn != m_worn) {
-@@ -2608,6 +2647,12 @@
+@@ -2078,6 +2117,9 @@
+ 	vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_ManufacturerName_String, "Monado");
+ 	vr::VRProperties()->SetStringProperty(m_ulPropertyContainer, vr::Prop_ModelNumber_String, m_xdev->str);
+ 	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_UserIpdMeters_Float, m_flIPD);
++	// SteamVR's IPD display over the motor's range.
++	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_IpdUIRangeMinMeters_Float, 0.058f);
++	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_IpdUIRangeMaxMeters_Float, 0.072f);
+ 	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_UserHeadToEyeDepthMeters_Float, 0.f);
+ 	vr::VRProperties()->SetFloatProperty(m_ulPropertyContainer, vr::Prop_DisplayFrequency_Float, m_flDisplayFrequency);
+ 	// The refresh rates the panels run (their one mode). SteamVR's Steam Link client sends them to
+@@ -2608,6 +2650,12 @@
  			ovrd_log("Device interaction started %d\n", event.trackedDeviceIndex);
  			break;
  		case vr::VREvent_IpdChanged: ovrd_log("ipd changed to %fm\n", event.data.ipd.ipdMeters); break;

@@ -23,8 +23,8 @@ arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
 depends=(openxr vulkan-icd-loader libusb systemd-libs dbus libcap libdrm libffi libx11 libxau libxcb
-         libxdmcp wayland gcc-libs glibc opencv libbsd)
-makedepends=(git cmake ninja eigen vulkan-headers glslang python)
+         libxdmcp wayland gcc-libs glibc opencv libbsd cairo)
+makedepends=(git cmake ninja eigen vulkan-headers glslang python cairo)
 # Loaded at runtime (VIT); without it the HMD stays on 3DoF.
 optdepends=('pico4-basalt: 6DoF head tracking')
 provides=(openxr-runtime)
@@ -43,6 +43,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
         pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4-roomview.c
+        pico4_lens_panel.h pico4-lens-panel.cpp
         pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
         comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
@@ -67,7 +68,7 @@ sha256sums=(SKIP
             7ba04fb72ef7d0fdd6abe6a044cf3586b059ae98129011086f38d30ca4fd0c6a
             a7e0b04b5fdff083e8556442f33a1ebc2cda18152bf7d4a711e9d2549d988762
             SKIP SKIP SKIP SKIP
-            SKIP SKIP SKIP SKIP
+            SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP
@@ -182,6 +183,8 @@ build() {
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -Imonado/src/xrt/drivers/pico4/include -o pico4-cam pico4-cam.c \
     pico4_cam.c pico4_station.c pico4_ssc.c -lpthread
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-roomview pico4-roomview.c -lvulkan -ldl -lm
+  ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -isystem monado/src/external/openvr_includes \
+    -o pico4-lens-panel pico4-lens-panel.cpp -lcairo -ldl -lm
   ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -isystem /usr/include/eigen3 -o pico4-ctrack-replay \
     pico4-ctrack-replay.cpp "${objs[@]}" pico4_blemcu.o -lpthread -lm
 }
@@ -206,6 +209,7 @@ package() {
   # remapping of other controllers' bindings is SteamVR's own file.
   install -Dm644 pico4-controller-profile.json "$input/pico4_controller_profile.json"
   ln -s /opt/steamvr/resources/input/default_pico_controller_remapping.json "$input/default_pico_controller_remapping.json"
+  install -Dm755 pico4-lens-panel -t "$pkgdir/usr/bin"
   install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay pico4-roomview -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.
   install -dm755 "$pkgdir/etc/openxr/1"

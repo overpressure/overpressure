@@ -1,7 +1,6 @@
 # overpressure
 
-Linux and a SteamOS-compatible userspace on standalone VR headsets, on each headset's own stock
-kernel. A headset boots a small Linux stage 1 from its boot partition, which takes a
+Linux and a SteamOS-compatible userspace on standalone VR headsets. A headset boots a small Linux stage 1 from its boot partition, which takes a
 SteamOS-compatible stage 2 over the USB cable into RAM or starts it installed on the headset;
 stage 2 runs Valve's VR session (gamescope and SteamVR) with a Monado driver for the headset's
 hardware.

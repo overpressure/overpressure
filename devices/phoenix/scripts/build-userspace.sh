@@ -240,7 +240,7 @@ build_package() {
     cp "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst "$B/var/cache/pico4-repo/"
 }
 build_package pico4-turnip-kgsl "$project"/src/graphics/*
-build_package pico4-valve-turnip
+build_package pico4-libdisplay-info
 build_package pico4-sensors
 build_package pico4-basalt
 build_package pico4-vrdisplay "$project"/src/vrdisplay/*
@@ -343,6 +343,8 @@ mapfile -t foreign < <(in_b pacman --config /etc/pico4/pacman.conf -r /target -S
 # LD_LIBRARY_PATH for the rest. (Python regular expression.)
 optional='^(systemd /usr/lib/systemd/systemd-journal-(gatewayd|remote)|libinput /usr/lib/libinput/libinput-debug-gui'
 optional+='|v4l-utils /usr/bin/qv4l2|v4l-utils /usr/bin/qvidcap'
+# Valve's Mesa's freedreno debugging tools.
+optional+='|deckard-mesa-linux-aarch64 /usr/bin/(cffdump|crashdec|fdperf|qrisc-asm|qrisc-disasm|rddecompiler)'
 optional+='|deckard-steamvr-rel /opt/steamvr/bin/linuxarm64/(vrmonitor|overlay_viewer|hellovr_sdl)):'
 optional+='|^deckard-steamvr-rel /opt/steamvr/[^:]*:\s*(\./)?lib(openvr_api|steam_api)\.so '
 # Bionic programs and libraries, run in Lepton's Android: SteamVR's Android client, Valve's
@@ -553,15 +555,12 @@ done
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
-    pico4-monado.socket pico4-session.service pico4-fan.service pico4-vulkan-icd.service \
+    pico4-monado.socket pico4-session.service pico4-fan.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
     pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service \
     pico4-venus.service pico4-venus-probe.service steam-video-codec-setup.service pico4-stock-preload.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service     pico4-wifi-backend.service pico4-panel-probe.service pico4-clock.service
 # pico4-sysvsem for every process on the stock kernel only (pico4-stock-preload.service).
 ln -sfn /run/pico4-poc/ld.so.preload "$T/etc/ld.so.preload"
-# The Vulkan driver for the running kernel (pico4-vulkan-icd.service).
-mkdir -p "$T/usr/share/vulkan/icd.d"
-ln -sfn /run/pico4-poc/vulkan-icd.json "$T/usr/share/vulkan/icd.d/pico4_turnip.aarch64.json"
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration

@@ -1,12 +1,13 @@
 # PICO 4 (phoenix)
 
 Linux and a SteamOS-compatible userspace ([overpressure](../../README.md)) on the original PICO 4 (2022, codename *phoenix*,
-Snapdragon XR2), on the headset's stock Android kernel (4.19.81) and device trees. A small
+Snapdragon XR2), on Valve's kernel from the Steam Frame with the PICO's own drivers and device tree.
+The stock Android kernel is no longer pursued; the way back to PICO OS stays. A small
 Alpine stage 1 boots from the boot partition and takes a SteamOS-compatible stage 2 over the
 USB cable into RAM, or starts it installed on the headset (system in `super`, data in
 `userdata`, PICO OS's own layout). Stage 2 runs Valve's VR session from the Steam Frame, gamescope and
 SteamVR, with a Monado driver for the PICO 4's hardware: the SteamVR environment shows in the
-lenses with 6DoF head tracking and 3DoF controllers.
+lenses with 6DoF head and controller tracking.
 
 This is experimental work on an unlocked headset. During development it keeps an engineering
 bootloader and a development image in its boot partition; the acceptance cycle returns it to the
@@ -20,13 +21,13 @@ them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL bac
 | Step | Result |
 | --- | --- |
 | 1 Recoverable device | EDL backups, engineering ABL, unlock and stock restore |
-| 2 Linux shell | stock kernel + Alpine ramdisk, SSH and HTTP over USB, read-only storage, return to PICO OS |
-| 3 Native graphics | Turnip (Vulkan) on KGSL; both 2160 x 2160 panels at 90 and 72 Hz through the stock KMS driver |
+| 2 Linux shell | Alpine ramdisk, SSH and HTTP over USB, read-only storage, return to PICO OS |
+| 3 Native graphics | Valve's Mesa (Turnip, OpenGL through zink) on msm; both 2160 x 2160 panels at 90 Hz |
 | 4 SteamOS-compatible userspace | Holo Core aarch64 with the Steam Frame's systemd 257.7 and SteamOS services, from RAM or installed (read-only system, 104 GiB of data); speakers and microphone through PipeWire |
 | 5 XR hardware | head IMU, Monado with KMS output, lens correction and IPD, four tracking cameras, 6DoF with PICO OS's tracker on the CDSP, controllers (inputs, 3DoF) |
 | 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path; the Steam client in the headset, games started from its library |
 
-Open: fan control over longer sessions and its tuning, performance, controller position tracking, boot feedback and power handling of the installed system. Plan and details:
+Open: worn checks of head and controller tracking on Valve's kernel, the speakers after a suspend, Steam Link, FEX and Lepton on Valve's Mesa, performance, boot feedback and power handling of the installed system. Plan and details:
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Quick start

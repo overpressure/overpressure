@@ -366,8 +366,13 @@ The headset has no IPD wheel: the motor moves the lenses, from a setting. [`pico
 timestamp reports; stock's reply `79`), `A0 07 00 lo hi xor` (the separation in 0.01 mm, 58.00–72.00),
 then `A0 11 00 00 00 B1` every 50 ms, whose reply `79 state xor` says 1 while moving and 0 at the end.
 The tool builds only these frames and the position query, and the lenses stay where they are until
-the next move. 0.9 mm take 0.17 s and end within 0.05 mm of the target. SteamVR has no control that
-sets the IPD, so the setting is the tool's for now.
+the next move. 0.9 mm take 0.17 s and end within 0.05 mm of the target.
+
+SteamVR shows the IPD when it changes but has no control that sets it, so
+[`pico4-lens-panel`](../src/xr/pico4-lens-panel.cpp) adds one to its dashboard, for people taking
+turns with the headset: a slider, buttons for half a millimetre and four presets (a press moves the
+lenses, holding one for a second stores the distance, in `~/.config/pico4-lens/presets`). It runs
+`pico4-lens`, and the driver hands SteamVR the new distance, whose own display then shows it.
 
 ## Controller radio ("station")
 

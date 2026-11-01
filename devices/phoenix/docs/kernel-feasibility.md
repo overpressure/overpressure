@@ -436,22 +436,21 @@ devices/phoenix/kernel/build-mesa-deps.sh <root>/usr/share/hwdata/pnp.ids \
     /var/tmp/pico4-kernel/mesa-deps /var/tmp/pico4-kernel/out
 ```
 
-Decision: Vulkan on Valve's kernel is Valve's Turnip, the driver of `deckard-mesa-linux-aarch64`
-unchanged ([`pico4-valve-turnip`](../userspace/pkgbuilds/pico4-valve-turnip/PKGBUILD)), the same
-commit as the Android driver Lepton uses. `libVkLayer_PICO4_swapchain_usage` removes the storage
-usage from `vrcompositor`'s swapchains, which it asks for and never uses, so that it resolves
-straight into compressed scanout images. OpenGL stays the system Mesa's zink on Turnip, as on the
-Frame, but not yet the Frame's Mesa: that package conflicts with the system Mesa the stock kernel
-needs.
+Decision: the system's Mesa is Valve's, `deckard-mesa-linux-aarch64` unchanged, the same commit as
+the Android driver Lepton uses: Vulkan through Turnip, OpenGL through zink on it, as on the Frame.
+It replaces the system's Mesa, whose only other user was the stock kernel, which the project no
+longer pursues. `libVkLayer_PICO4_swapchain_usage` removes the storage usage from `vrcompositor`'s
+swapchains, which it asks for and never uses, so that it resolves straight into compressed scanout
+images.
 
 | SteamVR's compositor, headset on a table, out of standby | Frames per second | GPU time per frame |
 | --- | --- | --- |
 | Mesa 26.1.6 with `wsi-compressed-scanout.patch` | 89.76 | 6.5 ms |
 | Valve's Turnip as it is | 89.93 | 8.0 ms |
-| Valve's Turnip with the layer, installed | 89.4 | 6.4 ms |
+| Valve's whole Mesa with the layer, installed | 89.7 | 6.45 ms |
 
-On this path 0.71 % of frames came late in the session check, 0.45 % on Mesa 26.1.6, from a hotter
-start. Open: Steam Link, FEX and Lepton's games on it, which need a network.
+0.37 % of frames came late in the session check with the whole Mesa, 0.45 % on Mesa 26.1.6. OpenGL
+reports 4.6 through zink on Turnip. Open: Steam Link, FEX and Lepton's games on it, which need a network.
 
 ### Source
 

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Guidance for working in this repository: **overpressure**, Linux and a SteamOS-compatible
-userspace on standalone VR headsets, each on its own stock kernel. The generic host tooling is at
+userspace on standalone VR headsets (the PICO 4 on Valve's kernel). The generic host tooling is at
 the root; everything specific to a headset lives in `devices/<codename>/`.
 
 **Before working on a headset, read its `devices/<codename>/CLAUDE.md`**: its status, its hard

@@ -1,12 +1,13 @@
 # Roadmap
 
 The project runs Linux, a SteamOS-compatible userspace and Valve's VR session on the original
-PICO 4 (2022, codename phoenix, Snapdragon XR2), always on its stock Android kernel
-(4.19.81-perf+, PICO OS 5.13.7 and 5.13.8) and stock device trees. The plan has six steps,
+PICO 4 (2022, codename phoenix, Snapdragon XR2), on Valve's kernel from the Steam Frame with the
+PICO's own drivers and device tree ([kernel-feasibility.md](kernel-feasibility.md)). It began on the
+stock Android kernel, which is no longer pursued; the way back to PICO OS stays. The plan has six steps,
 from a recoverable development device to Valve's VR session, and follows the strategy of the
 background research in [research.md](research.md). All six steps work on the tested headset,
-an original PICO 4 on PICO OS 5.13.7. Open work: cooling, performance, controller positions and
-the installed system's way back and power handling.
+an original PICO 4. Open work: worn checks of tracking on Valve's kernel, the speakers after a
+suspend, Steam Link, FEX and Lepton on Valve's Mesa, performance and the installed system's power handling.
 
 ## Status
 
@@ -14,7 +15,7 @@ the installed system's way back and power handling.
 | --- | --- | --- |
 | 1. Recoverable development device | Works: EDL backup, engineering ABL, persistent unlock, stock restore verified by readback | [device-preparation.md](device-preparation.md) |
 | 2. Minimal Linux | Works: root shell over USB-C, read-only storage, automatic return to PICO OS | [stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md) |
-| 3. Native graphics | Works: Turnip Vulkan on KGSL; both panels at 90 and 72 Hz through the stock KMS driver | [graphics.md](graphics.md) |
+| 3. Native graphics | Works: Valve's Mesa on msm; both panels at 90 Hz | [graphics.md](graphics.md) |
 | 4. SteamOS-compatible userspace | Works: Holo Core aarch64 with the Frame's systemd 257.7, no failed units | [userspace.md](userspace.md) |
 | 5. Native XR hardware | Works: head IMU, display, lens correction, tracking cameras, 6DoF head tracking, 3DoF controllers. Open: controller positions | [xr.md](xr.md) |
 | 6. Valve's VR session | Runs: SteamVR on both panels at 90 fps on the Steam Frame's compositor path. The Steam client signs in, games start from its library. Open: performance, cooling | [session.md](session.md), [cooling.md](cooling.md) |
@@ -23,18 +24,14 @@ Each step's document holds its design, measurements and reproduction steps.
 
 ## Constraints
 
-- **Stock kernel.** No kernel or device-tree changes. The kernel loads only modules signed with
-  PICO's per-build key, so its gaps are bridged in userspace: udev creates the device nodes
-  (no devtmpfs), the QRTR name service runs in userspace, FastRPC uses the downstream
-  `adsprpc` ABI, a preloaded library provides System V semaphores, and a Vulkan layer shares
-  GPU semaphores between processes over sync files. systemd stays at 257.x: 258 needs Linux
-  5.4. Whether a kernel at the Steam Frame's level is feasible, and how, is assessed in
-  [kernel-feasibility.md](kernel-feasibility.md); its prototype runs stage 1 and the installed
-  system on Valve's 7.2 kernel with both panels at 90 Hz, the GPU under Valve's own Mesa (Turnip
-  on msm, OpenGL through zink), the GD32 MCU with fan control, the three DSPs, the head IMU at
-  1 kHz and the keys; Valve's session presents in SteamVR's direct mode at 89.7 frames per
-  second, in the lenses as fluid as on the stock kernel. The tracking cameras stream through CAMSS
-  and PICO OS's head tracker and the controller tracker run there; both still need a worn check.
+- **Valve's kernel.** Stage 1 and the installed system run on Valve's 7.2 kernel
+  ([kernel-feasibility.md](kernel-feasibility.md)) with both panels at 90 Hz, the GPU under Valve's
+  own Mesa (Turnip on msm, OpenGL through zink), the GD32 MCU with fan control, the three DSPs, the
+  head IMU at 1 kHz and the keys; Valve's session presents in SteamVR's direct mode at 89 frames per
+  second. The tracking cameras stream through CAMSS and PICO OS's head tracker and the controller
+  tracker run there; both still need a worn check. The steps below describe how each came up, many
+  on the stock kernel, whose workarounds (no devtmpfs, the userspace QRTR name service, the downstream
+  `adsprpc` ABI, the preloaded System V semaphores) are no longer needed.
 - **Read-only storage.** Both stages switch every physical block device read-only. Only the
   explicit, backup-validated flash and restore paths write to the headset's storage (`boot`
   for the dev image or a test run, ABL through EDL); each write is checked against the
