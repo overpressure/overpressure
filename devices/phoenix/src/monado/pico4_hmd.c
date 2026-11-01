@@ -60,6 +60,8 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <math.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -114,6 +116,8 @@ DEBUG_GET_ONCE_OPTION(pico4_fusion_csv, "PICO4_FUSION_CSV", NULL)
 #define PICO4_LOOKUP_ATTEMPTS 5
 //! The headset's battery in the stock kernel's power-supply class.
 #define PICO4_BATTERY "/sys/class/power_supply/battery"
+//! The panels' backlight on a mainline kernel (the panel driver's); the stock kernel has none.
+#define PICO4_BACKLIGHT_POWER "/sys/class/backlight/pico4-panel/bl_power"
 #define PICO4_WARMUP_SKIP 100
 #define PICO4_WARMUP_AVERAGE 100
 //! The ICM-42688's temperature stream: its fastest rate (it offers 1 and 5 Hz).
@@ -210,7 +214,8 @@ struct pico4_hmd
 	bool has_lens;
 
 	//! Lens separation read from the IPD MCU, metres.
-	double ipd_m;
+	double ipd_m; //!< Written by the IPD thread, read with relaxed atomics.
+	struct os_thread_helper ipd_oth;
 
 	//! The newest gyro sample's time: the 3DoF filter needs each one later than the last.
 	int64_t last_gyro_ns;
@@ -764,6 +769,46 @@ station_thread(void *ptr)
 	return NULL;
 }
 
+/*!
+ * The lens separation while the session runs: pico4-lens moves the lenses. A move ends within
+ * 0.05 mm of its target and readings jitter by 0.02 mm, so only a real move counts.
+ */
+static void *
+ipd_thread(void *ptr)
+{
+	struct pico4_hmd *h = (struct pico4_hmd *)ptr;
+
+	os_thread_helper_name(&h->ipd_oth, "PICO 4 lenses");
+	os_thread_helper_lock(&h->ipd_oth);
+	while (os_thread_helper_is_running_locked(&h->ipd_oth)) {
+		os_thread_helper_unlock(&h->ipd_oth);
+		os_nanosleep(U_TIME_1S_IN_NS);
+		double now, known;
+		__atomic_load(&h->ipd_m, &known, __ATOMIC_RELAXED);
+		if (pico4_ipd_read(PICO4_IPD_DEVICE, &now) == 0 && fabs(now - known) > 0.0002) {
+			__atomic_store(&h->ipd_m, &now, __ATOMIC_RELAXED);
+			P4_INFO(h, "IPD %.2f mm", now * 1000);
+		}
+		os_thread_helper_lock(&h->ipd_oth);
+	}
+	os_thread_helper_unlock(&h->ipd_oth);
+	return NULL;
+}
+
+static void
+set_backlight(struct pico4_hmd *h, bool on)
+{
+	int fd = open(PICO4_BACKLIGHT_POWER, O_WRONLY | O_CLOEXEC);
+	if (fd < 0) {
+		return; // The stock kernel: its display layer powers the panels down.
+	}
+	// FB_BLANK_UNBLANK or FB_BLANK_POWERDOWN.
+	if (write(fd, on ? "0" : "4", 1) != 1) {
+		P4_WARN(h, "Backlight %s: %s", on ? "on" : "off", strerror(errno));
+	}
+	close(fd);
+}
+
 //! Reset the controller radio: the controllers reconnect and camera sync becomes possible.
 static void
 setup_station(struct pico4_hmd *h)
@@ -821,6 +866,10 @@ pico4_hmd_destroy(struct xrt_device *xdev)
 	if (h->oth.initialized) {
 		os_thread_helper_destroy(&h->oth);
 	}
+	if (h->ipd_oth.initialized) {
+		os_thread_helper_destroy(&h->ipd_oth);
+	}
+	set_backlight(h, true);
 	// Its thread asks for head poses, SLAM's included; SLAM's camera thread still pushes to it.
 	pico4_ctrack_stop(h->ctrack);
 	pico4_slam_destroy(&h->slam);
@@ -1105,10 +1154,12 @@ pico4_hmd_get_view_poses(struct xrt_device *xdev,
 {
 	struct pico4_hmd *h = pico4_hmd(xdev);
 
-	// The lenses (and panels) sit where the IPD wheel put them.
+	// The lenses (and panels) sit where the motor put them.
 	struct xrt_vec3 eye_relation = *default_eye_relation;
-	if (h->ipd_m > 0) {
-		eye_relation = (struct xrt_vec3){(float)h->ipd_m, 0, 0};
+	double ipd_m;
+	__atomic_load(&h->ipd_m, &ipd_m, __ATOMIC_RELAXED);
+	if (ipd_m > 0) {
+		eye_relation = (struct xrt_vec3){(float)ipd_m, 0, 0};
 	}
 	return u_device_get_view_poses(xdev, &eye_relation, at_timestamp_ns, view_type, view_count,
 	                               out_head_relation, out_fovs, out_poses);
@@ -1281,7 +1332,11 @@ pico4_hmd_create(void)
 		P4_INFO(h, "No IPD from the MCU (%s), using the runtime default", strerror(-ipd_ret));
 	} else {
 		P4_INFO(h, "IPD %.2f mm", h->ipd_m * 1000);
+		if (os_thread_helper_init(&h->ipd_oth) != 0 || os_thread_helper_start(&h->ipd_oth, ipd_thread, h) != 0) {
+			P4_WARN(h, "The IPD stays as it is for this session");
+		}
 	}
+	set_backlight(h, true); // A session that ended in standby without closing.
 	if (os_thread_helper_init(&h->oth) != 0 || !setup_display(h)) {
 		P4_ERROR(h, "Failed to set up the device");
 		goto fail;
@@ -1616,6 +1671,26 @@ pico4_hmd_floor(struct xrt_device *xdev, float *out_y)
 	}
 	*out_y = point.y;
 	return true;
+}
+
+bool
+pico4_hmd_ipd(struct xrt_device *xdev, float *out_ipd_m)
+{
+	if (xdev == NULL || xdev->get_tracked_pose != pico4_hmd_get_tracked_pose) {
+		return false;
+	}
+	double ipd_m;
+	__atomic_load(&pico4_hmd(xdev)->ipd_m, &ipd_m, __ATOMIC_RELAXED);
+	*out_ipd_m = (float)ipd_m;
+	return ipd_m > 0;
+}
+
+void
+pico4_hmd_standby(struct xrt_device *xdev, bool standby)
+{
+	if (xdev != NULL && xdev->get_tracked_pose == pico4_hmd_get_tracked_pose) {
+		set_backlight(pico4_hmd(xdev), !standby);
+	}
 }
 
 void

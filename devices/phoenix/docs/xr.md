@@ -358,7 +358,16 @@ build any other frame: the MCU also takes motor moves, calibration writes and fi
 also runs the fan, and `pico4-fan` ([cooling.md](cooling.md)) sends its frames on the same port:
 both hold an exclusive `flock` on `/dev/ttyHS1` for each transaction, and the IPD read gives up
 after waiting a second for it. The driver passes the separation to Monado's view poses and falls
-back to Monado's default if the MCU does not answer or the port stays locked.
+back to Monado's default if the MCU does not answer or the port stays locked. It reads the position
+again every second; after a move, SteamVR gets the new eye positions and its `Prop_UserIpdMeters_Float`.
+
+The headset has no IPD wheel: the motor moves the lenses, from a setting. [`pico4-lens`](../userspace/rootfs/usr/bin/pico4-lens)
+`set MM` does what PICO OS's `gd32ipdservice` does with `SetIPDPosition`: `A0 22 00 00 00 82` (no
+timestamp reports; stock's reply `79`), `A0 07 00 lo hi xor` (the separation in 0.01 mm, 58.00–72.00),
+then `A0 11 00 00 00 B1` every 50 ms, whose reply `79 state xor` says 1 while moving and 0 at the end.
+The tool builds only these frames and the position query, and the lenses stay where they are until
+the next move. 0.9 mm take 0.17 s and end within 0.05 mm of the target. SteamVR has no control that
+sets the IPD, so the setting is the tool's for now.
 
 ## Controller radio ("station")
 
@@ -1216,7 +1225,8 @@ data (2 bytes, 4 with bit 6), in µs before the packet's station time. Record ty
   order (sticks centred at 128). One byte of buttons: home (bit 0), menu, A/X, B/Y, grip, stick
   click (bit 5), trigger (bit 7). One byte of touch: A/X (bit 0), B/Y, stick, thumb rest,
   trigger (bit 4).
-- **Battery** (type 2): one byte.
+- **Battery** (type 2): one byte, levels 1 and 2 in the recordings so far; its scale is not known,
+  so it goes to the driver's log as it is and not to SteamVR as a percentage.
 
 Other types belong to trackers and diagnostics.
 

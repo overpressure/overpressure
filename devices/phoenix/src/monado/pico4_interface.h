@@ -121,6 +121,19 @@ void
 pico4_hmd_detect_floor(struct xrt_device *xdev);
 
 /*!
+ * The lens separation now, which pico4-lens can change during a session; false if it is unknown.
+ */
+bool
+pico4_hmd_ipd(struct xrt_device *xdev, float *out_ipd_m);
+
+/*!
+ * SteamVR's standby: nobody wears the headset. Its compositor keeps the panels on with black
+ * frames and holds the display, so the backlight goes off here.
+ */
+void
+pico4_hmd_standby(struct xrt_device *xdev, bool standby);
+
+/*!
  * SteamVR's 3D room view (docs/xr.md#passthrough): PICO OS's see-through depth mesh newer than
  * mesh @p after, its vertices (x, y, z; up to PICO4_DEPTH_MESH_VERTICES) into @p vertices and its
  * triangles (up to PICO4_DEPTH_MESH_INDICES indices) into @p indices, with its time and its place

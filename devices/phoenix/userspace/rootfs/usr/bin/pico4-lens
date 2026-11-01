@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""The PICO 4's lens separation: read it, or move the lenses as PICO OS's gd32ipdservice does.
+
+The lens motor hangs off the GD32 MCU on /dev/ttyHS1, which also runs the fan and takes firmware
+updates. This tool can only build the frames listed here: the position and move-state queries, the
+timestamp report's switch (always off) and a move within the stock range. A running session
+follows the position (docs/xr.md#lens-distortion-and-ipd).
+
+    pico4-lens              the separation in mm
+    pico4-lens set 63.5     move the lenses there, wait until they stop
+"""
+
+import argparse
+import os
+import sys
+import time
+
+DEVICE = "/dev/ttyHS1"
+REQUEST, REPLY = 0xA0, 0x79
+GET_POSITION, GET_MOVE_STATE, MOVE, REPORT_ENABLE = 0x08, 0x11, 0x07, 0x22
+MOVING = 1
+MIN_POSITION, MAX_POSITION = 5800, 7200  # 0.01 mm; SetIPDPosition refuses anything else
+TOLERANCE = 30  # 0.01 mm between the target and where a finished move ended
+GENI_CLOCK_VOTE = 0x544D  # as pico4-fan
+LOCK_TIMEOUT, REPLY_TIMEOUT, MOVE_TIMEOUT = 1.0, 0.2, 15.0
+
+
+def xor(data: bytes) -> int:
+    x = 0
+    for b in data:
+        x ^= b
+    return x
+
+
+def frame(command: int, position: int = None) -> bytes:
+    """A request; only the two queries, the report's switch off and a move can be built."""
+    if command in (GET_POSITION, GET_MOVE_STATE, REPORT_ENABLE) and position is None:
+        body = bytes((REQUEST, command, 0, 0, 0))
+    elif command == MOVE and type(position) is int and MIN_POSITION <= position <= MAX_POSITION:
+        body = bytes((REQUEST, command, 0, position & 0xFF, position >> 8))
+    else:
+        raise ValueError(f"command {command:#04x} ({position!r}) is not allowed")
+    return body + bytes((xor(body),))
+
+
+def parse_position(reply: bytes) -> int:
+    """79 a_lo a_hi b_lo b_hi xor: the separation and the Hall reading, told apart by range."""
+    if len(reply) < 6 or reply[0] != REPLY or xor(reply[:5]) != reply[5]:
+        raise ValueError(f"position reply {reply.hex()}")
+    for value in (reply[1] | reply[2] << 8, reply[3] | reply[4] << 8):
+        if 5700 <= value <= 7300:
+            return value
+    raise ValueError(f"position reply {reply.hex()}")
+
+
+def parse_state(reply: bytes) -> int:
+    """79 state xor; stock counts anything else as no answer."""
+    if len(reply) < 3 or reply[0] != REPLY or reply[0] ^ reply[1] != reply[2]:
+        raise ValueError(f"move state reply {reply.hex()}")
+    return reply[1]
+
+
+class Port:
+    """One transaction at a time under the flock that pico4-fan and the driver hold too."""
+
+    def __init__(self, device: str = DEVICE):
+        self.device = device
+
+    def __call__(self, tx: bytes, length: int) -> bytes:
+        import fcntl
+        import termios
+
+        fd = os.open(self.device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK | os.O_CLOEXEC)
+        try:
+            deadline = time.monotonic() + LOCK_TIMEOUT
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(f"{self.device} stays locked") from None
+                    time.sleep(0.005)
+            attrs = termios.tcgetattr(fd)
+            attrs[0] = attrs[1] = attrs[3] = 0
+            attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+            attrs[4] = attrs[5] = termios.B115200
+            attrs[6][termios.VMIN], attrs[6][termios.VTIME] = 0, 0
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+            try:
+                fcntl.ioctl(fd, GENI_CLOCK_VOTE, 0)
+            except OSError:
+                pass  # mainline's GENI UART has no such ioctl
+            termios.tcflush(fd, termios.TCIOFLUSH)
+            if os.write(fd, tx) != len(tx):
+                raise OSError(f"short write to {self.device}")
+            data = b""
+            deadline = time.monotonic() + REPLY_TIMEOUT
+            while time.monotonic() < deadline:
+                time.sleep(0.002)
+                try:
+                    data += os.read(fd, 16)
+                except BlockingIOError:
+                    continue
+                marker = data.find(bytes((REPLY,)))
+                if marker >= 0 and len(data) - marker >= length:
+                    return data[marker:marker + length]
+            raise TimeoutError(f"no reply from the MCU to {tx.hex()}")
+        finally:
+            os.close(fd)
+
+
+def position(port) -> int:
+    return parse_position(port(frame(GET_POSITION), 6))
+
+
+def move_state(port) -> int:
+    return parse_state(port(frame(GET_MOVE_STATE), 3))
+
+
+def move(port, target: int, sleep=time.sleep, now=time.monotonic) -> int:
+    """As SetIPDPosition without the timestamp report, then its thread's wait; the end position."""
+    frame_out = frame(MOVE, target)  # refuses a bad target before anything is sent
+    if move_state(port) == MOVING:
+        raise RuntimeError("the lenses are still moving")
+    port(frame(REPORT_ENABLE), 1)
+    port(frame_out, 1)
+    deadline = now() + MOVE_TIMEOUT
+    while True:
+        sleep(0.05)
+        state = move_state(port)
+        if state != MOVING:
+            break
+        if now() > deadline:
+            raise TimeoutError("the lenses did not stop")
+    end = position(port)
+    if state != 0 or abs(end - target) > TOLERANCE:
+        raise RuntimeError(f"move ended in state {state} at {end / 100:.2f} mm")
+    return end
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command")
+    set_parser = sub.add_parser("set", help="move the lenses")
+    set_parser.add_argument("mm", type=float, help=f"{MIN_POSITION / 100:g} to {MAX_POSITION / 100:g}")
+    args = parser.parse_args(argv)
+    port = Port()
+    try:
+        if args.command == "set":
+            end = move(port, round(args.mm * 100))
+        else:
+            end = position(port)
+    except (OSError, RuntimeError, ValueError) as e:
+        print(f"pico4-lens: {e}", file=sys.stderr)
+        return 1
+    print(f"{end / 100:.2f}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

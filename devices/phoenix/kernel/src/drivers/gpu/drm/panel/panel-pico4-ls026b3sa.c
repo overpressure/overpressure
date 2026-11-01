@@ -12,6 +12,7 @@
  * command (0xe6); probe compares it with the configuration given to the DSI host.
  */
 
+#include <linux/backlight.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
@@ -70,6 +71,8 @@ struct pico4_panel {
 	struct gpio_desc *reset;
 	struct gpio_desc *vio;
 	struct gpio_desc *backlight;
+	struct backlight_device *bl;
+	bool enabled;
 	const u8 *on_cmds, *off_cmds;
 	int on_len, off_len;
 };
@@ -192,16 +195,40 @@ static int pico4_prepare(struct drm_panel *panel)
 
 static int pico4_enable(struct drm_panel *panel)
 {
-	dev_info(to_pico4_panel(panel)->dev, "backlight on\n");
-	gpiod_direction_output(to_pico4_panel(panel)->backlight, 1);
+	struct pico4_panel *ctx = to_pico4_panel(panel);
+
+	dev_info(ctx->dev, "backlight on\n");
+	gpiod_direction_output(ctx->backlight, !backlight_is_blank(ctx->bl));
+	ctx->enabled = true;
 	return 0;
 }
 
 static int pico4_disable(struct drm_panel *panel)
 {
-	gpiod_set_value_cansleep(to_pico4_panel(panel)->backlight, 0);
+	struct pico4_panel *ctx = to_pico4_panel(panel);
+
+	ctx->enabled = false;
+	gpiod_set_value_cansleep(ctx->backlight, 0);
 	return 0;
 }
+
+/*
+ * The enable line as a backlight device, for a session's standby: its compositor keeps the panels
+ * on with black frames and holds the display, and the MCU's brightness command showed no effect.
+ * While the panels are off the line stays low and pico4_enable() applies the state.
+ */
+static int pico4_bl_update_status(struct backlight_device *bl)
+{
+	struct pico4_panel *ctx = bl_get_data(bl);
+
+	if (ctx->enabled)
+		gpiod_set_value_cansleep(ctx->backlight, !backlight_is_blank(bl));
+	return 0;
+}
+
+static const struct backlight_ops pico4_bl_ops = {
+	.update_status = pico4_bl_update_status,
+};
 
 static int pico4_unprepare(struct drm_panel *panel)
 {
@@ -340,6 +367,17 @@ static int pico4_probe(struct mipi_dsi_device *dsi)
 	ctx->backlight = devm_gpiod_get(dev, "backlight", GPIOD_ASIS);
 	if (IS_ERR(ctx->backlight))
 		return dev_err_probe(dev, PTR_ERR(ctx->backlight), "backlight gpio\n");
+	{
+		const struct backlight_properties props = {
+			.type = BACKLIGHT_RAW,
+			.brightness = 1,
+			.max_brightness = 1,
+		};
+
+		ctx->bl = devm_backlight_device_register(dev, "pico4-panel", dev, ctx, &pico4_bl_ops, &props);
+		if (IS_ERR(ctx->bl))
+			return dev_err_probe(dev, PTR_ERR(ctx->bl), "backlight device\n");
+	}
 
 	dsi1 = of_graph_get_remote_node(dev->of_node, 1, -1);
 	if (!dsi1)

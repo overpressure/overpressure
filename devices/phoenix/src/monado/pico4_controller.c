@@ -103,6 +103,7 @@ struct pico4_controller
 	struct pico4_blemcu_order order; //!< The 3DoF orientation's samples.
 	uint64_t imu_samples, key_packets;
 	uint64_t vibrations; //!< Motor frames sent; guarded by lock.
+	int battery;         //!< The raw level of the last battery record, -1 before the first.
 };
 
 static inline struct pico4_controller *
@@ -228,6 +229,12 @@ pico4_controller_push(struct pico4_controller *c, const struct pico4_blemcu_pack
 			c->keys = p->keys[i];
 			c->keys_ns = packet_ns;
 			c->key_packets++;
+		}
+	}
+	for (int i = 0; i < p->battery_count; i++) {
+		if (p->battery[i].device == c->device && p->battery[i].level != c->battery) {
+			c->battery = p->battery[i].level;
+			C_INFO(c, "Battery level %d (raw)", c->battery);
 		}
 	}
 	os_mutex_unlock(&c->lock);
@@ -429,6 +436,7 @@ pico4_controller_create(int device,
 	if (!c->has_aim_to_grip) {
 		U_LOG_IFL_W(log_level, "PICO 4 %s controller: grip pose = aim pose (%s)", left ? "left" : "right", error);
 	}
+	c->battery = -1;
 	m_imu_3dof_init(&c->fusion, M_IMU_3DOF_USE_GRAVITY_DUR_20MS);
 	m_relation_history_create(&c->history);
 
