@@ -39,6 +39,14 @@ namespace {
 constexpr const char *kOpenvrApi = "/opt/steamvr/bin/linuxarm64/libopenvr_api.so";
 constexpr const char *kFont = "Adwaita Sans";
 
+volatile sig_atomic_t g_stop;
+
+void
+stop_requested(int)
+{
+	g_stop = 1;
+}
+
 struct State
 {
 	double mm = 0;             //!< What the driver reports; 0 before the first reading.
@@ -321,6 +329,8 @@ main(int argc, char **argv)
 		return render(argv[2], atof(argv[3]));
 	}
 	signal(SIGPIPE, SIG_IGN);
+	signal(SIGTERM, stop_requested);
+	signal(SIGINT, stop_requested);
 
 	void *lib = dlopen(kOpenvrApi, RTLD_NOW);
 	if (lib == nullptr) {
@@ -335,11 +345,14 @@ main(int argc, char **argv)
 		return 1;
 	}
 	vr::EVRInitError err = vr::VRInitError_Driver_Failed;
-	for (int i = 0; i < 60 && err != vr::VRInitError_None; i++) {
+	for (int i = 0; i < 60 && err != vr::VRInitError_None && !g_stop; i++) {
 		vr_init(&err, vr::VRApplication_Background);
-		if (err != vr::VRInitError_None) {
+		if (err != vr::VRInitError_None && !g_stop) {
 			sleep(2);
 		}
+	}
+	if (g_stop && err != vr::VRInitError_None) {
+		return 0;
 	}
 	if (err != vr::VRInitError_None) {
 		fprintf(stderr, "pico4-lens-panel: VR_Init: %d\n", err);
@@ -379,7 +392,7 @@ main(int argc, char **argv)
 
 	bool dirty = true, running = true;
 	double next_read = 0;
-	while (running) {
+	while (running && !g_stop) {
 		vr::VREvent_t e;
 		while (overlay->PollNextOverlayEvent(main_overlay, &e, sizeof(e))) {
 			dirty = handle_event(s, e) || dirty;
@@ -428,6 +441,7 @@ main(int argc, char **argv)
 		usleep(visible ? 16000 : 200000);
 	}
 	cairo_surface_destroy(surface);
+	overlay->DestroyOverlay(main_overlay);
 	vr_shutdown();
 	return 0;
 }
