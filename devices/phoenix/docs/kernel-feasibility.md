@@ -449,8 +449,8 @@ images.
 | Valve's Turnip as it is | 89.93 | 8.0 ms |
 | Valve's whole Mesa with the layer, installed | 89.7 | 6.45 ms |
 
-0.37 % of frames came late in the session check with the whole Mesa, 0.45 % on Mesa 26.1.6. OpenGL
-reports 4.6 through zink on Turnip. Open: Steam Link, FEX and Lepton's games on it, which need a network.
+0.37–0.75 % of frames came late across session checks with the whole Mesa, 0.45 % in the one run on
+Mesa 26.1.6. OpenGL reports 4.6 through zink on Turnip. Open: Steam Link, FEX and Lepton's games on it, which need a network.
 
 ### Source
 
