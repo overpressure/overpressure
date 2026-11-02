@@ -176,6 +176,27 @@ class CameraTests(unittest.TestCase):
             self.assertIn("assigned-clock-rates = <37500000>;", cci)
 
 
+class GpuPreemptionTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0019-drm-msm-a6xx-ringbuffer-preemption-on-the-a650.patch"
+
+    def test_the_firmware_gets_kgsls_list_at_its_init(self):
+        patch = text(self.PATCH)
+        self.assertIn("+\tOUT_PKT7(ring, CP_ME_INIT, 11);", patch)
+        self.assertIn("+\tOUT_RING(ring, 0x0000016f);", patch)
+        self.assertIn("+\tlock->list_offset = ifpc->count * 2;", patch)
+
+    def test_a_preemption_restores_the_blocks_addressing(self):
+        patch = text(self.PATCH)
+        list_ = patch[patch.index("+static const u32 a650_pwrup_reglist_regs[] = {"):]
+        list_ = list_[:list_.index("+};")]
+        for block in ("VSC", "GRAS", "RB", "PC", "HLSQ", "VFD", "VPC", "UCHE", "SP", "TPL1"):
+            self.assertIn(f"REG_A6XX_{block}_ADDR_MODE_CNTL,", list_)
+        self.assertEqual(list_.count("+\tREG_"), 35)  # KGSL's 28 and the A650's 7
+
+    def test_on_by_default_for_the_a650(self):
+        self.assertIn("+\t\t\tADRENO_QUIRK_PREEMPTION,", text(self.PATCH))
+
+
 class RgbCameraTests(unittest.TestCase):
     DRIVER = KERNEL / "src/drivers/media/i2c/pico4-imx471.c"
     CAM = ROOT / "src/monado/pico4_cam.c"
