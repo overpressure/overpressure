@@ -75,6 +75,14 @@ class SteamLinkTests(unittest.TestCase):
         self.assertIn('#define EXPORT __attribute__((visibility("default")))', hooks)
         self.assertIn("./test_pico4_vidc_compat", read(ROOT / "userspace/pkgbuilds/pico4-vrlink/PKGBUILD"))
 
+    def test_our_controllers_are_the_frames_to_vrlink(self):
+        # vrlink compares the type with std::string::compare and sends nothing for any other.
+        hooks = read(ROOT / "src/vrlink/pico4-vrlink-compat.c")
+        self.assertIn("EXPORT int\nCXX_STRING_COMPARE(const struct cxx_string *self, const char *other)\n{", hooks)
+        self.assertIn("#define CXX_STRING_COMPARE _ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareEPKc", hooks)
+        self.assertIn('static const char ours[] = "pico_controller";', hooks)
+        self.assertIn('strcmp(other, "frame_controller") == 0', hooks)
+
     def test_buffers_carry_their_fd_as_the_driver_wants(self):
         core = read(ROOT / "src/vrlink/pico4-vidc-compat.c")
         self.assertIn("planes[p].reserved[0] = (uint32_t)fd;", core)

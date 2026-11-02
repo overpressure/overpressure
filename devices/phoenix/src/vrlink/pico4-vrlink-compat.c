@@ -345,6 +345,38 @@ dlsym(void *handle, const char *name)
 	return sym;
 }
 
+/*
+ * vrlink sends a controller's input only if its Prop_ControllerType_String compares equal to the
+ * Frame's; for any other it logs a line per controller and frame and sends an empty state. SteamVR
+ * gives our controllers the Frame controller's bindings (frame-controller-remapping.json), so to
+ * vrlink they are the Frame's: this is libstdc++'s std::string::compare(const char *).
+ */
+#define CXX_STRING_COMPARE _ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareEPKc
+struct cxx_string
+{
+	const char *data;
+	size_t size;
+};
+EXPORT int
+CXX_STRING_COMPARE(const struct cxx_string *self, const char *other);
+
+EXPORT int
+CXX_STRING_COMPARE(const struct cxx_string *self, const char *other)
+{
+	static const char ours[] = "pico_controller";
+	static int (*real)(const struct cxx_string *, const char *);
+	if (self->size == sizeof(ours) - 1 && memcmp(self->data, ours, sizeof(ours) - 1) == 0 &&
+	    strcmp(other, "frame_controller") == 0) {
+		return 0;
+	}
+	if (real == NULL) {
+		resolve();
+		real = (int (*)(const struct cxx_string *, const char *))real_dlsym(
+		    RTLD_NEXT, "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareEPKc");
+	}
+	return real(self, other);
+}
+
 EXPORT int
 close(int fd)
 {

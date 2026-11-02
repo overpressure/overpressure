@@ -911,11 +911,23 @@ SteamVR. The PC's `driver_vrlink` knows the client by the model "PICO 4" (its PI
     allocations (`vkAllocateMemory`, reached through `vrlink`'s `dlsym` of
     `vkGetInstanceProcAddr`) to that size.
   - Display delay 0 becomes the driver's decode order and low-latency controls.
-- **Controllers.** `vrlink`'s own bindings for `pico_controller` keep SteamVR from simulating an
-  Index for it; the controllers' input over the link is open.
+- **On Valve's kernel.** The decoder is mainline's Venus (`qcom-venus-decoder`), whose API is the
+  one `vrlink` is written for: the translation above stays unattached. `vrlink` picks its picture
+  format from what the driver reports after the source change: `QC10C` for `P010` (the PC sends
+  Main10), `QC08C` otherwise. It builds a `DRM_FORMAT_MOD_QCOM_COMPRESSED` image from the reported
+  pitch and its own offset of the second plane, and queues the image's dma-buf with the reported
+  size as its length, so both must be iris's: patch 0020 reports `QC10C`'s real pitch and sizes
+  without an extradata margin. Otherwise videobuf2 refuses the dma-buf (`EFAULT`), no picture is
+  decoded and the bitstream queue fills up.
+- **Controllers.** `vrlink` sends a controller's input only if its
+  `Prop_ControllerType_String` is `frame_controller`, and otherwise logs a line per controller and
+  frame. SteamVR gives our controllers the Frame controller's bindings
+  ([frame-controller-remapping.json](../userspace/session/frame-controller-remapping.json)), and
+  `libpico4-vrlink-compat.so` makes `pico_controller` compare equal to it in `vrlink`.
 
 | Check | Result |
 | --- | --- |
+| Headset, Valve's kernel: `vrlink`'s path without the PC (Venus decodes into dma-bufs of images built as `vrlink` builds them, a compute shader samples them through a YCbCr sampler) | 8-bit and Main10 at 1280×5120: the image and the reported size match (9,891,840 and 13,885,440 bytes), the sampled picture is identical to FFmpeg's decode of the same frame; 8-bit 1536×6144: the sizes match (14,229,504 bytes) |
 | Headset: the decoder through the layer, driven as `vrlink` drives it (NVENC HEVC test streams at 90 fps, Vulkan pictures as `vrlink` creates them) | steady 1280×5120, a reset, a size increase, a size decrease and a decrease with a reset: 268–269 of 270 pictures each at 90 fps, Venus stays up |
 | Headset: a decoded picture through the GPU (`vrlink`'s explicit `QCOM_COMPRESSED` import, copied to linear NV12) | identical to FFmpeg's decode of the same frame, also after a size decrease; Turnip sizes the image as Venus does (9,891,840 bytes at 1280×5120) |
 | Headset: Steam Link from a PC | the PC accepts the headset and streams HEVC at 1280x5120, about 88 frames/s arriving; the decoded picture is wrong: green, different in the two eyes, the game's title only faintly visible |
