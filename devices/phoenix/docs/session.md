@@ -73,14 +73,17 @@ owns the hardware. Valve's session is the only one: there is no session without 
 unit needs the GPU (`ConditionPathExists=/dev/kgsl-3d0`), so it does not start in QEMU.
 
 A session that ends by itself starts again 5 s later (`Restart=always`), as sddm's
-`Relogin=true` does on the Frame: a `vrcompositor` that dies in a running session makes
-`vrserver` quit everything ("Compositor exited unexpectedly"), gamescope segfaults as its
-OpenVR server goes, and `start-gamescope-session` returns 0. A SteamVR that failed for good
+`Relogin=true` does on the Frame. A SteamVR that ends without a stop being asked for, such as
+after a `vrcompositor` that dies, ends the session
+([`steamvr-ended`](../userspace/rootfs/usr/libexec/pico4-poc/steamvr-ended)): its unit would
+restart it (`RestartMode=direct`, which does not reach gamescope), and gamescope stays bound to the
+compositor that is gone, every DMA-BUF import of Steam's panel fails and the panel never shows.
+gamescope ignores the stop, and its unit's 10 s end it. A SteamVR that failed for good
 (its own start limit, below) ends the session too: `pico4-steamvr-failed.service` stops
 `gamescope-session.target`, which would otherwise stay without SteamVR and leave the lenses
-dark. A deliberate stop stays stopped. Five starts within ten minutes end the session's
-restarts: it stays stopped until the next boot or a deliberate start. A SteamVR crash loop takes
-about 105 s per session, so it ends after about ten minutes. Deliberate restarts, such as the session check's, reset the count
+dark. A requested restart of SteamVR keeps the session and restarts gamescope with it. A
+deliberate stop stays stopped. Five starts within ten minutes end the session's
+restarts: it stays stopped until the next boot or a deliberate start. Deliberate restarts, such as the session check's, reset the count
 first (`systemctl reset-failed pico4-session.service`).
 
 In Valve's session SteamVR's compositor and `driver_monado` run as `steamos`, so
@@ -1098,7 +1101,7 @@ archive's manifest lists `pico4-vrdisplay`, then Valve's session when it lists
 | Headset: SteamVR stopped with the session, two rounds | each stop clean ("Stopped SteamVR Launcher"), Valve's failure tracker empty; before, every stop failed the unit (`vrstartup -shutdown` exit 255) |
 | Headset: five starts of Valve's session in 252 s, then a forced crash loop | all five present, no start limit hit |
 | Headset: four Valve session checks back to back (45 s apart; eight SteamVR starts in about seven minutes) | all four passed (89.9–90.0 commits/s), no start limit hit; before the wait for SteamVR's stop the third of three failed on the start limit; the next session starts SteamVR with clean counters |
-| Headset: forced crash loop (`vrcompositor` killed whenever it runs) | each session's SteamVR reaches its start limit and `pico4-steamvr-failed.service` ends the session, which starts again 5 s later; after six sessions in 10.5 minutes (about twelve SteamVR starts, each a controller radio reset) the session's start limit stops it for good, no session process left |
+| Headset: `vrcompositor` killed once in a running session (Valve's kernel) | the session ends and a new one runs within about 25 s; the new gamescope's imports of Steam's panel run without an error, the old one's last three fail as it goes; a requested restart of `steamvr.service` keeps the session and restarts gamescope with it, without an error |
 | Headset: `vrcompositor` killed in a running Valve session | `vrserver` quits everything; either SteamVR restarts itself and the session goes on, or gamescope segfaults 16 s later and the session starts again after 5 s, Valve's target active within 30 s of the kill |
 | Headset: gamescope killed (SIGSEGV) in a running session | Valve's session starts again, its target active after 10 s and SteamVR's compositor up 14 s later; five such crashes in two minutes hit the session's start limit |
 | Headset: deliberate stop of `pico4-session.service` while gamescope is slow to stop | stays stopped (60 s observed); before, the stop timed out at the 15 s default and the unit failed |

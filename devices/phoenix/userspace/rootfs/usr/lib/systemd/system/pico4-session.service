@@ -20,12 +20,10 @@ After=pico4-vr-performance.service
 Conflicts=getty@tty1.service
 After=getty@tty1.service
 # A session that ends by itself starts again, as sddm's Relogin=true does on the Frame: a
-# compositor that dies in a running session makes vrserver quit everything, gamescope with
-# it, and start-gamescope-session then returns 0; a SteamVR that failed for good ends it too
-# (pico4-steamvr-failed.service). After five starts in ten minutes the session stays stopped
-# until the next boot or a deliberate start, which resets the count: a SteamVR crash loop takes
-# about 75 s per session (three starts), so the limit ends it after about 15 controller radio
-# resets.
+# SteamVR that ends without a stop being asked for ends it (steamvr-ended), as does a SteamVR
+# that failed for good (pico4-steamvr-failed.service). After five starts in ten minutes the
+# session stays stopped until the next boot or a deliberate start, which resets the count: a
+# crash loop ends after about five controller radio resets.
 StartLimitIntervalSec=600
 StartLimitBurst=5
 

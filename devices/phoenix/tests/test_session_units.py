@@ -38,6 +38,14 @@ class SteamvrRestartTest(unittest.TestCase):
         self.assertGreaterEqual(interval, burst * (restart + 20))
         self.assertLessEqual(burst, 3)
 
+    def test_steamvr_ending_by_itself_ends_the_session(self):
+        # RestartMode=direct does not reach gamescope, which stays without Steam's panel.
+        ended = "usr/libexec/pico4-poc/steamvr-ended"
+        self.assertEqual(self.dropin["Service"]["ExecStopPost"], f"-/{ended}")
+        script = (ROOT / "userspace/rootfs" / ended).read_text(encoding="utf-8")
+        self.assertIn('[ -n "$job" ] && [ "$job" != 0 ] && exit 0', script)
+        self.assertIn("exec systemctl --user --no-block stop gamescope-session.target", script)
+
     def test_failure_ends_the_session(self):
         # Valve's session is the only one: a SteamVR that keeps failing ends the session's target
         # (gamescope would stay without SteamVR), and the session's own start limit bounds the loop.
