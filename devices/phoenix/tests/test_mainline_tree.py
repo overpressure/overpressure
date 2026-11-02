@@ -176,6 +176,21 @@ class CameraTests(unittest.TestCase):
             self.assertIn("assigned-clock-rates = <37500000>;", cci)
 
 
+class SoundFormatTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0023-asoc-qcom-the-speakers-path-at-24-bits-and-the-dsps-24-bit-pcm-by-its-name.patch"
+
+    def test_the_speakers_path_runs_at_24_bits(self):
+        patch = text(self.PATCH)
+        self.assertIn("+\tsnd_mask_none(fmt);", patch)
+        self.assertIn("cpu_dai->id == WSA_CODEC_DMA_RX_0 ?", patch)
+        self.assertIn("SNDRV_PCM_FORMAT_S24_LE : SNDRV_PCM_FORMAT_S16_LE);", patch)
+
+    def test_the_dsps_24_bit_pcm_goes_by_its_name(self):
+        patch = text(self.PATCH)
+        self.assertIn("+\tcase SNDRV_PCM_FORMAT_S32_LE:", patch)
+        self.assertNotIn("+\tcase SNDRV_PCM_FORMAT_S24_LE:", patch)
+
+
 class GpuFaultTests(unittest.TestCase):
     PATCH = KERNEL / "patches/0022-drm-msm-a-gpu-page-fault-does-not-stall-the-gpu-as-on-kgsl.patch"
 

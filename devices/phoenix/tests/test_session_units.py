@@ -250,10 +250,11 @@ class KthreadPrioritiesTest(unittest.TestCase):
 
 
 class SoundCardFormatTest(unittest.TestCase):
-    def test_the_card_plays_at_16_bits(self):
-        # S24_LE reaches the DSP far too low and PICO OS's calibration then clips it: crunchy sound.
+    def test_the_card_picks_its_own_format(self):
+        # The kernel offers the DSP's 24-bit PCM as S32_LE (patch 0023), which PipeWire picks by itself:
+        # at 16 bits the tails of sounds are crunchy.
         conf = (ROOTFS / "etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf").read_text(encoding="utf-8")
-        self.assertIn('audio.format = "S16LE"', conf)
+        self.assertNotIn("audio.format", conf)
         self.assertIn('alsa_output.platform-sound', conf)
 
 

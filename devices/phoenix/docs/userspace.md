@@ -618,25 +618,24 @@ which does what the stock kernel does with the blocks PICO OS's HAL hands it:
    728.
 2. The driver maps a buffer through the audio SMMU stream and registers the custom topologies with
    the ADSP core (all earlier ones dropped first, as the stock driver does). The ADSP maps it only
-   once PICO OS's audio process runs, after the ADM service's first probe, so
-   `pico4-lpass-macros` probes the driver again once the card is up.
+   once PICO OS's audio process runs, after the ADM service's first probe, and refuses it for a
+   while longer on some boots, so `pico4-lpass-macros` probes the driver again every 2 s once the
+   card is up, for up to a minute. Without it the sound has none of PICO's processing.
 3. q6routing opens each calibrated path with its topology and sends its parameters in band after
    the open. A path without calibration, or one whose topology the ADSP refuses, keeps the null
    topology.
 
-The card plays at 16 bits
-([`51-pico4-sound-card.conf`](../userspace/rootfs/etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf)).
-Mainline's front end also offers S24_LE, which PipeWire prefers, but that reaches the DSP far too
-low, and the calibration's chain then clips what is left. A 1 kHz tone at −6 dBFS, on the same
-microphone path and with the speakers' calibration as noted:
+The card runs as PICO OS does: the speakers' device path, with PICO's processing in it, at 24 bits
+(`SND_DEVICE_OUT_SPEAKER bit_width="24"` in its platform configuration), the microphone's at 16. The
+ADSP's 24-bit PCM has its samples in the top 24 bits of a 32-bit word, so the front end offers it as
+S32_LE (patch 0023), which PipeWire picks for both directions. Mainline offered it as S24_LE, whose
+samples are in the low 24 bits, and ran every device path at 16.
 
-| Format | With calibration | Without |
+| Stream and device path | 1 kHz at −6 dBFS, volume 1.0, on the microphone | |
 | --- | --- | --- |
-| S16_LE | −2 dBFS, third harmonic 48 dB below it | −8 dBFS, third harmonic 27 dB below it: overdriven |
-| S24_LE | −62 dBFS, harmonics 6–8 dB below it: heard as crunchy | −41 dBFS |
-
-Capture is the other way round and stays at S24_LE: at S16_LE the microphone comes in about 47 dB
-low.
+| S32_LE, speakers at 24 bits | −52 dBFS, third harmonic 32–40 dB below it | in the tail of a fade at volume 0.3, just after PICO's processing drops it by about 25 dB: third harmonic 23–29 dB below the tone, fifth 30–39 dB; the microphone reads about as on the stock kernel |
+| S16_LE, device path at 16 bits | as loud | at the same point: third 15–30 dB, fifth 3–6 dB below, and about 10 dB further down both at or above the tone: heard as crunch at the end of every sound |
+| S24_LE as mainline had it | 56 dB lower | every sound crunchy, and the microphone 48 dB too hot |
 
 Its effect, measured with the microphone at the headset: a quiet tone (−20 dBFS) plays at the same
 level with and without the calibration, while a loud one (−6 dBFS), steady without it, is pulled
