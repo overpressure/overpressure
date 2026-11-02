@@ -176,6 +176,19 @@ class CameraTests(unittest.TestCase):
             self.assertIn("assigned-clock-rates = <37500000>;", cci)
 
 
+class VenusCaptureFormatTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0020-media-venus-compressed-capture-formats-as-iris-reports-them.patch"
+
+    def test_qc10c_reports_its_real_pitch(self):
+        self.assertIn("+\t\t\tpfmt[0].bytesperline = ALIGN(stride * 4 / 3, 256);", text(self.PATCH))
+
+    def test_the_sizes_hold_only_the_picture(self):
+        """Steam Link's dma-bufs are as large as the picture: a margin makes vb2 refuse them."""
+        patch = text(self.PATCH)
+        self.assertIn("-\tsize += max(extradata + SZ_8K, y_stride * 48);", patch)
+        self.assertIn("+\treturn ALIGN(y_meta_plane + y_plane + uv_meta_plane + uv_plane, SZ_4K);", patch)
+
+
 class GpuPreemptionTests(unittest.TestCase):
     PATCH = KERNEL / "patches/0019-drm-msm-a6xx-ringbuffer-preemption-on-the-a650.patch"
 
