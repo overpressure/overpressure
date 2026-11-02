@@ -83,6 +83,11 @@ class WifiTests(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(profile.read_bytes(), b"[wifi]\nband=no6\nssid=home\n[wifi-security]\npsk=secret\n")
 
+    def test_network_manager_retries_a_failed_connection(self):
+        # With iwd's autoconnect, one DHCP timeout leaves the headset offline for good.
+        conf = text(ROOTFS / "etc/NetworkManager/conf.d/50-pico4-wifi-autoconnect.conf")
+        self.assertRegex(conf, r"(?m)^\[device\]\nwifi\.iwd\.autoconnect=false$")
+
     def test_kernel_builds_ath11k_in(self):
         config = text(ROOT / "kernel/pico4.config")
         for option in ("CONFIG_ATH11K=y", "CONFIG_ATH11K_PCI=y", "CONFIG_PCI_PWRCTRL_PWRSEQ=y"):
