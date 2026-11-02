@@ -173,7 +173,13 @@ the same `msm_performance` and `core_ctl` nodes, and
 [`vr-performance`](../userspace/rootfs/usr/libexec/pico4-poc/vr-performance) applies the CPU part:
 [`pico4-vr-performance.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-vr-performance.service)
 runs it while `pico4-session.service` or `pico4-monado.service` runs (both want the unit, which
-stops when neither does) and puts the limits it found back when it stops. The GPU part stays
+stops when neither does) and puts the limits it found back when it stops. On a mainline kernel it
+also keeps the big cores, where the compositor runs, at their limit (governor `performance`),
+and puts `schedutil` back: without it the compositor misses frames while Steam's panel redraws
+([kernel-feasibility.md](kernel-feasibility.md)). In the session with the panel idle, 3 minutes
+each, this costs about 0.6 °C: hottest zone mean 58.7 and 59.7 °C (peaks 60.5 and 64.0) against
+58.4 and 58.7 °C (59.7 and 61.6); the little cores' load falls from about 45 to about 31 %.
+The GPU part stays
 with the compositors, which hold KGSL's floor themselves while they present
 ([session.md](session.md)).
 
