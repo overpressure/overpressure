@@ -149,7 +149,7 @@ class ValveMesaTests(unittest.TestCase):
 
     def test_no_depth_projection_without_a_mesh(self):
         patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-roomview-mesh.patch")
-        self.assertIn('return pico4_hmd_depth_mesh != NULL && ::access("/dev/cvp", F_OK) == 0;', patch)
+        self.assertIn('return pico4_hmd_depth_mesh != NULL && ::access("/usr/lib/pico4-stock-slam/system/lib64/libphotoid.so", F_OK) == 0;', patch)
 
     def test_only_the_compositor_loses_storage_usage(self):
         layer = self.read("src/vrdisplay/pico4-swapchain-usage.c")

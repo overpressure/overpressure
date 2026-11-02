@@ -102,44 +102,10 @@ mesh_ready(void)
 	}
 }
 
-/*!
- * Whether the CVP's restart level is RELATED: the pipeline's /dev/cvp session starts its firmware,
- * and at the kernel's default (SYSTEM) a CVP crash would reboot the headset (cdsp-boot sets it).
- */
-static bool
-cvp_restart_related(void)
-{
-	char path[64], text[16];
-	for (int i = 0; i < 32; i++) {
-		snprintf(path, sizeof(path), "/sys/bus/msm_subsys/devices/subsys%d/name", i);
-		int fd = open(path, O_RDONLY | O_CLOEXEC);
-		if (fd < 0) {
-			continue;
-		}
-		ssize_t n = read(fd, text, sizeof(text) - 1);
-		close(fd);
-		if (n < 5 || memcmp(text, "cvpss", 5) != 0 || (n > 5 && text[5] != '\n')) {
-			continue;
-		}
-		snprintf(path, sizeof(path), "/sys/bus/msm_subsys/devices/subsys%d/restart_level", i);
-		fd = open(path, O_RDONLY | O_CLOEXEC);
-		n = fd < 0 ? -1 : read(fd, text, sizeof(text) - 1);
-		if (fd >= 0) {
-			close(fd);
-		}
-		return n >= 7 && memcmp(text, "RELATED", 7) == 0;
-	}
-	return false;
-}
-
 int
 vst_start(struct pico4_slam_feed *feed)
 {
 	g_vst.feed = feed;
-	if (!cvp_restart_related()) {
-		fprintf(stderr, "pico4-slamd: no see-through depth mesh: the CVP's restart level is not RELATED\n");
-		return -1;
-	}
 	void *lib = dlopen("libphotoid.so", RTLD_NOW);
 	if (lib == 0) {
 		fprintf(stderr, "pico4-slamd: no see-through depth mesh: %s\n", dlerror());

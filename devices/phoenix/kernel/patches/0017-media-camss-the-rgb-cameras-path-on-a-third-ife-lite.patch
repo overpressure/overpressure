@@ -1,0 +1,143 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] media: camss: the RGB camera's path on a third IFE-lite
+
+SM8250's XR variant has three more CSID-lite/IFE-lite pairs than mainline
+describes. The tracking cameras take the four pairs it knows, so the RGB camera
+takes the next, as PICO's tree lists it (its registers at 0x0acdd400, its
+CSID 0x200 above, interrupts 449 and 266). With the option and object of the
+PICO 4's IMX471 driver.
+---
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -696,6 +696,16 @@
+ 	  to the controller radio: a sensor subdevice for CAMSS that powers and
+ 	  clocks them while they stream.
+ 
++config VIDEO_PICO4_IMX471
++	tristate "PICO 4 RGB camera (IMX471)"
++	depends on I2C && OF && COMMON_CLK && REGULATOR
++	select MEDIA_CONTROLLER
++	select VIDEO_V4L2_SUBDEV_API
++	select V4L2_FWNODE
++	help
++	  The PICO 4's IMX471 RGB camera, in the one mode PICO OS's see-through
++	  uses: 2328x1748 RAW10 at 50 fps.
++
+ config VIDEO_OV7640
+ 	tristate "OmniVision OV7640 sensor support"
+ 	help
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -117,6 +117,7 @@
+ obj-$(CONFIG_VIDEO_OV6710) += ov6710.o
+ obj-$(CONFIG_VIDEO_OV7251) += ov7251.o
+ obj-$(CONFIG_VIDEO_PICO4_OV7251) += pico4-ov7251.o
++obj-$(CONFIG_VIDEO_PICO4_IMX471) += pico4-imx471.o
+ obj-$(CONFIG_VIDEO_OV7640) += ov7640.o
+ obj-$(CONFIG_VIDEO_OV7670) += ov7670.o
+ obj-$(CONFIG_VIDEO_OV772X) += ov772x.o
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -2123,6 +2123,23 @@
+ 			.parent_dev_ops = &vfe_parent_dev_ops,
+ 			.formats = &csid_formats_gen2
+ 		}
++	},
++	/* CSID4 (the XR variant's third lite pair) */
++	{
++		.regulators = {},
++		.clock = { "vfe_lite_csid", "vfe_lite_cphy_rx", "vfe_lite",  "vfe_lite_ahb" },
++		.clock_rate = { { 400000000 },
++				{ 400000000 },
++				{ 400000000, 480000000 },
++				{ 0 } },
++		.reg = { "csid4" },
++		.interrupt = { "csid4" },
++		.csid = {
++			.is_lite = true,
++			.hw_ops = &csid_ops_gen2,
++			.parent_dev_ops = &vfe_parent_dev_ops,
++			.formats = &csid_formats_gen2
++		}
+ 	}
+ };
+ 
+@@ -2219,6 +2236,30 @@
+ 				{ 0 } },
+ 		.reg = { "vfe_lite1" },
+ 		.interrupt = { "vfe_lite1" },
++		.vfe = {
++			.is_lite = true,
++			.line_num = 4,
++			.hw_ops = &vfe_ops_480,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_845
++		}
++	},
++	/* VFE4 (lite, the XR variant's third lite pair) */
++	{
++		.regulators = {},
++		.clock = { "camnoc_axi_src", "slow_ahb_src", "cpas_ahb",
++			   "camnoc_axi", "vfe_lite_ahb", "vfe_lite_axi",
++			   "vfe_lite", "cam_hf_axi" },
++		.clock_rate = { { 19200000, 300000000, 400000000, 480000000 },
++				{ 19200000, 80000000 },
++				{ 19200000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 400000000, 480000000 },
++				{ 0 } },
++		.reg = { "vfe_lite2" },
++		.interrupt = { "vfe_lite2" },
+ 		.vfe = {
+ 			.is_lite = true,
+ 			.line_num = 4,
+diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+@@ -4482,7 +4482,8 @@
+ 			      <0 0x0acb4000 0 0xd000>,
+ 			      <0 0x0acc3000 0 0xd000>,
+ 			      <0 0x0acd9000 0 0x2200>,
+-			      <0 0x0acdb200 0 0x2200>;
++			      <0 0x0acdb200 0 0x2200>,
++			      <0 0x0acdd400 0 0x2200>;
+ 			reg-names = "csiphy0",
+ 				    "csiphy1",
+ 				    "csiphy2",
+@@ -4492,7 +4493,8 @@
+ 				    "vfe0",
+ 				    "vfe1",
+ 				    "vfe_lite0",
+-				    "vfe_lite1";
++				    "vfe_lite1",
++				    "vfe_lite2";
+ 
+ 			interrupts = <GIC_SPI 477 IRQ_TYPE_EDGE_RISING>,
+ 				     <GIC_SPI 478 IRQ_TYPE_EDGE_RISING>,
+@@ -4507,7 +4509,9 @@
+ 				     <GIC_SPI 465 IRQ_TYPE_EDGE_RISING>,
+ 				     <GIC_SPI 467 IRQ_TYPE_EDGE_RISING>,
+ 				     <GIC_SPI 469 IRQ_TYPE_EDGE_RISING>,
+-				     <GIC_SPI 360 IRQ_TYPE_EDGE_RISING>;
++				     <GIC_SPI 360 IRQ_TYPE_EDGE_RISING>,
++				     <GIC_SPI 449 IRQ_TYPE_EDGE_RISING>,
++				     <GIC_SPI 266 IRQ_TYPE_EDGE_RISING>;
+ 			interrupt-names = "csiphy0",
+ 					  "csiphy1",
+ 					  "csiphy2",
+@@ -4521,7 +4525,9 @@
+ 					  "vfe0",
+ 					  "vfe1",
+ 					  "vfe_lite0",
+-					  "vfe_lite1";
++					  "vfe_lite1",
++					  "csid4",
++					  "vfe_lite2";
+ 
+ 			power-domains = <&camcc IFE_0_GDSC>,
+ 					<&camcc IFE_1_GDSC>,

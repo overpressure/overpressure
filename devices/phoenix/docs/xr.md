@@ -644,9 +644,9 @@ station keep a single owner:
   create block queues. The camera component creates both, empty, when the HMD activates; the
   compositor connects ("Depth mesh block queues connection successfull"). Without the HMD's
   `Prop_SupportsRoomViewDepthProjection_Bool` it renders the camera view without depth
-  reprojection: each eye sees its own camera, so the room is still seen in stereo. With the
-  property and no mesh, it draws black: on Valve's kernel, which has no CVP driver and so no mesh
-  (no `/dev/cvp`), the HMD does not report the property.
+  reprojection: each eye sees its own camera, so the room is still seen in stereo, and close
+  objects double. With the property and no mesh, it draws black: the HMD reports the property only
+  where the image carries PICO OS's pipeline.
 - **The 3D room view.** With `camera.enableCamera`, `roomView` 2 and the HMD's
   `Prop_SupportsRoomViewDepthProjection_Bool` (2079), the compositor projects the camera images
   onto a depth mesh from those queues. Each value is an `IVRPaths_001` path property on the
@@ -663,8 +663,9 @@ station keep a single owner:
 - **PICO OS's see-through.** On the PICO 4, `pxrseethroughservice` feeds `libphotoid.so` each
   pair of the grey forward cameras with the tracker's result at the pair's time, and the
   tracker's map points while it tracks. Its pipeline (`vst_releaseA`, the only one it loads)
-  computes depth with a neural network (`FLNet_lite_v2`, SNPE on the Compute DSP) and also opens
-  a CVP session. It fills gaps from the map points and makes a hemisphere mesh around the head
+  computes depth with a neural network (`FLNet_lite_v2`, SNPE on the Compute DSP). It also sets up a
+  depth-from-stereo session on the CVP with its buffers (256×128), which it never runs:
+  `cvpDfs_Sync` is not called. It fills gaps from the map points and makes a hemisphere mesh around the head
   that ends at the ground. The ground is the tracker's own: with ground detection on
   (`setAlgorithmParameters("plane", "1")`), `libSlam` reports the floor's height and status in
   each pose result, and `libphotoid` takes them from the left image's result. The guardian
@@ -673,11 +674,10 @@ station keep a single owner:
 - **The same mesh here.** `pico4-slamd` runs `libphotoid` in the tracker's root and feeds it
   the same way ([vst.c](../src/stockslam/vst.c)): cam3 and cam2 after each scene set, with
   `libSlam`'s result nearest the set's time (a ring the IMU thread fills), and the map points
-  from `libSlam`'s point callback. The CVP's firmware lies in the root's `/lib/firmware` and in
-  the system's `/usr/lib/firmware`: the kernel reads `cvpss.mdt` in the root of the process that
-  opens `/dev/cvp`, and its workers load the segments (`cvpss.bNN`) from the system's; with the
-  segments missing there, the CVP stays offline and the pipeline fails. `cdsp-boot` sets the
-  CVP's restart level to RELATED, and `pico4-slamd` checks it before the start. SNPE's DSP
+  from `libSlam`'s point callback. The tracker's stand-ins
+  ([stubs.c](../src/stockslam/stubs.c)) answer the CVP session, so neither `/dev/cvp` nor the CVP's
+  firmware is needed; `cvpQueryImageInfo` stays `libcvp2`'s own calculation, and a call of
+  `cvpDfs_Sync` would fail loudly. SNPE's DSP
   module lies in `/system/lib64`, the path SNPE gives the DSP. Each mesh goes into the shared
   feed's two mesh slots ([pico4_slam_feed.h](../src/monado/pico4_slam_feed.h)). Measured with the
   headset on a desk:
@@ -815,6 +815,10 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
     camera slots backed by the same images, and publishes each frame to both: the compositor's
     only colour input. A colour-bar test pattern (`pico4-roomview --test-pattern`) shows in the
     right colours.
+  - On Valve's kernel the sensor has its own driver (`pico4-imx471`, below in
+    [kernel-feasibility.md](kernel-feasibility.md)), and the exposure and the pause are its V4L2
+    controls. Its CSID writes the 16-bit samples the conversion takes, as PICO's stack has it.
+    The view above the camera's field of view is black.
   - Shared memory version 2 carries the format: two grey cameras or one NV12 image.
 
 ## Head tracking
@@ -1627,6 +1631,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | IMU noise A/B (ours against PICO OS's values), still and worn blind | Basalt with PICO OS's values: 0.49–3.02 mm jiggle against 0.10–0.29 mm, two runaways worn against none; the user found ours calmer |
 | Latency probe, headless, 13 steps | pose handed out to scanout 33.0 ms (median; 32.6–33.5 ms for most); SteamVR extrapolates a reported turn by 9.2 ms (median); 21.6 px per degree at the eye's centre |
 | Latency probe in Valve's session check with the published 5 ms display lead (linear scanout, 74 commits/s), 36 phase changes | pose handed out to scanout 32.2–32.6 ms (medians of step on, step off and reported turn); 24 at 30.5–34.2 ms, 9 one frame earlier (19.3–22.1 ms), 3 later; SteamVR extrapolates a reported turn by 10.4 ms; 22.0 px per degree |
+| `libSlam`'s pose against the gyro, headset still, 30 s (fit R² 0.999) | orientation at stamp T = the gyro integrated up to T − 9.5 ms + `angular` × 6 ms; `angular` is a 36-tap FIR over the gyro from T − 11 to T − 46 ms, gain 1, about 3 ms behind its stamp below 8 Hz, 6.5× at 30 Hz, 8× at 50 Hz; at a constant rate the pose is about 3.5 ms behind its stamp; newest pose stamped 7.9–9.0 ms in the future, newest IMU sample 0.8–1.7 ms old |
 | Latency probe on Valve's kernel and Mesa, compressed scanout, 89 flips/s, period 1003 ms, 23 steps | pose handed out to the vblank that shows it 12–23 ms, 18 ms median; commit to vblank 10 ms; SteamVR extrapolates a reported turn by 10.6–12.1 ms (linear scanout) |
 | Head pose worn, standing still | 0.035° RMS around its 200 ms average at 1.7°/s, as in Basalt: the head's own motion (0.001° on a table) |
 | Runaway handling, seven worn sessions of about a minute | Basalt within 0.55–1.51 m of the start (before: 13.6 m and 1,750 m in two of four sessions); three sessions had runaways in Basalt's first seconds, each held, reset and re-anchored; no pose above 3 m/s afterwards in five; correction size 4.6–8.0 mm (median) |
@@ -1671,6 +1676,5 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
    unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
    which needs the Steam client in the session.
-4. **Passthrough.** On Valve's kernel the room view shows the grey forward cameras without a depth
-   mesh ([Passthrough](#passthrough)). Open: the RGB camera and the CVP (no drivers on that kernel),
-   the area above the cameras' field of view, and a worn check.
+4. **Passthrough.** On Valve's kernel the room view shows the RGB camera on PICO OS's depth mesh
+   ([Passthrough](#passthrough)). Open: the area above the camera's field of view, and a worn check.

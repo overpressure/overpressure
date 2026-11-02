@@ -99,9 +99,9 @@
 +	static bool
 +	DepthMeshSupported()
 +	{
-+		// PICO OS's pipeline needs the CVP. Told the HMD projects onto a mesh, a compositor that
-+		// never gets one draws black instead of the cameras.
-+		return pico4_hmd_depth_mesh != NULL && ::access("/dev/cvp", F_OK) == 0;
++		// Where the image carries PICO OS's pipeline. Told the HMD projects onto a mesh, a compositor
++		// that never gets one draws black instead of the cameras.
++		return pico4_hmd_depth_mesh != NULL && ::access("/usr/lib/pico4-stock-slam/system/lib64/libphotoid.so", F_OK) == 0;
 +	}
 +
  	void

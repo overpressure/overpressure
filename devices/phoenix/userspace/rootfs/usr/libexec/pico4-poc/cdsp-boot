@@ -26,12 +26,6 @@ subsys_state() {
 dir=$(subsys_dir) || { log "cdsp: no subsystem"; exit 1; }
 write RELATED "$dir/restart_level"
 [ "$(cat "$dir/restart_level" 2>/dev/null)" = RELATED ] || { log "cdsp: restart level not RELATED, not booting"; exit 1; }
-# The CVP likewise: the kernel starts it when the see-through's depth mesh in pico4-slamd opens
-# /dev/cvp (docs/xr.md#passthrough), which also checks the level first.
-if cvp=$(subsys_dir cvpss); then
-	write RELATED "$cvp/restart_level"
-	[ "$(cat "$cvp/restart_level" 2>/dev/null)" = RELATED ] || log "cvpss: restart level not RELATED"
-fi
 
 state=$(subsys_state)
 if [ "$state" = ONLINE ]; then

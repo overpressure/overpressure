@@ -64,6 +64,25 @@ class WifiTests(unittest.TestCase):
             self.assertEqual(log.read_text().splitlines(),
                              ["link set dev wlan0 down", "link set dev wlan0 address 00:aa:11:bb:22:cc"])
 
+    def test_profiles_lose_the_chips_changing_address(self):
+        # The chip's own address differs at each boot; a profile naming it never matches again.
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "wlan_mac.bin").write_text("Intf0MacAddress=00AA11BB22CC\n")
+            bin_dir = Path(tmp, "bin")
+            bin_dir.mkdir()
+            Path(bin_dir, "ip").write_bytes(b"#!/bin/sh\nexit 0\n")
+            os.chmod(bin_dir / "ip", 0o755)
+            profiles = Path(tmp, "profiles")
+            profiles.mkdir()
+            profile = profiles / "home.nmconnection"
+            profile.write_bytes(b"[wifi]\nband=no6\nmac-address=00:03:7F:12:C5:E0\nssid=home\n[wifi-security]\npsk=secret\n")
+            env = dict(os.environ, PATH=f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}")
+            script = ROOTFS / "usr/libexec/pico4-poc/wlan-address"
+            r = subprocess.run([shutil.which("sh"), script.as_posix(), Path(tmp, "wlan_mac.bin").as_posix(), "wlan0",
+                                profiles.as_posix()], env=env, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(profile.read_bytes(), b"[wifi]\nband=no6\nssid=home\n[wifi-security]\npsk=secret\n")
+
     def test_kernel_builds_ath11k_in(self):
         config = text(ROOT / "kernel/pico4.config")
         for option in ("CONFIG_ATH11K=y", "CONFIG_ATH11K_PCI=y", "CONFIG_PCI_PWRCTRL_PWRSEQ=y"):

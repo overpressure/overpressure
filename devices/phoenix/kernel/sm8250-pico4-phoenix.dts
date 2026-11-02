@@ -329,6 +329,14 @@
 		};
 
 		/* UFS 3.1 VCC: the stock driver asks for 2.504-2.95 V. */
+		/* The RGB camera's VIO. */
+		vreg_l14a_1p8: ldo14 {
+			regulator-name = "vreg_l14a_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
 		vreg_l17a_2p5: ldo17 {
 			regulator-name = "vreg_l17a_2p5";
 			regulator-min-microvolt = <2504000>;
@@ -347,6 +355,14 @@
 	regulators-1 {
 		compatible = "qcom,pm8150l-rpmh-regulators";
 		qcom,pmic-id = "c";
+
+		/* The RGB camera's VDIG: PICO's 1.075 V, in the rail's 8 mV steps as its kernel rounds it. */
+		vreg_l2c_1p08: ldo2 {
+			regulator-name = "vreg_l2c_1p08";
+			regulator-min-microvolt = <1080000>;
+			regulator-max-microvolt = <1080000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
 
 		/*
 		 * The GD32 MCU's supply at the stock initial 3.0 V: the stock tree gives it to the
@@ -1108,6 +1124,13 @@
 	};
 
 	/* The MCLK pins at 16 mA, as the stock camera stack drives them while the sensors run. */
+	cam_mclk1_default: cam-mclk1-default-state {
+		pins = "gpio95";
+		function = "cam_mclk";
+		drive-strength = <16>;
+		bias-disable;
+	};
+
 	cam_mclk2_default: cam-mclk2-default-state {
 		pins = "gpio96";
 		function = "cam_mclk";
@@ -1140,9 +1163,24 @@
 &camss {
 	vdda-phy-supply = <&vreg_l5a_0p88>;
 	vdda-pll-supply = <&vreg_l9a_1p2>;
+	/*
+	 * CAMSS never sets the camera NoC's clock, which stays at 19.2 MHz. The tracking cameras' 77 MB/s
+	 * get through; the RGB camera's lines come at 1.7 GB/s and overflow its IFE-lite.
+	 */
+	assigned-clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK_SRC>;
+	assigned-clock-rates = <300000000>;
 	status = "okay";
 
 	ports {
+		/* The RGB camera: four lanes, into the third IFE-lite. */
+		port@1 {
+			csiphy1_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&rgb_cam_ep>;
+			};
+		};
+
 		port@3 {
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -1186,6 +1224,37 @@
 	assigned-clocks = <&camcc CAM_CC_CCI_0_CLK_SRC>;
 	assigned-clock-rates = <37500000>;
 	status = "okay";
+};
+
+/*
+ * The RGB camera (IMX471), as PICO's board overlay wires it (its cam-sensor cell 4): CCI 0 master 0,
+ * MCLK 1 at 24 MHz, reset on GPIO 23, standby on GPIO 114, VIO from L14A, VDIG from L2C, and the
+ * camera clock controller's TITAN_TOP GDSC.
+ */
+&cci0_i2c0 {
+	camera@1a {
+		compatible = "pico,phoenix-imx471";
+		reg = <0x1a>;
+		clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		clock-names = "xclk";
+		power-domains = <&camcc TITAN_TOP_GDSC>;
+		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clock-rates = <24000000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk1_default>;
+		vio-supply = <&vreg_l14a_1p8>;
+		vdig-supply = <&vreg_l2c_1p08>;
+		reset-gpios = <&tlmm 23 GPIO_ACTIVE_HIGH>;
+		standby-gpios = <&tlmm 114 GPIO_ACTIVE_HIGH>;
+
+		port {
+			rgb_cam_ep: endpoint {
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <1032424000>;
+				remote-endpoint = <&csiphy1_ep>;
+			};
+		};
+	};
 };
 
 &cci1 {

@@ -24,14 +24,6 @@ class CdspBootTests(unittest.TestCase):
         self.assertLess(related, check)
         self.assertLess(check, boot)
 
-    def test_cvp_related_before_the_depth_mesh(self):
-        # The kernel starts the CVP's firmware when libphotoid opens /dev/cvp.
-        script = read(LIBEXEC / "cdsp-boot")
-        self.assertIn('if cvp=$(subsys_dir cvpss); then\n\twrite RELATED "$cvp/restart_level"', script)
-        vst = read(ROOT / "src/stockslam/vst.c")
-        start = vst[vst.index("\nvst_start(struct pico4_slam_feed *feed)"):]
-        self.assertLess(start.index("if (!cvp_restart_related())"), start.index('dlopen("libphotoid.so"'))
-
     def test_unit(self):
         unit = read(UNITS / "pico4-cdsp.service")
         self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4-poc/cdsp-boot$")
@@ -459,20 +451,25 @@ class DepthMeshTests(unittest.TestCase):
         script = read(ROOT / "scripts/extract-stock-slam.sh")
         for name in ("libphotoid.so", "libSNPE.so", "libhexagon_runtime.so", "libcvp2.so", "libcvp2_hfi.so",
                      "libcvp_common.so", "vst_releaseA.json.cpt", "FLNet_lite_v2", "libcvpdsp_skel.so",
-                     "libhexagon_nn_skel.so", "'::/image/cvpss.*'"):
+                     "libhexagon_nn_skel.so"):
             self.assertIn(name, script, name)
         # SNPE has the DSP load its skel by the system path, as on PICO OS.
         self.assertIn("for f in libsnpe_dsp_v66_domains_v2_skel.so libsnpe_dsp_domains_v2.so; do\n"
                       '    dump "$stock/system.img" "/system/lib64/$f" "$root/system/lib64/$f"', script)
 
-    def test_cvp_firmware_in_both_roots(self):
-        # The kernel reads cvpss.mdt in the root of the process opening /dev/cvp, and its workers
-        # the segments in the system's: a cold boot needs both.
-        build = read(ROOT / "scripts/build-userspace.sh")
-        self.assertIn('install -m 0644 "$stock_slam"/firmware/cvpss* "$island/lib/firmware/"', build)
-        self.assertIn('install -m 0644 "$stock_slam"/firmware/cvpss* "$T/usr/lib/firmware/"', build)
-        self.assertIn('cmp -s "$f" "$T/usr/lib/firmware/${f##*/}"', build)
-        self.assertIn("find usr/lib/firmware/cdsp* usr/lib/firmware/cvpss* usr/lib/pico4-stock-slam", build)
+    def test_cvp_session_answered_without_the_hardware(self):
+        # vst_releaseA opens a CVP session and takes its depth from FLNet on the Compute DSP.
+        stubs = read(ROOT / "src/stockslam/stubs.c")
+        for name in ("cvpCreateSession", "cvpStartSession", "cvpStopSession", "cvpDeleteSession", "cvpInitDfs",
+                     "cvpDeInitDfs", "cvpDfs_Sync", "cvpMemAlloc", "cvpMemFree"):
+            self.assertIn(f"{name}(", stubs, name)
+        # Its image sizes stay libcvp2's own calculation.
+        self.assertNotIn("cvpQueryImageInfo(", stubs)
+        # A run of the depth from stereo fails loudly: nothing here computes it.
+        sync = stubs[stubs.index("cvpDfs_Sync("):]
+        self.assertIn("return -1;", sync[:sync.index("cvpMemAlloc(")])
+        self.assertNotIn("cvp_restart_related", read(ROOT / "src/stockslam/vst.c"))
+        self.assertNotIn("cvpss", read(ROOT / "scripts/build-userspace.sh"))
 
     def test_slamd_feeds_it_as_pico_os(self):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")

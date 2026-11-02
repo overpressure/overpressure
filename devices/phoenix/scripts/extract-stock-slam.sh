@@ -8,7 +8,6 @@
 # STOCK_DIR comes from `python -m overpressure stock` (system.img, vendor.img, modem.bin, dsp.bin from
 # PICO's public OTA). OUTPUT_DIR receives:
 #   firmware/cdsp.mdt, cdsp.bNN, cdspr.jsn   the Compute DSP's image (modem partition)
-#   firmware/cvpss.mdt, cvpss.bNN            the CVP's image (modem partition)
 #   root/system/bin/bootstrap/linker64      bionic's linker and C library (system), which
 #   root/system/lib64/bootstrap/             need no Android runtime
 #   root/system/lib64/                       libSlam.so (the head tracker), the auto exposure
@@ -41,9 +40,6 @@ export MTOOLS_SKIP_CHECK=1
 echo ">> modem: the Compute DSP's image and protection-domain map"
 mcopy -n -i "$stock/modem.bin" '::/image/cdsp.*' '::/image/cdspr.jsn' "$output/firmware/"
 [[ -s "$output/firmware/cdsp.mdt" && -s "$output/firmware/cdspr.jsn" ]] || { echo "no cdsp.mdt in the modem partition" >&2; exit 1; }
-echo ">> modem: the CVP's image (depth from stereo for the see-through's depth mesh)"
-mcopy -n -i "$stock/modem.bin" '::/image/cvpss.*' "$output/firmware/"
-[[ -s "$output/firmware/cvpss.mdt" ]] || { echo "no cvpss.mdt in the modem partition" >&2; exit 1; }
 
 echo ">> dsp: the DSP's process shells"
 mkdir -p "$root/vendor/dsp"

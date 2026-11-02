@@ -176,6 +176,73 @@ class CameraTests(unittest.TestCase):
             self.assertIn("assigned-clock-rates = <37500000>;", cci)
 
 
+class RgbCameraTests(unittest.TestCase):
+    DRIVER = KERNEL / "src/drivers/media/i2c/pico4-imx471.c"
+    CAM = ROOT / "src/monado/pico4_cam.c"
+
+    def node(self) -> str:
+        return re.search(r"camera@1a \{(.*?)\n\t\};", tree(), re.S).group(1)
+
+    def test_driver_is_built_in_and_matches_the_tree(self):
+        self.assertIn("CONFIG_VIDEO_PICO4_IMX471=y", config())
+        compatible = re.search(r'\.compatible = "([^"]+)"', text(self.DRIVER)).group(1)
+        self.assertIn(f'compatible = "{compatible}";', self.node())
+
+    def test_wired_as_picos_board_overlay(self):
+        node = self.node()
+        self.assertIn("&cci0_i2c0 {", tree())
+        self.assertIn("reg = <0x1a>;", node)  # PICO's module: 0x34, in 8 bits
+        self.assertIn("CAM_CC_MCLK1_CLK", node)
+        self.assertIn("reset-gpios = <&tlmm 23 ", node)
+        self.assertIn("standby-gpios = <&tlmm 114 ", node)
+        self.assertIn("TITAN_TOP_GDSC", node)
+        self.assertIn("data-lanes = <0 1 2 3>;", tree())
+
+    def test_supplies_are_steps_of_their_rails(self):
+        # A voltage between the 8 mV steps takes the PMIC's whole regulator node down, with Wi-Fi,
+        # audio and the station's power.
+        for label, microvolts in (("vreg_l14a_1p8", 1800000), ("vreg_l2c_1p08", 1080000)):
+            node = re.search(label + r": ldo\d+ \{(.*?)\};", tree(), re.S).group(1)
+            self.assertIn(f"regulator-min-microvolt = <{microvolts}>;", node)
+            self.assertIn(f"regulator-max-microvolt = <{microvolts}>;", node)
+            self.assertEqual(microvolts % 8000, 0)
+
+    def test_the_camera_noc_is_above_its_boot_rate(self):
+        # CAMSS never sets it: at 19.2 MHz the RGB camera's IFE-lite overflows on every frame.
+        camss = re.search(r"&camss \{(.*?)ports \{", tree(), re.S).group(1)
+        self.assertIn("assigned-clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK_SRC>;", camss)
+        self.assertIn("assigned-clock-rates = <300000000>;", camss)
+
+    def test_a_missing_sensor_fails_only_its_stream(self):
+        # A probe error would keep CAMSS's notifier, and the tracking cameras, from completing.
+        driver = text(self.DRIVER)
+        probe = driver[driver.index("static int pico4_imx471_probe"):driver.index("static void pico4_imx471_remove")]
+        self.assertNotIn("IMX471_REG_CHIP_ID", probe)
+        start = driver[driver.index("static int pico4_imx471_start"):driver.index("static int pico4_imx471_s_stream")]
+        self.assertIn("IMX471_REG_CHIP_ID", start)
+
+    def test_the_third_lite_pair(self):
+        patch = text(KERNEL / "patches/0017-media-camss-the-rgb-cameras-path-on-a-third-ife-lite.patch")
+        for line in ('.reg = { "vfe_lite2" }', '.interrupt = { "csid4" }', "0x0acdd400", "GIC_SPI 449", "GIC_SPI 266"):
+            self.assertIn(line, patch)
+
+    def test_driver_takes_the_csids_16_bit_samples(self):
+        patch = text(KERNEL / "patches/0018-media-camss-16-bit-samples-from-an-rdi.patch")
+        self.assertIn("PLAIN_FORMAT_PLAIN16 << RDI_CFG0_PLAIN_FORMAT", patch)
+        self.assertIn("{ MEDIA_BUS_FMT_SRGGB16_1X16, 16, V4L2_PIX_FMT_SRGGB10, 1,", patch)
+        cam = text(self.CAM)
+        self.assertIn("{1, 1, 4, 4}, // the RGB camera", cam)
+        self.assertIn("#define V4L_MBUS_SRGGB16 0x3020", cam)
+        self.assertIn("rgb ? V4L2_PIX_FMT_SRGGB10 : V4L2_PIX_FMT_Y10P", cam)
+
+    def test_exposure_range_and_paused_control_agree(self):
+        driver = text(self.DRIVER)
+        self.assertIn("#define V4L2_CID_PICO4_PAUSED\t(V4L2_CID_USER_BASE | 0x1000)", driver)
+        self.assertIn("#define V4L_CID_RGB_PAUSED (V4L2_CID_USER_BASE | 0x1000)", text(self.CAM))
+        self.assertIn("#define IMX471_MAX_LINES\t4510", driver)
+        self.assertIn("#define PICO4_CAM_RGB_MAX_LINES 4510", text(ROOT / "src/monado/pico4_cam.h"))
+
+
 class FastRpcTests(unittest.TestCase):
     def test_context_banks_are_coherent_as_on_stock(self):
         # The stock tree's banks of all three DSPs; the tracker loses its features without it.
