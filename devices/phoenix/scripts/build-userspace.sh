@@ -373,6 +373,18 @@ done
 for f in pico4-reboot pico4-splash; do
     install -o 0 -g 0 -m 0755 "$project/prebuilt/aarch64/$f" "$T/usr/bin/$f"
 done
+# SteamVR reads its own remapping for pico_controller, whatever the profile names: the Frame
+# controller's layout (session/frame-controller-remapping.json) joins Valve's layouts there.
+python3 - "$T/opt/steamvr/resources/input/default_pico_controller_remapping.json" \
+    "$project/userspace/session/frame-controller-remapping.json" <<'EOF'
+import json, sys
+path, ours = sys.argv[1], json.load(open(sys.argv[2]))
+remapping = json.load(open(path))
+remapping["layouts"] = [l for l in remapping["layouts"]
+                        if l.get("from_controller_type") != ours["from_controller_type"]] + [ours]
+with open(path, "w") as f:
+    json.dump(remapping, f, indent=2)
+EOF
 firmware_json="[]"
 if [[ -n "$firmware" ]]; then
     mkdir -p "$T/usr/lib/firmware"

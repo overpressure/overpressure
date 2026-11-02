@@ -619,6 +619,13 @@ click, touch), A/B or X/Y (click, touch), `/input/system` (the menu button on th
 button on the right) and the haptic output. The poses are the render model's components
 (`aim`, `tip`, `grip`, `handgrip`, `openxr_aim`, `openxr_grip`; `tooling/controllermodel.py`).
 
+The Frame's Android games, such as Cubism, bind only the Frame controller
+(`/interaction_profiles/valve/frame_controller_valve`). The image therefore keeps the Frame
+controller's SteamVR resources, without its radio's firmware, and the build adds its layout
+([frame-controller-remapping.json](../userspace/session/frame-controller-remapping.json), without
+simulation) to SteamVR's `default_pico_controller_remapping.json`, the only remapping SteamVR
+reads for `pico_controller`. Without it the controllers stay at the origin, without input.
+
 ### Performance and heat
 
 With the Steam Frame's compositor settings ([SteamVR configuration](#steamvr-configuration))

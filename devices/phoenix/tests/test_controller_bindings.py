@@ -23,6 +23,19 @@ class ControllerTypeTests(unittest.TestCase):
         self.assertEqual(self.profile["controller_type"], "pico_controller")
         # SteamVR's remapping turns games' Touch, Index and Vive bindings into this type's.
         self.assertEqual(self.profile["remapping"], "input/default_pico_controller_remapping.json")
+
+    def test_android_games_frame_controller_bindings_reach_our_controllers(self):
+        # The Frame's Android games bind only its controller: without its layout in SteamVR's own
+        # remapping the controllers stay at the origin, without input.
+        project = Path(__file__).resolve().parents[1]
+        layout = json.loads((project / "userspace/session/frame-controller-remapping.json").read_text(encoding="utf-8"))
+        self.assertEqual(layout["from_controller_type"], "frame_controller")
+        self.assertFalse(layout["simulate_controller_type"])
+        build = (project / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+        self.assertIn('"$project/userspace/session/frame-controller-remapping.json"', build)
+        pacman = (project / "userspace/pacman.conf").read_text(encoding="utf-8")
+        self.assertIn("opt/steamvr/drivers/frame_controller/resources/firmware/*", pacman)
+        self.assertNotIn("opt/steamvr/drivers/frame_controller/* ", pacman)
         self.assertNotIn("compatibility_mode_controller_type", self.profile)  # SteamVR ignores it next to remapping
 
     def test_every_driver_input_is_in_the_profile(self):
