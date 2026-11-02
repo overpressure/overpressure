@@ -241,6 +241,34 @@ class KthreadPrioritiesTest(unittest.TestCase):
             self.assertEqual((workqueues / "dsi_drm_work_1/prio").read_text().strip(), "90")
 
 
+class CompositorPacingTest(unittest.TestCase):
+    LAYER = ROOT / "src/vrdisplay/pico4-swapchain-usage.c"
+
+    def test_the_session_asks_for_stocks_pacing(self):
+        unit_text = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
+        self.assertIn("Environment=PICO4_VRDISPLAY_FRAMES_AHEAD=1\n", unit_text)
+        self.assertIn("Environment=PICO4_VRDISPLAY_VSYNC_LEAD_US=5000\n", unit_text)
+
+    def test_the_layer_gives_it_the_images_it_needs(self):
+        # With the two images SteamVR asks for, its acquire waits for a flip whatever the rest does.
+        layer = self.LAYER.read_text(encoding="utf-8")
+        self.assertIn("frames_ahead() > 0 && info.minImageCount < 4", layer)
+
+    def test_a_present_counts_as_shown_with_the_one_before_it(self):
+        layer = self.LAYER.read_text(encoding="utf-8")
+        self.assertIn("next(device, swapchain, present_id - ahead, 0)", layer)
+        self.assertIn("earlier.presentId = info->presentId - ahead;", layer)
+
+    def test_a_queue_drains_and_a_late_job_keeps_its_slot(self):
+        layer = self.LAYER.read_text(encoding="utf-8")
+        self.assertIn("passed = blocked && value[0] > read_count ? value[0] : read_count;", layer)
+
+    def test_the_driver_learns_the_lead(self):
+        layer = self.LAYER.read_text(encoding="utf-8")
+        self.assertIn('"%s/pico4-vrdisplay-lead-us"', layer)
+        self.assertIn('"%s/pico4-vrdisplay-lead-us"', (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8"))
+
+
 class ConsoleQuietTest(unittest.TestCase):
     def test_only_critical_messages_on_the_headset_console(self):
         # journald forwards errors to the kernel log; printed on the UART console with
