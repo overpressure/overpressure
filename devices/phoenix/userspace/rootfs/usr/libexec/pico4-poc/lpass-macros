@@ -13,10 +13,15 @@ DEV=3370000.codec
 CARD=/proc/asound/PICO4
 
 calibration() {
-	local dev
+	local dev _
 	for dev in /sys/bus/platform/devices/*:calibration; do
 		[ -e "$dev" ] || return 0
-		[ -e "$dev/driver" ] || echo "${dev##*/}" > /sys/bus/platform/drivers_probe 2> /dev/null || true
+		# The ADSP refuses the map for a while after the card is up, for longer on some boots.
+		for _ in $(seq 1 30); do
+			[ -e "$dev/driver" ] && break
+			echo "${dev##*/}" > /sys/bus/platform/drivers_probe 2> /dev/null || true
+			sleep 2
+		done
 		if [ -e "$dev/driver" ]; then log "lpass-macros: calibration loaded"; else log "lpass-macros: no calibration"; fi
 	done
 }
