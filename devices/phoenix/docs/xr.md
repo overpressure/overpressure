@@ -1187,9 +1187,9 @@ pinned by commit).
   measures it: the driver turns the pose it hands out by 5° at known times
   (`PICO4_LATENCY_PROBE_MS`, a period that is no multiple of the refresh sweeps the steps across
   it), and the image on the plane shows each step at a vblank. A pose handed out just before the
-  compositor takes one reaches the vblank 12 ms later; steps arrive 12–23 ms after they start,
-  18 ms in the median. The compositor commits about 10 ms before the vblank. An
-  image in the panel's flash is thus 23 ms old, of which the driver predicts 12 ms and SteamVR 11
+  compositor takes one reaches the vblank 12 ms later, and the display's pacing adds its lead of
+  5 ms; steps arrive 17–28 ms after they start, 24 ms in the median. An
+  image in the panel's flash is thus 28 ms old, of which the driver predicts 17 ms and SteamVR 11
   ms. Too much prediction overshoots at the end of a fast turn and the view springs back, too
   little trails the head: a 10 ms error is 2° at 200°/s.
 - **Anchor.** Basalt's world is mapped onto the filter's by a heading and an offset, at first
