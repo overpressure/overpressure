@@ -176,6 +176,15 @@ class CameraTests(unittest.TestCase):
             self.assertIn("assigned-clock-rates = <37500000>;", cci)
 
 
+class UnalignedAtomicFixupTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0021-arm64-the-unaligned-atomic-fixups-128-bit-load-survives-a-read-only-page.patch"
+
+    def test_the_store_of_the_128_bit_load_has_its_exception_table_entry(self):
+        patch = text(self.PATCH)
+        self.assertIn('+               "2: stlxp %w[Tmp], %[ResultLower], %[ResultUpper], [%[Addr]]\\n"', patch)
+        self.assertIn("+               _ASM_EXTABLE_UACCESS_ERR(2b, 3b, %w[ret])", patch)
+
+
 class VenusCaptureFormatTests(unittest.TestCase):
     PATCH = KERNEL / "patches/0020-media-venus-compressed-capture-formats-as-iris-reports-them.patch"
 

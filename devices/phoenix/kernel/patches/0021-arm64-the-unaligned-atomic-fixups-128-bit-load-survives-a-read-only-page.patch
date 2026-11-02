@@ -1,0 +1,29 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] arm64: the unaligned atomic fixup's 128-bit load survives a read-only page
+
+Load128 reads with a store back, and only its load had an exception table entry. On a page that
+reads but does not write yet (copy-on-write) the store ends in "Unable to handle kernel access to
+user memory outside uaccess routines", and the oops takes the thread with it: a Unity game under
+FEX stays in its first load forever. With the entry the fixup reports the fault, the fault handler
+resolves it as the store it is and the instruction runs again. Every other store in the file has
+its entry.
+---
+diff --git a/arch/arm64/kernel/unaligned_atomic.c b/arch/arm64/kernel/unaligned_atomic.c
+index 28868ad0a3fe..8a31e8b04764 100644
+--- a/arch/arm64/kernel/unaligned_atomic.c
++++ b/arch/arm64/kernel/unaligned_atomic.c
+@@ -129,10 +129,11 @@ static struct fault_info Load128(u64 Addr, u128* Result) {
+ 
+   uaccess_enable_privileged();
+   asm volatile("1: ldaxp %[ResultLower], %[ResultUpper], [%[Addr]]\n"
+-               "   stlxp %w[Tmp], %[ResultLower], %[ResultUpper], [%[Addr]]\n"
++               "2: stlxp %w[Tmp], %[ResultLower], %[ResultUpper], [%[Addr]]\n"
+                "   cbnz %w[Tmp], 1b\n"
+-               "2:\n"
+-               _ASM_EXTABLE_UACCESS_ERR(1b, 2b, %w[ret])
++               "3:\n"
++               _ASM_EXTABLE_UACCESS_ERR(1b, 3b, %w[ret])
++               _ASM_EXTABLE_UACCESS_ERR(2b, 3b, %w[ret])
+                : [Tmp] "=&r"(Tmp), [ResultLower] "=&r"(Lower), [ResultUpper] "=&r"(Upper), [ret] "+r"(ret)
+                : [Addr] "r"(Addr)
+                : "memory");
