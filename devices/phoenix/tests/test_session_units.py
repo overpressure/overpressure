@@ -208,6 +208,38 @@ class KthreadPrioritiesTest(unittest.TestCase):
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertIn("pico4-kthread-priorities.service", build)
 
+    def test_valve_kernel_gets_the_frames_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp, "bin")
+            bin_dir.mkdir()
+            log = Path(tmp, "log").as_posix()
+            processes = ("10 gpu-worker", "11 crtc_event:91", "12 atomic-worker-0", "13 spi0",
+                         "14 irq/252-soundwi", "15 kworker/0:1")
+            for name, body in (("ps", "printf '%s\\n' " + " ".join(f"'{p}'" for p in processes)),
+                               ("chrt", f'echo "chrt $*" >> {log}'),
+                               # An interrupt thread refuses a new affinity.
+                               ("taskset", f'echo "taskset $*" >> {log}; [ "$3" != 14 ]')):
+                path = bin_dir / name
+                path.write_bytes(f"#!/bin/sh\n{body}\n".encode())
+                path.chmod(0o755)
+            workqueues = Path(tmp, "sys/bus/workqueue/devices")
+            for wq in ("msm", "ring0", "ring1", "ring2", "ring3", "dsi_drm_work_0", "dsi_drm_work_1"):
+                (workqueues / wq).mkdir(parents=True)
+                (workqueues / wq / "prio").write_text("255\n")
+            bash = shutil.which("bash")
+            env = dict(os.environ, PICO4_SYSFS=Path(tmp, "sys").as_posix(),
+                       PATH=f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}")
+            script = ROOTFS / "usr/libexec/pico4-poc/kthread-priorities"
+            r = subprocess.run([bash, script.as_posix()], env=env, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            calls = Path(log).read_text().splitlines()
+            for line in ("chrt -r -p 99 10", "chrt -r -p 99 11", "chrt -r -p 88 12", "chrt -r -p 80 13",
+                         "taskset -p 0x0f 13", "chrt -r -p 80 14"):
+                self.assertIn(line, calls)
+            self.assertFalse([c for c in calls if c.endswith(" 15")])
+            self.assertEqual((workqueues / "ring0/prio").read_text().strip(), "90")
+            self.assertEqual((workqueues / "dsi_drm_work_1/prio").read_text().strip(), "90")
+
 
 class ConsoleQuietTest(unittest.TestCase):
     def test_only_critical_messages_on_the_headset_console(self):

@@ -568,16 +568,16 @@ ln -sfn /dev/null "$T/etc/systemd/system-generators/zram-generator"
 # Valve's VR session (docs/session.md): no display manager (pico4-session.service
 # starts the session), and none of the Frame-only system units: the controller
 # radio programmer (a firmware OTA for the Frame's nRF, never to run here),
-# the tracking DSP service, kernel-thread priorities for the Frame's kernel,
-# v4l2loopback and the debug port forwards. The Frame's codec links
+# the tracking DSP service, kernel-thread priorities (its script stops at its first
+# entry here; pico4-kthread-priorities takes its values), v4l2loopback and the debug port forwards. The Frame's codec links
 # (steam-video-codec-setup) stay: the PICO 4's vrdevice_path answers them with Venus.
 in_t systemctl mask sddm.service dsp_service.service steamvr-program-ble.service \
     steamvr-set-kernel-thread-priorities.service steamvr-v4l2loopback.service \
     steamvr-web-debug-portforward.service steam-web-debug-portforward.service
 # The session's user units for Frame hardware (the headset-view loopback camera; the
 # proximity microphone mute, which cannot load this kernel's mixer: pico4-micmute does it) and
-# the sched_ext CPU scheduler (scx_lavd needs Linux 6.12; steamos-manager offers no scheduler
-# interface here, and stage 1 already sets schedutil).
+# the sched_ext CPU scheduler (scx_lavd needs an option Valve's kernel configuration leaves out;
+# steamos-manager offers no scheduler interface here, and stage 1 already sets schedutil).
 in_t systemctl --global mask steamvr-v4l2cam.service steamvr-proxmicmute.service steamos-scheduler.service
 # SteamVR's log forwarder (steamvr-logs) imports inotify_simple, which the Frame's
 # package installs for Python 3.12 only. The module is plain Python: the image's

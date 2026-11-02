@@ -12,7 +12,9 @@
 #
 # A mainline kernel has neither msm_performance nor core_ctl: the same frequency limits go to the
 # cpufreq policies (policy0 the little cores, policy4 the big ones, policy7 the prime core), and
-# every core stays online, which meets core_ctl's minimum.
+# every core stays online, which meets core_ctl's minimum. The big cores, where the compositor runs,
+# stay at their limit (governor performance): on schedutil each frame starts with a frequency ramp,
+# and a frame with Steam's panel redrawing has no time for it (docs/session.md).
 # PICO4_SYSFS and PICO4_VR_PERFORMANCE_STATE replace /sys and the state file for tests.
 set -euo pipefail
 S=${PICO4_SYSFS:-/sys}
@@ -37,6 +39,7 @@ mainline_limits() {
 				policy=${entry%%:*}
 				echo "policy$policy=$(cat "$CPU/cpufreq/policy$policy/scaling_min_freq"):$(cat "$CPU/cpufreq/policy$policy/scaling_max_freq")"
 			done > "$STATE.new"
+			echo "governor=$(cat "$CPU/cpufreq/policy4/scaling_governor")" >> "$STATE.new"
 			mv "$STATE.new" "$STATE"
 		fi
 		for entry in $POLICIES; do
@@ -45,10 +48,15 @@ mainline_limits() {
 			[[ -z $max ]] || echo "$max" > "$CPU/cpufreq/policy$policy/scaling_max_freq"
 			echo "$min" > "$CPU/cpufreq/policy$policy/scaling_min_freq"
 		done
+		echo performance > "$CPU/cpufreq/policy4/scaling_governor"
 		;;
 	off)
 		[[ -s $STATE ]] || return 0
 		while IFS='=' read -r key value; do
+			if [[ $key == governor ]]; then
+				echo "$value" > "$CPU/cpufreq/policy4/scaling_governor"
+				continue
+			fi
 			min=${value%%:*} max=${value#*:}
 			echo "$max" > "$CPU/cpufreq/$key/scaling_max_freq"
 			echo "$min" > "$CPU/cpufreq/$key/scaling_min_freq"

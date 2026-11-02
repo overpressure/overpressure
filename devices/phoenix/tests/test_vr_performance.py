@@ -81,6 +81,7 @@ class VrPerformanceMainlineTests(unittest.TestCase):
             d.mkdir(parents=True)
             (d / "scaling_min_freq").write_text(f"{low}\n")
             (d / "scaling_max_freq").write_text(f"{high}\n")
+            (d / "scaling_governor").write_text("schedutil\n")
         self.state = self.tmp / "run/vr-performance"
 
     def run_script(self, *args):
@@ -91,6 +92,19 @@ class VrPerformanceMainlineTests(unittest.TestCase):
     def limits(self, policy):
         d = self.tmp / f"sys/devices/system/cpu/cpufreq/policy{policy}"
         return (d / "scaling_min_freq").read_text().strip(), (d / "scaling_max_freq").read_text().strip()
+
+    def governor(self, policy):
+        d = self.tmp / f"sys/devices/system/cpu/cpufreq/policy{policy}"
+        return (d / "scaling_governor").read_text().strip()
+
+    def test_only_the_compositors_cores_leave_their_governor(self):
+        self.assertEqual(self.run_script("on").returncode, 0)
+        self.assertEqual(self.governor(4), "performance")
+        self.assertEqual(self.governor(0), "schedutil")
+        self.assertEqual(self.governor(7), "schedutil")
+        self.run_script("on")  # a restart keeps the governor saved before the first
+        self.assertEqual(self.run_script("off").returncode, 0)
+        self.assertEqual(self.governor(4), "schedutil")
 
     def test_on_applies_the_hint_and_off_restores(self):
         self.assertEqual(self.run_script("on").returncode, 0)
