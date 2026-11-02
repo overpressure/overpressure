@@ -176,6 +176,16 @@ class CameraTests(unittest.TestCase):
             self.assertIn("assigned-clock-rates = <37500000>;", cci)
 
 
+class GpuFaultTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0022-drm-msm-a-gpu-page-fault-does-not-stall-the-gpu-as-on-kgsl.patch"
+
+    def test_stalling_is_only_for_debugging(self):
+        patch = text(self.PATCH)
+        self.assertIn("+\tpriv->stall_enabled = stall_on_fault;", patch)
+        self.assertIn("+\tif (stall_on_fault && adreno_smmu->set_stall)", patch)
+        self.assertIn("+\tif (!stall_on_fault)\n+\t\treturn;", patch)
+
+
 class UnalignedAtomicFixupTests(unittest.TestCase):
     PATCH = KERNEL / "patches/0021-arm64-the-unaligned-atomic-fixups-128-bit-load-survives-a-read-only-page.patch"
 

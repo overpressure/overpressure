@@ -1,0 +1,69 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] drm/msm: a GPU page fault does not stall the GPU, as on KGSL
+
+With stall-on-fault the first fault of a boot stalls the GPU while its state is captured, the hang
+detection fires about 80 ms later and the recovery that follows loses the faulting context. Seen as
+a game quit: a job of the session's compositor read an unmapped address, and the session went down.
+KGSL as PICO's kernel ships it keeps the fault's stall off unless its policy asks for it, and its
+default does not: the read terminates, the job runs on, the fault is logged. So here too, with
+msm.stall_on_fault=1 for debugging. Hangs still recover through the hangcheck.
+---
+--- a/drivers/gpu/drm/msm/msm_drv.c
++++ b/drivers/gpu/drm/msm/msm_drv.c
+@@ -49,6 +49,9 @@
+ bool dumpstate;
+ MODULE_PARM_DESC(dumpstate, "Dump KMS state on errors");
+ module_param(dumpstate, bool, 0600);
++bool stall_on_fault;
++MODULE_PARM_DESC(stall_on_fault, "Stall the GPU on a page fault and capture its state (debugging)");
++module_param(stall_on_fault, bool, 0400);
+ 
+ static bool modeset = true;
+ MODULE_PARM_DESC(modeset, "Use kernel modesetting [KMS] (1=on (default), 0=disable)");
+@@ -154,7 +157,7 @@
+ 
+ 	/* Initialize stall-on-fault */
+ 	spin_lock_init(&priv->fault_stall_lock);
+-	priv->stall_enabled = true;
++	priv->stall_enabled = stall_on_fault;
+ 
+ 	/* Teach lockdep about lock ordering wrt. shrinker: */
+ 	fs_reclaim_acquire(GFP_KERNEL);
+--- a/drivers/gpu/drm/msm/msm_drv.h
++++ b/drivers/gpu/drm/msm/msm_drv.h
+@@ -73,6 +73,8 @@
+ 	uint64_t last_gpu, last_cpu;
+ };
+ 
++extern bool stall_on_fault;
++
+ struct msm_drm_private {
+ 
+ 	struct drm_device *dev;
+--- a/drivers/gpu/drm/msm/msm_iommu.c
++++ b/drivers/gpu/drm/msm/msm_iommu.c
+@@ -1008,10 +1008,10 @@
+ 		iommu_set_fault_handler(iommu->lpac_domain, msm_lpac_fault_handler, iommu);
+ 
+ 	/* Enable stall on iommu fault: */
+-	if (adreno_smmu->set_stall)
++	if (stall_on_fault && adreno_smmu->set_stall)
+ 		adreno_smmu->set_stall(adreno_smmu->cookie, true);
+ 
+-	if (lpac_adreno_smmu && lpac_adreno_smmu->set_stall)
++	if (stall_on_fault && lpac_adreno_smmu && lpac_adreno_smmu->set_stall)
+ 		lpac_adreno_smmu->set_stall(lpac_adreno_smmu->cookie, true);
+ 
+ 	return mmu;
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -262,6 +262,9 @@
+ 	struct msm_drm_private *priv = gpu->dev->dev_private;
+ 	unsigned long flags;
+ 
++	if (!stall_on_fault)
++		return;
++
+ 	/*
+ 	 * Wait until the cooldown period has passed and we would actually
+ 	 * collect a crashdump to re-enable stall-on-fault.
