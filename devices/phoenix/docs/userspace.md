@@ -624,6 +624,20 @@ which does what the stock kernel does with the blocks PICO OS's HAL hands it:
    the open. A path without calibration, or one whose topology the ADSP refuses, keeps the null
    topology.
 
+The card plays at 16 bits
+([`51-pico4-sound-card.conf`](../userspace/rootfs/etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf)).
+Mainline's front end also offers S24_LE, which PipeWire prefers, but that reaches the DSP far too
+low, and the calibration's chain then clips what is left. A 1 kHz tone at −6 dBFS, on the same
+microphone path and with the speakers' calibration as noted:
+
+| Format | With calibration | Without |
+| --- | --- | --- |
+| S16_LE | −2 dBFS, third harmonic 48 dB below it | −8 dBFS, third harmonic 27 dB below it: overdriven |
+| S24_LE | −62 dBFS, harmonics 6–8 dB below it: heard as crunchy | −41 dBFS |
+
+Capture is the other way round and stays at S24_LE: at S16_LE the microphone comes in about 47 dB
+low.
+
 Its effect, measured with the microphone at the headset: a quiet tone (−20 dBFS) plays at the same
 level with and without the calibration, while a loud one (−6 dBFS), steady without it, is pulled
 down by about 7 dB within a second with it, PICO's limiting of sustained loud output.

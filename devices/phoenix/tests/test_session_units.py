@@ -241,6 +241,14 @@ class KthreadPrioritiesTest(unittest.TestCase):
             self.assertEqual((workqueues / "dsi_drm_work_1/prio").read_text().strip(), "90")
 
 
+class SoundCardFormatTest(unittest.TestCase):
+    def test_the_card_plays_at_16_bits(self):
+        # S24_LE reaches the DSP far too low and PICO OS's calibration then clips it: crunchy sound.
+        conf = (ROOTFS / "etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf").read_text(encoding="utf-8")
+        self.assertIn('audio.format = "S16LE"', conf)
+        self.assertIn('alsa_output.platform-sound', conf)
+
+
 class CompositorPacingTest(unittest.TestCase):
     LAYER = ROOT / "src/vrdisplay/pico4-swapchain-usage.c"
 
