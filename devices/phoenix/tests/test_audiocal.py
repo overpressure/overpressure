@@ -111,23 +111,23 @@ class AudioCalLookupTests(unittest.TestCase):
 
     def test_mainline_file_layout(self):
         # What q6calibration-pico4.c parses: header, topologies, then per path port, ADM path,
-        # topology and the processing blocks followed by the volume table, each padded to 4.
+        # device and port topologies and the processing blocks followed by the volume table, each padded to 4.
         cal = audiocal.lookup(str(self.dir))
         data = audiocal.mainline_file(cal)
         self.assertEqual(data[:4], b"P4AC")
         version, topo_size, npaths = struct.unpack_from("<III", data, 4)
-        self.assertEqual((version, topo_size, npaths), (1, 16, 2))
+        self.assertEqual((version, topo_size, npaths), (2, 16, 2))
         self.assertEqual(data[16:32], b"TOPOLOGIES-BLOB!")
         off, paths = 32, []
         for _ in range(npaths):
-            port, path, topology, size = struct.unpack_from("<HHII", data, off)
-            params = data[off + 12:off + 12 + size]
-            paths.append((port, path, topology, params))
-            off += 12 + (size + 3) // 4 * 4
+            port, path, topology, afe, size = struct.unpack_from("<HHIII", data, off)
+            params = data[off + 16:off + 16 + size]
+            paths.append((port, path, topology, afe, params))
+            off += 16 + (size + 3) // 4 * 4
         self.assertEqual(off, len(data))
         speaker, mic = cal["paths"]
-        self.assertEqual(paths[0], (0xB000, 1, 0x11000003, speaker["audproc"] + speaker["audvol"]))
-        self.assertEqual(paths[1], (0xB037, 2, 0x10010315, mic["audproc"]))
+        self.assertEqual(paths[0], (0xB000, 1, 0x11000003, speaker["afe_topology"], speaker["audproc"] + speaker["audvol"]))
+        self.assertEqual(paths[1], (0xB037, 2, 0x10010315, mic["afe_topology"], mic["audproc"]))
         driver = (ROOT / "kernel/src/sound/soc/qcom/qdsp6/q6calibration-pico4.c").read_text(encoding="utf-8")
         self.assertIn('#define CAL_FIRMWARE\t"qcom/sm8250/pico4/audio-calibration.bin"', driver)
         self.assertTrue(audiocal.MAINLINE_FILE.endswith("/firmware/qcom/sm8250/pico4/audio-calibration.bin"))

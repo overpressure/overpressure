@@ -568,7 +568,9 @@ Two settings keep the sound continuous under Valve's session (load average about
   sink missed the DSP about 34 times a second: the sounds broke up.
   [`51-pico4-sound-card.conf`](../userspace/rootfs/etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf)
   sets the card's period to 1024 frames and its headroom to 2048 (one period was not enough).
-  On a mainline kernel the driver takes periods in steps of 480 frames, and the card runs at 480.
+  On a mainline kernel the driver calls itself a batch device, for which PipeWire halves the period
+  and adds one of headroom; `api.alsa.disable-batch` gives the period of 1024 and the buffer of
+  8192 frames the stock kernel's card runs with.
 - **A quantum of at least 1024 frames.** A game asks for 5 ms (Beat Saber: 220 frames at
   44.1 kHz), which runs the whole graph at 128 frames, 2.7 ms. Under a game's load, clients then
   miss cycles, and each miss is one quantum of silence in the mix, heard as a crack.
@@ -638,19 +640,33 @@ which does what the stock kernel does with the blocks PICO OS's HAL hands it:
    the open. A path without calibration, or one whose topology the ADSP refuses, keeps the null
    topology.
 
-The card runs as PICO OS does: the speakers' device path, with PICO's processing in it, at 24 bits
-(`SND_DEVICE_OUT_SPEAKER bit_width="24"` in its platform configuration), the microphone's at 16. The
-ADSP's 24-bit PCM has its samples in the top 24 bits of a 32-bit word, so the front end offers it as
-S32_LE (patch 0023), which PipeWire picks for both directions. Mainline offered it as S24_LE, whose
-samples are in the low 24 bits, and ran every device path at 16.
+The card runs as the stock kernel's does during playback: every device path, with PICO's processing
+in it, at 16 bits (patch 0025; PICO OS's platform configuration names 24 for the speakers, the stock
+kernel's back end reads S16_LE). The ADSP's 24-bit PCM has its samples in the top 24 bits of a 32-bit
+word, so the front end offers it as S32_LE (patch 0023), which PipeWire picks for both directions.
+Mainline offered it as S24_LE, whose samples are in the low 24 bits.
 
 The speakers' amplifiers and the WSA macro run with the registers the stock kernel has during
 playback (patch 0024): the compander sets the amplifier's gain over its COMP port, with its boost,
-over-current and path settings. The voltage and current sense stays off. The profile's verb sets the
-boost level and the microphone's gain, because a saved mixer state overrides its boot sequence.
+over-current and path settings. The profile's verb sets the boost level and the microphone's gain,
+because a saved mixer state overrides its boot sequence. The DSP's stream and port get the stock
+kernel's topologies (patch 0025), and the speakers' SoundWire bus its synchronization period and port
+offsets (patch 0026).
+
+Two of the amplifiers' switches are not to be changed on a running system with this driver.
+`VISENSE` on, as the stock kernel has it, adds the sense port to the playback stream: about 9,600 bus
+clashes in 13 s of playback. `COMP` off leaves that port's enable set in the active bus bank: no sound
+and white noise on the right channel, with no kernel error. Off again, with the PCM closed and the
+path powered down, recovers both.
+
+**Open: the end of a sound crackles at the speakers, worn, on all sounds.** The stock kernel's build
+does not. The mix is clean: Steam's volume sound, recorded before the sink, matches its source to
+−84 dB, down to exact silence. The crackle remains with patches 0024 to 0026, and the microphone does
+not catch it (a worn volume sound reads −62 dBFS over a floor of −75). Not yet split: the sink's
+writes to the PCM from the DSP and amplifiers, by playing to the PCM directly.
 
 Compared on the same headset with the stock kernel's build, the same sounds on the microphone at
-the same settings:
+the same settings, with patch 0024:
 
 | Sound | Stock kernel | This kernel |
 | --- | --- | --- |

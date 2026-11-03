@@ -10,10 +10,10 @@
  * when the ADM service comes up, q6routing opens a path with its topology and hands its
  * parameters on after the open. A path without calibration keeps mainline's null topology.
  *
- * The file (little endian): "P4AC", version 1, the topologies' size, the number of paths; the
- * topologies as the database holds them; per path its AFE port id (u16), ADM path (u16), topology,
- * parameter size and parameters (ADM set-parameter v3 entries, as the database packs them), each
- * part padded to 4 bytes.
+ * The file (little endian): "P4AC", version 2, the topologies' size, the number of paths; the
+ * topologies as the database holds them; per path its AFE port id (u16), ADM path (u16), ADM
+ * topology, AFE topology, parameter size and parameters (ADM set-parameter v3 entries, as the
+ * database packs them), each part padded to 4 bytes.
  */
 #include <linux/dma-mapping.h>
 #include <linux/firmware.h>
@@ -24,12 +24,13 @@
 #include <linux/sizes.h>
 #include <linux/unaligned.h>
 #include "q6adm.h"
+#include "q6afe.h"
 #include "q6calibration-pico4.h"
 #include "q6core.h"
 
 #define CAL_FIRMWARE	"qcom/sm8250/pico4/audio-calibration.bin"
 #define CAL_MAGIC	0x43413450	/* "P4AC" */
-#define CAL_VERSION	1
+#define CAL_VERSION	2
 #define CAL_MAX_PATHS	8
 #define SID_MASK	0xf
 
@@ -37,6 +38,7 @@ struct q6cal_path {
 	u16 afe_port;
 	u16 path;
 	u32 topology;
+	u32 afe_topology;
 	u32 size;
 	const u8 *params;
 };
@@ -72,13 +74,14 @@ static int q6cal_parse(struct q6cal *cal, const u8 *d, size_t n)
 	for (i = 0; i < npaths; i++) {
 		struct q6cal_path *p = &cal->paths[i];
 
-		if (off > n || n - off < 12)
+		if (off > n || n - off < 16)
 			return -EINVAL;
 		p->afe_port = get_unaligned_le16(d + off);
 		p->path = get_unaligned_le16(d + off + 2);
 		p->topology = get_unaligned_le32(d + off + 4);
-		p->size = get_unaligned_le32(d + off + 8);
-		off += 12;
+		p->afe_topology = get_unaligned_le32(d + off + 8);
+		p->size = get_unaligned_le32(d + off + 12);
+		off += 16;
 		if (p->size > n - off)
 			return -EINVAL;
 		p->params = d + off;
@@ -155,7 +158,7 @@ static int q6cal_probe(struct platform_device *pdev)
 	u64 dsp_addr;
 	size_t len;
 	void *buf;
-	int ret;
+	int ret, i;
 
 	cal = devm_kzalloc(dev, sizeof(*cal), GFP_KERNEL);
 	if (!cal)
@@ -199,6 +202,9 @@ static int q6cal_probe(struct platform_device *pdev)
 		}
 	}
 
+	for (i = 0; i < cal->npaths; i++)
+		q6afe_set_port_topology(cal->paths[i].afe_port, cal->paths[i].afe_topology);
+
 	platform_set_drvdata(pdev, cal);
 	mutex_lock(&q6cal_lock);
 	q6cal = cal;
@@ -218,6 +224,10 @@ err_fw:
 static void q6cal_remove(struct platform_device *pdev)
 {
 	struct q6cal *cal = platform_get_drvdata(pdev);
+	int i;
+
+	for (i = 0; i < cal->npaths; i++)
+		q6afe_set_port_topology(cal->paths[i].afe_port, 0);
 
 	mutex_lock(&q6cal_lock);
 	q6cal = NULL;

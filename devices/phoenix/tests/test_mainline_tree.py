@@ -190,6 +190,36 @@ class SpeakerAmplifierTests(unittest.TestCase):
         self.assertIn("(snd_soc_component_read(component, gain_reg) + 2) & 0xff", patch)
 
 
+class DspStreamAndPortTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0025-asoc-qcom-the-dsps-stream-and-port-as-the-stock-kernel-runs-them.patch"
+
+    def test_stream_and_port_get_the_stock_kernels_topologies(self):
+        patch = text(self.PATCH)
+        self.assertIn("+#define ASM_STREAM_POSTPROC_TOPO_ID_DEFAULT	0x00010BE4", patch)
+        self.assertIn("+#define AFE_PARAM_ID_SET_TOPOLOGY	0x0001025A", patch)
+        self.assertIn("+	q6afe_send_port_topology(port);", patch)
+
+    def test_periods_have_no_step_and_the_device_path_runs_at_16_bits(self):
+        patch = text(self.PATCH)
+        self.assertIn("-		SNDRV_PCM_HW_PARAM_PERIOD_SIZE, 480);", patch)
+        self.assertIn("+	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);", patch)
+
+
+class SoundWireFrameTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0026-soundwire-qcom-the-frames-sync-points-and-the-port-offsets-as-the-stock-kernel-programs-them.patch"
+
+    def test_sync_points_run_at_the_stock_kernels_rate(self):
+        patch = text(self.PATCH)
+        self.assertIn("+#define SWRM_SSP_RATE_HZ					4000", patch)
+        self.assertIn("SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_BMSK", patch)
+        # The stock kernel's frame control: 19.2 Mbit/s, 50 rows, 16 columns, period field 5.
+        self.assertEqual(19200000 // (50 * 16 * 4000) - 1, 5)
+
+    def test_an_offset_of_0xff_means_none(self):
+        patch = text(self.PATCH)
+        self.assertIn("+	if (pcfg->off2 != SWR_INVALID_PARAM)", patch)
+
+
 class SoundFormatTests(unittest.TestCase):
     PATCH = KERNEL / "patches/0023-asoc-qcom-the-speakers-path-at-24-bits-and-the-dsps-24-bit-pcm-by-its-name.patch"
 

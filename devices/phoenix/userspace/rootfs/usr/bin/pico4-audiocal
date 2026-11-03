@@ -73,7 +73,7 @@ PATHS = [
 # (WSA_CODEC_DMA_RX_0 playback, TX_CODEC_DMA_TX_3 record) and the file the kernel loads.
 MAINLINE_PORTS = {"speaker": (0xB000, 1), "handset-mic": (0xB037, 2)}
 MAINLINE_MAGIC = b"P4AC"
-MAINLINE_VERSION = 1
+MAINLINE_VERSION = 2
 MAINLINE_FILE = "/usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin"
 
 
@@ -308,14 +308,14 @@ def pad4(data: bytes) -> bytes:
 
 def mainline_file(cal: dict) -> bytes:
     """The kernel's calibration file on a mainline kernel: the custom topologies, then per path
-    its port, ADM path, device topology and the parameters PICO OS sends after the open (the
-    processing blocks, then the volume table's step 0), as the database packs them."""
+    its port, ADM path, device and port topologies and the parameters PICO OS sends after the open
+    (the processing blocks, then the volume table's step 0), as the database packs them."""
     out = MAINLINE_MAGIC + struct.pack("<III", MAINLINE_VERSION, len(cal["custom_topologies"]), len(cal["paths"]))
     out += pad4(cal["custom_topologies"])
     for p in cal["paths"]:
         port, path = MAINLINE_PORTS[p["name"]]
         params = (p["audproc"] or b"") + (p["audvol"] or b"")
-        out += struct.pack("<HHII", port, path, p["adm_topology"], len(params)) + pad4(params)
+        out += struct.pack("<HHIII", port, path, p["adm_topology"], p["afe_topology"], len(params)) + pad4(params)
     return out
 
 
