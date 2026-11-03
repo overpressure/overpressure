@@ -220,6 +220,32 @@ class SoundWireFrameTests(unittest.TestCase):
         self.assertIn("+	if (pcfg->off2 != SWR_INVALID_PARAM)", patch)
 
 
+class VenusCaptureBufferTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0027-media-venus-a-decoder-clients-16-capture-buffers-stand.patch"
+
+    def test_a_clients_16_buffers_stand_and_the_firmware_check_keeps_its_minimum(self):
+        patch = text(self.PATCH)
+        self.assertIn("+#define VDEC_CAPTURE_BUFS_ENOUGH	16U", patch)
+        self.assertIn("+		inst->num_output_bufs = max(*num_buffers, out_num);", patch)
+        self.assertIn("+		*num_buffers = max(*num_buffers, min(out_num, VDEC_CAPTURE_BUFS_ENOUGH));", patch)
+
+
+class VenusHeadersFirstTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0028-media-venus-a-decoder-without-pictures-skips-what-comes-before-the-headers.patch"
+
+    def test_data_before_the_headers_goes_back_to_the_client(self):
+        patch = text(self.PATCH)
+        self.assertIn("+	inst->dec_wait_parameter_sets = !inst->streamon_cap &&", patch)
+        self.assertIn("+					!v4l2_m2m_num_src_bufs_ready(inst->m2m_ctx);", patch)
+        self.assertIn("+			if (type == 32 || type == 33)	/* VPS, SPS */", patch)
+        self.assertIn("+		} else if ((p[i + 3] & 0x1f) == 7) {	/* SPS */", patch)
+        self.assertIn("+			v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_DONE);", patch)
+
+    def test_only_buffers_queued_on_a_started_output_queue_are_looked_at(self):
+        patch = text(self.PATCH)
+        self.assertIn("+	    vb2_start_streaming_called(vb->vb2_queue)) {", patch)
+
+
 class SoundFormatTests(unittest.TestCase):
     PATCH = KERNEL / "patches/0023-asoc-qcom-the-speakers-path-at-24-bits-and-the-dsps-24-bit-pcm-by-its-name.patch"
 
