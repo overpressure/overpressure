@@ -568,6 +568,19 @@ Two settings keep the sound continuous under Valve's session (load average about
   sink missed the DSP about 34 times a second: the sounds broke up.
   [`51-pico4-sound-card.conf`](../userspace/rootfs/etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf)
   sets the card's period to 1024 frames and its headroom to 2048 (one period was not enough).
+  On a mainline kernel the driver takes periods in steps of 480 frames, and the card runs at 480.
+- **A quantum of at least 1024 frames.** A game asks for 5 ms (Beat Saber: 220 frames at
+  44.1 kHz), which runs the whole graph at 128 frames, 2.7 ms. Under a game's load, clients then
+  miss cycles, and each miss is one quantum of silence in the mix, heard as a crack.
+  [`51-pico4-quantum.conf`](../userspace/rootfs/etc/pipewire/pipewire.conf.d/51-pico4-quantum.conf)
+  sets the minimum to 1024 frames, about PICO OS's 20 ms deep-buffer period. Measured on the sink's
+  monitor with a tone and Beat Saber in its menu:
+
+  | Minimum quantum | Graph | Holes in the mix |
+  | --- | --- | --- |
+  | 32 (PipeWire's default) | 128 frames | 3 to 5 per 20 s, one quantum each |
+  | 256, 512 | 256, 512 frames | none in 20 s |
+  | 1024 | 1024 frames | none in 60 s |
 
 ```sh
 cat /proc/asound/cards                     # kona-mtp-snd-card

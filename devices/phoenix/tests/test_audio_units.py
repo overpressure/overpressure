@@ -140,6 +140,11 @@ class AudioTimingTests(unittest.TestCase):
         headroom = int(re.search(r"api\.alsa\.headroom = (\d+)", rule).group(1))
         self.assertEqual((period, headroom), (1024, 2 * period))
 
+    def test_the_graph_stays_at_about_the_deep_buffer_period(self):
+        # A game's 5 ms request runs the graph at 128 frames, where clients miss cycles under its load.
+        conf = (ROOTFS / "etc/pipewire/pipewire.conf.d/51-pico4-quantum.conf").read_text(encoding="utf-8")
+        self.assertEqual(int(re.search(r"default\.clock\.min-quantum = (\d+)", conf).group(1)), 1024)
+
 
 class MainlineAudioTests(unittest.TestCase):
     def test_va_macro_binds_after_the_audio_process(self):
