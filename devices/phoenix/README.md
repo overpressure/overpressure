@@ -27,7 +27,7 @@ them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL bac
 | 5 XR hardware | head IMU, Monado with KMS output, lens correction and IPD, four tracking cameras, 6DoF with PICO OS's tracker on the CDSP, controllers (inputs, 3DoF) |
 | 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path; the Steam client in the headset, games started from its library |
 
-Open: worn checks of head and controller tracking on Valve's kernel, the speakers after a suspend, Steam Link, FEX and Lepton on Valve's Mesa, performance, boot feedback and power handling of the installed system. Plan and details:
+Open: worn checks of head and controller tracking on Valve's kernel, the speakers after a suspend, FEX and Lepton on Valve's Mesa, performance, boot feedback and power handling of the installed system. Plan and details:
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Quick start

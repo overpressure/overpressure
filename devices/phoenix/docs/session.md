@@ -922,18 +922,36 @@ SteamVR. The PC's `driver_vrlink` knows the client by the model "PICO 4" (its PI
   size as its length, so both must be iris's: patch 0020 reports `QC10C`'s real pitch and sizes
   without an extradata margin. Otherwise videobuf2 refuses the dma-buf (`EFAULT`), no picture is
   decoded and the bitstream queue fills up.
+- **The stream's start.** `vrlink` restarts the decoder when it sees no progress for 800 ms, also
+  on the PC's first frame, about 5 s after its start, and the stream goes on in the middle of a
+  group of pictures. The firmware starts only on a stream's headers: with other data first it holds
+  every buffer and answers no flush, so that each stop takes the driver's full second and `vrlink`
+  restarts it again. Patch 0028 returns data before the headers to the client while no capture queue
+  streams.
+- **Buffers.** `vrlink` asks for 16 capture buffers and has 16 images; Venus would raise the count to
+  the firmware's minimum of 18 for this stream. Patch 0027 keeps a client's 16; the firmware decodes
+  with them.
 - **Controllers.** `vrlink` sends a controller's input only if its
-  `Prop_ControllerType_String` is `frame_controller`, and otherwise logs a line per controller and
-  frame. SteamVR gives our controllers the Frame controller's bindings
-  ([frame-controller-remapping.json](../userspace/session/frame-controller-remapping.json)), and
-  `libpico4-vrlink-compat.so` makes `pico_controller` compare equal to it in `vrlink`.
+  `Prop_ControllerType_String` is `frame_controller`, and the PC's driver reads that input only for
+  that type. The PC activates a controller only when its static properties have a serial, a
+  manufacturer and a type. `vrlink` reads poses and haptics through its legacy actions
+  ([pico4-vrlink-bindings.json](../userspace/pkgbuilds/pico4-monado/pico4-vrlink-bindings.json)) and
+  the inputs by the Frame's paths (`IVRPaths`). So `libpico4-vrlink-compat.so`, in `vrlink`'s process
+  only, reports `frame_controller` and a manufacturer, and turns the Frame's `thumbstick`,
+  `dpad_down` and `dpad_up` paths into our `joystick`, `x` and `y`, the reverse of
+  [frame-controller-remapping.json](../userspace/session/frame-controller-remapping.json). SteamVR
+  on the headset keeps `pico_controller`.
+- **Timing.** SteamVR on the PC writes each frame's times to `vrlink_aftm_*.csv` in Steam's logs.
 
 | Check | Result |
 | --- | --- |
 | Headset, Valve's kernel: `vrlink`'s path without the PC (Venus decodes into dma-bufs of images built as `vrlink` builds them, a compute shader samples them through a YCbCr sampler) | 8-bit and Main10 at 1280×5120: the image and the reported size match (9,891,840 and 13,885,440 bytes), the sampled picture is identical to FFmpeg's decode of the same frame; 8-bit 1536×6144: the sizes match (14,229,504 bytes) |
 | Headset: the decoder through the layer, driven as `vrlink` drives it (NVENC HEVC test streams at 90 fps, Vulkan pictures as `vrlink` creates them) | steady 1280×5120, a reset, a size increase, a size decrease and a decrease with a reset: 268–269 of 270 pictures each at 90 fps, Venus stays up |
 | Headset: a decoded picture through the GPU (`vrlink`'s explicit `QCOM_COMPRESSED` import, copied to linear NV12) | identical to FFmpeg's decode of the same frame, also after a size decrease; Turnip sizes the image as Venus does (9,891,840 bytes at 1280×5120) |
-| Headset: Steam Link from a PC | the PC accepts the headset and streams HEVC at 1280x5120, about 88 frames/s arriving; the decoded picture is wrong: green, different in the two eyes, the game's title only faintly visible |
+| Headset, Valve's kernel: the decoder with frames before the first key frame (4, 12 and 40, Main10 at 1280×5120) | first picture 160, 261 and 438 ms after the decoder's start, no errors; without patch 0028 no picture within 5 s |
+| Headset, Valve's kernel: Steam Link from a PC (POOLS on an NVIDIA GPU, 1280×5120 Main10 over Wi-Fi), worn | picture, audio, head tracking and controllers work, by the wearer's report; about 22 minutes at 90 frames/s in one run |
+| The picture's start | about 8 s after `vrlink`'s start and 3 s after the PC's first frame, with 3 decoder restarts (without patch 0028: 18 and about 100 s) |
+| Frame times in a run of POOLS | from the game's frame start to illumination 73 ms (median; 67–78 ms, 5th to 95th percentile); of it encode 11–22 ms, send to receive 4 ms, decode 6 ms, decode end to illumination 30 ms. While the PC's encoder takes 22 ms the stream runs at about 67 frames/s, with 11 ms at 90 |
 
 ## Build
 

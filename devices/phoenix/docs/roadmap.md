@@ -7,7 +7,7 @@ stock Android kernel, which is no longer pursued; the way back to PICO OS stays.
 from a recoverable development device to Valve's VR session, and follows the strategy of the
 background research in [research.md](research.md). All six steps work on the tested headset,
 an original PICO 4. Open work: worn checks of tracking on Valve's kernel, the speakers after a
-suspend, Steam Link, FEX and Lepton on Valve's Mesa, performance and the installed system's power handling.
+suspend, FEX and Lepton on Valve's Mesa, performance and the installed system's power handling.
 
 ## Status
 

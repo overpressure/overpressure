@@ -1,3 +1,4 @@
+import json
 import re
 import unittest
 from pathlib import Path
@@ -76,12 +77,25 @@ class SteamLinkTests(unittest.TestCase):
         self.assertIn("./test_pico4_vidc_compat", read(ROOT / "userspace/pkgbuilds/pico4-vrlink/PKGBUILD"))
 
     def test_our_controllers_are_the_frames_to_vrlink(self):
-        # vrlink compares the type with std::string::compare and sends nothing for any other.
+        # vrlink sends input only for the Frame's type, and the PC's driver reads it only for that type.
         hooks = read(ROOT / "src/vrlink/pico4-vrlink-compat.c")
-        self.assertIn("EXPORT int\nCXX_STRING_COMPARE(const struct cxx_string *self, const char *other)\n{", hooks)
-        self.assertIn("#define CXX_STRING_COMPARE _ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareEPKc", hooks)
-        self.assertIn('static const char ours[] = "pico_controller";', hooks)
-        self.assertIn('strcmp(other, "frame_controller") == 0', hooks)
+        self.assertIn("EXPORT void *\nVR_GetGenericInterface(const char *version, int32_t *error)\n{", hooks)
+        self.assertIn('return vr_string_result("frame_controller", value, size, error);', hooks)
+        # The PC's driver activates a controller only with a manufacturer; ours has none.
+        self.assertIn('return vr_string_result("PICO", value, size, error);', hooks)
+
+    def test_vrlinks_input_paths_are_the_reverse_of_the_bindings_remapping(self):
+        # vrlink reads inputs by the Frame's paths: each one it asks for has to lead to one of ours.
+        hooks = read(ROOT / "src/vrlink/pico4-vrlink-compat.c")
+        paths = re.findall(r'\{"(/user/hand/[^"]+)/", "(/user/hand/[^"]+)/"\}', hooks)
+        self.assertEqual(len(paths), 4)
+        remapping = json.loads(read(ROOT / "userspace/session/frame-controller-remapping.json"))
+        remapped = {(entry["from"], entry["to"]) for entry in remapping["autoremappings"]}
+        for frame, ours in paths:
+            if frame.startswith("/user/hand/left/input/thumbstick"):
+                # The file names the right hand's stick; the left's is its mirror.
+                frame, ours = frame.replace("left", "right"), ours.replace("left", "right")
+            self.assertIn((frame, ours), remapped)
 
     def test_buffers_carry_their_fd_as_the_driver_wants(self):
         core = read(ROOT / "src/vrlink/pico4-vidc-compat.c")

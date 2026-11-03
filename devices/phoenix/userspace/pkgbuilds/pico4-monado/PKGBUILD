@@ -82,7 +82,7 @@ sha256sums=(SKIP
             SKIP SKIP
             f667c80d96c3251dd5e49ce10017b4fd702289ba2df5d49bacaf4465ceaee050
             c231b75202e6881295f87ec55580bb96aaf13a2637fed78bc20499ed003c6fc8
-            51a5d5acf4f167de960155baac83945d05b61afec202e49403c738f0cdb3daaa)
+            2a789ddf06894ec402ab73fb3cefbfdfadfe8d58d8fd20b2488c566d430fa170)
 
 prepare() {
   patch -d monado -p1 < monado-pico4-driver.patch

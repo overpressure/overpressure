@@ -70,6 +70,19 @@ class ControllerTypeTests(unittest.TestCase):
             self.assertIn(path, self.profile["input_source"])
         self.assertIn('install -Dm644 pico4-vrlink-bindings.json "$input/pico4_vrlink_bindings.json"', read("PKGBUILD"))
 
+    def test_steam_link_client_gets_the_controllers_inputs(self):
+        # The client reads a controller's input from its legacy actions; without sources the PC gets none.
+        sources = json.loads(read("pico4-vrlink-bindings.json"))["bindings"]["/actions/legacy"]["sources"]
+        paths = {s["path"] for s in sources}
+        for hand in ("left", "right"):
+            for name in ("system", "trigger", "grip", "joystick"):
+                self.assertIn(f"/user/hand/{hand}/input/{name}", paths)
+        self.assertTrue({"/user/hand/left/input/x", "/user/hand/left/input/y",
+                         "/user/hand/right/input/a", "/user/hand/right/input/b"} <= paths)
+        outputs = {i["output"] for s in sources for i in s["inputs"].values()}
+        self.assertIn("/actions/legacy/in/left_axis0_value", outputs)
+        self.assertIn("/actions/legacy/in/right_axis2_value1", outputs)
+
     def test_the_panels_refresh_rates_for_steam_link(self):
         patch = read("monado-steamvr-frame-rates.patch")
         self.assertIn("+	float rates[] = {m_flDisplayFrequency};", patch)
