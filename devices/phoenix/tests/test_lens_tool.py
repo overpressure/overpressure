@@ -117,7 +117,16 @@ class SessionTests(unittest.TestCase):
         self.assertIn("/sys/class/backlight/pico4-panel/bl_power", hmd)
         panel = self.read("kernel/src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c")
         self.assertIn('"pico4-panel"', panel)
-        self.assertIn("if (ctx->enabled)", panel)
+        # Raising the enable line alone leaves the lenses dark.
+        self.assertIn("ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);\n\tif (ret)\n\t\tdev_err", panel)
+
+    def test_the_panels_light_for_whoever_wears_it_as_steamvr_starts(self):
+        unit = self.read("userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/54-pico4-panel-light.conf")
+        self.assertIn("ExecStartPost=-/usr/libexec/pico4-poc/panel-light", unit)
+        script = self.read("userspace/rootfs/usr/libexec/pico4-poc/panel-light")
+        self.assertIn('[ "$(cat "$power")" = 0 ] || exit 0', script)
+        self.assertIn('echo 4 > "$power"', script)
+        self.assertIn('echo 0 > "$power"', script)
         rules = self.read("userspace/rootfs/usr/lib/udev/rules.d/70-pico4-xr.rules")
         self.assertIn('KERNEL=="pico4-panel"', rules)
 

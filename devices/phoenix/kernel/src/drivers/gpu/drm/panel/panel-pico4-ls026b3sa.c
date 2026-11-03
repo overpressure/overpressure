@@ -73,6 +73,7 @@ struct pico4_panel {
 	struct gpio_desc *backlight;
 	struct backlight_device *bl;
 	bool enabled;
+	bool dimmed;
 	const u8 *on_cmds, *off_cmds;
 	int on_len, off_len;
 };
@@ -200,6 +201,7 @@ static int pico4_enable(struct drm_panel *panel)
 	dev_info(ctx->dev, "backlight on\n");
 	gpiod_direction_output(ctx->backlight, !backlight_is_blank(ctx->bl));
 	ctx->enabled = true;
+	ctx->dimmed = backlight_is_blank(ctx->bl);
 	return 0;
 }
 
@@ -213,16 +215,28 @@ static int pico4_disable(struct drm_panel *panel)
 }
 
 /*
- * The enable line as a backlight device, for a session's standby: its compositor keeps the panels
- * on with black frames and holds the display, and the MCU's brightness command showed no effect.
- * While the panels are off the line stays low and pico4_enable() applies the state.
+ * A session's standby: its compositor keeps the panels on with black frames and holds the display,
+ * and the MCU's brightness command showed no effect. The enable line darkens the lenses, but raising
+ * it alone leaves them dark: with the power-on commands sent again while it is low, over the running
+ * video, they light at once. They do the same for a boot's panels, which stay dark after their first
+ * power-on until a resume or this (the session's panel-light; why is not known).
  */
 static int pico4_bl_update_status(struct backlight_device *bl)
 {
 	struct pico4_panel *ctx = bl_get_data(bl);
+	int ret;
 
-	if (ctx->enabled)
-		gpiod_set_value_cansleep(ctx->backlight, !backlight_is_blank(bl));
+	if (!ctx->enabled || ctx->dimmed == backlight_is_blank(bl))
+		return 0;
+	ctx->dimmed = backlight_is_blank(bl);
+	if (ctx->dimmed) {
+		gpiod_set_value_cansleep(ctx->backlight, 0);
+		return 0;
+	}
+	ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);
+	if (ret)
+		dev_err(ctx->dev, "power-on commands: %d\n", ret);
+	gpiod_set_value_cansleep(ctx->backlight, 1);
 	return 0;
 }
 
