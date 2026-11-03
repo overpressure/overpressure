@@ -176,6 +176,20 @@ class CameraTests(unittest.TestCase):
             self.assertIn("assigned-clock-rates = <37500000>;", cci)
 
 
+class SpeakerAmplifierTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0024-asoc-the-speakers-amplifiers-and-codec-path-as-the-stock-kernel-runs-them.patch"
+
+    def test_the_compander_sets_the_amplifiers_gain(self):
+        patch = text(self.PATCH)
+        self.assertIn("+					      wsa881x->port_enable[WSA881X_PORT_COMP] ?", patch)
+        self.assertIn("+					      WSA881X_PA_GAIN_SEL_DRE :", patch)
+
+    def test_the_gain_offset_is_applied_whole_and_taken_back(self):
+        patch = text(self.PATCH)
+        self.assertIn("(snd_soc_component_read(component, gain_reg) - 2) & 0xff", patch)
+        self.assertIn("(snd_soc_component_read(component, gain_reg) + 2) & 0xff", patch)
+
+
 class SoundFormatTests(unittest.TestCase):
     PATCH = KERNEL / "patches/0023-asoc-qcom-the-speakers-path-at-24-bits-and-the-dsps-24-bit-pcm-by-its-name.patch"
 

@@ -644,15 +644,20 @@ ADSP's 24-bit PCM has its samples in the top 24 bits of a 32-bit word, so the fr
 S32_LE (patch 0023), which PipeWire picks for both directions. Mainline offered it as S24_LE, whose
 samples are in the low 24 bits, and ran every device path at 16.
 
-| Stream and device path | 1 kHz at −6 dBFS, volume 1.0, on the microphone | |
-| --- | --- | --- |
-| S32_LE, speakers at 24 bits | −52 dBFS, third harmonic 32–40 dB below it | in the tail of a fade at volume 0.3, just after PICO's processing drops it by about 25 dB: third harmonic 23–29 dB below the tone, fifth 30–39 dB; the microphone reads about as on the stock kernel |
-| S16_LE, device path at 16 bits | as loud | at the same point: third 15–30 dB, fifth 3–6 dB below, and about 10 dB further down both at or above the tone: heard as crunch at the end of every sound |
-| S24_LE as mainline had it | 56 dB lower | every sound crunchy, and the microphone 48 dB too hot |
+The speakers' amplifiers and the WSA macro run with the registers the stock kernel has during
+playback (patch 0024): the compander sets the amplifier's gain over its COMP port, with its boost,
+over-current and path settings. The voltage and current sense stays off. The profile's verb sets the
+boost level and the microphone's gain, because a saved mixer state overrides its boot sequence.
 
-Its effect, measured with the microphone at the headset: a quiet tone (−20 dBFS) plays at the same
-level with and without the calibration, while a loud one (−6 dBFS), steady without it, is pulled
-down by about 7 dB within a second with it, PICO's limiting of sustained loud output.
+Compared on the same headset with the stock kernel's build, the same sounds on the microphone at
+the same settings:
+
+| Sound | Stock kernel | This kernel |
+| --- | --- | --- |
+| 1 kHz fading 15 dB/s, volume 0.6, per 250 ms | −41 −43 −47 −51 −55 −59 −65 −71 −81 dBFS | −48 −50 −54 −58 −63 −67 −72 −80 −85 dBFS |
+| Steam's volume sound, volume 0.52 | repeats alike within 1 dB, into the room's noise | the same shape, repeats alike |
+
+The microphone reads about 7 dB lower here, its noise floor with it (−62 and −68 dBFS).
 
 ## Memory
 

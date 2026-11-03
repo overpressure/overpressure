@@ -147,6 +147,12 @@ class AudioTimingTests(unittest.TestCase):
 
 
 class MainlineAudioTests(unittest.TestCase):
+    def test_every_verb_sets_what_a_saved_mixer_state_would_override(self):
+        # alsa-restore's saved state wins over the profile's boot sequence.
+        verb = (ROOTFS / "usr/share/alsa/ucm2/conf.d/sm8250/PICO4-HiFi.conf").read_text(encoding="utf-8")
+        for control in ("'SpkrLeft Smart Boost Level' 7", "'SpkrRight Smart Boost Level' 7", "'ADC1 Volume' 12"):
+            self.assertIn(control, verb)
+
     def test_va_macro_binds_after_the_audio_process(self):
         # Its probe votes the LPASS hardware through the AFE, which refuses until audiopd runs.
         u = unit("pico4-lpass-macros.service")
