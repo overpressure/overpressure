@@ -40,8 +40,8 @@ come from the image ([stage1.md](stage1.md), [xr.md](xr.md)).
   image) is taken from the new image.
 - **Boot indication.** [`pico4-splash`](../src/splash/pico4-splash.c) shows a turning ring of
   dots in the middle of both lenses while the system starts. Stage 1 starts it before it mounts
-  the system, about 15 s after the kernel; it survives the switch to systemd, whose
-  `pico4-splash.service` takes the display from it at about 29 s. It sets the panels' 90 Hz
+  the system, about 4 s after the kernel on Valve's kernel; it survives the switch to systemd, whose
+  `pico4-splash.service` takes the display from it at about 15 s. It sets the panels' 90 Hz
   mode on the six stock layers and then gives up DRM master, so the next compositor (Monado,
   SteamVR's) becomes master as usual; its commit ends the indication. After four minutes it
   ends in any case.

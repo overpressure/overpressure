@@ -120,15 +120,11 @@ class SessionTests(unittest.TestCase):
         # Raising the enable line alone leaves the lenses dark.
         self.assertIn("ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);\n\tif (ret)\n\t\tdev_err", panel)
 
-    def test_the_panels_light_for_whoever_wears_it_as_steamvr_starts(self):
-        unit = self.read("userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/54-pico4-panel-light.conf")
-        self.assertIn("ExecStartPost=-/usr/libexec/pico4-poc/panel-light", unit)
-        script = self.read("userspace/rootfs/usr/libexec/pico4-poc/panel-light")
-        self.assertIn('[ "$(cat "$power")" = 0 ] || exit 0', script)
-        self.assertIn('echo 4 > "$power"', script)
-        self.assertIn('echo 0 > "$power"', script)
-        rules = self.read("userspace/rootfs/usr/lib/udev/rules.d/70-pico4-xr.rules")
-        self.assertIn('KERNEL=="pico4-panel"', rules)
+    def test_a_boots_panels_get_their_first_light(self):
+        # They stay dark after their first power-on, and the boot's spinner with them.
+        panel = self.read("kernel/src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c")
+        self.assertIn("schedule_delayed_work(&ctx->first_light, msecs_to_jiffies(300));", panel)
+        self.assertIn("cancel_delayed_work_sync(&ctx->first_light);", panel)
 
     def test_the_driver_logs_the_battery_level_raw(self):
         controller = self.read("src/monado/pico4_controller.c")

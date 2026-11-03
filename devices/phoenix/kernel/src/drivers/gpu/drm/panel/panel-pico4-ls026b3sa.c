@@ -20,6 +20,7 @@
 #include <linux/of_graph.h>
 #include <linux/regulator/consumer.h>
 #include <linux/unaligned.h>
+#include <linux/workqueue.h>
 
 #include <drm/display/drm_dsc.h>
 #include <drm/display/drm_dsc_helper.h>
@@ -74,6 +75,8 @@ struct pico4_panel {
 	struct backlight_device *bl;
 	bool enabled;
 	bool dimmed;
+	bool lit;
+	struct delayed_work first_light;
 	const u8 *on_cmds, *off_cmds;
 	int on_len, off_len;
 };
@@ -194,6 +197,26 @@ static int pico4_prepare(struct drm_panel *panel)
 	return ret;
 }
 
+/*
+ * A boot's panels stay dark after their first power-on, whatever they are shown, until a resume or
+ * until the power-on commands go out again over the running video, with the enable line low. Why is
+ * not known: the display's GPIOs, supplies and clocks read the same in both states.
+ */
+static void pico4_first_light(struct work_struct *work)
+{
+	struct pico4_panel *ctx = container_of(to_delayed_work(work), struct pico4_panel, first_light);
+	int ret;
+
+	mutex_lock(&ctx->bl->update_lock);
+	if (ctx->enabled && !ctx->dimmed) {
+		gpiod_set_value_cansleep(ctx->backlight, 0);
+		ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);
+		gpiod_set_value_cansleep(ctx->backlight, 1);
+		dev_info(ctx->dev, "first light: %d\n", ret);
+	}
+	mutex_unlock(&ctx->bl->update_lock);
+}
+
 static int pico4_enable(struct drm_panel *panel)
 {
 	struct pico4_panel *ctx = to_pico4_panel(panel);
@@ -202,6 +225,10 @@ static int pico4_enable(struct drm_panel *panel)
 	gpiod_direction_output(ctx->backlight, !backlight_is_blank(ctx->bl));
 	ctx->enabled = true;
 	ctx->dimmed = backlight_is_blank(ctx->bl);
+	if (!ctx->lit && !keep_boot_state) {
+		ctx->lit = true;
+		schedule_delayed_work(&ctx->first_light, msecs_to_jiffies(300));
+	}
 	return 0;
 }
 
@@ -209,6 +236,7 @@ static int pico4_disable(struct drm_panel *panel)
 {
 	struct pico4_panel *ctx = to_pico4_panel(panel);
 
+	cancel_delayed_work_sync(&ctx->first_light);
 	ctx->enabled = false;
 	gpiod_set_value_cansleep(ctx->backlight, 0);
 	return 0;
@@ -218,8 +246,7 @@ static int pico4_disable(struct drm_panel *panel)
  * A session's standby: its compositor keeps the panels on with black frames and holds the display,
  * and the MCU's brightness command showed no effect. The enable line darkens the lenses, but raising
  * it alone leaves them dark: with the power-on commands sent again while it is low, over the running
- * video, they light at once. They do the same for a boot's panels, which stay dark after their first
- * power-on until a resume or this (the session's panel-light; why is not known).
+ * video, they light at once.
  */
 static int pico4_bl_update_status(struct backlight_device *bl)
 {
@@ -378,6 +405,7 @@ static int pico4_probe(struct mipi_dsi_device *dsi)
 	ctx->vio = devm_gpiod_get(dev, "vio", GPIOD_ASIS);
 	if (IS_ERR(ctx->vio))
 		return dev_err_probe(dev, PTR_ERR(ctx->vio), "vio gpio\n");
+	INIT_DELAYED_WORK(&ctx->first_light, pico4_first_light);
 	ctx->backlight = devm_gpiod_get(dev, "backlight", GPIOD_ASIS);
 	if (IS_ERR(ctx->backlight))
 		return dev_err_probe(dev, PTR_ERR(ctx->backlight), "backlight gpio\n");
