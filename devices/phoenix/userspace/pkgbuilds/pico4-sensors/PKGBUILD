@@ -12,10 +12,11 @@
 #                audio process (-P audiopd, on either ABI: the upstream driver's
 #                INIT_CREATE_STATIC), as PICO OS's "adsprpcd audiopd" does,
 #                and to answer ftell, which that process reads its files with.
+#                A second patch takes the sensors process's registry writes and drops them.
 # Sources are pinned by commit; the patches are this project's own.
 pkgname=pico4-sensors
 pkgver=0.1
-pkgrel=2
+pkgrel=3
 arch=(aarch64)
 url="https://github.com/linux-msm"
 license=(BSD-3-Clause GPL-3.0-or-later)
@@ -28,13 +29,16 @@ source=("qrtr::git+https://github.com/linux-msm/qrtr.git#commit=$_qrtr"
         "pd-mapper::git+https://github.com/linux-msm/pd-mapper.git#commit=$_pdmapper"
         "hexagonrpc::git+https://github.com/linux-msm/hexagonrpc.git#commit=$_hexagonrpc"
         hexagonrpc-vendor-kernel.patch
+        hexagonrpc-registry-writes.patch
         pd-mapper-jsn-dirs.patch)
 sha256sums=(SKIP SKIP SKIP
             '1022eb5f4d9ee24968224fe357c38f2f23acc91f7dbfd5715594a925d1a6b8dd'
+            '5263fe886404d2ea7491cecb41bdace9f7055a2762acd6e0a4985b23bee6c281'
             '6de989aaa80ca73bd53ba3a7c6192e7f8eba577e222dc95541cb8dc29e903dd3')
 
 prepare() {
   patch -d hexagonrpc -p1 < hexagonrpc-vendor-kernel.patch
+  patch -d hexagonrpc -p1 < hexagonrpc-registry-writes.patch
   patch -d pd-mapper -p1 < pd-mapper-jsn-dirs.patch
 }
 

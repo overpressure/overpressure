@@ -24,5 +24,25 @@ class ChecksumTests(unittest.TestCase):
                     self.assertIn(hashlib.sha256(path.read_bytes()).hexdigest(), pkgbuild)
 
 
+class RegistryWritesTests(unittest.TestCase):
+    """The sensors process's registry writes: taken and dropped, so that its IMU comes without 37 s of retries."""
+
+    def test_only_the_registry_is_taken_and_nothing_reaches_a_file(self):
+        patch = (Path(__file__).resolve().parents[1]
+                 / "userspace/pkgbuilds/pico4-sensors/hexagonrpc-registry-writes.patch").read_text(encoding="utf-8")
+        self.assertIn('+	return strstr(path, "/sensors/registry/") != NULL;', patch)
+        self.assertIn("+		if (is_registry_path(inbufs[3].p)) {", patch)
+        self.assertIn('fprintf(stderr, "Tried to open %s for writing', patch)
+        added = "\n".join(line for line in patch.splitlines() if line.startswith("+"))
+        for call in ("fopen(", "fwrite(", "open(", "rename(", "write("):
+            self.assertNotRegex(added, r"(?<![_\w])" + re.escape(call))
+
+    def test_large_inputs_come_through_the_listener(self):
+        patch = (Path(__file__).resolve().parents[1]
+                 / "userspace/pkgbuilds/pico4-sensors/hexagonrpc-registry-writes.patch").read_text(encoding="utf-8")
+        self.assertIn("-		fprintf(stderr, \"Large (>256B) input buffers aren't implemented", patch)
+        self.assertIn("+		ret = adsp_listener_get_in_bufs2(fd, *rctx, offset, &got, want, more);", patch)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -118,9 +118,12 @@ Behaviour of this kernel and DSP:
 - **Persistent listener.** The FastRPC listener has to stay alive. If a listener dies, the
   sensors process keeps it registered: a new `hexagonrpcd` cannot attach until the SLPI
   restarts.
-- **Read-only registry.** `hexagonfs` is read-only. During startup the DSP tries to rewrite the
-  registry groups (about 1650 refused `temp.json` writes), then stays quiet. Its factory
-  calibration is read from the registry and stays in effect.
+- **Read-only registry.** `hexagonfs` is read-only. During startup the DSP rewrites each registry
+  group: to `temp.json`, then renamed over the group (`apps_std` method 33, whose two paths are all
+  that is known of it). Refused, it retried about 1650 times, 22 ms apart, and the IMU was listed
+  after 37 s. So `hexagonrpcd` takes these writes and drops them. The DSP goes on from the registry
+  in `persist`, as it did when they were refused: its factory calibration stays in effect, and what
+  it would have saved is not kept.
 - **Rate selection.** The SSC runs a sensor at the next supported output data rate at or above
   the request and reports the requested rate as configured: 500 Hz runs the ICM-42688 at
   512 Hz, 512 or 1000 Hz at 1024 Hz.
@@ -1004,7 +1007,9 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   `Prop_CurrentUniverseId_Uint64` itself; it re-reads it every frame and, for a universe the file
   does not hold, keeps no standing space at all, so setting only the property (as before) left a
   new room's playspace setup without a floor. SteamVR keeps a play area per room, back in its
-  place whenever the tracker relocalises in that room. Until then the universe is 2. The tracker's own
+  place whenever the tracker relocalises in that room. Until then the universe is 2. A new room's
+  universe waits for a wearer: a headset started on a table can miss the tracker's 8 s to relocalise
+  and find its saved room after that, and each such start would leave an entry in the file. The tracker's own
   map name (`getRelocMapInfo`, the name of its current map object) is no identity: after a merge
   it can be the session's new map, and a saved room then came back as a new universe. Rooms saved
   with the plain 2 m square from before the ids (it reads as a reserved id) get an id and shape at
