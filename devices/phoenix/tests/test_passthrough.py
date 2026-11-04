@@ -1,4 +1,4 @@
-"""an issue: SteamVR's camera from the forward tracking cameras (docs/xr.md#passthrough)."""
+"""SteamVR's camera from the forward tracking cameras (docs/xr.md#passthrough)."""
 import json
 import re
 import unittest
@@ -155,7 +155,7 @@ class RoomViewTests(unittest.TestCase):
         self.assertFalse(0 < u < 1 and 0 < v < 1)
 
     def test_double_press_toggles_the_room_view(self):
-        # an issue: as the Frame's bindings on its headset's system button: once the dashboard,
+        # As the Frame's bindings on its headset's system button: once the dashboard,
         # twice the room view.
         bindings = json.loads(read(RECIPE / "pico4-vrcompositor-bindings.json"))
         sources = bindings["bindings"]["/actions/system"]["sources"]
@@ -178,7 +178,7 @@ class RoomViewTests(unittest.TestCase):
         self.assertIn("math_pose_transform(&xdev->tracking_origin->initial_offset, &tracked, &pose)", pose)
 
     def test_depth_mesh_published_as_the_frame(self):
-        # an issue: PICO OS's see-through depth mesh in the compositor's 3D room view, published
+        # PICO OS's see-through depth mesh in the compositor's 3D room view, published
         # as the Frame's XR service publishes its own.
         patch = read(RECIPE / "monado-steamvr-roomview-mesh.patch")
         recipe = read(RECIPE / "PKGBUILD")

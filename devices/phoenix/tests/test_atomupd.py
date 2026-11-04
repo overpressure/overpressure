@@ -16,7 +16,7 @@ def arms(script: str) -> dict[str, str]:
 
 
 class AtomupdManagerTests(unittest.TestCase):
-    """an issue: the queries Valve's steamos-select-branch and steamos-update make."""
+    """The queries Valve's steamos-select-branch and steamos-update make."""
 
     def setUp(self):
         self.script = MANAGER.read_text(encoding="utf-8")

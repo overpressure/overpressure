@@ -73,7 +73,7 @@ class WiringTests(unittest.TestCase):
         self.assertNotIn(b"\r", PATH.read_bytes())
 
     def test_frame_chaperone_settings(self):
-        # The Frame driver's own room-setup settings (frame_hmd_additional.vrsettings), an issue.
+        # The Frame driver's own room-setup settings (frame_hmd_additional.vrsettings).
         s = json.loads((ROOT / "userspace/session/steamvr.vrsettings").read_text(encoding="utf-8"))
         self.assertTrue(s["steamvr"]["promptForChaperoneAtGameLaunch"])
         self.assertFalse(s["steamvr"]["requireChaperoneAtGameLaunch"])

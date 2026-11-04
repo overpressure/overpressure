@@ -1,4 +1,4 @@
-"""an issue: the image is built without the user's backup.
+"""The image is built without the user's backup.
 
 The stock files come from PICO's public OTA (python -m overpressure stock), the headset's own factory data
 from its persist partition at boot (pico4-persist.service).

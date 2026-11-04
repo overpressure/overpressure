@@ -9,7 +9,7 @@ BINARY = ROOT / "prebuilt/aarch64/pico4-splash"
 
 
 class SplashTests(unittest.TestCase):
-    """an issue: a sign of life in the lenses while the installed system starts."""
+    """A sign of life in the lenses while the installed system starts."""
 
     def test_prebuilt_is_a_static_aarch64_program(self):
         data = BINARY.read_bytes()

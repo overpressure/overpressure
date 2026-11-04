@@ -7,7 +7,7 @@ RECIPE = ROOT / "userspace/pkgbuilds/pico4-gamescope"
 
 
 class GamescopeTests(unittest.TestCase):
-    """an issue: the Frame's gamescope, built here with the fix for a window added twice."""
+    """The Frame's gamescope, built here with the fix for a window added twice."""
 
     def test_the_frames_commit_and_pinned_wraps(self):
         recipe = (RECIPE / "PKGBUILD").read_text(encoding="utf-8")

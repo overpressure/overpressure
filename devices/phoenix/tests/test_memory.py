@@ -7,7 +7,7 @@ GENERATOR = "/usr/lib/systemd/system-generators/zram-generator"
 
 
 class ZramSwapTests(unittest.TestCase):
-    """an issue: the Frame's zram swap on the installed system, never on the dev boot's zram root."""
+    """The Frame's zram swap on the installed system, never on the dev boot's zram root."""
 
     def setUp(self):
         self.unit = (UNITS / "pico4-zram-swap.service").read_text(encoding="utf-8")

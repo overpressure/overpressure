@@ -13,7 +13,7 @@ def read(path: Path) -> str:
 
 
 class SteamLinkTests(unittest.TestCase):
-    """an issue: Steam Link's client (vrlink) on the PICO 4's video decoder (Venus) and controllers."""
+    """Steam Link's client (vrlink) on the PICO 4's video decoder (Venus) and controllers."""
 
     def setUp(self):
         self.build = read(ROOT / "scripts/build-userspace.sh")

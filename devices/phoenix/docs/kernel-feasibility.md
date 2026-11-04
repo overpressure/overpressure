@@ -137,7 +137,7 @@ Build `linux-valve` (7.2, the Frame's own tree) for SM8250 with a PICO 4 device 
 | Video decode (Steam Link) | Venus | iris (SM8250 support) | firmware from the headset | low–medium |
 | Wi-Fi, Bluetooth | QCA6390 on PCIe, Bluetooth on UART | ath11k (QCA6390 hw2.0), `hci_qca` | board data from PICO's calibration in ath11k's format; enable ath11k in the configuration | low–medium |
 | Audio | WCD938x codec, two WSA881x on SoundWire, LPASS macros | SM8250 machine driver, WCD938x, WSA881x, macros | machine routing in the device tree; PICO OS's calibration through the PICO's q6 calibration driver (patch 0013); the speakers' protection (voltage and current sense) is not applied | medium |
-| Charging, fuel gauge | PM8150B charger (`qpnp-smb5`), its fuel gauge (`qpnp,fg`), SMB1390 charge pump | no driver known | drivers for charger and fuel gauge, or the hardware's defaults without battery data; an issue's battery level depends on it | high |
+| Charging, fuel gauge | PM8150B charger (`qpnp-smb5`), its fuel gauge (`qpnp,fg`), SMB1390 charge pump | no driver known | drivers for charger and fuel gauge, or the hardware's defaults without battery data; the battery level depends on it | high |
 | Thermal, CPU frequency | TSENS, LMh, EPSS | supported | thermal zones and trip points from the stock tree; fan policy stays in user space | low |
 | Station (controller radio), GD32 MCU | SPI with a vendor spidev power ioctl; UART | spidev, GENI serial | the station's power as a regulator or GPIO in the device tree instead of the vendor ioctl | low |
 | Suspend | stock suspend works | SM8250 suspend partly | measure | medium |

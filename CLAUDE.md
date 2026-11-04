@@ -14,8 +14,7 @@ rules (what must never be written, what crashes its kernel) and its hardware wor
 ## Backlog
 
 The backlog lives in the issue tracker, project "Overpressure", key `the backlog`, for the
-headsets and the generic tooling alike. Issue ids `PICO-n` in older commits and comments are
-from a retired project. Every new bug, gap (something unverified or unmeasured) or missing feature
+headsets and the generic tooling alike. Every new bug, gap (something unverified or unmeasured) or missing feature
 found during work gets an issue there, in the active release, when it is found; search the
 project first so that nothing is filed twice.
 

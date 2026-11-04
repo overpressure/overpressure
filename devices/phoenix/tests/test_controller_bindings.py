@@ -1,4 +1,4 @@
-"""an issue: the PICO 4 controllers as SteamVR's pico_controller (docs/session.md#controllers-in-games)."""
+"""The PICO 4 controllers as SteamVR's pico_controller (docs/session.md#controllers-in-games)."""
 import json
 import re
 import unittest
@@ -60,7 +60,7 @@ class ControllerTypeTests(unittest.TestCase):
             self.assertIn(path, self.profile["input_source"])
 
     def test_steam_link_client_gets_bindings_without_simulation(self):
-        # an issue: without them SteamVR remaps vrlink to the knuckles and simulates an Index
+        # Without them SteamVR remaps vrlink to the knuckles and simulates an Index
         # headset, which the PC's Steam Link does not know.
         bindings = json.loads(read("pico4-vrlink-bindings.json"))
         self.assertEqual((bindings["app_key"], bindings["controller_type"]), ("vrlink.client", "pico_controller"))

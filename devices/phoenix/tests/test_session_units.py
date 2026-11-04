@@ -78,13 +78,13 @@ class OpenGLTest(unittest.TestCase):
             self.assertRegex(dropin, r"(?m)^Environment=MESA_LOADER_DRIVER_OVERRIDE=zink$", name)
 
     def test_web_helper_composites_on_vulkan(self):
-        # an issue: on ANGLE's OpenGL backend (zink) the client's VR overlays flicker between
+        # On ANGLE's OpenGL backend (zink) the client's VR overlays flicker between
         # frames while a dialog opens; Valve's unit sets STEAM_EXTRA_ARGS empty.
         dropin = (ROOTFS / "usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(encoding="utf-8")
         self.assertRegex(dropin, r"(?m)^Environment=STEAM_EXTRA_ARGS=-cef-use-vulkan$")
 
     def test_games_run_on_the_fast_cores(self):
-        # an issue: Valve's unit gives games cores 3-7 (0xf8, the Frame's chip); on the XR2 core 3
+        # Valve's unit gives games cores 3-7 (0xf8, the Frame's chip); on the XR2 core 3
         # is an A55. Cores 4-7 (0xf0) are the A77s and the prime core, PICO OS's VR app mask.
         dropin = (ROOTFS / "usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(encoding="utf-8")
         self.assertRegex(dropin, r"(?m)^Environment=STEAM_LAUNCH_WRAPPER_AFFINITY_LIST=0xf0$")
@@ -108,7 +108,7 @@ class VsyncLeadTest(unittest.TestCase):
 class CompressedScanoutTest(unittest.TestCase):
 
     def test_steamvr_keeps_one_frame_ahead(self):
-        # an issue: SteamVR waits for each present to be shown before it starts the next
+        # SteamVR waits for each present to be shown before it starts the next
         # frame; without a frame ahead the GPU idles a third of the time (about 58 fps).
         dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
         self.assertRegex(dropin, r"(?m)^Environment=PICO4_FRAMES_AHEAD=1$")
@@ -117,7 +117,7 @@ class CompressedScanoutTest(unittest.TestCase):
 
 class FrameSettingsTest(unittest.TestCase):
     def test_session_takes_the_frames_compositor_path(self):
-        # an issue: the Steam Frame's compositor settings are the baseline; they live in its
+        # The Steam Frame's compositor settings are the baseline; they live in its
         # driver's frame_hmd_additional.vrsettings, which SteamVR loads only with that driver.
         settings = json.loads((ROOT / "userspace/session/steamvr.vrsettings").read_text(encoding="utf-8"))
         steamvr = settings["steamvr"]
@@ -128,9 +128,9 @@ class FrameSettingsTest(unittest.TestCase):
         self.assertEqual(steamvr["overlayRenderQuality_2"], 1)
         self.assertEqual(steamvr["forcedDriver"], "monado")
         self.assertIs(settings["driver_frame_hmd"]["enable"], False)
-        # an issue: standby follows the wear sensor and pauses the compositor, as on the Frame.
+        # Standby follows the wear sensor and pauses the compositor, as on the Frame.
         self.assertIs(settings["power"]["pauseCompositorOnStandby"], True)
-        # an issue: the dashboard's room setup in the headset needs the HMD to say it supports it,
+        # The dashboard's room setup in the headset needs the HMD to say it supports it,
         # and its steps past the recenter need 11004 too.
         room = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch").read_text(encoding="utf-8")
         for prop in (11003, 11004):
@@ -283,7 +283,7 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn("pico4-session-fallback", build)
 
     def test_session_starts_again_after_it_ends(self):
-        # an issue: a compositor that dies in a running session makes vrserver quit everything,
+        # A compositor that dies in a running session makes vrserver quit everything,
         # gamescope with it, and start-gamescope-session returns 0; sddm's Relogin=true starts
         # the session again on the Frame.
         session = unit("usr/lib/systemd/system/pico4-session.service")

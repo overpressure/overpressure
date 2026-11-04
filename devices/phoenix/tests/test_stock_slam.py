@@ -13,7 +13,7 @@ def read(path: Path) -> str:
 
 
 class CdspBootTests(unittest.TestCase):
-    """an issue: the Compute DSP for PICO OS's head tracker (docs/xr.md#head-tracking)."""
+    """The Compute DSP for PICO OS's head tracker (docs/xr.md#head-tracking)."""
 
     def test_unit(self):
         unit = read(UNITS / "pico4-cdsp.service")
@@ -97,7 +97,7 @@ class ExtractionTests(unittest.TestCase):
         # From the stock firmware (PICO's public OTA), checked against its manifest first.
         self.assertIn('stock_dir "${1:-}" system.img vendor.img modem.bin dsp.bin', script)
         self.assertIn("sha256 does not match the stock manifest", read(ROOT.parent.parent / "scripts/stock-lib.sh"))
-        # an issue: as a fresh PICO OS install, nothing of the camera modules' ids from the backup.
+        # As a fresh PICO OS install, nothing of the camera modules' ids from the backup.
         self.assertNotIn("camera_otp", script)
         self.assertNotIn("userdata", script)
         # debugfs's rdump creates the directory inside its target: dump into the parent.
@@ -171,7 +171,7 @@ class SlamdThreadTests(unittest.TestCase):
 
 
 class TemperatureTests(unittest.TestCase):
-    """an issue: the IMU's die temperature with every sample, as PICO OS's sensor DSP inserts it."""
+    """The IMU's die temperature with every sample, as PICO OS's sensor DSP inserts it."""
 
     def test_driver_streams_it_into_the_feed(self):
         hmd = read(ROOT / "src/monado/pico4_hmd.c")
@@ -198,7 +198,7 @@ class TemperatureTests(unittest.TestCase):
 
 
 class CameraOtpTests(unittest.TestCase):
-    """an issue: the modules' ids as PICO OS's station service gets them on a fresh install."""
+    """The modules' ids as PICO OS's station service gets them on a fresh install."""
 
     def test_saved_on_the_data_partition_where_pico_os_keeps_them(self):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
@@ -222,7 +222,7 @@ class CameraOtpTests(unittest.TestCase):
 
 
 class AutoExposureTests(unittest.TestCase):
-    """an issue: PICO OS's auto exposure in pico4-slamd, the station commands in the driver."""
+    """PICO OS's auto exposure in pico4-slamd, the station commands in the driver."""
 
     def test_slamd_calls_it_as_pico_os(self):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
@@ -251,7 +251,7 @@ class AutoExposureTests(unittest.TestCase):
 
 
 class SetAssemblyTests(unittest.TestCase):
-    """an issue: the frames of one pulse form a set whatever exposure each camera has."""
+    """The frames of one pulse form a set whatever exposure each camera has."""
 
     LINE_NS = 19069
     WINDOW_NS = 4_000_000
@@ -286,7 +286,7 @@ class SetAssemblyTests(unittest.TestCase):
 
 
 class CaptureRecoveryTests(unittest.TestCase):
-    """an issue/112: a stall is logged, cannot lock the exposure, and a stuck capture restarts."""
+    """A stall is logged, cannot lock the exposure, and a stuck capture restarts."""
 
     def test_stall_is_logged_per_camera(self):
         slam = read(ROOT / "src/monado/pico4_slam.c")
@@ -339,7 +339,7 @@ class CaptureRecoveryTests(unittest.TestCase):
 
 
 class RoomTests(unittest.TestCase):
-    """an issue: PICO OS's map persistence and a SteamVR universe per room."""
+    """PICO OS's map persistence and a SteamVR universe per room."""
 
     def test_maps_on_the_data_partition(self):
         runner = read(LIBEXEC / "stock-slam")
@@ -351,7 +351,7 @@ class RoomTests(unittest.TestCase):
         self.assertIn("room_decode((const double(*)[3])g_seen, 4, &id, sqrt) == 0", slamd)
         self.assertIn("room_fit((const double(*)[3])g_seen, (const double(*)[3])shape, 4,", slamd)
         self.assertIn("write_boundary(SESSION_BOUNDARY, (const double(*)[3])shape, 4);", slamd)
-        # an issue: the universe comes from the room's id, not from the tracker's map name.
+        # The universe comes from the room's id, not from the tracker's map name.
         self.assertIn("room_identity(id, feed->room_uuid, sizeof(feed->room_uuid));", slamd)
         self.assertIn("room_table_add(id, map);", slamd)
         # A copy left from an earlier session must not count as this one's relocalisation.
@@ -362,7 +362,7 @@ class RoomTests(unittest.TestCase):
         self.assertLess(slamd.index('t->stop(h, "non_sleep");'), slamd.index("t->destroy(h);"))
 
     def test_slamd_restarts_a_lost_tracker_as_pico_os(self):
-        # an issue: PICO OS's tracking service restarts a tracker whose confidence fell from 1 to 0
+        # PICO OS's tracking service restarts a tracker whose confidence fell from 1 to 0
         # and stayed 0 for more than restart_tracking_sec (10).
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
         self.assertIn("#define RESTART_DEFAULT_S 10", slamd)
@@ -411,7 +411,7 @@ class RoomTests(unittest.TestCase):
         self.assertIn("*out_universe = h > 1 && h != 424242 ? h : h + 2;", hmd)
 
     def test_universes_through_vrserver_chaperone_server(self):
-        # an issue: as driver_cv, vrserver's chaperone server restores a known universe (slot 1) or
+        # As driver_cv, vrserver's chaperone server restores a known universe (slot 1) or
         # creates a new one with its room setup to do (slot 0); without it a new universe never
         # exists in vrserver and the playspace setup has no floor.
         patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
@@ -517,7 +517,7 @@ class DepthMeshTests(unittest.TestCase):
 
 
 class FloorTests(unittest.TestCase):
-    """an issue: the floor libSlam detects, to SteamVR's room setup as the Frame's driver_cv sends its own."""
+    """The floor libSlam detects, to SteamVR's room setup as the Frame's driver_cv sends its own."""
 
     def test_slamd_passes_the_ground_with_each_pose(self):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
@@ -555,7 +555,7 @@ class FloorTests(unittest.TestCase):
         self.assertIn("SendFloor(NAN);", off[:off.index("m_floor_sent = NAN;")])
 
     def test_room_setup_detects_the_floor_again(self):
-        # an issue: libSlam's ground is fitted once, in the first second after a start; a step that
+        # libSlam's ground is fitted once, in the first second after a start; a step that
         # detects the floor starts its ground detection again (setPlaneDetect, "plane" 1).
         patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch")
         self.assertIn("pico4_hmd_detect_floor(struct xrt_device *xdev) __attribute__((weak));", patch)

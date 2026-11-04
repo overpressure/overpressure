@@ -57,7 +57,7 @@ class KernelCompatTests(unittest.TestCase):
 
 
 class PowerWarningTests(unittest.TestCase):
-    """an issue: a tethered headset that drains its battery is reported, never failed."""
+    """A tethered headset that drains its battery is reported, never failed."""
 
     def power(self, port, status, input_ma=1250, online=True, current_ma=800):
         return {"usb_online": online, "port": port, "input_ma": input_ma, "usb_mv": 4846,
@@ -73,7 +73,7 @@ class PowerWarningTests(unittest.TestCase):
         self.assertIn("USB port, 490 mA input", warning)
 
     def test_drain_while_charging_warns(self):
-        # an issue: the charger said "Charging" while the battery lost 0.37 A under the session.
+        # The charger said "Charging" while the battery lost 0.37 A under the session.
         (warning,) = userspace.power_warnings(self.power("USB_CDP", "Charging", 1500, current_ma=-372))
         self.assertIn("discharges while tethered at 15 %", warning)
 

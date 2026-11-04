@@ -29,8 +29,7 @@ def stats(commits, seconds, late, stalls, timeouts=0, gpu_mean=3.1, max_interval
             "vblank_intervals": commits, "eye_mean_rgb": [[22.1, 30.5, 61.0], [21.8, 30.2, 60.7]]}
 
 
-# Valve's session on the Frame's compositor path: two one-second stalls while SteamVR starts
-#, then 90 commits per second.
+# Valve's session on the Frame's compositor path: two one-second stalls while SteamVR starts, then 90 commits per second.
 START = stats(commits=812, seconds=10.0, late=7, stalls=2)
 END = stats(commits=3512, seconds=40.0, late=9, stalls=2)
 

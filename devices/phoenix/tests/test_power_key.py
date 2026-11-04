@@ -1,4 +1,4 @@
-"""an issue: the power key as on PICO OS (docs/install.md#power-key)."""
+"""The power key as on PICO OS (docs/install.md#power-key)."""
 import configparser
 import importlib.machinery
 import importlib.util

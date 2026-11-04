@@ -34,7 +34,7 @@ deckard-arch-hotfixes-release-0.3/bluez-utils
 upower
 
 # Session, audio and graphics stack of the Frame. gamescope is the Frame's version
-# built here with a fix for a crash when a game starts (pico4-gamescope, an issue).
+# built here with a fix for a crash when a game starts (pico4-gamescope).
 pico4/pico4-gamescope
 libxxf86vm
 deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64

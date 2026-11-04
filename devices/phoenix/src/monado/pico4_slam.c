@@ -1352,8 +1352,7 @@ camera_thread(void *ptr)
 	os_thread_helper_lock(&s->oth);
 	while (os_thread_helper_is_running_locked(&s->oth)) {
 		os_thread_helper_unlock(&s->oth);
-		// The capture streamed into a suspend: a new capture after it, as after an ISP error
-		//.
+		// The capture streamed into a suspend: a new capture after it, as after an ISP error.
 		int64_t slept = pico4_slept_ns();
 		if (slept - slept_ns > PICO4_SLEEP_DETECT_NS) {
 			SLAM_INFO(s, "The system slept %.1f s: the capture starts again", (double)(slept - slept_ns) / 1e9);
