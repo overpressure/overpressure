@@ -257,8 +257,9 @@ the view is fluid, also with Steam's panel in view.
 - Beat Saber submits half the panels' rate. The GPU holds it there, at its top clock (92-96 % busy), not the
   CPU (every core below 50 %), so half rate is what this hardware gives this game.
 - Games start at 72 Hz, the Frame's default for apps; SteamVR's settings offer 72 and 90 Hz.
-- Steam Link: the first picture follows a decoder reset about 14 s after the client starts, and
-  30 ms pass between a decoded picture and its illumination.
+- Steam Link: the first picture comes about 12 s after the client starts, nearly all of it the PC's startup;
+  a decoder reset falls right at the first video and costs at most about 0.6 s. Then
+  30-43 ms pass between a decoded picture and its illumination, by run, with a floor of about 22 ms.
 
 ### Steam client and network
 
@@ -318,17 +319,17 @@ system updates. Open:
 2. **Power.** The lenses show a boot indication until Valve's session starts. The power key
    follows PICO OS (a short press suspends, 2 s held powers off), and a power-off with the
    cable attached ends in charger mode, from which the key starts the system. After a resume the
-   USB link is gone if the cable is in and the speakers are silent.
+   session goes on, with USB and sound back; `pico4-suspend-check` checks the sound.
 3. **Wake.** From a boot the picture comes by itself when the headset is picked up, repeatedly.
    Why an earlier dark wake went away is not known. A lens can go wrong after a wake while the other
    works: seen once grey (left, through three more wakes, cured by a suspend) and once corrupted
-   (right, cleared by the next wake); the cause is not known. The headset does not go to standby in
-   a dark room.
+   (right, cleared by the next wake), and once with pink lines on grey (left, cleared by the next wake);
+   the cause is not known.
 
 ### Other hardware
 
 Audio works: the speakers and
 the microphone are PipeWire's default sink and source, and playback runs without xruns under
 Valve's session ([userspace.md](userspace.md#audio)); SteamVR's sound and volume work in the
-headset, the microphone records speech at PICO OS's gain of 12, and PICO OS's calibration is loaded per stream; loud starts overshoot for about 250 ms (open, [userspace.md](userspace.md#audio)). Bluetooth has not been brought up under the userspace. Battery
+headset, the microphone records speech at PICO OS's gain of 12, and PICO OS's calibration is loaded per stream. PICO OS's speaker protection is absent, as the amplifiers' voltage and current sense is off ([userspace.md](userspace.md#audio)). Bluetooth has not been brought up under the userspace. Battery
 level and charging state reach UPower and SteamVR ([userspace.md](userspace.md)).
