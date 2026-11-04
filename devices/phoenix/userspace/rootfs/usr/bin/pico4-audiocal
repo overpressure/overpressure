@@ -1,41 +1,25 @@
 #!/usr/bin/env python3
-"""Load PICO OS's audio calibration (ACDB) into the ADSP, as its audio HAL does.
+"""PICO OS's audio calibration (ACDB) as the file the kernel's q6 calibration driver loads.
 
 PICO OS's audio HAL reads the calibration database (vendor acdbdata, from the user's
-backup at build time) and hands the blocks for each sound device to the kernel's
-calibration store, /dev/msm_audio_cal; the kernel sends them to the ADSP when a stream
-opens its path (docs/userspace.md#audio). This tool does the same for the two paths the
-system uses: the speakers (deep-buffer playback, acdb device 15) and the handset
-microphone (record, acdb device 4).
+stock firmware at build time) and hands the blocks for each sound device to its kernel. This tool
+reads the same blocks for the two paths the system uses: the speakers (deep-buffer playback,
+acdb device 15) and the handset microphone (record, acdb device 4).
 
-  pico4-audiocal show [--acdb DIR]   the topologies and blocks it would send, as JSON
-  pico4-audiocal run  [--acdb DIR]   send them, set the app-type controls and stay
-  pico4-audiocal export [--acdb DIR] [FILE]   the same for a mainline kernel, as the file
-                                     its q6 calibration driver loads (at image build)
-
-`run` stays running: the kernel drops every calibration block when the last process
-that opened /dev/msm_audio_cal closes it.
+  pico4-audiocal show [--acdb DIR]   the topologies and blocks, as JSON
+  pico4-audiocal export [--acdb DIR] [FILE]   the file the driver loads (at image build)
 """
 
 from __future__ import annotations
 
 import argparse
-import ctypes
 import glob
 import json
-import mmap
 import os
-import signal
 import struct
-import subprocess
 import sys
-import time
 
 ACDB_DIR = "/usr/lib/pico4-audio/acdb"
-CARD = "/dev/snd/controlC0"
-PCM_PLAYBACK = "/dev/snd/pcmC0D0p"  # MultiMedia1, the only PCMs with nodes
-PCM_CAPTURE = "/dev/snd/pcmC0D0c"
-IN_OPEN, IN_CLOSE, IN_IGNORED = 0x20, 0x08 | 0x10, 0x8000
 
 # ACDB property and table identifiers PICO OS's ACDB library looks up.
 PROP_ADM_TOPOLOGY = 0x113AD     # device: {app type, topology} pairs
@@ -44,21 +28,6 @@ PROP_AFE_TOPOLOGY = 0x13150     # device: the AFE topology
 PROP_INSTANCE_IDS = 0x1327F     # global: 1 when the instance tables apply
 PROP_CUSTOM_TOPOLOGIES = 0x132AC  # global: the custom topologies, sent as they are
 
-# /dev/msm_audio_cal (audio_calibration.c): _IOWR('a', 200 + n, void *).
-AUDIO_ALLOCATE_CALIBRATION = 0xC00861C8
-AUDIO_SET_CALIBRATION = 0xC00861CB
-ADM_TOPOLOGY_CAL_TYPE = 9
-ADM_AUDPROC_CAL_TYPE = 11
-ADM_AUDVOL_CAL_TYPE = 12
-AFE_TOPOLOGY_CAL_TYPE = 23
-CORE_CUSTOM_TOPOLOGIES_CAL_TYPE = 39
-
-# ION (msm, 4.19): the system heap, uncached, as PICO OS's loader allocates.
-ION_IOC_ALLOC = 0xC0184900
-ION_SYSTEM_HEAP_ID = 25
-
-# ALSA: SNDRV_CTL_IOCTL_TLV_READ, for the routing driver's backend table.
-SNDRV_CTL_IOCTL_TLV_READ = 0xC008551A
 
 # The two paths: PICO OS's sound devices, their ACDB devices and app types
 # (audio_platform_info.xml, audio_io_policy.conf), and the backends they play through.
@@ -69,7 +38,7 @@ PATHS = [
      "backend": "TX_CDC_DMA_TX_3", "stream_control": "Audio Stream Capture 0 App Type Cfg"},
 ]
 
-# On a mainline kernel (q6calibration-pico4.c): each path's AFE port and ADM path
+# The driver (q6calibration-pico4.c): each path's AFE port and ADM path
 # (WSA_CODEC_DMA_RX_0 playback, TX_CODEC_DMA_TX_3 record) and the file the kernel loads.
 MAINLINE_PORTS = {"speaker": (0xB000, 1), "handset-mic": (0xB037, 2)}
 MAINLINE_MAGIC = b"P4AC"
@@ -198,98 +167,6 @@ def lookup(acdb_dir: str) -> dict:
     return result
 
 
-class Calibration:
-    """The kernel's calibration store, with one ION buffer per block that has data."""
-
-    def __init__(self):
-        import fcntl  # Linux only; the database reading above also runs in the host tests
-
-        self.fcntl = fcntl
-        self.cal = os.open("/dev/msm_audio_cal", os.O_RDWR | os.O_CLOEXEC)
-        self.ion = os.open("/dev/ion", os.O_RDONLY | os.O_CLOEXEC)
-        self.buffers = []  # (fd, mmap): the kernel maps them to the DSP; they stay
-        self.sets: dict[int, list] = {}  # per path: the SET requests, sent again per stream
-
-    def _ioctl(self, request: int, cal_type: int, buffer: int, size: int, handle: int, info: list[int]):
-        body = struct.pack(f"<iiii{len(info)}i", 0, buffer, size, handle, *info)
-        data = struct.pack("<iiii", 16 + len(body), 0, cal_type, len(body)) + body
-        self.fcntl.ioctl(self.cal, request, bytearray(data))
-
-    def _ion_buffer(self, size: int):
-        size = (size + 4095) // 4096 * 4096
-        request = bytearray(struct.pack("<QIIII", size, 1 << ION_SYSTEM_HEAP_ID, 0, 0, 0))
-        self.fcntl.ioctl(self.ion, ION_IOC_ALLOC, request)
-        fd = struct.unpack_from("<I", request, 16)[0]
-        mem = mmap.mmap(fd, size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
-        self.buffers.append((fd, mem))
-        return fd, mem
-
-    def send(self, cal_type: int, buffer: int, data: bytes, info: list[int], minimum: int = 4096,
-             path: int | None = None):
-        """A block with data: an ION buffer handed to the kernel, then the data and its key."""
-        fd, mem = self._ion_buffer(max(len(data), minimum))
-        self._ioctl(AUDIO_ALLOCATE_CALIBRATION, cal_type, buffer, 0, fd, [])
-        mem[:len(data)] = data
-        self._set(path, (cal_type, buffer, len(data), fd, info))
-
-    def send_info(self, cal_type: int, buffer: int, info: list[int], path: int | None = None):
-        """A block that is only its key (topologies)."""
-        self._set(path, (cal_type, buffer, 0, -1, info))
-
-    def _set(self, path: int | None, request: tuple):
-        self._ioctl(AUDIO_SET_CALIBRATION, *request)
-        if path is not None:
-            self.sets.setdefault(path, []).append(request)
-
-    def refresh(self, path: int):
-        """Sends a path's blocks again. The kernel uses a device and port block for one stream
-        and then skips it as stale (cal_utils_mark_cal_used), so PICO OS's HAL sends them before
-        every stream; a SET makes them current again."""
-        for request in self.sets.get(path, []):
-            self._ioctl(AUDIO_SET_CALIBRATION, *request)
-
-
-def backend_ids() -> dict[str, int]:
-    """The routing driver's backend table: {id, name[24]} entries over a TLV control."""
-    import fcntl
-
-    out = subprocess.run(["amixer", "-c", "0", "controls"], capture_output=True, text=True, check=True).stdout
-    numid = next(int(line.split(",")[0].split("=")[1]) for line in out.splitlines()
-                 if "'Backend DAI Name Table'" in line)
-    info = subprocess.run(["amixer", "-c", "0", "cget", f"numid={numid}"], capture_output=True, text=True).stdout
-    size = int(info.split("values=")[1].split()[0].split(",")[0])
-    fd = os.open(CARD, os.O_RDONLY | os.O_CLOEXEC)
-    try:
-        request = bytearray(struct.pack("<II", numid, size) + bytes(size))
-        fcntl.ioctl(fd, SNDRV_CTL_IOCTL_TLV_READ, request)
-    finally:
-        os.close(fd)
-    table = bytes(request[8:])
-    ids = {}
-    for off in range(0, len(table) - 27, 28):
-        ident = struct.unpack_from("<i", table, off)[0]
-        name = table[off + 4:off + 28].split(b"\0")[0].decode("latin1")
-        if name:
-            ids[name] = ident
-    return ids
-
-
-def set_control(name: str, values: list[int], iface: str = "MIXER"):
-    subprocess.run(["amixer", "-q", "-c", "0", "cset", f"iface={iface},name={name}",
-                    ",".join(str(v) for v in values)], check=True)
-
-
-def wait_for_card(timeout: float) -> None:
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        if os.path.exists(CARD) and os.path.exists("/dev/msm_audio_cal"):
-            out = subprocess.run(["amixer", "-c", "0", "controls"], capture_output=True, text=True).stdout
-            if "'App Type Config'" in out and "'Backend DAI Name Table'" in out:
-                return
-        time.sleep(1)
-    raise TimeoutError("the sound card's routing controls did not appear")
-
-
 def describe(cal: dict) -> dict:
     out = {"custom_topologies_bytes": len(cal["custom_topologies"]), "paths": []}
     for p in cal["paths"]:
@@ -307,7 +184,7 @@ def pad4(data: bytes) -> bytes:
 
 
 def mainline_file(cal: dict) -> bytes:
-    """The kernel's calibration file on a mainline kernel: the custom topologies, then per path
+    """The kernel's calibration file: the custom topologies, then per path
     its port, ADM path, device and port topologies and the parameters PICO OS sends after the open
     (the processing blocks, then the volume table's step 0), as the database packs them."""
     out = MAINLINE_MAGIC + struct.pack("<III", MAINLINE_VERSION, len(cal["custom_topologies"]), len(cal["paths"]))
@@ -327,94 +204,19 @@ def cmd_export(args) -> int:
     return 0
 
 
-def cmd_run(args) -> int:
-    cal = lookup(args.acdb)
-    wait_for_card(args.timeout)
-    store = Calibration()
-    # The custom topologies first: the DSP learns them now, and the device topologies use them.
-    store.send(CORE_CUSTOM_TOPOLOGIES_CAL_TYPE, 0, cal["custom_topologies"], [])
-    for p in cal["paths"]:
-        path = buffer = p["path"]  # PICO OS: path + 2 x use case, one use case per path here
-        store.send_info(ADM_TOPOLOGY_CAL_TYPE, buffer,
-                        [p["adm_topology"], p["acdb_id"], p["path"], p["app_type"], p["rate"]], path=path)
-        if p["audproc"]:
-            store.send(ADM_AUDPROC_CAL_TYPE, buffer, p["audproc"],
-                       [p["acdb_id"], p["path"], p["app_type"], p["rate"]], minimum=16384, path=path)
-        if p["audvol"]:
-            store.send(ADM_AUDVOL_CAL_TYPE, buffer, p["audvol"], [p["acdb_id"], p["path"], p["app_type"], 0],
-                       path=path)
-        store.send_info(AFE_TOPOLOGY_CAL_TYPE, buffer, [p["afe_topology"], p["acdb_id"], p["path"], p["rate"]],
-                        path=path)
-    # The database's parameters carry instance ids; PICO OS's HAL tells the kernel after loading
-    # it, which then sends them with the DSP's instance-aware commands (the DSP rejects them
-    # otherwise: ADSP_ENEEDMORE).
-    set_control("Instance ID Support", [1], iface="CARD")
-    # The routing driver then picks these blocks for streams of these app types on these backends.
-    # The stream (ASM) blocks stay the DSP's: the kernel keeps one for both directions, which PICO
-    # OS sends again before every stream.
-    backends = backend_ids()
-    app_types = [len(cal["paths"])]
-    for p in cal["paths"]:
-        app_types += [p["app_type"], p["rate"], p["bits"]]
-    set_control("App Type Config", app_types)
-    for p in cal["paths"]:
-        set_control(p["stream_control"], [p["app_type"], p["acdb_id"], p["rate"], backends[p["backend"]]])
-    print(json.dumps({"status": "loaded", **describe(cal)}), flush=True)
-    if args.once:
-        return 0
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    follow_streams(store)
-    return 1
-
-
-def follow_streams(store: Calibration):
-    """Sends a path's blocks again whenever its PCM node is opened or closed, as PICO OS's HAL
-    does before every stream: once on opening, before the stream reaches its device, and once
-    on closing, for the next one. Returns when the nodes go away (the card left with the ADSP;
-    the service then starts over)."""
-    libc = ctypes.CDLL(None, use_errno=True)
-    fd = libc.inotify_init1(os.O_CLOEXEC)
-    if fd < 0:
-        raise OSError(ctypes.get_errno(), "inotify_init1")
-    watches = {}
-    for path, node in ((0, PCM_PLAYBACK), (1, PCM_CAPTURE)):
-        wd = libc.inotify_add_watch(fd, node.encode(), IN_OPEN | IN_CLOSE | IN_IGNORED)
-        if wd < 0:
-            raise OSError(ctypes.get_errno(), f"inotify_add_watch {node}")
-        watches[wd] = path
-    while watches:
-        data = os.read(fd, 4096)
-        changed = set()
-        off = 0
-        while off + 16 <= len(data):
-            wd, mask, _cookie, length = struct.unpack_from("<iIII", data, off)
-            off += 16 + length
-            if mask & IN_IGNORED:
-                watches.pop(wd, None)
-            elif wd in watches:
-                changed.add(watches[wd])
-        for path in changed:
-            store.refresh(path)
-
-
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("show", "run", "export"):
+    for name in ("show", "export"):
         p = sub.add_parser(name)
         p.add_argument("--acdb", default=ACDB_DIR, help="directory of the .acdb files")
-        if name == "run":
-            p.add_argument("--timeout", type=float, default=120.0, help="seconds to wait for the card")
-            p.add_argument("--once", action="store_true", help="exit after loading (drops the blocks)")
         if name == "export":
-            p.add_argument("output", nargs="?", default=MAINLINE_FILE, help="the mainline kernel's file")
+            p.add_argument("output", nargs="?", default=MAINLINE_FILE, help="the kernel's file")
     args = parser.parse_args(argv)
     if args.command == "show":
         print(json.dumps(describe(lookup(args.acdb)), indent=2))
         return 0
-    if args.command == "export":
-        return cmd_export(args)
-    return cmd_run(args)
+    return cmd_export(args)
 
 
 if __name__ == "__main__":

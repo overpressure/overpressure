@@ -21,11 +21,9 @@ be reimplemented).
 | Video codec firmware | modem `/image`: venus.mdt, venus.b00–.b10, venus.b19 | `extract-graphics-firmware.sh` | Venus (Steam Link's decoder) | signed |
 | SLPI image and PD maps | modem `/image`: slpi.mdt, slpi.b00–.b20, slpir.jsn, slpius.jsn | `extract-sensor-data.sh` | the SLPI (IMU, wear sensor) | signed |
 | Sensor driver configuration and registry layout | vendor `/etc/sensors/config` (44 json), sns_reg_config | `extract-sensor-data.sh` | the SLPI's registry | data; the whole directory ships, which files load is not measured |
-| ADSP image and PD maps | modem `/image`: adsp.mdt, adsp.b00–.b18, adspr.jsn, adspua.jsn | `extract-audio.sh` | the ADSP, pd-mapper | signed |
-| Audio kernel modules | vendor `/lib/modules`: 27 audio_*.ko, modules.dep | `extract-audio.sh` | the stock kernel only; Valve's kernel does not load them | signed (the kernel's module key) |
+| ADSP image and PD maps | modem `/image`: adsp.mdt, adsp.b00–.b18, adspr.jsn, adspua.jsn | `extract-audio.sh` | the ADSP | signed |
 | Audio PD libraries | vendor `/etc/acdbdata/adsp_avs_config.acdb`; `/lib/rfsa/adsp`: capi_v2_ailab_ecns, two aptX codecs, capi_v2_effectcpp, libapps_mem_heap, libc++.so.1, libc++abi.so.1, sami_audio_config.json | `extract-audio.sh` | the ADSP's audio PD | signed DSP code; which modules load is not measured |
 | Audio calibration | vendor `acdbdata/wsa8810/base/MTP`: Global, Handset, Speaker `_cal.acdb` | `extract-audio.sh` | `pico4-audiocal` | data |
-| WLAN driver | vendor qca_cld3_qca6390.ko | `extract-wlan.sh` | the stock kernel only; Valve's kernel does not load it | signed |
 | WLAN firmware, board data, configuration | modem `/image/qca6390`: amss20.bin, m3.bin, 26 bdwlan.eNN, bdwlan/bdwlann/bdwlanq.elf; vendor WCNSS_qcom_cfg.ini | `extract-wlan.sh` | the QCA6390, qcacld | firmware signed; the board files data: this headset loads bdwlanq.elf (and asks for qca6390/regdb.bin, which PICO OS does not have either); the ini data |
 | CDSP image and PD map | modem `/image`: cdsp.mdt, cdsp.b00–.b11, cdspr.jsn | `extract-stock-slam.sh` | the CDSP | signed |
 | CVP image | modem `/image`: cvpss.mdt and parts | `extract-stock-slam.sh` | the CVP (the see-through's depth mesh) | signed |
@@ -43,6 +41,6 @@ be reimplemented).
 Not taken from the stock image: the station, the IMU's SSC client, the fan, the IPD motor, the
 lens distortion, the wear sensor, the camera OTP reader, the power key, the VR CPU limits, the
 audio calibration loader, the image processing (`isp.h`), `pico4-slamd` and the Steam Link
-decoder layer are this project's own implementations; qrtr-ns, pd-mapper and hexagonrpcd come
+decoder layer are this project's own implementations; hexagonrpcd comes
 from linux-msm; the engineering ABL and the Firehose loader come
 from public Neo3 packages; Valve's packages are not from the stock image.

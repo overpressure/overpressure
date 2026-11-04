@@ -35,7 +35,7 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(recipe.count("pico4_passthrough.c"), 3)  # source, install, host test
         driver = read(RECIPE / "monado-pico4-driver.patch")
         self.assertIn("+\t\tpico4/pico4_passthrough.c\n+\t\tpico4/pico4_passthrough.h\n", driver)
-        self.assertIn("@@ -249,6 +249,66 @@", driver)
+        self.assertIn("@@ -249,6 +249,64 @@", driver)
 
     def test_camera_thread_only_copies(self):
         # The copy never waits for the client (trylock), and only while a client streams.
@@ -103,12 +103,10 @@ class RoomViewTests(unittest.TestCase):
         # Valve's code is not linked: the client library is opened at run time.
         self.assertIn('dlopen(OPENVR_API, RTLD_NOW)', producer)
         # The import of the frames needs vrclient's compositor connection, which only a
-        # compositor interface opens; the shared semaphore needs the display layer's emulation.
+        # compositor interface opens.
         self.assertLess(producer.index("vr_interface(COMPOSITOR_INTERFACE, &err)"),
                         producer.index("vr_interface(INTERFACE, &err)"))
         self.assertIn("VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME", producer)
-        service = read(ROOT / "userspace/rootfs/usr/lib/systemd/user/pico4-roomview.service")
-        self.assertIn("Environment=PICO4_VRDISPLAY=1", service)
 
     def test_metadata_as_the_room_view_shaders_read_it(self):
         producer = read(ROOT / "src/xr/pico4-roomview.c")

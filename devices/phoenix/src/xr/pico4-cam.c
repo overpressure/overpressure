@@ -1,21 +1,13 @@
 // SPDX-License-Identifier: BSL-1.0
 /*
- * pico4-cam: the four OV7251 tracking cameras and the IMX471 RGB camera through the
- * Spectra CSL UAPI (src/monado/pico4_cam.c).
+ * pico4-cam: the four OV7251 tracking cameras and the IMX471 RGB camera through V4L2
+ * (src/monado/pico4_cam.c).
  *
- *   pico4-cam list
- *       Request manager, sync, ISP, sensor and CSIPHY nodes with the slot and
- *       PHY each one reports, the ISP's IOMMU handles and every media entity.
- *       Opens subdevs for CAM_QUERY_CAP only; powers nothing.
- *   pico4-cam probe [SLOT...]
- *       CAM_SENSOR_PROBE_CMD on the given slots (default 0-3; 4 is the RGB camera): power up, read
- *       the chip ID, power down. The kernel forgets the probe again when this
- *       process closes the sensor node.
- *   pico4-cam capture [--slots 0,1,2,3] [--frames N] [--fps 60|30] [--out DIR]
- *                     [--ring N] [--timeout MS] [--lane-assign SLOT=LANE]
+ *   pico4-cam capture [--slots 0,1,2,3] [--frames N] [--out DIR]
+ *                     [--ring N] [--timeout MS]
  *                     [--no-station] [--no-station-reset] [--stats-log FILE]
  *                     [--exposure LINES [--gain G]] [--led-exposure LINES [--led-gain G]]
- *                     [--lines N] [--sensor-lines N] [--record-leds FILE] [--record-scene FILE]
+ *                     [--record-leds FILE] [--record-scene FILE]
  *                     [--record-imu FILE]
  *       Streams until every selected camera delivered N frames (default 30),
  *       saves an early scene frame of each camera as DIR/camS.pgm (8 bits, the
@@ -32,8 +24,7 @@
  *       frame to delivery; the brightest sample and the samples at 1023;
  *       the applied exposure from the metadata line, phase 0 if it does not
  *       decode), for example to find which slot goes dark when a lens is
- *       covered. --lines and --sensor-lines (480-482) override the lines the
- *       ISP writes and the height programmed into the sensor.
+ *       covered.
  *       --exposure (sensor lines, at most about 570) and --gain (16 = 1x)
  *       ask the station for that exposure; the saved frame is then the
  *       tenth or eleventh, after the setting took effect. Every other frame
@@ -44,7 +35,7 @@
  *       station keeps the LED phase at 4 lines and gain 26.
  *       --record-leds appends every controller-LED exposure of the selected
  *       cameras to FILE, for the controller tracking work: per frame a 48-byte
- *       header ("P4LF", version 1, slot, the ISP frame counter, start of frame
+ *       header ("P4LF", version 1, slot, the frame counter, start of frame
  *       on CLOCK_BOOTTIME and CLOCK_MONOTONIC in ns, the applied exposure lines
  *       and gain, width, height; little-endian) and the scene rows as 8 bits
  *       (the 10-bit samples shifted right by two). --record-scene writes the
@@ -61,16 +52,12 @@
  *       as in the driver: without another sensor streaming, the sensor DSP slows
  *       ble_mcu to about 90 events per second a few minutes after it started.
  *
- *   pico4-cam buffers
- *       The free entries of the kernel's camera buffer table (pico4_cam_free_buffers).
  *   pico4-cam rgb [--frames N] [--out DIR] [--exposure LINES] [--gain G]
  *       The RGB camera alone (slot 4, 2328x1748 RGGB at 50 fps, free-running: no
  *       station); see cmd_rgb().
  *
- * -v and -vv (before or after the command) log progress and every ioctl to
- * stderr. Exit status 0 means success: every node found (list), every probe
- * answered (probe), or every camera delivered N frames with increasing
- * timestamps (capture).
+ * -v (before or after the command) logs progress to stderr. Exit status 0 means
+ * success: every camera delivered N frames with increasing timestamps.
  */
 
 #define _GNU_SOURCE // sigaction, mkdir under -std=c11
@@ -103,14 +90,12 @@ on_signal(int sig)
 static void
 usage(FILE *f)
 {
-	fputs("usage: pico4-cam [-v|-vv] list\n"
-	      "       pico4-cam [-v|-vv] probe [SLOT...]\n"
-	      "       pico4-cam [-v|-vv] capture [--slots 0,1,2,3] [--frames N] [--fps 60|30] [--out DIR]\n"
-	      "                 [--ring N] [--timeout MS] [--lane-assign SLOT=LANE] [--no-station]\n"
+	fputs("usage: pico4-cam [-v] capture [--slots 0,1,2,3] [--frames N] [--out DIR]\n"
+	      "                 [--ring N] [--timeout MS] [--no-station]\n"
 	      "                 [--no-station-reset] [--stats-log FILE] [--exposure LINES [--gain G]]\n"
-	      "                 [--led-exposure LINES [--led-gain G]] [--lines N] [--sensor-lines N]\n"
+	      "                 [--led-exposure LINES [--led-gain G]]\n"
 	      "                 [--record-leds FILE] [--record-scene FILE] [--record-imu FILE]\n"
-	      "       pico4-cam [-v|-vv] rgb [--frames N] [--out DIR] [--exposure LINES] [--gain G]\n"
+	      "       pico4-cam [-v] rgb [--frames N] [--out DIR] [--exposure LINES] [--gain G]\n"
 	      "                 [--step-exposure LINES [--step-gain G]]\n",
 	      f);
 }
@@ -161,111 +146,6 @@ parse_slots(const char *s, unsigned *mask)
 	}
 	*mask = m;
 	return m != 0;
-}
-
-
-/*
- *
- * list
- *
- */
-
-static int
-cmd_list(const struct pico4_cam_config *cfg)
-{
-	struct pico4_cam_devices *d = calloc(1, sizeof(*d));
-	int r, sensors = 0;
-	bool first;
-
-	if (d == NULL) {
-		return 1;
-	}
-	r = pico4_cam_discover(d, cfg);
-	printf("{\n  \"crm\": ");
-	json_str(d->crm);
-	printf(",\n  \"sync\": ");
-	json_str(d->sync);
-	printf(",\n  \"isp\": ");
-	json_str(d->isp);
-	printf(",\n  \"isp_iommu\": {\"non_secure\": %d, \"secure\": %d},\n", d->isp_iommu[0], d->isp_iommu[1]);
-	printf("  \"cdm_iommu\": {\"non_secure\": %d, \"secure\": %d},\n", d->cdm_iommu[0], d->cdm_iommu[1]);
-	printf("  \"sensors\": [");
-	first = true;
-	for (int s = 0; s < PICO4_CAM_MAX_SLOTS; s++) {
-		if (d->sensor[s][0] == '\0') {
-			continue;
-		}
-		printf("%s\n    {\"slot\": %d, \"node\": ", first ? "" : ",", s);
-		json_str(d->sensor[s]);
-		printf(", \"csiphy\": %d, \"tracking_camera\": %s}", d->sensor_csiphy[s], s < PICO4_CAM_NUM ? "true" : "false");
-		first = false;
-		sensors += s < PICO4_CAM_NUM;
-	}
-	printf("\n  ],\n  \"csiphys\": [");
-	first = true;
-	for (int p = 0; p < PICO4_CAM_MAX_PHYS; p++) {
-		if (d->csiphy[p][0] == '\0') {
-			continue;
-		}
-		printf("%s\n    {\"phy\": %d, \"node\": ", first ? "" : ",", p);
-		json_str(d->csiphy[p]);
-		printf("}");
-		first = false;
-	}
-	printf("\n  ],\n  \"entities\": [");
-	for (unsigned i = 0; i < d->num_entities; i++) {
-		const struct pico4_cam_entity *e = &d->entities[i];
-		printf("%s\n    {\"name\": ", i == 0 ? "" : ",");
-		json_str(e->name);
-		printf(", \"function\": \"0x%x\", \"dev\": \"%u:%u\", \"node\": ", e->function, e->major, e->minor);
-		json_str(e->devnode);
-		printf("}");
-	}
-	printf("\n  ]\n}\n");
-	free(d);
-	return r == 0 && sensors == PICO4_CAM_NUM ? 0 : 1;
-}
-
-
-/*
- *
- * probe
- *
- */
-
-static int
-cmd_probe(struct pico4_cam_config *cfg)
-{
-	struct pico4_cam *cam = NULL;
-	bool ok = true, first = true;
-	int r;
-
-	cfg->probe_only = true;
-	r = pico4_cam_open(&cam, cfg);
-	if (r < 0) {
-		printf("{\"ok\": false, \"error\": ");
-		json_str(strerror(-r));
-		printf("}\n");
-		return 1;
-	}
-	printf("{\n  \"slots\": [");
-	for (int s = 0; s < PICO4_CAM_SLOTS; s++) {
-		struct pico4_cam_slot_info si;
-		if (!((cfg->slots >> s) & 1) || pico4_cam_get_slot_info(cam, s, &si) < 0) {
-			continue;
-		}
-		printf("%s\n    {\"slot\": %d, \"sensor\": ", first ? "" : ",", s);
-		json_str(si.sensor);
-		printf(", \"csiphy\": %d, \"combo\": %s, \"lane_assign\": %u, \"probe\": ", si.phy,
-		       si.combo ? "true" : "false", si.lane_assign);
-		json_str(si.probe_rc == 0 ? "ok" : si.probe_rc > 0 ? "not attempted" : strerror(-si.probe_rc));
-		printf("}");
-		ok = ok && si.probe_rc == 0;
-		first = false;
-	}
-	printf("\n  ],\n  \"ok\": %s\n}\n", ok ? "true" : "false");
-	pico4_cam_close(cam);
-	return ok ? 0 : 1;
 }
 
 
@@ -482,24 +362,6 @@ on_frame(struct slot_stats *st, const struct pico4_cam_frame *f, const char *dir
 	st->frames++;
 }
 
-static bool
-parse_lane_assign(const char *s, struct pico4_cam_config *cfg)
-{
-	unsigned long slot, lane;
-	char buf[32], *eq;
-	snprintf(buf, sizeof(buf), "%s", s);
-	eq = strchr(buf, '=');
-	if (eq == NULL) {
-		return false;
-	}
-	*eq = '\0';
-	if (!parse_uint(buf, PICO4_CAM_NUM - 1, &slot) || !parse_uint(eq + 1, 3, &lane)) {
-		return false;
-	}
-	cfg->lane_assign[slot] = (int)lane;
-	return true;
-}
-
 //! The AP's counter, the QTimer that also stamps the sensor service's events (aarch64 only).
 static uint64_t
 qtimer_ticks(void)
@@ -667,8 +529,6 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 		i++;
 		if (strcmp(a, "--slots") == 0 && parse_slots(v, &cfg->slots)) {
 		} else if (strcmp(a, "--frames") == 0 && parse_uint(v, 1000000, &frames) && frames > 0) {
-		} else if (strcmp(a, "--fps") == 0 && parse_uint(v, 60, &n) && (n == 60 || n == 30)) {
-			cfg->fps = (unsigned)n;
 		} else if (strcmp(a, "--out") == 0) {
 			dir = v;
 		} else if (strcmp(a, "--exposure") == 0 && parse_uint(v, 1700, &exposure)) {
@@ -703,15 +563,9 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 				fprintf(stderr, "pico4-cam: cannot write %s: %s\n", v, strerror(errno));
 				return 1;
 			}
-		} else if (strcmp(a, "--lines") == 0 && parse_uint(v, PICO4_CAM_HEIGHT + 2, &n) && n >= PICO4_CAM_HEIGHT) {
-			cfg->lines = (unsigned)n;
-		} else if (strcmp(a, "--sensor-lines") == 0 && parse_uint(v, PICO4_CAM_HEIGHT + 2, &n) &&
-		           n >= PICO4_CAM_HEIGHT) {
-			cfg->sensor_lines = (unsigned)n;
 		} else if (strcmp(a, "--ring") == 0 && parse_uint(v, PICO4_CAM_RING_MAX, &n)) {
 			cfg->ring = (unsigned)n;
 		} else if (strcmp(a, "--timeout") == 0 && parse_uint(v, 600000, &timeout)) {
-		} else if (strcmp(a, "--lane-assign") == 0 && parse_lane_assign(v, cfg)) {
 		} else {
 			fprintf(stderr, "pico4-cam: bad option %s %s\n", a, v);
 			usage(stderr);
@@ -824,8 +678,7 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 	if (station_started) {
 		pico4_station_camera_stop(station);
 	}
-	printf("{\n  \"fps\": %u,\n  \"station\": %s,\n  \"frames_requested\": %lu,\n", cfg->fps,
-	       use_station ? "true" : "false", frames);
+	printf("{\n  \"station\": %s,\n  \"frames_requested\": %lu,\n", use_station ? "true" : "false", frames);
 	printf("  \"slots\": [");
 	for (int s = 0; s < PICO4_CAM_NUM; s++) {
 		const struct slot_stats *t = &st[s];
@@ -1095,8 +948,6 @@ main(int argc, char **argv)
 	for (; i < argc && argv[i][0] == '-'; i++) {
 		if (strcmp(argv[i], "-v") == 0) {
 			cfg.verbose = PICO4_CAM_LOG_INFO;
-		} else if (strcmp(argv[i], "-vv") == 0) {
-			cfg.verbose = PICO4_CAM_LOG_DEBUG;
 		} else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
 			usage(stdout);
 			return 0;
@@ -1109,44 +960,21 @@ main(int argc, char **argv)
 		usage(stderr);
 		return 2;
 	}
-	// Verbosity flags may also follow the command.
+	// The verbosity flag may also follow the command.
 	for (int j = i + 1; j < argc; j++) {
-		if (strcmp(argv[j], "-v") == 0 || strcmp(argv[j], "-vv") == 0) {
-			cfg.verbose = argv[j][2] == 'v' ? PICO4_CAM_LOG_DEBUG : PICO4_CAM_LOG_INFO;
+		if (strcmp(argv[j], "-v") == 0) {
+			cfg.verbose = PICO4_CAM_LOG_INFO;
 			memmove(&argv[j], &argv[j + 1], (size_t)(argc - j - 1) * sizeof(argv[0]));
 			argc--;
 			j--;
 		}
 	}
 
-	if (strcmp(argv[i], "list") == 0 && argc == i + 1) {
-		return cmd_list(&cfg);
-	}
-	if (strcmp(argv[i], "probe") == 0) {
-		if (argc > i + 1) {
-			unsigned mask = 0;
-			for (int j = i + 1; j < argc; j++) {
-				unsigned long v;
-				if (!parse_uint(argv[j], PICO4_CAM_SLOTS - 1, &v)) {
-					usage(stderr);
-					return 2;
-				}
-				mask |= 1u << v;
-			}
-			cfg.slots = mask;
-		}
-		return cmd_probe(&cfg);
-	}
 	if (strcmp(argv[i], "capture") == 0) {
 		return cmd_capture(&cfg, argc - i - 1, argv + i + 1);
 	}
 	if (strcmp(argv[i], "rgb") == 0) {
 		return cmd_rgb(&cfg, argc - i - 1, argv + i + 1);
-	}
-	if (strcmp(argv[i], "buffers") == 0 && argc == i + 1) {
-		int n = pico4_cam_free_buffers(&cfg);
-		printf("{\"free_buffers\": %d}\n", n);
-		return n >= 0 ? 0 : 1;
 	}
 	usage(stderr);
 	return 2;

@@ -3,9 +3,7 @@
 # controller stays off for SCHED_FIFO in Monado's compositor.
 [Unit]
 Description=Real-time priority for the PICO 4's GPU and display kernel threads
-# The stock kernel's GPU, or Valve's kernel's workqueue priorities.
-ConditionPathExists=|/sys/class/kgsl/kgsl-3d0
-ConditionPathExists=|/sys/bus/workqueue/devices/ring0/prio
+ConditionPathExists=/sys/bus/workqueue/devices/ring0/prio
 
 [Service]
 Type=oneshot

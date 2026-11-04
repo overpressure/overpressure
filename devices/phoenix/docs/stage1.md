@@ -535,9 +535,6 @@ The self-test checks:
 * with a silent PC side, one or two re-plugs. With 35 s of silence the headset re-plugs twice,
   and DHCP, the log drive and the serial shell work afterwards. Normal runs need no re-plug.
 
-`tests/qemu/run-userspace.sh` tests stage 1 together with the handoff to stage 2 on a
-stock-like 4.19 kernel ([userspace.md](userspace.md)).
-
 ### On the headset
 
 The hardware acceptance runner ([hardware-testing.md](hardware-testing.md)) checks stage 1 on a

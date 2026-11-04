@@ -4,8 +4,7 @@
 # builds upstream's release against the image's libraries. The source archive bundles its
 # subprojects (Dear ImGui, ImPlot, spdlog, the Vulkan headers), which link statically; spdlog
 # stays bundled so that the image's newer spdlog and fmt do not matter. No NVIDIA support.
-# gamescope reaches mangoapp through a System V message queue, which the image's preloaded
-# pico4-sysvsem provides (not a dependency here: makepkg would want it in the build root).
+# gamescope reaches mangoapp through a System V message queue.
 pkgname=pico4-mangohud
 pkgver=0.8.4
 pkgrel=1

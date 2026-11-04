@@ -14,7 +14,7 @@
 #                       stack stays inactive.
 #   --wlan DIR          Wi-Fi driver module, firmware and configuration (scripts/extract-wlan.sh,
 #                       docs/userspace.md). Without it Wi-Fi stays off.
-#   --audio DIR         audio modules, ADSP firmware and the audio process's files
+#   --audio DIR         ADSP firmware and the audio process's files
 #                       (scripts/extract-audio.sh, docs/userspace.md). Without it there is no
 #                       sound card.
 #   --stock-slam DIR    PICO OS's head tracker, its Compute DSP firmware and bionic root
@@ -86,7 +86,6 @@ holo_snapshot=mash-20251118.3
 holo_url=https://holo-packages.steamos.cloud/holo-core-aarch64-preview/$holo_snapshot/system.rootfs.zst
 holo_sha256=7e3fb88454e1ac633b7488abb72d3ca0cc7d2578a38146fdd7d58b50fcbd60bf
 holo_archive=$repo/cache/holo/$holo_snapshot-system.rootfs.zst
-mesa_archive=$repo/cache/mesa-26.1.6.tar.xz
 B=$build_root/bootstrap
 T=$B/target    # the image root, an overlay on $B/base
 log() { printf '>> %s\n' "$*"; }
@@ -230,26 +229,21 @@ build_package() {
         mkdir -p "$dir"
         rm -f "$dir/.recipe"
         cp "$project/userspace/pkgbuilds/$name"/* "$@" "$dir/"
-        if [[ "$name" == pico4-turnip-kgsl && -s "$mesa_archive" && ! -s "$dir/${mesa_archive##*/}" ]]; then
-            cp "$mesa_archive" "$dir/"
-        fi
         chown -R "$builder" "$dir"
         in_b su builder -c "cd /build/$name && MAKEFLAGS=-j\$(nproc) $ccenv makepkg --noconfirm --nocheck -f $extra"
         echo "$recipe $sources" > "$dir/.recipe"
     fi
     cp "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst "$B/var/cache/pico4-repo/"
 }
-build_package pico4-turnip-kgsl "$project"/src/graphics/*
+build_package pico4-graphics-tests "$project"/src/graphics/*
 build_package pico4-libdisplay-info
 build_package pico4-sensors
 build_package pico4-basalt
-build_package pico4-vrdisplay "$project"/src/vrdisplay/*
-build_package pico4-sysvsem "$project"/src/sysvsem/*
+build_package pico4-swapchain-usage "$project"/src/swapchain/*
 build_package pico4-vrlink "$project"/src/vrlink/*
 build_package pico4-gtk2
 build_package pico4-mangohud
 build_package pico4-gamescope
-build_package pico4-wpa-supplicant
 build_package pico4-monado "$project"/src/monado/* "$project"/src/xr/*
 in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
 if [[ -n $llvm ]]; then
@@ -410,18 +404,16 @@ if [[ -n "$firmware" ]]; then
     firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* $(ls venus.* 2>/dev/null) | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
 # Wi-Fi: the QCA6390's firmware and board data and the driver's configuration, where the
-# kernel's firmware loader looks, and the stock signed driver module, loaded by path
-# (pico4-wlan.service). The module is installed byte for byte: its signature is appended. The
+# kernel's firmware loader looks. The
 # MAC file links to the headset's own in persist, as PICO OS links it.
 wlan_json="[]"
 if [[ -n "$wlan" ]]; then
-    for f in modules/qca_cld3_qca6390.ko firmware/qca6390/amss20.bin firmware/qca6390/m3.bin \
+    for f in firmware/qca6390/amss20.bin firmware/qca6390/m3.bin \
         firmware/wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini; do
         [[ -s "$wlan/$f" ]] || { echo "missing $wlan/$f (see scripts/extract-wlan.sh)" >&2; exit 1; }
     done
-    mkdir -p "$T/usr/lib/firmware" "$T/usr/lib/pico4-wlan"
+    mkdir -p "$T/usr/lib/firmware"
     cp -r --no-preserve=ownership "$wlan/firmware/." "$T/usr/lib/firmware/"
-    install -m 0644 "$wlan/modules/qca_cld3_qca6390.ko" "$T/usr/lib/pico4-wlan/"
     ln -sfn /mnt/vendor/persist/wlan_mac.bin "$T/usr/lib/firmware/wlan/qca_cld/qca6390/wlan_mac.bin"
     # ath11k on a mainline kernel loads the same files under its own names; the headset's board
     # data (cnss2 picks bdwlanq.elf) is its board.bin.
@@ -430,27 +422,22 @@ if [[ -n "$wlan" ]]; then
     ln -sfn ../../../qca6390/amss20.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin"
     ln -sfn ../../../qca6390/m3.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/m3.bin"
     ln -sfn ../../../qca6390/bdwlanq.elf "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/board.bin"
-    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/wlan" "$T/usr/lib/firmware/ath11k" \
-        "$T/usr/lib/pico4-wlan"
-    wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 usr/lib/firmware/wlan usr/lib/pico4-wlan -type f -print0 |
+    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/wlan" "$T/usr/lib/firmware/ath11k"
+    wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 usr/lib/firmware/wlan -type f -print0 |
         sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
-# Audio: the ADSP's image and protection-domain maps where the PIL loader and pd-mapper look,
-# the stock signed modules with their modules.dep, loaded by path (pico4-audio-modules.service),
-# the tree hexagonrpcd serves to the audio process (pico4-audiopd.service) and the calibration
-# database pico4-audiocal.service loads. The modules are installed byte for byte: their
-# signatures are appended. On a mainline kernel the q6 calibration driver loads the same database's
-# blocks from one file that pico4-audiocal builds here.
+# Audio: the ADSP's image and protection-domain maps where the kernel and pd-mapper look, the tree
+# hexagonrpcd serves to the audio process (pico4-audiopd.service) and the calibration: the q6
+# calibration driver loads PICO OS's database's blocks from one file that pico4-audiocal builds here.
 audio_json="[]"
 if [[ -n "$audio" ]]; then
-    for f in modules/audio_machine_kona.ko modules/modules.dep firmware/adsp.mdt firmware/adspr.jsn \
+    for f in firmware/adsp.mdt firmware/adspr.jsn \
         firmware/adspua.jsn audiopd/acdb/adsp_avs_config.acdb calibration/MTP_base_Wsa8810_Global_cal.acdb; do
         [[ -s "$audio/$f" ]] || { echo "missing $audio/$f (see scripts/extract-audio.sh)" >&2; exit 1; }
     done
     mkdir -p "$T/usr/lib/firmware" "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio"
     install -m 0644 "$audio"/firmware/adsp* "$T/usr/lib/firmware/"
-    install -m 0644 "$audio"/modules/* "$T/usr/lib/pico4-audio/"
     install -D -m 0644 -t "$T/usr/lib/pico4-audio/acdb" "$audio"/calibration/*.acdb
     cp -r --no-preserve=ownership "$audio/audiopd/." "$T/usr/share/qcom/pico4-audio/"
     python3 "$project/userspace/rootfs/usr/bin/pico4-audiocal" export --acdb "$audio/calibration" \
@@ -558,11 +545,9 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
     pico4-monado.socket pico4-session.service pico4-fan.service \
-    pico4-usb-internet.service systemd-timesyncd.service pico4-wlan.service pico4-audio.target \
+    pico4-usb-internet.service systemd-timesyncd.service pico4-audio.target \
     pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service \
-    pico4-venus.service pico4-venus-probe.service steam-video-codec-setup.service pico4-stock-preload.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service     pico4-wifi-backend.service pico4-panel-probe.service pico4-clock.service
-# pico4-sysvsem for every process on the stock kernel only (pico4-stock-preload.service).
-ln -sfn /run/pico4-poc/ld.so.preload "$T/etc/ld.so.preload"
+    pico4-venus-probe.service steam-video-codec-setup.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service     pico4-panel-probe.service pico4-clock.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
 # need cgroup memory control, or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
@@ -624,8 +609,8 @@ chown -R 1000:1000 "$T/home/$user"
 # The compositor's launcher raises its priority (as SteamVR's setup does on
 # desktops); the archive keeps file capabilities.
 in_t setcap cap_sys_nice=eip /opt/steamvr/bin/linuxarm64/vrcompositor-launcher
-# Steam Link's client drives the PICO 4's video decoder through pico4-vrlink's compatibility
-# layer (docs/session.md#steam-link), preloaded by its launcher only.
+# Steam Link's client takes the PICO 4's controllers for the Frame's through pico4-vrlink's
+# compatibility layer (docs/session.md#steam-link), preloaded by its launcher only.
 vrlink_run=$T/opt/steamvr/tools/vrlink/bin/linuxarm64/run_vrlink.sh
 grep -qx '\./vrlink "\$@" &' "$vrlink_run" ||
     { echo "$vrlink_run does not start vrlink as expected; check pico4-vrlink's preload" >&2; exit 1; }

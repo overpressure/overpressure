@@ -4,10 +4,8 @@
 # (PICO4_SESSION_TARGET) names another.
 [Unit]
 Description=PICO 4 user session (steamos)
-# Valve's session needs the GPU, KGSL on the stock kernel or msm's render node on a mainline
-# kernel: none in QEMU.
-ConditionPathExists=|/dev/kgsl-3d0
-ConditionPathExists=|/dev/dri/renderD128
+# Valve's session needs the GPU's render node: none in QEMU.
+ConditionPathExists=/dev/dri/renderD128
 # After the head IMU is listed: SteamVR's driver_monado probes it when SteamVR starts.
 After=systemd-user-sessions.service systemd-logind.service pico4-sensors.target
 # PICO OS's head tracker for SteamVR's driver_monado (docs/xr.md#head-tracking).
@@ -15,8 +13,7 @@ Wants=pico4-slamd.service
 # PICO OS's CPU limits for VR while the session runs (docs/cooling.md#vr-cpu-limits).
 Wants=pico4-vr-performance.service
 After=pico4-vr-performance.service
-# On a kernel with virtual terminals (a mainline kernel) the session takes VT 1 in getty's place,
-# as sddm does on the Frame; the stock kernel has none.
+# The session takes VT 1 in getty's place, as sddm does on the Frame.
 Conflicts=getty@tty1.service
 After=getty@tty1.service
 # A session that ends by itself starts again, as sddm's Relogin=true does on the Frame: a

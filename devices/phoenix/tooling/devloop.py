@@ -269,12 +269,12 @@ class Dev(Headset):
             raise RuntimeError(f"the headset did not confirm {name}")
 
     def install(self, system: Path = SYSTEM, format_data: bool = False, boot: Path | None = None):
-        """Install from the maintenance stage 1: the install boot image in boot, the system
-        image in super, userdata formatted if it holds no data yet (or when asked), then the
-        installed system starts. @p boot replaces the install boot image, such as one with
-        another kernel (kernel/recovery_image.py --installed out/dev/install-boot.img --boot)."""
-        boot = boot or self.work / "install-boot.img"
-        for path, hint in ((boot, "python -m overpressure dev image"), (system, "scripts/build-system-image.sh")):
+        """Install from the maintenance stage 1: the boot image with Valve's kernel in boot, the
+        system image in super, userdata formatted if it holds no data yet (or when asked), then the
+        installed system starts. @p boot replaces the boot image."""
+        boot = boot or self.work.parent / "kernel/install-boot-valve-rgb.img"
+        for path, hint in ((boot, "kernel/recovery_image.py --installed out/dev/install-boot.img --boot"),
+                           (system, "scripts/build-system-image.sh")):
             if not path.exists():
                 raise ValueError(f"missing {path}: run {hint}")
         if self.connect() != "recovery":
@@ -516,7 +516,7 @@ def main(argv=None) -> int:
     inst = sub.add_parser("install")
     inst.add_argument("system", nargs="?", type=Path, default=SYSTEM)
     inst.add_argument("--format-data", action="store_true", help="format userdata even if it holds data")
-    inst.add_argument("--boot", type=Path, help="the boot image to install instead of out/dev/install-boot.img")
+    inst.add_argument("--boot", type=Path, help="the boot image to install instead of out/kernel/install-boot-valve-rgb.img")
     restore_part = sub.add_parser("restore-partition")
     restore_part.add_argument("partition", choices=RESTORABLE)
     restore_part.add_argument("--no-reboot", action="store_true")

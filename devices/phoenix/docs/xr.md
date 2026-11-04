@@ -74,30 +74,16 @@ and `/usr/share/qcom/pico4/calibration/pvr` and the sensor registry link there
 ## Head IMU through the sensor DSP
 
 The IMU is not wired to the application processor. It hangs off the SLPI, a Hexagon DSP running
-Qualcomm's Sensor Core, so Linux has to do what PICO OS's init does. postmarketOS uses the same
-free software on mainline kernels; [`pico4-sensors`](../userspace/pkgbuilds/pico4-sensors/PKGBUILD)
-builds it from pinned linux-msm commits with patches for the stock 4.19 vendor kernel:
+Qualcomm's Sensor Core:
 
-1. **Name service.** `qrtr-ns` (linux-msm/qrtr) provides the QRTR name service. Linux 5.7+ has
-   it in the kernel; 4.19 does not, and PICO OS also runs it in userspace. Upstream qrtr
-   dropped it, so the build pins the last commit that has it.
-2. **Firmware boot.** Writing to `/sys/kernel/boot_slpi/boot` makes the kernel's PIL loader boot
-   `slpi.mdt`/`.bNN` from the headset's own modem partition (installed to `/usr/lib/firmware`).
-   `slpi-boot` first sets the subsystem's `restart_level` to `RELATED` (see the rules above),
-   then waits up to 30 s for the subsystem state `ONLINE`.
-3. **Service locator.** `pd-mapper` (linux-msm) answers the DSPs' service-locator queries from
-   `slpi*.jsn`. [A patch](../userspace/pkgbuilds/pico4-sensors/pd-mapper-jsn-dirs.patch) makes it
-   read the `.jsn` files from directories given as arguments, because PIL-loaded DSPs have no
-   remoteproc sysfs entries to find them through.
-4. **Registry server.** `hexagonrpcd` (linux-msm/hexagonrpc) attaches to the sensors process
+1. **Name service and service locator.** The kernel has both (`QRTR`, its own PD mapper).
+2. **Firmware boot.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4-poc/remoteproc-boot) starts
+   `slpi.mdt`/`.bNN` from the headset's own modem partition (installed to `/usr/lib/firmware`) through
+   remoteproc, whose recovery restarts only that DSP after a crash.
+3. **Registry server.** `hexagonrpcd` (linux-msm/hexagonrpc,
+   [`pico4-sensors`](../userspace/pkgbuilds/pico4-sensors/PKGBUILD)) attaches to the sensors process
    (`sensorspd`) and serves it the sensor configuration and this headset's registry through
-   FastRPC. Four changes, all in
-   [hexagonrpc-vendor-kernel.patch](../userspace/pkgbuilds/pico4-sensors/hexagonrpc-vendor-kernel.patch):
-   - **Downstream ioctl ABI.** hexagonrpc targets the upstream `misc/fastrpc.h` driver. A small,
-     unit-tested translation layer drives the downstream `adsprpc` ABI instead: `GETINFO`
-     selects the DSP channel, `INIT_ATTRS` with `ATTACH_SENSORS` attaches, and invocations use
-     16-byte `remote_arg` entries. The two ABIs reuse ioctl numbers with different meanings,
-     so a descriptor is only ever driven with the ABI it was attached with.
+   FastRPC. Its patches:
    - **Registry version file.** It also serves `sns_reg_version`, so the DSP accepts the
      existing registry.
    - **Static processes.** `-P NAME` starts a static process from the DSP's image instead of
@@ -105,16 +91,14 @@ builds it from pinned linux-msm commits with patches for the stock 4.19 vendor k
      ([userspace.md](userspace.md#audio)).
    - **`ftell`.** The file server answers `ftell` (method 8 of the file interface), which the
      audio process reads its configuration with; unanswered, the server ends its session.
-5. **Client.** `pico4-imu` is a dependency-free Python client of the SNS client service (QMI
+4. **Client.** `pico4-imu` is a dependency-free Python client of the SNS client service (QMI
    service 0x190 over QRTR; requests and events inside the QMI messages are protobuf-encoded).
    It finds sensors by data type, reads their attributes, streams accel and gyro, and reports
    rate, timestamp monotonicity, gaps, gravity, gyro bias and a gravity-corrected orientation
    estimate.
 
-Behaviour of this kernel and DSP:
+Behaviour of the DSP:
 
-- **Secure channel.** The SLPI FastRPC channel is marked secure, so `/dev/adsprpc-smd` returns
-  `EACCES` and `hexagonrpcd` must use `/dev/adsprpc-smd-secure`.
 - **Persistent listener.** The FastRPC listener has to stay alive. If a listener dies, the
   sensors process keeps it registered: a new `hexagonrpcd` cannot attach until the SLPI
   restarts.
@@ -131,10 +115,8 @@ Behaviour of this kernel and DSP:
 
 | Unit (all in `pico4-sensors.target`) | Runs |
 | --- | --- |
-| `pico4-qrtr-ns.service` | `qrtr-ns -f` |
-| `pico4-slpi.service` | `slpi-boot`, after the name service |
-| `pico4-pd-mapper.service` | `pd-mapper /usr/lib/firmware` |
-| `pico4-sensorspd.service` | `hexagonrpcd -f /dev/adsprpc-smd-secure -d sdsp -s -R /usr/share/qcom/pico4`, once udev has created the node (no devtmpfs); restarted whenever it ends, because it ends successfully when the DSP restarts and the restarted DSP needs it again |
+| `pico4-slpi.service` | `remoteproc-boot slpi` |
+| `pico4-sensorspd.service` | `hexagonrpcd -f /dev/fastrpc-sdsp -d sdsp -s -R /usr/share/qcom/pico4`, once udev has created the node (no devtmpfs); restarted whenever it ends, because it ends successfully when the DSP restarts and the restarted DSP needs it again |
 | `pico4-imu-ready.service` | `pico4-imu wait`: until the sensor service lists the accelerometer and gyroscope, at most 120 s; the target is reached after it |
 
 The DSP loads its sensor registry for about 35 s after it boots, and until then the sensor
@@ -143,15 +125,14 @@ target, so the driver (Monado's, or SteamVR's `driver_monado`) does not probe be
 is listed; a probe before that falls back to Monado's simulated headset, whose display
 SteamVR cannot find.
 
-**DSP restarts.** An SLPI subsystem restart (level `RELATED`, `/sys/kernel/boot_slpi/ssr`)
-takes the sensor service away; the name service reports it, and the driver's SSC client sees it
+**DSP restarts.** An SLPI restart takes the sensor service away; the name service reports it, and the driver's SSC client sees it
 as `-ECONNRESET`. A second without IMU samples counts the same. The driver then reports the head
 pose untracked (orientation still valid), and its IMU thread opens a new client, looks the
 sensors up again, maps the QTimer again and subscribes, in short steps so that a service stop
 never waits for the DSP. The station and the cameras stay as they are. The stream is back once
 the DSP has loaded its registry again, about 35 s after the restart.
 
-The units start only where `/sys/kernel/boot_slpi` and the sensor data exist: on the headset,
+The units start only where `/sys/class/remoteproc` and the sensor data exist: on the headset,
 with a userspace built with sensor data. Elsewhere (QEMU) their conditions skip them.
 
 ## Monado driver
@@ -210,119 +191,6 @@ tilt is measured in STAGE because LOCAL keeps only the start yaw of a tilted hea
 tracking it adds `position_tracked`, the path length, the largest distance from the start and
 the last position. Exit status 0 means every location after the first second had a valid
 orientation.
-
-## Display output through Monado
-
-*Stock kernel path, no longer pursued: this section does not describe Valve's kernel.*
-
-Monado's direct-mode targets need `VK_KHR_display` or an X/Wayland server. Turnip's KGSL backend
-has no display support, and the stock kernel's panels follow a vendor KMS contract anyway. The
-driver therefore adds a compositor target,
-[comp_window_pico4_kms.c](../src/monado/comp_window_pico4_kms.c). It presents with the fenced
-sequence of [graphics.md](graphics.md); unfenced page flips show corrupted output on this kernel.
-
-- **Selection.** The target comes first in Monado's list and is picked wherever `/dev/dri/card0`
-  is `msm_drm` with a connected DSI output that has a 4320×2160 90 Hz mode. `PICO4_KMS=0` turns
-  it off. It must become DRM master, so nothing else may hold the display.
-- **Images.** Three linear Vulkan images (4320×2160, both eyes side by side), exportable as
-  dma-bufs. Turnip allocates them from ION on this kernel. `msm_drm` imports them with PRIME and
-  adds them as `XRGB8888` framebuffers (`XBGR8888` for RGBA formats). Compositor and display
-  share the memory with no copy. One image is on screen, one is committed for the next vblank,
-  one is rendered.
-- **Layers.** The stock arrangement: four VIG (scaler) and two DMA layers, one per colour
-  component and eye, routed by `sspp_layout` and blended per component (`blend_op`
-  `layer_color`). The right eye reads the right half of the shared image.
-- **Commits.** The first commit sets the 90 Hz mode and blocks. Every later commit flips all six
-  layers without blocking (retried up to 20 times on `EBUSY`) and requests the CRTC release fence
-  (`output_fence`) and the connector retire fence (`RETIRE_FENCE`).
-  - Before each commit the target waits for the renderer's queue and for the previous commit's
-    retire fence. Only then can the image acquired next be off screen. Each 500 ms without the
-    signal counts as a retire timeout in the statistics; after a second the display is taken as
-    stuck: the present fails with `VK_ERROR_SURFACE_LOST_KHR` and the fences stay open, so the
-    image is never taken for a retired one ([pico4_retire.h](../src/monado/pico4_retire.h),
-    tested with fake fences). Turning the display off ends the wait for good.
-  - One vblank event stays queued, because this vendor driver holds no vblank reference for
-    commits on its own.
-  - Pacing uses Monado's fixed-period pacer at the HMD's 90 Hz, phase-locked to the timestamps
-    of the panel's vblank events. On its own the pacer counts periods from its creation, at an
-    arbitrary phase against the panel; commits can then land just after vblank and miss a third
-    of the refreshes.
-- **Real-time threads.** Monado runs its compositor threads at real-time priority, and the stock
-  kernel only grants that outside cgroups with the `cpu` controller: with
-  `CONFIG_RT_GROUP_SCHED` on cgroup v2, `SCHED_FIFO` fails with `EPERM` there, even for root.
-  systemd enables that controller by default, for CPU accounting and through the user manager.
-  Drop-ins in `userspace/rootfs/etc/systemd` turn it off: `DefaultCPUAccounting=no` for the
-  system and user managers, `Delegate=memory pids` for `user@.service`, and an empty
-  `CPUWeight=` for the user's `app`, `background` and `session` slices. Units added later must
-  not set `CPUWeight`/`CPUQuota` or delegate `cpu`. Without real-time threads the compositor
-  competes with Basalt and misses 50–80 refreshes in 30 s, with client-fence stalls of up to
-  300 ms; with them it misses 1–4.
-- **GPU clock and pacing.** The GPU runs at the stock `msm-adreno-tz` governor's clocks. The
-  compositor starts each frame a full refresh before its vblank: `pico4-monado.service` sets
-  Monado's fake pacer to 12 ms of compositor time (`U_PACING_COMP_MIN_TIME_MS`; its default 3 ms
-  plus the 4 ms present offset left 7 ms, while a two-layer frame takes 9.3–9.4 ms at the
-  governor's clocks). `PICO4_KMS_GPU_MIN_MHZ` can still set a clock floor through KGSL's
-  `min_pwrlevel`; the target then restores KGSL's default level (`default_pwrlevel`, power level
-  6, 305 MHz) on exit, as the unit does after any stop, so a crashed compositor's floor does not
-  outlive it.
-
-Monado has two composition paths:
-
-- **Fast path.** A frame with a single projection layer is distorted straight from the client
-  images into the target.
-- **Layer squasher.** Any other frame (for example a projection plus a quad layer) is first
-  rendered into per-eye scratch images, which a distortion pass then copies into the target.
-
-Each pass is limited by memory bandwidth (GPU timestamps around both passes): the memory runs at
-its full 2,096 MHz, and the GPU reaches about 25 GB/s with real data. Without the following three
-changes in the patch, two-layer frames run at 30 Hz, each frame staying on the panels for three
-refreshes, which shows as visible stepping in the lenses:
-
-1. **Scratch images without storage use** when the compositor uses its graphics pipelines.
-   Turnip on Adreno 6xx does not compress (UBWC) storage images, and upstream Monado requests
-   storage use for the compute path in every case. This cuts the squash pass from 12.7 to 7.7 ms
-   and distortion from 9.0 to 6.7 ms.
-2. **Scratch images at panel size** (2160² per eye) instead of the 140% view size. Larger ones
-   only cost bandwidth. Squash then takes 4.0 ms and distortion 5.2 ms.
-3. **The GPU clock floor** above: squash then takes 2.3 ms.
-
-The compute path is off in this build (`XRT_COMPOSITOR_COMPUTE=1` brings it back): its writes
-into the linear images take twice as long. Measured on the headset, 10 s runs:
-
-| Frame content (140% eye buffers, 3024²) | Setup | GPU time per frame | Frames on the panels |
-| --- | --- | --- | --- |
-| One projection layer | compute, 305 MHz | 18.5 ms | 43 Hz |
-| One projection layer | graphics, final | 6.2 ms | 90 Hz |
-| Projection + quad layer | graphics, upstream scratch images | 22–23 ms | 30 Hz |
-| Projection + quad layer | no storage use | 14.4 ms | 45 Hz |
-| Projection + quad layer | + panel-size scratch, 305 MHz | 9.1–10.3 ms | 61–65 Hz |
-| Projection + quad layer | + 587 MHz floor | 8.0 ms | 90 Hz |
-| Projection + quad layer, 30 s | governor's clocks, 3 ms compositor time | 9.4 ms | 89.2–89.6 Hz, 13–28 late |
-| Projection + quad layer, 30 s | governor's clocks, 12 ms compositor time (final) | 9.2–9.5 ms | 89.2–89.75 Hz, 9–28 late |
-
-[`pico4-openxr-display`](../src/xr/pico4-openxr-display.c) `[SECONDS] [--projection-only] [--sky]` is the
-display acceptance client. It renders through `XR_KHR_vulkan_enable2`:
-
-- **Projection layer.** A dim grid with a large L (left eye, red) or R (right eye, blue).
-- **Quad layer.** A green and white checkerboard 1.5 m ahead in LOCAL space, so it stays put while
-  the head turns. `--projection-only` leaves it out.
-- **Content.** Static: each swapchain image is filled once by a buffer copy, so the frame loop
-  measures the runtime, not the client.
-- **Sky (`--sky`).** Instead of the static pattern, a grid sky fixed in LOCAL space (lines every
-  15 degrees, the horizon brighter) drawn every frame for the pose the runtime predicts, at
-  1584×1584 per eye like SteamVR's applications. It shows whether lines stay single while the
-  head turns ([session.md](session.md#performance-and-heat)). The lines are clear rectangles
-  in a render pass, merged along each line because the driver draws each rectangle on its own.
-- **Report.** The frame rate, the display period, late frames (an interval above 1.5 periods) and
-  tracking, all after the first second. Exit status 0 needs frames at 95% of the display rate or
-  better, at most 1% of them late, and tracked orientation.
-
-With `PICO4_KMS_STATS=path` the target writes its statistics as JSON when it is destroyed:
-commits and commit rate, the longest interval and late commits (over 1.5 periods), `EBUSY`
-retries, retire waits and timeouts, vblanks, the panel rate and repeated vblanks, and the GPU
-and retire waits. With `PICO4_KMS_DUMP=path` it also saves the image of commit
-`PICO4_KMS_DUMP_FRAME` (default 300) as a PPM, downscaled by four, and records the mean colour of
-each eye. `pico4-monado.service` sets both (`/run/pico4-monado/kms.json`, `frame.ppm`).
 
 ## Lens distortion and IPD
 
@@ -472,44 +340,13 @@ as PICO OS's station service reads it:
 
 ## Tracking cameras
 
-The four OV7251s (640×480 mono, global shutter, RAW10) only exist behind Qualcomm's Spectra
-camera stack (CSL), which has no V4L2 capture path. [pico4_cam.c](../src/monado/pico4_cam.c)
-rebuilds the stock tracking pipeline from the public CSL UAPI headers (CAF LA.UM.9.12 kona, from
-a pinned public kernel tree, the closest public match of the stock kernel):
+The four OV7251s (640×480 mono, global shutter, RAW10) run on V4L2 through CAMSS
+([pico4_cam.c](../src/monado/pico4_cam.c), [kernel-feasibility.md](kernel-feasibility.md#results)): media
+links and formats per slot (CSIPHY, CSID, VFE RDI, 640×481 Y10), multi-planar buffers in a ring, Y10P
+unpacked to 16 bits. A frame's time comes from its buffer (the CSID's hardware start of frame); the
+QTimer time follows from an offset measured once a second. The sensors' control port belongs to the
+station, which configures them over its own I2C and sends the frame sync:
 
-- **A mainline kernel.** Without KGSL's node the same functions run on V4L2 through CAMSS: the
-  media links and formats per slot (CSIPHY, CSID, VFE RDI, 640×481 Y10), multi-planar buffers in
-  a ring, Y10P unpacked to 16 bits. A frame's time comes from its buffer (the CSID's hardware
-  start of frame); the QTimer time follows from an offset measured once a second. The sections
-  below describe the stock kernel's path; the metadata line and the station's role are the same.
-- **Discovery.** The nodes are found at run time from the media graph and `CAM_QUERY_CAP`, not
-  from fixed node numbers.
-- **Probe.** All four sensors are probed (`CAM_SENSOR_PROBE_CMD`: I2C address, chip-ID check
-  `0x300A` = `0x7750`, power sequence) before any is powered for streaming: reset and standby
-  are shared GPIOs, and a probe ends with a power-down. PICO's kernel answers these probes
-  without touching the bus: the sensors' control port belongs to the station.
-- **Sessions.** One CSL session per camera:
-  - the sensor through the CCI driver: acquire (power-up) and the stock OV7251 register table,
-    which PICO's kernel drops for a camera marked as a tracking camera in its I2C info (the
-    `reserved` byte): only the stream-on register reaches its stream-state bits, and the station
-    configures the sensor over its own I2C;
-  - its CSIPHY: one lane at 480 Mbit/s, settle count 14, combo mode where two sensors share a
-    PHY;
-  - an IFE-lite with one RDI output (raw data, no pixel pipeline, no ISP firmware), on a free
-    CSID-lite/IFE-lite pair.
-
-  PICO's kernel allows four links per session where the public header says two; the build
-  patches the header (`MAX_LINKS_PER_SESSION`).
-- **IFE-lite.** The RDI only produces start-of-frame events once the INIT packet enables the
-  CAMIF-lite module with a CDM register write; the kernel never does. CamX does the same. The
-  sensor sends RAW10 (CSI data type `0x2B`), stored as `PLAIN16_10`. Packet opcodes follow CamX,
-  `(device type << 24) | opcode`; the ISP decodes them as `(opcode + 1) & 0xF`, so INIT is
-  `0x0F000000` and UPDATE `0x0F000001`.
-- **Requests.** The ISP is alone on its request-manager link: the sensor follows the frame sync,
-  not requests. Each camera keeps 8 requests in flight with bubble recovery; with 6, about 10% of
-  frames are lost. Buffer completion comes through `cam_sync` fences, each with a user payload,
-  so one `poll()` covers all cameras. The timestamp is the start-of-frame event's boot time,
-  which the driver converts to Monado's clock.
 - **Metadata line.** The sensor sends one embedded line before the 480 scene rows, and the RDI
   writes 481 lines, as PICO OS captures them (640×481). The line carries register values as
   10-bit samples (two bits up): gain in word 4, exposure in words 6 and 7, and the exposure
@@ -523,9 +360,7 @@ a pinned public kernel tree, the closest public match of the stock kernel):
   308 against 737 lines put one camera 4.1 ms after another and no set ever formed again.
 - **Stalls and recovery.** When no scene set completes for a second while scene frames arrive,
   the driver logs each camera's frames, late and repeated frames, start-of-frame offsets and
-  exposure. A camera that delivers nothing while the others do has a stuck link (after a load
-  spike the ISP's request manager retried one request on every frame, "bubble", and that
-  camera stayed silent for good); then, and after 3 s without a set or 1 s without any frame,
+  exposure. A camera that delivers nothing while the others do has a stuck link; then, and after 3 s without a set or 1 s without any frame,
   the camera thread restarts the capture as at the start: the station's sync off, the sessions
   closed and opened, the sync on, the exposure set (at most once in 5 s). The station refuses
   the first restart's sync start after a single stop and takes it after a second one. With PICO
@@ -541,71 +376,16 @@ a pinned public kernel tree, the closest public match of the stock kernel):
   or 61 late frames in that window (checked every 100 ms). One restart runs at a time, and after
   6 failed ones it reports the system as irreparable. The driver keeps its own coarser triggers
   and 5 s limit; with them it recovers within 1–2 s, and leaving a game no longer drops tracking.
-- **Cached buffers.** Frames land in cached buffers, which are invalidated
-  (`CAM_REQ_MGR_CACHE_OPS`) before the CPU reads them. With uncached buffers, reading frames
-  stalls buffer delivery for about 100 ms every 10–13 frames (latency 45–67 ms mean). With cached
-  buffers the latency is a constant 16–18 ms.
-- **Kernel console.** The camera driver logs every start of frame at `KERN_INFO`. On the serial
-  console each line costs about 13 ms in interrupt context, and capture collapses after about
-  20 frames. `/etc/sysctl.d/50-pico4-console.conf` sets `kernel.printk = 5 4 1 7`, which keeps
-  informational messages off the console, and on the headset `pico4-console-quiet.service`
-  lowers the level to 3: journald's forwarded warnings and errors on the console delayed the
-  display interrupt ([session.md](session.md#performance-and-heat)).
-- **udev.** systemd's `60-persistent-v4l.rules` is overridden. Its `v4l_id` probe opens the ICP
-  node at boot, whose firmware load fails. That blocks PICO's CAM-HUB work queue, and every
-  later open of `cam_sync` times out.
-
-| CSL slot | Module (8-bit I2C address) | Factory camera, as worn | Flip and mirror in the register table |
-| --- | --- | --- | --- |
-| 0 | left (`E2`) | cam0, top left | yes |
-| 1 | right (`E4`) | cam2, bottom right | no |
-| 2 | "slave" (`E6`) | cam1, top right | no |
-| 3 | "master" (`E8`) | cam3, bottom left | yes |
-
-The station drives the sensors, which run in FSIN slave mode:
-
-- **Start.** Each run resets the station, then sends camera init (command `04`, payload
-  `01 00 02 00`) and stream on for all cameras (`04`, `02 00 01`) once all four sensors stream.
-  The station initialises them over its own I2C and refuses unless all four are on. Frames
-  arrive at 49.99 Hz.
-- **Exposure.** The sensors ignore their own exposure registers in this mode. Exposure and gain
-  go through the station's camera command `04 03`, laid out as the stock `CameraSetPara`: per
-  camera, exposure in sensor lines of 19.3 µs and gain in 1/16 steps (16 = 1×, up to 248),
-  cameras 0–3 in bytes 1–12 and a second set in 16–27; the station sends no reply. By the frames'
-  metadata the first set drives the scene frames, and the second changes neither phase: the
-  driver fills it with PICO OS's LED setting, 4 lines at gain 26, within PICO OS's LED limits
-  (10 lines, gain 32). Bytes 13–14 carry 52, the value PICO OS's tracking service sends at a
-  50 Hz camera rate (160 at other rates), and byte 15 an event index that PICO OS counts 0–9,
-  one per command. Once any such command has gone out, the controllers' LEDs show about 27 times
-  more saturated samples in the LED exposures than before the first one (the same 4 lines at
-  gain 26 by the metadata), whatever the command holds. Exposure plus the
-  9 ms readout must fit the 20 ms period, about 570 lines; 3,000 lines stall the sensors. The station's default exposure, about
-  3 ms, leaves rooms nearly black.
-- **Alternating exposures.** Every other frame is a short exposure in which only the
-  controllers' IR LEDs show (mean 23–28 of 1023): 4 lines at gain 26 by the metadata, whatever
-  the scene exposure and whatever the command's second set holds, as in PICO OS. They stay
-  unsaturated while the scene exposure changes. PICO uses those frames for controller tracking; the scene
-  frames run at 25 Hz.
-
-Covering one lens at a time darkens exactly one slot, which gives the mapping in the table
-(`PICO4_TCAM_SLOTS`, default `0,2,1,3` for cam0–cam3). Under it, a point seen by both lower
-cameras triangulates with a 0 mm ray gap at 15 cm, using the images as captured; every rotated
-or swapped variant gives negative depths or gaps of 5–10 cm. The factory model (omni + radtan,
-Kalibr `T_BS` to the IMU frame) is refitted to Kannala-Brandt (KB4, same principal point) for
-Basalt in [pico4_tcam.c](../src/monado/pico4_tcam.c), at 0.21–0.52 px RMS.
 
 [`pico4-cam`](../src/xr/pico4-cam.c) tests the cameras on their own:
 
-- `list`: CSL nodes, slots, PHYs, the ISP's IOMMU handles and the media entities; powers nothing.
-- `probe [SLOT...]`: power up, read the chip ID, power down.
 - `capture`: resets the station, starts the frame sync and streams until each camera delivered
   N frames. Saves a scene frame of each camera (8-bit PGM of the scene rows, and the whole buffer
   as 16-bit raw, metadata line first) and prints per camera the frames, errors, frame rate from
   the start-of-frame timestamps, their monotonicity, the sample statistics and the frames of
   each exposure phase. `--stats-log FILE` logs per frame the slot, start-of-frame time,
   brightness, latency, request, phase, exposure and gain; `--exposure LINES --gain G` sets the
-  station exposure; `--lines` and `--sensor-lines` (480–482) override the capture and sensor
-  heights.
+  station exposure.
 
 ## Passthrough
 
@@ -1452,8 +1232,7 @@ bash devices/phoenix/scripts/extract-stock-slam.sh /var/tmp/pico4-stock/5.13.7-g
 the root's stand-ins ([src/stockslam/build.sh](../src/stockslam/build.sh)) with the host's clang;
 it first runs `test_isp` (the image processing against hand-computed values) natively.
 
-- **`pico4-sensors`**: qrtr-ns, pd-mapper and hexagonrpcd from pinned linux-msm commits plus this
-  project's patches. Its `meson test` covers the FastRPC ABI translation.
+- **`pico4-sensors`**: hexagonrpcd from a pinned linux-msm commit plus this project's patches.
 - **`pico4-basalt`**: Basalt and the submodules the library needs, at pinned commits.
 - **`pico4-monado`**: Monado plus `src/monado` and `src/xr`. It fetches the Spectra camera UAPI
   headers from a pinned public kernel tree. Its build runs the C tests, because the userspace
@@ -1501,16 +1280,11 @@ root:
 systemctl stop pico4-session.service
 XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-pose 10 10
 XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-display 10 [--projection-only] [--sky]
-systemctl stop pico4-monado.service; cat /run/pico4-monado/kms.json
+systemctl stop pico4-monado.service
 systemctl start pico4-session.service
 ```
 
-The service writes the KMS statistics and the frame dump when it stops; they cover its whole
-lifetime, so a measurement starts a fresh service. Basalt's diagnostics go to the service's
-journal; both clients keep their stdout for the JSON report and point file descriptor 1 at
-stderr, for runtimes that run in-process. With the cameras and Basalt, a still headset stays
-within centimetres only in a scene the lower cameras can see in depth, not in front of a surface
-a few centimetres away.
+
 
 The driver reads its options from the environment of the process that runs it: `monado-service`
 (`pico4-monado.service`) or SteamVR's `driver_monado`, not the OpenXR client. For example,
@@ -1531,12 +1305,7 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_IMU_RATE` | 1000 | head IMU rate requested from the DSP, Hz |
 | `PICO4_CALIBRATION_DIR` | `/usr/share/qcom/pico4/calibration` | factory lens and camera calibration |
 | `PICO4_LENS_CA` | off | chromatic aberration correction |
-| `PICO4_KMS` | on | KMS compositor target |
-| `PICO4_KMS_GPU_MIN_MHZ` | 0 | GPU clock floor while the target drives the panels (587 for 587 MHz or faster); 0 leaves the governor alone |
-| `U_PACING_COMP_MIN_TIME_MS` | 12 (unit) | Monado's compositor time per frame: the frame starts this much plus 4 ms before its vblank |
-| `PICO4_KMS_STATS` | unset | JSON statistics written when the target is destroyed |
-| `PICO4_KMS_DUMP`, `PICO4_KMS_DUMP_FRAME` | unset, 300 | PPM of that commit's image, plus the eye means |
-| `XRT_COMPOSITOR_COMPUTE` | off in this build | Monado's compute composition path |
+| `XRT_COMPOSITOR_COMPUTE` | 0 (service) | Monado's compute composition path |
 | `PICO4_SLAM` | on | 6DoF |
 | `PICO4_SLAM_BACKEND` | `stock` | `stock`: PICO OS's tracker through `pico4-slamd`; `basalt`: Monado's Basalt |
 | `PICO4_SLAMD_LSC` | the vendor's | `pico4-slamd`'s lens-shading table in `/system/etc/pvr/config` instead of the one the camera modules' vendor picks; set in the unit's environment |
@@ -1569,7 +1338,6 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 The cameras and the radio on their own (stop the Monado service first):
 
 ```sh
-pico4-cam list                                    # CSL nodes, slots, PHYs; powers nothing
 pico4-cam capture --frames 1500 --out /tmp/cams   # all four at 50 Hz, JSON summary, one scene frame each
 pico4-cam capture --exposure 300 --gain 32 --stats-log /tmp/frames.txt
 pico4-station version                             # station firmware version
@@ -1578,7 +1346,8 @@ pico4-station listen --seconds 5                  # frames the station sends
 
 ## Verified results
 
-On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwise.
+On the headset, lying still unless stated otherwise. Current results on Valve's kernel:
+[kernel-feasibility.md](kernel-feasibility.md#results).
 
 | Check | Result |
 | --- | --- |
@@ -1594,9 +1363,6 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Tilt against the accelerometer | within 0.2° (for example 9.12° against 8.96–9.11°, 4.02° against 4.06°); with Basalt drifting in front of a near surface 2.01° against 0.65°, heading 0.11°/s |
 | Latency, sensor sample to pose | 0.94–1.16 ms |
 | Learned gyro bias | (0.0039, −0.0009, −0.0056) rad/s in the head frame |
-| KMS target | `pico4_kms` on connector 29 / CRTC 140, mode `4320x2160x90`, six stock layers; images `B8G8R8A8_SRGB`, linear, pitch 17,408 bytes, imported from ION dma-bufs |
-| One projection layer (3024² per eye), 60 s | client 5,400 frames at 90.000 Hz, 3 late (longest interval 19.5 ms); 5,343 commits; panels 89.998 Hz; no retire fence timeout; GPU 7.2 ms per frame, 38 °C afterwards |
-| Projection + world-locked quad, 90 s, head turning | client 8,100 frames at 90.000 Hz, 7 late; 87.0 commits per second (about 3% of the refreshes repeat a frame, none for more than one refresh; longest gap 21.9 ms); panels 89.998 Hz; no retire timeout; GPU 8.2 ms per frame |
 | Two layers with Basalt running, 30 s | 2,698 frames at 89.996 Hz, 2 late; 88.8 commits per second; panels 89.998 Hz; no retire timeout; Basalt skipped 73 of 757 sets |
 | Scanned-out image | left half red L, right half blue R; eye means for example (70, 40, 25) and (26, 41, 72) |
 | Seen in the lenses | one layer: a steady image, red L only in the left eye, blue R only in the right eye. Two layers, head turning: the checkerboard has a stereo offset between the eyes, stays fixed in the room and moves smoothly, with no visible latency |
@@ -1634,8 +1400,6 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | SLAM pose latency, worn in Valve's session | median 112 ms, 90th percentile 157 ms; no gap in the poses |
 | Predicted pose against Basalt's, head moving | gyro prediction: rotation 15 ms and position 65 ms behind, 0.4 mm wander at rest; gyro and acceleration with the deadband: 12 ms and 31 ms, 1.5 mm |
 | 6DoF worn in Valve's session, Monado's prediction (`PICO4_FUSION=0`) | tracks, no snaps to another heading; the image lags and jumps by 2–30 cm (the extrapolation of about 150 ms amplifies the velocity noise of 25 Hz poses) |
-| Two-layer display test (30 s), GPU at the governor's clocks, 12–16 ms compositor time | 89.2–89.75 Hz, 9–28 late frames in 14 runs (median 89.5 Hz, 15.5 late), GPU 9.2–9.5 ms per frame; with the 587 MHz floor and 3 ms in the same conditions 89.5–89.6 Hz, 14–18 late, 8.5 ms: the late frames do not depend on the floor. Without Basalt (`PICO4_SLAM=0`) 89.77 Hz and 7 late in both runs; Basalt on the four small cores alone (`PICO4_SLAM_CPUS=15`) 6 and 24 late |
-| GPU floor after a crash | `vrcompositor` killed while its floor (power level 1) was raised: level 6, KGSL's default, right after; a compositor that found level 1 left behind restores 6 on exit, and Monado's unit after its stop |
 | Basalt VIO settings | Basalt logs "Using VIO config /usr/share/pico4-basalt/pico4-vio.json" when the PICO 4 driver starts SLAM |
 | Exposure phases, `pico4-cam` with each set varied (80 frames per camera) | scene frames take the first set (60–400 lines, gain 16–128); LED frames 4 lines at gain 26 with the second set at 0/0, 2/20, 4/26, 8/30 or 10/32; LED frames peak at 344–377 of 1023, no sample saturated, while scene frames saturate 14–4,650 samples per frame |
 | Metadata line, `pico4-cam` | decodes to the commanded exposure and gain (300 lines and gain 32, 120 lines and gain 16); every camera 50 scene and 50 LED frames of 100; LED frames 4 lines at gain 26; the 481st captured line continues the scene (mean row difference 8.8 against 8.4 one row up), 0 errors at 49.8 Hz |
@@ -1671,9 +1435,7 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Controllers worn in Valve's session (120 s): both held, the left switched off for 10 s and on again | both tracked with their own calibration; the left disconnected, held its place while off (user) and connected again, with its record re-read in 48 ms and tracking at once; event time minus station time 0.00–0.99 µs in every 30 s window, across the reconnect and under the session's load |
 | Station power cycled 10 times, with awake controllers lying still | both reconnect each time within 0.3–0.4 s of the power, and neither drops in the 5 s after |
 | Station off with awake controllers lying still, then on | after 30 s, 2, 5, 10 and 15 minutes with the slow-advertising command, and 30 s, 2 and 5 minutes without it: both reconnect within 1.3 s, without a press |
-| Acceptance cycle (`flash-run --userspace`, then stock restoration) | passed: archive received in 86–105 s, SSH 112–123 s after the start of the transfer; systemd `running`, 0 failed units, storage read-only, USB link unchanged, Turnip 65,536 pixels; IMU, pose and display checks as above (two layers, Basalt running); stock boot verified by EDL readback, stock ABL restored, PICO OS started |
 | Room view in Valve's session (`pico4-roomview`, still headset) | the compositor imports the frames ("Late initialization successful"); frame dumps show the room in both eyes, the dashboard over it; 25 frames per second per camera published, none skipped; with the room view on for 60 s the stock tracker lost no pose and stayed within 1.3 mm of its start (1.1 mm with it off), no tracker warnings |
-| QEMU, same archive (4.19 without SLPI or `msm_drm`) | self-test passed; the sensor units and Monado's PICO 4 prober stay inactive |
 
 ## Next steps
 

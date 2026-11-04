@@ -91,7 +91,7 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_capture_restart_test_s, "PICO4_CAPTURE_RESTART_T
  */
 DEBUG_GET_ONCE_OPTION(pico4_slam_cams, "PICO4_SLAM_CAMS", "0,1,2,3")
 /*!
- * CSL sensor slot of each factory camera cam0..cam3 (top left, top right,
+ * Sensor slot of each factory camera cam0..cam3 (top left, top right,
  * bottom right, bottom left as worn), found by covering one lens at a time.
  */
 DEBUG_GET_ONCE_OPTION(pico4_tcam_slots, "PICO4_TCAM_SLOTS", "0,2,1,3")
@@ -969,8 +969,7 @@ scene_stall(struct pico4_slam *s)
 		some = some || s->stall.frames[i] != 0;
 	}
 	if (silent && some) {
-		// One camera's link stuck while the others run: the ISP's request manager retrying a
-		// bubbled request on every frame after a load spike.
+		// One camera's stream stuck while the others run.
 		s->restart_why = "a camera delivers no frames";
 	} else if (now - s->stall.last_complete_ns >= (int64_t)3 * U_TIME_1S_IN_NS) {
 		s->restart_why = "no complete scene set for 3 s";
@@ -1299,8 +1298,8 @@ imu_push_thread(void *ptr)
 
 /*!
  * The capture again from the start, as pico4_slam_create starts it: the station's camera sync off,
- * the sessions closed and opened, the sync on, the exposure set (camera thread). A link the ISP's
- * request manager keeps retrying recovers only this way.
+ * the capture closed and opened, the sync on, the exposure set (camera thread). A stream that
+ * stays stuck recovers only this way.
  */
 static bool
 restart_capture(struct pico4_slam *s, const char *why)
@@ -1353,8 +1352,8 @@ camera_thread(void *ptr)
 	os_thread_helper_lock(&s->oth);
 	while (os_thread_helper_is_running_locked(&s->oth)) {
 		os_thread_helper_unlock(&s->oth);
-		// The capture streamed into a suspend and its request manager comes back in a bad state:
-		// a new capture session after it, as after an ISP error.
+		// The capture streamed into a suspend: a new capture after it, as after an ISP error
+		//.
 		int64_t slept = pico4_slept_ns();
 		if (slept - slept_ns > PICO4_SLEEP_DETECT_NS) {
 			SLAM_INFO(s, "The system slept %.1f s: the capture starts again", (double)(slept - slept_ns) / 1e9);
@@ -1531,7 +1530,7 @@ cameras:
 	cc.verbose = log_level <= U_LOGGING_DEBUG ? PICO4_CAM_LOG_INFO : PICO4_CAM_LOG_ERROR;
 	cc.log = cam_log;
 	cc.log_user = s;
-	// The RGB camera shares the request manager, which takes one owner: the same capture.
+	// The RGB camera is in the same capture.
 	bool rgb = s->passthrough != NULL && debug_get_bool_option_pico4_roomview_rgb();
 	if (rgb) {
 		cc.slots |= 1u << PICO4_CAM_RGB_SLOT;

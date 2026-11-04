@@ -6,8 +6,7 @@ The station relays the controllers' IMU, buttons and battery to the sensor DSP
 (SSC sensor "ble_mcu", see pico4-imu raw ble_mcu); the AP talks to it over
 /dev/spidev0.0 for control only. Frames are 40 bytes: header, target, command,
 36 payload bytes (the last two carry a sequence number), CRC-8 (Dallas/Maxim)
-over bytes 0..38. The vendor spidev driver performs the transfers on the
-station's interrupt; userspace writes and reads whole frames.
+over bytes 0..38.
 
 Safety: the station and controller firmware can be updated over this link. This
 tool can only build the frames listed in COMMANDS (version query, camera frame
@@ -22,7 +21,6 @@ import ctypes
 import fcntl
 import json
 import os
-import select
 import struct
 import sys
 import time
@@ -32,8 +30,7 @@ FRAME = 40
 HEADER_SEND = 0xAA
 HEADERS_RECV = (0xBB, 0xA5)
 TARGET_STATION = 0x01
-IOCTL_POWER = 0x80046B09  # _IOW('k', 9, int): 1 = on, 0 = off
-# A mainline kernel: a plain spidev, and the station's supply as station-power (device tree).
+# A plain spidev, and the station's supply as station-power (device tree).
 STATION_POWER = "/sys/devices/platform/station-power/state"
 SPI_IOC_MESSAGE_1 = 0x40206B00  # _IOW('k', 0, struct spi_ioc_transfer)
 SPIDEV_POLL_S = 0.002
@@ -193,14 +190,11 @@ class Station:
         self.seq = 0
         self.log = []
         self.announced = False
-        # A mainline kernel's plain spidev moves no frames on its own (the stock vendor spidev
-        # transfers on the station's interrupt): each transfer is full duplex, and the
+        # A plain spidev moves no frames on its own: each transfer is full duplex, and the
         # station's next frame comes back with whatever goes out, a command or zeros (no
         # header, which the station ignores). Frames that come back wait in the queue.
-        self.spidev = os.path.exists(STATION_POWER)
         self.queue = []
-        # The station repeats its last frame on every transfer until it has another one (the
-        # vendor driver read only on the station's interrupt): a frame equal to the last is no new one.
+        # The station repeats its last frame on every transfer until it has another one: a frame equal to the last is no new one.
         self.last = None
         self._tx = ctypes.create_string_buffer(FRAME)
         self._rx = ctypes.create_string_buffer(FRAME)
@@ -209,9 +203,6 @@ class Station:
         os.close(self.fd)
 
     def power(self, on: bool):
-        if not self.spidev:
-            fcntl.ioctl(self.fd, IOCTL_POWER, struct.pack("i", 1 if on else 0))
-            return
         with open(STATION_POWER, "w") as f:
             f.write("enabled" if on else "disabled")
         self.queue.clear()
@@ -228,16 +219,10 @@ class Station:
             self.queue.append(self._rx.raw)
 
     def send(self, data: bytes):
-        if self.spidev:
-            self._transfer(data)
-        elif os.write(self.fd, data) != FRAME:
-            raise OSError("short write to the station")
+        self._transfer(data)
 
     def _next(self, timeout: float):
         """The station's next frame within the timeout, or None."""
-        if not self.spidev:
-            ready, _, _ = select.select([self.fd], [], [], timeout)
-            return os.read(self.fd, FRAME) if ready else None
         end = time.monotonic() + timeout
         while not self.queue:
             self._transfer(bytes(FRAME))

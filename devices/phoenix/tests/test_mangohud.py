@@ -22,18 +22,6 @@ class MangoHudTests(unittest.TestCase):
         self.assertNotRegex(build, r"sed -i [^\n]*--mangoapp")
         packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
         self.assertIn("pico4/pico4-mangohud", packages)
-        # gamescope's queue to mangoapp needs the preloaded System V IPC.
-        self.assertIn("pico4/pico4-sysvsem", packages)
-
-    def test_message_queues_are_built_and_tested_with_the_semaphores(self):
-        recipe = (PKGBUILDS / "pico4-sysvsem/PKGBUILD").read_text(encoding="utf-8")
-        compile_line = re.search(r"-o libpico4-sysvsem\.so ([^\n]*)", recipe).group(1)
-        self.assertIn("pico4-sysvmsg.c", compile_line)
-        self.assertIn("test_pico4_sysvmsg", recipe)
-        source = (ROOT / "src/sysvsem/pico4-sysvmsg.c").read_text(encoding="utf-8")
-        for call in ("msgget", "msgsnd", "msgrcv", "msgctl"):
-            self.assertRegex(source, rf"EXPORT [a-z_]+\n{call}\(")
-
 
 if __name__ == "__main__":
     unittest.main()

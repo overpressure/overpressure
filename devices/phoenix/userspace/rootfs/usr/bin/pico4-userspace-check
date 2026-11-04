@@ -71,7 +71,7 @@ missing_nodes=$(
 	done
 )
 udev_devices=$(udevadm info --export-db 2>/dev/null | grep -c '^P:')
-# Stage 1 hands over a mainline kernel's devtmpfs, and a tmpfs copy on the stock kernel.
+# Stage 1 hands over the kernel's devtmpfs; QEMU's and other kernels without it get a tmpfs copy.
 dev_want=tmpfs
 grep -qw devtmpfs /proc/filesystems && dev_want=devtmpfs
 need "/dev is a $dev_want (the kernel's own)" [ "$dev_fs" = "$dev_want" ]
@@ -100,7 +100,7 @@ data_dev=$(part_dev userdata)
 if [ -n "$system_dev" ] && [ "$root_src" = "$system_dev" ]; then
 	# The installed system: the image in super read-only, data on userdata, the only writable partition.
 	installed=true
-	# A mainline kernel counts a disk's read-only flag for its partitions too, so stage 1 makes
+	# The kernel counts a disk's read-only flag for its partitions too, so stage 1 makes
 	# userdata's disk writable; its other partitions keep their own flags and are checked here.
 	data_disk=$(basename "$(readlink -f "/sys/class/block/${data_dev##*/}/..")")
 	writable=$(grep -vx -e "${data_dev##*/}" -e "$data_disk" <<<"$writable")
@@ -177,7 +177,7 @@ session_failed=$(user_systemctl list-units --failed --plain --no-legend 2>/dev/n
 # Device nodes the session user needs in Valve's session (SteamVR's
 # driver_monado and compositor run as steamos); those missing in QEMU are skipped.
 access_denied=$(
-	for node in /dev/dri/card0 /dev/kgsl-3d0 /dev/ion /dev/spidev0.0 /dev/ttyHS1 /dev/media0 /dev/video0; do
+	for node in /dev/dri/card0 /dev/spidev0.0 /dev/ttyHS1 /dev/media0 /dev/video0; do
 		[ -e "$node" ] || continue
 		runuser -u "$session_user" -- test -r "$node" -a -w "$node" 2>/dev/null || echo "$node"
 	done
@@ -185,7 +185,7 @@ access_denied=$(
 monado_socket=$(systemctl is-active pico4-monado.socket 2>/dev/null)
 monado_service=$(systemctl is-active pico4-monado.service 2>/dev/null)
 # Valve's session runs where the GPU is (pico4-session.service): not in QEMU.
-if [ -e /dev/kgsl-3d0 ]; then
+if [ -e /dev/dri/renderD128 ]; then
 	need "session service active (is: $session_service)" [ "$session_service" = active ]
 	need "session user logged in (is: $session_user_state)" [ "$session_user_state" = active ]
 	need "session target $session_target active (is: $session_target_state)" [ "$session_target_state" = active ]
@@ -246,7 +246,7 @@ os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-}")
 # -- Vulkan through Turnip (needs the GPU firmware from your own backup) --------
 vk_status=skipped
 vk_json=null
-if [ "$vulkan" = 1 ] && { [ -c /dev/kgsl-3d0 ] || [ -c /dev/dri/renderD128 ]; }; then
+if [ "$vulkan" = 1 ] && [ -c /dev/dri/renderD128 ]; then
 	if out=$(VK_DRIVER_FILES=/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json \
 		timeout 45 pico4-vulkan-test 2>/run/pico4-vulkan-test.log); then
 		vk_status=passed

@@ -46,7 +46,7 @@ class ResumeTests(unittest.TestCase):
         self.assertIn("s->slept_ns = pico4_slept_ns();", slam)
 
     def test_capture_starts_again_after_a_suspend(self):
-        # The capture streamed into the suspend and the request manager came back broken: the
+        # The capture streamed into the suspend and came back broken: the
         # camera thread's restart runs once the thread sees the system slept.
         slam = read("pico4_slam.c")
         thread = slam[slam.index("camera_thread(void *ptr)"):]

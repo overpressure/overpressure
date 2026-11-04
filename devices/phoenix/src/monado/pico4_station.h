@@ -7,8 +7,8 @@
  * The station, an nRF52832 on /dev/spidev0.0, pulses the OV7251s' FSIN line;
  * the sensors run in FSIN slave mode and send nothing without it. Frames are
  * 40 bytes: header (AA to the station, BB replies, A5 notifications), target,
- * command, payload, and a CRC-8 (Dallas/Maxim) over bytes 0..38. The vendor
- * spidev driver moves whole frames on the station's interrupt.
+ * command, payload, and a CRC-8 (Dallas/Maxim) over bytes 0..38. Each spidev
+ * transfer is full duplex: a frame goes out and the station's next one comes back.
  *
  * All calls may come from different threads (one internal lock).
  *
@@ -16,7 +16,7 @@
  * This module builds only the frames in pico4_station_frame()'s allowlist
  * (acknowledge, camera frame rate, camera init/stream/exposure), the two
  * vibration frames to a controller (pico4_station_vibrate()), the read-only
- * calibration query (pico4_station_calibration_query()) and the power ioctl; it
+ * calibration query (pico4_station_calibration_query()) and the supply's switch; it
  * has no way to send firmware, bootloader or flash commands and never touches
  * the boot pin.
  *
@@ -206,7 +206,7 @@ pico4_station_poll(struct pico4_station *st, int timeout_ms);
 
 /*!
  * Start FSIN: camera init, then stream on for all cameras. Call once all
- * sensors stream (CSL START_DEV); the station initialises them over its own
+ * sensors stream (pico4_cam_start()); the station initialises them over its own
  * I2C and fails if they are powered down. Returns 0, -EIO if the station
  * refused, or another negative errno.
  */

@@ -1,6 +1,0 @@
-#!/bin/sh
-# The display layer (pico4-vrdisplay) gives the stock kernel's KGSL and msm_drm SteamVR's direct
-# mode and shared semaphores (docs/session.md). A mainline kernel's msm and Turnip have both, as
-# on the Frame, and there the layer, which answers the display queries itself, would hide the
-# driver's display: without KGSL the session's units, which enable the layer, run without it.
-[ -e /dev/kgsl-3d0 ] || echo PICO4_VRDISPLAY_DISABLE=1

@@ -1,6 +1,5 @@
 [Unit]
-Description=Bind the LPASS VA macro once the ADSP's audio process runs (mainline kernel)
-# The mainline driver only; the stock kernel's macros come with its audio modules.
+Description=Bind the LPASS VA macro once the ADSP's audio process runs
 ConditionPathExists=/sys/bus/platform/drivers/va_macro
 Wants=pico4-audiopd.service
 After=pico4-audiopd.service

@@ -5,7 +5,7 @@
 Description=Boot indication in the lenses
 DefaultDependencies=no
 ConditionKernelCommandLine=pico4poc.root=installed
-# The device nodes exist after the sweep (no devtmpfs on the stock kernel); msm's panels have
+# msm's panels have
 # their mode once pico4-panel-probe has run.
 After=pico4-storage-ro.service pico4-panel-probe.service
 Conflicts=shutdown.target

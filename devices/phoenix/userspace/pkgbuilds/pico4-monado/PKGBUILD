@@ -1,7 +1,7 @@
-# Monado (OpenXR runtime) with a driver for the original PICO 4 on its stock
-# kernel (docs/xr.md): head orientation from the ICM-42688 behind the sensor DSP,
+# Monado (OpenXR runtime) with a driver for the original PICO 4 on Valve's kernel
+# (docs/xr.md): head orientation from the ICM-42688 behind the sensor DSP,
 # through the same Qualcomm Sensor Core client protocol as pico4-imu, and 6DoF
-# from the four OV7251 tracking cameras (Spectra CSL, frame sync from the
+# from the four OV7251 tracking cameras (V4L2 through CAMSS, frame sync from the
 # controller radio) through Monado's SLAM tracker with Basalt (pico4-basalt),
 # plus the two controllers (inputs, 3DoF) from the radio's packets.
 # Upstream Monado, pinned by commit, plus this project's driver files and a
@@ -9,8 +9,7 @@
 # hardware for clients of any user, docs/session.md; the runtime library is its IPC
 # client) and as a SteamVR driver plugin (driver_monado, the headset driver of
 # Valve's VR session). The main compositor shows frames on the two panels
-# through the stock msm_drm KMS driver (comp_window_pico4_kms.c, the fenced
-# path of docs/graphics.md); the null compositor serves headless clients. The
+# through Vulkan's display; the null compositor serves headless clients. The
 # acceptance clients read the head pose (pico4-openxr-pose) and render frames
 # (pico4-openxr-display) through the OpenXR loader; pico4-cam checks the
 # tracking cameras on their own; pico4-ctrack-replay runs the controller LED
@@ -18,7 +17,7 @@
 # SteamVR's room view (docs/xr.md#passthrough).
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=11
+pkgrel=12
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -29,11 +28,7 @@ makedepends=(git cmake ninja eigen vulkan-headers glslang python cairo)
 optdepends=('pico4-basalt: 6DoF head tracking')
 provides=(openxr-runtime)
 _commit=3b450e37b624f5edea366492ee2d267d673a35aa # v25.1.0
-# Spectra camera UAPI (CAF LA.UM.9.12 kona, the closest public match of the stock kernel).
-_camuapi=https://raw.githubusercontent.com/LineageOS/android_kernel_xiaomi_sm8250/f3d39dae3253e7f8bb623eb83a146088f3174148/techpack/camera/include/uapi/media
-_camheaders=(cam_cpas.h cam_defs.h cam_isp.h cam_isp_ife.h cam_isp_vfe.h cam_req_mgr.h cam_sensor.h cam_sync.h)
 source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_commit"
-        "${_camheaders[@]/#/$_camuapi/}"
         monado-pico4-driver.patch monado-steamvr-pico4.patch monado-service-sigterm.patch
         monado-slam-prediction.patch monado-steamvr-battery.patch monado-vk-mutex-init-failure.patch
         monado-steamvr-presence.patch monado-steamvr-camera.patch monado-steamvr-room.patch
@@ -46,8 +41,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_lens_panel.h pico4-lens-panel.cpp
         pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
-        comp_window_pico4_kms.c pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
-        pico4_retire.h test_pico4_retire.c
+        pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
         pico4_ctrack_types.hpp pico4_ctrack_model.hpp pico4_ctrack_model.cpp pico4_ctrack_solve.hpp
         pico4_ctrack_solve.cpp pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp
         pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp pico4_ctrack_imu.cpp pico4_ctrack_engine.hpp
@@ -59,14 +53,6 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4-vrcompositor-bindings.json pico4-controller-profile.json pico4-vrlink-bindings.json)
 # Project files (src/monado, src/xr) are SKIP: build-userspace.sh copies them in.
 sha256sums=(SKIP
-            56161a34cf6d6d64dde3b804e34fc1b2b6654a060cae6544b95be9e577278c29
-            5d0a4271a5471fff18f772b4b5bf86163afd5ee85a82652bfbf01d73898bfabc
-            ce20049b508db7f193fbc85ca415722fc193479ca5f77a2a0150dca02bb502a5
-            0273b49789f08268f53daa21301809e3193df1c911bcb15aa18c4015ca1c7449
-            0cbaeb3cd32bdd4d8fb39acb402a1e9bf960fd4e97327dfa6158d9d7899840e7
-            891a5906ffaf4388adc07f21309b7a9bac7007efbafbb37dc7eb8387f8130941
-            7ba04fb72ef7d0fdd6abe6a044cf3586b059ae98129011086f38d30ca4fd0c6a
-            a7e0b04b5fdff083e8556442f33a1ebc2cda18152bf7d4a711e9d2549d988762
             SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
@@ -74,8 +60,6 @@ sha256sums=(SKIP
             SKIP
             SKIP
             SKIP
-            SKIP
-            SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP
@@ -106,11 +90,6 @@ prepare() {
   patch -d monado -p1 < monado-steamvr-frame-rates.patch
   # The eye positions follow the lens motor, the backlight follows SteamVR's standby.
   patch -d monado -p1 < monado-steamvr-lenses-standby.patch
-  # PICO's kernel allows four links per session where the CAF header says two.
-  install -Dm644 -t monado/src/xrt/drivers/pico4/include/media "${_camheaders[@]}"
-  sed -i -E 's/^(#define MAX_LINKS_PER_SESSION[[:space:]]+)2$/\14/' \
-    monado/src/xrt/drivers/pico4/include/media/cam_req_mgr.h
-  grep -q '^#define MAX_LINKS_PER_SESSION[[:space:]]*4$' monado/src/xrt/drivers/pico4/include/media/cam_req_mgr.h
 }
 
 build() {
@@ -125,7 +104,6 @@ build() {
     pico4_ctrack_init.hpp pico4_ctrack_init.cpp pico4_ctrack_blob.hpp pico4_ctrack_blob.cpp pico4_ctrack_imu.hpp \
     pico4_ctrack_imu.cpp pico4_ctrack_engine.hpp pico4_ctrack_engine.cpp pico4_ctrack_runner.hpp \
     pico4_ctrack_runner.cpp pico4_ctrack_calib.hpp pico4_ctrack_calib.cpp pico4_aimgrip.h
-  install -C -Dm644 -t monado/src/xrt/compositor/main comp_window_pico4_kms.c pico4_retire.h
 
   # The protocol and model tests run here because build-userspace.sh uses --nocheck.
   ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_ssc test_pico4_ssc.c pico4_ssc.c
@@ -142,8 +120,6 @@ build() {
   ${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -Imonado/src/xrt/include -o test_pico4_fusion test_pico4_fusion.c \
     pico4_fusion.c -lm
   ./test_pico4_fusion
-  ${CC:-cc} -std=c11 -D_GNU_SOURCE -O1 -Wall -Wextra -Werror -o test_pico4_retire test_pico4_retire.c -lpthread
-  ./test_pico4_retire
   # The controller tracker (C++17, Eigen), compiled once for its tests and the replay tool.
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -c pico4_tcam.c pico4_blemcu.c
   local ctrack=(model solve init blob imu engine runner calib) objs=(pico4_tcam.o) m t
@@ -180,7 +156,7 @@ build() {
 
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-pose pico4-openxr-pose.c -lopenxr_loader -lm
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-openxr-display pico4-openxr-display.c -lopenxr_loader -lvulkan -lm
-  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -Imonado/src/xrt/drivers/pico4/include -o pico4-cam pico4-cam.c \
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-cam pico4-cam.c \
     pico4_cam.c pico4_station.c pico4_ssc.c -lpthread
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-roomview pico4-roomview.c -lvulkan -ldl -lm
   ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \

@@ -480,7 +480,7 @@ from the same settings (`PICO4_VRDISPLAY_FRAMES_AHEAD=1`, `PICO4_VRDISPLAY_VSYNC
   the vblank after next. The layer publishes the lead in `$XDG_RUNTIME_DIR/pico4-vrdisplay-lead-us`,
   and the driver predicts its poses that much further;
 - a wait returns at a count SteamVR has not read, or it spins for a second
-  ([session.md](session.md#one-second-waits)). When it had to wait for its flip, it also waits for the next
+  ([session.md](session.md#performance-and-heat)). When it had to wait for its flip, it also waits for the next
   tick: a frame that started at once would be shown a refresh later, and that queue would stay for good.
   SteamVR uses no display event fences on this path.
 

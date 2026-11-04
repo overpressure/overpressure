@@ -1,11 +1,10 @@
-# wlan0's address from persist on a mainline kernel (ath11k), before NetworkManager takes the
+# wlan0's address from persist (ath11k), before NetworkManager takes the
 # interface; the stock driver sets it itself.
 [Unit]
 Description=Wi-Fi address from persist
 After=pico4-persist.service sys-subsystem-net-devices-wlan0.device
 BindsTo=sys-subsystem-net-devices-wlan0.device
 Before=NetworkManager.service
-ConditionPathExists=!/sys/class/kgsl
 ConditionPathExists=/mnt/vendor/persist/wlan_mac.bin
 
 [Service]

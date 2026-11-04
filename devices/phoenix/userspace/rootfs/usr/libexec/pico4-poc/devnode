@@ -36,8 +36,7 @@ installed_data() {
 }
 
 # installed_data_disk NAME: true for the disk of the installed system's data partition when stage 1
-# left it writable: a mainline kernel counts a disk's read-only flag for its partitions too (the
-# 4.19 kernel keeps them apart, and there the disk stays read-only).
+# left it writable: the kernel counts a disk's read-only flag for its partitions too.
 installed_data_disk() {
 	local part
 	[ "$(poc_arg root '')" = installed ] && [ "$(cat "/sys/class/block/$1/ro" 2>/dev/null)" = 0 ] || return 1

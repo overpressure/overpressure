@@ -1,26 +1,20 @@
-# Steam Link's client (SteamVR's vrlink) on the PICO 4's video decoder (docs/session.md#steam-link).
-# vrlink drives a decoder through the mainline stateful V4L2 API (MMAP buffers, QUERYBUF,
-# SOURCE_CHANGE, DISPLAY_DELAY); the stock kernel's msm_vidc (Venus) takes USERPTR buffers with
-# dma-buf fds, has an extradata plane and reports the picture size with its own event. This
-# library, preloaded into vrlink by its launcher, translates between the two. The test runs here
-# against a fake driver because build-userspace.sh uses --nocheck.
+# Steam Link's client (SteamVR's vrlink) with the PICO 4's controllers (docs/session.md#steam-link).
+# vrlink sends input only for the Steam Frame's controllers: this library, preloaded into vrlink by
+# its launcher, shows ours to it as the Frame's.
 # Sources are this project's own files, copied in by build-userspace.sh.
 pkgname=pico4-vrlink
 pkgver=1
-pkgrel=1
+pkgrel=2
 arch=(aarch64)
-url="https://docs.kernel.org/userspace-api/media/v4l/dev-decoder.html"
+url="https://github.com/ValveSoftware/openvr"
 license=(BSL-1.0)
 depends=(glibc)
-source=(pico4-vrlink-compat.c pico4-vidc-compat.c pico4-vidc-compat.h test_pico4_vidc_compat.c)
-sha256sums=(SKIP SKIP SKIP SKIP)
+source=(pico4-vrlink-compat.c)
+sha256sums=(SKIP)
 
 build() {
   ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror -fPIC -shared -fvisibility=hidden $LDFLAGS \
-    -o libpico4-vrlink-compat.so pico4-vrlink-compat.c pico4-vidc-compat.c -ldl -lpthread
-  ${CC:-cc} $CFLAGS -std=c11 -Wall -Wextra -Werror $LDFLAGS -o test_pico4_vidc_compat \
-    test_pico4_vidc_compat.c pico4-vidc-compat.c -lpthread
-  ./test_pico4_vidc_compat
+    -o libpico4-vrlink-compat.so pico4-vrlink-compat.c -ldl
 }
 
 package() {

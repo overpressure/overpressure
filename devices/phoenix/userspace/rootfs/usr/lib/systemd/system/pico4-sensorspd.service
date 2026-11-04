@@ -1,12 +1,10 @@
 [Unit]
 Description=FastRPC file server for the SLPI sensors process (sensor registry and config)
 ConditionPathExists=/usr/share/qcom/pico4/sensors/config
-# The stock kernel's subsystem interface, or a mainline kernel's remoteproc.
-ConditionPathExists=|/sys/kernel/boot_slpi
-ConditionPathExists=|/sys/class/remoteproc
+ConditionPathExists=/sys/class/remoteproc
 Requires=pico4-slpi.service
 # A mainline kernel's SoC values come from debugfs.
-After=pico4-slpi.service pico4-pd-mapper.service sys-kernel-debug.mount
+After=pico4-slpi.service sys-kernel-debug.mount
 
 [Service]
 # The FastRPC node and the root for the kernel that runs (the script says why).

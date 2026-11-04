@@ -1,6 +1,6 @@
 #!/bin/bash
-# Extract the GPU firmware the stock kernel's KGSL loads (docs/graphics.md) and the video codec's
-# (Venus, msm_vidc; docs/session.md#steam-link) from the stock firmware.
+# Extract the GPU firmware the kernel loads (docs/graphics.md) and the video codec's
+# (Venus; docs/session.md#steam-link) from the stock firmware.
 #
 # Usage (Linux/WSL, root):
 #   scripts/extract-graphics-firmware.sh STOCK_DIR OUTPUT_DIR

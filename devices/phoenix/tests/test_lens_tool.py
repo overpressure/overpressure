@@ -157,7 +157,7 @@ class ValveMesaTests(unittest.TestCase):
         self.assertIn('return pico4_hmd_depth_mesh != NULL && ::access("/usr/lib/pico4-stock-slam/system/lib64/libphotoid.so", F_OK) == 0;', patch)
 
     def test_only_the_compositor_loses_storage_usage(self):
-        layer = self.read("src/vrdisplay/pico4-swapchain-usage.c")
+        layer = self.read("src/swapchain/pico4-swapchain-usage.c")
         self.assertIn('"vrcompositor"', layer)
         self.assertIn("info.imageUsage &= ~VK_IMAGE_USAGE_STORAGE_BIT;", layer)
 

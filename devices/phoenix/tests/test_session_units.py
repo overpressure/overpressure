@@ -72,22 +72,10 @@ class SteamvrStopTest(unittest.TestCase):
 
 class OpenGLTest(unittest.TestCase):
     def test_gl_clients_use_zink(self):
-        # an issue: Mesa's loader would pick msm for msm_drm's render node and fall back to
-        # llvmpipe; zink on Turnip is the GPU's OpenGL. On a mainline kernel it is the Frame's.
+        # zink on Turnip is the GPU's OpenGL, as on the Frame.
         for name in ("gamescope-session", "steam"):
             dropin = (ROOTFS / f"usr/lib/systemd/user/{name}.service.d/50-pico4.conf").read_text(encoding="utf-8")
             self.assertRegex(dropin, r"(?m)^Environment=MESA_LOADER_DRIVER_OVERRIDE=zink$", name)
-            # Zink finds the GPU for the render node through the layer's DRM nodes.
-            self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY=1$", name)
-
-    @unittest.skipIf(shutil.which("sh") is None, "needs sh")
-    def test_stock_kernel_generator_writes_nothing_on_mainline(self):
-        script = ROOTFS / "usr/lib/systemd/user-generators/50-pico4-stock-kernel"
-        with tempfile.TemporaryDirectory() as out:
-            r = subprocess.run([shutil.which("sh"), script.as_posix(), out, out, out], capture_output=True)
-            self.assertEqual(r.returncode, 0)
-            # This host has no /sys/class/kgsl: the generator leaves the directory empty.
-            self.assertEqual(os.listdir(out), [])
 
     def test_web_helper_composites_on_vulkan(self):
         # an issue: on ANGLE's OpenGL backend (zink) the client's VR overlays flicker between
@@ -102,78 +90,30 @@ class OpenGLTest(unittest.TestCase):
         self.assertRegex(dropin, r"(?m)^Environment=STEAM_LAUNCH_WRAPPER_AFFINITY_LIST=0xf0$")
         self.assertRegex(dropin, r"(?m)^Environment=STEAM_DESKTOP_APP_AFFINITY_LIST=0xf0$")
 
-    def test_games_get_the_semaphore_library(self):
-        # an issue: the Steam API in a game takes System V semaphores; Steam Linux Runtime's
-        # container ignores the host's /etc/ld.so.preload but imports LD_PRELOAD.
-        # Both on the stock kernel only (KGSL): a mainline kernel has System V IPC.
-        unit = (ROOTFS / "usr/lib/systemd/system/pico4-stock-preload.service").read_text(encoding="utf-8")
-        self.assertIn("ConditionPathExists=/sys/class/kgsl", unit)
-        self.assertIn("echo /usr/lib/libpico4-sysvsem.so > /run/pico4-poc/ld.so.preload", unit)
-        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertIn('ln -sfn /run/pico4-poc/ld.so.preload "$T/etc/ld.so.preload"', build)
-        self.assertIn("pico4-stock-preload.service", build[build.index("in_t systemctl enable"):])
-        generator = (ROOTFS / "usr/lib/systemd/user-generators/50-pico4-stock-kernel").read_text(encoding="utf-8")
-        self.assertIn("[ -e /sys/class/kgsl ] || exit 0", generator)
-        self.assertIn("Environment=LD_PRELOAD=/usr/lib/libpico4-sysvsem.so", generator)
-        dropin = (ROOTFS / "usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertNotIn("LD_PRELOAD", dropin.split("[Service]")[1])
-
-    def test_turnip_keeps_the_drm_wsi(self):
-        # A KGSL-only Turnip builds without libdrm, and its swapchains read DRM image
-        # parameters as CPU ones; KGSL must still accept instances with VK_KHR_display.
-        recipe = (ROOT / "userspace/pkgbuilds/pico4-turnip-kgsl/PKGBUILD").read_text(encoding="utf-8")
-        self.assertIn("-Dfreedreno-kmds=kgsl,msm", recipe)
-        self.assertIn("kgsl-display.patch", recipe)
-        patch = (ROOT / "userspace/pkgbuilds/pico4-turnip-kgsl/kgsl-display.patch").read_text(encoding="utf-8")
-        self.assertIn("-                       \"I can't KHR_display\");", patch)
-
-
 class VsyncLeadTest(unittest.TestCase):
     def test_steamvr_runs_with_the_lead(self):
         # SteamVR starts its compositor about 4 ms before the vblank it sees.
         dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_VSYNC_LEAD_US=5000$")
+        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VSYNC_LEAD_US=5000$")
         # Only the layer reads the variable; it publishes the lead it applies, and
         # the driver predicts that much further from the published value.
         hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
-        self.assertNotIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', hmd)
-        layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
-        self.assertIn('"PICO4_VRDISPLAY_VSYNC_LEAD_US"', layer)
+        self.assertNotIn('"PICO4_VSYNC_LEAD_US"', hmd)
+        layer = (ROOT / "src/swapchain/pico4-swapchain-usage.c").read_text(encoding="utf-8")
+        self.assertIn('"PICO4_VSYNC_LEAD_US"', layer)
         for source in (hmd, layer):
-            self.assertIn('"%s/pico4-vrdisplay-lead-us"', source)
+            self.assertIn('"%s/pico4-display-lead-us"', source)
 
 
 class CompressedScanoutTest(unittest.TestCase):
-    def test_steamvr_scans_out_compressed(self):
-        # an issue: linear scanout images doubled the lens-distortion pass's GPU time.
-        dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_UBWC=2$")
-        layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
-        self.assertIn('"PICO4_VRDISPLAY_UBWC"', layer)
-        # The planes take the compressed modifier for XBGR8888 only; SteamVR renders BGRA:
-        # mode 2 gives its views and presenting render passes the RGBA format instead.
-        self.assertIn("DRM_FORMAT_MOD_QCOM_COMPRESSED", layer)
-        for entry in ("vkCreateImageView", "vkCreateRenderPass", "vkCreateRenderPass2"):
-            self.assertIn(f'"{entry}"', layer)
-        self.assertIn("VK_IMAGE_LAYOUT_PRESENT_SRC_KHR", layer)
 
     def test_steamvr_keeps_one_frame_ahead(self):
         # an issue: SteamVR waits for each present to be shown before it starts the next
         # frame; without a frame ahead the GPU idles a third of the time (about 58 fps).
         dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_FRAMES_AHEAD=1$")
-        layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
-        self.assertIn('"PICO4_VRDISPLAY_FRAMES_AHEAD"', layer)
-
-    def test_steamvr_runs_with_render_pass_barriers(self):
-        # an issue: without them chunks of the overlay are missing in the right eye.
-        dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VRDISPLAY_PASS_BARRIER=1$")
-        layer = (ROOT / "src/vrdisplay/pico4-vrdisplay.c").read_text(encoding="utf-8")
-        self.assertIn('"PICO4_VRDISPLAY_PASS_BARRIER"', layer)
-        for entry in ("vkCmdBeginRenderPass", "vkCmdBeginRenderPass2", "vkCmdBeginRendering"):
-            self.assertIn(f'"{entry}"', layer)
-
+        self.assertRegex(dropin, r"(?m)^Environment=PICO4_FRAMES_AHEAD=1$")
+        layer = (ROOT / "src/swapchain/pico4-swapchain-usage.c").read_text(encoding="utf-8")
+        self.assertIn('"PICO4_FRAMES_AHEAD"', layer)
 
 class FrameSettingsTest(unittest.TestCase):
     def test_session_takes_the_frames_compositor_path(self):
@@ -204,12 +144,10 @@ class FrameSettingsTest(unittest.TestCase):
 
 
 class KthreadPrioritiesTest(unittest.TestCase):
-    def test_unit_raises_gpu_and_display_threads(self):
+    def test_unit_raises_the_gpu_workqueues(self):
         service = unit("usr/lib/systemd/system/pico4-kthread-priorities.service")
         script = (ROOTFS / service["Service"]["ExecStart"].lstrip("/")).read_text(encoding="utf-8")
-        for name in ("kgsl_worker_thr", "crtc_commit:*", "crtc_event:*"):
-            self.assertIn(name, script)
-        self.assertIn('chrt -r -p "$prio"', script)
+        self.assertIn("workqueue/devices/ring", script)
         # Real-time threads (Monado's compositor) need the cpu controller off.
         self.assertNotIn("CPUWeight", service["Service"])
         self.assertNotIn("CPUQuota", service["Service"])
@@ -259,12 +197,12 @@ class SoundCardFormatTest(unittest.TestCase):
 
 
 class CompositorPacingTest(unittest.TestCase):
-    LAYER = ROOT / "src/vrdisplay/pico4-swapchain-usage.c"
+    LAYER = ROOT / "src/swapchain/pico4-swapchain-usage.c"
 
     def test_the_session_asks_for_stocks_pacing(self):
         unit_text = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertIn("Environment=PICO4_VRDISPLAY_FRAMES_AHEAD=1\n", unit_text)
-        self.assertIn("Environment=PICO4_VRDISPLAY_VSYNC_LEAD_US=5000\n", unit_text)
+        self.assertIn("Environment=PICO4_FRAMES_AHEAD=1\n", unit_text)
+        self.assertIn("Environment=PICO4_VSYNC_LEAD_US=5000\n", unit_text)
 
     def test_the_layer_gives_it_the_images_it_needs(self):
         # With the two images SteamVR asks for, its acquire waits for a flip whatever the rest does.
@@ -282,8 +220,8 @@ class CompositorPacingTest(unittest.TestCase):
 
     def test_the_driver_learns_the_lead(self):
         layer = self.LAYER.read_text(encoding="utf-8")
-        self.assertIn('"%s/pico4-vrdisplay-lead-us"', layer)
-        self.assertIn('"%s/pico4-vrdisplay-lead-us"', (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8"))
+        self.assertIn('"%s/pico4-display-lead-us"', layer)
+        self.assertIn('"%s/pico4-display-lead-us"', (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8"))
 
 
 class ConsoleQuietTest(unittest.TestCase):
@@ -308,12 +246,11 @@ class MonadoServiceTest(unittest.TestCase):
         # Monado's default of two images every second refresh was missed (45 Hz).
         unit = (ROOTFS / "usr/lib/systemd/system/pico4-monado.service").read_text(encoding="utf-8")
         self.assertIn("ExecStart=/usr/libexec/pico4-poc/monado-service", unit)
-        self.assertIn("ConditionPathExists=|/dev/kgsl-3d0\nConditionPathExists=|/dev/dri/renderD128\n", unit)
+        self.assertIn("ConditionPathExists=/dev/dri/renderD128\n", unit)
         script = (ROOTFS / "usr/libexec/pico4-poc/monado-service").read_text(encoding="utf-8")
-        mainline = script[script.index("if [ ! -e /dev/kgsl-3d0 ]"):script.index("\nfi\n")]
-        for setting in ("PICO4_KMS=0", "XRT_COMPOSITOR_FORCE_VK_DISPLAY=0", "XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3"):
-            self.assertIn(setting, mainline)
-        self.assertIn("unset U_PACING_COMP_MIN_TIME_MS", mainline)
+        for setting in ("XRT_COMPOSITOR_FORCE_VK_DISPLAY=0", "XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3",
+                        "XRT_COMPOSITOR_COMPUTE=0"):
+            self.assertIn(setting, script)
         self.assertIn('exec /usr/bin/monado-service "$@"', script)
 
 
@@ -322,7 +259,6 @@ class PanelProbeTest(unittest.TestCase):
         # Without the probe msm's DSI connector has no modes and SteamVR finds no display.
         probe = unit("usr/lib/systemd/system/pico4-panel-probe.service")
         self.assertIn("pico4-session.service", probe["Unit"]["Before"])
-        self.assertEqual(probe["Unit"]["ConditionPathExists"], "!/sys/class/kgsl")
         self.assertIn('echo detect > "$c"', probe["Service"]["ExecStart"])
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertIn("pico4-panel-probe.service", build[build.index("in_t systemctl enable"):])
@@ -360,10 +296,9 @@ class SessionTest(unittest.TestCase):
         burst = int(session["Unit"]["StartLimitBurst"])
         self.assertGreaterEqual(interval, burst * (restart + 30))
         self.assertNotIn("OnFailure", session["Unit"])
-        # Valve's session needs the GPU of either kernel (none in QEMU), and no longer the
-        # Monado service.
+        # Valve's session needs the GPU (none in QEMU), and no longer the Monado service.
         text = (ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-session.service").read_text(encoding="utf-8")
-        self.assertIn("\nConditionPathExists=|/dev/kgsl-3d0\nConditionPathExists=|/dev/dri/renderD128\n", text)
+        self.assertIn("\nConditionPathExists=/dev/dri/renderD128\n", text)
         self.assertNotIn("pico4-monado.socket", session["Unit"].get("Wants", ""))
 
     def test_deliberate_stop_stays_stopped(self):

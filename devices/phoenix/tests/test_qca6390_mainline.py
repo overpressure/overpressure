@@ -1,5 +1,5 @@
 """The QCA6390 on a mainline kernel: ath11k for Wi-Fi, hci_qca for Bluetooth, with PICO OS's
-firmware, board data and addresses; the stock driver's units only on the stock kernel."""
+firmware, board data and addresses."""
 import importlib.machinery
 import importlib.util
 import os
@@ -22,16 +22,6 @@ def text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-class StockDriverUnitsTests(unittest.TestCase):
-    def test_stock_modules_load_on_the_stock_kernel_only(self):
-        # ath11k is the firmware's QMI client on a mainline kernel; the stock driver, our
-        # WLFW client and the stock audio modules would only fail or interfere. (The ADSP boots
-        # on both kernels: test_audio_units.)
-        for name in ("pico4-wlfw-client.service", "pico4-wlan.service", "pico4-venus.service",
-                     "pico4-audio-modules.service"):
-            self.assertIn("ConditionPathExists=/sys/class/kgsl\n", text(UNITS / name), name)
-
-
 class WifiTests(unittest.TestCase):
     def test_ath11k_finds_the_stock_files_under_its_names(self):
         build = text(ROOT / "scripts/build-userspace.sh")
@@ -42,7 +32,6 @@ class WifiTests(unittest.TestCase):
 
     def test_ath11k_gets_the_address_pico_assigned(self):
         unit = text(UNITS / "pico4-wlan-address.service")
-        self.assertIn("ConditionPathExists=!/sys/class/kgsl", unit)
         self.assertIn("Before=NetworkManager.service", unit)
         conf = text(ROOTFS / "etc/NetworkManager/conf.d/50-pico4-wifi-address.conf")
         self.assertIn("wifi.cloned-mac-address=preserve", conf)

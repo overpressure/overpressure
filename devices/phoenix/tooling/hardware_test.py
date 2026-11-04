@@ -160,7 +160,6 @@ def userspace_state(archive: Path) -> dict:
             "packages": len(packages), "systemd": packages.get("systemd"),
             "gpu_firmware": bool(manifest.get("gpu_firmware")),
             "sensor_data": bool(manifest.get("sensor_data")),
-            "vr_display": "pico4-vrdisplay" in packages,
             "steamvr": "deckard-steamvr-rel" in packages}
 
 
@@ -524,8 +523,7 @@ class Runner:
     def head_imu(self, state):
         """Roadmap step 5: stream the head IMU through the sensor DSP (docs/xr.md)."""
         print(">> head IMU: sensor DSP and SSC stream", flush=True)
-        for name, command in (("sensors-units", "systemctl status --no-pager -l pico4-qrtr-ns pico4-slpi "
-                                                "pico4-pd-mapper pico4-sensorspd"),
+        for name, command in (("sensors-units", "systemctl status --no-pager -l pico4-slpi pico4-sensorspd"),
                               ("sensors-list", "pico4-imu list accel gyro")):
             try:
                 (self.folder / f"userspace-{name}.txt").write_text(self.ssh(command, 60), encoding="utf-8")
@@ -540,10 +538,10 @@ class Runner:
         self.save()
         require(code.strip() == "0", "Head IMU check failed")
         userspace.validate_imu(value)
-        if state.get("vr_display"):
+        if state.get("steamvr"):
             paused = self.pause_session()
             try:
-                self.vr_display(state)
+                self.valve_session(state)
             finally:
                 if paused:
                     self.resume_session()
@@ -574,74 +572,6 @@ class Runner:
         """Starts the session again, unless Valve's session check already did."""
         self.ssh("systemctl is-active -q pico4-session.service || { systemctl reset-failed pico4-session.service; "
                  "systemctl start pico4-session.service; }; true", 90)
-
-    def vr_display(self, state):
-        """SteamVR's display path: the pico4-vrdisplay layer shows a VK_KHR_display swapchain on the panels.
-
-        The test client drives the layer the way SteamVR's compositor does
-        (docs/session.md); the session is stopped meanwhile. On a mainline kernel's msm the layer
-        stays unloaded: Turnip and msm drive the panels and share semaphores themselves, as on the
-        Frame, and Valve's session check measures msm's frames.
-        """
-        if self.ssh("[ -e /dev/kgsl-3d0 ] && echo kgsl || echo msm", 30).strip() == "msm":
-            print(">> SteamVR display layer: not used on msm", flush=True)
-            state["vrdisplay"] = {"status": "not-used", "gpu": "msm"}
-            self.save()
-            if state.get("steamvr"):
-                self.valve_session(state)
-            return
-        print(">> SteamVR display layer: VK_KHR_display on the panels", flush=True)
-        output = self.ssh("systemctl stop pico4-monado.service 2>/dev/null; PICO4_VRDISPLAY=1 "
-                          "PICO4_VRDISPLAY_STATS=/run/pico4-poc/vrdisplay.json "
-                          "PICO4_VRDISPLAY_DUMP=/run/pico4-poc/vrdisplay.ppm "
-                          f"pico4-vrdisplay-test {userspace.VR_DISPLAY_SECONDS} "
-                          "2>/run/pico4-poc/vrdisplay.log; echo EXIT=$?", 120)
-        report, _, code = output.rpartition("EXIT=")
-        (self.folder / "userspace-vrdisplay.json").write_text(report.strip() + "\n", encoding="utf-8")
-        stats_report = self.ssh("cat /run/pico4-poc/vrdisplay.json", 30)
-        (self.folder / "userspace-vrdisplay-stats.json").write_text(stats_report.strip() + "\n", encoding="utf-8")
-        try:
-            (self.folder / "userspace-vrdisplay.log").write_text(
-                self.ssh("cat /run/pico4-poc/vrdisplay.log", 30), encoding="utf-8")
-        except (ValueError, OSError) as exc:
-            (self.folder / "userspace-vrdisplay.log").write_text(f"unavailable: {exc}\n", encoding="utf-8")
-        value, stats = json.loads(report), json.loads(stats_report)
-        state["vrdisplay"] = {
-            **{k: value.get(k) for k in ("status", "display", "mode", "acquire", "frames", "frame_hz",
-                                         "vblank_hz", "counter")},
-            "layer": {k: stats.get(k) for k in ("target", "fake", "mode", "format", "commits", "commit_hz",
-                                                "vblank_hz", "retire_timeouts", "gpu_timeouts", "eye_mean_rgb")}}
-        self.save()
-        require(code.strip() == "0", "SteamVR display layer check failed")
-        userspace.validate_vr_display(value, stats)
-        self.vr_sync(state)
-        if state.get("steamvr"):
-            self.valve_session(state)
-
-    def vr_sync(self, state):
-        """Semaphores shared between processes, as SteamVR's compositor shares them.
-
-        Two processes of the session user share a timeline semaphore as an
-        OPAQUE_FD handle, which the display layer emulates over sync files
-        (pico4-vrsync.c): the kernel has no object that could carry it.
-        """
-        print(">> SteamVR semaphores: a timeline shared between processes", flush=True)
-        output = self.ssh(f"runuser -u {userspace.SESSION_USER} -- env PICO4_VRDISPLAY=1 "
-                          f"VK_DRIVER_FILES={userspace.TURNIP_ICD} pico4-vrsync-test "
-                          "2>/run/pico4-poc/vrsync.log; echo EXIT=$?", 120)
-        report, _, code = output.rpartition("EXIT=")
-        (self.folder / "userspace-vrsync.json").write_text(report.strip() + "\n", encoding="utf-8")
-        try:
-            (self.folder / "userspace-vrsync.log").write_text(self.ssh("cat /run/pico4-poc/vrsync.log", 30),
-                                                             encoding="utf-8")
-        except (ValueError, OSError) as exc:
-            (self.folder / "userspace-vrsync.log").write_text(f"unavailable: {exc}\n", encoding="utf-8")
-        value = json.loads(report)
-        state["vrsync"] = {k: value.get(k) for k in ("status", "gpu_wait", "host_wait", "host_signal", "early_wait",
-                                                     "work_ms", "early_held_ms")}
-        self.save()
-        require(code.strip() == "0", "Semaphore sharing check failed")
-        userspace.validate_vr_sync(value)
 
     def valve_session(self, state):
         """Roadmap step 6: Valve's VR session with gamescope and SteamVR on the panels (docs/session.md).
@@ -674,7 +604,6 @@ class Runner:
         for name, command in (("valve-session.log", "cat /run/pico4-poc/valve-session.log"),
                               ("valve-vrcompositor.txt", f"cat {logs}/vrcompositor.txt"),
                               ("valve-vrserver.txt", f"tail -n 400 {logs}/vrserver.txt"),
-                              ("valve-vrdisplay.txt", f"cat {logs}/pico4-vrdisplay.txt"),
                               ("valve-journal.txt", "journalctl -b --no-pager -o short-monotonic _UID=1000 "
                                                     "| tail -n 2000")):
             try:
@@ -682,13 +611,11 @@ class Runner:
             except (ValueError, OSError) as exc:
                 (self.folder / f"userspace-{name}").write_text(f"unavailable: {exc}\n", encoding="utf-8")
         value = json.loads(report)
-        layer = value.get("layer") if isinstance(value.get("layer"), dict) else {}
+        frames = value.get("frames") if isinstance(value.get("frames"), dict) else {}
         state["valve_session"] = {
             **{k: value.get(k) for k in ("status", "errors", "startup_seconds", "session", "compositor", "devices",
                                          "max_temp_c", "fan")},
-            "layer": {k: layer.get(k) for k in ("target", "commits", "commit_hz", "vblank_hz", "late",
-                                                "retire_timeouts", "gpu_timeouts", "gpu_wait_ms",
-                                                "present_wait_timeouts", "eye_mean_rgb")},
+            "frames": {k: frames.get(k) for k in ("target", "commits", "commit_hz", "vblank_hz", "late")},
             "performance": value.get("performance")}
         self.save()
         print(f"   integration: {value.get('status')}; {userspace.format_valve_performance(value.get('performance'))}",

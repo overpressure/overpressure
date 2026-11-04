@@ -124,7 +124,7 @@ crash-dump mode); whole-partition images therefore go as sparse images
 devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img  # as root
 python -m overpressure dev image
 python -m overpressure dev flash recovery     # the maintenance stage 1; starts it
-python -m overpressure dev install --boot out/kernel/install-boot-valve-rgb.img   # boot, super, userdata (if new), then the installed system
+python -m overpressure dev install            # boot, super, userdata (if new), then the installed system
 python -m overpressure dev check              # the acceptance checks, on the installed system
 ```
 
@@ -143,15 +143,14 @@ already holds its image (by a readback hash), and formats `userdata` only when i
 `pico4-data` file system (or with `--format-data`). An update is the same command with a new
 system image: `boot` and the data stay.
 
-**Valve's kernel in `boot`.** `--boot IMAGE` installs the normal boot image in place of
-`out/dev/install-boot.img`: the installed system's own boot image with Valve's kernel and tree
+**Valve's kernel in `boot`.** `dev install` installs `out/kernel/install-boot-valve-rgb.img` (`--boot IMAGE`
+names another): the installed system's own boot image with Valve's kernel and tree
 ([kernel-feasibility.md](kernel-feasibility.md)), made from it by `recovery_image.py --installed
 out/dev/install-boot.img --boot --stage1 devices/phoenix/initramfs ...`. It carries the install
 boot image's stage 1 in installed mode with this tree's files and the GPU and Wi-Fi firmware, no
 AVB footer (the bootloader applies the `dtbo` partition's overlay, as on every normal boot), and
 its stage 1 still reboots into `recovery` after a failed start, where the maintenance stage 1 on
-the stock kernel waits. `dev install` without `--boot` installs the stock kernel's boot image, on
-which the image no longer drives the GPU. The way back to PICO OS is `dev restore`.
+the stock kernel waits. The way back to PICO OS is `dev restore`.
 
 | Command | Purpose |
 | --- | --- |

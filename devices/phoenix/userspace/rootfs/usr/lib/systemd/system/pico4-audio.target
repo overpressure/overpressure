@@ -1,7 +1,7 @@
 [Unit]
 Description=PICO 4 audio: speakers and microphone (docs/userspace.md#audio)
 ConditionPathExists=/usr/lib/firmware/adsp.mdt
-Wants=pico4-audio-modules.service pico4-adsp.service pico4-audiopd.service pico4-audiocal.service
+Wants=pico4-adsp.service pico4-audiopd.service
 Wants=pico4-lpass-macros.service
 
 [Install]

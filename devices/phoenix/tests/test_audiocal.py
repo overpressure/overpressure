@@ -137,29 +137,6 @@ class AudioCalLookupTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             audiocal.lookup(str(self.dir))
 
-    def test_refresh_sends_a_paths_blocks_again(self):
-        # The kernel uses device and port blocks for one stream only; each stream needs a SET.
-        calls = []
-
-        class FakeIoctl:
-            @staticmethod
-            def ioctl(fd, request, data):
-                calls.append((request, struct.unpack_from("<iiiiiiii", bytes(data))))
-
-        store = object.__new__(audiocal.Calibration)
-        store.fcntl, store.cal, store.sets = FakeIoctl, 3, {}
-        store.send_info(audiocal.AFE_TOPOLOGY_CAL_TYPE, 1, [0x112FB, 4, 1, 48000], path=1)
-        store.send_info(audiocal.CORE_CUSTOM_TOPOLOGIES_CAL_TYPE, 0, [])  # not per path
-        calls.clear()
-        store.refresh(1)
-        self.assertEqual(len(calls), 1)
-        request, words = calls[0]
-        self.assertEqual(request, audiocal.AUDIO_SET_CALIBRATION)
-        # data size, version, type, type size, header version, buffer, size, handle (-1: info only)
-        self.assertEqual(words, (48, 0, audiocal.AFE_TOPOLOGY_CAL_TYPE, 32, 0, 1, 0, -1))
-        store.refresh(0)
-        self.assertEqual(len(calls), 1)
-
     def test_paths_match_pico_os(self):
         # audio_platform_info.xml and audio_io_policy.conf: speaker 15/deep buffer, handset mic 4/record.
         by_name = {p["name"]: p for p in audiocal.PATHS}

@@ -26,53 +26,6 @@ index 41e822af0..38be1c7c2 100644
  message(STATUS "#    DRIVER_SIMULATED:            ${XRT_BUILD_DRIVER_SIMULATED}")
  message(STATUS "#    DRIVER_SIMULAVR:             ${XRT_BUILD_DRIVER_SIMULAVR}")
  message(STATUS "#    DRIVER_SURVIVE:              ${XRT_BUILD_DRIVER_SURVIVE}")
-diff --git a/src/xrt/compositor/CMakeLists.txt b/src/xrt/compositor/CMakeLists.txt
-index 1ba5ec438..a475e44bb 100644
---- a/src/xrt/compositor/CMakeLists.txt
-+++ b/src/xrt/compositor/CMakeLists.txt
-@@ -237,6 +237,11 @@ if(XRT_MODULE_COMPOSITOR_MAIN)
- 	if(VK_USE_PLATFORM_DISPLAY_KHR)
- 		target_sources(comp_main PRIVATE main/comp_window_vk_display.c)
- 	endif()
-+	if(XRT_BUILD_DRIVER_PICO4 AND LIBDRM_FOUND)
-+		target_sources(comp_main PRIVATE main/comp_window_pico4_kms.c)
-+		target_link_libraries(comp_main PRIVATE PkgConfig::LIBDRM)
-+		target_compile_definitions(comp_main PRIVATE XRT_HAVE_PICO4_KMS)
-+	endif()
- 	if(VK_USE_PLATFORM_DISPLAY_KHR OR XRT_HAVE_XCB)
- 		target_sources(comp_main PRIVATE main/comp_window_direct.c)
- 	endif()
-diff --git a/src/xrt/compositor/main/comp_compositor.c b/src/xrt/compositor/main/comp_compositor.c
-index 41dfe48bc..0cf24a8db 100644
---- a/src/xrt/compositor/main/comp_compositor.c
-+++ b/src/xrt/compositor/main/comp_compositor.c
-@@ -753,6 +753,9 @@ compositor_init_vulkan(struct comp_compositor *c)
-  */
- 
- const struct comp_target_factory *ctfs[] = {
-+#ifdef XRT_HAVE_PICO4_KMS
-+    &comp_target_factory_pico4_kms,
-+#endif
- #if defined VK_USE_PLATFORM_WAYLAND_KHR && defined XRT_HAVE_WAYLAND_DIRECT
-     &comp_target_factory_direct_wayland,
- #endif
-@@ -991,7 +994,16 @@ compositor_init_renderer(struct comp_compositor *c)
- {
- 	COMP_TRACE_MARKER();
- 
-+#ifdef XRT_HAVE_PICO4_KMS
-+	/*
-+	 * PICO 4: scratch images at the panels' size, which the distortion mesh
-+	 * samples. Scratch images at the scaled view size only cost bandwidth.
-+	 */
-+	VkExtent2D scratch_extent = {c->xdev->hmd->views[0].display.w_pixels, c->xdev->hmd->views[0].display.h_pixels};
-+	c->r = comp_renderer_create(c, scratch_extent);
-+#else
- 	c->r = comp_renderer_create(c, c->view_extents);
-+#endif
- 
- #ifdef XRT_FEATURE_WINDOW_PEEK
- 	c->peek = comp_window_peek_create(c);
 diff --git a/src/xrt/compositor/main/comp_renderer.c b/src/xrt/compositor/main/comp_renderer.c
 index 16c16fd7a..697491fee 100644
 --- a/src/xrt/compositor/main/comp_renderer.c
@@ -87,40 +40,6 @@ index 16c16fd7a..697491fee 100644
  	if (!bret) {
  		COMP_ERROR(c, "chl_scratch_ensure: false");
  		assert(bret && "Whelp, can't return a error. But should never really fail.");
-diff --git a/src/xrt/compositor/main/comp_settings.c b/src/xrt/compositor/main/comp_settings.c
-index 900c64097..1d3534d32 100644
---- a/src/xrt/compositor/main/comp_settings.c
-+++ b/src/xrt/compositor/main/comp_settings.c
-@@ -10,7 +10,8 @@
- #include "util/u_debug.h"
- #include "comp_settings.h"
- 
--#ifdef XRT_OS_ANDROID
-+#if defined(XRT_OS_ANDROID) || defined(XRT_HAVE_PICO4_KMS)
-+// PICO 4: Turnip renders into the linear scanout images about twice as fast as compute writes them.
- #define USE_COMPUTE_DEFAULT false
- #else
- #define USE_COMPUTE_DEFAULT true
-diff --git a/src/xrt/compositor/main/comp_window.h b/src/xrt/compositor/main/comp_window.h
-index eb41c3c36..bb38bd709 100644
---- a/src/xrt/compositor/main/comp_window.h
-+++ b/src/xrt/compositor/main/comp_window.h
-@@ -34,6 +34,15 @@ extern "C" {
-  */
- extern const struct comp_target_factory comp_target_factory_debug_image;
- 
-+#ifdef XRT_HAVE_PICO4_KMS
-+/*!
-+ * The PICO 4 panels through the stock msm_drm KMS driver.
-+ *
-+ * @ingroup comp_main
-+ */
-+extern const struct comp_target_factory comp_target_factory_pico4_kms;
-+#endif
-+
- #ifdef VK_USE_PLATFORM_XCB_KHR
- 
- /*!
 diff --git a/src/xrt/compositor/util/comp_high_level_scratch.c b/src/xrt/compositor/util/comp_high_level_scratch.c
 index d1ad4e755..2d9ba95e8 100644
 --- a/src/xrt/compositor/util/comp_high_level_scratch.c
@@ -332,7 +251,7 @@ diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
 index bd31b3374..747bbfd36 100644
 --- a/src/xrt/drivers/CMakeLists.txt
 +++ b/src/xrt/drivers/CMakeLists.txt
-@@ -249,6 +249,66 @@ if(XRT_BUILD_DRIVER_ROKID)
+@@ -249,6 +249,64 @@ if(XRT_BUILD_DRIVER_ROKID)
  	list(APPEND ENABLED_HEADSET_DRIVERS rokid)
  endif()
  
@@ -383,8 +302,6 @@ index bd31b3374..747bbfd36 100644
 +		pico4/pico4_tcam.c
 +		pico4/pico4_tcam.h
 +		)
-+	# Spectra camera UAPI headers (media/cam_*.h), placed here by the package build.
-+	target_include_directories(drv_pico4 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/pico4/include)
 +	# PICO OS's controller tracker is built without fused multiply-adds; round alike.
 +	target_compile_options(drv_pico4 PRIVATE -ffp-contract=off)
 +	target_link_libraries(

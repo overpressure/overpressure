@@ -9,10 +9,10 @@
  * Valve's Mesa as it is (docs/kernel-feasibility.md). Every other process passes through, and so
  * does the stock kernel, whose Turnip does the same with a driconf option.
  *
- * It also paces the compositor one frame ahead, as pico4-vrdisplay does on the stock kernel
- * (PICO4_VRDISPLAY_FRAMES_AHEAD=N): a present counts as shown once the present N before it is. The
+ * It also paces the compositor one frame ahead, as the stock path paces it
+ * (PICO4_FRAMES_AHEAD=N): a present counts as shown once the present N before it is. The
  * compositor then records the next frame while the GPU renders this one. With a lead
- * (PICO4_VRDISPLAY_VSYNC_LEAD_US) the counter it paces itself by ticks that much before each vblank,
+ * (PICO4_VSYNC_LEAD_US) the counter it paces itself by ticks that much before each vblank,
  * so that each frame starts that much earlier: with Steam's panel in view and rendering a job does
  * not fit between two vblanks on this GPU, and each frame it misses shows as the view jumping during
  * a head turn. The layer publishes the lead for the driver in SteamVR, which predicts its poses that
@@ -60,7 +60,7 @@ static PFN_vkGetInstanceProcAddr next_get_instance_proc_addr;
 static bool
 is_compositor(void)
 {
-	return strcmp(program_invocation_short_name, "vrcompositor") == 0 && access("/dev/kgsl-3d0", F_OK) != 0;
+	return strcmp(program_invocation_short_name, "vrcompositor") == 0;
 }
 
 static struct device *
@@ -108,7 +108,7 @@ create_swapchain(VkDevice device,
 static uint64_t
 frames_ahead(void)
 {
-	const char *value = getenv("PICO4_VRDISPLAY_FRAMES_AHEAD");
+	const char *value = getenv("PICO4_FRAMES_AHEAD");
 	return value != NULL && is_compositor() ? strtoull(value, NULL, 10) : 0;
 }
 
@@ -123,7 +123,7 @@ now_ns(void)
 static uint64_t
 vsync_lead_ns(void)
 {
-	const char *value = getenv("PICO4_VRDISPLAY_VSYNC_LEAD_US");
+	const char *value = getenv("PICO4_VSYNC_LEAD_US");
 	return value != NULL && is_compositor() ? strtoull(value, NULL, 10) * 1000 : 0;
 }
 
@@ -137,7 +137,7 @@ lead_publish(bool on)
 		return;
 	}
 	char path[PATH_MAX], tmp[PATH_MAX + 4];
-	snprintf(path, sizeof(path), "%s/pico4-vrdisplay-lead-us", dir);
+	snprintf(path, sizeof(path), "%s/pico4-display-lead-us", dir);
 	if (!on) {
 		unlink(path);
 		return;

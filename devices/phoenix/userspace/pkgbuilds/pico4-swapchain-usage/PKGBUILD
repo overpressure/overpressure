@@ -1,0 +1,25 @@
+# SteamVR's compositor's swapchains on Valve's kernel (docs/session.md): without the storage usage
+# it never uses, so that they can be compressed, and paced as the stock path paces them. An implicit
+# Vulkan layer, active only in vrcompositor.
+# Sources are this project's own files, copied in by build-userspace.sh.
+pkgname=pico4-swapchain-usage
+pkgver=1
+pkgrel=1
+pkgdesc="PICO 4 pacing and scanout usage for SteamVR's compositor"
+arch=(aarch64)
+url="https://registry.khronos.org/vulkan/specs/latest/man/html/VK_KHR_swapchain.html"
+license=(BSL-1.0)
+depends=(glibc vulkan-icd-loader)
+makedepends=(vulkan-headers)
+source=(pico4-swapchain-usage.c VkLayer_PICO4_swapchain_usage.json)
+sha256sums=(SKIP SKIP)
+
+build() {
+  ${CC:-cc} $CFLAGS -D_GNU_SOURCE -std=c11 -Wall -Wextra -Werror -fvisibility=hidden -shared -fPIC $LDFLAGS \
+    -o libVkLayer_PICO4_swapchain_usage.so pico4-swapchain-usage.c -lpthread
+}
+
+package() {
+  install -Dm755 libVkLayer_PICO4_swapchain_usage.so -t "$pkgdir/usr/lib"
+  install -Dm644 VkLayer_PICO4_swapchain_usage.json -t "$pkgdir/usr/share/vulkan/implicit_layer.d"
+}

@@ -114,9 +114,9 @@ DEBUG_GET_ONCE_OPTION(pico4_fusion_csv, "PICO4_FUSION_CSV", NULL)
 //! Gyro samples ignored after enabling (the accelerometer settles), then averaged for the start pose.
 //! Accelerometer/gyroscope lookups of 3 s each before giving up (DSP still starting).
 #define PICO4_LOOKUP_ATTEMPTS 5
-//! The headset's battery in the stock kernel's power-supply class.
+//! The headset's battery in the power-supply class.
 #define PICO4_BATTERY "/sys/class/power_supply/battery"
-//! The panels' backlight on a mainline kernel (the panel driver's); the stock kernel has none.
+//! The panels' backlight (the panel driver's).
 #define PICO4_BACKLIGHT_POWER "/sys/class/backlight/pico4-panel/bl_power"
 #define PICO4_WARMUP_SKIP 100
 #define PICO4_WARMUP_AVERAGE 100
@@ -800,7 +800,7 @@ set_backlight(struct pico4_hmd *h, bool on)
 {
 	int fd = open(PICO4_BACKLIGHT_POWER, O_WRONLY | O_CLOEXEC);
 	if (fd < 0) {
-		return; // The stock kernel: its display layer powers the panels down.
+		return; // No panel driver.
 	}
 	// FB_BLANK_UNBLANK or FB_BLANK_POWERDOWN.
 	if (write(fd, on ? "0" : "4", 1) != 1) {
@@ -831,7 +831,7 @@ setup_station(struct pico4_hmd *h)
 }
 
 /*!
- * The headset's battery, from the stock kernel's power supply (the PMIC's fuel gauge):
+ * The headset's battery, from its power supply (the PMIC's fuel gauge):
  * capacity in percent and the charger's status.
  */
 static xrt_result_t
@@ -969,8 +969,8 @@ setup_track(struct pico4_hmd *h)
 }
 
 /*!
- * The display layer's vsync lead: pico4-vrdisplay signals each vblank this much early and
- * publishes the lead it applies in $XDG_RUNTIME_DIR/pico4-vrdisplay-lead-us (microseconds).
+ * The display's vsync lead: pico4-swapchain-usage signals each vblank this much early and
+ * publishes the lead it applies in $XDG_RUNTIME_DIR/pico4-display-lead-us (microseconds).
  * SteamVR takes the early signal for the vblank and predicts its poses for that much
  * earlier, so the lead is added to the prediction; 0 without the layer (Monado's own
  * compositor). Read at most once a second.
@@ -987,7 +987,7 @@ display_lead_ns(struct pico4_hmd *h)
 	char path[512];
 	const char *dir = getenv("XDG_RUNTIME_DIR");
 	long long us = 0;
-	snprintf(path, sizeof(path), "%s/pico4-vrdisplay-lead-us", dir != NULL ? dir : "/run");
+	snprintf(path, sizeof(path), "%s/pico4-display-lead-us", dir != NULL ? dir : "/run");
 	FILE *f = fopen(path, "re");
 	if (f != NULL) {
 		if (fscanf(f, "%lld", &us) != 1 || us < 0 || us > 20000) {
@@ -996,7 +996,7 @@ display_lead_ns(struct pico4_hmd *h)
 		fclose(f);
 	}
 	if (us * 1000 != lead) {
-		P4_INFO(h, "Display lead %lld us (pico4-vrdisplay): poses predicted that much further", us);
+		P4_INFO(h, "Display lead %lld us (pico4-swapchain-usage): poses predicted that much further", us);
 		__atomic_store_n(&h->lead_ns, us * 1000, __ATOMIC_RELAXED);
 	}
 	return us * 1000;
@@ -1267,7 +1267,7 @@ load_lens(struct pico4_hmd *h)
 	free(config);
 }
 
-//! Display description: two 2160x2160 panels side by side, as the step-3 KMS path drives them.
+//! Display description: two 2160x2160 panels side by side.
 static bool
 setup_display(struct pico4_hmd *h)
 {
@@ -1469,16 +1469,10 @@ fail:
  *
  */
 
-/*!
- * A headset with a sensor DSP: the stock kernel's SLPI subsystem, or a mainline kernel's
- * remoteproc named "slpi".
- */
+//! A headset with a sensor DSP: a remoteproc named "slpi".
 static bool
 pico4_has_sensor_dsp(void)
 {
-	if (access("/sys/kernel/boot_slpi", F_OK) == 0) {
-		return true;
-	}
 	DIR *dir = opendir("/sys/class/remoteproc");
 	if (dir == NULL) {
 		return false;

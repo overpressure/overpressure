@@ -229,7 +229,7 @@ class DevTests(HeadsetFixture):
         archive.write_bytes(b"userspace")
         digest = hashlib.sha256(b"userspace").hexdigest()
         (self.root / "pico4-userspace.manifest.json").write_text(json.dumps({
-            "archive": {"sha256": digest}, "packages": {"systemd": "257.7", "pico4-monado": "25.1.0-3", "pico4-vrdisplay": "1-2"},
+            "archive": {"sha256": digest}, "packages": {"systemd": "257.7", "pico4-monado": "25.1.0-3", "deckard-steamvr-rel": "1"},
             "gpu_firmware": [{}], "sensor_data": []}))
         return archive, digest
 
@@ -253,7 +253,7 @@ class DevTests(HeadsetFixture):
         dev = self.make({"pico4-userspace receive": f"unpacking\nreceived {digest}",
                          "cat /proc/1/comm": lambda: next(comm), "pico4-userspace switch": "switching"})
         state = dev.boot(archive)
-        self.assertEqual((state["sha256"], state["vr_display"], state["gpu_firmware"]), (digest, True, True))
+        self.assertEqual((state["sha256"], state["steamvr"], state["gpu_firmware"]), (digest, True, True))
         self.assertTrue(any(f"receive --sha256 {digest}" in c for c in self.texts()))
         self.assertTrue(any("userspace-authenticated" in c for c in self.texts()))
         saved = json.loads((self.root / "dev/state.json").read_text())
@@ -337,7 +337,9 @@ class DevTests(HeadsetFixture):
         (backup / "lun0/rawprogram0.xml").write_text(f"<data>{rows}</data>")
         dev_dir = self.root / "dev"
         dev_dir.mkdir(exist_ok=True)
-        (dev_dir / "install-boot.img").write_bytes(b"install boot")
+        kernel_dir = self.root / "kernel"
+        kernel_dir.mkdir(exist_ok=True)
+        (kernel_dir / "install-boot-valve-rgb.img").write_bytes(b"install boot")
         system = self.root / "pico4-system.img"
         system.write_bytes(b"system image")
         boot_sha = hashlib.sha256(confirmed_boot).hexdigest()

@@ -1,9 +1,8 @@
 # The Frame's zram swap (holo-zram-swap: zram0 at half the RAM, lzo-rle; docs/userspace.md#memory)
 # on the installed system. zram-generator's own swap unit waits for dev-zram0.device, which
 # never appears here (no device units on this kernel), so its generator is masked and this
-# unit runs the same setup from the Frame's configuration. The swap priority is PICO OS's:
-# the stock kernel's reclaim swaps only to a device of priority 32758, any other counts as
-# PICO's storage swap and is never used. The dev boot's root file system lives on zram0:
+# unit runs the same setup from the Frame's configuration. The swap priority is PICO OS's.
+# The dev boot's root file system lives on zram0:
 # never there.
 [Unit]
 Description=Swap on zram as on the Steam Frame

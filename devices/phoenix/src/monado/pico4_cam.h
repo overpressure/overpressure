@@ -2,21 +2,13 @@
 // SPDX-License-Identifier: BSL-1.0
 /*!
  * @file
- * @brief  Capture from the four OV7251 tracking cameras through the Spectra CSL UAPI.
+ * @brief  Capture from the four OV7251 tracking cameras and the IMX471 RGB camera through V4L2.
  *
- * The stock 4.19 kernel exposes Qualcomm's camera stack (CSL: request manager,
- * sync objects, CCI sensor driver, CSIPHY, CSID-lite + IFE-lite) and nothing
- * V4L2-capture shaped. This module drives that stack the way PICO OS does for
- * its tracking cameras: one CSL session per camera, only the ISP on its
- * request-manager link (the sensor follows the station's FSIN pulses, not
- * requests), and a single RDI output (raw sensor data, no pixel pipeline, no
- * firmware) into cached buffers that are invalidated before each frame is read. Sensor slots 0-3 are the OV7251s (left, right,
- * "slave", "master" modules); devices are found at run time from the media
- * graph and CAM_QUERY_CAP, not from fixed node numbers.
+ * One pipeline per camera through CAMSS, with raw sensor data (no pixel pipeline, no firmware).
+ * Sensor slots 0-3 are the OV7251s (left, right, "slave", "master" modules), slot 4 the IMX471.
  *
- * Plain C11 on Linux headers plus the Spectra UAPI headers (media/cam_*.h,
- * fetched at build time, see pico4_cam.c). Not thread-safe: one thread owns a
- * pico4_cam. Functions return 0 or a negative errno and log the failing ioctl.
+ * Plain C11 on Linux headers. Not thread-safe: one thread owns a pico4_cam. Functions return 0
+ * or a negative errno.
  *
  * @ingroup drv_pico4
  */
@@ -32,39 +24,27 @@
 extern "C" {
 #endif
 
-#define PICO4_CAM_NUM 4      //!< OV7251 tracking cameras, CSL sensor slots 0-3.
+#define PICO4_CAM_NUM 4      //!< OV7251 tracking cameras, sensor slots 0-3.
 #define PICO4_CAM_WIDTH 640  //!< Image width in pixels.
 #define PICO4_CAM_HEIGHT 480 //!< Scene rows reported to callers.
 /*!
- * The IMX471 RGB camera, CSL sensor slot 4: 2328x1748 RAW10 (RGGB, the 2x2-binned array),
- * free-running at 50 fps on four lanes, with no metadata line. The request manager takes one
- * opener, so it streams through the same pico4_cam as the tracking cameras.
+ * The IMX471 RGB camera, sensor slot 4: 2328x1748 RAW10 (RGGB, the 2x2-binned array),
+ * free-running at 50 fps on four lanes, with no metadata line. It streams through the same
+ * pico4_cam as the tracking cameras.
  */
 #define PICO4_CAM_RGB_SLOT 4
 #define PICO4_CAM_RGB_WIDTH 2328
 #define PICO4_CAM_RGB_HEIGHT 1748
-#define PICO4_CAM_RGB_FPS 50
 #define PICO4_CAM_RGB_BLACK 64     //!< Black level of the 10-bit samples.
 #define PICO4_CAM_RGB_LINE_NS 4425 //!< One line of the 50 fps mode (frame length 4520).
 #define PICO4_CAM_RGB_MAX_LINES 4510 //!< Longest exposure in lines: frame length less 10.
 #define PICO4_CAM_SLOTS 5          //!< Sensor slots this module drives: the OV7251s and the IMX471.
-/*!
- * Lines the RDI writes per frame by default: the sensor's metadata line
- * (pico4_cam_meta_decode) and the 480 scene rows, as PICO OS captures them.
- */
-#define PICO4_CAM_LINES 481
-#define PICO4_CAM_SENSOR_LINES 480 //!< Default output height programmed into the sensor.
 #define PICO4_CAM_RING_MIN 4
 #define PICO4_CAM_RING_MAX 8
-#define PICO4_CAM_MAX_SLOTS 8   //!< CSL sensor slots in the device tree (0-5 used on PICO 4).
-#define PICO4_CAM_MAX_PHYS 8    //!< CSIPHY instances (0-5 used).
-#define PICO4_CAM_MAX_ENTITIES 64
-
 enum pico4_cam_log_level
 {
 	PICO4_CAM_LOG_ERROR = 0,
 	PICO4_CAM_LOG_INFO = 1,
-	PICO4_CAM_LOG_DEBUG = 2, //!< Every ioctl.
 };
 
 typedef void (*pico4_cam_log_fn)(void *user, enum pico4_cam_log_level level, const char *msg);
@@ -72,15 +52,10 @@ typedef void (*pico4_cam_log_fn)(void *user, enum pico4_cam_log_level level, con
 struct pico4_cam_config
 {
 	unsigned slots;               //!< Bitmask of sensor slots 0-4 (4: the RGB camera).
-	unsigned fps;                 //!< The OV7251s: 60 or 30 (frame length 862 or 1724 lines).
 	unsigned ring;                //!< In-flight requests per camera, 4-8.
-	int lane_assign[PICO4_CAM_NUM]; //!< CSIPHY data lane per OV7251 slot, -1 = automatic (see pico4_cam.c).
 	unsigned rgb_exposure_lines;  //!< The RGB camera's exposure (4-PICO4_CAM_RGB_MAX_LINES), 0: 1/100 s.
 	unsigned rgb_gain;            //!< Its analog gain, 16 = 1x (16-256), 0: 1x.
 	bool hold_frames;             //!< Frames stay owned until pico4_cam_release(); else the next call releases.
-	bool probe_only;              //!< pico4_cam_open() stops after the sensor probes (no sessions).
-	unsigned lines;               //!< Lines the RDI writes (480-482), 0: PICO4_CAM_LINES.
-	unsigned sensor_lines;        //!< Output height programmed into the sensor, 0: PICO4_CAM_SENSOR_LINES.
 	int verbose;                  //!< Highest pico4_cam_log_level that is logged.
 	pico4_cam_log_fn log;         //!< NULL logs to stderr.
 	void *log_user;
@@ -89,17 +64,17 @@ struct pico4_cam_config
 struct pico4_cam_frame
 {
 	int slot;                  //!< Sensor slot 0-4.
-	uint64_t request_id;       //!< CSL request that carried the buffer.
-	uint64_t frame_id;         //!< ISP start-of-frame counter of this session.
-	int64_t sof_boottime_ns;   //!< CLOCK_BOOTTIME at the start-of-frame interrupt; 0 if no event arrived.
-	int64_t sof_monotonic_ns;  //!< The same instant on CLOCK_MONOTONIC; 0 if unknown.
-	int64_t sof_qtimer_ns;     //!< The camera hardware's SOF stamp, QTimer in ns (the IMU's clock); 0 if unknown.
+	uint64_t request_id;       //!< The buffer's V4L2 sequence number.
+	uint64_t frame_id;         //!< The same: the stream's frame counter.
+	int64_t sof_boottime_ns;   //!< CLOCK_BOOTTIME at the hardware's start of frame.
+	int64_t sof_monotonic_ns;  //!< The same instant on CLOCK_MONOTONIC.
+	int64_t sof_qtimer_ns;     //!< The same instant in QTimer ns (the IMU's clock).
 	uint32_t width;            //!< 640 (the RGB camera: 2328).
 	uint32_t height;           //!< Scene rows from data on (480, fewer if the buffer is shorter; RGB: 1748).
 	uint32_t lines;            //!< Lines in the buffer, the metadata line included (481; RGB: 1748).
 	uint32_t stride;           //!< Bytes per line.
 	uint32_t bytes_per_sample; //!< 2: RAW10, LSB-aligned in 16 bits.
-	const void *meta;          //!< The buffer's first line: the OV7251's metadata (pico4_cam_meta_decode); RGB: NULL.
+	const void *meta;          //!< The buffer's first line: the OV7251's metadata (pico4_cam_meta_decode); RGB: the image.
 	const void *data;          //!< First scene row, after the metadata line; valid until the frame is released.
 	size_t size;               //!< stride * lines, from meta.
 	unsigned buffer;           //!< Ring index (internal, used by pico4_cam_release()).
@@ -302,30 +277,6 @@ pico4_cam_set_consistent(struct pico4_cam_set_check *c,
 	return false;
 }
 
-//! Media entity found while discovering the camera devices.
-struct pico4_cam_entity
-{
-	char name[32];
-	uint32_t function;
-	uint32_t major, minor;
-	char devnode[64]; //!< Empty if the entity has no node.
-};
-
-//! What pico4_cam_discover() found. Integer fields are -1 where nothing was found.
-struct pico4_cam_devices
-{
-	char crm[64];  //!< cam-req-mgr video node.
-	char sync[64]; //!< cam_sync video node.
-	char isp[64];  //!< cam-isp subdev.
-	char sensor[PICO4_CAM_MAX_SLOTS][64];  //!< Sensor subdev by slot (cell-index).
-	int sensor_csiphy[PICO4_CAM_MAX_SLOTS]; //!< csiphy_slot_id reported by each sensor.
-	char csiphy[PICO4_CAM_MAX_PHYS][64];   //!< CSIPHY subdev by PHY index.
-	int32_t isp_iommu[2]; //!< Image IOMMU handle: non-secure, secure.
-	int32_t cdm_iommu[2]; //!< CDM IOMMU handle: non-secure, secure.
-	unsigned num_entities;
-	struct pico4_cam_entity entities[PICO4_CAM_MAX_ENTITIES];
-};
-
 //! Per-slot state for diagnostics.
 struct pico4_cam_slot_info
 {
@@ -335,33 +286,23 @@ struct pico4_cam_slot_info
 	int phy;            //!< CSIPHY index.
 	bool combo;         //!< PHY shared with another slot (combo mode).
 	unsigned lane_assign;
-	int probe_rc;       //!< 0 = probed, negative errno, 1 = not attempted.
-	int32_t session, sensor_dev, csiphy_dev, isp_dev, link;
-	uint64_t frames, errors, missing_ts;
+	uint64_t frames, errors;
 };
 
 struct pico4_cam;
 
-//! Defaults: all four slots, 60 fps, RAW10, free-running, ring of 8, automatic lanes.
+//! Defaults: all four slots, ring of 8.
 void
 pico4_cam_config_init(struct pico4_cam_config *cfg);
 
-//! Finds the CSL nodes and queries sensors, CSIPHYs and the ISP. Powers nothing. -ENOTSUP on a mainline kernel.
-int
-pico4_cam_discover(struct pico4_cam_devices *out, const struct pico4_cam_config *cfg);
-
 /*!
- * Opens the request manager, probes the selected sensors and sets up one
- * session per camera: sensor acquire (power-up) and register tables, CSIPHY,
- * IFE-lite RDI and buffers. Streaming starts with pico4_cam_start().
- *
- * On a mainline kernel: one V4L2 pipeline per camera through CAMSS; the sensors power up with
- * pico4_cam_start(). The RGB camera and sensor probes are -ENOTSUP there.
+ * Sets up one V4L2 pipeline per selected camera through CAMSS, with its buffers. The sensors
+ * power up and streaming starts with pico4_cam_start().
  */
 int
 pico4_cam_open(struct pico4_cam **out, const struct pico4_cam_config *cfg);
 
-//! Links, starts ISP, CSIPHY and sensor (stream on) and queues the request ring.
+//! Stream on for every selected camera.
 int
 pico4_cam_start(struct pico4_cam *cam);
 
@@ -376,11 +317,11 @@ pico4_cam_next(struct pico4_cam *cam, struct pico4_cam_frame *out, int timeout_m
 int
 pico4_cam_release(struct pico4_cam *cam, const struct pico4_cam_frame *frame);
 
-//! Stream off, flush, stop and unlink. Safe to call twice.
+//! Stream off. Safe to call twice.
 int
 pico4_cam_stop(struct pico4_cam *cam);
 
-//! Stops if needed, releases every device, session and buffer, closes all nodes.
+//! Stops if needed, releases every buffer, closes all nodes.
 void
 pico4_cam_close(struct pico4_cam *cam);
 
@@ -398,20 +339,10 @@ pico4_cam_set_rgb_exposure(struct pico4_cam *cam, unsigned lines, unsigned gain)
 
 /*!
  * Pauses (or resumes) the RGB camera's stream at the sensor while the capture runs on, for
- * when nobody shows its frames. Its requests stay queued and its link stays up; the request
- * manager's 5 s start-of-frame watchdog fires on the paused link and is ignored.
+ * when nobody shows its frames. Its buffers stay queued and its pipeline stays up.
  */
 int
 pico4_cam_set_rgb_streaming(struct pico4_cam *cam, bool on);
-
-/*!
- * Diagnostics: the free entries of the kernel's camera buffer table (CAM_MEM_BUFQ_MAX, 1024),
- * counted by allocating small buffers until it refuses and releasing them again. Needs no
- * cameras. While another process holds the request manager (SteamVR's driver), PICO's kernel
- * gives this one no buffers at all: 0. A negative errno if the request manager does not open.
- */
-int
-pico4_cam_free_buffers(const struct pico4_cam_config *cfg);
 
 /*!
  * CLOCK_BOOTTIME less CLOCK_MONOTONIC, ns: it grows by the time the system was suspended. The

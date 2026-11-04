@@ -65,9 +65,9 @@ README.md current.
   packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
   layer), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,
   pico4-gamescope, pico4-vrlink, pico4-gtk2 for the Steam client, pico4-mangohud, and others;
-  `pico4-turnip-kgsl` and `pico4-sysvsem` serve only the stock kernel; `pico4-vrdisplay` still ships the frame pacing).
+  `pico4-swapchain-usage`).
 - `src/`: the project's C sources (`graphics/`, `monado/` driver, `xr/` OpenXR clients, `vrlink/`,
-  `vrdisplay/`, `sysvsem/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
+  `swapchain/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
   them in. `stockslam/` is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a
   bionic root; `build-userspace.sh` builds it with clang for Android, without an NDK.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, the extraction
@@ -76,7 +76,7 @@ README.md current.
   overpressure stock`, PICO's public OTA; overpressure's `scripts/stock-lib.sh`) and the on-headset preflight. The
   headset's own factory data is not extracted: the image links to persist, mounted read-only at
   boot (`pico4-persist`). `tests/`: unittest suites, `test_recovery_policy.sh`,
-  `test_charger.sh`, `test_vrdisplay_fake.sh`, `tests/qemu/`. `device.mk`: its Makefile targets.
+  `test_charger.sh`, `tests/qemu/`. `device.mk`: its Makefile targets.
 - Private and generated, ignored, at the repository root: `backup/` (identity
   `backup/device.json`, EDL backups), `assets/`, `cache/`, `out/` (`out/dev/` for the dev loop,
   `out/cycle-*/` evidence), `.env`.
@@ -89,7 +89,6 @@ From the repository root (the window, `python -m overpressure gui`, runs the sam
 python -m unittest                                       # host tests, seconds, no hardware
 bash devices/phoenix/tests/test_recovery_policy.sh       # stage-1 recovery policy
 sh devices/phoenix/tests/test_charger.sh                 # stage-1 charger mode
-bash devices/phoenix/tests/test_vrdisplay_fake.sh        # display layer on lavapipe (WSL; VULKAN_INCLUDE=...)
 python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> out/
 # Linux/WSL as root (or OVERPRESSURE_LINUX=docker): the stock firmware from PICO's public OTA, then the assets
 # (docs/development.md#stock-firmware; about 11 GB of OTA members and images, on the WSL disk):
@@ -103,7 +102,7 @@ python -m overpressure dev boot && python -m overpressure dev check   # iterate 
 python -m overpressure dev reboot                        # next attempt; also from fastboot
 # The installed system (docs/install.md): image as root, then from the maintenance stage 1:
 devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
-python -m overpressure dev recovery && python -m overpressure dev install --boot out/kernel/install-boot-valve-rgb.img   # boot, super, data; starts it
+python -m overpressure dev recovery && python -m overpressure dev install   # boot, super, data; starts it
 python -m overpressure dev installed && python -m overpressure dev check    # reconnect after a reboot; check
 # Back to stock only when the user asks: python -m overpressure dev restore, then
 python -m overpressure cycle --restore-only              # verified stock boot and ABL, PICO OS
@@ -113,10 +112,7 @@ python -m overpressure cycle --restore-only              # verified stock boot a
 - Project packages rebuild only when their recipe changes, and incrementally when only `src/`
   changed; `--clean` forces a clean package build. Package databases change only with
   `--refresh`. Details and timings: docs/development.md.
-- Test on the headset, not in QEMU. The QEMU boot tests in `tests/qemu/` emulate the whole
-  system under TCG: a userspace boot takes 10–20 minutes and often fails on RCU stalls
-  ("Failed to start up manager"), while `dev boot` and `dev check` answer in minutes on the real
-  kernel. Don't run them unless the user asks.
+- Test on the headset. `tests/qemu/` covers stage 1 only; don't run it unless the user asks.
 
 ## Hard rules
 
@@ -145,9 +141,8 @@ python -m overpressure cycle --restore-only              # verified stock boot a
   readback. The way back to stock (`dev restore`, `cycle --restore-only`) must keep working,
   but tasks do not end on stock: the headset stays in development mode. Ask the user before the
   first flash or EDL action in a new conversation.
-- **SLPI, ADSP, CDSP and WLAN restart level.** Set it to `RELATED` before any restart or start of
-  the firmware (`slpi-boot`, `pico4-adsp.service`, `cdsp-boot` and `pico4-wlan.service` do this). The kernel
-  default `SYSTEM` reboots the whole headset.
+- **DSP recovery.** `remoteproc-boot` refuses to start a DSP with remoteproc's crash recovery off: a
+  crash would leave it down.
 - **Never send controller/station OTA commands** when working on the controller SPI protocol.
   The station and GD32 (IPD, fan) modules build frames only from allowlists; keep it that way.
 - **Cameras need the station.** The OV7251s only stream while the station pulses FSIN, so each

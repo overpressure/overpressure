@@ -25,21 +25,16 @@ deckard-arch-hotfixes-release-0.3/holo-zram-swap
 # The Frame's build: the Steam client's Wi-Fi connections ask for its 802-11-wireless.band "no6"
 deckard-arch-hotfixes-release-0.3/networkmanager
 deckard-arch-hotfixes-release-0.3/libnm
-# The Frame's Wi-Fi backend on a mainline kernel (the stock kernel keeps wpa_supplicant, pico4-wifi-backend.service)
+# The Frame's Wi-Fi backend
 iwd
 # Bluetooth as on the Frame; btmgmt sets the controller's address (pico4-bt-address.service)
 deckard-arch-hotfixes-release-0.3/bluez
 deckard-arch-hotfixes-release-0.3/bluez-utils
-# NetworkManager's wpa_supplicant, patched so that WPA3 (SAE) connects on the 4.19 kernel
-pico4/pico4-wpa-supplicant
-# Battery level and charging state from the stock kernel's power supply (D-Bus activated)
+# Battery level and charging state from the kernel's power supply (D-Bus activated)
 upower
 
 # Session, audio and graphics stack of the Frame. gamescope is the Frame's version
 # built here with a fix for a crash when a game starts (pico4-gamescope, an issue).
-# Mesa (OpenGL for Xwayland) comes from the preview: Valve's deckard Mesa needs
-# libdisplay-info.so.1, which only the Frame's private base has, and its Turnip
-# lacks KGSL anyway.
 pico4/pico4-gamescope
 libxxf86vm
 deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64
@@ -58,7 +53,7 @@ vulkan-tools
 # GL test clients (glxgears, glxinfo, eglinfo): X11 presentation in gamescope (docs/session.md)
 mesa-utils
 
-# Project-built: Turnip with the KGSL backend and the step-3 graphics tests
+# Project-built: the step-3 graphics test
 pico4/pico4-libdisplay-info
 pico4/pico4-graphics-tests
 
@@ -81,10 +76,8 @@ qt6-base
 # "steamvr" script needs jq.
 deckard-arch-hotfixes-release-0.3/deckard-steamvr-session
 deckard-arch-hotfixes-release-0.3/deckard-steamvr-rel
-# Project-built: the panels as SteamVR's direct-mode display (Vulkan layer)
-pico4/pico4-vrdisplay
-# Project-built: System V semaphores, which SteamVR needs and the kernel lacks
-pico4/pico4-sysvsem
+# Project-built: pacing and scanout usage for SteamVR's compositor (Vulkan layer)
+pico4/pico4-swapchain-usage
 # Project-built: Steam Link's client on the PICO 4's video decoder (V4L2 compatibility layer)
 pico4/pico4-vrlink
 jq

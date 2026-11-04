@@ -20,7 +20,6 @@
 #include <string.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -42,11 +41,10 @@
 #define CALIBRATION_TRIES 30     //!< GetCalibrationFromStation 0x9f158.
 #define CALIBRATION_WAIT_MS 100  //!< waitForDataCommon(100) at 0x9f124.
 #define CALIBRATION_RETRY_MS 50  //!< usleep(50000) after a "not ready", 0x9f0e4.
-#define IOCTL_POWER 0x80046B09 //!< _IOW('k', 9, int): 1 on, 0 off.
-//! A mainline kernel's switch of the station's supply (regulator-output in the device tree).
+//! The switch of the station's supply (regulator-output in the device tree).
 #define STATION_POWER "/sys/devices/platform/station-power/state"
 #define SPIDEV_QUEUE 8         //!< Frames that came back with commands, kept for the next read.
-#define SPIDEV_POLL_US 2000    //!< How often a plain spidev is asked for the station's next frame.
+#define SPIDEV_POLL_US 2000    //!< How often the spidev is asked for the station's next frame.
 
 #define CAMERA_INIT 0x01
 #define CAMERA_STREAM 0x02
@@ -86,12 +84,11 @@ struct pico4_station
 	//! The last calibration reply: target, echoed index, data.
 	int calib_target, calib_index;
 	uint8_t calib_data[PICO4_STATION_CALIBRATION_CHUNK];
-	//! A plain spidev (a mainline kernel) instead of the stock vendor spidev, and its frames.
-	bool spidev;
+	//! The frames that came back with transfers.
 	uint8_t queue[SPIDEV_QUEUE][PICO4_STATION_FRAME];
 	unsigned queued;
 	//! The last frame that came back: the station repeats it on every transfer until it has
-	//! another one (the vendor driver read only on the station's interrupt).
+	//! another one.
 	uint8_t last[PICO4_STATION_FRAME];
 };
 
@@ -297,9 +294,8 @@ now_ms(void)
 }
 
 /*
- * A mainline kernel's spidev moves no frames on its own (the stock vendor spidev transfers them
- * on the station's interrupt): each transfer is full duplex, and the station's next frame comes
- * back with whatever goes out, a command or zeros, which carry no header and which the station
+ * The spidev moves no frames on its own: each transfer is full duplex, and the station's next
+ * frame comes back with whatever goes out, a command or zeros, which carry no header and which the station
  * ignores. Frames that come back keep their order in the queue until a read takes them.
  */
 static int
@@ -316,7 +312,7 @@ spidev_transfer(struct pico4_station *st, const uint8_t tx[PICO4_STATION_FRAME])
 	}
 	if (pico4_station_valid(rx) && memcmp(rx, st->last, sizeof(rx)) != 0) {
 		memcpy(st->last, rx, sizeof(rx));
-		if (st->queued == SPIDEV_QUEUE) { // the oldest goes, as the vendor driver's buffer
+		if (st->queued == SPIDEV_QUEUE) { // the oldest goes
 			memmove(st->queue[0], st->queue[1], sizeof(st->queue) - sizeof(st->queue[0]));
 			st->queued--;
 		}
@@ -325,7 +321,7 @@ spidev_transfer(struct pico4_station *st, const uint8_t tx[PICO4_STATION_FRAME])
 	return 0;
 }
 
-//! Ask a plain spidev until a frame is queued or @p timeout_ms passed: 1, 0 or a negative errno.
+//! Ask the spidev until a frame is queued or @p timeout_ms passed: 1, 0 or a negative errno.
 static int
 spidev_wait(struct pico4_station *st, int timeout_ms)
 {
@@ -349,18 +345,11 @@ spidev_wait(struct pico4_station *st, int timeout_ms)
 	}
 }
 
-//! Send one frame: the vendor spidev's write, or a transfer.
+//! Send one frame: a transfer.
 static int
 send_frame(struct pico4_station *st, const uint8_t f[PICO4_STATION_FRAME])
 {
-	if (st->spidev) {
-		return spidev_transfer(st, f);
-	}
-	ssize_t w = write(st->fd, f, PICO4_STATION_FRAME);
-	if (w < 0) {
-		return -errno;
-	}
-	return w == PICO4_STATION_FRAME ? 0 : -EIO;
+	return spidev_transfer(st, f);
 }
 
 static int
@@ -380,28 +369,11 @@ read_one(struct pico4_station *st, int timeout_ms)
 	uint8_t f[PICO4_STATION_FRAME];
 	int r;
 
-	if (st->spidev) {
-		if ((r = spidev_wait(st, timeout_ms)) <= 0) {
-			return r;
-		}
-		memcpy(f, st->queue[0], sizeof(f));
-		memmove(st->queue[0], st->queue[1], --st->queued * sizeof(st->queue[0]));
-	} else {
-		fd_set set;
-		struct timeval tv = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
-		FD_ZERO(&set);
-		FD_SET(st->fd, &set);
-		r = select(st->fd + 1, &set, NULL, NULL, &tv);
-		if (r < 0) {
-			return errno == EINTR ? 0 : -errno;
-		}
-		if (r == 0) {
-			return 0;
-		}
-		if (read(st->fd, f, sizeof(f)) != (ssize_t)sizeof(f) || !pico4_station_valid(f)) {
-			return 0;
-		}
+	if ((r = spidev_wait(st, timeout_ms)) <= 0) {
+		return r;
 	}
+	memcpy(f, st->queue[0], sizeof(f));
+	memmove(st->queue[0], st->queue[1], --st->queued * sizeof(st->queue[0]));
 	if (!(f[0] == HEADER_NOTIFY && f[1] == NOTIFY_STREAM)) {
 		send_cmd(st, PICO4_STATION_CMD_ACK, f + 37, 2);
 	}
@@ -477,8 +449,6 @@ pico4_station_open(struct pico4_station **out, const char *device)
 	}
 	pthread_mutex_init(&st->lock, NULL);
 	st->camera_hz = 50;
-	// A mainline kernel gives the station's supply its own switch and the bus a plain spidev.
-	st->spidev = access(STATION_POWER, F_OK) == 0;
 	*out = st;
 	return 0;
 }
@@ -496,9 +466,6 @@ pico4_station_close(struct pico4_station *st)
 static int
 power(struct pico4_station *st, int on)
 {
-	if (!st->spidev) {
-		return ioctl(st->fd, IOCTL_POWER, &on) < 0 ? -errno : 0;
-	}
 	const char *state = on ? "enabled" : "disabled";
 	int fd = open(STATION_POWER, O_WRONLY | O_CLOEXEC);
 	if (fd < 0) {
@@ -577,54 +544,24 @@ pico4_station_reset(struct pico4_station *st)
 	return r;
 }
 
-//! Wait up to @p timeout_ms for the station to have a frame; 1, 0 or a negative errno.
-static int
-wait_readable(struct pico4_station *st, int timeout_ms)
-{
-	fd_set set;
-	struct timeval tv = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
-	FD_ZERO(&set);
-	FD_SET(st->fd, &set);
-	int r = select(st->fd + 1, &set, NULL, NULL, &tv);
-	return r < 0 ? (errno == EINTR ? 0 : -errno) : r > 0;
-}
-
 int
 pico4_station_poll(struct pico4_station *st, int timeout_ms)
 {
 	int64_t end = now_ms() + timeout_ms;
 	int n = 0;
-	if (st->spidev) {
-		// Every question to a plain spidev is a transfer, which needs the lock: ask, then
-		// sleep without it, so that a command can take its turn.
-		do {
-			pthread_mutex_lock(&st->lock);
-			int r = read_one(st, 0);
-			pthread_mutex_unlock(&st->lock);
-			if (r < 0) {
-				return r;
-			}
-			n += r;
-			if (r == 0) {
-				usleep(SPIDEV_POLL_US);
-			}
-		} while (now_ms() < end);
-		return n;
-	}
+	// Every question to the spidev is a transfer, which needs the lock: ask, then sleep
+	// without it, so that a command can take its turn.
 	do {
-		int64_t left = end - now_ms();
-		// Wait without the lock: a command in another thread must be able to take
-		// it (and with it the reply it waits for) at any time.
-		int r = wait_readable(st, left > 0 ? (int)left : 0);
-		if (r > 0) {
-			pthread_mutex_lock(&st->lock);
-			r = read_one(st, 0);
-			pthread_mutex_unlock(&st->lock);
-		}
+		pthread_mutex_lock(&st->lock);
+		int r = read_one(st, 0);
+		pthread_mutex_unlock(&st->lock);
 		if (r < 0) {
 			return r;
 		}
 		n += r;
+		if (r == 0) {
+			usleep(SPIDEV_POLL_US);
+		}
 	} while (now_ms() < end);
 	return n;
 }

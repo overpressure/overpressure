@@ -1,27 +1,24 @@
-import re
+"""Valve's session check and the userspace check on msm, the only GPU path."""
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECK = ROOT / "userspace/rootfs/usr/bin/pico4-valve-session-check"
+BIN = ROOT / "userspace/rootfs/usr/bin"
 
 
-class SessionCheckDropinTests(unittest.TestCase):
-    def test_user_manager_reads_the_dropin(self):
-        # The user manager outlives a session restart, so a drop-in written without a reload
-        # never reaches steamvr.service: the layer then writes no statistics.
-        text = CHECK.read_text(encoding="utf-8")
-        write = text.index('> "$dropin"')
-        restart = text.index("systemctl restart pico4-session.service", write)
-        self.assertRegex(text[write:restart], r"user_systemctl daemon-reload")
-        removal = text.index('rm -f "$dropin"', restart)
-        back = text.index("systemctl restart pico4-session.service", removal)
-        self.assertRegex(text[removal:back], r"user_systemctl daemon-reload")
+class SessionCheckTests(unittest.TestCase):
+    def test_frames_come_from_msms_events(self):
+        check = (BIN / "pico4-valve-session-check").read_text(encoding="utf-8")
+        self.assertIn('msm-frame-stats record "$seconds"', check)
+        self.assertIn('printf \',"frames":%s,"devices":%s', check)
+        for stale in ("kgsl", "dropin", "VRDISPLAY"):
+            self.assertNotIn(stale, check)
 
-    def test_reload_is_not_fatal(self):
-        # Without a running user manager the next one reads the drop-in at its start.
-        for m in re.finditer(r"(?m)^user_systemctl daemon-reload.*$", CHECK.read_text(encoding="utf-8")):
-            self.assertIn("|| true", m.group(0))
+    def test_userspace_check_requires_the_session_where_the_gpu_is(self):
+        check = (BIN / "pico4-userspace-check").read_text(encoding="utf-8")
+        gate = check.index('if [ -e /dev/dri/renderD128 ]; then\n\tneed "session service active')
+        self.assertIn('need "session target $session_target active', check[gate:])
+        self.assertNotIn("kgsl", check)
 
 
 if __name__ == "__main__":

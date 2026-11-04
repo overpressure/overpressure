@@ -6,7 +6,7 @@ USERSPACE_FLAGS ?= --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data 
 	--wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
 PHOENIX := devices/phoenix
 
-.PHONY: image userspace qemu-stage1 qemu-userspace
+.PHONY: image userspace qemu-stage1
 
 image: ## PICO 4: stage-1 boot image for FIRMWARE in out/
 	$(PYTHON) -m overpressure --device phoenix build --firmware $(FIRMWARE)
@@ -17,5 +17,3 @@ userspace: ## PICO 4: userspace archive in USERSPACE/ (as root; USERSPACE_FLAGS+
 qemu-stage1: ## PICO 4, optional: stage 1 on the QEMU test kernel, about 3 min
 	$(PHOENIX)/tests/qemu/run-selftest.sh out/pico4-poc-$(FIRMWARE)-initramfs.cpio.gz
 
-qemu-userspace: ## PICO 4, optional: the userspace on the 4.19 QEMU kernel, 10-20 min, often fails
-	$(PHOENIX)/tests/qemu/run-userspace.sh out/pico4-poc-$(FIRMWARE)-initramfs.cpio.gz $(USERSPACE)/pico4-userspace.tar.zst

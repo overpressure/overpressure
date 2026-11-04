@@ -2,16 +2,14 @@
 # PICO OS's CPU limits while a VR session runs (docs/cooling.md#vr-cpu-limits), run by
 # pico4-vr-performance.service as root. While a VR app runs, PICO OS's qvrservice holds one
 # power hint for every CPU and GPU level (qvrservice_config.txt performance_perf_hints ->
-# powerhint.xml 0x130A-0x1312); its CPU part: msm_performance's frequency limits (big cores
-# 864-2016 MHz, little 576-1804 MHz, prime 941-2054 MHz) and core_ctl's minimum of online cores
-# (3 big, 1 prime).
+# powerhint.xml 0x130A-0x1312); its CPU part: frequency limits (big cores 864-2016 MHz, little
+# 576-1804 MHz, prime 941-2054 MHz) and a minimum of online cores (3 big, 1 prime).
 #
 #   vr-performance on|off
 #
 # "on" saves the current limits and applies the hint's; "off" puts the saved ones back.
 #
-# A mainline kernel has neither msm_performance nor core_ctl: the same frequency limits go to the
-# cpufreq policies (policy0 the little cores, policy4 the big ones, policy7 the prime core), and
+# The frequency limits go to the cpufreq policies (policy0 the little cores, policy4 the big ones, policy7 the prime core), and
 # every core stays online, which meets core_ctl's minimum. The big cores, where the compositor runs,
 # stay at their limit (governor performance): on schedutil each frame starts with a frequency ramp,
 # and a frame with Steam's panel redrawing has no time for it (docs/session.md).
@@ -19,17 +17,10 @@
 set -euo pipefail
 S=${PICO4_SYSFS:-/sys}
 STATE=${PICO4_VR_PERFORMANCE_STATE:-/run/pico4-poc/vr-performance}
-P=$S/module/msm_performance/parameters
 CPU=$S/devices/system/cpu
-# The hint's values in kHz, as the perf HAL writes them; the little cores' maximum is theirs.
-MAX_FREQ="4:2016000 5:2016000 6:2016000 7:2054000"
-MIN_FREQ="0:576000 1:576000 2:576000 3:576000 4:864000 5:864000 6:864000 7:941000"
-BIG_MIN_CPUS=3
-PRIME_MIN_CPUS=1
-
-# mainline_limits on|off: the hint's limits on a mainline kernel's cpufreq policies.
+# The hint's limits in kHz: policy:minimum:maximum; the little cores' maximum is theirs.
 POLICIES="0:576000: 4:864000:2016000 7:941000:2054000"
-mainline_limits() {
+limits() {
 	local entry policy min max
 	case $1 in
 	on)
@@ -66,46 +57,8 @@ mainline_limits() {
 	esac
 }
 
-if [[ ! -e $P/cpu_max_freq && -e $CPU/cpufreq/policy0/scaling_min_freq ]]; then
-	case "${1:-}" in
-	on | off) mainline_limits "$1"; exit 0 ;;
-	esac
-fi
-
 case "${1:-}" in
-on)
-	# Saved once: a second "on" (a restart) keeps the limits from before the first. The kernel
-	# lists the pairs with a trailing space, which it refuses on writing (EINVAL): unquoted, the
-	# echo joins them with single spaces.
-	if [[ ! -s $STATE ]]; then
-		mkdir -p "$(dirname "$STATE")"
-		{
-			# shellcheck disable=SC2046
-			echo "max="$(cat $P/cpu_max_freq)
-			# shellcheck disable=SC2046
-			echo "min="$(cat $P/cpu_min_freq)
-			echo "big=$(cat $CPU/cpu4/core_ctl/min_cpus)"
-			echo "prime=$(cat $CPU/cpu7/core_ctl/min_cpus)"
-		} > "$STATE.new"
-		mv "$STATE.new" "$STATE"
-	fi
-	echo "$MAX_FREQ" > $P/cpu_max_freq
-	echo "$MIN_FREQ" > $P/cpu_min_freq
-	echo $BIG_MIN_CPUS > $CPU/cpu4/core_ctl/min_cpus
-	echo $PRIME_MIN_CPUS > $CPU/cpu7/core_ctl/min_cpus
-	;;
-off)
-	[[ -s $STATE ]] || exit 0
-	while IFS='=' read -r key value; do
-		case $key in
-		max) echo "$value" > $P/cpu_max_freq ;;
-		min) echo "$value" > $P/cpu_min_freq ;;
-		big) echo "$value" > $CPU/cpu4/core_ctl/min_cpus ;;
-		prime) echo "$value" > $CPU/cpu7/core_ctl/min_cpus ;;
-		esac
-	done < "$STATE"
-	rm -f "$STATE"
-	;;
+on | off) limits "$1" ;;
 *)
 	echo "usage: vr-performance on|off" >&2
 	exit 2

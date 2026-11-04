@@ -228,74 +228,6 @@ def validate_imu(value, rate: float = IMU_RATE_HZ) -> None:
 
 
 DISPLAY_HZ = 90.0
-DISPLAY_RATE_MARGIN = 0.95   # frames and commits per second, against the display rate
-DISPLAY_EYE_CONTRAST = 20.0  # mean red/blue difference that tells the eyes apart
-
-
-VR_DISPLAY_SECONDS = 15
-
-
-def validate_vr_display(value, stats) -> None:
-    """Validate `pico4-vrdisplay-test` JSON and the pico4-vrdisplay layer's statistics.
-
-    SteamVR's compositor reaches the panels through this path (docs/session.md): the
-    display must be found and acquired through DRM, frames and vblank events
-    must run at the display rate, and the scanned-out image must have the
-    client's red left and blue right half on the matching panels.
-    """
-    if not isinstance(value, dict) or value.get("schema") != 1:
-        raise ValueError("Display layer check produced no schema-1 result")
-    if value.get("status") != "pass":
-        raise ValueError("Display layer check failed: " + str(value.get("error", "frame or vblank rate")))
-    if value.get("display") != "PICO 4" or value.get("acquire") != "drm":
-        raise ValueError(f"Display {value.get('display')!r} was not acquired through DRM ({value.get('acquire')})")
-    if (value.get("frame_hz") or 0) < DISPLAY_RATE_MARGIN * DISPLAY_HZ:
-        raise ValueError(f"Display layer frames ran at {value.get('frame_hz')} Hz")
-    if abs((value.get("vblank_hz") or 0) - DISPLAY_HZ) > 0.01 * DISPLAY_HZ:
-        raise ValueError(f"The swapchain's vblank counter advanced at {value.get('vblank_hz')} Hz")
-    # The client re-arms its vblank event between events and can miss one.
-    if (value.get("event_hz") or 0) < 0.9 * DISPLAY_HZ:
-        raise ValueError(f"Vblank events arrived at {value.get('event_hz')} Hz")
-    counter = value.get("counter") or [0, 0]
-    if len(counter) != 2 or counter[1] <= counter[0]:
-        raise ValueError(f"The swapchain's vblank counter did not advance: {counter}")
-    if not isinstance(stats, dict) or stats.get("target") != "pico4_vrdisplay" or stats.get("fake"):
-        raise ValueError("The pico4-vrdisplay layer did not drive the panels")
-    if stats.get("retire_timeouts") or stats.get("gpu_timeouts") or not stats.get("commits"):
-        raise ValueError("The display layer lost fences or committed nothing")
-    if (stats.get("commit_hz") or 0) < DISPLAY_RATE_MARGIN * DISPLAY_HZ:
-        raise ValueError(f"The display layer committed {stats.get('commit_hz')} frames per second")
-    means = stats.get("eye_mean_rgb")
-    if not means or len(means) != 2:
-        raise ValueError("The display layer recorded no scanned-out frame")
-    (left_r, _, left_b), (right_r, _, right_b) = means
-    if left_r - left_b < DISPLAY_EYE_CONTRAST or right_b - right_r < DISPLAY_EYE_CONTRAST:
-        raise ValueError(f"Scanned-out eye colours {means} do not match red left / blue right")
-
-
-
-def validate_vr_sync(value) -> None:
-    """Validate `pico4-vrsync-test` JSON: one timeline semaphore shared by two processes.
-
-    SteamVR shares such semaphores (OPAQUE_FD) between its compositor and other
-    processes; on this kernel the display layer emulates them over sync files
-    (docs/session.md). The waiting process's GPU work must start after the
-    signalling work ended, host waits and signals must reach the other process,
-    a wait submitted before its signal must hold until the signal arrives, and a
-    wait for an earlier batch of the same submission must not hold at all.
-    """
-    if not isinstance(value, dict) or value.get("schema") != 1:
-        raise ValueError("Semaphore sharing check produced no schema-1 result")
-    failed = [k for k in ("gpu_wait", "host_wait", "host_signal", "early_wait", "same_submit")
-              if value.get(k) is not True]
-    if value.get("child_exit") != 0:
-        failed.append("child process")
-    if failed or value.get("status") != "pass":
-        raise ValueError("Semaphore sharing failed: " + (", ".join(failed) or "status"))
-    start, end = value.get("child_start_ticks") or 0, value.get("parent_end_ticks") or 0
-    if not 0 < end <= start:
-        raise ValueError(f"The waiting GPU work started at {start}, before the signalling work ended at {end}")
-
 
 VALVE_SESSION_SECONDS = 30  # bounded: the session heats the headset quickly (docs/cooling.md)
 VALVE_SESSION_START_C = 70.0  # the hottest thermal zone before the session starts...
@@ -308,9 +240,8 @@ VALVE_SESSION_MIN_HZ = 0.4 * DISPLAY_HZ
 def validate_valve_session(value) -> None:
     """Validate `pico4-valve-session-check` JSON: Valve's VR session on the panels.
 
-    gamescope's session must run with SteamVR, whose compositor presents
-    (on the stock path through the pico4-vrdisplay layer without lost fences,
-    showing an image); SteamVR must report the headset and both controllers
+    gamescope's session must run with SteamVR, whose compositor presents;
+    SteamVR must report the headset and both controllers
     with positions; and the configured session must come back. The
     fan daemon's state before and after is recorded (null without the daemon).
     The performance verdict over the run after startup must pass as well.
@@ -326,21 +257,17 @@ def validate_valve_session(value) -> None:
     compositor = value.get("compositor") or {}
     if not compositor.get("started") or not compositor.get("gamescope_client") or compositor.get("asserts"):
         raise ValueError(f"SteamVR's compositor did not run with gamescope: {compositor}")
-    # The stock kernel: the display layer's statistics. A mainline kernel's msm: its own events
-    # (msm-frame-stats), without an image: the compressed scanout is readable only by the master.
-    layer = value.get("layer")
-    target = layer.get("target") if isinstance(layer, dict) else None
-    if target not in ("pico4_vrdisplay", "msm") or layer.get("fake"):
-        raise ValueError("SteamVR's compositor did not present through the pico4-vrdisplay layer or msm")
-    if not layer.get("commits") or layer.get("retire_timeouts") or layer.get("gpu_timeouts"):
-        raise ValueError("The display lost fences or committed nothing in Valve's session")
-    if (layer.get("commit_hz") or 0) < VALVE_SESSION_MIN_HZ:
-        raise ValueError(f"SteamVR's compositor presented {layer.get('commit_hz')} frames per second")
-    if abs((layer.get("vblank_hz") or 0) - DISPLAY_HZ) > 0.01 * DISPLAY_HZ:
-        raise ValueError(f"The panels' vblanks ran at {layer.get('vblank_hz')} Hz")
-    means = layer.get("eye_mean_rgb")
-    if target == "pico4_vrdisplay" and (not means or len(means) != 2 or any(max(eye) < 2.0 for eye in means)):
-        raise ValueError(f"SteamVR's scanned-out image is black or missing: {means}")
+    # msm's own events (msm-frame-stats), without an image: the compressed scanout is readable
+    # only by the master.
+    frames = value.get("frames")
+    if not isinstance(frames, dict) or frames.get("target") != "msm":
+        raise ValueError("SteamVR's compositor did not present through msm")
+    if not frames.get("commits"):
+        raise ValueError("The display committed nothing in Valve's session")
+    if (frames.get("commit_hz") or 0) < VALVE_SESSION_MIN_HZ:
+        raise ValueError(f"SteamVR's compositor presented {frames.get('commit_hz')} frames per second")
+    if abs((frames.get("vblank_hz") or 0) - DISPLAY_HZ) > 0.01 * DISPLAY_HZ:
+        raise ValueError(f"The panels' vblanks ran at {frames.get('vblank_hz')} Hz")
     devices = {d.get("index"): d for d in value.get("devices") or [] if isinstance(d, dict)}
     if not {0, 1, 2} <= devices.keys():
         raise ValueError(f"SteamVR reports devices {sorted(devices)}, not the headset and two controllers")

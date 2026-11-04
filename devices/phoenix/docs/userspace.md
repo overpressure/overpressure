@@ -7,7 +7,7 @@ stage-1 initramfs ([stage1.md](stage1.md)) stays the recoverable entry point:
 it receives the userspace into compressed RAM and hands PID 1 to its systemd. Flash storage
 stays read-only throughout. The userspace reaches `running` with no failed units on the headset, where Valve's Mesa runs
 Turnip on msm. The XR stack ([xr.md](xr.md)) and Valve's VR session ([session.md](session.md)) run
-in it. Sections on the stock kernel's path, no longer pursued, are labelled.
+in it.
 
 ## Where the packages come from
 
@@ -68,63 +68,13 @@ glibc.
 | Package | Content | Details |
 | --- | --- | --- |
 | `pico4-graphics-tests` | the native graphics tests | [graphics.md](graphics.md) |
-| `pico4-sensors` | qrtr-ns, pd-mapper and hexagonrpcd with this project's patches, for the sensor DSP | [xr.md](xr.md) |
+| `pico4-sensors` | hexagonrpcd with this project's patches, for the DSPs | [xr.md](xr.md) |
 | `pico4-monado` | Monado 25.1.0 with the PICO 4 driver, the KMS compositor target and `pico4-cam` | [xr.md](xr.md) |
 | `pico4-basalt` | Basalt for Monado's VIT interface, built for `armv8.2-a` | [xr.md](xr.md) |
-| `pico4-vrdisplay` | `pico4-swapchain-usage`, the stock path's frame pacing in SteamVR's compositor; its Vulkan layer for the panels is used on the stock kernel only | [session.md](session.md) |
-| `pico4-sysvsem` | System V semaphores in userspace, preloaded on the stock kernel only | [session.md](session.md) |
+| `pico4-swapchain-usage` | the stock path's frame pacing and compressed scanout in SteamVR's compositor | [session.md](session.md) |
 
 External sources are pinned by commit or hash; the project's patches lie next to each PKGBUILD,
 its own sources in [src/](../src/).
-
-## Kernel compatibility
-
-`python -m overpressure inspect --firmware BUILD` evaluates the stock kernel's embedded configuration
-against what this userspace needs ([tooling/userspace.py](../tooling/userspace.py)) and writes
-`userspace-compat.json` beside its analysis. For the stock 5.13.7 and 5.13.8 kernels
-(`4.19.81-perf+`), only `DEVTMPFS` is missing among the required options, and the handoff
-replaces it. The gaps and their adaptations:
-
-| Missing in the stock kernel | Affects | Adaptation |
-| --- | --- | --- |
-| `DEVTMPFS` (systemd requires it) | `/dev`, udev | stage 1 hands over a tmpfs copy of its `/dev`; [`00-pico4-devnodes.rules`](../userspace/rootfs/usr/lib/udev/rules.d/00-pico4-devnodes.rules) creates and removes the node for every uevent before any other rule runs |
-| `FHANDLE` | systemd mount detection, udev | none needed: systemd falls back to mount IDs |
-| `USER_NS`, `PID_NS`, `IPC_NS`, `UTS_NS` | unit sandboxing; Steam's pressure-vessel containers | systemd ignores these settings; `/usr/bin/bwrap` is setuid, which pressure-vessel uses for Steam Linux Runtime's containers when its own bubblewrap fails; the containers then share the host's PIDs ([session.md](session.md#the-steam-client)) |
-| `MEMCG`, `CGROUP_PIDS`, `CGROUP_DEVICE` | resource control | `systemd-oomd` masked; memory and task limits are not enforced |
-| `SYSVIPC`, `POSIX_MQUEUE` | X11 MIT-SHM (`shmget`), SteamVR's process locks (`semget`), some games | semaphores: [`pico4-sysvsem`](../src/sysvsem/pico4-sysvsem.c), preloaded for every process ([session.md](session.md)); shared memory and message queues: none, clients must use memfd and fd passing |
-| `BINFMT_MISC` | FEX for x86 games | Windows games need none: Proton 11 (ARM64) emulates them with its own FEX; native Linux x86 programs must be started through FEX explicitly |
-| `HIDRAW` | Steam Input, SteamVR HID access | input only through evdev and uhid |
-| `VT`, `DMIID`, `AUTOFS`, ext4 POSIX ACLs | logind, udev, automounts | seat0 without VTs; device identity from the device tree; no `.automount` units; no ACLs on the zram root (device ACLs live on the `/dev` tmpfs) |
-
-Other kernel behaviour the userspace must respect:
-
-- **`ANDROID_PARANOID_NETWORK`**: only root, holders of `CAP_NET_RAW` and members of the Android
-  network groups may open IPv4, IPv6 or Bluetooth sockets.
-  [`pico4-android-net.conf`](../userspace/rootfs/usr/lib/sysusers.d/pico4-android-net.conf)
-  creates the group IDs the kernel checks: `aid_bt` (3001), `aid_bt_net` (3002), `aid_inet`
-  (3003) and `aid_net_raw` (3004). The session user `steamos` (UID 1000, as on the Frame) is a
-  member of all four. systemd-networkd and -resolved hold `CAP_NET_RAW`; `systemd-timesyncd`
-  does not and gets `aid_inet` from a drop-in.
-- **`RT_GROUP_SCHED`**: on cgroup v2 the kernel refuses `SCHED_FIFO` and `SCHED_RR` in any cgroup
-  where the `cpu` controller is enabled, even to root, and Monado's compositor needs real-time
-  threads. The drop-ins in [userspace/rootfs/etc/systemd/](../userspace/rootfs/etc/systemd/)
-  keep the controller off (`DefaultCPUAccounting=no`, no `CPUWeight` on the user slices, user
-  managers delegated only `memory pids`). Units must not set `CPUWeight` or `CPUQuota` or
-  delegate `cpu`.
-- **Root file system**: no btrfs, squashfs or erofs. The root is ext4 on `zram0`, and the stock
-  kernel's zram offers only LZO. e2fsprogs 1.47 enables `orphan_file` and `metadata_csum_seed`
-  by default, which 4.19 cannot mount, so the handoff turns them off.
-- **Firmware loading**: the kernel loads firmware directly from `/usr/lib/firmware` (through the
-  `/lib` symlink). udev has no fallback loader, so in stage 2 a missing file fails after the
-  5 s fallback timeout that stage 1 sets.
-- **Hotplug**: `UEVENT_HELPER` is enabled; the handoff empties the helper path, and udev
-  receives events over netlink.
-
-Mainline 4.19 differs from PICO's Android 4.19 by Android-only patches (KGSL, the SDE display
-driver, `PARANOID_NETWORK`, a PSI backport). The QEMU test kernel is mainline 4.19 with
-[kernel-4.19.fragment](../tests/qemu/kernel-4.19.fragment), which gives the stock kernel's
-answers to the options above. It reproduces the syscall surface (no pidfd, clone3, openat2 or
-new mount API) and the configuration, not those drivers.
 
 ## How the handoff works
 
@@ -228,11 +178,9 @@ Adaptations in the image:
 - **Enabled**: sshd, systemd-networkd, NetworkManager, the recovery, storage, log and self-test
   units, the sensor target, Monado's socket and `pico4-session.service`. The default target is
   `graphical.target`.
-- **Battery.** The stock kernel's charger and fuel gauge (PM8150B) appear as power supplies:
+- **Battery.** The charger and fuel gauge (PM8150B) appear as power supplies:
   `battery` (capacity, status, voltage, current), `usb` (USB-PD, the cable), `pc_port`, `dc`
-  and `bms`. UPower reads them; it is D-Bus activated, and a drop-in turns off its
-  `PrivateUsers=` ([upower.service.d](../userspace/rootfs/usr/lib/systemd/system/upower.service.d/50-pico4.conf)),
-  which needs user namespaces the kernel lacks (status 217/USER). The kernel's `status` says
+  and `bms`. UPower reads them; it is D-Bus activated. The kernel's `status` says
   "Charging" whenever the charger is on; on a PC's 500 mA port the running headset still draws
   from the battery (negative current), and UPower reports that as discharging. In Valve's
   session the PICO 4 driver reads the same `battery` supply, and `driver_monado` passes it to
@@ -309,7 +257,7 @@ checks:
   XR device nodes accessible to the session user ([session.md](session.md));
 - `steamos-customizations-deckard`, `steamos-manager`, gamescope, PipeWire and
   `deckard-mesa-linux-aarch64` installed;
-- with a GPU node present (`/dev/kgsl-3d0`, or msm's render node on a mainline kernel), the Turnip
+- with msm's render node present, the Turnip
   Vulkan test ([graphics.md](graphics.md)).
 
 `pico4.userspace.validate_check` validates the JSON on the host. As a bounded acceptance run,
@@ -391,220 +339,26 @@ quick after that.
 
 ## Wi-Fi
 
-*Stock kernel path, no longer pursued: this section does not describe Valve's kernel. On Valve's kernel: [kernel-feasibility.md](kernel-feasibility.md#results).*
-
-The Wi-Fi chip is a QCA6390 (v2.0) on PCIe, run by the stock kernel's built-in cnss2 and PICO OS's
-own driver module, qcacld-3.0 (`qca_cld3_qca6390.ko`, module `wlan`). The module is signed with
-the stock kernel's build key, so the kernel loads it as it is. It must stay byte for byte as
-extracted, because its signature is appended. [`scripts/extract-wlan.sh`](../scripts/extract-wlan.sh)
-reads them from the stock firmware ([development.md](development.md#stock-firmware)), checking
-the module; the MAC addresses are the headset's own, linked from persist:
-
-| File | From | Purpose |
-| --- | --- | --- |
-| `modules/qca_cld3_qca6390.ko` | vendor | the driver |
-| `firmware/qca6390/amss20.bin`, `m3.bin`, `bdwlan*` | modem | chip firmware and board data, requested by cnss2 |
-| `firmware/wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini` | vendor | the driver's configuration |
-| `firmware/wlan/qca_cld/qca6390/wlan_mac.bin` | a link to `/mnt/vendor/persist/wlan_mac.bin` | this headset's MAC addresses, read by the driver |
-
-`build-userspace.sh --wlan DIR` installs the firmware under `/usr/lib/firmware` and the module
-in `/usr/lib/pico4-wlan`. The bring-up follows PICO OS, plus one rule of our own, the restart level:
-
-1. [`pico4-wlfw-client.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-wlfw-client.service)
-   starts [`pico4-wlfw-client`](../userspace/rootfs/usr/bin/pico4-wlfw-client).
-2. [`pico4-wlan.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-wlan.service) sets the
-   `wlan` subsystem's restart level to `RELATED`. At the kernel's default, `SYSTEM`, a firmware
-   crash would reboot the headset.
-3. It writes `fs_ready`, which starts the chip's cold-boot calibration.
-4. It loads the module, which waits for the calibration and brings up `wlan0` and `p2p0`.
-5. On stop it writes `/sys/kernel/shutdown_wlan/shutdown`, as PICO OS does; the driver is never
-   unloaded.
-
-The PICO 4's device tree sets `cnss-daemon-support`. The kernel then tells the firmware that two
-control clients exist, and the firmware holds back its memory request, and with it "FW ready",
-until the second has registered. On PICO OS that is `cnss-daemon`. `pico4-wlfw-client`
-reimplements only its part in the firmware's control service (WLFW, QMI service 0x45), from the
-message tables compiled into it:
-
-- an indication registration for FW ready, calibration download and update and FW memory ready,
-  with the daemon's client id;
-- on "FW memory ready", the capability request and a calibration report without calibration
-  files.
-
-The firmware then calibrates, restarts once and comes up. Calibration data is not kept, since
-storage is read-only, so every boot calibrates cold. A link file
-([`10-pico4-wlan.link`](../userspace/rootfs/usr/lib/systemd/network/10-pico4-wlan.link)) keeps the
-kernel's interface names. NetworkManager manages `wlan0` with `wpa_supplicant`; its connections
-live in RAM and are gone after a reboot. The Steam client switches NetworkManager to the Frame's
-iwd backend through steamos-manager (`99-valve-wifi-backend.conf` in `/etc`). iwd cannot run on
-the stock kernel, which lacks the AF_ALG crypto sockets (`CONFIG_CRYPTO_USER_API_*`), and with
-that backend `wlan0` stayed "unavailable" and listed no network. On the stock kernel
-`pico4-wifi-backend.service` links
-[`99-zz-pico4-wifi-backend.conf`](../userspace/rootfs/usr/share/pico4-poc/99-zz-pico4-wifi-backend.conf)
-into `/run/NetworkManager/conf.d`, where it sorts after Valve's file and keeps `wpa_supplicant`;
-a mainline kernel runs the Frame's iwd.
-
-WPA3 (SAE) works through the driver's external authentication: the driver connects in
-firmware and asks `wpa_supplicant` (`NL80211_CMD_EXTERNAL_AUTH`) for the SAE handshake. The
-Steam client saves networks whose access points offer WPA3 as WPA3-only (`key-mgmt sae`, open
-authentication), and they connect as saved. `wpa_supplicant` 2.11 asks for WPA version 3 in
-the connect request whenever the kernel numbers nl80211 attributes up to
-`NL80211_ATTR_SAE_PASSWORD`. The PICO 4's Android 4.19 kernel does, but its cfg80211 accepts
-only versions 1 and 2 there: every WPA3 connect failed with `EINVAL` before the driver saw it.
-The image's `wpa_supplicant` is therefore
-[`pico4-wpa-supplicant`](../userspace/pkgbuilds/pico4-wpa-supplicant/PKGBUILD): Arch's 2.11 with
-[a patch](../userspace/pkgbuilds/pico4-wpa-supplicant/sae-wpa-version-2.patch) that asks for
-version 2.
+The kernel's ath11k drives the QCA6390 with PICO OS's firmware and the headset's board data, and
+NetworkManager uses the Frame's iwd backend. [`pico4-wlan-address`](../userspace/rootfs/usr/libexec/pico4-poc/wlan-address)
+sets `wlan0`'s address from `persist` before NetworkManager starts. It joins WPA2 and WPA3 networks and
+reconnects by itself after a reboot ([kernel-feasibility.md](kernel-feasibility.md#results)).
 
 ## Audio
 
-*Stock kernel path, no longer pursued: this section does not describe Valve's kernel. On Valve's kernel: [Audio on a mainline kernel](#audio-on-a-mainline-kernel).*
-
-The sound card is Qualcomm's `kona-mtp-snd-card`, the audio DSP (ADSP) running its front ends.
-Its outputs are two WSA881x amplifiers, one per speaker, on SoundWire. Its microphone is analog,
-on the WCD938x codec's ADC1 (PICO OS's `amic1`); the card's digital-microphone inputs carry
-nothing. The stock kernel has the ASoC core; the rest is PICO OS's own modules (Qualcomm's audio
-techpack), signed with the kernel's build key like the Wi-Fi driver.
-[`scripts/extract-audio.sh`](../scripts/extract-audio.sh) reads them from the stock firmware
-([development.md](development.md#stock-firmware)):
-
-| File | From | Purpose |
-| --- | --- | --- |
-| `modules/audio_*.ko`, `modules.dep` | vendor | the 24 modules PICO OS loads and the 3 they depend on |
-| `firmware/adsp.mdt`, `adsp.bNN` | modem | the ADSP's image |
-| `firmware/adspr.jsn`, `adspua.jsn` | modem | its protection domains, for `pd-mapper`: the root process and the audio process (`audio_pd`, service `avs/audio`) |
-| `audiopd/acdb/adsp_avs_config.acdb` | vendor | the audio process's AVS configuration |
-| `audiopd/dsp/adsp/` | vendor | the audio process's libraries from PICO OS's ADSP library path: its audio modules, their C++ runtime, its heap module and audio configuration |
-| `calibration/*.acdb` | vendor | PICO OS's calibration database for the speakers and the handset microphone (`acdbdata/wsa8810/base/MTP`: global, speaker and handset files) |
-
-`build-userspace.sh --audio DIR` installs the firmware and maps under `/usr/lib/firmware`, the
-modules in `/usr/lib/pico4-audio`, the calibration database in `/usr/lib/pico4-audio/acdb` and
-the audio process's files in `/usr/share/qcom/pico4-audio`. `pico4-audio.target` brings the card
-up in PICO OS's order:
-
-1. [`pico4-audio-modules.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-audio-modules.service)
-   loads the modules (PICO OS: early-init), each after the modules it depends on, before
-   `pico4-pd-mapper.service` starts. The audio notifier registers its clients only when the
-   kernel's service locator answers the audio service's lookup, and while the mapper runs that
-   answer comes within a millisecond of loading the first module, before the notifier module
-   has subscribed: the sound card would never appear. Loaded first, the lookup waits for the
-   mapper.
-2. [`pico4-adsp.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-adsp.service) sets the
-   ADSP's restart level to `RELATED` and boots it (PICO OS: early-boot), as for the SLPI.
-3. [`pico4-audiopd.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-audiopd.service)
-   starts the audio process as PICO OS's `adsprpcd audiopd` does: `hexagonrpcd -P audiopd`
-   creates the static process `audiopd` from the ADSP's image (FastRPC's create-static init with
-   a 2 MiB remote heap, as PICO OS's library does) and serves it its files. The channel is
-   marked secure, as for the SLPI. The process reads its files with `ftell`, which the server
-   answers ([xr.md](xr.md#head-imu-through-the-sensor-dsp)); without the answer the server stopped, and the DSP then
-   refused the stream buffers (`hw_params` failing with `ENOMEM`). It asks for some voice
-   processing modules that PICO OS does not have either.
-
-When the audio process reports its domain up, the APR driver adds the card's devices and the
-machine driver registers the card.
-
-4. [`pico4-audiocal.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-audiocal.service)
-   loads PICO OS's calibration as its audio HAL does
-   ([`pico4-audiocal`](../userspace/rootfs/usr/bin/pico4-audiocal)). It reads the calibration
-   database (`acdbdata/wsa8810`, its global, speaker and handset files) for the two paths: the
-   speakers (ACDB device 15, app type 0x11130, deep-buffer playback) and the handset microphone
-   (device 4, app type 0x11132, record). It hands the blocks to the kernel's calibration store
-   (`/dev/msm_audio_cal`, data in ION buffers of the system heap):
-   - the custom topologies, which the kernel registers with the DSP at once;
-   - each path's device (ADM) topology and processing parameters, and the speakers' volume table;
-   - each path's port (AFE) topology.
-
-   It then switches on the kernel's instance-ID support, as PICO OS's HAL does after loading the
-   database: the parameters carry instance IDs, and the DSP refuses them in the older commands
-   (`ADSP_ENEEDMORE`). Last, it sets the app-type controls that make the routing driver pick
-   these blocks for MultiMedia1 on the speakers' and the microphone's backends.
-
-   The kernel uses a device or port block for one stream and then skips it as stale, so PICO
-   OS's HAL sends a path's blocks before every stream. The service does the same: it watches
-   MultiMedia1's two PCM nodes and sends a path's blocks again when its node is opened (before
-   the stream reaches its device) and when it is closed. Without that, only the first stream
-   after loading had its topologies. The stream (ASM) blocks stay the DSP's defaults: the kernel
-   keeps a single stream block for both directions. The service stays running, because the
-   kernel drops every block when the calibration device is closed for the last time. It
-   restarts with the ADSP, which forgets the topologies.
-
-The database has no port (AFE) parameters for these two devices, so the kernel still reports
-"cal_block not found" for them, as on PICO OS.
-
-The card has about 40 PCMs; the system uses MultiMedia1 (PCM 0) in both directions, as PICO OS
-plays and records media. The other PCMs get no device node
-([`00-pico4-devnodes.rules`](../userspace/rootfs/usr/lib/udev/rules.d/00-pico4-devnodes.rules)):
-PipeWire's "pro-audio" profile opens every PCM it finds, and opening the capture side of the
-hostless MI2S PCM dereferences NULL in the stock kernel's ASoC core (an oops that kills the
-opening process with the PCM's lock held, so that every later reader of its status hangs).
-PipeWire's access check only looks at the nodes that exist.
-
-An ALSA UCM profile
-([`ucm2/conf.d/kona-mtp-snd-ca`](../userspace/rootfs/usr/share/alsa/ucm2/conf.d/kona-mtp-snd-ca))
-gives PipeWire the speakers and the microphone, with PICO OS's routes from its `mixer_paths.xml`
-(`speaker`, `deep-buffer-playback`, `handset-mic`, `audio-record`) and default volumes. The front
-end only accepts hardware parameters while its whole path to the speakers or the microphone is
-connected, and PipeWire probes it before it enables a device, so the verb sets both paths; with
-one output and one input there is nothing to switch. DAPM powers the amplifiers only while a
-stream runs. PipeWire shows a "Speakers" sink and a "Microphone" source; volume is PipeWire's
-own.
-
-Two settings keep the sound continuous under Valve's session (load average about 12 on 8 cores):
-
-- **Real-time audio threads.** PipeWire's data threads get real-time priority (round-robin, 80)
-  from RTKit (`rtkit`), as on SteamOS: when a session bus exists, PipeWire 1.4 asks the desktop
-  portal or RTKit and otherwise stays at normal priority, although its own limit would allow
-  real-time. The Frame's RTKit drop-in passes `--no-polkit`, an option Arch's RTKit 0.13 does
-  not have, so the daemon did not start;
-  [`rtkit-limits.conf`](../userspace/rootfs/etc/systemd/system/rtkit-daemon.service.d/rtkit-limits.conf)
-  replaces it with the same limits without that option.
-- **Two periods of headroom.** The DSP advances the PCM's position one 1024-frame period at a
-  time. SteamVR's sounds ask for quanta of 256 and 512 frames, and below a quantum of 1024 the
-  sink missed the DSP about 34 times a second: the sounds broke up.
-  [`51-pico4-sound-card.conf`](../userspace/rootfs/etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf)
-  sets the card's period to 1024 frames and its headroom to 2048 (one period was not enough).
-  On a mainline kernel the driver calls itself a batch device, for which PipeWire halves the period
-  and adds one of headroom; `api.alsa.disable-batch` gives the period of 1024 and the buffer of
-  8192 frames the stock kernel's card runs with.
-- **A quantum of at least 1024 frames.** A game asks for 5 ms (Beat Saber: 220 frames at
-  44.1 kHz), which runs the whole graph at 128 frames, 2.7 ms. Under a game's load, clients then
-  miss cycles, and each miss is one quantum of silence in the mix, heard as a crack.
-  [`51-pico4-quantum.conf`](../userspace/rootfs/etc/pipewire/pipewire.conf.d/51-pico4-quantum.conf)
-  sets the minimum to 1024 frames, about PICO OS's 20 ms deep-buffer period. Measured on the sink's
-  monitor with a tone and Beat Saber in its menu:
-
-  | Minimum quantum | Graph | Holes in the mix |
-  | --- | --- | --- |
-  | 32 (PipeWire's default) | 128 frames | 3 to 5 per 20 s, one quantum each |
-  | 256, 512 | 256, 512 frames | none in 20 s |
-  | 1024 | 1024 frames | none in 60 s |
-
-```sh
-cat /proc/asound/cards                     # kona-mtp-snd-card
-systemctl status pico4-audio.target        # the three units above
-# as the session user (steamos):
-wpctl status                               # "Speakers" sink and "Microphone" source
-pw-record --rate 48000 --channels 1 /tmp/mic.wav   # a few seconds, then Ctrl-C
-pw-play /tmp/mic.wav                       # through the speakers
-```
-
-### Audio on a mainline kernel
-
-On Valve's kernel the card is mainline's SM8250 machine driver with the PICO's routing in the
+The card is mainline's SM8250 machine driver with the PICO's routing in the
 device tree ([kernel-feasibility.md](kernel-feasibility.md)): the two WSA8810 speakers on the WSA
 macro's SoundWire (units 1 and 2), the WCD9380 on the RX and TX SoundWire buses (units 4 and 3),
 the LPASS macros and the DSP's APR services (AFE, ASM, ADM). The card is named `PICO4`. Its
 bring-up:
 
-1. `pico4-audio-modules` and `pico4-audiocal` skip themselves (stock modules, the stock
-   kernel's calibration store).
-2. `pico4-adsp` boots the ADSP through remoteproc (`audio boot` hands over to `remoteproc-boot`).
-3. `pico4-audiopd` starts the audio process on upstream FastRPC
+1. `pico4-adsp` boots the ADSP through remoteproc (`remoteproc-boot`).
+2. `pico4-audiopd` starts the audio process on upstream FastRPC
    ([`audiopd`](../userspace/rootfs/usr/libexec/pico4-poc/audiopd), `/dev/fastrpc-adsp`):
    `hexagonrpcd -P` creates it with `FASTRPC_IOCTL_INIT_CREATE_STATIC`, and the driver backs it
    with the stock remote heap (12 MiB of CMA), which it gives to the DSP's VMs (LPASS,
    ADSP heap) as the stock tree does.
-4. [`pico4-lpass-macros`](../userspace/rootfs/usr/libexec/pico4-poc/lpass-macros) probes the VA
+3. [`pico4-lpass-macros`](../userspace/rootfs/usr/libexec/pico4-poc/lpass-macros) probes the VA
    macro again once the audio process runs. The macro's probe votes the LPASS hardware through
    the AFE, which refuses the vote until then, and a failed probe is final. The driver has no bind
    file, so the platform bus probes it again (`drivers_probe`). The other macros, the SoundWire
@@ -674,19 +428,12 @@ The microphone reads about 7 dB lower here, its noise floor with it (−62 and �
 
 The headset has 7.6 GiB of RAM, shared with the GPU. Valve's idle VR session leaves about
 4.2 GB available: Steam's UI processes (steamwebhelper, vrwebhelper, steam) hold about 1.4 GB,
-GPU memory (KGSL) about 0.7 GB, and the page cache about 2.7 GB.
+GPU memory about 0.7 GB, and the page cache about 2.7 GB.
 
 - **Swap as on the Frame.** The image installs the Frame's `holo-zram-swap`: zram-generator
-  makes `zram0` a swap device of half the RAM, compressed with `lzo-rle` (which the stock
-  kernel offers), with zswap off. PICO OS swaps to zram the same way
+  makes `zram0` a swap device of half the RAM, compressed with `lzo-rle`, with zswap off. PICO OS swaps to zram the same way
   (`init.qcom.post_boot.sh`: half the RAM, at most 4 GiB). GPU memory cannot be swapped.
-- **Priority 32758.** The stock kernel carries ByteDance's swap patches: its `get_swap_pages`
-  gives ordinary reclaim (kswapd, direct reclaim, `/proc/PID/reclaim anon`) swap space only on
-  a device of priority exactly 32758, the priority PICO OS's script uses; a device of any other
-  priority counts as PICO's storage swap, which only `/proc/PID/reclaim storage` uses. At the
-  Frame's priority (100) the kernel never swapped (`pswpout` 0 with 220 MB left); at 32758 it
-  swaps as soon as memory runs short. Its `/proc/swaps` has an extra `NrExtents` column, which
-  systemd cannot parse ("Failed to parse /proc/swaps:2").
+- **Priority 32758.** The swap device has the priority PICO OS's script uses.
 - **PICO OS's reclaim settings.**
   [`50-pico4-memory.conf`](../userspace/rootfs/etc/sysctl.d/50-pico4-memory.conf) sets what
   PICO OS's script sets for this kernel: `vm.swappiness` 100, `vm.watermark_scale_factor` 90,
@@ -720,113 +467,13 @@ GPU memory (KGSL) about 0.7 GB, and the page cache about 2.7 GB.
 
 ```sh
 swapon --show                              # /dev/zram0, partition, about 3.8G, prio 32758
-cat /sys/class/kgsl/kgsl/page_alloc        # GPU memory in bytes
 cat /proc/pressure/memory                  # memory pressure (PSI)
 ```
 
 ## Verified results
 
-### Audio on the headset
-
-*Stock kernel path, no longer pursued: this section does not describe Valve's kernel.*
-
-| Check | Result |
-| --- | --- |
-| Bring-up at boot (installed system) | modules loaded, ADSP online and `kona-mtp-snd-card` registered 32.7 s after the kernel started; the audio process's file server without a restart; nodes for PCM 0 only; no oops |
-| Speakers | a 440 Hz test tone played on MultiMedia1 heard by the user |
-| Microphones | with the speakers playing that tone (−20 dBFS): the analog microphone (`amic1`) records it 58 dB above its level in silence; the six digital-microphone inputs record nothing |
-| PipeWire | "Speakers" sink (default) and "Microphone" source; playback and capture at the same time; the microphone records the speakers' tone at −54.9 dBFS at volume 1.0 and −78.9 dBFS at 0.4 |
-| Calibration (`pico4-audiocal`) | its blocks match those extracted from PICO OS's database byte for byte; loaded at boot 0.6 s after the card registers; five fresh streams in each direction all get the port topologies 0x112fc (speakers) and 0x112fb (microphone) instead of 0; the DSP takes the device topologies and parameters without an error; playback without xruns; the microphone records the speakers' tone 1.8 dB lower than without calibration |
-| Continuous playback | data threads round-robin 80 through RTKit; no xruns at quanta from 1024 down to 64 frames; while Valve's session starts and runs (SteamVR's streams at 512 frames, load average about 10), a 20 s tone at a 256-frame latency without xruns. Capture alone at a 64-frame quantum still loses about 5 periods a second |
-| `dev check` on the installed system | passes, Valve's session included (89.93 commits/s) |
-
-### QEMU: stage 1 and the userspace on a stock-like 4.19 kernel
-
-*Stock kernel path, no longer pursued: this section does not describe Valve's kernel.*
-
-```sh
-devices/phoenix/tests/qemu/build-test-kernel.sh 4.19.325      # once; writes cache/qemu/Image-4.19
-devices/phoenix/tests/qemu/run-userspace.sh out/pico4-poc-5.13.7-global-seko-initramfs.cpio.gz \
-    out/userspace/pico4-userspace.tar.zst     # or: make qemu-userspace
-```
-
-The VM boots the exact stage-1 initramfs of the headset image. A GPT partition named
-`pico4_payload` holds the archive, and `pico4poc.userspace_payload=` makes stage 1 run the same
-`pico4-userspace receive` and `switch` as over SSH. dummy_hcd makes the VM both ends of the USB
-cable, so the NCM link and the log drive exist as on the headset. In stage 2,
-`pico4-userspace-selftest.service` (`pico4poc.userspace_selftest=1`) runs
-`pico4-userspace-check --no-vulkan`, logs `PICO4-USERSPACE-SELFTEST: PASS` or `FAIL` and powers
-off; the harness saves the console log and the check's JSON in `out/`. The kernel is mainline
-4.19.325 with [kernel-4.19.fragment](../tests/qemu/kernel-4.19.fragment), on `-cpu cortex-a76`
-(`cortex-a57` where QEMU lacks it), 4 GiB, TCG and 2 vCPUs (`QEMU_SMP`). The test is optional
-and slow: a boot of the current archive takes 10–20 minutes, and RCU stalls in the emulated
-CPUs often push systemd's generators past their limit ("Failed to start up manager"); 4 vCPUs
-stall more, 1 vCPU takes twice as long. The headset's development loop is the routine test
-([hardware-testing.md](hardware-testing.md)).
-
-Base userspace (the Frame's systemd, SteamOS packages, gamescope, PipeWire, NetworkManager,
-Turnip/KGSL; 366 MiB archive, 1,416 MiB installed):
-
-| Check | Result |
-| --- | --- |
-| Receive into zram | SHA-256 verified; 1,496 MiB on ext4 in 630 MiB of RAM (LZO); `systemd 257 (257.7-2.2-arch)` runs in the new root |
-| Handoff | `pico4-init` -> `switch_root` -> systemd as PID 1, taint `old-kernel` only |
-| System state | `running`, no failed units, `multi-user.target` reached |
-| `/dev` without devtmpfs | tmpfs; every kernel device in `/sys/dev` has a node; 214 devices in the udev database |
-| Storage | root on `/dev/zram0`; every physical block device read-only |
-| logind, D-Bus, sshd | seat0 present, system bus up, sshd active |
-| USB link and log drive | link unchanged across the switch; no stage-1 process left; mass-storage thread alive |
-| Frame packages | `steamos-customizations-deckard` 20260823.1-2, `steamos-manager` 26.4.1-2, gamescope 3.16.28-1 |
-| Host validation | `pico4.userspace.validate_check` accepts the JSON |
-| Stage-1 regression | [run-selftest.sh](../tests/qemu/run-selftest.sh) on the 6.18 test kernel passes with `pico4-init` and the handoff tools |
-
-The archives with the XR stack and Valve's session pass the same self-test, including the
-session user's session and Monado's socket ([session.md](session.md)).
-
-### Headset
-
-Original PICO 4, PICO OS 5.13.7 (global, seko), stock kernel `4.19.81-perf+`, base userspace
-(358 packages, 366 MiB archive). Unattended `flash-run --userspace`, with the engineering ABL
-staged through EDL (`adb reboot edl`, no buttons):
-
-| Check | Result |
-| --- | --- |
-| Stage 1 | shell, read-only storage, HTTP and hardware report pass as in the stage-1 acceptance ([hardware-testing.md](hardware-testing.md)) |
-| Archive over USB NCM into zram | 366 MiB in 92 s with dropbear's default 24 KiB window; SHA-256 verified on the headset |
-| Handoff | SSH from systemd as PID 1 about 21 s after the switch, with the same pinned host key and run identity |
-| systemd 257.7 | `running`, no failed units, taint `old-kernel`; `multi-user.target` 91 s after the switch |
-| `/dev` without devtmpfs | every kernel device has a node; 1,622 devices in the udev database |
-| Storage | root on `/dev/zram0`; every physical block device read-only; the stage-1 storage assertions hold in stage 2 |
-| USB link, logind | `usb0` unchanged (name, MAC, address, carrier); seat0 |
-| **Vulkan through Turnip/KGSL (glibc)** | **Adreno 650, all 65,536 pixels verified, 0 bad** |
-| Memory | 6.5 of 7.7 GB available; the 1.5 GB root takes about 0.8 GB of RAM in zram |
-| Recovery | the runner restores stock boot and verifies the matching PICO OS; a full 96 MiB EDL readback of boot matches the backup; the stock ABL is written back and verified by EDL readback; PICO OS boots normally |
-
-The errors in the stage-2 journal are the stock kernel's own early-boot messages (PMIC and SPMI
-probes, display PLL debugfs) and the missing Frame modules and sysctls below. The archives with
-the XR stack and Valve's session pass the same acceptance with stock restoration
-([xr.md](xr.md), [session.md](session.md)).
-
-With internet shared over USB from a Windows 11 PC on Wi-Fi, the headset resolves
-store.steampowered.com through the PC and an HTTPS request to it answers 200 in 0.5 s. The clock
-is set about 32 s after boot, once `systemd-resolved` has fallen back from EDNS0. SSH and the
-recovery deadlines (on uptime) are unaffected by the eight-month clock jump.
-
-Wi-Fi comes up by itself in 41 s, in parallel with the rest of the boot: registration, FW memory
-ready, calibration, the firmware's restart and `wlan0`. NetworkManager scans 2.4 and 5 GHz
-networks (34 seen, strongest 94 %). A WPA2 network joins: an address by DHCP, HTTPS to the
-Steam store, 21 MB/s download. A WPA2/WPA3 network joins with WPA3 (SAE through the driver's
-external authentication), with open or unset authentication in the profile, and HTTPS works.
+Current results are in [kernel-feasibility.md](kernel-feasibility.md#results).
 
 ### Limits and known messages
 
-- KGSL, the SDE display driver, PICO's USB controller and `PARANOID_NETWORK` exist only in PICO's
-  kernel. QEMU skips the Vulkan check (no `/dev/kgsl-3d0`); on the headset it is required
-  whenever the manifest lists GPU firmware.
-- `systemd-modules-load` asks for `hid_nintendo`, `hid_playstation` and `ntsync` (the Frame's
-  module list); the stock kernel has none of them and loads only PICO-signed modules. Two of the
-  Frame's sysctls do not exist on 4.19. Both are logged, not failures.
-- In QEMU, `serial-getty@ttyAMA0` times out waiting for its device and is skipped; the emulated
-  boot is slow (`multi-user.target` about 170 s after the switch). The headset has no serial
-  console; the stage-2 logs are the journal and the kernel log.
 - The Steam client starts with Valve's session, signs in and runs games ([session.md](session.md#the-steam-client)).

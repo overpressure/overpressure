@@ -1,13 +1,12 @@
-# The panels' mode on a mainline kernel's msm: the DSI connector stays unprobed (status unknown, no
+# The panels' mode on msm: the DSI connector stays unprobed (status unknown, no
 # modes) until a DRM master asks for it, which the installed system's boot splash does. Without
 # it SteamVR's compositor sees a 1024x768 output without a name and finds no direct-mode display.
-# Writing "detect" to the connector's status probes it; the stock kernel's KGSL display needs none.
+# Writing "detect" to the connector's status probes it.
 [Unit]
 Description=Probe the panels' connector (msm)
 DefaultDependencies=no
 After=systemd-udevd.service
 Before=pico4-session.service sysinit.target
-ConditionPathExists=!/sys/class/kgsl
 ConditionPathExistsGlob=/sys/class/drm/card*-DSI-*/status
 
 [Service]

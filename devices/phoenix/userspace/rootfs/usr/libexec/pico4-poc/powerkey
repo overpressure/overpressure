@@ -30,7 +30,7 @@ def slept():
     return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
 
 
-#: The PMIC's power-on key: the stock kernel's qpnp_pon, a mainline kernel's pm8941_pwrkey.
+#: The PMIC's power-on key: pm8941_pwrkey.
 KEY_DEVICES = ("qpnp_pon", "pm8941_pwrkey")
 
 

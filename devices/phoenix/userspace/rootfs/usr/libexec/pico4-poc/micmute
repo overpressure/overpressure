@@ -2,8 +2,7 @@
 """Mutes the session's microphone while the headset is off the head (docs/session.md).
 
 The Frame does this with Valve's steamvr-proxmicmute, which sets the codec's capture volume
-through ALSA's simple mixer; on the PICO 4's stock kernel that mixer does not load (the MSM PCM
-volume controls fail while their PCM is closed). The PICO 4 driver writes the wear sensor's
+through ALSA's simple mixer. The PICO 4 driver writes the wear sensor's
 state to $XDG_RUNTIME_DIR/pico4-worn ("1" worn, "0" off the head); this mutes PipeWire's default
 microphone while it reads 0 and unmutes it otherwise, and when it stops.
 

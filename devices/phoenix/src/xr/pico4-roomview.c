@@ -250,7 +250,7 @@ struct vulkan
 /*!
  * The extensions of @p wanted that the instance (@p physical NULL) or device offers, into @p out.
  * vrclient calls their entry points (KHR names) on our device: the shared semaphore it imports
- * from the compositor (an OPAQUE_FD timeline, which pico4-vrdisplay emulates on KGSL), the
+ * from the compositor (an OPAQUE_FD timeline), the
  * distortion images it creates and exports.
  */
 static uint32_t

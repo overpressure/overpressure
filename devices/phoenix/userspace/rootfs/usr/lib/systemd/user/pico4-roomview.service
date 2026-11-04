@@ -10,8 +10,5 @@ After=steamvr.service
 ExecStart=/usr/bin/pico4-roomview
 # Valve's Mesa settings for SteamVR's processes, as steamvr.service reads them.
 EnvironmentFile=-/usr/share/deckard/mesavars.sh
-# The compositor shares an OPAQUE_FD timeline semaphore with the producer; on KGSL the
-# pico4-vrdisplay layer emulates those (docs/session.md#shared-semaphores).
-Environment=PICO4_VRDISPLAY=1
 Restart=on-failure
 RestartSec=5

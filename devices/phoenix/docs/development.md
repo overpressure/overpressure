@@ -30,16 +30,15 @@ userspace/        stage 2: the SteamOS-compatible userspace
   rootfs/           the PICO 4 adaptation layer (units, udev rules, PAM, session, device tools, checks)
   session/          the session user's SteamVR configuration
   pkgbuilds/        the project's packages: pico4-sensors, pico4-basalt, pico4-monado, pico4-gamescope,
-                    pico4-vrlink, pico4-vrdisplay, pico4-gtk2 and others; pico4-turnip-kgsl and
-                    pico4-sysvsem serve the stock kernel only
+                    pico4-vrlink, pico4-swapchain-usage, pico4-gtk2 and others
 kernel/           Valve's kernel: build-kernel.sh, patches/, the PICO's drivers, the device tree
 src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's PICO 4 driver),
-                  stockslam/ (pico4-slamd), vrlink/ (Steam Link), xr/ (OpenXR test clients), vrdisplay/
-                  sysvsem/ (System V semaphores), reboot/ (pico4-reboot), splash/ (pico4-splash)
+                  stockslam/ (pico4-slamd), vrlink/ (Steam Link), xr/ (OpenXR test clients), swapchain/ (frame pacing),
+                  reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-system-image.sh, the extract-*.sh scripts
                   (stock firmware, with overpressure's scripts/stock-lib.sh) and the on-headset preflight
-tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, test_vrdisplay_fake.sh, qemu/ (test kernels and boot tests)
+tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, qemu/ (test kernels and boot tests)
 docs/             documentation
 ```
 
@@ -88,11 +87,9 @@ Clean package builds on a 12-core i7-12700KF (20 threads) under WSL2:
 
 | Package | GCC under QEMU | host clang |
 | --- | --- | --- |
-| pico4-turnip-kgsl (Mesa 26.1.6, Turnip only) | about 30 min | 4.4 min |
 | pico4-basalt | 8.7 min (ccache warm) | 2.9 min |
 | pico4-monado | 4.6–8.3 min | 2.8 min |
 | pico4-sensors | 1.6 min | 1.0 min |
-| pico4-vrdisplay, pico4-sysvsem | 45 s | 21–25 s |
 | pico4-gtk2 (GTK 2.24.33, libraries and modules; Autotools under QEMU) | – | 14 min |
 
 A Raspberry Pi 5 (four Cortex-A76 cores) compiles at about the speed of this host's emulation,
@@ -209,19 +206,13 @@ debug packages and compression take about a minute for Monado.
 | Host tests: protocols, validators, the runner, cycle and dev loop against fakes | `python -m unittest` (from the repository root: these and the generic tests) | about 8 s |
 | Stage-1 recovery policy | `bash devices/phoenix/tests/test_recovery_policy.sh` | seconds |
 | Stage-1 charger mode | `sh devices/phoenix/tests/test_charger.sh` | seconds |
-| The SteamVR display layer on a fake display: presenting, a stuck display that must lose its surface, and idle pauses that turn the panels off (Linux or WSL with lavapipe; `VULKAN_INCLUDE` names a directory with the Vulkan and libdrm headers, such as the userspace build's `bootstrap/usr/include`) | `bash devices/phoenix/tests/test_vrdisplay_fake.sh` | seconds |
 | Both of the above | `make test` | seconds |
 | On the headset: the integration test | `python -m overpressure dev boot` and `dev check`, in development mode | minutes; [hardware-testing.md](hardware-testing.md) |
 | Optional: stage 1 on a QEMU test kernel | `devices/phoenix/tests/qemu/run-selftest.sh` (`make qemu-stage1`) | about 3 min |
-| Optional: stage 1 and the userspace on the stock-like 4.19 QEMU kernel | `devices/phoenix/tests/qemu/run-userspace.sh` (`make qemu-userspace`) | 10–20 min, often fails |
 
 The headset is the integration test: the development loop boots a new archive on the real
-kernel and runs the acceptance checks in minutes. The QEMU boot tests remain for work without a
-headset. They emulate the whole system under TCG (the test kernels come from
-`tests/qemu/build-test-kernel.sh`): unpacking the userspace archive takes about 2.5 minutes, and
-the guest's CPUs stall (RCU stall warnings) while systemd runs its generators. A userspace boot
-takes 10–20 minutes and often stops with "Failed to start up manager" when those stalls push the
-generators past their limit; one vCPU instead of two avoids the stalls but takes twice as long.
+kernel and runs the acceptance checks in minutes. The QEMU test covers stage 1 without a headset
+(its test kernel comes from `tests/qemu/build-test-kernel.sh`).
 
 New behaviour gets host tests with fakes for hardware and golden data for protocols; the C
 protocol tests and the controller tracker's C++ tests (`test_pico4_ctrack_*`: solvers,

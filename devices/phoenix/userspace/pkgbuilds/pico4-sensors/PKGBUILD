@@ -1,54 +1,33 @@
-# Host side of the Qualcomm Sensor Core for the stock PICO 4 kernel (4.19,
-# PIL-loaded DSPs, downstream adsprpc). The head IMU sits behind the sensor
-# DSP (SLPI); reaching it takes three daemons that PICO OS ships as vendor
-# binaries and that exist as free software (linux-msm):
-#   qrtr-ns      QRTR name service. Linux 5.7+ has it in the kernel, 4.19 not;
-#                upstream qrtr dropped it after the pinned commit.
-#   pd-mapper    QMI service locator for protection domains. Patched to read
-#                .jsn files from named directories (no remoteproc sysfs here).
-#   hexagonrpcd  FastRPC file server the sensors process loads its registry and
-#                config through. Patched for the downstream adsprpc ioctl ABI, to
-#                serve the registry's version file, to start the ADSP's static
-#                audio process (-P audiopd, on either ABI: the upstream driver's
-#                INIT_CREATE_STATIC), as PICO OS's "adsprpcd audiopd" does,
-#                and to answer ftell, which that process reads its files with.
-#                A second patch takes the sensors process's registry writes and drops them.
+# Host side of the Qualcomm Sensor Core: hexagonrpcd, the FastRPC file server PICO OS ships as a
+# vendor binary and that exists as free software (linux-msm). The sensors process loads its registry
+# and config through it. Patched to serve the registry's version file, to start the ADSP's static
+# audio process (-P audiopd, INIT_CREATE_STATIC), as PICO OS's "adsprpcd audiopd" does, and to answer
+# ftell, which that process reads its files with; the patch also carries the downstream adsprpc
+# ioctl ABI, unused on the upstream driver. A second patch takes the sensors process's registry writes
+# and drops them.
 # Sources are pinned by commit; the patches are this project's own.
 pkgname=pico4-sensors
 pkgver=0.1
-pkgrel=3
+pkgrel=4
 arch=(aarch64)
 url="https://github.com/linux-msm"
-license=(BSD-3-Clause GPL-3.0-or-later)
+license=(GPL-3.0-or-later)
 depends=(glibc xz)
 makedepends=(git meson ninja)
-_qrtr=6d950d26e50d9ea3607510308fdd653bccc54400
-_pdmapper=5ecd2fe926aca7abfe40724177f63b942cff3947
 _hexagonrpc=da7a3742ab8d5273a281b70ee11f16fb2cb6a690
-source=("qrtr::git+https://github.com/linux-msm/qrtr.git#commit=$_qrtr"
-        "pd-mapper::git+https://github.com/linux-msm/pd-mapper.git#commit=$_pdmapper"
-        "hexagonrpc::git+https://github.com/linux-msm/hexagonrpc.git#commit=$_hexagonrpc"
+source=(        "hexagonrpc::git+https://github.com/linux-msm/hexagonrpc.git#commit=$_hexagonrpc"
         hexagonrpc-vendor-kernel.patch
-        hexagonrpc-registry-writes.patch
-        pd-mapper-jsn-dirs.patch)
-sha256sums=(SKIP SKIP SKIP
+        hexagonrpc-registry-writes.patch)
+sha256sums=(SKIP
             '1022eb5f4d9ee24968224fe357c38f2f23acc91f7dbfd5715594a925d1a6b8dd'
-            '5263fe886404d2ea7491cecb41bdace9f7055a2762acd6e0a4985b23bee6c281'
-            '6de989aaa80ca73bd53ba3a7c6192e7f8eba577e222dc95541cb8dc29e903dd3')
+            '5263fe886404d2ea7491cecb41bdace9f7055a2762acd6e0a4985b23bee6c281')
 
 prepare() {
   patch -d hexagonrpc -p1 < hexagonrpc-vendor-kernel.patch
   patch -d hexagonrpc -p1 < hexagonrpc-registry-writes.patch
-  patch -d pd-mapper -p1 < pd-mapper-jsn-dirs.patch
 }
 
 build() {
-  meson setup qrtr build-qrtr --prefix /usr --buildtype plain -Dqrtr-ns=enabled -Dsystemd-service=disabled
-  meson compile -C build-qrtr
-  DESTDIR="$srcdir/stage" meson install -C build-qrtr --quiet
-
-  make -C pd-mapper CFLAGS="$CFLAGS -Wall -I$srcdir/stage/usr/include"     LDFLAGS="$LDFLAGS -L$srcdir/stage/usr/lib -lqrtr -llzma"
-
   meson setup hexagonrpc build-hexagonrpc --prefix /usr --buildtype plain
   meson compile -C build-hexagonrpc
 }
@@ -58,10 +37,6 @@ check() {
 }
 
 package() {
-  DESTDIR="$pkgdir" meson install -C build-qrtr
-  install -Dm755 pd-mapper/pd-mapper -t "$pkgdir/usr/bin"
   DESTDIR="$pkgdir" meson install -C build-hexagonrpc
-  install -Dm644 qrtr/LICENSE "$pkgdir/usr/share/licenses/$pkgname/qrtr.LICENSE"
-  install -Dm644 pd-mapper/LICENSE "$pkgdir/usr/share/licenses/$pkgname/pd-mapper.LICENSE"
   install -Dm644 hexagonrpc/COPYING "$pkgdir/usr/share/licenses/$pkgname/hexagonrpc.COPYING"
 }

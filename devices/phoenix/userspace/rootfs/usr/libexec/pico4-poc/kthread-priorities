@@ -7,12 +7,6 @@
 # threads refuse taskset and it runs with set -e. What hands the compositor's jobs to the GPU is a
 # workqueue (ring0..ring3, one per ringbuffer), an ordinary kworker unless its prio attribute,
 # Valve's addition, says otherwise. The script's Frame-only names have no counterpart here.
-#
-# On the stock 4.19 kernel the GPU dispatcher (kgsl_worker_thr) runs at SCHED_FIFO 12 and the
-# display's commit and event threads (crtc_commit:N, crtc_event:N) at SCHED_FIFO 61, so a compositor
-# thread on the same CPU delays its own submissions and flips. They get SCHED_RR 99, round-robin
-# with the compositor. The station's SPI thread (spi0) already runs at SCHED_FIFO 99 there; the
-# GPU's workqueues (kgsl-events, kgsl-workqueue) run at nice -20 and take no real-time policy.
 # PICO4_SYSFS replaces /sys for tests.
 set -euo pipefail
 S=${PICO4_SYSFS:-/sys}
@@ -43,13 +37,4 @@ if [[ -e $S/bus/workqueue/devices/ring0/prio ]]; then
 	exit 0
 fi
 
-while read -r pid comm; do
-	case "$comm" in
-	kgsl_worker_thr | crtc_commit:* | crtc_event:*)
-		chrt -r -p "$prio" "$pid"
-		echo "$comm ($pid): SCHED_RR $prio"
-		found=$((found + 1))
-		;;
-	esac
-done < <(ps --ppid 2 -o pid=,comm=)
 [[ $found -gt 0 ]] || { echo "no GPU or display kernel threads found" >&2; exit 1; }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSL-1.0
 /*!
  * @file
- * @brief  Interface to the PICO 4 driver (stock kernel, IMU through the sensor DSP).
+ * @brief  Interface to the PICO 4 driver (IMU through the sensor DSP).
  * @ingroup drv_pico4
  */
 

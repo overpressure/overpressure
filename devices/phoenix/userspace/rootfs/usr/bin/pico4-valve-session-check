@@ -2,9 +2,7 @@
 # Valve's VR session on the PICO 4 (roadmap step 6, docs/session.md): runs Valve's
 # gamescope-session.target through pico4-session.service for a short while, then
 # returns to the configured session. Checks that SteamVR's compositor drives the
-# panels (on the stock kernel through the pico4-vrdisplay layer, which counts its
-# frames; on a mainline kernel's msm directly, counted from the kernel's own events by
-# msm-frame-stats) and that SteamVR tracks the headset and both controllers. Prints one
+# panels (counted from the kernel's own events by msm-frame-stats) and that SteamVR tracks the headset and both controllers. Prints one
 # JSON object; exit status 0 only if it passed.
 # "status" is that integration verdict. "performance" is a verdict of its own
 # (session-performance): frame rate and pacing over the run after startup,
@@ -46,15 +44,11 @@ json_list() {
 }
 
 user=steamos
-# The stock kernel's KGSL: the display layer's statistics; otherwise msm's events.
-frames=layer
-[ -e /dev/kgsl-3d0 ] || frames=msm
 uid=$(id -u "$user")
 home=$(getent passwd "$user" | cut -d: -f6)
 logs=$home/.local/share/Steam/logs
 conf=/etc/pico4-poc/session.conf
-work=/run/pico4-valve-session # the compositor (the session user) writes the layer's files here
-dropin=/run/systemd/user/steamvr.service.d/60-pico4-check.conf
+work=/run/pico4-valve-session
 errors=()
 user_systemctl() {
 	runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" \
@@ -73,17 +67,11 @@ fan_state() { # pico4-fan's duty, RPM and hottest mean, or null without the daem
 	if grep -q '^{' <<<"$s"; then printf '%s' "$s"; else printf null; fi
 }
 
-# Valve's session for the duration of the check; the layer reports into $work.
+# Valve's session for the duration of the check.
 saved=""
 [ -s "$conf" ] && saved=$(cat "$conf")
 rm -rf "$work"
 install -d -o "$user" -m 0755 "$work"
-mkdir -p "${dropin%/*}"
-printf '[Service]\nEnvironment=PICO4_VRDISPLAY_STATS=%s/vrdisplay.json PICO4_VRDISPLAY_DUMP=%s/vrdisplay.ppm\n' \
-	"$work" "$work" > "$dropin"
-# The user manager outlives a session restart (logind stops it only after a delay), so it
-# must read the drop-in now; without a running manager the next one reads it at its start.
-user_systemctl daemon-reload 2>/dev/null || true
 rm -f "$logs"/*.txt
 # driver_monado in SteamVR owns the hardware: the Monado service must not hold it.
 systemctl stop pico4-monado.service
@@ -94,7 +82,7 @@ echo PICO4_SESSION_TARGET=gamescope-session.target > "$conf"
 systemctl reset-failed pico4-session.service
 systemctl restart pico4-session.service
 
-# Startup: the compositor's log, then the layer's first statistics (ten seconds of frames).
+# Startup: the compositor's log.
 startup=-1
 # A headset lying still off the head enters SteamVR's standby after power.turnOffScreensTimeout
 # (5 s), which pauses the compositor (pauseCompositorOnStandby, the Frame's default) and leaves
@@ -105,42 +93,22 @@ for i in $(seq 180); do
 		vrcmd --set-settings-float power.turnOffScreensTimeout 3600 >/dev/null 2>&1; then
 		standby_off=true
 	fi
-	if grep -qs "Startup Complete" "$logs/vrcompositor.txt" &&
-		{ [ "$frames" = msm ] || [ -s "$work/vrdisplay.json" ]; }; then
+	if grep -qs "Startup Complete" "$logs/vrcompositor.txt"; then
 		startup=$i
 		break
 	fi
 	sleep 1
 done
 [ "$startup" -ge 0 ] || errors+=("SteamVR's compositor did not start presenting within 180 s")
-# SteamVR's startup stalls the compositor a few times while the dashboard starts.
-# The measured window starts with the first statistics update (every ten seconds) that
-# adds no stall, or after 60 s; the startup's stalls are reported on their own.
-stalls() { sed -n 's/.*"stalls":\([0-9]*\).*/\1/p' "$1" 2>/dev/null; }
-cp -p "$work/vrdisplay.json" "$work/vrdisplay-start.json" 2>/dev/null
+# SteamVR's startup stalls the compositor a few times while the dashboard starts: the measured
+# window starts 20 s later, a recording of its own, and the start counts nothing.
 settle=0
-# On msm the window is a recording of its own: it starts after the startup's stalls (as
-# the layer's first quiet update would, 20 s), and the start counts nothing.
-if [ "$frames" = msm ] && [ "$startup" -ge 0 ]; then
+if [ "$startup" -ge 0 ]; then
 	settle=20
 	sleep "$settle"
-	echo '{"target":"msm","commits":0,"commit_hz":0,"late":0,"stalls":0}' > "$work/vrdisplay-start.json"
-fi
-while [ "$frames" = layer ] && [ "$startup" -ge 0 ] && [ "$settle" -lt 60 ]; do
-	previous=$(stat -c %Y "$work/vrdisplay-start.json" 2>/dev/null)
-	while [ "$(stat -c %Y "$work/vrdisplay.json" 2>/dev/null)" = "$previous" ] && [ "$settle" -lt 60 ]; do
-		sleep 1
-		settle=$((settle + 1))
-	done
-	before=$(stalls "$work/vrdisplay-start.json")
-	cp -p "$work/vrdisplay.json" "$work/vrdisplay-start.json" 2>/dev/null
-	[ "$(stalls "$work/vrdisplay-start.json")" != "$before" ] || break
-done
-if [ "$startup" -ge 0 ] && [ "$frames" = msm ]; then
+	echo '{"target":"msm","commits":0,"commit_hz":0,"late":0,"stalls":0}' > "$work/frames-start.json"
 	/usr/libexec/pico4-poc/msm-frame-stats record "$seconds" "$(pgrep -u "$user" -x vrcompositor | head -n 1)" \
-		"$work/vrdisplay.json" >/dev/null 2>&1 || errors+=("msm's frame events could not be recorded")
-elif [ "$startup" -ge 0 ]; then
-	sleep "$seconds"
+		"$work/frames.json" >/dev/null 2>&1 || errors+=("msm's frame events could not be recorded")
 fi
 
 target_state=$(user_systemctl is-active gamescope-session.target 2>/dev/null)
@@ -153,7 +121,7 @@ gamescope_client=false
 grep -qs "External connection from /usr/bin/gamescope" "$logs/vrcompositor.txt" && gamescope_client=true
 asserts=$(grep -s -c "ASSERT" "$logs/vrcompositor.txt")
 present_wait_errors=$(grep -s -c "failed to wait for present" "$logs/vrcompositor.txt")
-stats=$(cat "$work/vrdisplay.json" 2>/dev/null)
+stats=$(cat "$work/frames.json" 2>/dev/null)
 grep -q '^{' <<<"$stats" || stats=null
 # SteamVR's own view of the tracked devices: index, position (m), rotation (rad).
 devices=$(runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid" \
@@ -168,7 +136,7 @@ devices=$(runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid
 grep -q '^\[' <<<"$devices" || devices="[]"
 temp_after=$(max_temp)
 fan_after=$(fan_state)
-performance=$(/usr/libexec/pico4-poc/session-performance "$work/vrdisplay-start.json" "$work/vrdisplay.json" "${temp_after:-nan}" 2>/dev/null)
+performance=$(/usr/libexec/pico4-poc/session-performance "$work/frames-start.json" "$work/frames.json" "${temp_after:-nan}" 2>/dev/null)
 grep -q '^{' <<<"$performance" || performance='{"status":"failed","failures":["no performance verdict"]}'
 
 [ "$target_state" = active ] || errors+=("gamescope-session.target is $target_state")
@@ -177,14 +145,12 @@ grep -q '^{' <<<"$performance" || performance='{"status":"failed","failures":["n
 [ "$started" = true ] || errors+=("SteamVR's compositor did not complete its startup")
 [ "$gamescope_client" = true ] || errors+=("gamescope did not connect to SteamVR")
 [ "${asserts:-0}" = 0 ] || errors+=("SteamVR's compositor asserted")
-[ "$stats" != null ] || errors+=("no frame statistics (the display layer's or msm's events)")
+[ "$stats" != null ] || errors+=("no frame statistics from msm's events")
 grep -q '"index":2' <<<"$devices" || errors+=("SteamVR does not report the headset and both controllers")
 
 # Back to the configured session, with SteamVR's standby timeout.
 [ "$standby_off" = false ] || vrcmd --set-settings-float power.turnOffScreensTimeout 5 >/dev/null 2>&1 ||
 	errors+=("SteamVR's standby timeout could not be set back")
-rm -f "$dropin"
-user_systemctl daemon-reload 2>/dev/null || true
 if [ -n "$saved" ]; then printf '%s\n' "$saved" > "$conf"; else rm -f "$conf"; fi
 systemctl reset-failed pico4-session.service
 systemctl restart pico4-session.service
@@ -201,7 +167,7 @@ printf ',"session":{"target":"gamescope-session.target","target_state":%s,"steam
 	"$(json_list <<<"$failed")" "$(json_str "$restored")"
 printf ',"compositor":{"started":%s,"gamescope_client":%s,"asserts":%s,"present_wait_errors":%s}' \
 	"$started" "$gamescope_client" "${asserts:-0}" "${present_wait_errors:-0}"
-printf ',"layer":%s,"devices":%s,"max_temp_c":{"before":%s,"after_run":%s}' "$stats" "$devices" \
+printf ',"frames":%s,"devices":%s,"max_temp_c":{"before":%s,"after_run":%s}' "$stats" "$devices" \
 	"${temp_before:-null}" "${temp_after:-null}"
 printf ',"fan":{"before":%s,"after_run":%s},"performance":%s}\n' "$fan_before" "$fan_after" "$performance"
 [ "$status" = passed ]

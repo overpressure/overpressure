@@ -15,18 +15,9 @@ def read(path: Path) -> str:
 class CdspBootTests(unittest.TestCase):
     """an issue: the Compute DSP for PICO OS's head tracker (docs/xr.md#head-tracking)."""
 
-    def test_restart_level_before_boot(self):
-        # The kernel default SYSTEM reboots the whole headset on any DSP crash (CLAUDE.md).
-        script = read(LIBEXEC / "cdsp-boot")
-        related = script.index("write RELATED")
-        check = script.index('= RELATED ] || {')
-        boot = script.index("echo 1 > /sys/kernel/boot_cdsp/boot")
-        self.assertLess(related, check)
-        self.assertLess(check, boot)
-
     def test_unit(self):
         unit = read(UNITS / "pico4-cdsp.service")
-        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4-poc/cdsp-boot$")
+        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4-poc/remoteproc-boot cdsp$")
         self.assertRegex(unit, r"(?m)^ConditionPathExists=/usr/lib/firmware/cdsp\.mdt$")
         self.assertRegex(unit, r"(?m)^RemainAfterExit=yes$")
 
@@ -46,13 +37,12 @@ class TrackerUnitTests(unittest.TestCase):
         for name in ("pico4-slamd", "pico4-cdsprpcd", "pico4-cdsp"):
             self.assertNotRegex(read(UNITS / f"{name}.service"), r"(?m)^(CPUWeight|CPUQuota)=", name)
 
-    def test_tracker_runs_on_either_kernels_fastrpc(self):
+    def test_tracker_runs_on_upstream_fastrpc(self):
         # Without the bridge PICO OS's FastRPC finds no ION or adsprpc node on a mainline kernel
         # and restarts its listener every 100 ms, which also changes the IMU's rate.
         for name in ("pico4-slamd", "pico4-cdsprpcd"):
             unit = read(UNITS / f"{name}.service")
-            self.assertRegex(unit, r"(?m)^ConditionPathExists=\|/sys/class/kgsl$", name)
-            self.assertRegex(unit, r"(?m)^ConditionPathExists=\|/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge\.so$", name)
+            self.assertRegex(unit, r"(?m)^ConditionPathExists=/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge\.so$", name)
         # The bridge's path in the root is the one stock-slam preloads.
         self.assertIn("/pico4/libpico4-fastrpc-bridge.so", read(ROOT / "userspace/rootfs/usr/libexec/pico4-poc/stock-slam"))
 
@@ -90,7 +80,7 @@ class RootRunnerTests(unittest.TestCase):
         self.assertNotIn("dlsym", bridge)
 
     def test_files_stay_lf(self):
-        for path in (LIBEXEC / "stock-slam", LIBEXEC / "cdsp-boot", UNITS / "pico4-slamd.service",
+        for path in (LIBEXEC / "stock-slam", LIBEXEC / "remoteproc-boot", UNITS / "pico4-slamd.service",
                      ROOT / "scripts/extract-stock-slam.sh", ROOT / "src/stockslam/build.sh"):
             self.assertNotIn(b"\r", path.read_bytes(), path.name)
 

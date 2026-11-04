@@ -1,5 +1,5 @@
 #!/bin/bash
-# On a mainline kernel, bring the LPASS VA macro up once PICO OS's audio process runs. Its probe
+# Bring the LPASS VA macro up once PICO OS's audio process runs. Its probe
 # votes the LPASS hardware through the AFE, which refuses the vote until the audio process
 # (audiopd) is up; a probe before that fails for good rather than deferring, and the driver has no
 # bind file: the platform bus probes it again (drivers_probe). The other macros, the SoundWire

@@ -6,9 +6,6 @@
 #
 # Usage: tests/qemu/build-test-kernel.sh [kernel-version]
 # Output: cache/qemu/Image (inside the project directory)
-#
-# A 4.x version also applies kernel-4.19.fragment and writes cache/qemu/Image-4.19:
-#   tests/qemu/build-test-kernel.sh 4.19.325   # for tests/qemu/run-userspace.sh
 set -euo pipefail
 
 VERSION=${1:-6.18.56}
@@ -16,9 +13,6 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 PROJECT=$(cd "$HERE/../../../.." && pwd)  # the repository: cache/, out/
 FRAGMENTS=("$HERE/kernel.fragment")
 IMAGE=Image
-case "$VERSION" in
-4.*) FRAGMENTS+=("$HERE/kernel-4.19.fragment"); IMAGE=Image-4.19 ;;
-esac
 # Build on a native Linux filesystem: compiling under /mnt/c (WSL) is very slow.
 WORK=${PICO4_BUILD_DIR:-$HOME/.cache/pico4-poc}/linux-$VERSION
 OUT=$PROJECT/cache/qemu

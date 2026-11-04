@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 """The panels' frame statistics on a mainline kernel's msm, from its own events (docs/session.md).
 
-On the stock kernel the pico4-vrdisplay layer counts SteamVR's commits; on msm the compositor
+The compositor
 drives the display itself, and the kernel's tracepoints tell the same: the flips the display
 completed (dpu_crtc_complete_flip), the vblanks (drm_vblank_event) and the GPU jobs of the
 presenting process's threads (msm_gpu_submit_retired names the submitting thread, with the GPU's
