@@ -376,9 +376,12 @@ other call passes through; without the panels, the layer stays out of the way.
   would otherwise stay at 587 MHz or faster with nothing running.
 - **What the check sees on msm.** `msm-frame-stats` also reports the web helpers' share of the GPU in
   its window and how long before its vblank each frame's last compositor job ended. A p99 below 1 ms
-  fails the check, a vblank with no job in its refresh counting as 0. On a table it is 6.2-6.4 ms with
-  a share of 0 %: at 0 % the window did not test a Steam panel in view, which lying on a table it
-  does not draw even when opened. A game that saturates the GPU gives 0 ms and fails.
+  fails the check, a vblank with no job in its refresh counting as 0, so it also fails when 1 % of the
+  refreshes have no frame. On a table the web helpers' share varies, and with it what a run tests: 23-24 %
+  with a margin of 1.4-5.3 ms in the first minutes after a boot, 0 % with 6.2-6.5 ms after a standby. What
+  decides it is not known, so a table run does not reliably test a panel in view. Below 1 % the check
+  still passes, with a warning that no Steam panel was tested. A game that saturates the GPU gives 0 ms
+  and fails.
 - **The compositor's crash at a stop.** `vrcompositor` ends with SIGSEGV about 40 ms after logging
   `Cleaning up`, when the render thread has ended and every client has gone: its cleanup calls a
   virtual method of a freed object (`vrcompositor+0x106a10`, the function that holds "Unable to release

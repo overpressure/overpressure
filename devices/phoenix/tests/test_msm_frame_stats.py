@@ -4,6 +4,8 @@ import json
 import unittest
 from pathlib import Path
 
+from devices.phoenix.tooling import userspace
+
 ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/msm-frame-stats"
 _loader = importlib.machinery.SourceFileLoader("msm_frame_stats", str(PATH))
@@ -57,6 +59,21 @@ class MsmFrameStatsTests(unittest.TestCase):
         self.assertEqual(v["web_helper_gpu_percent"], 12.5)
         end["job_margin_ms"]["p99"] = 6.3
         self.assertEqual(perf.verdict(start, end, 60.0)["status"], "passed")
+
+    def test_a_window_without_a_panel_passes_with_a_warning(self):
+        flips = [100 + i * REFRESH for i in range(901)]
+        end = stats.parse(trace(flips, 901, [(700, 5.9)]), {700})
+        end["job_margin_ms"] = {"p50": 7.1, "p99": 6.3, "frames": 900, "without_a_job": 0}
+        end["web_helper_gpu_percent"] = 0.0
+        start = {"target": "msm", "commits": 0, "commit_hz": 0, "late": 0, "stalls": 0}
+        v = perf.verdict(start, end, 60.0)
+        self.assertEqual(v["status"], "passed")
+        self.assertIn("no Steam panel was tested", v["warnings"][0])
+        line = userspace.format_valve_performance(v)
+        self.assertIn("job margin p99 6.3 ms, web helpers 0.0 % of the GPU", line)
+        self.assertIn("warning: no Steam panel was tested", line)
+        end["web_helper_gpu_percent"] = 12.5
+        self.assertEqual(perf.verdict(start, end, 60.0)["warnings"], [])
 
     def test_the_web_helpers_threads_count_apart_from_the_compositors(self):
         flips = [100 + i * REFRESH for i in range(91)]

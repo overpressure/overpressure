@@ -373,5 +373,10 @@ def format_valve_performance(performance) -> str:
                  f"{performance.get('stalls')} stalls, {performance.get('present_wait_timeouts')} present-wait "
                  f"timeouts, hottest {performance.get('hottest_c')} °C over {performance.get('window_seconds')} s; "
                  f"startup stalls {(performance.get('startup') or {}).get('stalls')})")
+    margin = (performance.get("job_margin_ms") or {}).get("p99")
+    if margin is not None:
+        text += f"; job margin p99 {margin} ms, web helpers {performance.get('web_helper_gpu_percent')} % of the GPU"
     failures = performance.get("failures") or []
-    return text + ("; " + "; ".join(failures) if failures else "")
+    text += "; " + "; ".join(failures) if failures else ""
+    warnings = performance.get("warnings") or []
+    return text + "".join(f"; warning: {w}" for w in warnings)
