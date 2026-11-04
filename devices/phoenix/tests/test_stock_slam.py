@@ -327,6 +327,11 @@ class CaptureRecoveryTests(unittest.TestCase):
         self.assertEqual(at, sorted(at))
         self.assertIn("s->cam_config = cc;", slam)
 
+    def test_a_new_rooms_universe_waits_for_a_wearer(self):
+        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
+        self.assertLess(patch.index("+					if (!known && m_worn != 1) {"),
+                        patch.index("+						((create_fn)vtable[0])(m_chaperone_server, universe, true);"))
+
     def test_a_refused_camera_sync_at_the_start_is_tried_again(self):
         slam = read(ROOT / "src/monado/pico4_slam.c")
         start = slam[slam.index("A timeout here would leave the head in 3DoF"):]

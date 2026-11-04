@@ -31,7 +31,7 @@
  	while (m_poseUpdating) {
  		//! @todo figure out the best pose update rate
  		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-@@ -1716,6 +1726,40 @@
+@@ -1716,6 +1726,46 @@
  			m_worn = worn;
  			ovrd_log("Headset %s\n", worn ? "worn" : "taken off");
  		}
@@ -55,6 +55,12 @@
 +					void **vtable = *(void ***)m_chaperone_server;
 +					const vr::HmdMatrix34_t identity = {{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}}};
 +					const bool known = ((restore_fn)vtable[1])(m_chaperone_server, universe, &identity, false);
++					// A new room's universe waits for a wearer. A headset started on a table
++					// can miss the tracker's 8 s to relocalise, and finds its saved room after
++					// that: each such start would leave a universe behind in SteamVR's file.
++					if (!known && m_worn != 1) {
++						continue;
++					}
 +					if (!known) {
 +						((create_fn)vtable[0])(m_chaperone_server, universe, true);
 +					}
