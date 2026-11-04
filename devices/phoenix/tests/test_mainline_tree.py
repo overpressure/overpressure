@@ -246,6 +246,13 @@ class VenusHeadersFirstTests(unittest.TestCase):
         self.assertIn("+	    vb2_start_streaming_called(vb->vb2_queue)) {", patch)
 
 
+class DeferredSplitShrinkerTests(unittest.TestCase):
+    PATCH = KERNEL / "patches/0029-mm-the-deferred-split-shrinker-is-no-slab-shrinker.patch"
+
+    def test_the_shrinker_keeps_its_memory_cgroups_with_nokmem(self):
+        self.assertIn("+						 SHRINKER_NONSLAB,", text(self.PATCH))
+
+
 class SoundFormatTests(unittest.TestCase):
     PATCH = KERNEL / "patches/0023-asoc-qcom-the-speakers-path-at-24-bits-and-the-dsps-24-bit-pcm-by-its-name.patch"
 
