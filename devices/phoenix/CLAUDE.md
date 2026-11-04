@@ -21,7 +21,7 @@ section lists what comes next. Each step has its own document:
 | 3 Native graphics (Valve's Mesa on msm, compressed scanout on both panels) | verified | [docs/graphics.md](docs/graphics.md) |
 | 4 SteamOS-compatible userspace (Holo Core aarch64 + Steam Frame systemd 257.7) | verified | [docs/userspace.md](docs/userspace.md) |
 | 5 XR hardware: IMU, Monado driver, lenses and IPD, cameras, controllers (inputs, vibration, positions), 6DoF (PICO OS's libSlam on the CDSP; Basalt selectable), colour room view | verified worn | [docs/xr.md](docs/xr.md) |
-| 6 Valve's VR session: gamescope + SteamVR with `driver_monado` in direct mode through Turnip's display WSI | verified worn; 90 fps on the Frame's compositor path; the Steam client signs in, its library runs games through Proton and FEX, Android apps through Lepton, Steam Link from a PC; heavy games' frame rate open | [docs/session.md](docs/session.md) |
+| 6 Valve's VR session: gamescope + SteamVR with `driver_monado` in direct mode through Turnip's display WSI | verified worn; 90 fps on the Frame's compositor path; the Steam client signs in, its library runs games through Proton and FEX, Android apps through Lepton, Steam Link from a PC; heavy games run at what the GPU allows | [docs/session.md](docs/session.md) |
 
 Installed system: the system image read-only in `super`, data in `userdata`, the maintenance
 stage 1 in `recovery`, following PICO OS's layout; installed, starts without the PC, persistent
@@ -194,8 +194,8 @@ passed.
   the final EDL reset with stock boot and ABL already verified; a hard reset by the user brought
   PICO OS back. If PICO OS does not appear, ask the user to look at the headset rather than
   retrying anything.
-- **Venus.** Never run FFmpeg's `h264_v4l2m2m` unattended: it crashes Venus's firmware, storage
-  stalls and the headset needs a 10 s power press.
+- **Venus.** A firmware exception can end the driver's recovery in an interrupt storm that starves storage or
+  in a panic; both reboot the headset by themselves. Run decoder experiments that may crash it with the user near.
 - **Windows NCM.** The Windows NCM link needs `overpressure/windows_ncm.py` (repository root) (UsbDk) after each stage-1
   boot (`dev connect`, `dev installed` and the runner do it). Re-initializing a working link in
   stage 2 disturbs it; `dev installed` repeats it at most once a minute while SSH times out.

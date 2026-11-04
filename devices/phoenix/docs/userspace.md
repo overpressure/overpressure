@@ -408,12 +408,6 @@ clashes in 13 s of playback. `COMP` off leaves that port's enable set in the act
 and white noise on the right channel, with no kernel error. Off again, with the PCM closed and the
 path powered down, recovers both.
 
-**Open: the end of a sound crackles at the speakers, worn, on all sounds.** The stock kernel's build
-does not. The mix is clean: Steam's volume sound, recorded before the sink, matches its source to
-−84 dB, down to exact silence. The crackle remains with patches 0024 to 0026, and the microphone does
-not catch it (a worn volume sound reads −62 dBFS over a floor of −75). Not yet split: the sink's
-writes to the PCM from the DSP and amplifiers, by playing to the PCM directly.
-
 Compared on the same headset with the stock kernel's build, the same sounds on the microphone at
 the same settings, with patch 0024:
 

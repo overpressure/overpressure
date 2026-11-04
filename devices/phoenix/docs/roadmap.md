@@ -6,8 +6,8 @@ PICO's own drivers and device tree ([kernel-feasibility.md](kernel-feasibility.m
 stock Android kernel, which is no longer pursued; the way back to PICO OS stays. The plan has six steps,
 from a recoverable development device to Valve's VR session, and follows the strategy of the
 background research in [research.md](research.md). All six steps work on the tested headset,
-an original PICO 4. Open work: a lens that can go wrong after a wake, suspend and resume (USB and
-the speakers), the sound's crackle, heavy games' frame rate and the Venus firmware's crash on H.264.
+an original PICO 4. Open work: a lens that can go wrong after a wake, the battery drain while
+suspended and USB after a reboot to fastboot.
 
 ## Status
 
@@ -18,7 +18,7 @@ the speakers), the sound's crackle, heavy games' frame rate and the Venus firmwa
 | 3. Native graphics | Works: Valve's Mesa on msm; both panels at 90 Hz | [graphics.md](graphics.md) |
 | 4. SteamOS-compatible userspace | Works: Holo Core aarch64 with the Frame's systemd 257.7, no failed units | [userspace.md](userspace.md) |
 | 5. Native XR hardware | Works: head IMU, display, lens correction, tracking cameras, 6DoF head and controller tracking, RGB camera and the colour room view | [xr.md](xr.md) |
-| 6. Valve's VR session | Works: SteamVR on both panels at 90 fps on the Steam Frame's compositor path, the Steam client and its library, x86 games through Proton and FEX, Android apps through Lepton, Steam Link from a PC. Open: heavy games' frame rate | [session.md](session.md), [cooling.md](cooling.md) |
+| 6. Valve's VR session | Works: SteamVR on both panels at 90 fps on the Steam Frame's compositor path, the Steam client and its library, x86 games through Proton and FEX, Android apps through Lepton, Steam Link from a PC. Heavy games run at what the GPU allows | [session.md](session.md), [cooling.md](cooling.md) |
 
 Each step's document holds its design, measurements and reproduction steps.
 
@@ -218,7 +218,7 @@ and where they stand.
 | Run the ARM64 SteamOS userspace | Done: Holo Core aarch64 with the Frame's systemd 257.7 and SteamOS services, no failed units (step 4) |
 | Display a Steam-style desktop in the headset | Done: SteamVR's environment and dashboard in the lenses, the Steam client's library as SteamVR's overlay (step 6) |
 | Full 6DoF and controllers | Done: head and controller tracking, all inputs and vibration (step 5) |
-| Complete standalone SteamVR experience | Done for the tested games: starts without the PC, Steam's library, x86 and Android apps, Steam Link (step 6). Open: heavy games' frame rate and suspend, see [Open work](#open-work) |
+| Complete standalone SteamVR experience | Done for the tested games: starts without the PC, Steam's library, x86 and Android apps, Steam Link (step 6). Open: the battery drain while suspended, see [Open work](#open-work) |
 
 ## Open work
 
@@ -254,7 +254,8 @@ Details: [session.md](session.md), [xr.md](xr.md).
 Valve's session runs the Steam Frame's compositor path at 90 frames per second at 587 MHz, and worn
 the view is fluid, also with Steam's panel in view.
 
-- Beat Saber submits half the panels' rate.
+- Beat Saber submits half the panels' rate. The GPU holds it there, at its top clock (92-96 % busy), not the
+  CPU (every core below 50 %), so half rate is what this hardware gives this game.
 - Games start at 72 Hz, the Frame's default for apps; SteamVR's settings offer 72 and 90 Hz.
 - Steam Link: the first picture follows a decoder reset about 14 s after the client starts, and
   30 ms pass between a decoded picture and its illumination.
@@ -270,8 +271,7 @@ Details: [session.md](session.md), [userspace.md](userspace.md).
   ([userspace.md](userspace.md#internet-over-usb)).
 - MangoHud's `mangoapp`, the client's performance overlay: switching it on from the client's menu is
   unverified.
-- Video: HEVC decodes through Venus. H.264 crashes Venus's firmware, which then stalls storage and
-  halts the headset until a 10 s power press; do not run FFmpeg's `h264_v4l2m2m`.
+- Video: H.264, HEVC, VP9 and VP8 decode through Venus. MPEG-2 ends in a session error from the firmware.
 
 ### Controllers
 
@@ -330,5 +330,5 @@ system updates. Open:
 Audio works: the speakers and
 the microphone are PipeWire's default sink and source, and playback runs without xruns under
 Valve's session ([userspace.md](userspace.md#audio)); SteamVR's sound and volume work in the
-headset, the microphone records speech at PICO OS's gain of 12, and PICO OS's calibration is loaded per stream; the end of a sound still crackles at the speakers and loud starts overshoot for about 250 ms (open, [userspace.md](userspace.md#audio)). Bluetooth has not been brought up under the userspace. Battery
+headset, the microphone records speech at PICO OS's gain of 12, and PICO OS's calibration is loaded per stream; loud starts overshoot for about 250 ms (open, [userspace.md](userspace.md#audio)). Bluetooth has not been brought up under the userspace. Battery
 level and charging state reach UPower and SteamVR ([userspace.md](userspace.md)).
