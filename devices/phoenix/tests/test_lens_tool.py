@@ -129,7 +129,13 @@ class SessionTests(unittest.TestCase):
     def test_the_driver_logs_the_battery_level_raw(self):
         controller = self.read("src/monado/pico4_controller.c")
         self.assertIn('"Battery level %d (raw)"', controller)
-        self.assertNotIn("get_battery_status", controller)
+        self.assertIn("c->base.get_battery_status = pico4_controller_get_battery_status;", controller)
+        self.assertIn("(float)level / BATTERY_FULL", controller)
+
+    def test_steamvr_gets_the_controllers_battery_too(self):
+        patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-battery.patch")
+        self.assertIn("+\t\t\t\tupdate_battery(m_xdev, m_ulPropertyContainer, &battery_at);", patch)
+        self.assertIn("+\t\tupdate_battery(m_xdev, m_ulPropertyContainer, &battery_at);", patch)
 
 
 class ValveMesaTests(unittest.TestCase):

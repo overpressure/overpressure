@@ -1032,8 +1032,10 @@ data (2 bytes, 4 with bit 6), in µs before the packet's station time. Record ty
   order (sticks centred at 128). One byte of buttons: home (bit 0), menu, A/X, B/Y, grip, stick
   click (bit 5), trigger (bit 7). One byte of touch: A/X (bit 0), B/Y, stick, thumb rest,
   trigger (bit 4).
-- **Battery** (type 2): one byte, levels 1 and 2 in the recordings so far; its scale is not known,
-  so it goes to the driver's log as it is and not to SteamVR as a percentage.
+- **Battery** (type 2): one byte, a fifth of a full charge per level, which goes to SteamVR as a percentage.
+  PICO OS's controller service counts level 1 as low. Its `SetMotor` limits a low controller to 70 % only
+  where the strength is 100 %; the driver runs at PICO OS's default of 75 %, so the limit never applies.
+  Its settings draw six steps, 0 to 5; levels 1, 2 and 4 have been seen.
 
 Other types belong to trackers and diagnostics.
 
@@ -1082,6 +1084,12 @@ models (triangulated OBJ in metres, material, texture, and components for the ai
 `aim-to-grip.json`, the grip), `extract-sensor-data.sh` writes them to `rendermodels/`, and the
 image build copies them to `/usr/share/steamvr-monado/resources/rendermodels/`, where SteamVR
 finds `{monado}pico4_controller_left` and `_right`.
+
+The battery shows where PICO OS has its bar, a strip on the controller's base (the models' group
+`Power`). SteamVR's system UI draws its controller status panel on a model's `status` component, so
+that strip becomes the component, a mesh that is hidden unless the panel is on it, with its UVs on the
+panel's battery pips. SteamVR shows four steps: one for 20 %, two for 40 %, three for 60 % and 80 %, four
+for 100 %, and nothing at level 0.
 
 ### Controller tracking
 

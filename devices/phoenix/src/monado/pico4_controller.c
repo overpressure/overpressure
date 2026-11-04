@@ -73,6 +73,9 @@ enum
 	IN_COUNT,
 };
 
+//! The top of the battery byte's scale.
+#define BATTERY_FULL 5
+
 struct pico4_controller
 {
 	struct xrt_device base;
@@ -409,6 +412,23 @@ pico4_controller_set_output(struct xrt_device *xdev, enum xrt_output_name name, 
 	return XRT_SUCCESS;
 }
 
+/*!
+ * The controller's charge. The level is one byte; PICO OS's controller service counts 1 as low, and
+ * its settings draw six steps, 0 to 5, so a level is a fifth of a full charge.
+ */
+static xrt_result_t
+pico4_controller_get_battery_status(struct xrt_device *xdev, bool *out_present, bool *out_charging, float *out_charge)
+{
+	struct pico4_controller *c = pico4_controller(xdev);
+	os_mutex_lock(&c->lock);
+	int level = c->battery;
+	os_mutex_unlock(&c->lock);
+	*out_present = level >= 0 && level <= BATTERY_FULL;
+	*out_charging = false;
+	*out_charge = *out_present ? (float)level / BATTERY_FULL : 0.f;
+	return XRT_SUCCESS;
+}
+
 struct pico4_controller *
 pico4_controller_create(int device,
                         struct xrt_device *head,
@@ -443,6 +463,7 @@ pico4_controller_create(int device,
 	c->base.name = XRT_DEVICE_PICO4_CONTROLLER;
 	c->base.device_type = left ? XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER : XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER;
 	c->base.update_inputs = pico4_controller_update_inputs;
+	c->base.get_battery_status = pico4_controller_get_battery_status;
 	c->base.get_tracked_pose = pico4_controller_get_tracked_pose;
 	c->base.set_output = pico4_controller_set_output;
 	c->base.destroy = pico4_controller_destroy;

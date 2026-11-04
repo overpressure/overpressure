@@ -1,6 +1,34 @@
 --- a/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
 +++ b/src/xrt/state_trackers/steamvr_drv/ovrd_driver.cpp
-@@ -1197,16 +1197,44 @@
+@@ -373,6 +373,11 @@
+ 	flexion_joints_to_bone_transform(&hand_joint_set, out_bone_transforms, hand);
+ }
+ 
++static void
++update_battery(struct xrt_device *xdev,
++               vr::PropertyContainerHandle_t props,
++               std::chrono::steady_clock::time_point *next);
++
+ class CDeviceDriver_Monado_Controller : public vr::ITrackedDeviceServerDriver
+ {
+ public:
+@@ -741,6 +746,7 @@
+ 	{
+ 		ovrd_log("Starting controller pose update thread for %s\n", m_xdev->str);
+ 
++		std::chrono::steady_clock::time_point battery_at{};
+ 		while (m_poseUpdating) {
+ 			//! @todo figure out the best pose update rate
+ 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+@@ -748,6 +754,7 @@
+ 			if (m_unObjectId != vr::k_unTrackedDeviceIndexInvalid) {
+ 				vr::VRServerDriverHost()->TrackedDevicePoseUpdated(m_unObjectId, GetPose(),
+ 				                                                   sizeof(vr::DriverPose_t));
++				update_battery(m_xdev, m_ulPropertyContainer, &battery_at);
+ 			}
+ 		}
+ 
+@@ -1212,16 +1219,44 @@
  	res->m[2][3] = t.z;
  }
  

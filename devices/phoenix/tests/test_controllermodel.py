@@ -61,7 +61,7 @@ class ControllerModelTests(unittest.TestCase):
             name = f"pico4_controller_{hand}"
             d = out / name
             self.assertEqual(sorted(p.name for p in d.iterdir()),
-                             sorted(f"{name}.{ext}" for ext in ("json", "mtl", "obj", "png")))
+                             sorted([f"{name}_status.obj"] + [f"{name}.{ext}" for ext in ("json", "mtl", "obj", "png")]))
             positions, faces = parse_written_obj((d / f"{name}.obj").read_text())
             self.assertEqual(len(positions), 8)  # the indicator's vertex is gone
             self.assertEqual(len(faces), 12)
@@ -76,6 +76,34 @@ class ControllerModelTests(unittest.TestCase):
             self.assertEqual(components["body"]["filename"], f"{name}.obj")
             self.assertEqual(components["aim"]["component_local"]["origin"], [0.0, 0.0, 0.0])
             self.assertNotIn("grip", components)
+
+    def test_the_indicator_becomes_steamvrs_status_component_on_the_panels_pips(self):
+        # A strip across x, tilted: its near edge is lower and further back, its normal up and back.
+        strip = ["v -0.5 0.5 1.0", "v 0.5 0.5 1.0", "v 0.5 0.1 1.3", "v -0.5 0.1 1.3"]
+        obj = box_obj(1.0).replace("g PICO4_Controller_Left Power", "\n".join(strip + ["vn 0 0.6 0.8", "g PICO4_Controller_Left Power"]))
+        obj = obj.replace("f 9/1/1 1/2/1 2/3/1", "f 10/1/2 11/2/2 12/3/2\nf 10/1/2 12/3/2 13/4/2")
+        out = self.root / "out"
+        controllermodel.convert(model_dir(self.root, left=obj), out)
+        name = "pico4_controller_left"
+        component = json.loads((out / name / f"{name}.json").read_text())["components"]["status"]
+        self.assertEqual(component["filename"], f"{name}_status.obj")
+        self.assertEqual(component["visibility"], {"default": False})
+        self.assertEqual(component["component_local"]["origin"], [0.0, 0.003, 0.0115])
+        self.assertAlmostEqual(component["component_local"]["rotate_xyz"][0], math.degrees(math.atan2(0.6, -0.8)), places=3)
+        lines = (out / name / f"{name}_status.obj").read_text().splitlines()
+        positions = [tuple(map(float, l.split()[1:])) for l in lines if l.startswith("v ")]
+        uvs = [tuple(map(float, l.split()[1:])) for l in lines if l.startswith("vt ")]
+        by_corner = dict(zip(positions, uvs))
+        left, top, right, bottom = 23 / 256, 172 / 256, 233 / 256, 197 / 256
+        for corner, (u, v) in (((-0.005, 0.005, 0.01), (left, 1 - top)), ((0.005, 0.005, 0.01), (right, 1 - top)),
+                               ((0.005, 0.001, 0.013), (right, 1 - bottom)), ((-0.005, 0.001, 0.013), (left, 1 - bottom))):
+            self.assertAlmostEqual(by_corner[corner][0], u, places=5)
+            self.assertAlmostEqual(by_corner[corner][1], v, places=5)
+
+    def test_a_model_without_the_indicator_is_refused(self):
+        obj = box_obj(1.0).replace("g PICO4_Controller_Left Power", "g PICO4_Controller_Left Other")
+        with self.assertRaises(controllermodel.ControllerModelError):
+            controllermodel.convert(model_dir(self.root, left=obj), self.root / "out")
 
     def test_grip_components_follow_the_aim_to_grip_transform(self):
         half = math.radians(34.0) / 2

@@ -16,7 +16,9 @@ For each hand this writes a SteamVR render model directory `pico4_controller_<ha
 as a triangulated OBJ in metres with its MTL and PNG, and a JSON with the body component and the
 pose components `aim`, `openxr_aim` and `tip` (the model's origin), plus `grip`, `openxr_grip`
 and `handgrip` (the name in SteamVR's pico_controller profile) from PICO OS's aim-to-grip
-transform when it is given. The models are vendor data:
+transform when it is given. SteamVR's system UI draws its controller status panel, with the battery's
+pips, on a render model's `status` component, so PICO OS's indicator becomes that component, its UVs
+on the pips of the panel: the charge shows where PICO OS shows it. The models are vendor data:
 they are read from the headset's own firmware and stay out of the repository.
 
     python -m devices.phoenix.tooling.controllermodel MODEL_DIR OUTPUT_DIR [--aim-to-grip JSON] [--check LED_JSON LEVER_JSON]
@@ -35,6 +37,11 @@ HANDS = {"left": "60", "right": "61"}
 NAME = "pico4_controller_{hand}"
 #: The group that holds the body; the battery indicator ("Power") uses a texture of its own.
 BODY_GROUP = "Controller"
+POWER_GROUP = "Power"
+#: SteamVR's status panel is this many pixels square; its battery pips fill this part of it (left, top,
+#: right, bottom), as its stylesheet lays them out.
+STATUS_PANEL_PX = 256
+STATUS_BATTERY_PX = (23, 172, 233, 197)
 CM = 0.01
 #: Plausibility: the body's extent along each axis (metres).
 MIN_EXTENT_M, MAX_EXTENT_M = 0.04, 0.25
@@ -59,8 +66,8 @@ class Mesh:
     triangles: list[tuple[tuple[int, int, int], ...]] = field(default_factory=list)
 
 
-def parse_obj(text: str, hand: str) -> Mesh:
-    """The body group of a PICO OS controller OBJ, in metres, triangulated and compactly indexed."""
+def parse_obj(text: str, hand: str, wanted: str = BODY_GROUP) -> Mesh:
+    """One group of a PICO OS controller OBJ, in metres, triangulated and compactly indexed."""
     if "centimeters" not in text.split("\n", 1)[0]:
         raise ControllerModelError(f"{hand}: not a model in centimetres")
     positions: list[tuple[float, ...]] = []
@@ -81,7 +88,7 @@ def parse_obj(text: str, hand: str) -> Mesh:
                 normals.append(tuple(float(w) for w in words[1:4]))
             elif words[0] == "g":
                 group = " ".join(words[1:])
-            elif words[0] == "f" and group.split()[:1] == [BODY_GROUP]:
+            elif words[0] == "f" and wanted in group.split():
                 corners = [tuple(int(i) - 1 for i in w.split("/")) for w in words[1:]]
                 if len(corners) < 3 or any(len(c) != 3 or min(c) < 0 for c in corners):
                     raise ValueError("a face needs three or more v/vt/vn corners")
@@ -89,7 +96,7 @@ def parse_obj(text: str, hand: str) -> Mesh:
         except ValueError as exc:
             raise ControllerModelError(f"{hand}: line {number}: {exc}") from None
     if not faces:
-        raise ControllerModelError(f"{hand}: no face in a group {BODY_GROUP!r}")
+        raise ControllerModelError(f"{hand}: no face in a group {wanted!r}")
     mesh = Mesh()
     remap: list[dict[int, int]] = [{}, {}, {}]
     sources = (positions, uvs, normals)
@@ -204,6 +211,46 @@ def grip_component(transform: dict) -> dict:
     return {"origin": [round(v, 7) for v in transform["position"]], "rotate_xyz": [round(angle, 4), 0.0, 0.0]}
 
 
+def surface_normal(mesh: Mesh) -> tuple[float, float]:
+    """The indicator's outward direction in the y-z plane, a unit vector (y, z)."""
+    y = sum(n[1] for n in mesh.normals)
+    z = sum(n[2] for n in mesh.normals)
+    length = math.hypot(y, z)
+    if length == 0.0:
+        raise ControllerModelError("the battery indicator has no normal in the y-z plane")
+    return y / length, z / length
+
+
+def status_mesh(power: Mesh) -> Mesh:
+    """The indicator with UVs on the panel's pips: as on the Steam Frame's model, u follows x and v
+    falls towards the wearer, with the top of the panel at v = 1."""
+    ny, nz = surface_normal(power)
+    # Along the surface towards the wearer (z back).
+    ty, tz = (-nz, ny) if ny >= 0.0 else (nz, -ny)
+    across = [p[0] for p in power.positions]
+    along = [p[1] * ty + p[2] * tz for p in power.positions]
+    if max(across) == min(across) or max(along) == min(along):
+        raise ControllerModelError("the battery indicator is not a surface")
+    left, top, right, bottom = (edge / STATUS_PANEL_PX for edge in STATUS_BATTERY_PX)
+    uvs = []
+    for x, s in zip(across, along):
+        fx = (x - min(across)) / (max(across) - min(across))
+        fs = (s - min(along)) / (max(along) - min(along))
+        uvs.append((left + fx * (right - left), 1.0 - (top + fs * (bottom - top))))
+    triangles = [tuple((p, p, n) for p, _, n in triangle) for triangle in power.triangles]
+    return Mesh(list(power.positions), uvs, list(power.normals), triangles)
+
+
+def status_component(power: Mesh, filename: str) -> dict:
+    """SteamVR's `status`: the mesh in the model's frame, hidden unless the panel is drawn on it, and
+    its local frame at the indicator's centre with -z outwards, as on the Steam Frame's model."""
+    ny, nz = surface_normal(power)
+    centre = [round(sum(p[k] for p in power.positions) / len(power.positions), 6) for k in range(3)]
+    angle = round(math.degrees(math.atan2(ny, -nz)), 4)
+    return {"filename": filename, "component_local": {"origin": centre, "rotate_xyz": [angle, 0.0, 0.0]},
+            "visibility": {"default": False}}
+
+
 def write_obj(mesh: Mesh, name: str) -> str:
     lines = [f"# PICO 4 controller ({name}) from PICO OS, in metres, in the aim frame (x right, y up, z back)",
              f"mtllib {name}.mtl", f"o {name}", f"usemtl {name}"]
@@ -218,9 +265,9 @@ def write_mtl(name: str) -> str:
     return f"newmtl {name}\nKa 0 0 0\nKd 1 1 1\nKs 0 0 0\nd 1\nillum 1\nmap_Kd {name}.png\n"
 
 
-def write_json(name: str, grip: dict | None) -> str:
+def write_json(name: str, grip: dict | None, status: dict) -> str:
     identity = {"component_local": {"origin": [0.0, 0.0, 0.0], "rotate_xyz": [0.0, 0.0, 0.0]}}
-    components = {"body": {"filename": f"{name}.obj", **identity}}
+    components = {"body": {"filename": f"{name}.obj", **identity}, "status": status}
     for pose in ("tip", "aim", "openxr_aim"):
         components[pose] = identity
     if grip is not None:
@@ -232,9 +279,11 @@ def write_json(name: str, grip: dict | None) -> str:
 def convert(model_dir: Path, output_dir: Path, aim_to_grip: dict | None = None,
             led_models: dict | None = None, lever_arms: dict | None = None) -> dict[str, float]:
     """Writes both render models; returns the worst LED distance per hand when checked."""
-    meshes, textures = {}, {}
+    meshes, powers, textures = {}, {}, {}
     for hand, stem in HANDS.items():
-        meshes[hand] = parse_obj((model_dir / f"{stem}.obj").read_text(encoding="utf-8", errors="replace"), hand)
+        text = (model_dir / f"{stem}.obj").read_text(encoding="utf-8", errors="replace")
+        meshes[hand] = parse_obj(text, hand)
+        powers[hand] = parse_obj(text, hand, POWER_GROUP)
         textures[hand] = (model_dir / f"{stem}_idle.png").read_bytes()
         if not textures[hand].startswith(PNG_SIGNATURE):
             raise ControllerModelError(f"{hand}: {stem}_idle.png is not a PNG file")
@@ -248,7 +297,10 @@ def convert(model_dir: Path, output_dir: Path, aim_to_grip: dict | None = None,
         (target / f"{name}.obj").write_text(write_obj(mesh, name), encoding="utf-8", newline="\n")
         (target / f"{name}.mtl").write_text(write_mtl(name), encoding="utf-8", newline="\n")
         (target / f"{name}.png").write_bytes(textures[hand])
-        (target / f"{name}.json").write_text(write_json(name, grips.get(hand)), encoding="utf-8", newline="\n")
+        (target / f"{name}_status.obj").write_text(write_obj(status_mesh(powers[hand]), name), encoding="utf-8",
+                                                   newline="\n")
+        status = status_component(powers[hand], f"{name}_status.obj")
+        (target / f"{name}.json").write_text(write_json(name, grips.get(hand), status), encoding="utf-8", newline="\n")
     return worst
 
 
