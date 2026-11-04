@@ -178,6 +178,17 @@
 };
 
 /*
+ * The stock tree's reset through PS_HOLD, which the stock kernel uses. Mainline's tree resets through
+ * PSCI alone, and the firmware refuses the warm reset that a panic asks for.
+ */
+&{/soc@0} {
+	restart@c264000 {
+		compatible = "qcom,pshold";
+		reg = <0x0 0x0c264000 0x0 0x4>;
+	};
+};
+
+/*
  * The audio DSP's FastRPC channel: PICO OS's audio process (audiopd, which the userspace starts)
  * gets the stock remote heap, given to the DSP's VMs as the stock tree gives it
  * (qcom,adsp-remoteheap-vmid).

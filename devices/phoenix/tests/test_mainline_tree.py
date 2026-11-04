@@ -423,5 +423,15 @@ class FastRpcTests(unittest.TestCase):
         self.assertIn("if (req.fd < 0) {", added)
 
 
+
+class PanicResetTests(unittest.TestCase):
+    def test_a_refused_warm_reset_has_two_more_ways_out(self):
+        self.assertIn('compatible = "qcom,pshold";', tree())
+        patch = text(KERNEL / "patches/0031-firmware-psci-a-refused-reset-ends-in-a-cold-reset.patch")
+        self.assertIn('pr_emerg("warm reset refused: %d', patch)
+        self.assertIn("+\tregister_restart_handler(&psci_sys_reset_last_nb);", patch)
+        self.assertIn("+\t.priority = 0,", patch)
+
+
 if __name__ == "__main__":
     unittest.main()
