@@ -433,5 +433,16 @@ class PanicResetTests(unittest.TestCase):
         self.assertIn("+\t.priority = 0,", patch)
 
 
+class VenusRecoveryTests(unittest.TestCase):
+    def test_a_failed_recovery_masks_the_interrupt_before_it_powers_down(self):
+        patch = text(KERNEL / "patches/0032-media-venus-a-failed-recovery-masks-the-interrupt-before-it-powers-down.patch")
+        self.assertLess(patch.index("+		disable_irq(core->irq);"), patch.index(" 	pm_runtime_put_sync(core->dev);"))
+        self.assertIn("-		disable_irq_nosync(core->irq);", patch)
+
+    def test_h264_ends_its_stream_with_a_null_address(self):
+        patch = text(KERNEL / "patches/0033-media-venus-h264-end-of-stream-with-a-null-address.patch")
+        self.assertIn("inst->fmt_out->pixfmt == V4L2_PIX_FMT_H264", patch)
+
+
 if __name__ == "__main__":
     unittest.main()

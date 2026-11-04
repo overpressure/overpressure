@@ -1,0 +1,19 @@
+From: overpressure <overpressure@pico4>
+Subject: [PATCH] media: venus: H.264's end of stream with a NULL address on IRIS2
+
+The firmware (VIDEO.VPU.1.0-00093) takes an exception when a stop command ends an H.264 stream with
+the driver's 0xdeadb000 address. With NULL, which the driver uses for firmware up to 1.0.87, the
+stream ends cleanly. HEVC, VP9 and VP8 end cleanly with the old address, so they keep it.
+---
+--- a/drivers/media/platform/qcom/vcodec/venus/vdec.c
++++ b/drivers/media/platform/qcom/vcodec/venus/vdec.c
+@@ -576,7 +576,8 @@
+ 		 * avoids misapplying this quirk and breaking VP9 decode on SC7280.
+ 		 */
+ 
+-		if (IS_IRIS2(inst->core) && is_fw_rev_or_older(inst->core, 1, 0, 87))
++		if (IS_IRIS2(inst->core) &&
++		    (is_fw_rev_or_older(inst->core, 1, 0, 87) || inst->fmt_out->pixfmt == V4L2_PIX_FMT_H264))
+ 			fdata.device_addr = 0;
+ 		else
+ 			fdata.device_addr = 0xdeadb000;
