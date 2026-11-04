@@ -374,6 +374,11 @@ other call passes through; without the panels, the layer stays out of the way.
   (`default_pwrlevel`), also when it found the floor already raised, and `steamvr.service` does
   the same after every stop: a compositor that crashed cannot restore its floor, and the GPU
   would otherwise stay at 587 MHz or faster with nothing running.
+- **What the check sees on msm.** `msm-frame-stats` also reports the web helpers' share of the GPU in
+  its window and how long before its vblank each frame's last compositor job ended. A p99 below 1 ms
+  fails the check, a vblank with no job in its refresh counting as 0. On a table it is 6.2-6.4 ms with
+  a share of 0 %: at 0 % the window did not test a Steam panel in view, which lying on a table it
+  does not draw even when opened. A game that saturates the GPU gives 0 ms and fails.
 - **The compositor's crash at a stop.** `vrcompositor` ends with SIGSEGV about 40 ms after logging
   `Cleaning up`, when the render thread has ended and every client has gone: its cleanup calls a
   virtual method of a freed object (`vrcompositor+0x106a10`, the function that holds "Unable to release

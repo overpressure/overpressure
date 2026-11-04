@@ -34,6 +34,37 @@ def trace(flip_times, vblank_count, jobs):
 
 
 class MsmFrameStatsTests(unittest.TestCase):
+    def test_job_margins_are_taken_before_each_vblank(self):
+        vblanks = [100 + i * REFRESH for i in range(200)]
+        ends = [v - 0.007 for v in vblanks[1:]]
+        ends[50] = vblanks[51] - 0.0005   # one job that ends just in time
+        del ends[100]                     # one vblank without a job
+        margins = stats.job_margins(ends, vblanks, REFRESH)
+        self.assertEqual(margins["frames"], 199)
+        self.assertEqual(margins["without_a_job"], 1)
+        self.assertAlmostEqual(margins["p50"], 7.0, places=1)
+        self.assertLess(margins["p99"], 1.0)
+
+    def test_a_little_margin_fails_the_check_and_the_web_helpers_share_is_reported(self):
+        flips = [100 + i * REFRESH for i in range(901)]
+        end = stats.parse(trace(flips, 901, [(700, 5.9)]), {700})
+        end["job_margin_ms"] = {"p50": 5.5, "p99": 0.0, "frames": 900, "without_a_job": 12}
+        end["web_helper_gpu_percent"] = 12.5
+        start = {"target": "msm", "commits": 0, "commit_hz": 0, "late": 0, "stalls": 0}
+        v = perf.verdict(start, end, 60.0)
+        self.assertEqual(v["status"], "failed")
+        self.assertIn("below 1.0 ms", v["failures"][0])
+        self.assertEqual(v["web_helper_gpu_percent"], 12.5)
+        end["job_margin_ms"]["p99"] = 6.3
+        self.assertEqual(perf.verdict(start, end, 60.0)["status"], "passed")
+
+    def test_the_web_helpers_threads_count_apart_from_the_compositors(self):
+        flips = [100 + i * REFRESH for i in range(91)]
+        lines = trace(flips, 91, [(700, 5.9), (800, 500.0)])
+        s = stats.parse(lines, {700}, {800})
+        self.assertEqual(s["gpu_jobs"], 1)
+        self.assertAlmostEqual(s["web_helper_gpu_percent"], 50.0, places=0)
+
     def test_flips_vblanks_and_the_compositors_gpu_time(self):
         flips = [100 + i * REFRESH for i in range(91)]
         flips[50:] = [t + REFRESH for t in flips[50:]]   # one late flip (two refreshes)

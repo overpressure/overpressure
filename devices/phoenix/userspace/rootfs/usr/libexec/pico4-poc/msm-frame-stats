@@ -26,12 +26,37 @@ EVENTS = ("dpu/dpu_crtc_complete_flip", "drm/drm_vblank_event", "drm_msm_gpu/msm
 LINE = re.compile(r"\s*.+?-\d+\s+\[\d+\]\s+\S+\s+([\d.]+): (\w+): ?(.*)")
 LATE_REFRESHES = 1.5   # as the layer: a commit more than 1.5 refreshes after the one before
 STALL_S = 0.100        # as the layer: a gap above 100 ms
+HELPERS = {"steamwebhelper", "vrwebhelper"}
 
 
-def parse(lines, tids) -> dict:
-    """The statistics of trace lines: flips of the busiest CRTC, vblanks, the threads' GPU jobs."""
+def job_margins(ends, vblanks, refresh) -> dict:
+    """How long before each vblank the compositor's last job of that refresh ended, in ms. A vblank
+    within the jobs' span with no job in its refresh counts as 0: its frame had no margin."""
+    ends = sorted(ends)
+    margins = []
+    i = 0
+    for v in sorted(vblanks):
+        if not ends or v <= ends[0] or v > ends[-1] + refresh:
+            continue
+        while i + 1 < len(ends) and ends[i + 1] < v:
+            i += 1
+        margin = v - ends[i]
+        margins.append(margin * 1e3 if 0 < margin <= refresh else 0.0)
+    if not margins:
+        return {}
+    margins.sort()
+    # p99: 99 % of the frames had at least this margin.
+    return {"p50": round(margins[len(margins) // 2], 3), "p99": round(margins[len(margins) // 100], 3),
+            "frames": len(margins), "without_a_job": sum(m == 0.0 for m in margins)}
+
+
+def parse(lines, tids, helper_tids=()) -> dict:
+    """The statistics of trace lines: flips of the busiest CRTC, vblanks, the threads' GPU jobs, and
+    the web helpers' share of the GPU, which on a table can be idle when worn it would not be."""
     tids = {int(t) for t in tids}
-    flips, vblanks, gpu = {}, [], []
+    helper_tids = {int(t) for t in helper_tids}
+    flips, vblanks, gpu, ends = {}, [], [], []
+    helper_ns = 0
     for line in lines:
         m = LINE.match(line)
         if not m:
@@ -43,8 +68,12 @@ def parse(lines, tids) -> dict:
             vblanks.append(t)
         elif event == "msm_gpu_submit_retired":
             f = dict(re.findall(r"(\w+)=(-?\d+)", fields))
-            if int(f.get("pid", -1)) in tids:
+            pid = int(f.get("pid", -1))
+            if pid in tids:
                 gpu.append(int(f["elapsed"]) / 1e6)
+                ends.append(t)
+            elif pid in helper_tids:
+                helper_ns += int(f["elapsed"])
     stats = {"target": "msm", "commits": 0, "commit_hz": 0.0, "late": 0, "stalls": 0,
              "max_interval_ms": 0.0, "vblank_hz": 0.0, "gpu_jobs": len(gpu)}
     if len(vblanks) > 1:
@@ -62,6 +91,11 @@ def parse(lines, tids) -> dict:
         gpu.sort()
         stats["gpu_ms"] = {"mean": round(statistics.fmean(gpu), 3), "p90": round(gpu[len(gpu) * 9 // 10], 3),
                            "max": round(gpu[-1], 3)}
+    margins = job_margins(ends, vblanks, refresh)
+    if margins:
+        stats["job_margin_ms"] = margins
+    if len(vblanks) > 1:
+        stats["web_helper_gpu_percent"] = round(helper_ns / ((vblanks[-1] - vblanks[0]) * 1e9) * 100, 2)
     return stats
 
 
@@ -74,6 +108,18 @@ def threads(pid: int) -> set:
         return {int(t) for t in os.listdir(f"/proc/{pid}/task")}
     except OSError:
         return set()
+
+
+def helpers() -> set:
+    """The threads of the web helpers, the Steam client's and SteamVR's, which draw the panels."""
+    tids = set()
+    for proc in Path("/proc").glob("[0-9]*"):
+        try:
+            if (proc / "comm").read_text().strip() in HELPERS:
+                tids |= threads(int(proc.name))
+        except OSError:
+            pass
+    return tids
 
 
 def record(seconds: float, pid: int) -> dict:
@@ -89,12 +135,13 @@ def record(seconds: float, pid: int) -> dict:
         write(TRACING / "tracing_on", "0")
         trace = (TRACING / "trace").read_text(errors="replace").splitlines()
         tids |= threads(pid)
+        helper_tids = helpers()
     finally:
         for event in EVENTS:
             write(TRACING / "events" / event / "enable", "0")
         write(TRACING / "trace", "")
         write(TRACING / "buffer_size_kb", "1408")
-    return parse(trace, tids)
+    return parse(trace, tids, helper_tids)
 
 
 def main(argv) -> int:

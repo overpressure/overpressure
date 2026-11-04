@@ -23,6 +23,9 @@ LIMITS = {
     "stalls_max": 0,                  # gaps between commits above 100 ms
     "present_wait_timeouts_max": 0,   # SteamVR's present waits that ran out
     "hottest_c_max": 90.0,            # hottest thermal zone at the end of the run (docs/cooling.md)
+    # A mainline kernel: 99 % of the compositor's frames end at least this long before their vblank.
+    # 6.2-6.4 ms on a table; a frame without a job in its refresh counts as 0, as with a stutter.
+    "job_margin_p99_ms_min": 1.0,
 }
 
 
@@ -55,6 +58,10 @@ def verdict(start, end, hottest_c) -> dict:
         failures.append(f"{stalls} gaps above 100 ms")
     if timeouts > LIMITS["present_wait_timeouts_max"]:
         failures.append(f"{timeouts} present-wait timeouts")
+    margin = (end.get("job_margin_ms") or {}).get("p99")
+    if margin is not None and margin < LIMITS["job_margin_p99_ms_min"]:
+        failures.append(f"99 % of the compositor's jobs end {margin:.2f} ms before their vblank, "
+                        f"below {LIMITS['job_margin_p99_ms_min']} ms")
     if hottest_c is None or not math.isfinite(hottest_c):
         failures.append("no temperature reading")
     elif hottest_c > LIMITS["hottest_c_max"]:
@@ -70,6 +77,9 @@ def verdict(start, end, hottest_c) -> dict:
         "gpu_wait_ms_mean": round(gpu_mean, 3),
         # msm-frame-stats (a mainline kernel): the GPU's own time per job of the compositor.
         "gpu_ms": end.get("gpu_ms"),
+        "job_margin_ms": end.get("job_margin_ms"),
+        # The web helpers draw the panels: at 0 the window did not test a panel in view.
+        "web_helper_gpu_percent": end.get("web_helper_gpu_percent"),
         "hottest_c": hottest_c,
         "startup": {"stalls": start.get("stalls"), "max_interval_ms": start.get("max_interval_ms")},
         "max_interval_ms": end.get("max_interval_ms"),
