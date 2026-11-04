@@ -384,19 +384,30 @@ class RoomTests(unittest.TestCase):
         self.assertIn("PICO4_SLAMD_RESTART_S", read(LIBEXEC / "stock-slam"))
 
     def test_slamd_takes_a_late_relocalisation(self):
-        # an issue: the room settles when libSlam reports its relocalisation (PICO OS's
-        # RelocResultCallbackRegister), also after the first 10 s, which only decide a new room.
+        # The room settles when the tracker writes its copy of the saved room's boundary, also after
+        # a new room was decided. libSlam's callback for this does not come here.
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
-        self.assertIn('.reloc = (reloc_register_fn)dlsym(lib, "RelocResultCallbackRegister"),', slamd)
+        self.assertNotIn('dlsym(lib, "RelocResultCallbackRegister")', slamd)
         start = slamd.index("tracker_start(const struct tracker *t")
-        self.assertLess(slamd.index("__atomic_store_n(&g_relocalised, 0, __ATOMIC_RELEASE);", start),
-                        slamd.index("t->reloc(on_reloc);", start))
+        self.assertLess(slamd.index("unlink(RELOCALISED_BOUNDARY);", start), slamd.index("t->create(", start))
         loop = slamd.index("relocalised in a saved map")
-        self.assertLess(slamd.index("access(RELOCALISED_BOUNDARY, R_OK) == 0", loop - 400), loop)
-        self.assertLess(loop, slamd.index("if (!room_settled && now - started > RELOCALISE_NS) {"))
+        self.assertLess(slamd.index("if (!relocalised && read_boundary(RELOCALISED_BOUNDARY, g_seen) == 4) {", loop - 400),
+                        loop)
+        self.assertLess(loop, slamd.index("if (!room_settled && input_since != 0 && now - input_since > relocalise_ns) {"))
         settle = slamd.index("settle_room(struct pico4_slam_feed *feed")
         self.assertLess(slamd.index("__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);", settle),
                         slamd.index("__atomic_store_n(&feed->room_state, state, __ATOMIC_RELEASE);", settle))
+
+    def test_the_time_to_relocalise_runs_from_the_trackers_first_frames(self):
+        # Cameras that start 10 s late after a failed sync must not decide a new room unseen.
+        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
+        self.assertIn("#define RELOCALISE_DEFAULT_S 10", slamd)
+        self.assertIn("if (input_since == 0 && __atomic_load_n(&frames.sets_fed, __ATOMIC_RELAXED) != sets_at_start) {", slamd)
+        # A restarted tracker starts over: its copy is removed and its first frames count again.
+        restart = slamd.index("restarting the tracker")
+        for reset in ("relocalised = false;", "sets_at_start = __atomic_load_n(&frames.sets_fed", "input_since = 0;"):
+            self.assertLess(restart, slamd.index(reset, restart))
+        self.assertIn("PICO4_SLAMD_RELOCALISE_S", read(LIBEXEC / "stock-slam"))
 
     def test_steamvr_gets_a_universe_per_map(self):
         patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")

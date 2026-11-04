@@ -51,5 +51,6 @@ exec unshare -m --propagation private /bin/bash -c '
 		"ADSP_LIBRARY_PATH=/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp" \
 		${PICO4_SLAMD_DEBUG:+PICO4_SLAMD_DEBUG=$PICO4_SLAMD_DEBUG} ${PICO4_SLAMD_LSC:+PICO4_SLAMD_LSC=$PICO4_SLAMD_LSC} \
 		${PICO4_SLAMD_AE:+PICO4_SLAMD_AE=$PICO4_SLAMD_AE} ${PICO4_SLAMD_RESTART_S:+PICO4_SLAMD_RESTART_S=$PICO4_SLAMD_RESTART_S} \
+		${PICO4_SLAMD_RELOCALISE_S:+PICO4_SLAMD_RELOCALISE_S=$PICO4_SLAMD_RELOCALISE_S} \
 		/usr/bin/chroot "$root" /system/bin/bootstrap/linker64 "$@"
 ' stock-slam "$root" "$calibration" "$libs" "$state" "$preload" "$@"

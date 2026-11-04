@@ -970,9 +970,9 @@ PICO OS keeps a room across sessions with the tracker's map: `libSlam.so` loads 
 `start6DOF`, and saves its map at the stop (`preStopAlgorithm`, `stopAlgorithm` with
 `non_sleep`, `destroyHandle`), but only while `boundary/stdata.txt` holds a boundary;
 `createHandle` and `start6DOF` empty the boundary files. After a relocalisation it writes the
-saved room's boundary, in this session's world, to `boundary/stdataforalgorithm.txt`, and calls
-the callback of `RelocResultCallbackRegister` once per tracker with the relocalisation's time
-and pose, whenever the relocalisation happens; PICO OS's service learns of it that way. A boundary
+saved room's boundary, in this session's world, to `boundary/stdataforalgorithm.txt`. It also has a
+callback for this, `RelocResultCallbackRegister`, which it calls only with a flag in its
+configuration set and does not call here, so `pico4-slamd` watches the file. A boundary
 file holds `vertexcount` and the points as `(a, b, c)` with b up; the tracker's world point is
 (b, −a, c): `libSlam`'s writer prints a world point (x, y, z) as (−y, x, z), and its readers
 store (a, b, c) as (b, −a, c). The map is saved in the session's world: the tracker restarted with
@@ -993,9 +993,10 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   residual): that is the transform from the session's world to the saved room's, whichever saved
   map the tracker found. It publishes it in the shared memory and writes the copy to
   `stdata.txt`, so the stop saves the map again; the driver puts every pose of that generation
-  into the room's world. Without a relocalisation 10 s after `start6DOF` the session is a new
-  room with a new random id, saved with its shape as it is; a later relocalisation (a covered
-  start, a restarted tracker) moves it into the saved room's world and universe then.
+  into the room's world. The tracker relocalises about 1 s after its first frames. Without a
+  relocalisation 10 s after its first frame set (the cameras can start 10 s late after a failed
+  sync) the session is a new room with a new random id, saved with its shape as it is; a later
+  relocalisation (a covered start) moves it into the saved room's world and universe then.
 - **SteamVR's universe.** The room's identity is `room-` and its id; its hash is the room's
   universe (never 0, 1 or 424242, which `vrserver` reserves). Once the room is settled,
   `driver_monado` switches universes as the Frame's driver does, through `vrserver`'s chaperone
