@@ -1577,7 +1577,17 @@ cameras:
 	s->rgb = rgb;
 	s->rgb_lines = cc.rgb_exposure_lines;
 	s->rgb_gain = cc.rgb_gain;
-	if ((r = pico4_station_camera_start(s->station)) < 0) {
+	// A timeout here would leave the head in 3DoF for the whole session. After one the radio refuses
+	// (EIO) every further start, also after a stop (provoked): only the reset that readies it for
+	// camera sync at the driver's start helps, and the controllers are back within a second.
+	for (int tries = 0; (r = pico4_station_camera_start(s->station)) < 0 && tries < 3; tries++) {
+		SLAM_WARN(s, "The controller radio refused camera sync (%s): resetting it", strerror(-r));
+		int reset = pico4_station_reset(s->station);
+		if (reset < 0) {
+			SLAM_WARN(s, "The controller radio's reset: %s", strerror(-reset));
+		}
+	}
+	if (r < 0) {
 		SLAM_ERROR(s, "The controller radio refused camera sync: %s", strerror(-r));
 		goto fail;
 	}

@@ -327,6 +327,16 @@ class CaptureRecoveryTests(unittest.TestCase):
         self.assertEqual(at, sorted(at))
         self.assertIn("s->cam_config = cc;", slam)
 
+    def test_a_refused_camera_sync_at_the_start_is_tried_again(self):
+        slam = read(ROOT / "src/monado/pico4_slam.c")
+        start = slam[slam.index("A timeout here would leave the head in 3DoF"):]
+        start = start[:start.index("goto fail;")]
+        self.assertIn("(r = pico4_station_camera_start(s->station)) < 0 && tries < 3", start)
+        # After a timeout the radio refuses further starts: only its reset helps, as measured.
+        self.assertLess(start.index("SLAM_WARN(s, \"The controller radio refused camera sync (%s): resetting it\""),
+                        start.index("pico4_station_reset(s->station);"))
+        self.assertNotIn("pico4_station_camera_stop(", start)
+
     def test_overflow_free_durations(self):
         # 3 and 5 s in ns do not fit an int: the build warned and the comparisons were wrong.
         slam = read(ROOT / "src/monado/pico4_slam.c")
