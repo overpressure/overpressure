@@ -42,7 +42,7 @@ come from the image ([stage1.md](stage1.md), [xr.md](xr.md)).
   dots in the middle of both lenses while the system starts. Stage 1 starts it before it mounts
   the system, about 4 s after the kernel on Valve's kernel; it survives the switch to systemd, whose
   `pico4-splash.service` takes the display from it at about 15 s. It sets the panels' 90 Hz
-  mode on the six stock layers and then gives up DRM master, so the next compositor (Monado,
+  mode on msm's primary plane and then gives up DRM master, so the next compositor (Monado,
   SteamVR's) becomes master as usual; its commit ends the indication. After four minutes it
   ends in any case.
 - **SSH host keys.** The installed system keeps the keys of its first boot (in the `/etc`
@@ -124,7 +124,7 @@ crash-dump mode); whole-partition images therefore go as sparse images
 devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img  # as root
 python -m overpressure dev image
 python -m overpressure dev flash recovery     # the maintenance stage 1; starts it
-python -m overpressure dev install            # boot, super, userdata (if new), then the installed system
+python -m overpressure dev install --boot out/kernel/install-boot-valve-rgb.img   # boot, super, userdata (if new), then the installed system
 python -m overpressure dev check              # the acceptance checks, on the installed system
 ```
 
@@ -143,14 +143,15 @@ already holds its image (by a readback hash), and formats `userdata` only when i
 `pico4-data` file system (or with `--format-data`). An update is the same command with a new
 system image: `boot` and the data stay.
 
-**Valve's kernel in `boot`.** `--boot IMAGE` installs another boot image in place of
+**Valve's kernel in `boot`.** `--boot IMAGE` installs the normal boot image in place of
 `out/dev/install-boot.img`: the installed system's own boot image with Valve's kernel and tree
 ([kernel-feasibility.md](kernel-feasibility.md)), made from it by `recovery_image.py --installed
 out/dev/install-boot.img --boot --stage1 devices/phoenix/initramfs ...`. It carries the install
 boot image's stage 1 in installed mode with this tree's files and the GPU and Wi-Fi firmware, no
 AVB footer (the bootloader applies the `dtbo` partition's overlay, as on every normal boot), and
 its stage 1 still reboots into `recovery` after a failed start, where the maintenance stage 1 on
-the stock kernel waits. The way back to the stock kernel is `dev install` without `--boot`.
+the stock kernel waits. `dev install` without `--boot` installs the stock kernel's boot image, on
+which the image no longer drives the GPU. The way back to PICO OS is `dev restore`.
 
 | Command | Purpose |
 | --- | --- |
@@ -180,10 +181,10 @@ the ABL to stock (`python -m overpressure cycle --restore-only`) and entering de
 | Install | `boot` (46 MiB) and `super` (3,105 MiB) written and read back, `userdata` formatted: 104 GiB for data |
 | Installed boot | systemd `running`, no failed units; `/` read-only from `super`, `/data` and its binds writable from `userdata`, writing `/` refused |
 | Persistence | files in `/home`, `/var`, `/etc` and `/root` survive a reboot and a system update (a new image in `super`, its package database taken over) |
-| `dev check` on the installed system | the userspace, IMU, pose and display checks pass (the display check failed once on the first, cold run with 51 late frames, then passed with 21); Valve's session passes its integration checks, its performance verdict fails on one of the known one-second stalls (as in RAM) |
+| `dev check` on the installed system | the userspace, IMU, pose and display checks pass (the display check failed once on the first, cold run with 51 late frames, then passed with 21); Valve's session passes its integration checks and its performance verdict: 90.0 commits/s, 0.04 % late, no stalls |
 | Development loop | `dev recovery`, `dev boot` (root on zram again), `dev reboot` (stays in maintenance), `dev normal` (installed system again); from fastboot without the recovery request, `dev reboot` connects to the installed system that `boot` starts |
 | Boot without the PC (cable unplugged, power button) | stage 1 switches without waiting for a PC; systemd reaches the graphical target 1 min 53 s after power-on with no failed units; the data is there; the USB link comes up when the cable is plugged in later |
-| Boot indication | stage 1 shows it 15.3 s after the kernel started, stage 2's service takes over at 29.2 s without a gap, Monado and SteamVR's compositor take the display from it (it exits within 0.5 s) |
+| Boot indication | stage 1 shows it about 4 s after the kernel started, stage 2's service takes over at about 15 s without a gap, Monado and SteamVR's compositor take the display from it (it exits within 0.5 s) |
 | Power-off | stays off without the cable; with the cable attached the headset starts again in charger mode (`androidboot.mode=charger`), and stage 1 stays there: no system, lenses dark, the LED amber (green once a PC configures the USB link, as in every stage 1), waiting on the power key; held 2 s it starts the installed system, as `pico4-reboot` does |
 
 ## Open work

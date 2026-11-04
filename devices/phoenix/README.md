@@ -24,10 +24,10 @@ them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL bac
 | 2 Linux shell | Alpine ramdisk, SSH and HTTP over USB, read-only storage, return to PICO OS |
 | 3 Native graphics | Valve's Mesa (Turnip, OpenGL through zink) on msm; both 2160 x 2160 panels at 90 Hz |
 | 4 SteamOS-compatible userspace | Holo Core aarch64 with the Steam Frame's systemd 257.7 and SteamOS services, from RAM or installed (read-only system, 104 GiB of data); speakers and microphone through PipeWire |
-| 5 XR hardware | head IMU, Monado with KMS output, lens correction and IPD, four tracking cameras, 6DoF with PICO OS's tracker on the CDSP, controllers (inputs, 3DoF) |
-| 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path; the Steam client in the headset, games started from its library |
+| 5 XR hardware | head IMU, Monado inside SteamVR, lens correction and IPD, four tracking cameras, 6DoF with PICO OS's tracker on the CDSP, controllers (inputs, vibration, positions), the colour room view |
+| 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path; the Steam client in the headset, games from its library through Proton and FEX, Android apps through Lepton, Steam Link from a PC |
 
-Open: worn checks of head and controller tracking on Valve's kernel, the speakers after a suspend, FEX and Lepton on Valve's Mesa, performance, boot feedback and power handling of the installed system. Plan and details:
+Open: a lens that can go wrong after a wake, suspend and resume (USB and the speakers), the sound's crackle, heavy games' frame rate, the Venus firmware's crash on H.264. Plan and details:
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Quick start
@@ -82,10 +82,11 @@ Open: worn checks of head and controller tracking on Valve's kernel, the speaker
 | [docs/device-preparation.md](docs/device-preparation.md) | identity, EDL backups, engineering ABL, unlock, restore |
 | [docs/stage1.md](docs/stage1.md) | the boot image: contents, boot sequence, options, troubleshooting |
 | [docs/hardware-testing.md](docs/hardware-testing.md) | acceptance runner, acceptance cycle, development loop |
-| [docs/graphics.md](docs/graphics.md) | Turnip on KGSL and fenced KMS on both panels |
+| [docs/kernel-feasibility.md](docs/kernel-feasibility.md) | Valve's kernel on the PICO 4: the study, its patches and what is verified on it |
+| [docs/graphics.md](docs/graphics.md) | the graphics stack and both panels |
 | [docs/userspace.md](docs/userspace.md) | the SteamOS-compatible userspace and the handoff |
 | [docs/xr.md](docs/xr.md) | IMU, Monado driver, display, lenses, cameras, 6DoF, controllers |
-| [docs/session.md](docs/session.md) | Valve's VR session: SteamVR, gamescope, the display layer |
+| [docs/session.md](docs/session.md) | Valve's VR session: SteamVR, gamescope, games, Steam Link |
 | [docs/cooling.md](docs/cooling.md) | fan control and the thermal policy |
 | [docs/development.md](docs/development.md) | layout, build system and hosts, tests, Windows and WSL |
 | [docs/stock-components.md](docs/stock-components.md) | what the images take unchanged from PICO OS, and what could replace each |
@@ -94,9 +95,10 @@ Open: worn checks of head and controller tracking on Valve's kernel, the speaker
 
 ```text
 tooling/     host tooling (Python standard library): python -m overpressure COMMAND, and the GUI's steps
+kernel/      Valve's kernel: build script, patches, the PICO's drivers and device tree
 initramfs/   stage 1: the files added to the Alpine ramdisk
 userspace/   stage 2: package list, pacman.conf, adaptation layer, SteamVR configuration, PKGBUILDs
-src/         C sources: graphics tests, Monado's PICO 4 driver, OpenXR clients, SteamVR display layer
+src/         C sources: graphics tests, Monado's PICO 4 driver, the tracker's host, OpenXR clients, SteamVR helpers
 scripts/     userspace and system image builds, stock firmware extraction, the on-headset preflight
 prebuilt/    static aarch64 helpers for stage 1
 tests/       host tests and the QEMU boot tests

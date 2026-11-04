@@ -18,10 +18,10 @@ section lists what comes next. Each step has its own document:
 | --- | --- | --- |
 | 1 Recoverable device (EDL backups, engineering ABL, unlock, restore) | done | [docs/device-preparation.md](docs/device-preparation.md) |
 | 2 Linux shell (Alpine initramfs, USB NCM/SSH, read-only storage) | verified on hardware | [docs/stage1.md](docs/stage1.md), [docs/hardware-testing.md](docs/hardware-testing.md) |
-| 3 Native graphics (Turnip/KGSL Vulkan, fenced KMS on both panels) | verified | [docs/graphics.md](docs/graphics.md) |
+| 3 Native graphics (Valve's Mesa on msm, compressed scanout on both panels) | verified | [docs/graphics.md](docs/graphics.md) |
 | 4 SteamOS-compatible userspace (Holo Core aarch64 + Steam Frame systemd 257.7) | verified | [docs/userspace.md](docs/userspace.md) |
-| 5 XR hardware: IMU, Monado driver and KMS display, lenses and IPD, cameras, controllers (3DoF), 6DoF (PICO OS's libSlam on the CDSP; Basalt selectable) | verified with stock restore; controller positions open | [docs/xr.md](docs/xr.md) |
-| 6 Valve's VR session: gamescope + SteamVR with `driver_monado`, `pico4-vrdisplay`, shared GPU and System V semaphores | verified with stock restore; 90 fps on the Frame's compositor path; the Steam client signs in, its library runs games; performance and cooling open | [docs/session.md](docs/session.md) |
+| 5 XR hardware: IMU, Monado driver, lenses and IPD, cameras, controllers (inputs, vibration, positions), 6DoF (PICO OS's libSlam on the CDSP; Basalt selectable), colour room view | verified worn | [docs/xr.md](docs/xr.md) |
+| 6 Valve's VR session: gamescope + SteamVR with `driver_monado` in direct mode through Turnip's display WSI | verified worn; 90 fps on the Frame's compositor path; the Steam client signs in, its library runs games through Proton and FEX, Android apps through Lepton, Steam Link from a PC; heavy games' frame rate open | [docs/session.md](docs/session.md) |
 
 Installed system: the system image read-only in `super`, data in `userdata`, the maintenance
 stage 1 in `recovery`, following PICO OS's layout; installed, starts without the PC, persistent
@@ -34,8 +34,8 @@ Build system, tests and the Windows/WSL environment: [docs/development.md](docs/
 
 ## Backlog
 
-Project "PICO 4" (key `PICO`) in the issue tracker's "Devices" workspace; the rules are in
-the repository's CLAUDE.md.
+Project "Overpressure" (key `the backlog`) in the issue tracker; the rules are in the repository's
+CLAUDE.md.
 
 ## Documentation
 
@@ -59,13 +59,15 @@ README.md current.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
   the f_mass_storage kernel thread and with it the USB link. `pico4-userspace receive/switch`
   hands over to stage 2.
+- `kernel/`: Valve's kernel: `build-kernel.sh`, `patches/`, the PICO's drivers in `src/`, the device
+  tree `sm8250-pico4-phoenix.dts`, `recovery_image.py` for its boot images.
 - `userspace/`: stage 2. `packages.txt` and `pacman.conf` (the Holo preview first; Frame
   packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
-  layer), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-turnip-kgsl, pico4-sensors,
-  pico4-basalt, pico4-monado, pico4-vrdisplay, pico4-sysvsem, pico4-gtk2 for the Steam client,
-  pico4-mangohud).
-- `src/`: the project's C sources (`graphics/`, `monado/` driver and KMS target, `xr/` OpenXR
-  clients, `vrdisplay/`, `sysvsem/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
+  layer), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,
+  pico4-gamescope, pico4-vrlink, pico4-gtk2 for the Steam client, pico4-mangohud, and others;
+  `pico4-turnip-kgsl` and `pico4-sysvsem` serve only the stock kernel; `pico4-vrdisplay` still ships the frame pacing).
+- `src/`: the project's C sources (`graphics/`, `monado/` driver, `xr/` OpenXR clients, `vrlink/`,
+  `vrdisplay/`, `sysvsem/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
   them in. `stockslam/` is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a
   bionic root; `build-userspace.sh` builds it with clang for Android, without an NDK.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, the extraction
@@ -101,7 +103,7 @@ python -m overpressure dev boot && python -m overpressure dev check   # iterate 
 python -m overpressure dev reboot                        # next attempt; also from fastboot
 # The installed system (docs/install.md): image as root, then from the maintenance stage 1:
 devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
-python -m overpressure dev recovery && python -m overpressure dev install   # boot, super, data; starts it
+python -m overpressure dev recovery && python -m overpressure dev install --boot out/kernel/install-boot-valve-rgb.img   # boot, super, data; starts it
 python -m overpressure dev installed && python -m overpressure dev check    # reconnect after a reboot; check
 # Back to stock only when the user asks: python -m overpressure dev restore, then
 python -m overpressure cycle --restore-only              # verified stock boot and ABL, PICO OS
@@ -146,8 +148,6 @@ python -m overpressure cycle --restore-only              # verified stock boot a
 - **SLPI, ADSP, CDSP and WLAN restart level.** Set it to `RELATED` before any restart or start of
   the firmware (`slpi-boot`, `pico4-adsp.service`, `cdsp-boot` and `pico4-wlan.service` do this). The kernel
   default `SYSTEM` reboots the whole headset.
-- **Sound card PCMs.** Only MultiMedia1 (PCM 0) gets device nodes: opening the capture side of
-  the hostless MI2S PCM oopses the stock kernel and leaves that PCM's lock held until a reboot.
 - **Never send controller/station OTA commands** when working on the controller SPI protocol.
   The station and GD32 (IPD, fan) modules build frames only from allowlists; keep it that way.
 - **Cameras need the station.** The OV7251s only stream while the station pulses FSIN, so each
@@ -188,11 +188,9 @@ passed.
   stage 1 from there without a flash. The dev image's maximum runtime (an hour) counts from the
   last `python -m overpressure dev` command, which renews it; plain `ssh` does not. A kernel panic reboots rather than parking in crash-dump
   mode (stage 1 sets `msm_poweroff.download_mode=0`).
-- **Heat.** `pico4-fan.service` drives the fan with PICO OS's policy: with the fan at 30 % the
-  30 s Valve session check peaks at 69 °C (86 °C without fan control). Qualcomm's
-  `thermal-engine` does not run (it is off on PICO OS too), and the kernel's `step_wise` zones
-  throttle. Without fan control a minute of Valve's session took the hottest zone from about
-  54 °C to 92 °C. Keep GPU-heavy runs short (`pico4-valve-session-check`
+- **Heat.** `pico4-fan.service` drives the fan with PICO OS's policy: the 30 s Valve session check
+  peaks at about 64 °C. Qualcomm's `thermal-engine` does not run (it is off on PICO OS too), and
+  the kernel's `step_wise` zones throttle. Keep GPU-heavy runs short (`pico4-valve-session-check`
   runs 30 s), stop them as soon as the evidence is in, and read
   `/sys/class/thermal/thermal_zone*/temp` when in doubt.
 - **Back to stock, only when the user asks** (PICO OS needed, a release acceptance):
@@ -201,6 +199,8 @@ passed.
   the final EDL reset with stock boot and ABL already verified; a hard reset by the user brought
   PICO OS back. If PICO OS does not appear, ask the user to look at the headset rather than
   retrying anything.
+- **Venus.** Never run FFmpeg's `h264_v4l2m2m` unattended: it crashes Venus's firmware, storage
+  stalls and the headset needs a 10 s power press.
 - **Windows NCM.** The Windows NCM link needs `overpressure/windows_ncm.py` (repository root) (UsbDk) after each stage-1
   boot (`dev connect`, `dev installed` and the runner do it). Re-initializing a working link in
   stage 2 disturbs it; `dev installed` repeats it at most once a minute while SSH times out.

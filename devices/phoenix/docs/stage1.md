@@ -1,7 +1,9 @@
 # Stage 1: the bootable Linux image
 
-Stage 1 is a standard Android boot image for the original PICO 4 (A8110, *phoenix*): the stock
-PICO kernel (`4.19.81-perf+`) and device trees byte for byte, with the ramdisk replaced by
+Stage 1 is a standard Android boot image for the original PICO 4 (A8110, *phoenix*). The dev and
+maintenance images keep the stock PICO kernel (`4.19.81-perf+`) and device trees byte for byte, and
+this document describes them; the installed system's boot image carries Valve's kernel and tree
+instead ([install.md](install.md)). In both the ramdisk is replaced by
 Alpine Linux 3.24 (aarch64) and the project's init from [initramfs/](../initramfs/). Over the
 USB-C cable it offers a network link with SSH, telnet and a status web page, and a read-only USB
 drive with the boot logs. Every disk and partition of the headset is read-only while it runs,

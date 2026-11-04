@@ -1,13 +1,14 @@
 # Native graphics
 
-Roadmap step 3 ([roadmap.md](roadmap.md)): Vulkan through Mesa's Turnip driver on the stock
-kernel's KGSL GPU interface, and presentation on both panels through the stock `msm_drm` display
-driver, with the stock kernel and device trees unchanged. Two native tests cover the two halves
+Roadmap step 3 ([roadmap.md](roadmap.md)): Vulkan through Valve's Turnip on msm, OpenGL through
+zink, and presentation on both panels through mainline's DPU and DSI drivers, on Valve's kernel
+([kernel-feasibility.md](kernel-feasibility.md)). Most of this document describes how this came up
+on the stock kernel's KGSL and `msm_drm`, no longer pursued, and stays as the reference for that
+hardware path. Two native tests cover the two halves
 separately: an offscreen Vulkan render with pixel readback, and CPU-drawn frames on both panels
-through atomic KMS with the vendor display fences. Both pass on the headset, the KMS test at
-90 Hz and 72 Hz. They come with the userspace package `pico4-graphics-tests`
-([userspace.md](userspace.md)). Monado's KMS compositor target ([xr.md](xr.md)) and SteamVR's
-display layer ([session.md](session.md)) present GPU-rendered frames over the same display path.
+through atomic KMS. They come with the userspace package `pico4-graphics-tests`
+([userspace.md](userspace.md)). SteamVR's compositor presents through Turnip's display WSI
+([session.md](session.md)).
 
 ## Interfaces on PICO OS 5.13.7
 
@@ -74,7 +75,7 @@ Both tests are in the userspace (`pico4-graphics-tests`). In
 [development mode](hardware-testing.md#development-mode), `python -m overpressure dev check` runs
 the Vulkan test and the display checks in stage 2; `pico4-kms-test` runs by hand on the headset.
 
-- **Vulkan** (`pico4-vulkan-test`): selects the KGSL Turnip ICD explicitly (`VK_DRIVER_FILES`),
+- **Vulkan** (`pico4-vulkan-test`): selects the system's Turnip ICD explicitly (`VK_DRIVER_FILES`),
   requires the Turnip driver and an integrated GPU, renders a full-screen triangle into a
   256 x 256 image with four colour quadrants, waits for the fence, copies the image back and
   checks every pixel. It prints JSON on stdout with `status`, `driver`, the image size,
@@ -121,7 +122,7 @@ and commit timing. They report `diagnostic`, never a pass:
 | `--opaque-layers` | two opaque planes, one per eye, instead of the six colour layers |
 | `--no-retire-fence` | page-flip events only, without the release and retire fences |
 
-In the userspace, `pico4-turnip-kgsl` provides Turnip, unmodified Mesa 26.1.6 with
+On the stock kernel's path, `pico4-turnip-kgsl` provided Turnip, unmodified Mesa 26.1.6 with
 `-Dvulkan-drivers=freedreno -Dfreedreno-kmds=kgsl,msm` (the release archive checked against the
 SHA-512 of [Alpine's package recipe](https://github.com/alpinelinux/aports/blob/3.24-stable/main/mesa/APKBUILD)),
 under its own ICD file (`/usr/share/pico4/vulkan/turnip-kgsl.json`), and
@@ -163,8 +164,9 @@ defects. One applies here:
 
 ## OpenGL
 
-The GPU's only driver is Turnip on KGSL. Holo's Mesa (25.2.7) brings the rest of the OpenGL
-stack: EGL, GLX, GBM and zink, Mesa's OpenGL on Vulkan. Mesa's loader picks an OpenGL driver
+The GPU's driver is Valve's Mesa: Turnip on msm, OpenGL through zink, as on the Frame. The rest of
+this section describes the stock kernel's path, where the GPU's only driver was Turnip on KGSL and
+Holo's Mesa (25.2.7) brought the rest of the OpenGL stack: EGL, GLX, GBM and zink, Mesa's OpenGL on Vulkan. Mesa's loader picks an OpenGL driver
 by the DRM node's kernel driver; `msm_drm`'s render node, the only one, names `msm`, whose
 driver needs an msm GPU, so on its own the loader falls back to llvmpipe. Xwayland in gamescope
 then refuses glamor ("Refusing to try glamor on llvmpipe"), and the Steam client and its web
@@ -187,6 +189,8 @@ the swapchains take the DRM path. KGSL has no DRM node to share, so a swapchain 
 into a linear buffer exported as a dma-buf (the prime path).
 
 ## Verified results
+
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel. Current results: [kernel-feasibility.md](kernel-feasibility.md#results).*
 
 Original PICO 4, PICO OS 5.13.7, stock kernel `4.19.81-perf+`:
 

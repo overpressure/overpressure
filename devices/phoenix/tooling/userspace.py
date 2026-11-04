@@ -309,9 +309,9 @@ def validate_valve_session(value) -> None:
     """Validate `pico4-valve-session-check` JSON: Valve's VR session on the panels.
 
     gamescope's session must run with SteamVR, whose compositor presents
-    through the pico4-vrdisplay layer without lost fences and shows an image;
-    SteamVR must report the headset and both controllers, the controllers
-    placed by the arm model; and the configured session must come back. The
+    (on the stock path through the pico4-vrdisplay layer without lost fences,
+    showing an image); SteamVR must report the headset and both controllers
+    with positions; and the configured session must come back. The
     fan daemon's state before and after is recorded (null without the daemon).
     The performance verdict over the run after startup must pass as well.
     """

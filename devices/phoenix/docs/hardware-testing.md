@@ -220,7 +220,7 @@ The request works because the 4.19 kernel's `f_ncm` recomputes the NDP signature
 every CDC class request to its control interface (and resets it with the data interface);
 Windows' UsbNcm sends none, and nothing on the gadget side triggers the recompute. The stock
 kernel has no RNDIS, ECM or EEM function to use instead, but it has FunctionFS and TUN, so an NCM
-function in userspace would let UsbNcm work without UsbDk (open work, an issue).
+function in userspace would let UsbNcm work without UsbDk (open work).
 
 Install [UsbDk](https://github.com/daynix/UsbDk/releases) (`winget install daynix.UsbDk`, as
 administrator; the helper loads `UsbDkHelper.dll` from `%ProgramFiles%\UsbDk Runtime Library`),
@@ -314,19 +314,18 @@ Then, in this order:
 
 | Check | Runs when | Must hold |
 | --- | --- | --- |
-| Userspace check | always | `pico4-userspace-check --wait 240` passes: systemd 257 as PID 1, state `running`, no failed units; `/dev` on tmpfs with every node; root on zram and no writable block device; the USB link unchanged; logind's `seat0`; the `steamos` user's session, `pico4-session.service` and Valve's session target active; the session user can open its devices; `pico4-fan.service` active and writing its state ([cooling.md](cooling.md#checks)); with GPU firmware in the archive, the Turnip/KGSL Vulkan readback. The stage-1 shell and storage assertions (phase 8) then hold in stage 2 too. |
+| Userspace check | always | `pico4-userspace-check --wait 240` passes: systemd 257 as PID 1, state `running`, no failed units; `/dev` on tmpfs with every node; root on zram and no writable block device; the USB link unchanged; logind's `seat0`; the `steamos` user's session, `pico4-session.service` and Valve's session target active; the session user can open its devices; `pico4-fan.service` active and writing its state ([cooling.md](cooling.md#checks)); with GPU firmware in the archive, Turnip's Vulkan readback. The stage-1 shell and storage assertions (phase 8) then hold in stage 2 too. |
 | Head IMU | the manifest has sensor data | `pico4-imu stream --rate 500 --seconds 10 --check --orientation`: accelerometer and gyroscope samples with increasing timestamps at the requested 500 Hz; the accelerometer's mean is the tilt reference for the next check |
-| SteamVR display layer | the archive has `pico4-vrdisplay` | `pico4-vrdisplay-test 15`: display `PICO 4` acquired through DRM; frames at ≥ 95 % of 90 Hz; the swapchain's vblank counter advancing at 90 Hz ± 1 %, vblank events at ≥ 90 % of 90 Hz; the real `pico4_vrdisplay` layer commits at ≥ 95 % of 90 Hz without fence or GPU timeouts; red left, blue right |
-| Shared semaphores | the archive has `pico4-vrdisplay` | `pico4-vrsync-test` as `steamos`: one timeline semaphore shared by two processes (OPAQUE_FD, emulated over sync files) carries a GPU wait, host waits and signals, an early wait and a same-submission wait; the waiting GPU work starts after the signalling work ends |
-| Valve's session | the archive has `deckard-steamvr-rel` | after the cool-down, `pico4-valve-session-check --seconds 30`: `gamescope-session.target`, SteamVR and gamescope active and the configured session restored afterwards; SteamVR's compositor runs as a gamescope client without asserts and presents through `pico4_vrdisplay` at ≥ 36 commits/s (40 % of 90 Hz), vblank at 90 Hz ± 1 %, no fence or GPU timeouts, a non-black image; SteamVR reports the headset and both controllers with finite poses, the controllers with positions |
+| SteamVR display layer | the stock kernel's path only; skipped on msm | `pico4-vrdisplay-test 15`: display `PICO 4` acquired through DRM; frames at ≥ 95 % of 90 Hz; the swapchain's vblank counter advancing at 90 Hz ± 1 %, vblank events at ≥ 90 % of 90 Hz; the real `pico4_vrdisplay` layer commits at ≥ 95 % of 90 Hz without fence or GPU timeouts; red left, blue right |
+| Shared semaphores | the stock kernel's path only; skipped on msm | `pico4-vrsync-test` as `steamos`: one timeline semaphore shared by two processes (OPAQUE_FD, emulated over sync files) carries a GPU wait, host waits and signals, an early wait and a same-submission wait; the waiting GPU work starts after the signalling work ends |
+| Valve's session | the archive has `deckard-steamvr-rel` | after the cool-down, `pico4-valve-session-check --seconds 30`: `gamescope-session.target`, SteamVR and gamescope active and the configured session restored afterwards; SteamVR's compositor runs as a gamescope client without asserts and presents, measured from msm's events, at ≥ 95 % of 90 Hz with at most 1 % late, no stalls, 99 % of its jobs at least 1 ms before their vblank; SteamVR reports the headset and both controllers with finite poses, the controllers with positions |
 
 Each check runs only after the previous one passed and only when the archive contains what it
 tests. The thresholds are in [tooling/userspace.py](../tooling/userspace.py). Before the display-layer
 test the runner stops the session and waits until SteamVR and the Steam client have exited, so
 the layer drives the panels; afterwards the session runs again, also after a failed check.
 
-The fan control ([cooling.md](cooling.md)) has not been measured with Valve's session. Before
-Valve's session, the runner reads the hottest thermal zone every 5 s (ignoring readings of 200 °C
+Before Valve's session, the runner reads the hottest thermal zone every 5 s (ignoring readings of 200 °C
 and above) and starts once it is below 70 °C, or after 180 s regardless; `valve_session_cooldown`
 in `result.json` records the wait and the temperature. The session check waits up to 180 s for
 SteamVR's compositor to present, runs 30 s, records the hottest zone (`max_temp_c`) and the fan's

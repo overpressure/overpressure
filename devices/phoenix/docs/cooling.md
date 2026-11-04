@@ -1,6 +1,6 @@
 # Cooling
 
-The fan and a thermal policy for the Linux userspace on the stock kernel and device tree. The
+The fan and a thermal policy for the Linux userspace on Valve's kernel, following PICO OS. The
 fan is not a Linux device on either system: it hangs off the GD32 MCU that also moves the lenses
 and drives the backlight ([xr.md](xr.md#lens-distortion-and-ipd)), and PICO OS's
 `pxrfanservice` sets its duty over that MCU's UART. [`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan)
@@ -40,7 +40,7 @@ What PICO OS does not use, on either system:
   `init_thermal-engine.rc`, and `thermal-engine.conf` is the empty default. The `*-usr` zones
   (`user_space` governor, trips at 115 and 125 °C) have no listener on either system.
 
-The kernel's `step_wise` zones come from the same device tree on both systems, so they throttle
+Valve's kernel takes the stock device tree's trip points onto mainline's zones, so they throttle
 alike:
 
 | Zone | Trip | Cooling |
@@ -179,9 +179,7 @@ and puts `schedutil` back: without it the compositor misses frames while Steam's
 ([kernel-feasibility.md](kernel-feasibility.md)). In the session with the panel idle, 3 minutes
 each, this costs about 0.6 °C: hottest zone mean 58.7 and 59.7 °C (peaks 60.5 and 64.0) against
 58.4 and 58.7 °C (59.7 and 61.6); the little cores' load falls from about 45 to about 31 %.
-The GPU part stays
-with the compositors, which hold KGSL's floor themselves while they present
-([session.md](session.md)).
+The GPU's clock stays with msm's devfreq governor.
 
 ## Build
 
@@ -257,4 +255,4 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
    runs to it. On the Frame's compositor path both of PICO OS's tables keep a 10-minute Valve
    session below 80 °C; the faster early table lowers the hottest mean by only about 1.5 °C,
    because the heat sits in the CPU cores, which the kernel throttles from 75 °C. Sessions
-   beyond 10 minutes and with games are unmeasured.
+   much beyond 10 minutes are unmeasured.

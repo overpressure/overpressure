@@ -1,10 +1,10 @@
 # Native XR hardware (roadmap step 5)
 
-The PICO 4's XR hardware under Linux, on the stock kernel (4.19.81-perf+, PICO OS 5.13.7) and
-with free software only. The head IMU streams through the sensor DSP. Monado 25.1.0 with this
-project's `pico4` driver gives OpenXR clients the head pose (3DoF fusion at 1 kHz, 6DoF from
-Basalt on the four tracking cameras), shows their frames on both panels through the stock KMS
-driver with the factory lens model and the IPD read from the lens motor, and provides both
+The PICO 4's XR hardware under Linux, on Valve's kernel ([kernel-feasibility.md](kernel-feasibility.md));
+sections on the stock kernel's path, no longer pursued, say so. The head IMU streams through the
+sensor DSP. Monado with this project's `pico4` driver runs inside SteamVR and gives it the head pose
+(6DoF from PICO OS's `libSlam` on the CDSP through `pico4-slamd`, with Basalt selectable), the
+factory lens model and the IPD read from the lens motor, and provides both
 controllers with inputs, their 6DoF pose from PICO OS's LED tracking (reimplemented), PICO OS's
 own render models and vibration. Monado runs as a system service ([session.md](session.md#monado-as-a-service)); SteamVR
 uses the same driver through `driver_monado`. The inventory comes from the stock image, kernel and
@@ -212,6 +212,8 @@ the last position. Exit status 0 means every location after the first second had
 orientation.
 
 ## Display output through Monado
+
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel.*
 
 Monado's direct-mode targets need `VK_KHR_display` or an X/Wayland server. Turnip's KGSL backend
 has no display support, and the stock kernel's panels follow a vendor KMS contract anyway. The
@@ -750,8 +752,7 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   interface, `SetGraphicsDevice` with its own Vulkan device on Turnip, and `SetupCameraFrames`
   with three linear R8 images per camera, exported as dma-bufs (DRM format modifier, linear).
   `vrclient` imports an OPAQUE_FD timeline semaphore from the compositor into that device, so the
-  device enables the external semaphore extensions and the process runs with the
-  `pico4-vrdisplay` layer, which emulates those semaphores on KGSL. The view state's "available"
+  device enables the external semaphore extensions, which Turnip on msm provides. The view state's "available"
   flag goes on with the frames.
 - **Each frame.** While the compositor asks for frames: the newest frame from the ring into a free
   image per camera (the pixel shader squares each sample, so the linear luma goes out as its
@@ -828,7 +829,7 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   - On Valve's kernel the sensor has its own driver (`pico4-imx471`, below in
     [kernel-feasibility.md](kernel-feasibility.md)), and the exposure and the pause are its V4L2
     controls. Its CSID writes the 16-bit samples the conversion takes, as PICO's stack has it.
-    The view above the camera's field of view is black.
+    The scanout is black above the camera's field of view; worn none of that shows, also looking up.
   - Shared memory version 2 carries the format: two grey cameras or one NV12 image.
 
 ## Head tracking
@@ -987,7 +988,7 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   boundary, in the room's world, 1.5 m below where the room's first session started. The shape
   carries the room's id ([room.h](../src/stockslam/room.h)): three sides of 1.5 m + v × 0.2 mm,
   v 12 bits each; a turn and a shift keep the sides, and the tracker keeps a map's boundary
-  through every save and merge. When the relocalisation callback comes and the copy is written,
+  through every save and merge. When the tracker writes the copy after a relocalisation,
   `pico4-slamd` reads the room's id from the copy's sides and fits the copy to the room's shape
   (a turn about the up axis and a shift, both worlds being gravity-aligned; accepted below 5 cm
   residual): that is the transform from the session's world to the saved room's, whichever saved
@@ -1038,7 +1039,7 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   the compositor (`floor_detection_result`), whose floor target snaps to it; accepting the step
   commits it. NaN clears it when the step ends. The floor height adjustment (step 2) is manual
   on the Frame too, and on the Frame a controller touching the floor pushes the target down
-  (the lowest controller in room-setup space); the PICO 4's controllers have no positions yet.
+  (the lowest controller in room-setup space).
   Here `libSlam`'s ground detection gives the floor: `pico4-slamd` turns it on (`plane` 1,
   `setPlaneDetect`) and passes each result's ground status and height with the pose. The floor
   lies that far below the tracker world's origin. While the detection runs, each plane it fits
@@ -1468,7 +1469,7 @@ the orientation filter, the runner's validators and the super-image reader.
 ## Run
 
 The sensor units start at boot. The fan control ([cooling.md](cooling.md)) keeps the 30 s Valve
-session check at 69 °C; longer runs are unmeasured, so keep display and SLAM runs short.
+session check at about 64 °C and about 10 minutes of a worn game at 75.6 °C.
 
 ```sh
 pico4-imu list accel gyro mag          # sensors and attributes the DSP reports
@@ -1486,8 +1487,8 @@ The stage-2 checks, `python -m overpressure dev check` in development mode and t
 `python -m overpressure hwtest flash-run --userspace ARCHIVE …` and `python -m overpressure cycle --userspace
 ARCHIVE` ([hardware-testing.md](hardware-testing.md)), test an archive built with sensor data
 after the userspace check: they record the sensor units' status and `pico4-imu list accel gyro`,
-then require `pico4-imu stream --rate 500 --seconds 10 --check`. They continue with SteamVR's
-display layer and Valve's session ([session.md](session.md#acceptance)); Monado's own OpenXR
+then require `pico4-imu stream --rate 500 --seconds 10 --check`. They continue with Valve's
+session ([session.md](session.md#acceptance)); Monado's own OpenXR
 clients are not part of them.
 
 OpenXR clients reach the driver through the Monado service, a development runtime, with Valve's
@@ -1681,15 +1682,12 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
    [Room setup](#room-setup): SteamVR's room setup runs in the headset, the floor height and
    the play area are set easily with the colour room view, and the play area comes back after a
    reboot.
-2. **Controllers in applications.** SteamVR's dashboard toggles but stays hidden without the
-   Steam client ([session.md](session.md)), so the laser, clicking and the grip frame are
-   unchecked in it. A vibration strong enough to feel has not yet come from a SteamVR
+2. **Controllers in applications.** A vibration strong enough to feel has not yet come from a SteamVR
    application: SteamVR's own test pulses are 2.5 % strong.
 3. **Controller positions.** The tracker runs in the driver. A controller that lies still from
    the start is acquired only through the identification table, as on PICO OS: the table path
    trims the blob cluster to five, and with the LEDs as bright as in the session the five of a
    controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
-   unacquired until it or the head moves. The grip frame needs checking with SteamVR's dashboard,
-   which needs the Steam client in the session.
+   unacquired until it or the head moves.
 4. **Passthrough.** On Valve's kernel the room view shows the RGB camera on PICO OS's depth mesh
-   ([Passthrough](#passthrough)). Open: the area above the camera's field of view, and a worn check.
+   ([Passthrough](#passthrough)), confirmed worn: a full colour picture, nothing black in view.

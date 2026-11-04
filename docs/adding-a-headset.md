@@ -17,8 +17,8 @@ devices/<codename>/
   ...              whatever its images need (stage 1, userspace, sources, scripts)
 ```
 
-How the images are built is the headset's own business: the PICO 4 boots an Alpine stage 1 with
-its stock Android kernel and builds its userspace from Valve's Holo packages; another headset
+How the images are built is the headset's own business: the PICO 4 boots an Alpine stage 1 on
+Valve's kernel, which it builds under `kernel/`, and builds its userspace from Valve's Holo packages; another headset
 may differ in every step.
 
 ## What overpressure already does

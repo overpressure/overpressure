@@ -29,10 +29,12 @@ userspace/        stage 2: the SteamOS-compatible userspace
   packages.txt, pacman.conf   package list and repositories
   rootfs/           the PICO 4 adaptation layer (units, udev rules, PAM, session, device tools, checks)
   session/          the session user's SteamVR configuration
-  pkgbuilds/        the project's packages: pico4-turnip-kgsl, pico4-sensors, pico4-basalt,
-                    pico4-monado, pico4-vrdisplay, pico4-sysvsem, pico4-gtk2
-src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's PICO 4 driver and
-                  KMS target), xr/ (OpenXR test clients), vrdisplay/ (SteamVR's display layer),
+  pkgbuilds/        the project's packages: pico4-sensors, pico4-basalt, pico4-monado, pico4-gamescope,
+                    pico4-vrlink, pico4-vrdisplay, pico4-gtk2 and others; pico4-turnip-kgsl and
+                    pico4-sysvsem serve the stock kernel only
+kernel/           Valve's kernel: build-kernel.sh, patches/, the PICO's drivers, the device tree
+src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's PICO 4 driver),
+                  stockslam/ (pico4-slamd), vrlink/ (Steam Link), xr/ (OpenXR test clients), vrdisplay/
                   sysvsem/ (System V semaphores), reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-system-image.sh, the extract-*.sh scripts
@@ -228,7 +230,8 @@ package builds, because makepkg runs with `--nocheck`.
 
 ## From a change to the headset
 
-The headset stays in development mode, with the engineering ABL and the dev image in `boot`
+The headset stays in development mode, with the engineering ABL, the dev image in `recovery` and
+the installed system in `boot`
 ([hardware-testing.md](hardware-testing.md#development-mode)):
 
 1. Change the code, then build: `make userspace` (or the script above), incremental.

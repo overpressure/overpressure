@@ -12,7 +12,7 @@ say how its way back to stock works.
 
 | Codename | Headset | Status | Folder |
 | --- | --- | --- | --- |
-| phoenix | PICO 4 (2022, Snapdragon XR2) | Valve's VR session with 6DoF head tracking and 3DoF controllers, installed or from RAM | [devices/phoenix](devices/phoenix/README.md) |
+| phoenix | PICO 4 (2022, Snapdragon XR2) | Valve's kernel and VR session with 6DoF head and controller tracking, games and Steam Link, installed or from RAM | [devices/phoenix](devices/phoenix/README.md) |
 
 ## The tool
 

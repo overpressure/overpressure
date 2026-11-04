@@ -1,13 +1,13 @@
 # SteamOS-compatible ARM64 userspace
 
 Roadmap step 4 ([roadmap.md](roadmap.md)): the Steam Frame's ARM64 SteamOS userspace (systemd,
-SteamOS services, gamescope, PipeWire, NetworkManager) on the **stock PICO 4 kernel**
-(`4.19.81-perf+`), with services, devices, input and graphics adapted to that kernel instead of
-the Frame's. The stage-1 initramfs ([stage1.md](stage1.md)) stays the recoverable entry point:
+SteamOS services, gamescope, PipeWire, NetworkManager) on **Valve's kernel from the Frame**
+([kernel-feasibility.md](kernel-feasibility.md)), with the PICO's own drivers and device tree. The
+stage-1 initramfs ([stage1.md](stage1.md)) stays the recoverable entry point:
 it receives the userspace into compressed RAM and hands PID 1 to its systemd. Flash storage
-stays read-only throughout. The userspace reaches `running` with no failed units in QEMU on a
-stock-like 4.19 kernel and on the headset, where Turnip renders through KGSL. The XR stack
-([xr.md](xr.md)) and Valve's VR session ([session.md](session.md)) run in it.
+stays read-only throughout. The userspace reaches `running` with no failed units on the headset, where Valve's Mesa runs
+Turnip on msm. The XR stack ([xr.md](xr.md)) and Valve's VR session ([session.md](session.md)) run
+in it. Sections on the stock kernel's path, no longer pursued, are labelled.
 
 ## Where the packages come from
 
@@ -18,7 +18,7 @@ its ARM64 packages; the project builds the rest:
 | --- | --- | --- |
 | [Holo Core aarch64 preview](https://holo-packages.steamos.cloud/holo-core-aarch64-preview/), snapshot `mash-20251118.3` | Valve and Collabora's ARM64 Arch port: `core`, `extra` and a base `system.rootfs.zst` | the build environment; resolves every dependency by default (glibc 2.42, pacman 7) |
 | [Steam Frame hotfix repository](https://steamdeck-packages.steamos.cloud/archlinux-deckard-hotfixes/release/0.3.x/) `deckard-arch-hotfixes-release-0.3` | about 400 of the Frame's own builds: systemd 257.7, gamescope 3.16.28, Mesa 26.3 (development), `steamos-customizations-deckard`, `steamos-manager`, the Steam client and SteamVR | the Frame packages named in [packages.txt](../userspace/packages.txt) |
-| [userspace/pkgbuilds/](../userspace/pkgbuilds/) | this project's packages ([below](#project-packages)) | Turnip with KGSL, the XR stack, SteamVR's display layer, System V semaphores |
+| [userspace/pkgbuilds/](../userspace/pkgbuilds/) | this project's packages ([below](#project-packages)) | the XR stack, frame pacing, patched gamescope and `vrlink` support |
 
 The Frame repository holds only the Frame's hotfixes; its base is not public. Several of its
 libraries (ffmpeg, freerdp) need older library versions than the preview provides, so a
@@ -55,33 +55,24 @@ the build's configuration without the local `pico4` repository and with
 `IgnorePkg = systemd systemd-libs systemd-sysvcompat systemd-resolvconf`, so an upgrade on the
 device cannot pull 258.
 
-### Turnip needs its KGSL backend
+### Valve's Mesa
 
-Valve's `deckard-mesa-linux-aarch64` and the preview's `vulkan-freedreno` both build Turnip only
-for the upstream `msm` DRM driver; neither binary references `/dev/kgsl-3d0`. The PICO's kernel
-exposes the Adreno 650 only through Qualcomm's KGSL driver ([graphics.md](graphics.md)).
-[`pico4-turnip-kgsl`](../userspace/pkgbuilds/pico4-turnip-kgsl/PKGBUILD) therefore builds the
-unmodified Mesa 26.1.6 with the KGSL backend, against glibc and with Wayland and X11 window-system support. It installs beside the system Mesa
-under its own names: `/usr/lib/pico4/libvulkan_freedreno_kgsl.so` with the ICD file
-`/usr/share/pico4/vulkan/turnip-kgsl.json`, which is no longer in the image: the system's Mesa is
-Valve's `deckard-mesa-linux-aarch64` ([kernel-feasibility.md](kernel-feasibility.md#valves-mesa)),
-which has no KGSL backend, so the image no longer drives the GPU on the stock kernel. Its split package
+The system's Mesa is Valve's `deckard-mesa-linux-aarch64`
+([kernel-feasibility.md](kernel-feasibility.md#valves-mesa)): Turnip on msm and OpenGL through zink.
+It has no KGSL backend, so the image no longer drives the GPU on the stock kernel.
 `pico4-graphics-tests` carries the Vulkan and KMS tests of [graphics.md](graphics.md), built for
-glibc. `/dev/kgsl-3d0` is open to every user (mode 0666, as on Android).
-
-The system Mesa (OpenGL for Xwayland) is the preview's 25.2.7. Valve's Mesa 26.3 needs
-`libdisplay-info.so.1` and `libsensors`, which only the Frame's private base provides.
+glibc.
 
 ### Project packages
 
 | Package | Content | Details |
 | --- | --- | --- |
-| `pico4-turnip-kgsl`, `pico4-graphics-tests` | Turnip with the KGSL backend; the native graphics tests | [graphics.md](graphics.md) |
+| `pico4-graphics-tests` | the native graphics tests | [graphics.md](graphics.md) |
 | `pico4-sensors` | qrtr-ns, pd-mapper and hexagonrpcd with this project's patches, for the sensor DSP | [xr.md](xr.md) |
 | `pico4-monado` | Monado 25.1.0 with the PICO 4 driver, the KMS compositor target and `pico4-cam` | [xr.md](xr.md) |
 | `pico4-basalt` | Basalt for Monado's VIT interface, built for `armv8.2-a` | [xr.md](xr.md) |
-| `pico4-vrdisplay` | the Vulkan layer that gives SteamVR's compositor the panels and shared semaphores | [session.md](session.md) |
-| `pico4-sysvsem` | System V semaphores in userspace, preloaded for every process | [session.md](session.md) |
+| `pico4-vrdisplay` | `pico4-swapchain-usage`, the stock path's frame pacing in SteamVR's compositor; its Vulkan layer for the panels is used on the stock kernel only | [session.md](session.md) |
+| `pico4-sysvsem` | System V semaphores in userspace, preloaded on the stock kernel only | [session.md](session.md) |
 
 External sources are pinned by commit or hash; the project's patches lie next to each PKGBUILD,
 its own sources in [src/](../src/).
@@ -317,7 +308,7 @@ checks:
 - the session user logged in with its session target active, Monado's socket listening, and the
   XR device nodes accessible to the session user ([session.md](session.md));
 - `steamos-customizations-deckard`, `steamos-manager`, gamescope, PipeWire and
-  `pico4-turnip-kgsl` installed;
+  `deckard-mesa-linux-aarch64` installed;
 - with a GPU node present (`/dev/kgsl-3d0`, or msm's render node on a mainline kernel), the Turnip
   Vulkan test ([graphics.md](graphics.md)).
 
@@ -400,6 +391,8 @@ quick after that.
 
 ## Wi-Fi
 
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel. On Valve's kernel: [kernel-feasibility.md](kernel-feasibility.md#results).*
+
 The Wi-Fi chip is a QCA6390 (v2.0) on PCIe, run by the stock kernel's built-in cnss2 and PICO OS's
 own driver module, qcacld-3.0 (`qca_cld3_qca6390.ko`, module `wlan`). The module is signed with
 the stock kernel's build key, so the kernel loads it as it is. It must stay byte for byte as
@@ -464,6 +457,8 @@ The image's `wpa_supplicant` is therefore
 version 2.
 
 ## Audio
+
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel. On Valve's kernel: [Audio on a mainline kernel](#audio-on-a-mainline-kernel).*
 
 The sound card is Qualcomm's `kona-mtp-snd-card`, the audio DSP (ADSP) running its front ends.
 Its outputs are two WSA881x amplifiers, one per speaker, on SoundWire. Its microphone is analog,
@@ -733,6 +728,8 @@ cat /proc/pressure/memory                  # memory pressure (PSI)
 
 ### Audio on the headset
 
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel.*
+
 | Check | Result |
 | --- | --- |
 | Bring-up at boot (installed system) | modules loaded, ADSP online and `kona-mtp-snd-card` registered 32.7 s after the kernel started; the audio process's file server without a restart; nodes for PCM 0 only; no oops |
@@ -744,6 +741,8 @@ cat /proc/pressure/memory                  # memory pressure (PSI)
 | `dev check` on the installed system | passes, Valve's session included (89.93 commits/s) |
 
 ### QEMU: stage 1 and the userspace on a stock-like 4.19 kernel
+
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel.*
 
 ```sh
 devices/phoenix/tests/qemu/build-test-kernel.sh 4.19.325      # once; writes cache/qemu/Image-4.19
@@ -830,4 +829,4 @@ external authentication), with open or unset authentication in the profile, and 
 - In QEMU, `serial-getty@ttyAMA0` times out waiting for its device and is skipped; the emulated
   boot is slow (`multi-user.target` about 170 s after the switch). The headset has no serial
   console; the stage-2 logs are the journal and the kernel log.
-- The Steam client starts with Valve's session; signing in is not verified yet ([session.md](session.md#the-steam-client)).
+- The Steam client starts with Valve's session, signs in and runs games ([session.md](session.md#the-steam-client)).

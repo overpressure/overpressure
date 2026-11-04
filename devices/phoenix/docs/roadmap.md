@@ -6,8 +6,8 @@ PICO's own drivers and device tree ([kernel-feasibility.md](kernel-feasibility.m
 stock Android kernel, which is no longer pursued; the way back to PICO OS stays. The plan has six steps,
 from a recoverable development device to Valve's VR session, and follows the strategy of the
 background research in [research.md](research.md). All six steps work on the tested headset,
-an original PICO 4. Open work: worn checks of tracking on Valve's kernel, the speakers after a
-suspend, FEX and Lepton on Valve's Mesa, performance and the installed system's power handling.
+an original PICO 4. Open work: a lens that can go wrong after a wake, suspend and resume (USB and
+the speakers), the sound's crackle, heavy games' frame rate and the Venus firmware's crash on H.264.
 
 ## Status
 
@@ -17,8 +17,8 @@ suspend, FEX and Lepton on Valve's Mesa, performance and the installed system's 
 | 2. Minimal Linux | Works: root shell over USB-C, read-only storage, automatic return to PICO OS | [stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md) |
 | 3. Native graphics | Works: Valve's Mesa on msm; both panels at 90 Hz | [graphics.md](graphics.md) |
 | 4. SteamOS-compatible userspace | Works: Holo Core aarch64 with the Frame's systemd 257.7, no failed units | [userspace.md](userspace.md) |
-| 5. Native XR hardware | Works: head IMU, display, lens correction, tracking cameras, 6DoF head tracking, 3DoF controllers. Open: controller positions | [xr.md](xr.md) |
-| 6. Valve's VR session | Runs: SteamVR on both panels at 90 fps on the Steam Frame's compositor path. The Steam client signs in, games start from its library. Open: performance, cooling | [session.md](session.md), [cooling.md](cooling.md) |
+| 5. Native XR hardware | Works: head IMU, display, lens correction, tracking cameras, 6DoF head and controller tracking, RGB camera and the colour room view | [xr.md](xr.md) |
+| 6. Valve's VR session | Works: SteamVR on both panels at 90 fps on the Steam Frame's compositor path, the Steam client and its library, x86 games through Proton and FEX, Android apps through Lepton, Steam Link from a PC. Open: heavy games' frame rate | [session.md](session.md), [cooling.md](cooling.md) |
 
 Each step's document holds its design, measurements and reproduction steps.
 
@@ -27,11 +27,9 @@ Each step's document holds its design, measurements and reproduction steps.
 - **Valve's kernel.** Stage 1 and the installed system run on Valve's 7.2 kernel
   ([kernel-feasibility.md](kernel-feasibility.md)) with both panels at 90 Hz, the GPU under Valve's
   own Mesa (Turnip on msm, OpenGL through zink), the GD32 MCU with fan control, the three DSPs, the
-  head IMU at 1 kHz and the keys; Valve's session presents in SteamVR's direct mode at 89 frames per
-  second. The tracking cameras stream through CAMSS and PICO OS's head tracker and the controller
-  tracker run there; both still need a worn check. The steps below describe how each came up, many
-  on the stock kernel, whose workarounds (no devtmpfs, the userspace QRTR name service, the downstream
-  `adsprpc` ABI, the preloaded System V semaphores) are no longer needed.
+  head IMU at 1 kHz and the keys. The stock Android kernel is no longer pursued and the image no
+  longer drives the GPU there; its behaviour stays the reference for the hardware, and the way back
+  to PICO OS stays.
 - **Read-only storage.** Both stages switch every physical block device read-only. Only the
   explicit, backup-validated flash and restore paths write to the headset's storage (`boot`
   for the dev image or a test run, ABL through EDL); each write is checked against the
@@ -119,22 +117,13 @@ the two eye displays can be driven reliably at their native resolution and refre
 
 **Status.**
 
-- **Display.** `msm_drm` exposes one 4320×2160 DSI connector for the two 2160×2160 panels
-  (Sharp LS026B3SA), with 90 and 72 Hz modes. Frames use the stock arrangement (six
-  colour-component layers, routed to the eyes with `sspp_layout`) and the vendor fence
-  contract: each commit requests the CRTC release fence and the connector retire fence and
-  waits for the retire fence. With page-flip events alone, swapped frames come out corrupted.
-  Output starts at the boot-time 90 Hz mode; a first frame at 72 Hz fails with
-  `DMS not supported on first frame`.
-- **Measured.** From a fresh boot, 90 s per mode: 8,100 flips at 89.9976 Hz and 6,481 flips
-  at 72.0045 Hz, with no vblank sequence gaps and steady left and right images in the lenses;
-  120 s runs give 90.0021 and 72.0082 Hz. Generic `drm_info` and `modetest` compute about
-  32.83 and 26.27 Hz for these modes; the kernel's vblank events give the real rates.
-- **GPU.** The Adreno 650 is driven by KGSL; it is not a DRM device on this kernel. Turnip built
-  with its KGSL backend (Mesa 26.1.6, `-Dfreedreno-kmds=kgsl`) renders an offscreen Vulkan test
-  and verifies all 65,536 pixels. Alpine's and Valve's Mesa builds lack that backend.
-- The compositors of steps 5 and 6 present through this display path, scanning out
-  GPU-rendered images without a copy.
+- **Display.** The DPU drives two bonded DSI links with DSC as one 4320×2160 connector for the two
+  2160×2160 panels (Sharp LS026B3SA), with vblanks at 90.00 Hz. The panel driver comes from the stock
+  tree's power-on commands and timings. SteamVR's compositor scans out compressed GPU-rendered images
+  without a copy.
+- **GPU.** The Adreno 650 runs on the msm DRM driver as one device with the display, as on the Frame,
+  under Valve's Mesa: Turnip on msm (Vulkan 1.3) and OpenGL 4.6 through zink. It runs at up to 587 MHz,
+  the chip's speed bin and PICO OS's VR level.
 
 **Limits.** The tests are bounded runs, not a long-duration reliability or Vulkan conformance
 claim. The GPU firmware comes from the user's own backup.
@@ -142,81 +131,48 @@ claim. The GPU firmware comes from the user's own backup.
 ### 4. SteamOS-compatible userspace
 
 **Goal.** Study the public Steam Frame packages and the steamac and steam-frame-nixos
-projects, and adapt system services, input and graphics dependencies to the PICO kernel
-instead of using the Frame's kernel.
+projects, and run the Frame's system services, input and graphics stack on the PICO 4.
 
 **Status.**
 
 - **Packages.** Valve's public Holo Core aarch64 preview resolves the system. The Frame's own
   builds come from its public hotfix repository, named explicitly in
-  [packages.txt](../userspace/packages.txt): systemd 257.7,
-  `steamos-customizations-deckard`, `steamos-manager`, gamescope 3.16.28 and, for step 6,
-  SteamVR. The preview's systemd 258 needs Linux 5.4, so the build takes 257.7 and the device
-  pins it (`IgnorePkg`). Neither Valve's Turnip nor the preview's has the KGSL backend;
-  `pico4-turnip-kgsl` installs beside the system Mesa. The current archive holds 409 packages:
-  840 MB, 2,567 MiB installed.
+  [packages.txt](../userspace/packages.txt): systemd 257.7 (pinned with `IgnorePkg`),
+  `steamos-customizations-deckard`, `steamos-manager`, gamescope, Valve's Mesa and SteamVR.
 - **Handoff.** Stage 1 receives the archive over SSH into ext4 on zram
   (`pico4-userspace receive`) and hands PID 1 to its systemd (`pico4-userspace switch`). The
   USB link, the SSH host key, read-only storage and the recovery deadlines carry over into
-  stage 2.
-- **On the stock kernel** systemd reaches `running` with no failed units (taint `old-kernel`
-  only), and Turnip renders and verifies the Vulkan test inside the userspace. Adaptations: a
-  udev rule creates the device nodes; the session user `steamos` is in the Android network
-  groups that `ANDROID_PARANOID_NETWORK` requires for sockets; drop-ins keep systemd's `cpu`
-  controller off, because with `CONFIG_RT_GROUP_SCHED` the kernel refuses real-time threads
-  inside it; zram uses LZO, the only compressor the kernel offers.
-- **QEMU.** [tests/qemu/run-userspace.sh](../tests/qemu/run-userspace.sh) boots the same
-  stage 1 and archive on a mainline 4.19 kernel configured like the stock one: the same handoff
-  and syscall surface, without the headset's drivers.
-
-**Open.** Kernel features the Steam client and games will miss: user, PID, IPC and UTS
-namespaces (Steam Linux Runtime's containers), `binfmt_misc` (FEX for x86 games), `hidraw`
-(Steam Input; input comes only through evdev and uhid), System V shared memory and message
-queues, and memcg (no resource limits; `systemd-oomd` is masked). How to run the Steam Linux
-Runtime on this kernel is undecided.
+  stage 2. Installed, the same system runs from `super` without the PC ([install.md](install.md)).
+- **Result.** systemd reaches `running` with no failed units and Turnip renders and verifies the
+  Vulkan test inside the userspace. Drop-ins keep systemd's `cpu` controller off, because with
+  `CONFIG_RT_GROUP_SCHED` the kernel refuses real-time threads inside it.
 
 ### 5. Native XR hardware
 
 **Goal.** Establish IMU access, camera acquisition, 6DoF tracking, controller connectivity and
 lens calibration, with Monado as the foundation.
 
-**Status.** Monado 25.1.0 with the project's `pico4` driver ([src/monado/](../src/monado/)) is
-the system's OpenXR runtime and runs as a socket-activated system service. The factory
-calibration it uses comes from the user's own backup.
+**Status.** Monado with the project's `pico4` driver ([src/monado/](../src/monado/)) runs inside
+SteamVR as `driver_monado`. The factory calibration it uses comes from the headset's own `persist`.
 
-- **Head IMU.** The ICM-42688 sits behind the sensor DSP (SLPI). linux-msm's qrtr-ns, pd-mapper
-  and hexagonrpcd, ported to the stock kernel's downstream FastRPC ABI, boot the DSP and serve
-  its sensor registry. The `pico4-imu` client streams it at 512 Hz with no gaps and monotonic
-  DSP timestamps; a guided 90° turn reads +90.3 to +90.5°. Monado's driver fuses it at 1 kHz:
-  it maps the DSP's QTimer timestamps onto `CLOCK_MONOTONIC`, starts level from the measured
-  gravity and learns the gyro bias while the headset is still. A headless OpenXR client gets a
-  tracked pose about 1 ms after the sample; on a still headset the view rotates 0.009° in 60 s.
-- **Display.** A Monado compositor target presents through the stock KMS driver with the fenced
-  six-layer path of step 3, sharing linear dma-buf images with the display without a copy.
-  OpenXR frames reach the panels at 90 Hz with one projection layer. Frames with several layers
-  reach 90 Hz with compressible scratch images at panel size and a GPU clock floor of 587 MHz.
-- **Lenses and IPD.** The compositor pre-distorts each eye with the headset's factory lens
-  model over a 106.7° field of view; lines look straight in the lenses. The chromatic
-  aberration terms are implemented but off by default, as on PICO OS. The IPD comes from the
-  lens motor's GD32 MCU through one read-only command (71.99 mm with the wheel at 72 mm).
-- **Tracking cameras.** The four OV7251s stream through Qualcomm's Spectra camera stack (CSL)
-  without vendor libraries. The controller radio ("station", an nRF52832 on SPI) provides their
-  50 Hz frame sync and their exposure: in 30 s each camera delivers 1,500 of 1,500 frames,
-  17.5 ms on average from start of frame to delivery.
-- **Controllers.** Inputs and IMU arrive through the sensor DSP (`ble_mcu`). Both controllers
-  appear in OpenXR with the PICO 4 controller profile, all buttons, touch sensors, sticks and
-  triggers, and 3DoF orientation, at about 500 IMU samples and 100 input packets per second
-  each.
-- **6DoF.** PICO OS's own tracker (`libSlam.so`, its front end on the Compute DSP) runs in a
-  bionic root beside the driver, on all four cameras at 25 Hz and the IMU at 1 kHz. Still, it
-  holds within a millimetre for a minute at about 70 % of one core (Basalt took about 3.5
-  cores). Worn, a closed 12 m walk ends within 1.8 cm of the start; slid 50 cm on a table, it
-  returns within 1 cm. Basalt inside Monado is deprecated; it remains selectable as it is.
-- **Acceptance.** In the step's acceptance cycle, with 6DoF running, an OpenXR client renders
-  2,698 frames in 30 s at 89.996 Hz (2 late), each eye on its own panel.
+- **Head IMU.** The ICM-42688 sits behind the sensor DSP (SLPI), reached over upstream FastRPC and
+  QRTR: 1023.89 Hz with no gaps. Monado's driver maps the DSP's timestamps onto `CLOCK_MONOTONIC`,
+  starts level from the measured gravity and learns the gyro bias while the headset is still.
+- **Lenses and IPD.** Each eye is pre-distorted with the headset's factory lens model; lines look
+  straight in the lenses. The IPD comes from the lens motor's GD32 MCU through one read-only command.
+- **Tracking cameras.** The four OV7251s stream through CAMSS. The controller radio ("station", an
+  nRF52832 on SPI) provides their 50 Hz frame sync and their exposure: 1,500 frames per camera at
+  49.997 fps, none with an error, every timestamp from the hardware.
+- **Controllers.** Inputs and IMU arrive through the sensor DSP, positions from a reimplementation of
+  PICO OS's controller tracking on the cameras' LED exposures. Worn, both follow the hands.
+- **6DoF.** PICO OS's own tracker (`libSlam.so`, its front end on the Compute DSP) runs in a bionic
+  root beside the driver, on all four cameras at 25 Hz and the IMU at 1 kHz. Still for 60 s: 0 poses
+  lost, under a millimetre, about half of one core. Worn it tracks walking and fast turns, and rooms
+  and their play areas come back after a reboot. Basalt inside Monado remains selectable.
+- **Room view.** The compositor's colour room view runs on the RGB camera and the depth mesh; worn it
+  shows a full colour picture, also looking up.
 
-**Open.** 6DoF robustness; see
-[Open work](#open-work).
+**Open.** See [Open work](#open-work).
 
 ### 6. Valve's VR session
 
@@ -230,34 +186,24 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
   `pico4-session.service` starts. The Frame's tracking driver, controller driver and radio
   firmware stay out of the image. The Frame's radio firmware updater is masked: it must never
   run against the PICO's station.
-- **Display.** SteamVR's compositor presents only in direct mode. The `pico4-vrdisplay` Vulkan
-  layer gives it the panels as one 4320×2160 display at 90 Hz, through the stock KMS driver with
-  the fenced path of step 3.
-- **Tracking.** `driver_monado`, Monado's SteamVR plugin, runs the step-5 driver inside
-  SteamVR: the headset with 6DoF, both controllers with 3DoF and an arm model.
-- **Kernel gaps.** SteamVR's process locks use System V semaphores, which the preloaded
-  `pico4-sysvsem` provides. Its compositor shares GPU semaphores between processes, which
-  neither Turnip's KGSL backend nor the kernel supports (no DRM syncobjs); the display layer
-  emulates them over sync files.
-- **Measured.** In the full session (gamescope's overlay and the dashboard besides the
-  compositor) the GPU is 99 % busy at 587 MHz, and the compositor presents about 42–54 frames
-  per second against the panels' 90 Hz. SteamVR on its own presents most frames at 90 Hz;
-  about one in five is a refresh late. In the lenses the SteamVR environment shows, slightly
-  jittery; the controllers turn with the wrists but do not move in space.
-- **Heat.** Without fan control Valve's session takes the hottest thermal zone from about 54 °C
-  to 92 °C within a minute. The userspace enables `pico4-fan.service`, which runs PICO OS's fan
-  policy ([cooling.md](cooling.md)): with the fan at 30 % the 30 s session check takes the
-  hottest zone from 45 °C to 69 °C, against 47 °C to 86 °C without it. Session checks run for
-  30 s.
-- **Session.** Valve's session is the only session; it starts at boot. Monado's service remains
-  as a development runtime for the driver's own OpenXR clients, with the session stopped (both
-  own the hardware).
-- **Acceptance.** The acceptance cycle includes 30 s of Valve's session: presenting 15 s after
-  the switch at about 51 frames per second, no fence or GPU timeout, the headset and both
-  controllers in SteamVR.
+- **Display.** SteamVR's compositor presents in direct mode through Turnip's own display WSI on msm:
+  one 4320×2160 display at 90 Hz. `pico4-swapchain-usage` holds the stock path's pacing: four images,
+  one frame ahead, a lead of 5 ms.
+- **Tracking.** `driver_monado`, Monado's SteamVR plugin, runs the step-5 driver inside SteamVR: the
+  headset and both controllers with 6DoF.
+- **Measured.** `dev check`: 90.0 commits/s, 0.04 % late, no stalls over 30 s. Worn the view shows no
+  visible stutter with Steam's panel in view. Beat Saber through Proton and FEX submits a median
+  44.8 frames/s while the compositor presents 89.6/s. POOLS is limited by the GPU, at about 32 frames/s.
+- **Apps.** The Steam client signs in and starts games from its library, x86 games through Proton and
+  FEX, Android apps through Lepton. Steam Link plays PC games from a PC with picture, sound, tracking
+  and controllers, and its end returns to the local session.
+- **Heat.** `pico4-fan.service` runs PICO OS's fan policy ([cooling.md](cooling.md)): about 10 minutes
+  of a worn game peak at 75.6 °C, the limit being 90 °C.
+- **Session.** Valve's session is the only session; it starts at boot.
+- **Acceptance.** `dev check` runs 30 s of Valve's session on the installed system, with the headset
+  and both controllers in SteamVR.
 
-**Open.** Performance, cooling and controller positions;
-see [Open work](#open-work).
+**Open.** See [Open work](#open-work).
 
 ## Milestones
 
@@ -267,12 +213,12 @@ and where they stand.
 | Milestone | Status |
 | --- | --- |
 | Unlock the PICO 4 bootloader | Done: normal and critical unlock persist with the engineering ABL (step 1) |
-| Boot minimal Linux | Done: stock kernel with an Alpine initramfs, root shell over USB-C (step 2) |
-| Obtain accelerated Linux graphics | Done: Turnip Vulkan on KGSL and both panels at 90 and 72 Hz through KMS (step 3); the compositors of steps 5 and 6 scan out GPU-rendered images |
+| Boot minimal Linux | Done: Valve's kernel with an Alpine initramfs, root shell over USB-C (step 2) |
+| Obtain accelerated Linux graphics | Done: Valve's Mesa on msm, both panels at 90 Hz, compressed scanout (step 3) |
 | Run the ARM64 SteamOS userspace | Done: Holo Core aarch64 with the Frame's systemd 257.7 and SteamOS services, no failed units (step 4) |
 | Display a Steam-style desktop in the headset | Done: SteamVR's environment and dashboard in the lenses, the Steam client's library as SteamVR's overlay (step 6) |
-| Full 6DoF and controllers | Partly: 6DoF head tracking and 3DoF controllers with all inputs (step 5); controller positions are open |
-| Complete standalone SteamVR experience | Partly: the installed system starts without the PC; in Valve's session SteamVR runs on the panels at 90 fps and games start from the Steam library; cooling and power handling are open |
+| Full 6DoF and controllers | Done: head and controller tracking, all inputs and vibration (step 5) |
+| Complete standalone SteamVR experience | Done for the tested games: starts without the PC, Steam's library, x86 and Android apps, Steam Link (step 6). Open: heavy games' frame rate and suspend, see [Open work](#open-work) |
 
 ## Open work
 
@@ -298,42 +244,34 @@ peaks at 69 °C instead of 86 °C. Remaining:
 
 1. **Longer sessions.** The hottest-zone limit is 90 °C. PICO OS's early table, the default,
    holds 10 minutes of Valve's session at 90 fps at a hottest CPU/GPU mean of 65.6–72.1 °C with
-   the fan at 45 % ([cooling.md](cooling.md)); longer sessions and games are unmeasured.
+   the fan at 45 % ([cooling.md](cooling.md)); about 10 minutes of Beat Saber peak at 75.6 °C. Sessions
+   much longer than that are unmeasured.
 
 ### Performance
 
 Details: [session.md](session.md), [xr.md](xr.md).
 
-Valve's session runs the Steam Frame's compositor path at 90 frames per second at 587 MHz:
-7.0 ms of GPU per frame, the GPU about 72 % busy, frames reaching the panels at a steady
-21–22 ms after their present, the hottest zone below 62 °C, and in the lenses fluid without
-doubled lines.
+Valve's session runs the Steam Frame's compositor path at 90 frames per second at 587 MHz, and worn
+the view is fluid, also with Steam's panel in view.
 
-- The headset's proximity sensor in `driver_monado`, so that SteamVR's standby works as on the
-  Frame (its compositor keeps running on standby until then).
-- One gap of 125–165 ms during each start of Valve's session
-  ([session.md](session.md#one-second-waits)).
+- Beat Saber submits half the panels' rate.
+- 72 Hz, the Frame's default for apps, is not selectable in SteamVR's settings yet.
+- Steam Link: the first picture follows a decoder reset about 14 s after the client starts, and
+  30 ms pass between a decoded picture and its illumination.
 
 ### Steam client and network
 
 Details: [session.md](session.md), [userspace.md](userspace.md).
 
-- The Steam client is in the image as Valve's 671 MiB bundle; its first start unpacks it on
-  the data partition (2.5 GB) and updates it. It starts with Valve's session and shows its UI
-  as SteamVR overlays; pointer, clicks, haptics and its settings work. Its UI, its web helper
-  and Xwayland run OpenGL on the GPU through zink ([graphics.md](graphics.md#opengl)). Open:
-  a fluid login page and library in the headset (checked by the user), signing in, and a worn
-  check that SteamVR's one-second waits no longer come while the client works with its
-  overlays.
-- The headset reaches the internet over the USB link when the PC shares its connection
-  ([userspace.md](userspace.md#internet-over-usb)). Wi-Fi comes up and scans
-  ([userspace.md](userspace.md#wi-fi)) and joins WPA2 and WPA3 networks.
-- MangoHud's `mangoapp`, the client's performance overlay, shows its HUD in the headset over
-  apps in gamescope (built against the image's libraries, its frame timings through the System
-  V message queues of `pico4-sysvsem`); switching it on from the client's menu is unverified.
-  The client's video module uses the FFmpeg 8 it brings itself; playback is unverified.
-- The client will meet the kernel limits of step 4: no namespaces for Steam Linux Runtime's
-  containers, no `binfmt_misc` for FEX, no `hidraw` for Steam Input.
+- The Steam client signs in, and its store and library work in the headset. `vrcompositor` dumps core
+  when the session stops.
+- Wi-Fi joins WPA2 and WPA3 networks and reconnects after a reboot; the headset also reaches the
+  internet over the USB link when the PC shares its connection
+  ([userspace.md](userspace.md#internet-over-usb)).
+- MangoHud's `mangoapp`, the client's performance overlay: switching it on from the client's menu is
+  unverified.
+- Video: HEVC decodes through Venus. H.264 crashes Venus's firmware, which then stalls storage and
+  halts the headset until a 10 s power press; do not run FFmpeg's `h264_v4l2m2m`.
 
 ### Controllers
 
@@ -349,9 +287,10 @@ Details: [xr.md](xr.md).
   the only controller command in the allowlist; firmware and OTA commands stay excluded.
 - **SteamVR.** The controllers are SteamVR's own PICO 4 controller type (`pico_controller`), so
   games' bindings for it, or their Touch, Index and Vive bindings through SteamVR's remapping,
-  apply; in a game this is unchecked. A press of the PICO or menu button opens the dashboard,
+  apply. A press of the PICO or menu button opens the dashboard,
   whose content comes from the Steam client, a double press the room view, and the laser and
   trigger clicks work in it.
+- **Battery.** The controllers' battery level has no known scale and does not reach SteamVR yet.
 
 ### Head tracking
 
@@ -377,13 +316,18 @@ system updates. Open:
    wiped data) is not yet verified on the headset.
 2. **Power.** The lenses show a boot indication until Valve's session starts. The power key
    follows PICO OS (a short press suspends, 2 s held powers off), and a power-off with the
-   cable attached ends in charger mode, from which the key starts the system; verified on the
-   headset. After a resume Valve's session goes on with 6DoF, both controllers and the cameras.
+   cable attached ends in charger mode, from which the key starts the system. After a resume the
+   USB link is gone if the cable is in and the speakers are silent.
+3. **Wake.** From a boot the picture comes by itself when the headset is picked up, repeatedly.
+   Why an earlier dark wake went away is not known. A lens can go wrong after a wake while the other
+   works: seen once grey (left, through three more wakes, cured by a suspend) and once corrupted
+   (right, cleared by the next wake); the cause is not known. The headset does not go to standby in
+   a dark room.
 
 ### Other hardware
 
-Wi-Fi joins WPA2 networks ([userspace.md](userspace.md#wi-fi)). Audio works: the speakers and
+Audio works: the speakers and
 the microphone are PipeWire's default sink and source, and playback runs without xruns under
 Valve's session ([userspace.md](userspace.md#audio)); SteamVR's sound and volume work in the
-headset, the microphone records speech, and PICO OS's calibration is loaded per stream; the end of a sound still crackles at the speakers (open, [userspace.md](userspace.md#audio)). Bluetooth has not been brought up under the userspace; suspend and resume work ([install.md](install.md#power-key)). Battery
+headset, the microphone records speech at PICO OS's gain of 12, and PICO OS's calibration is loaded per stream; the end of a sound still crackles at the speakers and loud starts overshoot for about 250 ms (open, [userspace.md](userspace.md#audio)). Bluetooth has not been brought up under the userspace. Battery
 level and charging state reach UPower and SteamVR ([userspace.md](userspace.md)).

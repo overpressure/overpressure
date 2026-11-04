@@ -1,16 +1,14 @@
 # Valve's VR session
 
 Roadmap step 6 ([roadmap.md](roadmap.md)) runs the Steam Frame's VR session on the original
-PICO 4 and its stock 4.19 kernel: Valve's `gamescope-session.target` with gamescope (OpenVR
-backend) and SteamVR 2.17.10. SteamVR's compositor drives both panels in direct mode through
-this project's Vulkan layer, `pico4-vrdisplay`, and Monado's SteamVR plugin, `driver_monado`,
-supplies the headset (6DoF) and both controllers (3DoF) from the PICO 4 driver of
-[xr.md](xr.md). Semaphores shared between processes and System V semaphores, which the kernel
-cannot provide, are implemented in userspace. Outside Valve's session, Monado runs as a
-socket-activated system service. The session is verified on the headset, including an
-acceptance cycle with stock restore. It is GPU-bound at 42–54 frames per second, the fan
-control ([cooling.md](cooling.md)) has not been measured with it, and the Steam client starts
-with it but is not signed in yet.
+PICO 4 on Valve's Steam Frame 7.2 kernel: Valve's `gamescope-session.target` with gamescope
+(OpenVR backend) and SteamVR 2.17.10. SteamVR's compositor drives both panels in direct mode
+through Turnip's own display WSI on msm, and Monado's SteamVR plugin, `driver_monado`, supplies
+the headset and both controllers in 6DoF from the PICO 4 driver of [xr.md](xr.md). Verified worn:
+90 frames per second, the Steam client signed in with its library running games, x86 games
+through Proton and FEX, Android apps through Lepton, and Steam Link from a PC. Parts of this
+document describe the stock kernel's path, which is no longer pursued; they are labelled, and
+the current results are in [kernel-feasibility.md](kernel-feasibility.md#results).
 Valve's packages come from the Frame's public repository ([userspace.md](userspace.md)); the
 build output stays private.
 
@@ -45,9 +43,9 @@ system: dsp_service, steamvr-program-ble (controller radio firmware), deckard-fp
 | --- | --- |
 | sddm autologin | `pico4-session.service`: a logind session for `steamos` through PAM, whose user manager starts the session target |
 | `driver_cv`, `dsp_service`, FPGA, radio firmware | `driver_monado`, Monado's SteamVR plugin, with the PICO 4 driver of [xr.md](xr.md) in `vrserver` |
-| Direct mode through Valve's Turnip on `msm` | `pico4-vrdisplay`, a Vulkan layer that implements the display path on the stock KMS driver |
-| Semaphores shared between processes (DRM syncobjs on `msm`) | the same layer emulates them over sync files ([below](#shared-semaphores)) |
-| System V semaphores (SteamVR's process locks) | `pico4-sysvsem`, a preloaded library ([below](#system-v-semaphores)) |
+| Direct mode through Valve's Turnip on `msm` | the same, with the stock path's pacing in `pico4-swapchain-usage` |
+| Semaphores shared between processes (DRM syncobjs on `msm`) | the same |
+| System V semaphores (SteamVR's process locks) | the same; the kernel provides them |
 | `driver_frame_hmd`'s SteamVR settings | `enableLinuxVulkanAsync` in the session user's `steamvr.vrsettings` ([below](#steamvr-configuration)) |
 | Steam client | the same package and unit; unpacked, updated and started with the session ([below](#the-steam-client)) |
 | — | Monado as a system service: the OpenXR runtime outside Valve's session |
@@ -70,7 +68,7 @@ the user manager, then starts Valve's session through Valve's own `start-gamesco
 names (`PICO4_SESSION_TARGET=...`, an optional `EnvironmentFile`). SteamVR is the OpenXR
 runtime (its first start links it into the user's `~/.config/openxr`) and `driver_monado`
 owns the hardware. Valve's session is the only one: there is no session without SteamVR. The
-unit needs the GPU (`ConditionPathExists=/dev/kgsl-3d0`), so it does not start in QEMU.
+unit needs the GPU's node, so it does not start in QEMU.
 
 A session that ends by itself starts again 5 s later (`Restart=always`), as sddm's
 `Relogin=true` does on the Frame. A SteamVR that ends without a stop being asked for, such as
@@ -262,8 +260,7 @@ session:
   client does not see the external driver path (`/usr/share/steamvr-monado`, the container has
   its own `/usr`) and logs "driver not found"; games start without it.
   Games with an Android build (Cubism) start through Valve's
-  Lepton instead, which runs the Android build in a podman container; podman is not in the
-  image.
+  Lepton instead, which runs the Android build in a rootless podman container, as on the Frame.
 - **UI on the GPU.** The client's web helper (CEF) draws the UI with ANGLE. On ANGLE's OpenGL
   backend, zink on Turnip, the UI's overlay alternates between the new and an older frame from
   the moment a dialog opens (the sign-in's "More Options..." dialog: in panel images every fifth
@@ -283,6 +280,8 @@ session:
   packaged for arm64; the client disables it.
 
 ### Monado as a service
+
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel.*
 
 A development runtime, not part of the session: the driver's OpenXR test clients
 (`pico4-openxr-pose`, `pico4-openxr-display`, [xr.md](xr.md)) run through it, with Valve's
@@ -313,6 +312,8 @@ session never run together: nothing in Valve's session connects to the socket, a
 started while the session runs gets no system (the service fails to open the display).
 
 ### SteamVR's display: pico4-vrdisplay
+
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel. Text that names Valve's kernel or msm applies.*
 
 `vrcompositor` presents only through direct mode: Vulkan's `VK_KHR_display` with
 `VK_EXT_acquire_drm_display`, or a Wayland DRM lease. Turnip's KGSL backend has no display
@@ -454,6 +455,8 @@ watcher re-arms between events and can miss one). Without `/dev/dri/card0`, or w
 
 ### Shared semaphores
 
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel.*
+
 SteamVR's compositor shares timeline semaphores with other processes as `OPAQUE_FD` handles
 (its mirror textures first, then the swapchains of every client). Turnip's KGSL backend can
 export a semaphore only as a sync file, and the stock kernel has no object that keeps a GPU
@@ -585,8 +588,8 @@ adapts `driver_monado`:
   frame of their render models;
 - the controllers are drawn with PICO OS's own models, `{monado}pico4_controller_left` and
   `_right` ([xr.md](xr.md#controllers)), and get a haptic output (`/output/haptic`);
-- positions marked valid count, not only tracked ones, so the 3DoF controllers appear where
-  the arm model places them;
+- positions marked valid count, not only tracked ones, so controllers the tracker has not
+  acquired yet appear where the arm model places them;
 - inputs a controller lacks are left out instead of being missed every frame: one profile
   serves both hands, with A/B on the right controller and X/Y on the left;
 - the headset also answers `IVRDisplayComponent_003` with the exact inverse of its lens
@@ -638,6 +641,8 @@ simulation) to SteamVR's `default_pico_controller_remapping.json`, the only rema
 reads for `pico_controller`. Without it the controllers stay at the origin, without input.
 
 ### Performance and heat
+
+*Stock kernel path, no longer pursued: this section does not describe Valve's kernel. Current results: [kernel-feasibility.md](kernel-feasibility.md#results).*
 
 With the Steam Frame's compositor settings ([SteamVR configuration](#steamvr-configuration))
 Valve's session presents 90 frames per second at the GPU's 587 MHz floor: 90.0 commits/s with
@@ -1007,9 +1012,8 @@ systemctl start pico4-session.service
 SteamVR's logs, including the layer's `pico4-vrdisplay.txt`, are in
 `/home/steamos/.local/share/Steam/logs`.
 
-The display layer and the shared semaphores on their own (the session must be stopped for the
-display; `VK_DRIVER_FILES` selects Turnip with the KGSL backend, since the Mesa package
-beside it has no driver for this GPU):
+The display layer and the shared semaphores on their own, on the stock kernel's path only (the
+session must be stopped for the display):
 
 ```sh
 PICO4_VRDISPLAY=1 PICO4_VRDISPLAY_STATS=/run/vrdisplay.json pico4-vrdisplay-test 15
@@ -1024,8 +1028,9 @@ runs Valve's session for a bounded time and returns to the configured one:
 
 1. It saves `session.conf`, stops the Monado service, records the hottest thermal zone (the
    highest reading below 200 °C), selects `gamescope-session.target` and restarts
-   `pico4-session.service`. A runtime drop-in for `steamvr.service` has the layer write its
-   statistics and frame 300 into `/run/pico4-valve-session`; SteamVR's old logs are removed.
+   `pico4-session.service`. On msm the numbers come from `msm-frame-stats`; on the stock path a
+   runtime drop-in for `steamvr.service` has the layer write its statistics and frame 300 into
+   `/run/pico4-valve-session`. SteamVR's old logs are removed.
 2. It waits up to 180 s for the compositor's "Startup Complete" and the layer's first
    statistics (ten seconds of frames). As soon as `vrserver` answers, it sets
    `power.turnOffScreensTimeout` to an hour (`vrcmd`): the headset lies still and off the head,
@@ -1075,19 +1080,20 @@ verdict. The runner prints both verdicts.
 ARCHIVE …` and `python -m overpressure cycle --userspace ARCHIVE` (unattended, ending on stock boot and
 ABL) run the same stage-2 checks ([hardware-testing.md](hardware-testing.md)). After the
 userspace check and the head IMU, they stop the session (waiting until SteamVR and the Steam
-client have exited) and run `pico4-vrdisplay-test 15` and `pico4-vrsync-test` when the
-archive's manifest lists `pico4-vrdisplay`, then Valve's session when it lists
+client have exited) and run Valve's session when the archive's manifest lists
 `deckard-steamvr-rel`; afterwards the session runs again, also after a failed check:
 
-- the display layer test must hold the display rate, show red left and blue right on the
-  panels and lose no fences (`validate_vr_display`); the semaphore test must pass all five
-  checks (`validate_vr_sync`);
+- on the stock path only, the display layer test and the semaphore test (`validate_vr_display`,
+  `validate_vr_sync`) run first; on msm they are skipped;
 - before Valve's session the runner waits until the hottest zone is below 70 °C (180 s at
   most), then runs `pico4-valve-session-check --seconds 30` with its stderr kept out of the
   JSON (`VALVE_SESSION_*` in [tooling/userspace.py](../tooling/userspace.py)). It keeps SteamVR's
   logs and the session user's journal with its results.
 
 ## Verified results
+
+*Most rows were measured on the stock kernel's path, no longer pursued. Current results:
+[kernel-feasibility.md](kernel-feasibility.md#results).*
 
 | Check | Result |
 | --- | --- |
@@ -1124,7 +1130,7 @@ archive's manifest lists `pico4-vrdisplay`, then Valve's session when it lists
 | Headset: Valve's session with the vblank time and the present waits held for an unread count | five 30 s checks in a row: 89.94–90.0 commits/s, 0.0–0.15 % late, no stall in the window, no one-second wait; twelve more starts with 25 s each: none |
 | Headset: Valve's 20 s check with the frame dump copying rows first, two runs | 90.0 and 89.97 commits/s, 0.06 % late; the startup's largest gap 46 and 77 ms (125–165 ms in every check before); eye means measured |
 | Headset: `pico4-vrdisplay-test` with five 8 s pauses (`--pauses 5`) | each pause: panels off after 5 s without a present (backlight powered down), GPU floor back to the default level, the vblank counter going on at 90 Hz (720 counts in 8 s); each next present: panels on after 459-473 ms, floor raised again; 87.3 frames/s between the pauses, 2 late, no stall |
-| Headset: Valve's session with `pauseCompositorOnStandby` on, headset lying still, orientation only (`PICO4_SLAM=0`) | SteamVR enters standby after about 15 s and stops presenting; 5 s later the panels go off, the GPU drops to 305 MHz at its default floor, and the hottest zone falls from 40 to 30 °C in 100 s. With 6DoF the tracker's runaways count as motion, and SteamVR does not enter standby |
+| Headset: Valve's session with `pauseCompositorOnStandby` on, headset lying still, orientation only (`PICO4_SLAM=0`) | SteamVR enters standby after about 15 s and stops presenting; 5 s later the panels go off, the GPU drops to 305 MHz at its default floor, and the hottest zone falls from 40 to 30 °C in 100 s. |
 | Headset: Valve's session with `mangoapp` (60 s) | one `mangoapp` process throughout (before, without its library, 15,077 restarts a minute); gamescope's queue to it in `pico4-sysvmsg`, its messages received by `mangoapp`; MangoHud warns about two Steam settings it does not know (`no_display`, `nis_steam_sharpness`) |
 | Headset: Valve's session, `glxgears` in gamescope with the HUD switched on in `mangoapp`'s configuration, panel images every 15th present for 25 s | the HUD (GPU and CPU load, frame rate, frame time and its graph) over `glxgears` in every image; SteamVR lists the app's overlay and three of its layer subviews as visible |
 | Headset: X11 test clients in gamescope's Xwayland (the environment of `steam.service`) | `glxinfo`: direct rendering on `zink Vulkan 1.3(Turnip Adreno (TM) 650)`, OpenGL 4.6; `glxgears` synchronized to the refresh at 88.9–89.8 FPS; `vkcube` (xcb) 900 frames in 10.1 s, 88.8 FPS; no llvmpipe or glamor failure in Xwayland's log; `ibus-gamescope` active |
@@ -1141,16 +1147,4 @@ archive's manifest lists `pico4-vrdisplay`, then Valve's session when it lists
 
 ## Next steps
 
-1. **Performance.** A compositor frame within the 11.1 ms period with room for the vblank
-   phase and with the lens correction intact: the Facet renderer's distortion of the scene
-   with `driver_monado`'s lens model. The panels' 72 Hz mode would give 13.9 ms but needs a 90 Hz frame before
-   the switch.
-2. **Cooling.** Measure the fan control ([cooling.md](cooling.md)) on the headset, with the
-   full session for 10 minutes against an agreed limit for the hottest zone.
-3. **The Steam client.** It updates and starts with the session, its UI on the GPU; signing in,
-   the library, video playback and gamescope's overlays of Steam's apps are not verified yet.
-4. **Controller positions.** IR-LED tracking, as for Monado ([xr.md](xr.md)); until then the
-   controllers are 3DoF, placed by the arm model.
-5. **Controllers in games.** As SteamVR's `pico_controller`
-   ([Controllers in games](#controllers-in-games)): Beat Saber's menus and sabers, and an OpenVR
-   game, are still to be checked in the headset.
+See [Open work](roadmap.md#open-work).
