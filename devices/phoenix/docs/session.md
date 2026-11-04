@@ -177,7 +177,7 @@ Every stop of SteamVR ends `vrcompositor` with a segmentation fault in its own s
 virtual call through an object that is already freed (its vtable and the call's target lie in
 freed heap memory). No frame of the display layer or of Turnip is on the stack. The unit does
 not fail, because the compositor is not its main process; systemd-coredump keeps a core of
-5–6 MB per stop, within its defaults (at most 10 % of the data partition, two weeks).
+5–6 MB per stop, for two weeks and within 1 GB for all core dumps together.
 
 ### The Steam client
 
@@ -309,9 +309,10 @@ semaphores need and the System V semaphores of its process locks.
   before, destroyed the overlay and shut down cleanly. An overlay with a Vulkan image through
   `SetOverlayTexture`, as other overlay applications set theirs, stops cleanly, as does a client
   without an image, so the lens panel's images are Vulkan textures.
-  Long sessions before the panel existed crashed too, on both Mesas, probably from the Steam client's
-  overlays. It costs a core dump of about 6 MB and no data: Valve's health check reads
-  `steamvr.service`'s result, which stays clean. Whether other SteamVR installations do this is not known.
+  Long sessions before the panel existed crashed too, on both Mesas, and a stop still crashes with the
+  Steam client, the lens panel and the room view all stopped first, so what leaves that image now is not
+  known; SteamVR's dashboard is untested. It costs a core dump of about 6 MB and no data: `coredump.conf.d/50-pico4-limit.conf` keeps all core
+  dumps within 1 GB, removing the oldest, and Valve's health check reads `steamvr.service`'s result, which stays clean. Whether other SteamVR installations do this is not known.
 
 ### SteamVR configuration
 

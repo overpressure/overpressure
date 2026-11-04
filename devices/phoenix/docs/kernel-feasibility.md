@@ -194,7 +194,7 @@ kernel; the stock-kernel rule is lifted for it only. Its files are in [kernel/](
 | Boot | Valve's 7.2 kernel boots the maintenance stage 1 from `recovery`; SSH over USB NCM answers 13 s after the reboot |
 | Storage | UFS with all six LUNs and their partitions; stage 1 switches every block device read-only |
 | SoC | 8 CPUs, 7.4 GB RAM; CPU frequencies through `cpufreq-hw` (three policies, up to 2.84 GHz); TSENS thermal zones; RPMh regulators at the stock voltages; SPMI, PMIC RTC, watchdog, `socinfo` |
-| Reboots | `pico4-reboot bootloader` reaches fastboot; a panic's warm reset fails ("Reboot failed"); the watchdog usually resets the headset about a minute later, with the RAM console kept, but not always: after one panic the headset stayed hung (no USB device answered) until a forced restart. Leaving a test boot therefore takes a plain reboot, never a panic |
+| Reboots | `pico4-reboot bootloader` reaches fastboot; the firmware refuses the warm reset a panic asks for (`reboot=panic_warm`, from the stock command line; `SYSTEM_RESET2` answers -2). The tree's PS_HOLD reset, as on the stock kernel, then restarts the headset, about 40 s from a forced panic to SSH, with the RAM console kept. PSCI's ordinary reset (patch 0031) stands behind it and has not been needed |
 
 | Phase 1 | Result on the headset |
 | --- | --- |
@@ -442,6 +442,8 @@ so on this kernel the check has no image of its own.
 | 0027 a decoder client's capture buffers | Steam Link's client asks for 16 capture buffers and has images for 16. Venus raised the count to the firmware's minimum, 18 for its stream, so that the client queued buffers without an image and stuck after the first frame. A client's 16 now stand; the firmware decodes with them ([session.md](session.md#steam-link)) |
 | 0028 data before the headers | the firmware starts on a stream's headers: with other data first it holds every buffer and answers no flush. Steam Link's client restarts the decoder in the middle of a stream, and each stop took the driver's full second, until a key frame happened to come first. As a stateful decoder does, data before the headers now goes back to the client ([session.md](session.md#steam-link)) |
 | 0029 the deferred split shrinker | with `cgroup.memory=nokmem` on the command line only a shrinker flagged `SHRINKER_NONSLAB` may be aware of memory cgroups, and the deferred split shrinker lacks the flag: it warned at a game's first huge page (id 0, a map of 0), and a cgroup's partly mapped huge pages were not split under memory pressure |
+| 0030 a refresh change is a mode set on DPU 6.0 | Valve's seamless path for a refresh-only change, written for the Frame's DPU 10.0, leaves the XR2's DPU 6.0 at the old rate: the state says 72 Hz, vblanks stay 11.11 ms apart and the compositor judders. Without it the change is a full mode set, and the panels power-cycle on a switch |
+| 0031 a refused reset ends in a cold reset | the firmware refuses the warm reset that the stock command line asks for on a panic, and the system halted until a long press. The patch logs the firmware's answer and, after the other restart handlers, tries the ordinary reset that every plain reboot uses |
 
 Mainline sets RPMh regulators only to voltages on the regulator's own steps, and one invalid
 regulator node fails the whole PMIC's set. The stock tree runs L7A (the panels' VDDIO) in

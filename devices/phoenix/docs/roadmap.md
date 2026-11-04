@@ -255,7 +255,7 @@ Valve's session runs the Steam Frame's compositor path at 90 frames per second a
 the view is fluid, also with Steam's panel in view.
 
 - Beat Saber submits half the panels' rate.
-- 72 Hz, the Frame's default for apps, is not selectable in SteamVR's settings yet.
+- Games start at 72 Hz, the Frame's default for apps; SteamVR's settings offer 72 and 90 Hz.
 - Steam Link: the first picture follows a decoder reset about 14 s after the client starts, and
   30 ms pass between a decoded picture and its illumination.
 
@@ -290,7 +290,8 @@ Details: [xr.md](xr.md).
   apply. A press of the PICO or menu button opens the dashboard,
   whose content comes from the Steam client, a double press the room view, and the laser and
   trigger clicks work in it.
-- **Battery.** The controllers' battery level has no known scale and does not reach SteamVR yet.
+- **Battery.** The controllers' battery level goes to SteamVR as a fifth of a full charge per level, and
+  SteamVR's status panel shows it as pips where PICO OS has its bar. That 5 is the top of the scale is inferred.
 
 ### Head tracking
 
