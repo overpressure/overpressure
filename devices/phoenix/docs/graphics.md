@@ -80,6 +80,20 @@ The GPU's driver is Valve's Mesa: Turnip on msm, OpenGL through zink, as on the 
 freedreno gallium driver. gamescope's session and the Steam client set
 `MESA_LOADER_DRIVER_OVERRIDE=zink`; Xwayland's glamor, and with it DRI3 for X11 clients, needs it.
 
+## Refresh rates
+
+The panel driver offers 90 Hz and 72 Hz, and SteamVR sees both (`Prop_DisplayAvailableFrameRates_Float_Array`).
+The 72 Hz mode is the stock tree's dynamic fps by vertical front porch
+(`dfps_immediate_porch_mode_vfp`): the same pixel clock and lines, vtotal 2781 instead of 2225, and no
+panel commands. PICO's `post-72-nt57900-on-command` is not sent: with it both lenses show a white, blueish,
+inverted-looking picture. A change between the rates is a full mode set (patch 0030).
+
+| Fact | Result |
+| --- | --- |
+| vblanks at 72 Hz, on a table | 72.007 Hz, 72 commits/s, 0 late, margin 7.8 ms |
+| Picture at 72 Hz in the lenses without the commands | normal in both lenses, in the session and in Beat Saber |
+| A change of rate, worn | a short black fade; SteamVR's settings and a game's start both switch it |
+
 ## Verified results
 
 Current results are in [kernel-feasibility.md](kernel-feasibility.md#results).

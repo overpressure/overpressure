@@ -85,7 +85,8 @@ class ControllerTypeTests(unittest.TestCase):
 
     def test_the_panels_refresh_rates_for_steam_link(self):
         patch = read("monado-steamvr-frame-rates.patch")
-        self.assertIn("+	float rates[] = {m_flDisplayFrequency};", patch)
+        self.assertIn("+	float rates[] = {72.f, 90.f};", patch)
+        self.assertIn("vr::Prop_DisplaySupportsRuntimeFramerateChange_Bool, true", patch)
         self.assertIn("vr::Prop_DisplayAvailableFrameRates_Float_Array", patch)
         self.assertIn("patch -d monado -p1 < monado-steamvr-frame-rates.patch", read("PKGBUILD"))
 

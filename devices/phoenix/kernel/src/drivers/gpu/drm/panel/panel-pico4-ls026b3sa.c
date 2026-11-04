@@ -58,6 +58,12 @@ static const struct drm_display_mode panel_mode = {
 };
 
 /*
+ * The stock 72 Hz mode: the same pixel clock and lines, with a longer vertical front porch, as the
+ * stock tree's dynamic fps (dfps_immediate_porch_mode_vfp) does. The panels follow the video.
+ */
+#define PANEL_VTOTAL_72 (((PANEL_SIZE + 57 + 4 + 4) * 90 + 36) / 72)
+
+/*
  * The stock display's one switched supply. Its ±5.8 V bias stays as the bootloader set it; the
  * GD32 MCU, which drives the backlight, has its own supply.
  */
@@ -285,12 +291,15 @@ static int pico4_unprepare(struct drm_panel *panel)
 	return 0;
 }
 
-static int pico4_get_modes(struct drm_panel *panel, struct drm_connector *connector)
+static struct drm_display_mode *pico4_add_mode(struct drm_connector *connector, int vtotal)
 {
 	struct drm_display_mode *mode = drm_mode_duplicate(connector->dev, &panel_mode);
 
 	if (!mode)
-		return -ENOMEM;
+		return NULL;
+	mode->vsync_start += vtotal - mode->vtotal;
+	mode->vsync_end += vtotal - mode->vtotal;
+	mode->vtotal = vtotal;
 	/* Both panels side by side: the DSI host splits the line between its two links. */
 	mode->clock *= 2;
 	mode->hdisplay *= 2;
@@ -298,13 +307,22 @@ static int pico4_get_modes(struct drm_panel *panel, struct drm_connector *connec
 	mode->hsync_end *= 2;
 	mode->htotal *= 2;
 	mode->width_mm *= 2;
-	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
+	mode->type = DRM_MODE_TYPE_DRIVER;
 	drm_mode_set_name(mode);
 	drm_mode_probed_add(connector, mode);
+	return mode;
+}
 
+static int pico4_get_modes(struct drm_panel *panel, struct drm_connector *connector)
+{
+	struct drm_display_mode *mode = pico4_add_mode(connector, panel_mode.vtotal);
+
+	if (!mode || !pico4_add_mode(connector, PANEL_VTOTAL_72))
+		return -ENOMEM;
+	mode->type |= DRM_MODE_TYPE_PREFERRED;
 	connector->display_info.width_mm = mode->width_mm;
 	connector->display_info.height_mm = mode->height_mm;
-	return 1;
+	return 2;
 }
 
 static const struct drm_panel_funcs pico4_panel_funcs = {
