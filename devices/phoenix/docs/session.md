@@ -941,6 +941,11 @@ SteamVR. The PC's `driver_vrlink` knows the client by the model "PICO 4" (its PI
   `dpad_down` and `dpad_up` paths into our `joystick`, `x` and `y`, the reverse of
   [frame-controller-remapping.json](../userspace/session/frame-controller-remapping.json). SteamVR
   on the headset keeps `pico_controller`.
+- **The codec's address fault.** Each time the codec powers down, about 2.5 s after its last client
+  closed it, the IOMMU logs `Unhandled context fault` at address 0 for stream `0x2100`. It also comes
+  at boot, after the probe's power-up. With no client it does not come, and decoding after it works
+  (a stream of 22 minutes, repeated decoder starts), so it is harmless. What the codec reads at
+  address 0 while it powers down is not known.
 - **Timing.** SteamVR on the PC writes each frame's times to `vrlink_aftm_*.csv` in Steam's logs.
 
 | Check | Result |

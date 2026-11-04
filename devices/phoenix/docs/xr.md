@@ -405,6 +405,13 @@ moves whole frames on the station's interrupt, so userspace only `write()`s, `se
   advertising slowly, and then cuts the station's power; `wakeUp` only powers the station on again,
   and the controllers reconnect. The driver does the same when it closes
   (`pico4_station_sleep`), as does `pico4-station power off`.
+- **Camera sync at a session's start.** After a timeout the station refuses (`EIO`) every further
+  start, also after a stop, so the tracker resets the station as the driver's start does, up to three
+  times, and logs each try. The controllers reconnect on their own.
+- **How long a controller waits.** Awake controllers lying still reconnect without a press after at
+  least 15 minutes without the station (5 minutes without the slow-advertising command, the longest
+  tried). After hours without a link they connect only after a button press. The time between is not
+  measured.
 - **Firmware.** The station reports firmware 2.96, the version PICO OS ships.
 - **Mainline kernels.** Without the vendor spidev the bus is a plain spidev, whose every transfer
   is full duplex: commands go out as transfers, zeros (no header, which the station ignores) ask
@@ -1655,6 +1662,8 @@ On the headset (PICO OS 5.13.7, stock kernel), lying still unless stated otherwi
 | Controller samples, recordings of about 60,000 per hand (still, and moved) | no duplicate, backward or future-stamped sample; single samples lost now and then (4–9 per 30 s) |
 | Controller calibration records from the station, both controllers | 12 chunks each; gyro and accelerometer matrices within 0.4 % of identity, gyro biases up to 0.016 rad/s, LED positions 0.3 mm (mean) and 0.6 mm (largest) from the nominal models; the serial of each connect notification names one of the two bias tables in persist (9 and 8 temperature bins) |
 | Controllers worn in Valve's session (120 s): both held, the left switched off for 10 s and on again | both tracked with their own calibration; the left disconnected, held its place while off (user) and connected again, with its record re-read in 48 ms and tracking at once; event time minus station time 0.00–0.99 µs in every 30 s window, across the reconnect and under the session's load |
+| Station power cycled 10 times, with awake controllers lying still | both reconnect each time within 0.3–0.4 s of the power, and neither drops in the 5 s after |
+| Station off with awake controllers lying still, then on | after 30 s, 2, 5, 10 and 15 minutes with the slow-advertising command, and 30 s, 2 and 5 minutes without it: both reconnect within 1.3 s, without a press |
 | Acceptance cycle (`flash-run --userspace`, then stock restoration) | passed: archive received in 86–105 s, SSH 112–123 s after the start of the transfer; systemd `running`, 0 failed units, storage read-only, USB link unchanged, Turnip 65,536 pixels; IMU, pose and display checks as above (two layers, Basalt running); stock boot verified by EDL readback, stock ABL restored, PICO OS started |
 | Room view in Valve's session (`pico4-roomview`, still headset) | the compositor imports the frames ("Late initialization successful"); frame dumps show the room in both eyes, the dashboard over it; 25 frames per second per camera published, none skipped; with the room view on for 60 s the stock tracker lost no pose and stayed within 1.3 mm of its start (1.1 mm with it off), no tracker warnings |
 | QEMU, same archive (4.19 without SLPI or `msm_drm`) | self-test passed; the sensor units and Monado's PICO 4 prober stay inactive |
