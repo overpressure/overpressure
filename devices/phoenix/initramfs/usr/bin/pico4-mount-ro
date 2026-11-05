@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Unlicense
 # Mount a stock partition read-only for inspection.
 #
 #   pico4-mount-ro <partition> [directory]     e.g. pico4-mount-ro modem

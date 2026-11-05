@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Host tests of the overpressure package (python -m unittest from the repository root)."""
 
 # Tools fetched into this checkout (python -m overpressure tools) must not stand in for the tests'

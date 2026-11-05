@@ -1,0 +1,69 @@
+#!/bin/bash
+# SPDX-License-Identifier: Unlicense
+# udev helper for block devices (00-pico4-devnodes.rules); the kernel's devtmpfs makes the nodes:
+#   devnode add     apply the storage policy to $DEVNAME
+#   devnode remove  delete its by-name links
+#   devnode sweep   apply the storage policy to every block device present
+#
+# Block devices are made read-only as soon as they appear, exactly like the
+# stage-1 initramfs does (pico4.rw=1 on the kernel command line disables
+# this), and get Android-style /dev/block/by-name/<PARTNAME> links. The one
+# exception is the installed system's data partition (userdata holding the
+# pico4-data file system), which stage 1 made writable and mounted: set
+# read-only under the mounted file system, its writeback fails and data is lost.
+set -u
+
+block_policy() {
+	local name=$1 partname
+	case "$name" in loop* | ram* | zram* | dm-* | nbd*) return 0 ;; esac
+	[ -e "/sys/class/block/$name" ] || return 0
+	. /usr/libexec/pico4/lib.sh
+	partname=$(sed -n 's/^PARTNAME=//p' "/sys/class/block/$name/uevent" 2>/dev/null)
+	if [ "$(stage1_arg rw 0)" != 1 ] && ! installed_data "$name" "$partname" && ! installed_data_disk "$name"; then
+		blockdev --setro "/dev/$name" 2>/dev/null || log "could not set /dev/$name read-only"
+	fi
+	if [ -n "$partname" ]; then
+		mkdir -p /dev/block/by-name
+		ln -sfn "../../$name" "/dev/block/by-name/$partname"
+		[ -e /dev/block/bootdevice ] || ln -s . /dev/block/bootdevice
+	fi
+}
+
+# installed_data NAME PARTNAME: true for the installed system's data partition.
+installed_data() {
+	[ "$2" = userdata ] && [ "$(stage1_arg root '')" = installed ] &&
+		[ "$(ext_label "/dev/$1" 2>/dev/null)" = pico4-data ]
+}
+
+# installed_data_disk NAME: true for the disk of the installed system's data partition when stage 1
+# left it writable: the kernel counts a disk's read-only flag for its partitions too.
+installed_data_disk() {
+	local part
+	[ "$(stage1_arg root '')" = installed ] && [ "$(cat "/sys/class/block/$1/ro" 2>/dev/null)" = 0 ] || return 1
+	for part in "/sys/class/block/$1/$1"*; do
+		[ -e "$part/partition" ] || continue
+		installed_data "${part##*/}" "$(sed -n 's/^PARTNAME=//p' "$part/uevent" 2>/dev/null)" && return 0
+	done
+	return 1
+}
+
+case "${1:-}" in
+add)
+	[ -n "${DEVNAME:-}" ] || exit 0
+	if [ "${ACTION:-add}" != change ]; then
+		block_policy "${DEVNAME#/dev/}"
+	fi
+	;;
+remove)
+	[ -n "${DEVNAME:-}" ] || exit 0
+	for l in /dev/block/by-name/*; do
+		[ "$(readlink "$l")" = "../../${DEVNAME#/dev/}" ] && rm -f "$l"
+	done
+	;;
+sweep)
+	for d in /sys/class/block/*; do
+		[ -e "$d" ] && block_policy "${d##*/}"
+	done
+	;;
+esac
+exit 0

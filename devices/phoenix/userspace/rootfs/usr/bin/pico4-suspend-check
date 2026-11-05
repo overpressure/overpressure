@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# SPDX-License-Identifier: Unlicense
 """Suspend and resume with sound (docs/hardware-testing.md): a tone on the speakers, recorded on the
 microphone, before and after an RTC suspend. The speakers once came back silent with their whole path
 looking healthy, so only the sound itself tells. Run it with someone near: a failed resume needs a hand

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Unlicense
 /* Render a full-screen triangle through Turnip and verify every readback pixel.
  * Headless GPU acceptance: this does not prove KMS presentation or panel output.
  * Run under an outer timeout; a broken kernel ioctl cannot be bounded here.
@@ -93,7 +94,7 @@ int main(void) {
     VkRenderPass pass; CHECK(vkCreateRenderPass(dev,&ri,NULL,&pass));
     VkFramebufferCreateInfo fi={.sType=VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,.renderPass=pass,.attachmentCount=1,.pAttachments=&view,.width=SIZE,.height=SIZE,.layers=1};
     VkFramebuffer fb; CHECK(vkCreateFramebuffer(dev,&fi,NULL,&fb));
-    VkShaderModule vs=shader(dev,"/usr/share/pico4-poc/graphics/fullscreen.vert.spv"), fs=shader(dev,"/usr/share/pico4-poc/graphics/quadrants.frag.spv");
+    VkShaderModule vs=shader(dev,"/usr/share/pico4/graphics/fullscreen.vert.spv"), fs=shader(dev,"/usr/share/pico4/graphics/quadrants.frag.spv");
     VkPipelineShaderStageCreateInfo stages[2]={
         {.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,.stage=VK_SHADER_STAGE_VERTEX_BIT,.module=vs,.pName="main"},
         {.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,.stage=VK_SHADER_STAGE_FRAGMENT_BIT,.module=fs,.pName="main"}};
@@ -136,7 +137,7 @@ int main(void) {
         uint8_t *p=pixels+4*(y*SIZE+x); int green=y<128?64:191;
         if (p[0]!=(x<128?255:0) || abs((int)p[1]-green)>1 || p[2]!=(x<128?0:255) || p[3]!=255) ++bad;
     }
-    FILE *out=fopen("/run/pico4-poc/vulkan-readback.rgba","wb");
+    FILE *out=fopen("/run/pico4/vulkan-readback.rgba","wb");
     if (!out || fwrite(pixels,1,SIZE*SIZE*4,out)!=SIZE*SIZE*4 || fclose(out)) fail("Cannot save render readback");
     vkUnmapMemory(dev,bmem);
     printf("{\"status\":\"%s\",\"driver\":\"turnip\",\"device_id\":%u,\"api_version\":%u,\"width\":256,\"height\":256,\"verified_pixels\":%u,\"bad_pixels\":%u}\n",

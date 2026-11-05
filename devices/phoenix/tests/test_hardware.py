@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import argparse
 import contextlib
 import gzip
@@ -86,13 +87,13 @@ class HarnessTests(unittest.TestCase):
         cls.shared = tempfile.TemporaryDirectory()
         cls.image = Path(cls.shared.name) / "poc.img"
         tree = cpio.Tree()
-        tree.add_file("etc/pico4-poc/build-info", json.dumps(cls.INFO).encode())
+        tree.add_file("etc/pico4/build-info", json.dumps(cls.INFO).encode())
         tree.add_file("init", b"#!/bin/sh\n", 0o755)
-        tree.add_file("usr/libexec/pico4-poc/recovery-watch", b"#!/bin/sh\n", 0o755)
-        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4-poc/svc recovery-watch\n"
-                      b"::restart:/usr/libexec/pico4-poc/switch-userspace\n")
+        tree.add_file("usr/libexec/pico4/recovery-watch", b"#!/bin/sh\n", 0o755)
+        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4/svc recovery-watch\n"
+                      b"::restart:/usr/libexec/pico4/switch-userspace\n")
         tree.add_file("usr/bin/pico4-userspace", b"#!/bin/sh\n", 0o755)
-        tree.add_file("usr/libexec/pico4-poc/pico4-init", b"#!/bin/sh\n", 0o755)
+        tree.add_file("usr/libexec/pico4/pico4-init", b"#!/bin/sh\n", 0o755)
         tree.mkdir("root", 0o700)
         cls.image.write_bytes(bootimg.BootImage(2, 4096, b"kernel", gzip.compress(tree.to_cpio()), dtb=b"dtb").pack())
 
@@ -124,8 +125,8 @@ class HarnessTests(unittest.TestCase):
         stock.ramdisk = b"original stock ramdisk"
         (self.args.backup / "boot.bin").write_bytes(stock.pack().ljust(65536, b"\0"))
         self.backup_manifest = {"schema": 1, "identity": {"schema": 1, "serial": "ABC",
-            "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.8/test:user/dev-keys",
-            "oem_state": "false", "chip_id": 1234567},
+            "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/test:user/dev-keys",
+            "oem_state": "true", "chip_id": 1234567},
             "files": {"boot.bin": hw.backups.digest(self.args.backup / "boot.bin")}}
         self.save_backup_manifest()
         self.runner = hw.Runner(self.args)
@@ -188,7 +189,7 @@ class HarnessTests(unittest.TestCase):
             if "getprop ro.build.fingerprint" in argv[-1]:
                 if not self.stock or self.scenario == "recovery" and self.runner.moved:
                     raise ValueError("Android did not return")
-                return "Pico/Phoenix_ovs/PICOA8110:10/5.13.8/test:user/dev-keys\nfalse\n1234567\n1"
+                return "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/test:user/dev-keys\ntrue\n1234567\n1"
             if "preflight.sh" in argv[-1] and "PICO4_PREFLIGHT_DIR=" in argv[-1]:
                 return "PREFLIGHT: 20 passed, 1 failed" if self.scenario == "preflight" else "PREFLIGHT: 21 passed, 0 failed"
             if argv[-2:] == ["reboot", "bootloader"]:
@@ -270,7 +271,7 @@ class HarnessTests(unittest.TestCase):
                 return "sensor evidence"
             if "test-run" in command:
                 return ("wrong-run" if self.scenario == "identity" else self.runner.run_id) + "\n1234567"
-            if command == "cat /etc/pico4-poc/build-info":
+            if command == "cat /etc/pico4/build-info":
                 return json.dumps({} if self.scenario == "build" else self.info)
             if command == "uname -m":
                 return "aarch64"
@@ -301,7 +302,7 @@ class HarnessTests(unittest.TestCase):
         if self.scenario == "http":
             raise OSError("HTTP unavailable")
         if endpoint == "cgi-bin/status":
-            return b"PICO 4 Linux POC"
+            return b"PICO 4 Linux"
         if endpoint == "cgi-bin/log?boot":
             return self.runner.run_id.encode()
         return report(self.runner.run_id)
@@ -340,9 +341,9 @@ class HarnessTests(unittest.TestCase):
         self.assertTrue((self.runner.folder / "report.tar.gz").exists())
         image = bootimg.parse((self.runner.folder / "test-boot.img").read_bytes())
         tree = dict(cpio.read_cpio(gzip.decompress(image.ramdisk)))
-        self.assertEqual(tree["etc/pico4-poc/test-connect-timeout"].data, b"31\n")
-        self.assertEqual(tree["etc/pico4-poc/test-timeout"].data, b"302\n")
-        self.assertTrue(any(cmd[-1] == "touch /run/pico4-poc/test-authenticated" for cmd in self.calls))
+        self.assertEqual(tree["etc/pico4/test-connect-timeout"].data, b"31\n")
+        self.assertEqual(tree["etc/pico4/test-timeout"].data, b"302\n")
+        self.assertTrue(any(cmd[-1] == "touch /run/pico4/test-authenticated" for cmd in self.calls))
         for cmd in self.calls:
             if cmd[0] in ("adb", "fastboot") and cmd[-1] != "devices":
                 self.assertEqual(cmd[1:3], ["-s", "ABC"])
@@ -412,9 +413,9 @@ class HarnessTests(unittest.TestCase):
 
     def test_userspace_requires_handoff_image(self):
         tree = cpio.Tree()
-        tree.add_file("etc/pico4-poc/build-info", json.dumps(self.info).encode())
-        tree.add_file("usr/libexec/pico4-poc/recovery-watch", b"#!/bin/sh\n", 0o755)
-        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4-poc/svc recovery-watch\n")
+        tree.add_file("etc/pico4/build-info", json.dumps(self.info).encode())
+        tree.add_file("usr/libexec/pico4/recovery-watch", b"#!/bin/sh\n", 0o755)
+        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4/svc recovery-watch\n")
         self.source = self.root / "handoff-less.img"
         self.source.write_bytes(bootimg.BootImage(2, 4096, b"kernel", gzip.compress(tree.to_cpio()), dtb=b"dtb").pack())
         with self.assertRaisesRegex(ValueError, "handoff"):
@@ -491,7 +492,7 @@ class HarnessTests(unittest.TestCase):
         entries = dict(cpio.read_cpio(gzip.decompress(image.ramdisk)))
         self.assertEqual(image.kernel, b"kernel")
         self.assertEqual(image.dtb, b"dtb")
-        self.assertIn("pico4poc.test_run=nonce", image.full_cmdline)
+        self.assertIn("pico4.test_run=nonce", image.full_cmdline)
         self.assertEqual(entries["root/.ssh/authorized_keys"].data, b"ssh-ed25519 TEST\n")
         self.assertEqual(entries["root/.ssh/authorized_keys"].mode & 0o777, 0o600)
         self.assertEqual(result["build_info"], self.info)
@@ -499,7 +500,7 @@ class HarnessTests(unittest.TestCase):
     def test_rejects_writable_and_qemu_images(self):
         original = bootimg.parse(self.source.read_bytes())
         self.source = self.root / "variant.img"
-        for option in ("pico4poc.rw=1", "pico4poc.rw", "pico4poc.selftest=1", "pico4poc.selftest"):
+        for option in ("pico4.rw=1", "pico4.rw", "pico4.selftest=1", "pico4.selftest"):
             self.source.write_bytes(original.with_cmdline(option).pack())
             with self.assertRaises(ValueError):
                 hw.prepare_image(self.source, self.runner.folder, "nonce", b"ssh-ed25519 TEST")
@@ -615,11 +616,11 @@ class PreflightDefaultTests(unittest.TestCase):
     def test_the_newest_rootfs_tar(self):
         with tempfile.TemporaryDirectory() as temp:
             out = Path(temp)
-            for i, name in enumerate(("pico4-poc-a-rootfs.tar", "pico4-poc-b-rootfs.tar", "other.tar")):
+            for i, name in enumerate(("pico4-stage1-a-rootfs.tar", "pico4-stage1-b-rootfs.tar", "other.tar")):
                 (out / name).write_bytes(b"")
                 os.utime(out / name, (1000 + i, 1000 + i))
-            os.utime(out / "pico4-poc-a-rootfs.tar", (5000, 5000))
-            self.assertEqual(hw.newest_rootfs(out).name, "pico4-poc-a-rootfs.tar")
+            os.utime(out / "pico4-stage1-a-rootfs.tar", (5000, 5000))
+            self.assertEqual(hw.newest_rootfs(out).name, "pico4-stage1-a-rootfs.tar")
             with self.assertRaises(SystemExit):
                 hw.newest_rootfs(out / "missing")
 

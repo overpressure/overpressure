@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Build pico4-slamd and the tracker root's stand-ins (docs/xr.md#head-tracking) for bionic
 # (aarch64-linux-android29) with a host clang, against PICO OS's own bionic libraries, which
 # scripts/extract-stock-slam.sh puts into ROOT. No NDK: own entry point (crt.c) and

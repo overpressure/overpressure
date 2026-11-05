@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Validate the Vulkan render evidence of the stage-2 check (pico4-vulkan-test)."""
 
 

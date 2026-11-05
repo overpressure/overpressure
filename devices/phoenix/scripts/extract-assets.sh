@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Every asset the userspace build takes, in one go: the stock firmware from PICO's public OTA
 # (python -m overpressure stock), then each extraction script into assets/KIND-VERSION
 # (docs/development.md#stock-firmware). Linux or WSL, as root, from anywhere:

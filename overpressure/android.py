@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """adb and fastboot: running them fail-closed, choosing the device, reading the bootloader's state.
 
 Every command names its device's serial; a command counts as failed when it exits nonzero or

@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Extract the Wi-Fi (QCA6390, ath11k) inputs from the stock firmware. The headset's own MAC
 # addresses are not extracted: pico4-wlan-address reads wlan_mac.bin from persist on the headset
 # (docs/userspace.md#the-headsets-own-data).

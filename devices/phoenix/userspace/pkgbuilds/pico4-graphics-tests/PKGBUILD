@@ -6,7 +6,7 @@ pkgrel=1
 pkgdesc="PICO 4 native graphics acceptance test (offscreen Vulkan)"
 arch=(aarch64)
 url="https://docs.vulkan.org/"
-license=(BSL-1.0)
+license=(Unlicense)
 depends=(vulkan-icd-loader glibc)
 makedepends=(vulkan-headers glslang)
 source=(pico4-vulkan-test.c fullscreen.vert quadrants.frag)
@@ -21,5 +21,5 @@ build() {
 
 package() {
   install -Dm755 tests/pico4-vulkan-test -t "$pkgdir/usr/bin"
-  install -Dm644 tests/fullscreen.vert.spv tests/quadrants.frag.spv -t "$pkgdir/usr/share/pico4-poc/graphics"
+  install -Dm644 tests/fullscreen.vert.spv tests/quadrants.frag.spv -t "$pkgdir/usr/share/pico4/graphics"
 }

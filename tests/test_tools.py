@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure.tools: pinned downloads checked by SHA-256, unpacked into cache/tools, found by name."""
 import hashlib
 import io

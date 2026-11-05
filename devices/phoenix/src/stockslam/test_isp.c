@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * isp.h against hand-computed values of PICO OS's image processing: row handling (first scene
  * row doubled, last dropped), black level, the (v >> 8) step, lens-shading gain and clamping,

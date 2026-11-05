@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Where a step that needs Linux as root runs: WSL, sudo, or overpressure's build container.
 
     OVERPRESSURE_LINUX=wsl|sudo|docker     (environment or .env; the default fits the host)
@@ -6,9 +7,8 @@
 - sudo: this Linux host (the default on Linux; no sudo when already root).
 - docker: the build container (overpressure/container), on any host with Docker or Podman (the
   default on macOS, and on Windows without WSL). It needs nothing else on the host: its image
-  holds the tools of the userspace, system image and extraction builds (the kernel build needs
-  its own cross toolchain), the repository is mounted at /work and /var/tmp (build roots, stock
-  folders) is a named volume.
+  holds the tools of the userspace, kernel, system image and extraction builds, the repository is
+  mounted at /work and /var/tmp (build roots, stock folders) is a named volume.
 
     python -m overpressure container build      the image, overpressure-builder:HASH
     python -m overpressure container run -- CMD  CMD in the container, from the repository root

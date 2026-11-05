@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Booting an image from RAM with `fastboot boot`, for any headset whose bootloader allows it.
 
 A RAM boot writes nothing: the next normal boot starts whatever the headset's partitions hold.

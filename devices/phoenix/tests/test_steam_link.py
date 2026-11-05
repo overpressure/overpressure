@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import json
 import re
 import unittest
@@ -27,7 +28,7 @@ class SteamLinkTests(unittest.TestCase):
         unit = read(UNITS / "pico4-venus-probe.service")
         self.assertIn("ConditionPathExists=/sys/bus/platform/drivers/qcom-venus\n", unit)
         self.assertIn("ConditionPathExists=/usr/lib/firmware/venus.mdt\n", unit)
-        script = read(ROOTFS / "usr/libexec/pico4-poc/venus-probe")
+        script = read(ROOTFS / "usr/libexec/pico4/venus-probe")
         self.assertIn('echo "$DEV" > /sys/bus/platform/drivers/qcom-venus/bind', script)
         self.assertIn('firmware-name = "venus.mdt";', read(ROOT / "kernel/sm8250-pico4-phoenix.dts"))
         config = read(ROOT / "kernel/pico4.config")

@@ -1,5 +1,7 @@
+# SPDX-License-Identifier: Unlicense
 import copy
 import unittest
+from pathlib import Path
 
 from devices.phoenix.tooling import hardware_test as hw, userspace
 
@@ -21,6 +23,39 @@ PASSING = {
     "vulkan": {"status": "passed", "result": {"status": "passed", "driver": "turnip", "width": 256,
                                                "height": 256, "verified_pixels": 65536, "bad_pixels": 0}},
 }
+
+
+class SshAccessTests(unittest.TestCase):
+    """Keys only, on USB and Wi-Fi (docs/security.md), and no key in anything the build shares."""
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def test_sshd_takes_keys_only(self):
+        config = (self.ROOT / "userspace/rootfs/etc/ssh/sshd_config.d/50-pico4.conf").read_text(encoding="utf-8")
+        settings = dict(line.split(None, 1) for line in config.splitlines() if line and not line.startswith("#")
+                        and not line.startswith("HostKey"))
+        self.assertEqual(settings["PermitRootLogin"], "prohibit-password")
+        self.assertEqual(settings["PermitEmptyPasswords"], "no")
+        self.assertEqual(settings["PasswordAuthentication"], "no")
+        self.assertEqual(settings["KbdInteractiveAuthentication"], "no")
+        self.assertEqual(settings["AuthenticationMethods"], "publickey")
+
+    def test_no_account_has_a_usable_password(self):
+        build = (self.ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+        self.assertNotIn("passwd -d", build)
+        self.assertIn("in_t usermod -p '*' root", build)
+        self.assertIn("in_t usermod -p '*' \"$user\"", build)
+
+    def test_no_key_in_the_image_sources(self):
+        tree = self.ROOT / "userspace/rootfs"
+        names = [p for p in tree.rglob("*") if p.name in ("authorized_keys", "id_ed25519", "id_rsa")
+                 or p.name.startswith("ssh_host_")]
+        self.assertEqual(names, [])
+
+    def test_the_installed_stage_1_serves_ssh_with_keys_only(self):
+        svc = (self.ROOT / "initramfs/usr/libexec/pico4/svc").read_text(encoding="utf-8")
+        for service in ("telnetd", "httpd", "serial"):
+            self.assertIn(f"{service})\n\tinstalled_mode && idle\n", svc)
+        self.assertIn("if installed_mode; then\n\t\texec dropbear -F -E -R -s -p 22", svc)
 
 
 class PowerWarningTests(unittest.TestCase):

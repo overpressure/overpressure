@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Unlicense
 # Install the Linux system on the headset, from the maintenance stage 1 in recovery
 # (docs/install.md). The only partitions it writes:
 #
@@ -18,10 +19,10 @@
 #   pico4-install status
 #
 # Each partition is made writable for its write only and read-only again afterwards.
-. /usr/libexec/pico4-poc/lib.sh
+. /usr/libexec/pico4/lib.sh
 set -o pipefail
 
-STATE=$POC_RUN/install
+STATE=$P4_RUN/install
 BCB_BYTES=2048 # Android's struct bootloader_message
 die() { log "install: $*"; echo "pico4-install: $*" >&2; exit 1; }
 
@@ -154,5 +155,5 @@ format-data) shift; format_data "$@" ;;
 wipe) shift; wipe "$@" ;;
 bootmode) bootmode "$2" ;;
 status) status ;;
-*) sed -n '2,23s/^# \{0,1\}//p' "$0"; exit 2 ;;
+*) sed -n '3,24s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

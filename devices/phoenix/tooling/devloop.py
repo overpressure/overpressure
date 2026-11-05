@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Development loop on a headset in development mode.
 
 The headset stays in development mode between tasks: the engineering ABL, the dev image as the
@@ -45,7 +46,7 @@ ROOT = localconfig.ROOT
 WORK = ROOT / "out" / "dev"
 HOST = "172.16.42.1"
 RUN_ID = "dev-loop"
-CONTACT = "/run/pico4-poc/host-contact"  # uptime of the last command (recovery-watch)
+CONTACT = "/run/pico4/host-contact"  # uptime of the last command (recovery-watch)
 ARCHIVE = ROOT / "out" / "userspace" / "pico4-userspace.tar.zst"
 #: Boot images the dev loop writes through fastboot: the dev image to recovery, stock boot back.
 BOOT_PARTITIONS = ("boot", "recovery")
@@ -53,13 +54,13 @@ SYSTEM = ROOT / "out" / "userspace" / "pico4-system.img"
 #: Written by "dev install": PICO OS's system and data are gone, "dev restore" brings them back.
 INSTALLED = "installed.json"
 #: The installed system's identity file (install boot image), as test-run is the dev image's.
-INSTALL_ID = "/etc/pico4-poc/install-id"
+INSTALL_ID = "/etc/pico4/install-id"
 #: Images above this size go to fastboot as sparse images.
 SPARSE_ABOVE = 64 << 20
 #: Partitions "dev restore-partition" writes back from the backup through fastboot.
 RESTORABLE = ("boot", "recovery", "misc")
-#: Command-line word naming the partition a dev image was written for (pico4poc.part=recovery).
-PART_MARK = "pico4poc.part="
+#: Command-line word naming the partition a dev image was written for (pico4.part=recovery).
+PART_MARK = "pico4.part="
 
 
 class Dev(Headset):
@@ -91,7 +92,7 @@ class Dev(Headset):
         return builds[self.s.firmware]["url"]
 
     def image(self):
-        source = ROOT / "out" / f"pico4-poc-{self.s.firmware}.img"
+        source = ROOT / "out" / f"pico4-stage1-{self.s.firmware}.img"
         if not source.exists():
             raise ValueError(f"missing {source}: run python -m overpressure build --firmware {self.s.firmware}")
         key = self.work / "id_ed25519"
@@ -120,13 +121,29 @@ class Dev(Headset):
         recovery = avb.with_stock_vbmeta(stock, recovery)
         (self.work / "dev-recovery.img").write_bytes(recovery)
         info["recovery_sha256"] = hashlib.sha256(recovery).hexdigest()
-        install = self.install_image(source, key.with_name("id_ed25519.pub").read_bytes())
+        install = self.install_image(source, self.enrolled_keys(key.with_name("id_ed25519.pub").read_bytes()))
         (self.work / "install-boot.img").write_bytes(install)
         info["install_sha256"] = hashlib.sha256(install).hexdigest()
         (self.work / "dev-image.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
         print(f"out/dev/dev-boot.img {info['boot_sha256']}")
         print(f"out/dev/dev-recovery.img {info['recovery_sha256']}")
         print(f"out/dev/install-boot.img {info['install_sha256']}")
+
+    def enrolled_keys(self, this_pc: bytes) -> bytes:
+        """The installed system's authorized_keys: this PC's key, and the owner's own when .env names
+        one. These are the only logins the system takes, on USB and on Wi-Fi (docs/security.md)."""
+        keys = [this_pc.strip()]
+        if self.s.ssh_public_key:
+            path = self.s.path("ssh_public_key")
+            if not path.is_file():
+                raise ValueError(f"PICO4_SSH_PUBLIC_KEY: no file {path}")
+            own = [line.strip() for line in path.read_bytes().splitlines() if line.strip()]
+            for line in own:
+                if b"PRIVATE KEY" in line or not line.startswith((b"ssh-", b"ecdsa-", b"sk-")):
+                    raise ValueError(f"PICO4_SSH_PUBLIC_KEY: {path} is no public key file")
+            keys += own
+        print(f"SSH: keys only; enrolled {len(keys)} key(s), this PC's is {self.work / 'id_ed25519'}")
+        return b"\n".join(keys) + b"\n"
 
     @staticmethod
     def install_image(source: Path, public_key: bytes) -> bytes:
@@ -139,8 +156,8 @@ class Dev(Headset):
         tree.mkdir("root/.ssh", 0o700)
         tree.add_file("root/.ssh/authorized_keys", public_key.rstrip() + b"\n", 0o600)
         tree.add_file(INSTALL_ID.lstrip("/"), RUN_ID.encode() + b"\n")
-        words = [w for w in image.full_cmdline.split() if not w.startswith(("pico4poc.root=", "pico4poc.autoreboot="))]
-        image = image.with_cmdline(" ".join(words + ["pico4poc.root=installed", "pico4poc.autoreboot=0"]))
+        words = [w for w in image.full_cmdline.split() if not w.startswith(("pico4.root=", "pico4.autoreboot="))]
+        image = image.with_cmdline(" ".join(words + ["pico4.root=installed", "pico4.autoreboot=0"]))
         image.ramdisk = gzip.compress(tree.to_cpio(), mtime=0)
         image.boot_signature = b""
         data = image.pack()
@@ -233,10 +250,10 @@ class Dev(Headset):
         print("dev image flashed to recovery; the maintenance stage 1 is starting")
 
     def authenticate(self):
-        lines = self.ssh("cat /etc/pico4-poc/test-run; cat /sys/devices/soc0/serial_number", 10).splitlines()
+        lines = self.ssh("cat /etc/pico4/test-run; cat /sys/devices/soc0/serial_number", 10).splitlines()
         if len(lines) != 2 or lines[0] != RUN_ID or qualcomm.chip_id(lines[1]) != self.identity()["chip_id"]:
             raise RuntimeError("the SSH endpoint is not this headset's dev image")
-        self.ssh("touch /run/pico4-poc/test-authenticated", 10)
+        self.ssh("touch /run/pico4/test-authenticated", 10)
 
     def connect(self):
         # Stage 1 makes new host keys on every boot.
@@ -285,6 +302,7 @@ class Dev(Headset):
                 raise ValueError(f"missing {path}: run {hint}")
         if self.connect() != "recovery":
             raise RuntimeError("install runs from the maintenance stage 1 in recovery (python -m overpressure dev recovery)")
+        device.check_panel(self.ssh("cat /proc/cmdline", 10))
         # From here on PICO OS's system is gone until "dev restore" writes it back.
         (self.work / INSTALLED).write_text(json.dumps({"system": str(system), "since": datetime.datetime.now(
             datetime.timezone.utc).isoformat(timespec="seconds")}) + "\n", encoding="utf-8")
@@ -349,7 +367,7 @@ class Dev(Headset):
         self.until("installed system", 240, installed)
         # dev check's state: the archive the system image was built from, if it is a local one
         # (out/userspace, or another build's output folder).
-        archive = self.ssh("cat /usr/share/pico4-poc/userspace-archive.sha256", 10).strip()
+        archive = self.ssh("cat /usr/share/pico4/userspace-archive.sha256", 10).strip()
         local = [ARCHIVE] + sorted(p for p in (ROOT / "out").glob("*/pico4-userspace.tar.zst") if p != ARCHIVE)
         found = next((p for p in local if p.exists() and backups.digest(p)["sha256"] == archive), None)
         if found is not None:
@@ -363,7 +381,7 @@ class Dev(Headset):
         """The build information of the running stage 1: the dev image's, or that of an image from
         recovery_image.py, the installed boot image or a test image (out/kernel/*.img.json)."""
         try:
-            running = json.loads(self.ssh("cat /etc/pico4-poc/build-info", 10))
+            running = json.loads(self.ssh("cat /etc/pico4/build-info", 10))
         except (RuntimeError, ValueError):
             return dev_image
         if running != dev_image:
@@ -373,6 +391,65 @@ class Dev(Headset):
                     print(f"stage 1 of the kernel test image {record.name[:-5]}")
                     return info
         return dev_image
+
+    def boot_image(self) -> Path:
+        """The installed system's boot image, from what the steps before made (docs/install.md)."""
+        from ..kernel import recovery_image
+        version = self.s.firmware.split("-")[0]
+        kernel, out = self.work.parent / "kernel", self.work.parent / "kernel" / "valve-boot.img"
+        needed = {kernel / "Image.gz": "the Valve's kernel step", self.work / "install-boot.img": "the dev image step",
+                  self.work / "dev-recovery.img": "the dev image step"}
+        for path, hint in needed.items():
+            if not path.exists():
+                raise ValueError(f"missing {path}: run {hint} first")
+        stock = ROOT / "cache" / "stock" / (self.stock_location().rsplit("/", 1)[-1] + ".recovery.img")
+        if not stock.exists():
+            raise ValueError(f"no stock recovery at {stock}: run the dev image step first")
+        code = recovery_image.main(["--installed", str(self.work / "install-boot.img"), "--boot",
+                                    "--gpu-firmware", str(ROOT / "assets" / f"graphics-firmware-{version}"),
+                                    "--wlan-firmware", str(ROOT / "assets" / f"wlan-{version}"),
+                                    "--stage1", str(ROOT / "devices/phoenix/initramfs"), str(kernel), str(stock),
+                                    str(self.work / "dev-recovery.img"), str(out)])
+        if code:
+            raise RuntimeError("the boot image failed")
+        return out
+
+    def release_check(self, attended: bool = False) -> int:
+        """The automated checks of docs/release-checklist.md, on the installed system with a session up;
+        each runs whatever the others found, and the result file is the release's record."""
+        folder = self.work.parent / "release" / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        folder.mkdir(parents=True, exist_ok=True)
+        checks = {"listeners": "pico4-listeners", "still gate": "pico4-still-gate 60"}
+        if attended:
+            checks["suspend with sound"] = "pico4-suspend-check"
+        results = {"acceptance": "passed" if self.check() == 0 else "failed"}
+        for name, command in checks.items():
+            try:
+                results[name] = {"status": "passed", "output": self.ssh(command, 600)}
+            except (RuntimeError, subprocess.TimeoutExpired) as exc:
+                results[name] = {"status": "failed", "output": str(exc)[-2000:]}
+        results["version"] = self.ssh("cat /usr/share/pico4/version", 10, check=False)
+        (folder / "result.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+        failed = [k for k, v in results.items() if v == "failed" or isinstance(v, dict) and v["status"] == "failed"]
+        print(f"{folder / 'result.json'}: " + (f"FAILED {', '.join(failed)}" if failed else "automated checks passed"))
+        print("The worn checks stay yours: docs/release-checklist.md")
+        return 1 if failed else 0
+
+    def support_bundle(self, output: Path | None = None) -> Path:
+        """pico4-support-bundle on the headset, and its archive here; its member list is printed, so
+        the owner sees what would be sent."""
+        lines = self.ssh("pico4-support-bundle", 300).splitlines()
+        if not lines or not lines[0].startswith("/"):
+            raise RuntimeError("pico4-support-bundle gave no archive")
+        remote = lines[0]
+        print("\n".join(lines[1:]), flush=True)
+        output = output or self.work.parent / "support" / Path(remote).name
+        output.parent.mkdir(parents=True, exist_ok=True)
+        # Binary: not through the text-decoding runner.
+        with output.open("wb") as target:
+            subprocess.run([str(a) for a in self.ssh_argv(f"cat {remote}; rm -f {remote}")], stdout=target,
+                           check=True, timeout=120)
+        return output
 
     def check(self) -> int:
         state = json.loads((self.work / "state.json").read_text(encoding="utf-8"))
@@ -485,6 +562,11 @@ def main(argv=None) -> int:
     for name in ("stage-abl", "image", "flash", "connect", "check", "reboot", "restore", "normal", "recovery",
                  "installed"):
         sub.add_parser(name)
+    sub.add_parser("boot-image", help="out/kernel/valve-boot.img from out/kernel, out/dev and the assets")
+    release = sub.add_parser("release-check", help="the automated part of docs/release-checklist.md")
+    release.add_argument("--attended", action="store_true", help="also what needs someone near: tones, a suspend")
+    bundle = sub.add_parser("support-bundle", help="logs for a bug report, identifiers masked, into out/support")
+    bundle.add_argument("--output", type=Path)
     inst = sub.add_parser("install")
     inst.add_argument("system", nargs="?", type=Path, default=SYSTEM)
     inst.add_argument("--format-data", action="store_true", help="format userdata even if it holds data")
@@ -505,6 +587,12 @@ def main(argv=None) -> int:
             return dev.check()
         elif args.command == "install":
             dev.install(args.system, args.format_data, args.boot)
+        elif args.command == "boot-image":
+            print(dev.boot_image())
+        elif args.command == "release-check":
+            return dev.release_check(args.attended)
+        elif args.command == "support-bundle":
+            print(dev.support_bundle(args.output))
         elif args.command == "restore-partition":
             dev.restore_partition(args.partition, not args.no_reboot)
         elif args.command == "ssh":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Unlicense
 """The PICO 4's lens separation: read it, or move the lenses as PICO OS's gd32ipdservice does.
 
 The lens motor hangs off the GD32 MCU on /dev/ttyHS1, which also runs the fan and takes firmware

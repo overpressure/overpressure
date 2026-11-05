@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * Entry point of bionic executables without the NDK's crtbegin: hand the kernel's argument block
  * to bionic's __libc_init, which runs main and exits (also when started through the linker).

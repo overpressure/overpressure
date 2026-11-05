@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Qualcomm devices: the SoC ID, Emergency Download mode (EDL) and its partition maps.
 
 EDL runs through a separately installed client, edl-ng or bkerler/edl, with the device's own

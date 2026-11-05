@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The image is built without the user's backup.
 
 The stock files come from PICO's public OTA (python -m overpressure stock), the headset's own factory data
@@ -39,7 +40,7 @@ class ExtractionTests(unittest.TestCase):
 
 class PersistTests(unittest.TestCase):
     def test_mounted_read_only_without_journal_replay(self):
-        script = read(ROOT / "userspace/rootfs/usr/libexec/pico4-poc/persist")
+        script = read(ROOT / "userspace/rootfs/usr/libexec/pico4/persist")
         self.assertIn("mount -t ext4 -o ro,noload,nodev,nosuid,noexec", script)
         self.assertIn('blockdev --setro "$dev"', script)
         unit = read(ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-persist.service")
@@ -47,7 +48,7 @@ class PersistTests(unittest.TestCase):
         self.assertIn("Before=local-fs.target", unit)
 
     def test_session_user_reads_a_copy_of_the_controller_bias_tables(self):
-        script = read(ROOT / "userspace/rootfs/usr/libexec/pico4-poc/persist")
+        script = read(ROOT / "userspace/rootfs/usr/libexec/pico4/persist")
         self.assertIn('"$dir"/pvr/?????????????????.txt', script)
         self.assertIn("install -m 644", script)
         self.assertIn("/run/pico4-controllers/", script)

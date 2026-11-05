@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Verified files: SHA-256 digests, manifests of backups, and records that are never overwritten.
 
 A backup folder holds manifest.json ({"schema": 1, "files": {NAME: {"size", "sha256"}}}); every

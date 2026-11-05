@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * The tracker root's kernel interfaces on a mainline kernel (docs/xr.md#head-tracking): PICO OS's
  * libcdsprpc speaks the vendor kernel's FastRPC ioctls on /dev/adsprpc-smd and allocates its

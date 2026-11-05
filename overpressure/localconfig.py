@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Local settings of a headset's commands, read from .env at the repository root.
 
 .env describes particular headsets (their serials and backups) and the private files their

@@ -1,6 +1,6 @@
 # Hardware testing
 
-Three commands run the POC on a prepared headset ([device-preparation.md](device-preparation.md)).
+Three commands run stage 1 on a prepared headset ([device-preparation.md](device-preparation.md)).
 The development loop, `python -m overpressure dev`, is the everyday route: the headset stays in
 [development mode](#development-mode), with the engineering ABL, the dev image as the maintenance
 stage 1 in `recovery` and the installed system on Valve's kernel, so that each attempt installs a
@@ -42,7 +42,7 @@ every acceptance boot writes `boot` and restores it.
   [NCM initialization](#windows-ncm-initialization). The tools change no host network settings and
   install no drivers; driver setup and physical recovery from a hard hang need a person.
 - **Images**, built from the repository root ([development.md](development.md)):
-  `out/pico4-poc-<firmware>.img` from `python -m overpressure build --firmware <firmware>`, for the
+  `out/pico4-stage1-<firmware>.img` from `python -m overpressure build --firmware <firmware>`, for the
   firmware entry that `python -m overpressure match` finds for the headset; for the installed
   system, the images in [install.md](install.md#install-and-update), from
   `out/userspace/pico4-userspace.tar.zst` with `pico4-userspace.manifest.json` beside it.
@@ -61,7 +61,7 @@ settings to it.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `PICO4_ADB_SERIAL` | required | serial in `adb devices` |
-| `PICO4_FASTBOOT_SERIAL` | required | serial in `fastboot devices`, also the POC gadget's USB serial |
+| `PICO4_FASTBOOT_SERIAL` | required | serial in `fastboot devices`, also stage 1 gadget's USB serial |
 | `PICO4_EDL_SERIAL` | required for EDL writes | `Serial Number` in edl-ng's output; no ABL is written to another device |
 | `PICO4_IDENTITY` | `backup/device.json` | identity record (`python -m overpressure device probe`); its SoC ID derives the OEM authorization and is checked at login |
 | `PICO4_BACKUP` | `backup/stock` | verified EDL backup with the stock `boot` and `abl` |
@@ -69,7 +69,7 @@ settings to it.
 | `PICO4_ENGINEERING_ABL` | `assets/engineering-abl.elf` | engineering ABL image |
 | `PICO4_ENGINEERING_ABL_SHA256` | required for staging | its expected SHA-256 |
 | `PICO4_EDL` | empty: the fetched edl-ng (`python -m overpressure tools`), else PATH | edl-ng executable |
-| `PICO4_FIRMWARE` | `5.13.7-global-seko` | entry of [tooling/firmware.json](../tooling/firmware.json); selects `out/pico4-poc-<firmware>.img` |
+| `PICO4_FIRMWARE` | `5.13.7-global-seko` | entry of [tooling/firmware.json](../tooling/firmware.json); selects `out/pico4-stage1-<firmware>.img` |
 | `PICO4_NCM_PYTHON` | empty: the fetched NCM venv on Windows, else no NCM initialization | Python with the `windows-ncm` extra |
 | `PICO4_PLATFORM_TOOLS` | empty: the fetched platform-tools, else `PATH` | folder with `adb` and `fastboot` |
 | `PICO4_SSH`, `PICO4_SSH_KEYGEN` | `ssh`, `ssh-keygen` | OpenSSH executables |
@@ -131,7 +131,7 @@ not tested. `flash-run` never unlocks the bootloader, resets user data or modifi
 ```sh
 python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FASTBOOT_SERIAL \
     --confirm-device ADB_SERIAL --backup backup/stock \
-    --image out/pico4-poc-5.13.7-global-seko.img \
+    --image out/pico4-stage1-5.13.7-global-seko.img \
     --windows-ncm-python PYTHON_OF_THE_NCM_VENV   # python -m overpressure tools ncm-venv prints its folder
 ```
 
@@ -140,9 +140,9 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--serial` | required; `preflight` takes the only authorized ADB device | ADB serial |
-| `--fastboot-serial` | `--serial` | fastboot serial if it differs; also the POC gadget's USB serial |
+| `--fastboot-serial` | `--serial` | fastboot serial if it differs; also stage 1 gadget's USB serial |
 | `--image` | required for `flash-run` | stage-1 image |
-| `--rootfs` | `preflight`: the newest `out/pico4-poc-*-rootfs.tar` | `out/pico4-poc-<firmware>-rootfs.tar` |
+| `--rootfs` | `preflight`: the newest `out/pico4-stage1-*-rootfs.tar` | `out/pico4-stage1-<firmware>-rootfs.tar` |
 | `--backup` | required for `flash-run` | verified EDL backup |
 | `--confirm-device` | required for `flash-run` | repeats `--serial` to authorize the boot write |
 | `--out` | `out/hardware-<random>` | new [result directory](#result-directory) |
@@ -156,11 +156,11 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
 `result.json` records each phase under `checks`, with these names:
 
 1. **prepare test boot image.** With `--windows-ncm-python`, the NCM helper's `--check`. A fresh
-   ed25519 key for the run. The source image must pass its header checksum, be a POC build, keep
-   read-only mode and the QEMU self-test off (`pico4poc.rw`, `pico4poc.selftest`) and start the
+   ed25519 key for the run. The source image must pass its header checksum, be a stage-1 build, keep
+   read-only mode and the QEMU self-test off (`pico4.rw`, `pico4.selftest`) and start the
    independent `recovery-watch` service (rebuild older images). The runner derives `test-boot.img`: root's `authorized_keys` with the run's
-   public key, a random run identifier (in `/etc/pico4-poc/test-run` and as
-   `pico4poc.test_run=`), the [device deadlines](#device-deadlines) and no boot signature.
+   public key, a random run identifier (in `/etc/pico4/test-run` and as
+   `pico4.test_run=`), the [device deadlines](#device-deadlines) and no boot signature.
    Kernel, DTBs and boot layout are kept; the runner parses the packed image again and compares
    kernel and DTB. Both images' SHA-256 are recorded. The preflight uses `rootfs.tar`, the
    userspace of the same source image, so it cannot be paired with another rootfs.
@@ -171,7 +171,7 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
    [below](#explicit-boot-partition-test)).
 4. **userspace preflight.** Pushes `rootfs.tar` and
    [scripts/preflight-device.sh](../scripts/preflight-device.sh) to
-   `/data/local/tmp/pico4-poc-<run>`; the script runs the image's Alpine binaries on the stock
+   `/data/local/tmp/pico4-stage1-<run>`; the script runs the image's Alpine binaries on the stock
    kernel as the unprivileged ADB shell user. It must exit 0 and print exactly one summary
    `PREFLIGHT: N passed, 0 failed` with N > 0 (`preflight.txt`). The files are removed after a
    failure too.
@@ -189,7 +189,7 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
    file system is mounted writable. These checks observe: nothing
    tries to write to a real partition. For `flash-run`, `boot` read back over the test image's
    length must hash to the test image's SHA-256.
-9. **HTTP and diagnostic report.** `cgi-bin/status` must be the POC's and `cgi-bin/log?boot` must
+9. **HTTP and diagnostic report.** `cgi-bin/status` must be stage 1's and `cgi-bin/log?boot` must
    name this run. The runner waits up to `--report-timeout` for the report that init's probe
    writes instead of starting another probe; `cgi-bin/report` must hold `summary.txt`,
    `system.txt` (naming this run) and `dmesg.txt`, each 1 B to 16 MiB, inspected without
@@ -287,8 +287,8 @@ original Android identity must complete boot (`android_boot_verified`). That is 
 of the stock partition; the [cycle](#acceptance-cycle) adds a full EDL readback. A failed restore
 leaves the headset in fastboot when possible and keeps `boot_restore_required: true`.
 
-Killing the host process or losing power can leave the POC in `boot`; a normal reboot then starts
-the POC again, never PICO OS. Once the headset is in fastboot (its deadlines bring it there), the
+Killing the host process or losing power can leave stage 1 in `boot`; a normal reboot then starts
+stage 1 again, never PICO OS. Once the headset is in fastboot (its deadlines bring it there), the
 saved `manual_restore_commands` flash `stock-boot.img` from the result directory; the EDL backup
 is the other way back.
 
@@ -334,23 +334,23 @@ python -m overpressure dev ssh "cat /run/pico4-suspend-check.json"
 ### Device deadlines
 
 Every test image carries deadlines that its independent `recovery-watch` service enforces
-([recovery-watch](../initramfs/usr/libexec/pico4-poc/recovery-watch), policy in
-[recovery-policy.sh](../initramfs/usr/libexec/pico4-poc/recovery-policy.sh)), from inittab. It checks every 2 s and reboots to
+([recovery-watch](../initramfs/usr/libexec/pico4/recovery-watch), policy in
+[recovery-policy.sh](../initramfs/usr/libexec/pico4/recovery-policy.sh)), from inittab. It checks every 2 s and reboots to
 fastboot when a deadline passes.
 
 - **Connection**, from Linux start: `--boot-timeout` + 30 s (210 s by default); 600 s in the dev
   image. Only the host's verified SSH identity check clears it
-  (`/run/pico4-poc/test-authenticated`); USB enumeration, carrier and DHCP traffic do not.
+  (`/run/pico4/test-authenticated`); USB enumeration, carrier and DHCP traffic do not.
 - **Maximum runtime**, from Linux start: `--boot-timeout` + `--report-timeout` + 300 s; 660 s by
   default. 3600 s in the dev image. Nothing clears it, so it also
   covers a host runner that died after authentication. The dev loop renews it instead: each of
-  its commands writes the uptime to `/run/pico4-poc/host-contact`, and the deadline then counts
+  its commands writes the uptime to `/run/pico4/host-contact`, and the deadline then counts
   from that contact ("maximum runtime: no host contact for 3600s").
 
 These deadlines apply even when the image turns off the interactive auto-reboot
-(`pico4poc.autoreboot`, [stage1.md](stage1.md)). A switch that fails before systemd runs also
+(`pico4.autoreboot`, [stage1.md](stage1.md)). A switch that fails before systemd runs also
 returns to fastboot. A kernel panic reboots the headset instead of leaving it in Qualcomm
-crash-dump mode (stage 1 turns download mode off unless `pico4poc.ramdump=1`), so a flashed POC
+crash-dump mode (stage 1 turns download mode off unless `pico4.ramdump=1`), so a flashed POC
 starts again and its deadlines apply.
 
 ### Failure and timeout behavior
@@ -373,9 +373,9 @@ Valve's session).
 Once the headset has left PICO OS, a failure leads into the recovery phase (a `finally` path):
 
 - With this run's SSH identity verified, the runner saves the boot log (`recovery-boot.log`, best
-  effort) and asks the POC to reboot, to the bootloader when `boot` must be restored.
+  effort) and asks stage 1 to reboot, to the bootloader when `boot` must be restored.
 - `flash-run` restores stock boot as [described above](#explicit-boot-partition-test).
-- If the fastboot serial appears, including after the POC's own fallback to fastboot, the runner
+- If the fastboot serial appears, including after stage 1's own fallback to fastboot, the runner
   requests a normal boot, then waits for the original Android identity and boot completion.
 - If neither ADB nor fastboot returns in time, recovery is marked failed and the logs stay for
   manual recovery.
@@ -408,12 +408,12 @@ image.
 ### Preflight only
 
 ```sh
-python -m overpressure hwtest preflight --serial ADB_SERIAL --rootfs out/pico4-poc-5.13.7-global-seko-rootfs.tar
+python -m overpressure hwtest preflight --serial ADB_SERIAL --rootfs out/pico4-stage1-5.13.7-global-seko-rootfs.tar
 ```
 
 Runs phases 2 and 4 only: PICO OS keeps running, and no unlock, fastboot or SSH is involved.
 `--serial` may be left out when exactly one authorized ADB device is attached, and `--rootfs`
-when the newest `out/pico4-poc-*-rootfs.tar` is the one to check (the window's "Preflight on
+when the newest `out/pico4-stage1-*-rootfs.tar` is the one to check (the window's "Preflight on
 PICO OS" step runs it so). The recorded fingerprint and OEM
 state select the firmware entry: `python -m overpressure match --fingerprint ... --oem-state ...`.
 
@@ -430,7 +430,7 @@ stock boot and stock ABL. It takes the headset out of development mode, so tasks
    `PICO4_ENGINEERING_ABL_SHA256`, which checks the hash, writes and reads back
    ([device-preparation.md](device-preparation.md)); EDL reset; PICO OS must finish booting.
 2. **Acceptance run**: `python -m overpressure hwtest flash-run` with the `.env` serials and backup,
-   `out/pico4-poc-<PICO4_FIRMWARE>.img` (built beforehand) and `--windows-ncm-python` when
+   `out/pico4-stage1-<PICO4_FIRMWARE>.img` (built beforehand) and `--windows-ncm-python` when
    `PICO4_NCM_PYTHON` is set; results in
    `run/`, bounded to 4 hours. If `result.json` still requires a boot restore, the cycle waits up
    to 45 minutes for the fastboot serial (the device deadlines bring the headset there), checks
@@ -484,7 +484,7 @@ are in [install.md](install.md#install-and-update). Settings come from [`.env`](
 | Command | Effect |
 | --- | --- |
 | `stage-abl` | engineering ABL through EDL with readback, then PICO OS, as in cycle step 1; logs in `out/dev/stage-abl-<time>/` |
-| `image` | builds `out/dev/dev-boot.img`, `dev-recovery.img` and `install-boot.img` from `out/pico4-poc-<PICO4_FIRMWARE>.img`, which must contain the handoff: instrumented like a runner image, with the run identifier `dev-loop`, the dev key and long deadlines ([install.md](install.md#boot-images)) |
+| `image` | builds `out/dev/dev-boot.img`, `dev-recovery.img` and `install-boot.img` from `out/pico4-stage1-<PICO4_FIRMWARE>.img`, which must contain the handoff: instrumented like a runner image, with the run identifier `dev-loop`, the dev key and long deadlines ([install.md](install.md#boot-images)) |
 | `flash` | goes to fastboot (from PICO OS through ADB, from stage 1 or 2 through SSH; up to 180 s), checks the bootloader and partition as `flash-run` does (unlocked, exactly one non-slotted partition of the backed-up size, an image that fits), sends the OEM authorization, writes the dev image to `recovery` and starts it |
 | `connect` | forgets the previous host key (stage 1 makes new ones every boot), runs the NCM initialization when `PICO4_NCM_PYTHON` is set (retried for up to 120 s) and logs in to stage 1 within 120 s; the endpoint must report `dev-loop` and the SoC ID of `PICO4_IDENTITY`, and the login clears the connection deadline. It then reads back the partition the running stage 1 came from: its hash must match `out/dev/dev-boot.img` or `dev-recovery.img` |
 | `check` | runs the runner's stage-2 checks, from the userspace check to Valve's session, on the installed system; results in `out/dev/check-<time>/`; exit 0 only if all pass |
@@ -496,7 +496,7 @@ are in [install.md](install.md#install-and-update). Settings come from [`.env`](
   they do not compare the backup's identity record with the live headset; the serials in `.env`
   and the SoC ID checked at login tie them to it.
 - The dev image's connection deadline is 600 s and its maximum runtime 3600 s from the last
-  dev command (each one renews `/run/pico4-poc/host-contact`): stage 1 waits for the next
+  dev command (each one renews `/run/pico4/host-contact`): stage 1 waits for the next
   attempt instead of rebooting, a headset left alone returns to fastboot an hour after the last
   command, a session in use with commands in between keeps running. From fastboot, `dev reboot`
   starts what `misc` and `boot` select.
@@ -535,3 +535,12 @@ failures of the NCM initialization, command timeouts and artifact preservation.
 partition that differs from the backup, another EDL device, a changed pinned image, no EDL device)
 and the dev loop's login, install, reboot and restore; [tests/test_windows_ncm.py](../../../tests/test_windows_ncm.py)
 covers the NCM helper. They do not replace a run on the headset; the QEMU test covers stage 1 only.
+
+## Support bundle
+
+`python -m overpressure dev support-bundle` (or `pico4-support-bundle` on the headset) collects what a bug report
+needs into one archive in `out/support`: the version, the journals of this boot and the last, the kernel log,
+pstore, failed units, coredumps' list, Steam's and SteamVR's logs, packages, power, temperatures and network state.
+It works with the session down. Serials, MAC and IP addresses, Steam IDs, account and network names are masked;
+Steam's config and login data and the network connections are not read into it. It is plain text, and the command
+lists its files: read it before sending it.

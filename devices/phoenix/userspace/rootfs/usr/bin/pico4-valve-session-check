@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Valve's VR session on the PICO 4 (roadmap step 6, docs/session.md): runs Valve's
 # gamescope-session.target through pico4-session.service for a short while, then
 # returns to the configured session. Checks that SteamVR's compositor drives the
@@ -47,7 +48,7 @@ user=steamos
 uid=$(id -u "$user")
 home=$(getent passwd "$user" | cut -d: -f6)
 logs=$home/.local/share/Steam/logs
-conf=/etc/pico4-poc/session.conf
+conf=/etc/pico4/session.conf
 work=/run/pico4-valve-session
 errors=()
 user_systemctl() {
@@ -106,7 +107,7 @@ settle=0
 if [ "$startup" -ge 0 ]; then
 	settle=20
 	sleep "$settle"
-	/usr/libexec/pico4-poc/msm-frame-stats record "$seconds" "$(pgrep -u "$user" -x vrcompositor | head -n 1)" \
+	/usr/libexec/pico4/msm-frame-stats record "$seconds" "$(pgrep -u "$user" -x vrcompositor | head -n 1)" \
 		"$work/frames.json" >/dev/null 2>&1 || errors+=("msm's frame events could not be recorded")
 fi
 
@@ -135,7 +136,7 @@ devices=$(runuser -u "$user" -- env "HOME=$home" "XDG_RUNTIME_DIR=/run/user/$uid
 grep -q '^\[' <<<"$devices" || devices="[]"
 temp_after=$(max_temp)
 fan_after=$(fan_state)
-performance=$(/usr/libexec/pico4-poc/session-performance "$work/frames.json" "${temp_after:-nan}" 2>/dev/null)
+performance=$(/usr/libexec/pico4/session-performance "$work/frames.json" "${temp_after:-nan}" 2>/dev/null)
 grep -q '^{' <<<"$performance" || performance='{"status":"failed","failures":["no performance verdict"]}'
 
 [ "$target_state" = active ] || errors+=("gamescope-session.target is $target_state")

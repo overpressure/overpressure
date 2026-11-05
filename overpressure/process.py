@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Running the host's programs against a headset, and bounded waits for its states.
 
 Every wait is bounded: a headset that does not answer ends a step with an error naming what was

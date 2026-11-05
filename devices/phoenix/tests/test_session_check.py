@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Valve's session check and the userspace check on msm, the only GPU path."""
 import unittest
 from pathlib import Path

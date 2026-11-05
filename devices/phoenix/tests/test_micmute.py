@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """micmute: the microphone follows the wear sensor in place of Valve's steamvr-proxmicmute."""
 import importlib.machinery
 import importlib.util
@@ -8,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-PATH = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/micmute"
+PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/micmute"
 _loader = importlib.machinery.SourceFileLoader("micmute", str(PATH))
 _spec = importlib.util.spec_from_loader("micmute", _loader)
 tool = importlib.util.module_from_spec(_spec)
@@ -66,7 +67,7 @@ class WiringTests(unittest.TestCase):
         self.assertIn("Wants=pico4-micmute.service", dropin.read_text(encoding="utf-8"))
         unit = (ROOT / "userspace/rootfs/usr/lib/systemd/user/pico4-micmute.service").read_text(encoding="utf-8")
         self.assertIn("PartOf=steamvr.service", unit)
-        self.assertIn("ExecStart=/usr/libexec/pico4-poc/micmute\n", unit)
+        self.assertIn("ExecStart=/usr/libexec/pico4/micmute\n", unit)
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         mask = next(line for line in build.splitlines() if "systemctl --global mask" in line)
         self.assertIn("steamvr-proxmicmute.service", mask)

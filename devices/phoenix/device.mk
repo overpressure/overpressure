@@ -16,5 +16,5 @@ userspace: ## PICO 4: userspace archive in USERSPACE/ (as root; USERSPACE_FLAGS+
 	$(PHOENIX)/scripts/build-userspace.sh $(BUILD_ROOT) $(USERSPACE) $(USERSPACE_FLAGS)
 
 qemu-stage1: ## PICO 4, optional: stage 1 on the QEMU test kernel, about 3 min
-	$(PHOENIX)/tests/qemu/run-selftest.sh out/pico4-poc-$(FIRMWARE)-initramfs.cpio.gz
+	$(PHOENIX)/tests/qemu/run-selftest.sh out/pico4-stage1-$(FIRMWARE)-initramfs.cpio.gz
 

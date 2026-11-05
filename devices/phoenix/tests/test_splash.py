@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import struct
 import unittest
 from pathlib import Path
@@ -38,7 +39,7 @@ class SplashTests(unittest.TestCase):
 
     def test_stage_one_starts_it_for_the_installed_system_only(self):
         init = (ROOT / "initramfs/init").read_text(encoding="utf-8")
-        branch = init[init.index('if [ "$(poc_arg root "")" = installed ]'):]
+        branch = init[init.index('if [ "$(stage1_arg root "")" = installed ]'):]
         branch = branch[:branch.index("\nfi\n")]
         self.assertRegex(branch, r"(?m)^\tpico4-splash \d+ [^\n]*&$")
         self.assertEqual(init.count("pico4-splash "), 1)
@@ -47,7 +48,7 @@ class SplashTests(unittest.TestCase):
 
     def test_stage_two_unit(self):
         unit = (ROOTFS / "usr/lib/systemd/system/pico4-splash.service").read_text(encoding="utf-8")
-        self.assertIn("ConditionKernelCommandLine=pico4poc.root=installed", unit)
+        self.assertIn("ConditionKernelCommandLine=pico4.root=installed", unit)
         self.assertIn("DefaultDependencies=no", unit)
         self.assertIn("Conflicts=shutdown.target", unit)
         self.assertRegex(unit, r"(?m)^ExecStart=/usr/bin/pico4-splash \d+$")

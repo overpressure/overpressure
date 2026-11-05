@@ -1,6 +1,8 @@
+# SPDX-License-Identifier: Unlicense
 """The IMX471 RGB camera: the settings PICO OS's camera module gives it, in the kernel's
 driver, and its V4L2 path in pico4_cam."""
 
+import importlib.util
 import re
 import unittest
 from pathlib import Path
@@ -21,12 +23,6 @@ def function(source: str, name: str) -> str:
     return source[start:source.index("\n}\n", start)]
 
 
-def table(source: str) -> list:
-    start = source.index("imx471_mode[] = {")
-    body = source[start:source.index("};", start)]
-    return [(int(a, 16), int(v, 16)) for a, v in re.findall(r"\{ 0x([0-9a-f]{4}), 0x([0-9a-f]{2}) \}", body)]
-
-
 class RgbCameraTests(unittest.TestCase):
     def test_slot_and_geometry(self):
         header = read(HEADER)
@@ -35,16 +31,15 @@ class RgbCameraTests(unittest.TestCase):
         self.assertIn("#define PICO4_CAM_RGB_HEIGHT 1748", header)
         self.assertIn("#define PICO4_CAM_SLOTS 5", header)
 
-    def test_mode_table_is_the_50_fps_mode(self):
-        regs = dict(table(read(DRIVER)))
-        self.assertEqual(len(table(read(DRIVER))), 110)
-        self.assertEqual(regs[0x0136], 0x18)  # 24 MHz external clock
-        self.assertEqual((regs[0x0340] << 8) | regs[0x0341], 4520)  # frame length
-        self.assertEqual((regs[0x0342] << 8) | regs[0x0343], 2560)  # line length
-        self.assertEqual((regs[0x034c] << 8) | regs[0x034d], 2328)
-        self.assertEqual((regs[0x034e] << 8) | regs[0x034f], 1748)
-        self.assertEqual(regs[0x0114], 0x03)  # four lanes
-        self.assertEqual(regs[0x0901], 0x22)  # 2x2 binning
+    def test_the_50_fps_mode_fits_the_driver(self):
+        # The table is generated at the build (kernel/imx471_mode.py) for this mode.
+        spec = importlib.util.spec_from_file_location("imx471_mode", ROOT / "kernel/imx471_mode.py")
+        mode = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mode)
+        source = read(DRIVER)
+        self.assertRegex(source, rf"#define IMX471_WIDTH\s+{mode.WIDTH}")
+        self.assertRegex(source, rf"#define IMX471_HEIGHT\s+{mode.HEIGHT}")
+        self.assertRegex(source, rf"#define IMX471_MAX_LINES\s+{mode.FRAME_LENGTH - 10}")
         # 50 fps at this frame length: 4425 ns a line, as the header says.
         self.assertAlmostEqual(1e9 / (4520 * 50), 4424.8, places=1)
         self.assertIn("#define PICO4_CAM_RGB_LINE_NS 4425", read(HEADER))

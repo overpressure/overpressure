@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
+"""One archive with what a bug report needs, without the owner's identifiers (docs/hardware-testing.md).
+
+    pico4-support-bundle [--output FILE]     as root; prints the archive's path and its member list
+
+It works with the session down and after a crash: everything is read directly, and each part that
+is missing just stays out. Serials, MAC addresses, IP addresses, Steam IDs, Steam account and network
+names and the host's names are masked in every file, and no file with tokens (Steam's config, its
+login data, NetworkManager's connections) is read into the archive. The result is plain text, so
+the owner can read all of it before sending it.
+"""
+import argparse
+import datetime
+import glob
+import io
+import os
+import re
+import subprocess
+import sys
+import tarfile
+from pathlib import Path
+
+HOME = Path("/home/steamos")
+STEAM = HOME / ".local/share/Steam"
+#: Log files, last to first in importance; at most this much of each (the newest part).
+FILE_LIMIT = 8 << 20
+LOG_GLOBS = (str(STEAM / "logs/*.txt"), str(STEAM / "logs/*.log"), "/sys/fs/pstore/*", "/var/log/pico4/*")
+#: What to run, and the file its output goes to.
+COMMANDS = {
+    "version.txt": "uname -a; cat /usr/share/pico4/system-image /etc/os-release; cat /usr/share/pico4/version",
+    "journal-this-boot.txt": "journalctl -b --no-pager -o short-monotonic",
+    "journal-last-boot.txt": "journalctl -b -1 --no-pager -o short-monotonic",
+    "dmesg.txt": "dmesg",
+    "units.txt": "systemctl --failed --no-pager; systemctl status pico4-session.service --no-pager; "
+                 "runuser -u steamos -- env XDG_RUNTIME_DIR=/run/user/1000 systemctl --user --failed --no-pager",
+    "coredumps.txt": "coredumpctl list --no-pager",
+    "packages.txt": "pacman -Q",
+    "power.txt": "grep -H . /sys/class/power_supply/*/status /sys/class/power_supply/*/capacity",
+    "thermal.txt": "grep -H . /sys/class/thermal/thermal_zone*/type /sys/class/thermal/thermal_zone*/temp; pico4-fan state",
+    "storage.txt": "df -h; findmnt",
+    "network.txt": "ip -br addr; ip route; pico4-listeners",
+    "panels.txt": "dmesg | grep -iE 'pico4|panel|dsi|lens'",
+    "suspend.txt": "cat /sys/power/suspend_stats/* 2>/dev/null; grep -H . /sys/power/suspend_stats/*",
+}
+
+MAC = re.compile(r"\b[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\b")
+STEAM_ID = re.compile(r"\b7656119\d{10}\b")
+STEAM_ID3 = re.compile(r"\[U:1:\d+\]")
+IPV4 = re.compile(r"\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b")
+IPV6 = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}\b")
+#: Kept: nobody's own: loopback, any, the USB link, Valve-side version-like numbers are not addresses.
+PUBLIC_IPS = ("127.", "0.0.0.0", "172.16.42.")
+
+
+def mask_ip(match):
+    text = match.group(0)
+    if text.startswith(PUBLIC_IPS) or any(int(part) > 255 for part in match.groups()):
+        return text
+    return "<ip>"
+
+
+def masker(names):
+    """The function that masks the identifiers: the patterns, and these literal @p names."""
+    literal = sorted({name for name in names if name and len(name) >= 3}, key=len, reverse=True)
+    pattern = re.compile("|".join(re.escape(name) for name in literal)) if literal else None
+
+    def mask(text):
+        if pattern:
+            text = pattern.sub("<name>", text)
+        text = MAC.sub("<mac>", text)
+        text = STEAM_ID.sub("<steamid>", text)
+        text = STEAM_ID3.sub("<steamid>", text)
+        text = IPV6.sub("<ip>", text)
+        return IPV4.sub(mask_ip, text)
+    return mask
+
+
+def read(path):
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def run(command, timeout=60):
+    try:
+        done = subprocess.run(["sh", "-c", command], check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        return (exc.stdout or b"").decode("utf-8", "replace") + "\n(timed out)\n"
+    return done.stdout.decode("utf-8", "replace")
+
+
+def identifiers(cmdline_text, steam=STEAM):
+    """The names worth masking literally on this headset: serials, the machine's id, Steam's account
+    names (loginusers.vdf is read for this only, never archived), the known networks."""
+    names = [read("/sys/devices/soc0/serial_number"), read("/etc/machine-id"), read("/etc/hostname")]
+    names += re.findall(r"androidboot\.serialno=(\S+)", cmdline_text)
+    names += re.findall(r"androidboot\.(?:wifimacaddr|btmacaddr)=(\S+)", cmdline_text)
+    names += re.findall(r'"(?:AccountName|PersonaName)"\s+"([^"]+)"', read(steam / "config/loginusers.vdf"))
+    networks = run("nmcli -t -f NAME connection show 2>/dev/null", 10)
+    names += [line.replace("\\:", ":") for line in networks.splitlines() if line.strip()]
+    # The system's own name is everywhere and says nothing about the owner, nor does a network's type.
+    return [name for name in names if name not in ("pico4-steamos", "lo", "usb0")]
+
+
+def bundle(output, commands=COMMANDS, globs=LOG_GLOBS, names=None, limit=FILE_LIMIT):
+    """Write the archive; returns its members' names."""
+    mask = masker(identifiers(read("/proc/cmdline")) if names is None else names)
+    members = {}
+    for name, command in commands.items():
+        members[name] = run(command)
+    for pattern in globs:
+        for path in sorted(glob.glob(pattern)):
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, "rb") as source:
+                    size = os.fstat(source.fileno()).st_size
+                    source.seek(max(0, size - limit)) if size else None
+                    data = source.read(limit)
+            except OSError:
+                continue
+            members[f"files{path}".replace("/home/steamos", "/home")] = data.decode("utf-8", "replace")
+    os.umask(0o077)
+    with tarfile.open(output, "w:gz") as archive:
+        for name, text in members.items():
+            data = mask(text).encode("utf-8")
+            info = tarfile.TarInfo("support/" + name)
+            info.size, info.mode = len(data), 0o600
+            archive.addfile(info, io.BytesIO(data))
+    return list(members)
+
+
+def main(argv=None):
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--output", default=f"/var/tmp/pico4-support-{stamp}.tar.gz")
+    args = ap.parse_args(argv)
+    names = bundle(args.output)
+    print(args.output)
+    print(f"{len(names)} files, identifiers masked; plain text, read it before you send it:")
+    for name in names:
+        print("  " + name)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

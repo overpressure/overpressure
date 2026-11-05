@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * PICO OS's see-through depth mesh (vst.h), called as PICO OS's see-through service calls it on
  * the PICO 4: the mesh buffers, their lock and the ready callback before the start; then per

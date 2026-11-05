@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Unlicense
 """Run the PICO 4 fan from the CPU and GPU temperatures with PICO OS's policy (docs/cooling.md).
 
 The fan hangs off the GD32 MCU that also moves the lenses and drives the
@@ -21,7 +21,10 @@ the serial number ("early" and "late" here). This daemon runs the early table by
 default on every headset: Valve's GPU-bound session heats the headset more than
 PICO OS's own apps, and the late table's 35-50 % let it pass 90 °C. `auto` picks
 by batch as PICO OS does. It adds one thing: full speed while any of those
-sensors reads 95 °C or more, until the hottest mean is below 90 °C again.
+sensors reads 95 °C or more, until the hottest mean is below 90 °C again. And one
+thing for a fan that does not cool, for which PICO OS has no reaction: where PICO OS
+shows its overheating notice (a hottest mean of 95.1 °C for 2 minutes), a silent MCU
+or a stalled fan powers the headset off.
 
 Safety: the MCU also takes lens-motor moves, calibration writes and firmware
 updates. This tool builds only the queries in QUERIES and SetFanSpeed with a
@@ -33,6 +36,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import time
 from collections import deque
@@ -377,15 +381,24 @@ def log_stderr(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
+def poweroff() -> None:
+    """A clean power-off, as the power key's 2 s hold; --no-block keeps the control loop running."""
+    try:
+        subprocess.run(["systemctl", "--no-block", "poweroff"], check=False, timeout=10)
+    except (OSError, subprocess.SubprocessError) as e:
+        log_stderr(f"systemctl poweroff: {e}")
+
+
 class Daemon:
     """The control loop: read the sensors, step the controller, keep the MCU on the duty."""
 
     def __init__(self, controller: Controller, sensors: List[Sensor], fan: Optional[Fan],
                  read: Callable[[str], Optional[int]], clock: Callable[[], float] = time.monotonic,
                  log: Callable[[str], None] = log_stderr, state_path: Optional[Path] = STATE,
-                 profile: str = ""):
+                 profile: str = "", power_off: Callable[[], None] = poweroff):
         self.controller, self.sensors, self.fan, self.read = controller, sensors, fan, read
         self.clock, self.log, self.state_path, self.profile = clock, log, state_path, profile
+        self.power_off = power_off
         never = float("-inf")
         self.sent: Optional[int] = None   # duty the MCU acknowledged last
         self.sent_at = never
@@ -477,8 +490,21 @@ class Daemon:
             self.log(f"MCU answers again after {self.errors} errors")
         self.error, self.errors, self.error_at = "", 0, float("-inf")
 
+    def fan_fault(self) -> Optional[str]:
+        """Why the fan is not known to cool: a silent MCU or a stalled fan; None without an MCU (dry run)."""
+        if self.fan is None:
+            return None
+        if self.error:
+            return f"the MCU is silent ({self.error})"
+        if self.zero_rpm >= STALL_READS:
+            return f"the fan reports 0 rpm at {self.sent} %"
+        return None
+
     def watch(self, now: float, hottest_mean: Optional[int]) -> None:
-        """PICO OS shows an overheating notice when the hottest mean stays at or above 95.1 °C."""
+        """PICO OS shows an overheating notice when the hottest mean stays at or above 95.1 °C.
+
+        With a fan that does not cool, nothing but the kernel's throttling would hold the
+        temperature there, so that same moment powers the headset off."""
         if hottest_mean is None or hottest_mean < OVERHEAT:
             self.hot_since = None
             return
@@ -488,6 +514,10 @@ class Daemon:
             self.warned_at = now
             self.log(f"warning: hottest mean {c(hottest_mean)} °C for {now - self.hot_since:.0f} s "
                      "(PICO OS shows its overheating notice here)")
+            fault = self.fan_fault()
+            if fault:
+                self.log(f"powering off: {fault}")
+                self.power_off()
 
     def write_state(self) -> None:
         try:

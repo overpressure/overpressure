@@ -41,6 +41,20 @@ pinned SHA-256 of the bootstrap rootfs, and the build manifest, which records th
 every repository database and package file used. **Do not redistribute the output**: it
 contains Valve's packages, including proprietary ones.
 
+### Package lock
+
+[`userspace/packages.lock`](../userspace/packages.lock) names every upstream package of the image by SHA-256.
+A build stops on a package that differs or isn't listed, so an image holds what was tested even though the Frame's
+hotfix repository moves on and neither repository signs anything. SteamVR is one of these packages, so it updates
+only with the image. If Valve removes a locked package, a build from a clean machine fails until the lock moves to
+what Valve then publishes ([docs/releasing.md](../../../docs/releasing.md#moving-to-new-upstream-versions)).
+
+**What updates by itself.** On the headset the system image is read-only and Valve's updater is not installed
+([session.md](session.md)), so nothing of the image moves. The Steam client is the exception: it unpacks from the
+image's bundle on the first start, then updates itself in the data partition with every client release. Holding it
+at a tested version is open: the client's update is what signs in today, and whether an older client keeps working
+against Steam's servers is not known. The image reports its version and commit in `/usr/share/pico4/version`.
+
 ### systemd stays at 257.x
 
 systemd stays at the Frame's 257.7. The build takes `systemd`, `systemd-libs` and
@@ -99,7 +113,7 @@ system image in `super` read-only at `/newroot` and the data partition under it
 kernel (`systemd --version` in a chroot).
 
 **Switch.** `pico4-userspace switch` converts the stage-1 dropbear host keys for OpenSSH, so the
-hardware runner's pinned key stays valid. It copies the test-run state (`/etc/pico4-poc`) and
+hardware runner's pinned key stays valid. It copies the test-run state (`/etc/pico4`) and
 the authorized keys, writes `/etc/machine-id` (derived from the headset serial, stable per
 headset) and a systemd-networkd configuration for the same USB interface and address with a
 one-address DHCP pool for the PC. Then it signals PID 1. The SSH session ends with the switch.
@@ -109,13 +123,13 @@ reaches the kernel's USB mass-storage thread (`file-storage`, which serves the l
 `f_mass_storage` accepts SIGTERM and SIGKILL and exits. The PC then resets the composite USB
 device and the NCM link loses its carrier for good, while the headset still reports the UDC as
 `configured`. Killing only that thread in stage 1 reproduces this.
-[`pico4-init`](../initramfs/usr/libexec/pico4-poc/pico4-init) runs the same `/etc/inittab`
+[`pico4-init`](../initramfs/usr/libexec/pico4/pico4-init) runs the same `/etc/inittab`
 entries, but signals only processes whose `/proc/PID/exe` resolves, never kernel threads
 (`/proc` files report size 0, so the size of `/proc/PID/cmdline` cannot tell them apart).
 `pico4-userspace-check` asserts that the thread survives the switch and that no stage-1 process
 does.
 
-[`switch-userspace`](../initramfs/usr/libexec/pico4-poc/switch-userspace) moves the kernel's
+[`switch-userspace`](../initramfs/usr/libexec/pico4/switch-userspace) moves the kernel's
 devtmpfs, which stage 1 mounted, into the new root: systemd's device monitor listens to udev only
 when `/dev` is a devtmpfs or udev already runs. On a kernel without devtmpfs, such as the stock
 kernel, it refuses: the system runs only on Valve's kernel. Without a prepared userspace it restarts
@@ -124,9 +138,9 @@ stage-1 init.
 Guarantees carried into stage 2:
 
 - **Storage**: `pico4-storage-ro.service` and the udev helper keep every physical disk and
-  partition read-only (`pico4poc.rw=1` disables this, as in stage 1). The one exception is the
+  partition read-only (`pico4.rw=1` disables this, as in stage 1). The one exception is the
   installed system's data partition (`userdata` with the `pico4-data` file system, booted with
-  `pico4poc.root=installed`), which stage 1 made writable and mounted: switched read-only under
+  `pico4.root=installed`), which stage 1 made writable and mounted: switched read-only under
   the mounted file system, its writeback fails and the data is lost
   ([install.md](install.md)). `pico4-userspace-check` requires it to be writable. There are no fstab
   entries, the GPT auto-generator is disabled, and `systemd-repart` and `systemd-boot-update`
@@ -134,33 +148,33 @@ Guarantees carried into stage 2:
 - **Recovery**: `pico4-recovery-watch.service` runs the same script and policy as stage 1
   (`recovery-watch`, `recovery-policy.sh`) with the carried-over test deadlines and survives
   isolation. Emergency and rescue mode log the failed units and reboot to fastboot
-  after 30 s (`pico4poc.emergency_delay`) instead of waiting for a console. A crashed PID 1
+  after 30 s (`pico4.emergency_delay`) instead of waiting for a console. A crashed PID 1
   reboots (`CrashAction=reboot`); stop timeouts are 15 s. A failure before `switch_root`
   returns to fastboot from stage 1; on the installed system it reboots into recovery.
 - **Kernel panics**: the kernel reboots 5 s after a panic (`panic=5`). The firmware refuses the
   warm reset the command line asks for, and the tree's PS_HOLD reset restarts the headset, about
   40 s from a forced panic to SSH.
 - **Logs**: `systemd-pstore.service` is masked, so stage-1 logs in pstore stay for the next
-  stage-1 boot to export. `/run/pico4-poc/boot.log` continues across the switch. journald keeps
+  stage-1 boot to export. `/run/pico4/boot.log` continues across the switch. journald keeps
   the journal in `/run` (at most 64 MiB) and forwards warnings to the kernel log.
   `pico4-userspace-netdiag` writes USB link samples 20, 60 and 150 s after the switch to pstore
   (pmsg), which the next stage-1 boot exports. A timer rewrites the USB log drive with the
   journal, kernel log, unit and network state 45 s after the switch and every 2 minutes after
   that.
-- **Access**: sshd uses the converted host keys and the same access policy as stage 1 (root
-  over the USB cable, the runner's per-run keys or the empty password).
+- **Access**: sshd uses the converted host keys and takes the keys enrolled at install, on the USB
+  link and on Wi-Fi ([security.md](security.md)).
 
 Adaptations in the image:
 
 - **Session user**: `steamos` (UID 1000), which the Frame's tmpfiles rules and
   `steamos-customizations-deckard` require; groups `wheel`, `video`, `render`, `input`, `audio`.
-  Root and `steamos` have empty passwords. Hostname
+  Neither root nor `steamos` has a password. Hostname
   `pico4-steamos`.
 - **`/home`**: SteamOS's `home.mount` mounts the Frame's `/dev/disk/by-partsets/shared/home`;
   without that device it waits 90 s and fails `basic.target`. The image replaces it with a
   self-bind of `/home` on the data partition, which keeps the offload bind mounts
   (`steamos-offload.target`) working; their source directories are created in the image.
-- **USB**: `/tmp/usb_gadget_block` makes the Frame's Type-C plug handler leave the POC's USB
+- **USB**: `/tmp/usb_gadget_block` makes the Frame's Type-C plug handler leave stage 1's USB
   gadget alone. systemd-networkd configures the USB link; NetworkManager manages every other
   interface.
 - **Masked units**: `systemd-firstboot` (would wait for console input), `systemd-pstore`,
@@ -168,7 +182,7 @@ Adaptations in the image:
   `steamos-dump-info` (needs the Frame's EEPROM and EFI boot configuration, `steamos-bootconf`),
   `serial-getty@ttyMSM0` (no one logs in on the UART), and the Frame's USB
   gadget units (`usb-gadget.target`, `usb-ncm-gadget@`, `usb-ncm-dnsmasq@`), which would take
-  the controller from the POC's link. The session's masks are in [session.md](session.md).
+  the controller from stage 1's link. The session's masks are in [session.md](session.md).
 - **Enabled**: sshd, systemd-networkd, NetworkManager, systemd-timesyncd, bluetoothd, the
   recovery, storage and log units, the sensor and audio targets, Monado's socket,
   `pico4-session.service`, and the units for the fan, USB internet, splash, power key, persist,
@@ -297,7 +311,7 @@ save `temp.json` in the registry fails.
 
 The PC can share its internet with the headset over the USB cable. On the headset,
 [`pico4-usb-internet.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-usb-internet.service)
-adds the PC's end of the link (`pico4poc.host_ip=`, 172.16.42.2 by default) to stage 1's network
+adds the PC's end of the link (`pico4.host_ip=`, 172.16.42.2 by default) to stage 1's network
 file as default gateway and DNS server, at route metric 2048, below NetworkManager's Wi-Fi and
 Ethernet routes. Without sharing on the PC that route leads nowhere. `pico4-clock` sets the clock
 at boot from the PMIC's RTC and PICO OS's offset in persist; `systemd-timesyncd` corrects the drift
@@ -324,7 +338,7 @@ quick after that.
 ## Wi-Fi
 
 The kernel's ath11k drives the QCA6390 with PICO OS's firmware and the headset's board data, and
-NetworkManager uses the Frame's iwd backend. [`pico4-wlan-address`](../userspace/rootfs/usr/libexec/pico4-poc/wlan-address)
+NetworkManager uses the Frame's iwd backend. [`pico4-wlan-address`](../userspace/rootfs/usr/libexec/pico4/wlan-address)
 sets `wlan0`'s address from `persist` before NetworkManager starts. It joins WPA2 and WPA3 networks and
 reconnects by itself after a reboot ([kernel.md](kernel.md#results)).
 
@@ -338,11 +352,11 @@ bring-up:
 
 1. `pico4-adsp` boots the ADSP through remoteproc (`remoteproc-boot`).
 2. `pico4-audiopd` starts the audio process on upstream FastRPC
-   ([`audiopd`](../userspace/rootfs/usr/libexec/pico4-poc/audiopd), `/dev/fastrpc-adsp`):
+   ([`audiopd`](../userspace/rootfs/usr/libexec/pico4/audiopd), `/dev/fastrpc-adsp`):
    `hexagonrpcd -P` creates it with `FASTRPC_IOCTL_INIT_CREATE_STATIC`, and the driver backs it
    with the stock remote heap (12 MiB of CMA), which it gives to the DSP's VMs (LPASS,
    ADSP heap) as the stock tree does.
-3. [`pico4-lpass-macros`](../userspace/rootfs/usr/libexec/pico4-poc/lpass-macros) probes the VA
+3. [`pico4-lpass-macros`](../userspace/rootfs/usr/libexec/pico4/lpass-macros) probes the VA
    macro again once the audio process runs. The macro's probe votes the LPASS hardware through
    the AFE, which refuses the vote until then, and a failed probe is final. The driver has no bind
    file, so the platform bus probes it again (`drivers_probe`). The other macros, the SoundWire
@@ -351,8 +365,8 @@ bring-up:
 Its UCM profile ([`ucm2/conf.d/sm8250/PICO4.conf`](../userspace/rootfs/usr/share/alsa/ucm2/conf.d/sm8250/PICO4.conf))
 has PICO OS's routes and levels under mainline's control names. Playback is on MultiMedia1
 (PCM 0) and capture on MultiMedia2 (PCM 1): mainline's ASM front end runs one stream at a time.
-The speakers' voltage and current sense stays off, because PICO OS feeds it to its speaker
-protection and mainline has none.
+The speakers' voltage and current sense stays off: nothing here reads it. PICO OS's speaker protection is
+off as well (`speaker.prot.enable=false`), and PICO OS has no volume cap ([cooling.md](cooling.md#hardware-limits)).
 
 PICO OS's calibration reaches the ADSP through the PICO's own q6 calibration driver
 ([`q6calibration-pico4.c`](../kernel/src/sound/soc/qcom/qdsp6/q6calibration-pico4.c), patch 0013),

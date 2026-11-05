@@ -1,4 +1,4 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
+// Copyright 2026, overpressure contributors.
 // SPDX-License-Identifier: BSL-1.0
 /*
  * Unit test of the controller tracker's cameras, identification table and solvers with

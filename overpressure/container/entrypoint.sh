@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # The container's entry: the host kernel's binfmt handlers visible in /proc (a privileged
 # container sees an empty binfmt_misc until it is mounted), then the command.
 set -euo pipefail

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The power key as on PICO OS (docs/install.md#power-key)."""
 import configparser
 import importlib.machinery
@@ -7,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DROPIN = ROOT / "userspace/rootfs/usr/lib/systemd/logind.conf.d/50-pico4-power-key.conf"
-PATH = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/powerkey"
+PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/powerkey"
 _loader = importlib.machinery.SourceFileLoader("powerkey", str(PATH))
 _spec = importlib.util.spec_from_loader("powerkey", _loader)
 tool = importlib.util.module_from_spec(_spec)
@@ -21,7 +22,7 @@ class LogindTests(unittest.TestCase):
         self.assertEqual(config["Login"]["HandlePowerKey"], "ignore")
         self.assertEqual(config["Login"]["HandlePowerKeyLongPress"], "ignore")
         unit = (ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-powerkey.service").read_text(encoding="utf-8")
-        self.assertIn("ExecStart=/usr/libexec/pico4-poc/powerkey\n", unit)
+        self.assertIn("ExecStart=/usr/libexec/pico4/powerkey\n", unit)
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertIn("pico4-powerkey.service", build[build.index("in_t systemctl enable"):])
         self.assertNotIn(b"\r", PATH.read_bytes())
@@ -75,7 +76,7 @@ class KeyTests(unittest.TestCase):
 
     def test_charger_mode_knows_the_same_keys(self):
         # Stage 1's charger waits for the power key on whichever kernel boot holds.
-        charger = (ROOT / "initramfs/usr/libexec/pico4-poc/charger").read_text(encoding="utf-8")
+        charger = (ROOT / "initramfs/usr/libexec/pico4/charger").read_text(encoding="utf-8")
         self.assertIn(f'[ "$name" = {tool.KEY_DEVICE} ]', charger)
 
     def test_event_layout(self):

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The driver's clocks across a suspend (docs/xr.md#head-imu)."""
 import re
 import unittest

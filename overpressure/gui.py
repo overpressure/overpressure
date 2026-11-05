@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure's graphical tool: a headset's image creation and flashing steps, one click each.
 
 Every step is a command line of overpressure or a script of the headset (overpressure.headset.

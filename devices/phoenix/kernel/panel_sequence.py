@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The PICO 4 panels' command sequences, taken from the stock board overlay at build time.
 
 The panels' power-on and power-off commands are PICO's data, so they stay out of the
@@ -108,7 +109,7 @@ def main(argv=None) -> int:
         print("usage: python panel_sequence.py IMAGE OUT.dtsi", file=sys.stderr)
         return 2
     seqs = sequences(dtbo_sink.dtbo_of(Path(argv[0])))
-    Path(argv[1]).write_text(include(seqs), encoding="utf-8", newline="\n")
+    Path(argv[1]).write_bytes((include(seqs)).encode("utf-8"))
     counts = ", ".join(f"{len(commands(v))} {k.split('-')[-2]}" for k, v in seqs.items())
     print(f"panel commands ({counts}) -> {argv[1]}")
     return 0

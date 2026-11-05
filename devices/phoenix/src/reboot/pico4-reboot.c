@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Unlicense
 /*
  * pico4-reboot - reboot with a reason string, e.g. "bootloader" or "recovery".
  *

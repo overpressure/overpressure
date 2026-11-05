@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Build a mainline arm64 kernel for the QEMU smoke test (Linux / WSL only).
 #
 # Needs: curl, tar, xz, make, gcc, flex, bison, bc, libssl-dev, libelf-dev and
@@ -14,7 +15,7 @@ PROJECT=$(cd "$HERE/../../../.." && pwd)  # the repository: cache/, out/
 FRAGMENTS=("$HERE/kernel.fragment")
 IMAGE=Image
 # Build on a native Linux filesystem: compiling under /mnt/c (WSL) is very slow.
-WORK=${PICO4_BUILD_DIR:-$HOME/.cache/pico4-poc}/linux-$VERSION
+WORK=${PICO4_BUILD_DIR:-$HOME/.cache/pico4}/linux-$VERSION
 OUT=$PROJECT/cache/qemu
 CROSS=${CROSS_COMPILE:-aarch64-linux-gnu-}
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import importlib.machinery
 import importlib.util
 import json
@@ -7,12 +8,12 @@ from pathlib import Path
 from devices.phoenix.tooling import userspace
 
 ROOT = Path(__file__).resolve().parents[1]
-PATH = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/msm-frame-stats"
+PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/msm-frame-stats"
 _loader = importlib.machinery.SourceFileLoader("msm_frame_stats", str(PATH))
 _spec = importlib.util.spec_from_loader("msm_frame_stats", _loader)
 stats = importlib.util.module_from_spec(_spec)
 _loader.exec_module(stats)
-PERF = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/session-performance"
+PERF = ROOT / "userspace/rootfs/usr/libexec/pico4/session-performance"
 _ploader = importlib.machinery.SourceFileLoader("session_performance_msm", str(PERF))
 _pspec = importlib.util.spec_from_loader("session_performance_msm", _ploader)
 perf = importlib.util.module_from_spec(_pspec)

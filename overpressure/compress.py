@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Detect and decompress the formats found in Android kernels and ramdisks.
 
 gzip/xz/lzma/bzip2 come from the standard library; LZ4 (legacy and frame

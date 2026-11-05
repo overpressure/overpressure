@@ -10,7 +10,7 @@ ConditionPathExists=/dev/block/by-name/bluetooth
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/libexec/pico4-poc/bt-firmware
+ExecStart=/usr/libexec/pico4/bt-firmware
 
 [Install]
 WantedBy=local-fs.target

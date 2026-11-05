@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import importlib.machinery
 import importlib.util
 import json
@@ -10,7 +11,7 @@ from pathlib import Path
 from devices.phoenix.tooling import userspace
 
 ROOT = Path(__file__).resolve().parents[1]
-PATH = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/session-performance"
+PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/session-performance"
 _loader = importlib.machinery.SourceFileLoader("session_performance", str(PATH))
 _spec = importlib.util.spec_from_loader("session_performance", _loader)
 perf = importlib.util.module_from_spec(_spec)

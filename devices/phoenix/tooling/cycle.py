@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Unattended acceptance cycle that ends on stock boot and stock ABL (docs/hardware-testing.md).
 
   python -m overpressure cycle [--skip-stage] [--keep-abl | --restore-only]
@@ -123,7 +124,7 @@ class Headset:
 class Cycle(Headset):
     def flash_run(self) -> int:
         print(">> hardware acceptance (flash-run)", flush=True)
-        image = ROOT / "out" / f"pico4-poc-{self.s.firmware}.img"
+        image = ROOT / "out" / f"pico4-stage1-{self.s.firmware}.img"
         if not image.exists():
             raise ValueError(f"missing {image}: run python -m overpressure build --firmware {self.s.firmware}")
         argv = [sys.executable, "-m", "overpressure", "--device", "phoenix", "hwtest", "flash-run", "--serial", self.s.adb_serial,

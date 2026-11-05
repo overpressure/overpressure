@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import re
 import unittest
 from pathlib import Path
@@ -5,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 UNITS = ROOTFS / "usr/lib/systemd/system"
-LIBEXEC = ROOTFS / "usr/libexec/pico4-poc"
+LIBEXEC = ROOTFS / "usr/libexec/pico4"
 
 
 def read(path: Path) -> str:
@@ -17,7 +18,7 @@ class CdspBootTests(unittest.TestCase):
 
     def test_unit(self):
         unit = read(UNITS / "pico4-cdsp.service")
-        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4-poc/remoteproc-boot cdsp$")
+        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4/remoteproc-boot cdsp$")
         self.assertRegex(unit, r"(?m)^ConditionPathExists=/usr/lib/firmware/cdsp\.mdt$")
         self.assertRegex(unit, r"(?m)^RemainAfterExit=yes$")
 
@@ -25,12 +26,12 @@ class CdspBootTests(unittest.TestCase):
 class TrackerUnitTests(unittest.TestCase):
     def test_cdsprpcd_runs_in_the_root_with_vendor_libraries(self):
         unit = read(UNITS / "pico4-cdsprpcd.service")
-        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4-poc/stock-slam --vendor /vendor/bin/cdsprpcd$")
+        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4/stock-slam --vendor /vendor/bin/cdsprpcd$")
         self.assertRegex(unit, r"(?m)^Requires=pico4-cdsp\.service$")
 
     def test_slamd_restarts_for_each_driver(self):
         unit = read(UNITS / "pico4-slamd.service")
-        self.assertIn("/usr/libexec/pico4-poc/stock-slam /pico4/pico4-slamd", unit)
+        self.assertIn("/usr/libexec/pico4/stock-slam /pico4/pico4-slamd", unit)
         self.assertIn("getent group video", unit)
         self.assertRegex(unit, r"(?m)^Restart=always$")
         self.assertRegex(unit, r"(?m)^Requires=pico4-cdsprpcd\.service$")
@@ -42,7 +43,7 @@ class TrackerUnitTests(unittest.TestCase):
             unit = read(UNITS / f"{name}.service")
             self.assertRegex(unit, r"(?m)^ConditionPathExists=/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge\.so$", name)
         # The bridge's path in the root is the one stock-slam preloads.
-        self.assertIn("/pico4/libpico4-fastrpc-bridge.so", read(ROOT / "userspace/rootfs/usr/libexec/pico4-poc/stock-slam"))
+        self.assertIn("/pico4/libpico4-fastrpc-bridge.so", read(ROOT / "userspace/rootfs/usr/libexec/pico4/stock-slam"))
 
     def test_session_and_monado_want_the_tracker(self):
         for name in ("pico4-session", "pico4-monado"):

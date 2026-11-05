@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * The few bionic (Android C library) declarations pico4-slamd and its stand-ins use. They are
  * built with clang for aarch64-linux-android29 against PICO OS's own bionic libraries, without an

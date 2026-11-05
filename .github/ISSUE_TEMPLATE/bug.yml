@@ -1,0 +1,30 @@
+name: Bug
+description: Something on the headset or in the tools doesn't work
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to get there
+      placeholder: Worn or on the table? With the cable in? What game?
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`cat /usr/share/pico4/version` on the headset, or the Git commit you built"
+    validations:
+      required: true
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Support bundle
+      description: >-
+        Attach the archive from `python -m overpressure dev support-bundle`. Its identifiers are masked; it is plain
+        text, so read it before attaching it. If the headset can't be reached, say so.
+    validations:
+      required: true

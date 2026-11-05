@@ -1,4 +1,4 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
+// Copyright 2026, overpressure contributors.
 // SPDX-License-Identifier: BSL-1.0
 /*
  * End-to-end test of the controller tracker with synthetic data (no device data): rendered LED

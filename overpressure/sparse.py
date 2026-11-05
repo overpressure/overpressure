@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Android sparse images (format 1.0), as fastboot sends them.
 
 The engineering ABL crashed while receiving the 100 MiB stock recovery image as one raw

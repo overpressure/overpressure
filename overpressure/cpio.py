@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """In-memory root filesystem tree and "newc" cpio archive reader/writer.
 
 The Linux kernel unpacks an initramfs from a newc cpio archive. Building the

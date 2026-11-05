@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import importlib.machinery
 import importlib.util
 import struct

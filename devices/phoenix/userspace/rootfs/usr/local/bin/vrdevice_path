@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # The Steam Frame's device lookup for the PICO 4 (docs/session.md#steam-link): SteamVR's
 # Steam Link client (vrlink) and the Frame's steam-video-codec-setup.service ask
 # `vrdevice_path video_decode|video_encode` for the hardware video codec's node. The Frame

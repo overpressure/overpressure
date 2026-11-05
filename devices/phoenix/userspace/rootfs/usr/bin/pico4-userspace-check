@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Acceptance check for the SteamOS-compatible userspace on the PICO 4
 # (roadmap step 4). Prints one JSON object; exit status 0 only if it passed.
 #
@@ -112,9 +113,9 @@ need "sshd active" systemctl is-active --quiet sshd.service
 # (the PC's ARP entry and DHCP lease point at this name, MAC and address).
 link_status=absent
 link_now=""
-if [ -s /etc/pico4-poc/usb-link.env ]; then
+if [ -s /etc/pico4/usb-link.env ]; then
 	IFACE="" MAC="" IP=""
-	. /etc/pico4-poc/usb-link.env
+	. /etc/pico4/usb-link.env
 	link_now="$IFACE $(cat "/sys/class/net/$IFACE/address" 2>/dev/null) $(cat "/sys/class/net/$IFACE/operstate" 2>/dev/null)"
 	link_now+=" $(ip -4 -o addr show dev "$IFACE" 2>/dev/null | awk '{print $4}' | tr '\n' ' ')"
 	link_status=unchanged
@@ -147,7 +148,7 @@ fi
 # Monado service (a development runtime, not part of the session) is only reported.
 session_user=steamos
 session_target=gamescope-session.target
-[ ! -s /etc/pico4-poc/session.conf ] || . /etc/pico4-poc/session.conf
+[ ! -s /etc/pico4/session.conf ] || . /etc/pico4/session.conf
 [ -z "${PICO4_SESSION_TARGET:-}" ] || session_target=$PICO4_SESSION_TARGET
 session_uid=$(id -u "$session_user" 2>/dev/null)
 user_systemctl() { # the session user's own manager
@@ -230,6 +231,17 @@ for p in steamos-customizations-deckard steamos-manager gamescope pipewire decka
 done
 os_id=$(. /etc/os-release && echo "${ID:-}")
 os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-}")
+
+# -- Access (docs/security.md) --------------------------------------------------
+sshd_settings=$(sshd -T 2>/dev/null)
+for setting in "passwordauthentication no" "permitemptypasswords no" "kbdinteractiveauthentication no" \
+	"permitrootlogin without-password"; do
+	need "sshd: $setting" grep -qx "$setting" <<<"$sshd_settings"
+done
+for account in root steamos; do
+	need "no password on $account" [ "$(getent shadow "$account" | cut -d: -f2)" = '*' ]
+done
+need "no unexpected network listener: $(pico4-listeners 2>/dev/null | grep -c UNEXPECTED)" pico4-listeners
 
 # -- Vulkan through Turnip (needs the GPU firmware from the stock firmware) ----
 vk_status=skipped

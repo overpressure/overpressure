@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The PICO 4's settings in .env (PICO4_ keys; .env.example lists them).
 
 They describe one particular headset: its serials, its EDL backup and the private files its
@@ -13,6 +14,7 @@ from overpressure import localconfig as _base
 from overpressure.localconfig import EXE, ROOT
 
 from . import FIRMWARE
+from .unlockfiles import ENGINEERING_ABL_SHA256
 
 
 @dataclass
@@ -26,10 +28,11 @@ class Settings(_base.Settings):
     backup: str = "backup/stock"
     loader: str = "assets/firehose.elf"
     engineering_abl: str = "assets/engineering-abl.elf"
-    engineering_abl_sha256: str = ""
+    engineering_abl_sha256: str = ENGINEERING_ABL_SHA256
     edl: str = ""          #: empty: the fetched edl-ng (python -m overpressure tools)
     firmware: str = FIRMWARE
     ncm_python: str = ""   #: empty: the fetched NCM venv on Windows
+    ssh_public_key: str = ""   #: the owner's own public key file, enrolled besides this PC's key
 
     def edl_program(self) -> Path:
         """PICO4_EDL when set, else the fetched edl-ng, else edl-ng on PATH."""

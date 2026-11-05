@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Unlicense
 """Control the PICO 4 controller radio ("station", an nRF52832 on SPI) for the Linux userspace.
 
 The station relays the controllers' IMU, buttons and battery to the sensor DSP

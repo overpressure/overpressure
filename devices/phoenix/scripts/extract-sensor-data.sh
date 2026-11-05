@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Extract the head-IMU sensor stack and the lens and controller data from the stock firmware
 # (docs/xr.md). The headset's own factory data (registry, calibration) is not extracted: the image
 # links it from persist on the headset (docs/userspace.md#the-headsets-own-data).

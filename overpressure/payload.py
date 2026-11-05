@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Extract partitions (e.g. ``boot``) from an Android A/B OTA ``payload.bin``.
 
 Works on a local OTA zip, a bare payload.bin, or an http(s) URL of an OTA zip.
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import bz2
 import hashlib
+import http.client
 import io
 import lzma
 import struct
@@ -94,10 +96,10 @@ class HttpSource(Source):
                     raise IOError(f"short read ({len(data)} of {length} bytes)")
                 self.downloaded += len(data)
                 return data
-            except OSError as exc:
+            except (OSError, http.client.HTTPException) as exc:
                 if attempt == 4:
                     raise
-                self.log(f"  download error ({exc}); retrying...")
+                self.log(f"  download error ({exc!r}); retrying...")
                 time.sleep(2 * (attempt + 1))
         raise AssertionError("unreachable")
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Unlicense
 /*
  * An implicit Vulkan layer for SteamVR's compositor on a mainline kernel: its swapchains without
  * the storage usage it asks for and never uses.

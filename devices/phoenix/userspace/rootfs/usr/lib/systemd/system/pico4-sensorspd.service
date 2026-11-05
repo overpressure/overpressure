@@ -8,7 +8,7 @@ After=pico4-slpi.service sys-kernel-debug.mount
 
 [Service]
 # The sensors process's runtime root (the script says why).
-ExecStart=/usr/libexec/pico4-poc/sensorspd
+ExecStart=/usr/libexec/pico4/sensorspd
 # When the SLPI restarts (subsystem restart, level RELATED) hexagonrpcd loses its FastRPC
 # channel and exits successfully; the restarted sensors process needs it again, and the
 # head IMU only comes back once it runs (docs/xr.md).

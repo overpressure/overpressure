@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """What this host has and lacks for a headset's workflow: python -m overpressure doctor.
 
 Every check names what it is needed for (the window, building an image, the userspace build,

@@ -35,6 +35,7 @@ The kernel's files are in [kernel/](../kernel/):
 | [build-kernel.sh](../kernel/build-kernel.sh) | Valve's 7.2 source package (pinned by hash and commit), the patches and the own sources to `Image.gz` and the device tree |
 | [dtbo_sink.py](../kernel/dtbo_sink.py) | the include that absorbs the ABL's board overlay (below) |
 | [panel_sequence.py](../kernel/panel_sequence.py) | the include with the panels' command sequences, from the stock board overlay (below) |
+| [imx471_mode.py](../kernel/imx471_mode.py) | the header with the RGB camera's register table, from the camera module in the stock vendor image (below) |
 | [recovery_image.py](../kernel/recovery_image.py) | a test image: the maintenance stage 1 on Valve's kernel as a whole recovery partition; `--installed` starts the installed system instead, with `--boot` as the boot partition's image, `--stage1` carries this tree's stage-1 files; stage 1's build information names the new kernel and `OUT.json` records it, so that `dev check` accepts the image's stage 1; `--gpu-firmware` for the GPU, `--wlan-firmware` for the QCA6390; `--cmdline` for extra kernel words (such as the panel driver's parameters); `--debug` and `--trace` for failed boots (below) |
 
 ## Results
@@ -114,6 +115,14 @@ the GD32 MCU's supply, which drives the backlight; the stock tree gives it to th
 and the tree keeps it always on. The panels' command sequences are PICO's data: the build copies them
 from the stock board overlay into the tree (`panel_sequence.py`, as `pico4,on-command` and
 `pico4,off-command`), and the driver sends each command with its stock data type to both links.
+
+The RGB camera's mode is PICO's data too: the build generates the driver's register table
+(`imx471_mode.py`, as `pico4-imx471-mode.h`) from `/lib64/camera/com.qti.sensormodule.sunny_imx471.bin`
+in the stock vendor image. The table is the `regSetting` list of the module's resolution of
+2328x1748 at 50 fps, frame length 4520 and line length 2560, in the file's order. The one project
+decision in it: exposure and gain (0x0202 to 0x0205) are left out, since the driver writes them as
+controls. The tool takes only the module files it knows by SHA-256, the sunny and liteon modules of
+firmware 5.13.7, whose tables are the same, and refuses a structure it does not expect.
 
 ## DSPs and the GD32 MCU
 
@@ -325,9 +334,9 @@ source package, which carries the repository: `linux-72-deckard-7.2.0+g509b71a1b
 `sm8650-7.2`, built with `gabe_defconfig`.
 
 ```sh
-# Linux/WSL: the source package, the stock recovery image (python -m overpressure stock), work and output folders
+# Linux/WSL: the source package, the stock recovery and vendor images (python -m overpressure stock), work and output folders
 devices/phoenix/kernel/build-kernel.sh linux-72-deckard-7.2.0+g509b71a1bdcd-1.src.tar.gz \
-    cache/stock/<firmware>.recovery.img /var/tmp/pico4-kernel/work /var/tmp/pico4-kernel/out
+    cache/stock/<firmware>.recovery.img STOCK_DIR/vendor.img /var/tmp/pico4-kernel/work /var/tmp/pico4-kernel/out
 python devices/phoenix/kernel/recovery_image.py /var/tmp/pico4-kernel/out \
     cache/stock/<firmware>.recovery.img out/dev/dev-recovery.img out/kernel/test-recovery.img
 ```

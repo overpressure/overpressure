@@ -1,5 +1,6 @@
 #!/bin/sh
-# PICO 4 Linux POC - /init (PID 1)
+# SPDX-License-Identifier: Unlicense
+# PICO 4 Linux - /init (PID 1)
 #
 # Runs from the boot image's ramdisk, on the stock PICO kernel (4.19, Qualcomm
 # downstream: the maintenance stage 1) or on Valve's (the installed system). It
@@ -24,12 +25,12 @@ mount -t tmpfs -o nosuid,nodev,mode=0755 tmpfs /run
 mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs /tmp
 echo on > /proc/sys/kernel/printk_devkmsg 2>/dev/null
 
-. /usr/libexec/pico4-poc/lib.sh
-mkdir -p "$POC_RUN"
+. /usr/libexec/pico4/lib.sh
+mkdir -p "$P4_RUN"
 log "starting on $(uname -r) $(uname -m), cmdline: $(cat /proc/cmdline)"
 
 # -- /dev ---------------------------------------------------------------------
-if [ "$(poc_arg devtmpfs 1)" = 1 ] && mount -t devtmpfs -o mode=0755,nosuid devtmpfs /dev 2>/dev/null; then
+if [ "$(stage1_arg devtmpfs 1)" = 1 ] && mount -t devtmpfs -o mode=0755,nosuid devtmpfs /dev 2>/dev/null; then
 	log "/dev: devtmpfs"
 else
 	log "/dev: no devtmpfs in this kernel, populating with mdev"
@@ -55,14 +56,14 @@ mount -t pstore pstore /sys/fs/pstore 2>/dev/null
 mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
 
 # Belt and braces: anything mdev may have missed becomes read-only too.
-"$POC_LIB/block-hotplug" sweep
+"$P4_LIB/block-hotplug" sweep
 
 hostname -F /etc/hostname 2>/dev/null
 ip link set lo up 2>/dev/null
 led boot
 
 # Kernel modules from the stock first-stage ramdisk, in Android's order.
-if [ -f /lib/modules/modules.load ] && [ "$(poc_arg modules 1)" = 1 ]; then
+if [ -f /lib/modules/modules.load ] && [ "$(stage1_arg modules 1)" = 1 ]; then
 	while read -r m; do
 		[ -n "$m" ] || continue
 		insmod "/lib/modules/$m" 2>/dev/null || log "insmod $m failed"
@@ -70,26 +71,26 @@ if [ -f /lib/modules/modules.load ] && [ "$(poc_arg modules 1)" = 1 ]; then
 fi
 
 # -- USB, power management, probe ---------------------------------------------
-"$POC_LIB/usb-gadget" &
-"$POC_LIB/power" &
-if [ "$(poc_arg probe 1)" = 1 ]; then
-	( wait_for "$POC_RUN/usb.done" 120; sleep "$(poc_arg probe_delay 15)"; pico4-probe --boot ) &
+"$P4_LIB/usb-gadget" &
+"$P4_LIB/power" &
+if [ "$(stage1_arg probe 1)" = 1 ]; then
+	( wait_for "$P4_RUN/usb.done" 120; sleep "$(stage1_arg probe_delay 15)"; pico4-probe --boot ) &
 fi
-if [ "$(poc_arg selftest 0)" = 1 ]; then
-	"$POC_LIB/selftest" &
+if [ "$(stage1_arg selftest 0)" = 1 ]; then
+	"$P4_LIB/selftest" &
 fi
 
-# The installed system (pico4poc.root=installed, the boot image pico4-install wrote): mount it
+# The installed system (pico4.root=installed, the boot image pico4-install wrote): mount it
 # from super and userdata and switch to it, with or without a PC on the cable. When that fails,
 # the maintenance stage 1 in recovery starts instead.
-if [ "$(poc_arg root "")" = installed ] && [ "$(cmdline_arg androidboot.mode)" = charger ]; then
+if [ "$(stage1_arg root "")" = installed ] && [ "$(cmdline_arg androidboot.mode)" = charger ]; then
 	# Powered on by the USB cable: charge, as PICO OS does, until the power key starts the system.
-	"$POC_LIB/charger" &
-elif [ "$(poc_arg root "")" = installed ]; then
+	"$P4_LIB/charger" &
+elif [ "$(stage1_arg root "")" = installed ]; then
 	# A sign of life in the lenses until stage 2 starts its own (pico4-splash.service).
 	pico4-splash 300 </dev/null >/dev/null 2>/dev/kmsg &
 	(
-		wait_for "$POC_RUN/usb.done" 120
+		wait_for "$P4_RUN/usb.done" 120
 		pico4-userspace installed && pico4-userspace switch || {
 			log "installed system unavailable: rebooting into recovery"
 			sync
@@ -99,4 +100,4 @@ elif [ "$(poc_arg root "")" = installed ]; then
 fi
 
 log "handing over to pico4-init"
-exec /usr/libexec/pico4-poc/pico4-init
+exec /usr/libexec/pico4/pico4-init

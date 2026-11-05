@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import shutil
 import subprocess
 import tempfile
@@ -6,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
-SCRIPT = ROOTFS / "usr/libexec/pico4-poc/vr-performance"
+SCRIPT = ROOTFS / "usr/libexec/pico4/vr-performance"
 UNIT = ROOTFS / "usr/lib/systemd/system/pico4-vr-performance.service"
 BASH = shutil.which("bash")
 
@@ -66,8 +67,8 @@ class VrPerformanceUnitTests(unittest.TestCase):
     def test_unit_lives_as_long_as_a_vr_session(self):
         unit = UNIT.read_text(encoding="utf-8")
         self.assertRegex(unit, r"(?m)^StopWhenUnneeded=yes$")
-        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4-poc/vr-performance on$")
-        self.assertRegex(unit, r"(?m)^ExecStop=/usr/libexec/pico4-poc/vr-performance off$")
+        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4/vr-performance on$")
+        self.assertRegex(unit, r"(?m)^ExecStop=/usr/libexec/pico4/vr-performance off$")
         self.assertNotRegex(unit, r"(?m)^\[Install\]")
         for name in ("pico4-session", "pico4-monado"):
             text = (ROOTFS / f"usr/lib/systemd/system/{name}.service").read_text(encoding="utf-8")

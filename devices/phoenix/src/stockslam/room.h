@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * The room's boundary as PICO OS's tracker keeps it (docs/xr.md#room-setup): its boundary files
  * ("isSaveMap 1", "vertexcount 2N", then N lines "(a, b, c)", b up: the tracker world's (x, y, z)

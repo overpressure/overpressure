@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The PICO 4's checks for python -m overpressure doctor: its settings and private files, the tools
 that talk to it, the Windows USB link, the Linux side of its builds, and the extracted assets.
 
@@ -19,6 +20,7 @@ from . import FIRMWARE, device, localconfig
 HEADSET = "working on the headset"
 EDL = "EDL (development mode, way back)"
 BUILD = "userspace and system image (Linux, as root)"
+KERNEL = "Valve's kernel (Linux, as root)"
 ASSETS = "userspace build: extracted stock files"
 FIRMWARE_VERSION = FIRMWARE.split("-")[0]
 #: assets/<name>-VERSION and the extraction script that writes it.
@@ -120,6 +122,11 @@ def build_checks(host: Host) -> List[Check]:
     if host.backend == "docker" and not host.container_ready():
         return []  # the host checks name the image to build; its tools are checked once it is there
     checks = linux_commands(host, BUILD, commands, APT + packages)
+    checks += linux_commands(host, KERNEL, {"aarch64-linux-gnu-gcc": "cross compiling", "make": "the build", "flex": "the build",
+                                            "bison": "the build", "bc": "the build", "git": "the source package",
+                                            "perl": "the build", "dtc": "the device tree"},
+                             APT + "gcc-aarch64-linux-gnu make flex bison bc git perl libssl-dev libelf-dev dwarves "
+                             "device-tree-compiler")
     if not host.linux("echo ok=1"):
         return [Check("Linux", BUILD, MISSING, "no Linux to build in", "WSL (wsl --install -d Ubuntu-24.04) or a "
                       "Linux host")]

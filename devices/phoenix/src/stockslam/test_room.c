@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * room.h against hand-made boundaries: the file format both ways (b up), a malformed file, and
  * the fit of a turned and shifted copy. Built and run natively by src/stockslam/build.sh.

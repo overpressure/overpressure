@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The PICO 4 controllers as SteamVR's pico_controller (docs/session.md#controllers-in-games)."""
 import json
 import re

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Initialize the stock 4.19 NCM gadget for Windows, then release it to UsbNcm.
 
 Requires PyUSB, libusb-package and the separately installed UsbDk driver.

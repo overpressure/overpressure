@@ -1,7 +1,0 @@
-#!/bin/sh
-# Login shell for telnet and the USB serial console. There is no password:
-# the only network is the USB cable between the headset and one PC.
-export HOME=/root USER=root LOGNAME=root SHELL=/bin/sh
-export TERM="${TERM:-vt100}"
-cd /root || cd /
-exec /bin/sh -l

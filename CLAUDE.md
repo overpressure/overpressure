@@ -64,8 +64,10 @@ status in its roadmap and README current.
 - `devices/<codename>/`: one headset: `tooling/` (its Python package with `HEADSET`), its
   images' sources and recipes, `scripts/`, `tests/`, `docs/`, `README.md`, `CLAUDE.md`,
   `device.mk` (its Makefile targets).
-- `tests/`: host tests of the generic package. `docs/`: `tool.md`, `adding-a-headset.md`.
-  `scripts/`: shell helpers for the headsets' scripts (`stock-lib.sh`: a stock firmware folder).
+- `tests/`: host tests of the generic package. `docs/`: `tool.md`, `adding-a-headset.md`, `releasing.md`.
+  `scripts/`: shell helpers for the headsets' scripts (`stock-lib.sh`: a stock firmware folder), and the
+  repository's checks: `check-private.py`, `check-docs.py`, `run-shellcheck.py`, `c-tests.sh`, `changelog.py`.
+- `LICENSE` (Unlicense) and `THIRD-PARTY.md`; a directory under another license says so in its `LICENSE.md`.
 - Private and generated, ignored, at the root: `backup/`, `assets/`, `cache/`, `out/`, `.env`.
 
 ## Commands

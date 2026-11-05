@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * libandroid.so for PICO OS's tracker: it needs only these two trace calls from it, and the
  * real library would pull in most of Android. The auto exposure's shared-memory library

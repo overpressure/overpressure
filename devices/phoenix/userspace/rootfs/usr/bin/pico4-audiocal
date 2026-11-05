@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
 """PICO OS's audio calibration (ACDB) as the file the kernel's q6 calibration driver loads.
 
 PICO OS's audio HAL reads the calibration database (vendor acdbdata, from the user's

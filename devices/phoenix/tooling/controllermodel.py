@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """SteamVR render models of the PICO 4 controllers, from the models PICO OS ships.
 
 PICO OS keeps a textured model of each PICO 4 controller for its SDK's controller loader in
@@ -294,13 +295,12 @@ def convert(model_dir: Path, output_dir: Path, aim_to_grip: dict | None = None,
         name = NAME.format(hand=hand)
         target = output_dir / name
         target.mkdir(parents=True, exist_ok=True)
-        (target / f"{name}.obj").write_text(write_obj(mesh, name), encoding="utf-8", newline="\n")
-        (target / f"{name}.mtl").write_text(write_mtl(name), encoding="utf-8", newline="\n")
+        (target / f"{name}.obj").write_bytes((write_obj(mesh, name)).encode("utf-8"))
+        (target / f"{name}.mtl").write_bytes((write_mtl(name)).encode("utf-8"))
         (target / f"{name}.png").write_bytes(textures[hand])
-        (target / f"{name}_status.obj").write_text(write_obj(status_mesh(powers[hand]), name), encoding="utf-8",
-                                                   newline="\n")
+        (target / f"{name}_status.obj").write_bytes((write_obj(status_mesh(powers[hand]), name)).encode("utf-8"))
         status = status_component(powers[hand], f"{name}_status.obj")
-        (target / f"{name}.json").write_text(write_json(name, grips.get(hand), status), encoding="utf-8", newline="\n")
+        (target / f"{name}.json").write_bytes((write_json(name, grips.get(hand), status)).encode("utf-8"))
     return worst
 
 

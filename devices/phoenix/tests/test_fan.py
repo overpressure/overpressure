@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import contextlib
 import importlib.machinery
 import importlib.util
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "userspace/rootfs/usr/bin/pico4-fan"
@@ -370,6 +372,94 @@ class DaemonTest(unittest.TestCase):
         self.advance(60)
         self.assertEqual(self.mcu.duty, 30)
         self.assertEqual(len([m for m in self.logs if "0 rpm" in m]), 1)
+
+    def hot(self, celsius=96):
+        for name in self.temps:
+            self.temps[name] = mc(celsius)
+
+    def test_a_silent_mcu_powers_off_where_pico_os_shows_its_notice(self):
+        offs = []
+        self.daemon.power_off = lambda: offs.append(self.clock())
+        self.hot()
+        self.mcu.fail = 10 ** 6
+        self.advance(119.8)
+        self.assertEqual(offs, [])
+        self.advance(0.4)
+        self.assertEqual(len(offs), 1)
+        self.assertIn("no reply", self.daemon.last["error"])
+        self.assertEqual(len([m for m in self.logs if m.startswith("powering off: the MCU is silent")]), 1)
+        # Still running a repeat later: asked again, in case the first request failed.
+        self.advance(30)
+        self.assertEqual(len(offs), 2)
+
+    def test_a_stalled_fan_powers_off_where_pico_os_shows_its_notice(self):
+        offs = []
+        self.daemon.power_off = lambda: offs.append(self.clock())
+        self.mcu.stalled = True
+        self.hot()
+        self.advance(120.2)
+        self.assertEqual(len(offs), 1)
+        self.assertEqual([m for m in self.logs if m.startswith("powering off")],
+                         ["powering off: the fan reports 0 rpm at 100 %"])
+
+    def test_a_cooling_fan_never_powers_off(self):
+        # PICO OS shows only its notice; the kernel's critical trips end the rest.
+        offs = []
+        self.daemon.power_off = lambda: offs.append(self.clock())
+        self.hot(105)
+        self.advance(300)
+        self.assertEqual(offs, [])
+        self.assertTrue([m for m in self.logs if "overheating" in m])
+
+    def test_a_silent_mcu_below_the_limit_does_not_power_off(self):
+        offs = []
+        self.daemon.power_off = lambda: offs.append(self.clock())
+        self.mcu.fail = 10 ** 6
+        self.hot(95)    # below PICO OS's 95.1 °C
+        self.advance(300)
+        self.assertEqual(offs, [])
+        self.assertIn("no reply", self.daemon.last["error"])
+
+    def test_an_mcu_that_answers_again_does_not_power_off(self):
+        offs = []
+        self.daemon.power_off = lambda: offs.append(self.clock())
+        self.hot()
+        self.mcu.fail = 50      # about 50 s of failed transactions
+        self.advance(120.2)
+        self.assertEqual(self.mcu.fail, 0)
+        self.assertEqual(offs, [])
+
+    def test_cooling_down_restarts_the_two_minutes(self):
+        offs = []
+        self.daemon.power_off = lambda: offs.append(self.clock())
+        self.mcu.fail = 10 ** 6
+        self.hot()
+        self.advance(100)
+        self.hot(40)
+        self.advance(12)    # the means follow within 10 s
+        self.hot()
+        self.advance(100)
+        self.assertEqual(offs, [])
+
+    def test_power_off_is_systemctls(self):
+        with mock.patch.object(fan.subprocess, "run") as run:
+            fan.poweroff()
+        self.assertEqual(run.call_args[0][0], ["systemctl", "--no-block", "poweroff"])
+        with mock.patch.object(fan.subprocess, "run", side_effect=OSError("no systemctl")), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            fan.poweroff()   # the control loop goes on
+        self.assertIn("no systemctl", err.getvalue())
+
+    def test_dry_run_never_powers_off(self):
+        offs = []
+        daemon = fan.Daemon(fan.Controller(LATE), [fan.Sensor("cpu-0-0-usr", "x")], None,
+                            {"x": mc(96)}.get, clock=self.clock, log=self.logs.append, state_path=None,
+                            power_off=lambda: offs.append(1))
+        for _ in range(round(130 / fan.PERIOD)):
+            daemon.cycle()
+            self.clock.ticks += 1
+        self.assertEqual(offs, [])
+        self.assertTrue([m for m in self.logs if "overheating" in m])
 
     def test_dry_run_never_touches_the_mcu(self):
         daemon = fan.Daemon(fan.Controller(LATE), [fan.Sensor("cpu-0-0-usr", "x")], None,

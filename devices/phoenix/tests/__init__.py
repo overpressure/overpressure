@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Host tests of the PICO 4's tooling, sources and image recipes."""
 
 # Tools fetched into this checkout (python -m overpressure tools) must not stand in for the tests'

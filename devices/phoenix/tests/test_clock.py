@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The wall clock from the RTC and PICO OS's offset in persist (pico4-clock)."""
 import os
 import shutil
@@ -9,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
-SCRIPT = ROOTFS / "usr/libexec/pico4-poc/clock"
+SCRIPT = ROOTFS / "usr/libexec/pico4/clock"
 
 
 @unittest.skipIf(shutil.which("sh") is None or shutil.which("od") is None, "needs sh and od")

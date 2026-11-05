@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure's RAM boot (fastboot boot) against a fake fastboot and a fake headset."""
 import tempfile
 import unittest

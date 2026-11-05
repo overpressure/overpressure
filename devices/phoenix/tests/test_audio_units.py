@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import re
 import unittest
 from pathlib import Path
@@ -16,16 +17,16 @@ class AudioUnitTests(unittest.TestCase):
     def test_audio_process_is_started_as_on_pico_os(self):
         pd = unit("pico4-audiopd.service")
         self.assertIn("Requires=pico4-adsp.service", pd)
-        self.assertIn("ExecStart=/usr/libexec/pico4-poc/audiopd", pd)
+        self.assertIn("ExecStart=/usr/libexec/pico4/audiopd", pd)
         self.assertIn("Restart=always", pd)
-        script = (ROOTFS / "usr/libexec/pico4-poc/audiopd").read_text(encoding="utf-8")
+        script = (ROOTFS / "usr/libexec/pico4/audiopd").read_text(encoding="utf-8")
         self.assertIn("node=/dev/fastrpc-adsp", script)
         self.assertIn('-f "$node" -d adsp -P audiopd -R /usr/share/qcom/pico4-audio', script)
 
     def test_dsp_boots_through_remoteproc(self):
         adsp = unit("pico4-adsp.service")
         self.assertIn("ConditionPathExists=/sys/class/remoteproc", adsp)
-        self.assertIn("ExecStart=/usr/libexec/pico4-poc/remoteproc-boot adsp", adsp)
+        self.assertIn("ExecStart=/usr/libexec/pico4/remoteproc-boot adsp", adsp)
 
     def test_target_pulls_in_all_units(self):
         target = unit("pico4-audio.target")
@@ -98,13 +99,13 @@ class MainlineAudioTests(unittest.TestCase):
         self.assertIn("ConditionPathExists=/sys/bus/platform/drivers/va_macro", u)
         self.assertRegex(u, r"(?m)^After=.*pico4-audiopd\.service")
         self.assertIn("pico4-lpass-macros.service", unit("pico4-audio.target"))
-        script = (ROOTFS / "usr/libexec/pico4-poc/lpass-macros").read_text(encoding="utf-8")
+        script = (ROOTFS / "usr/libexec/pico4/lpass-macros").read_text(encoding="utf-8")
         self.assertIn("DEV=3370000.codec", script)
         self.assertIn('echo "$DEV" > /sys/bus/platform/drivers_probe', script)
 
     def test_calibration_binds_once_the_card_is_up(self):
         # The ADSP maps the calibration's buffer only once the audio process runs; the card shows it.
-        script = (ROOTFS / "usr/libexec/pico4-poc/lpass-macros").read_text(encoding="utf-8")
+        script = (ROOTFS / "usr/libexec/pico4/lpass-macros").read_text(encoding="utf-8")
         up = script.index('log "lpass-macros: sound card up"')
         self.assertLess(up, script.index("\t\tcalibration\n", up))
         self.assertIn('echo "${dev##*/}" > /sys/bus/platform/drivers_probe', script)

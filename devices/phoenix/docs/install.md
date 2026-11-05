@@ -31,7 +31,7 @@ come from the image ([stage1.md](stage1.md), [xr.md](xr.md)).
   maintenance stage 1 cannot mount them), file capabilities kept
   (gamescope's `cap_sys_nice`). Its size is the
   content plus 10 % and 128 MiB. It names the archive it came from in
-  `/usr/share/pico4-poc/system-image`.
+  `/usr/share/pico4/system-image`.
 - **Data.** Stage 1 mounts the system image read-only at the new root, then `userdata` at
   `/data`, and lays the changing parts onto it: `/etc` as an overlay (lower: the image, upper:
   `/data/etc/upper`), `/var`, `/home` and `/root` as binds of `/data/var`, `/data/home` and
@@ -70,7 +70,7 @@ The deadlines of the maintenance stage 1 return the headset to fastboot; with
 With the USB cable attached, a powered-off headset starts again: the PMIC powers up on USB,
 and the bootloader boots with `androidboot.mode=charger`. PICO OS then runs AOSP's `charger`
 instead of its system (`init.qcom.rc`). Stage 1 does the same for the installed system
-([`charger`](../initramfs/usr/libexec/pico4-poc/charger)): it does not switch, leaves the lenses
+([`charger`](../initramfs/usr/libexec/pico4/charger)): it does not switch, leaves the lenses
 dark, and keeps the USB link and SSH as every stage 1 does. Holding the
 power key for 2 s starts the system (a plain reboot, which the bootloader starts normally), and
 10 s without USB power turn the headset off, as AOSP's charger does.
@@ -104,7 +104,7 @@ the recovery image carries vendor data, the stock recovery's device-tree overlay
 from the public OTA of the headset's firmware):
 
 - `dev-boot.img`: the dev image for `boot`.
-- `dev-recovery.img`: the same stage 1 for `recovery`, marked `pico4poc.part=recovery` on its
+- `dev-recovery.img`: the same stage 1 for `recovery`, marked `pico4.part=recovery` on its
   command line. It is a whole-partition image, because the ABL treats `recovery` differently:
   - it loads the device-tree overlay from the image itself (`recovery_dtbo`), taken from the
     backup's stock recovery;
@@ -114,9 +114,9 @@ from the public OTA of the headset's firmware):
     fastboot; a hash mismatch alone is tolerated on the unlocked headset. The image therefore
     carries stock's vbmeta unchanged behind the stage 1 and a footer that points to it
     ([`overpressure/avb.py`](../../../overpressure/avb.py)).
-- `install-boot.img`: stage 1 in installed mode on the stock kernel (`pico4poc.root=installed
-  pico4poc.autoreboot=0`, no test files, so no deadlines), with the dev loop's SSH key and
-  `/etc/pico4-poc/install-id`. It is the base of the installed boot image
+- `install-boot.img`: stage 1 in installed mode on the stock kernel (`pico4.root=installed
+  pico4.autoreboot=0`, no test files, so no deadlines), with the dev loop's SSH key and
+  `/etc/pico4/install-id`. It is the base of the installed boot image
   ([below](#install-and-update)); `dev install` does not write it.
 
 Large raw downloads crash the ABL's fastboot (the 100 MiB stock recovery left the headset in
@@ -127,9 +127,9 @@ crash-dump mode); whole-partition images therefore go as sparse images
 
 ```sh
 # Linux, as root: Valve's kernel, from Valve's source package linux-72-deckard and the stock
-# firmware's recovery image; then copy Image.gz, sm8250-pico4-phoenix.dtb, version and config
+# firmware's recovery and vendor images; then copy Image.gz, sm8250-pico4-phoenix.dtb, version and config
 # from OUTDIR into out/kernel
-devices/phoenix/kernel/build-kernel.sh SOURCE_PACKAGE STOCK_RECOVERY WORKDIR OUTDIR
+devices/phoenix/kernel/build-kernel.sh SOURCE_PACKAGE STOCK_RECOVERY STOCK_VENDOR WORKDIR OUTDIR
 python -m overpressure dev image
 python devices/phoenix/kernel/recovery_image.py --installed out/dev/install-boot.img --boot \
     --gpu-firmware assets/graphics-firmware-5.13.7 --wlan-firmware assets/wlan-5.13.7 \

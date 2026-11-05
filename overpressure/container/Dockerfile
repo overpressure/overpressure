@@ -10,6 +10,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates coreutils curl tar zstd xz-utils python3 brotli e2fsprogs util-linux \
       clang-20 lld-20 \
+      gcc-aarch64-linux-gnu make flex bison bc git perl libssl-dev libelf-dev dwarves device-tree-compiler \
  && rm -rf /var/lib/apt/lists/*
 COPY entrypoint.sh /usr/local/bin/overpressure-entrypoint
 RUN chmod 0755 /usr/local/bin/overpressure-entrypoint

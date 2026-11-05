@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Boot images with Valve's kernel: the installed system's (--installed --boot), and a recovery
 image for a one-shot test boot.
 
@@ -64,7 +65,7 @@ STOCK_ONLY = ("androidboot.", "lpm_levels.", "video=", "msm_rtb.", "service_loca
 #: (--cmdline msm.separate_gpu_kms=1 parts them, so that a GPU that fails to start does not take
 #: the display with it).
 EXTRA = ("clk_ignore_unused", "pd_ignore_unused", "regulator_ignore_unused", "panic=5",
-         "pico4poc.modules=0", "pico4poc.kernel=valve", "pico4poc.udc_timeout=300")
+         "pico4.modules=0", "pico4.kernel=valve", "pico4.udc_timeout=300")
 #: --debug: each probe before it starts (dd.c's dynamic debug) and with its result, all levels
 #: on the console, and on a panic every task's stack (a probe asleep in a killable or idle wait,
 #: which the hung-task detector skips) and the backtraces of all CPUs, and the DRM drivers' and
@@ -77,7 +78,7 @@ DEBUG = ("initcall_debug", "dd.dyndbg=+p", "ignore_loglevel", "panic_sys_info=ta
 #: panic's reset keeps the RAM console; the return to fastboot leaves it corrupted. Its wait for
 #: the test runner drops from 600 s to the USB controller wait plus 30 s.
 REBOOT = "usr/sbin/pico4-reboot"
-REBOOT_REAL = "usr/libexec/pico4-poc/pico4-reboot-real"
+REBOOT_REAL = "usr/libexec/pico4/pico4-reboot-real"
 REBOOT_HEADER = "#!/bin/sh\n# Test image of Valve's kernel.\n"
 #: --debug: a return to fastboot panics instead, so that the RAM console survives the reset and
 #: the installed system can read this boot's kernel log.
@@ -93,8 +94,8 @@ REBOOT_PLAIN = f"""if [ "$1" = recovery ]; then
 	exec /{REBOOT_REAL}
 fi
 """
-CONNECT_TIMEOUT = "etc/pico4-poc/test-connect-timeout"
-BUILD_INFO = "etc/pico4-poc/build-info"
+CONNECT_TIMEOUT = "etc/pico4/test-connect-timeout"
+BUILD_INFO = "etc/pico4/build-info"
 
 
 #: --gpu-firmware: PICO's Adreno 650 firmware (assets/graphics-firmware-*, from the stock OTA)
@@ -132,7 +133,7 @@ def stage1_archive(ramdisk: bytes, debug: bool, installed: bool) -> cpio.Tree:
     wrapper = REBOOT_HEADER + (REBOOT_PANIC if debug else "") + (REBOOT_PLAIN if installed else "")
     tree.add_file(REBOOT, f'{wrapper}exec /{REBOOT_REAL} "$@"\n'.encode(), 0o755)
     if debug:
-        udc = int(dict(e.split("=") for e in EXTRA if "=" in e)["pico4poc.udc_timeout"])
+        udc = int(dict(e.split("=") for e in EXTRA if "=" in e)["pico4.udc_timeout"])
         tree.add_file(CONNECT_TIMEOUT, f"{udc + 30}\n".encode())
     return tree
 
@@ -207,12 +208,12 @@ def build_info_archive(info: dict) -> cpio.Tree:
 def stage1_image(dev_recovery: Path, installed: Path | None):
     """The recovery partition's image and the one stage 1 and its words come from."""
     base = bootimg.parse(dev_recovery.read_bytes())
-    if "pico4poc.part=recovery" not in base.full_cmdline.split():
+    if "pico4.part=recovery" not in base.full_cmdline.split():
         raise ValueError(f"{dev_recovery} is not the dev loop's recovery image")
     stage1 = base
     if installed:
         stage1 = bootimg.parse(installed.read_bytes())
-        if "pico4poc.root=installed" not in stage1.full_cmdline.split():
+        if "pico4.root=installed" not in stage1.full_cmdline.split():
             raise ValueError(f"{installed} is not the installed system's boot image")
     return base, stage1
 
@@ -306,8 +307,7 @@ def main(argv=None) -> int:
     stage1 = stage1_image(dev_recovery, args.installed)[1]
     info = build_info(stage1.ramdisk, (args.paths[0] / "Image.gz").read_bytes())
     key = "boot_sha256" if args.boot else "recovery_sha256"
-    Path(f"{out}.json").write_text(json.dumps({key: digest, "build_info": info}, indent=2) + "\n",
-                                   encoding="utf-8", newline="\n")
+    Path(f"{out}.json").write_bytes((json.dumps({key: digest, "build_info": info}, indent=2) + "\n").encode("utf-8"))
     print(f"{out} {digest}")
     return 0
 

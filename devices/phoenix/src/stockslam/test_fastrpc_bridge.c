@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * Native test of fastrpc_bridge.h: the vendor requests are the constants the stock libcdsprpc.so
  * and libion.so build, and each one becomes the upstream call with the same fields.
@@ -79,7 +79,7 @@ reset(void)
 int
 main(void)
 {
-	// The requests as the stock libraries build them (an issue's inventory).
+	// The requests as the stock libraries build them.
 	assert(FB_DS_INVOKE == 0xc0105201u && FB_DS_MMAP == 0xc0205202u && FB_DS_MUNMAP == 0xc0105203u);
 	assert(FB_DS_INVOKE_FD == 0xc0185204u && FB_DS_SETMODE == 0xc0045205u && FB_DS_INIT == 0xc0285206u);
 	assert(FB_DS_INVOKE_ATTRS == 0xc0205207u && FB_DS_GETINFO == 0xc0045208u && FB_DS_GETPERF == 0xc0185209u);

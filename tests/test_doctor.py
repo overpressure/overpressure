@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure.doctor: the host's checks, Linux probes, the report, the command and the panel."""
 import contextlib
 import io

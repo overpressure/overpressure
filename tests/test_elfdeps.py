@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import io
 import os
 import struct

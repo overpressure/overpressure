@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Check that installed programs and libraries find their shared libraries.
 
 The userspace root is aarch64. Running ldd in it means one QEMU process per file, so

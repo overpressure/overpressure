@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """SteamVR's camera from the forward tracking cameras (docs/xr.md#passthrough)."""
 import json
 import re

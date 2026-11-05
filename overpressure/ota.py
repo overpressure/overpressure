@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Stock firmware from a vendor's OTA: a partition's image, or a full block OTA's partitions.
 
 Android OTAs come in two kinds. A classic (non-A/B) block OTA is a zip whose members are the

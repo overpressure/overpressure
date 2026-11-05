@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The PICO 4's tree and configuration for Valve's kernel: battery, audio and the cameras."""
 import re
 import unittest

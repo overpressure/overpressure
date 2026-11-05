@@ -35,9 +35,9 @@ or [edl-ng](https://github.com/strongtz/edl-ng). The default adapter uses bkerle
 `w`, `--genxml`, `--memory=ufs` and `--loader` interface. `--edl-backend edl-ng --edl PATH`
 selects the native client, whose different syntax (`--memory Ufs`, `read-part`, `write-part`,
 `dump-rawprogram`) is handled explicitly; `cycle` and `dev` use edl-ng. QFIL command syntax is
-not supported. Supply a compatible signed Firehose loader and the engineering ABL (and a devinfo
-image, if needed) yourself, with hashes from a trusted source. Nothing is downloaded and no
-driver is installed automatically.
+not supported. `python -m overpressure device fetch-unlock-files` fetches the signed Firehose loader and the
+engineering ABL from PICO's public downloads for the Neo 3 and checks them by hash
+([distribution.md](distribution.md)). No driver is installed automatically.
 
 If Windows materializes the bkerler package's entrypoint symlink as a text file, use
 `--edl-script cache/edl-client/edl.py --edl-python cache/edl-venv/Scripts/python.exe` instead of
@@ -51,9 +51,19 @@ Install only its serial driver (`qcser.inf`), after verifying the catalog signat
 hardware ID. UsbDk is not needed for the native COM connection. If an interrupted EDL session
 stops responding, restart the headset into PICO OS, check its ADB identity and enter EDL again.
 
-The identity check accepts original PICO 4 (A8110, *phoenix*) fingerprints through PICO OS
-5.13.8, the upstream reported range, and rejects Neo 3 and other PICO generations. An accepted
-version does not prove that a loader, an image or a device variant is compatible.
+## Verified hardware
+
+The tools run only on what the whole path has run on, and refuse the rest before they change anything:
+
+| | Verified | Checked by |
+| --- | --- | --- |
+| Headset | original PICO 4, A8110, *phoenix* | the fingerprint, in `device probe` and every later command |
+| PICO OS | 5.13.7, `ro.oem.state` true (the `global-seko` build) | the same; newer PICO OS also closes the unlock (through 5.13.8 by its upstream's report) |
+| Panel | Sharp LS026B3SA | `dev install`, from the kernel command line in the maintenance stage 1: the stock tree also knows an Innolux NT57900, which our driver and tree do not |
+
+Neo 3, PICO 4 Pro, Enterprise and Ultra have other fingerprints and are refused. All this ran on one headset, so a
+second unit can still differ in what these checks don't see, such as the RGB camera's module (PICO OS knows two
+makers' with nearly the same settings).
 
 Keep only the intended Qualcomm device connected during EDL operations. ADB and fastboot select
 a device by serial, but the EDL adapter cannot verify that the connected device matches the

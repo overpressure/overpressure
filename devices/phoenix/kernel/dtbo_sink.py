@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """A device-tree include that absorbs the ABL's board overlay.
 
 Booting, the PICO 4's ABL lays a downstream board overlay (the dtbo partition, or a recovery
@@ -103,7 +104,7 @@ def main(argv=None) -> int:
     labels = set()
     for overlay in overlays(dtbo_of(Path(argv[0]))):
         labels |= fixup_labels(overlay)
-    Path(argv[1]).write_text(sink(labels), encoding="utf-8", newline="\n")
+    Path(argv[1]).write_bytes((sink(labels)).encode("utf-8"))
     print(f"{len(labels)} overlay labels -> {argv[1]}")
     return 0
 

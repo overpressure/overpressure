@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The QCA6390 on a mainline kernel: ath11k for Wi-Fi, hci_qca for Bluetooth, with PICO OS's
 firmware, board data and addresses."""
 import importlib.machinery
@@ -13,7 +14,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 UNITS = ROOTFS / "usr/lib/systemd/system"
-_loader = importlib.machinery.SourceFileLoader("bt_address", str(ROOTFS / "usr/libexec/pico4-poc/bt-address"))
+_loader = importlib.machinery.SourceFileLoader("bt_address", str(ROOTFS / "usr/libexec/pico4/bt-address"))
 bt_address = importlib.util.module_from_spec(importlib.util.spec_from_loader("bt_address", _loader))
 _loader.exec_module(bt_address)
 
@@ -46,7 +47,7 @@ class WifiTests(unittest.TestCase):
             Path(bin_dir, "ip").write_bytes(f'#!/bin/sh\necho "$@" >> {log.as_posix()}\n'.encode())
             os.chmod(bin_dir / "ip", 0o755)
             env = dict(os.environ, PATH=f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}")
-            script = ROOTFS / "usr/libexec/pico4-poc/wlan-address"
+            script = ROOTFS / "usr/libexec/pico4/wlan-address"
             r = subprocess.run([shutil.which("sh"), script.as_posix(), Path(tmp, "wlan_mac.bin").as_posix()],
                                env=env, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -66,7 +67,7 @@ class WifiTests(unittest.TestCase):
             profile = profiles / "home.nmconnection"
             profile.write_bytes(b"[wifi]\nband=no6\nmac-address=00:03:7F:12:C5:E0\nssid=home\n[wifi-security]\npsk=secret\n")
             env = dict(os.environ, PATH=f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}")
-            script = ROOTFS / "usr/libexec/pico4-poc/wlan-address"
+            script = ROOTFS / "usr/libexec/pico4/wlan-address"
             r = subprocess.run([shutil.which("sh"), script.as_posix(), Path(tmp, "wlan_mac.bin").as_posix(), "wlan0",
                                 profiles.as_posix()], env=env, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -96,7 +97,7 @@ class WifiTests(unittest.TestCase):
 
 class BluetoothTests(unittest.TestCase):
     def test_firmware_comes_from_the_bluetooth_partition(self):
-        script = text(ROOTFS / "usr/libexec/pico4-poc/bt-firmware")
+        script = text(ROOTFS / "usr/libexec/pico4/bt-firmware")
         self.assertIn("blockdev --setro", script)
         self.assertIn("mount -t vfat -o ro,", script)
         self.assertLess(script.index("blockdev --setro"), script.index("mount -t vfat"))
@@ -111,7 +112,7 @@ class BluetoothTests(unittest.TestCase):
         unit = text(UNITS / "pico4-bt-address.service")
         self.assertIn("Before=bluetooth.service", unit)
         self.assertIn("After=pico4-persist.service", unit)
-        self.assertIn("ExecStart=/usr/libexec/pico4-poc/bt-address /mnt/vendor/persist/pico_bt_mac 0", unit)
+        self.assertIn("ExecStart=/usr/libexec/pico4/bt-address /mnt/vendor/persist/pico_bt_mac 0", unit)
         self.assertIn("TimeoutStartSec=", unit)
 
     def test_address_command_is_the_management_interfaces(self):

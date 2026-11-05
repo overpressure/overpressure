@@ -114,6 +114,10 @@ python -m overpressure cycle --restore-only              # verified stock boot a
 
 ## Hard rules
 
+- **Access.** SSH takes keys only, on USB and Wi-Fi, and no account has a password; keys are per PC, enrolled by
+  `dev image` in boot images, never in the system image ([docs/security.md](docs/security.md)).
+- **Verified hardware.** The tools refuse firmware, headsets and panels the whole path hasn't run on
+  (`tooling/device.py`); extend that list only after a run.
 - **Private data.** Never commit or redistribute device data or vendor files: `backup/`,
   `assets/` (engineering ABL, firehose, GPU firmware, sensor data), `out/`, `cache/` and `.env`
   are ignored on purpose. Valve's packages and the built userspace archives are private too.
@@ -164,7 +168,7 @@ passed.
   `dev connect`. It runs unattended: `adb reboot edl` works from PICO OS, and EDL needs no
   buttons. `.env` holds the headset's serials and the paths of its backup, loader and
   engineering ABL (see `.env.example`).
-- **Engineering ABL.** Flashing the POC needs the engineering ABL (`python -m overpressure dev
+- **Engineering ABL.** Flashing stage 1 needs the engineering ABL (`python -m overpressure dev
   stage-abl`). The stock ABL reports `DeviceUnlocked=true`, and the runner refuses it. Writing
   boot also needs the per-session `fastboot oem <token> unlock` authorization, which the tools
   derive from the identity.

@@ -1,0 +1,13 @@
+# PICO OS's shutdown at a low battery (docs/cooling.md#hardware-limits): a clean power-off below
+# 1 %, and at 4 % or less with the screen off, unless the headset is charging.
+[Unit]
+Description=PICO 4 power-off at a low battery
+ConditionPathExists=/sys/class/power_supply/battery
+
+[Service]
+ExecStart=/usr/libexec/pico4/battery-guard
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

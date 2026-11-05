@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """What a headset gives overpressure: its identity, its commands and its workflow steps.
 
 Each headset lives in devices/<codename>/ with its own sources, image recipes, scripts, tests

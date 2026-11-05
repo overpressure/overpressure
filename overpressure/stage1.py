@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """A headset's stage 1: an Alpine Linux ramdisk in its stock Android boot image.
 
 The stock kernel, device trees, load addresses and OS version stay byte for byte; only the

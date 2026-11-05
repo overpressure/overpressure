@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure.ota: OTA members checked against the zip, and partition images from a full OTA's block
 images, as AOSP's updater writes them."""
 import io

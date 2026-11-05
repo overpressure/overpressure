@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Fetch Alpine Linux aarch64 packages without apk-tools.
 
 * downloads APKINDEX files and the minirootfs from the Alpine CDN (HTTPS),

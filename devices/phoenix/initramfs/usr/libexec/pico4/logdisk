@@ -1,0 +1,75 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# Read-only FAT "log drive" exposed over USB mass storage, so the boot logs
+# and the hardware report are reachable even without a working network link.
+#
+#   logdisk build     create /run/pico4/logdisk.img from the current logs
+#   logdisk refresh   rebuild and swap the medium (the PC sees a media change)
+. /usr/libexec/pico4/lib.sh
+
+IMG=$P4_RUN/logdisk.img
+LUN=/sys/kernel/config/usb_gadget/pico4/functions/mass_storage.0/lun.0
+export MTOOLS_SKIP_CHECK=1
+
+populate() {
+	local d=$1 f
+	cat > "$d/README.txt" <<-EOF
+	PICO 4 Linux - log drive (read-only, lives in the headset's RAM)
+
+	If the USB network works:  ssh root@$P4_IP   (empty password)
+	                           telnet $P4_IP
+	                           http://$P4_IP/
+	boot.log      what /init and the USB setup did
+	dmesg.txt     kernel log
+	report.tar.gz hardware inventory (appears ~30 s after boot; replug or
+	              eject/reinsert the drive if it is missing)
+	pstore/       logs the kernel kept from the previous boot
+	EOF
+	sed -i 's/$/\r/' "$d/README.txt"
+	cp "$P4_LOG" "$d/boot.log" 2>/dev/null
+	dmesg > "$d/dmesg.txt" 2>/dev/null
+	cat /proc/cmdline > "$d/cmdline.txt"
+	cp /etc/pico4/build-info "$d/build-info.json" 2>/dev/null
+	cp "$P4_RUN/report.tar.gz" "$d/" 2>/dev/null
+	for f in "$P4_RUN"/svc-*.log "$P4_RUN"/usb.state "$P4_RUN"/usb.link; do
+		[ -s "$f" ] && cp "$f" "$d/"
+	done
+	if [ -n "$(ls /sys/fs/pstore 2>/dev/null)" ]; then
+		mkdir -p "$d/pstore"
+		cp /sys/fs/pstore/* "$d/pstore/" 2>/dev/null
+	fi
+}
+
+build() {
+	command -v mformat >/dev/null || { log "logdisk: mtools missing"; return 1; }
+	local tmp size
+	tmp=$(mktemp -d) || return 1
+	populate "$tmp"
+	size=$(stage1_arg logdisk_mb 32)
+	rm -f "$IMG.new"
+	dd if=/dev/zero of="$IMG.new" bs=1M count="$size" 2>/dev/null &&
+		mformat -i "$IMG.new" -v PICO4LOGS :: >/dev/null 2>&1 &&
+		mcopy -s -i "$IMG.new" "$tmp"/* :: >/dev/null 2>&1
+	local rc=$?
+	rm -rf "$tmp"
+	if [ "$rc" != 0 ]; then
+		log "logdisk: could not build the FAT image"
+		rm -f "$IMG.new"
+		return 1
+	fi
+	mv -f "$IMG.new" "$IMG"
+}
+
+case "$1" in
+build) build ;;
+refresh)
+	[ -e "$LUN/file" ] || exit 0
+	build || exit 1
+	if echo "$IMG" > "$LUN/file" 2>/dev/null; then
+		log "logdisk: refreshed"
+	else
+		log "logdisk: the PC holds the medium; eject the drive to see new logs"
+	fi
+	;;
+*) echo "usage: logdisk build|refresh" >&2; exit 2 ;;
+esac

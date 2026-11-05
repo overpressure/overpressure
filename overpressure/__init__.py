@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure: Linux and a SteamOS-compatible userspace on standalone VR headsets.
 
 The host side, pure Python (3.9+) with the standard library only, so it runs on Windows, Linux

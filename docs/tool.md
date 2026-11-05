@@ -45,7 +45,7 @@ on Linux as root, in one of three places (`OVERPRESSURE_LINUX` in the environmen
 | --- | --- | --- |
 | `wsl` | Windows' Linux, as root | Windows (with WSL) |
 | `sudo` | this Linux host | Linux |
-| `docker` | the build container: Docker or Podman, any host | macOS, Windows without WSL |
+| `docker` | the build container: Docker or Podman, any host; it holds every tool of the builds, the kernel's too | macOS, Windows without WSL |
 
 The build container ([overpressure/container/Dockerfile](../overpressure/container/Dockerfile),
 Ubuntu 24.04 pinned by digest) holds the tools of the userspace, system image and extraction

@@ -1,0 +1,20 @@
+name: Another headset, firmware or panel
+description: The tools refused your headset, or you got further on one that isn't verified
+body:
+  - type: input
+    id: refused
+    attributes:
+      label: What the tool said
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: PICO OS version and ro.oem.state
+      description: Don't paste serials. `adb shell getprop ro.build.version.incremental ro.oem.state`.
+    validations:
+      required: true
+  - type: textarea
+    id: how-far
+    attributes:
+      label: How far did you get?

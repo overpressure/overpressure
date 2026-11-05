@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The package recipes under userspace/pkgbuilds: what makepkg checks before a build."""
 import hashlib
 import re

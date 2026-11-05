@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Unlicense
 # POST target=android|bootloader|recovery
 printf 'Content-Type: text/plain; charset=utf-8\r\n\r\n'
 if [ "$REQUEST_METHOD" != POST ]; then
@@ -15,6 +16,6 @@ target=recovery) mode=recovery ;;
 *) echo "unknown target"; exit 0 ;;
 esac
 echo "rebooting ${mode:-to PICO OS} in 2 seconds"
-. /usr/libexec/pico4-poc/lib.sh
+. /usr/libexec/pico4/lib.sh
 log "reboot requested from the web UI: ${mode:-android}"
 ( sleep 2; pico4-reboot $mode ) >/dev/null 2>&1 &

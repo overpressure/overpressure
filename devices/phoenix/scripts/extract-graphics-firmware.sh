@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Extract the GPU firmware the kernel loads (docs/graphics.md) and the video codec's
 # (Venus; docs/session.md#steam-link) from the stock firmware.
 #

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure.android: adb and fastboot run fail-closed, the device choice, the bootloader's state."""
 import subprocess
 import unittest

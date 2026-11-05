@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Independent host-side implementation of the documented PICO unlock workflow.
 
 No upstream code or binaries are bundled. EDL is a separately installed bkerler/edl
@@ -39,6 +40,31 @@ def unlock_token(number: int) -> str:
         str.maketrans("0123456789abcdef", "0XD9J6FB3ATQIHNM"))
 
 
+#: What the whole path has run on (docs/device-preparation.md): (PICO OS version, ro.oem.state).
+VERIFIED_FIRMWARES = {("5.13.7", "true")}
+#: Panels the kernel's driver and tree know, as the bootloader names them to the stock kernel.
+VERIFIED_PANELS = ("sharp_ls026b3sa",)
+
+
+def check_firmware(version: str, oem_state: str) -> None:
+    if (version, str(oem_state).lower()) not in VERIFIED_FIRMWARES:
+        verified = ", ".join(f"{v} (ro.oem.state {s})" for v, s in sorted(VERIFIED_FIRMWARES))
+        raise ValueError(f"PICO OS {version} (ro.oem.state {oem_state}) is not verified, only {verified}: "
+                         "nothing was changed (docs/device-preparation.md)")
+
+
+def check_panel(cmdline: str) -> str:
+    """The panel the bootloader named on the stock kernel's command line, if verified. Another panel
+    stays dark on Valve's kernel: the PICO 4 has been sold with a second one, an Innolux NT57900."""
+    found = re.search(r"\bmsm_drm\.dsi_display0=qcom,mdss_dsi_([a-z0-9_]+?)_\d+_(?:video|cmd)\b", cmdline)
+    if not found:
+        raise ValueError("The kernel command line names no panel: refusing to install (docs/device-preparation.md)")
+    if found.group(1) not in VERIFIED_PANELS:
+        raise ValueError(f"Panel {found.group(1)} is not verified, only {', '.join(VERIFIED_PANELS)}: "
+                         "refusing to install (docs/device-preparation.md)")
+    return found.group(1)
+
+
 def read_identity(path: Path) -> dict:
     identity = json.loads(path.read_text(encoding="utf-8"))
     if identity.get("schema") != 1 or not identity.get("serial"):
@@ -47,8 +73,7 @@ def read_identity(path: Path) -> dict:
     if not re.fullmatch(r"Pico/[Pp]hoenix(?:_ovs)?/PICOA8110:10/[^/]+/[^\s]+", fp):
         raise ValueError("This workflow supports original PICO 4 A8110/phoenix only")
     version = fp.split("/")[3]
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version) or tuple(map(int, version.split("."))) > (5, 13, 8):
-        raise ValueError("Firmware is outside the upstream reported range (through 5.13.8)")
+    check_firmware(version, identity.get("oem_state", ""))
     chip_id(str(identity["chip_id"]))
     return identity
 
@@ -61,6 +86,10 @@ def confirm(args, identity: dict) -> None:
 def dispatch(args) -> None:
     if args.command == "token":
         print("fastboot oem " + unlock_token(chip_id(args.chip_id)) + " unlock")
+        return
+    if args.command == "fetch-unlock-files":
+        from . import localconfig, unlockfiles
+        unlockfiles.fetch(localconfig.load())
         return
     if args.command == "probe":
         serial = select_device(args.adb, args.serial)
@@ -178,6 +207,7 @@ def parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="command", required=True)
     token = sub.add_parser("token", help="derive an OEM command offline; execute nothing")
     token.add_argument("chip_id")
+    sub.add_parser("fetch-unlock-files", help="the engineering ABL and Firehose loader from PICO's public downloads")
     probe = sub.add_parser("probe", help="read stock headset identity via ADB")
     probe.add_argument("--adb", default="adb")
     probe.add_argument("--serial")

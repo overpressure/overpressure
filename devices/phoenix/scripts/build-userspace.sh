@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Build the SteamOS-compatible ARM64 userspace for the PICO 4 (docs/userspace.md).
 #
 # Usage (Linux or WSL, as root):
@@ -21,6 +22,7 @@
 #                       (scripts/extract-stock-slam.sh, docs/xr.md). Without it head tracking
 #                       falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
 #   --refresh           download the current package databases and reinstall the base
+#   --update-lock       write OUTPUT_DIR/packages.lock instead of checking userspace/packages.lock
 #                       root; without it every build installs the same package versions
 #   --clean             rebuild the project packages from scratch
 #   --emulated-cc       compile with the build environment's own GCC under QEMU
@@ -61,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --audio) audio=$(realpath "${2:?}"); shift 2 ;;
     --stock-slam) stock_slam=$(realpath "${2:?}"); shift 2 ;;
     --refresh) refresh=1; shift ;;
+    --update-lock) update_lock=1; shift ;;
     --clean) clean=1; shift ;;
     --emulated-cc) emulated_cc=1; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
@@ -117,10 +120,10 @@ mount_api() {
 # -- 0. a snapshot of the inputs ------------------------------------------------------
 project=$build_root/project
 rm -rf "$project.new"
-mkdir -p "$project.new/initramfs/usr/libexec/pico4-poc" "$project.new/prebuilt/aarch64"
+mkdir -p "$project.new/initramfs/usr/libexec/pico4" "$project.new/prebuilt/aarch64"
 cp -r "$repo/overpressure" "$source_dir/src" "$source_dir/userspace" "$project.new/"
 for f in lib.sh recovery-policy.sh recovery-watch; do
-    cp "$source_dir/initramfs/usr/libexec/pico4-poc/$f" "$project.new/initramfs/usr/libexec/pico4-poc/"
+    cp "$source_dir/initramfs/usr/libexec/pico4/$f" "$project.new/initramfs/usr/libexec/pico4/"
 done
 cp "$source_dir/prebuilt/aarch64/pico4-reboot" "$source_dir/prebuilt/aarch64/pico4-splash" \
     "$project.new/prebuilt/aarch64/"
@@ -366,7 +369,7 @@ while IFS= read -r -d '' f; do
 done < <(find "$project/userspace/rootfs" -type f -print0)
 # Shared with stage 1, at the same paths: one recovery policy for both stages.
 for f in lib.sh recovery-policy.sh recovery-watch; do
-    overlay "$project/initramfs/usr/libexec/pico4-poc/$f" "$T/usr/libexec/pico4-poc/$f"
+    overlay "$project/initramfs/usr/libexec/pico4/$f" "$T/usr/libexec/pico4/$f"
 done
 for f in pico4-reboot pico4-splash; do
     install -o 0 -g 0 -m 0755 "$project/prebuilt/aarch64/$f" "$T/usr/bin/$f"
@@ -520,8 +523,9 @@ in_t usermod -a -G wheel,video,render,input,audio "$user"
 # Subordinate IDs for rootless podman (Lepton's Android runs in it), as useradd gives a user
 # from login.defs; sysusers created this one without them.
 grep -q "^$user:" "$T/etc/subuid" 2>/dev/null || in_t usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$user"
-in_t passwd -d root >/dev/null
-in_t passwd -d "$user" >/dev/null
+# No password logs in, here or through su: SSH takes keys, the session logs in by itself.
+in_t usermod -p '*' root
+in_t usermod -p '*' "$user"
 echo pico4-steamos > "$T/etc/hostname"
 echo LANG=C.UTF-8 > "$T/etc/locale.conf"
 rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
@@ -542,13 +546,13 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service \
     pico4-monado.socket pico4-session.service pico4-fan.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-audio.target \
-    pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service \
+    pico4-splash.service pico4-powerkey.service pico4-battery-guard.service pico4-persist.service pico4-zram-swap.service \
     pico4-venus-probe.service steam-video-codec-setup.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service     pico4-panel-probe.service pico4-clock.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
-# or manage boot partitions the POC never touches.
+# or manage boot partitions stage 1 never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
 # (steamos-bootconf), which do not exist here, and then fails. The Frame's
-# USB gadget units would take the controller from the POC's NCM link. The kernel
+# USB gadget units would take the controller from stage 1's NCM link. The kernel
 # console's getty (the generator adds it for console=ttyMSM0): no one logs in on the UART.
 in_t systemctl mask systemd-firstboot.service systemd-pstore.service \
     systemd-boot-update.service systemd-repart.service steamos-dump-info.service \
@@ -593,7 +597,7 @@ install -d -o 1000 -g 1000 -m 0755 "$T/home/$user/.config/openvr" "$T/home/$user
 install -o 1000 -g 1000 -m 0644 "$project/userspace/session/openvrpaths.vrpath" "$T/home/$user/.config/openvr/"
 install -o 1000 -g 1000 -m 0644 "$project/userspace/session/steamvr.vrsettings" "$T/home/$user/.local/share/Steam/config/"
 # The image's copy: steamvr-settings puts its keys into the user's file at each SteamVR start.
-install -D -m 0644 "$project/userspace/session/steamvr.vrsettings" "$T/usr/share/pico4-poc/steamvr.vrsettings"
+install -D -m 0644 "$project/userspace/session/steamvr.vrsettings" "$T/usr/share/pico4/steamvr.vrsettings"
 # The Steam client's RUNSTEAM.sh makes these links; SteamVR finds its logs and
 # the Steam folder through them.
 ln -sfn "/home/$user/.local/share/Steam" "$T/home/$user/.steam/steam"
@@ -626,6 +630,15 @@ while read -r name version; do
     done
 done < "$build_root/packages.txt" | sort -u -k2 > "$build_root/package-hashes.txt"
 (cd "$T/var/lib/pacman/sync" && sha256sum ./*.db) > "$build_root/db-hashes.txt"
+# Every upstream package is the tested one, or the build stops: Valve's repositories publish no
+# signatures, and the Frame's hotfix repository moves on (docs/userspace.md#package-lock).
+python3 "$source_dir/scripts/check-package-lock.py" "$build_root/package-hashes.txt" "$project/userspace/packages.lock" \
+    ${update_lock:+--write "$output/packages.lock"}
+# What the image says it is: the release's version and the Git commit it was built from.
+version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/pyproject.toml")
+commit=$(git -c safe.directory='*' -C "$repo" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)
+install -d -m 0755 "$T/usr/share/pico4"
+printf 'version=%s\ncommit=%s\n' "$version" "$commit" > "$T/usr/share/pico4/version"
 unmount_below "$T" inner
 rm -rf "$T/var/cache/pacman/pkg"/* "$T/var/log/pacman.log"
 archive=$output/pico4-userspace.tar.zst

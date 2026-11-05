@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Android boot image (boot.img) parser and packer, header versions 0-4.
 
 Layout follows AOSP system/tools/mkbootimg/include/bootimg/bootimg.h. The aim

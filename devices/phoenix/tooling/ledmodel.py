@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Nominal LED models of the PICO 4 controllers, from PICO OS's controller tracking library.
 
 PICO OS tracks each controller by a ring of 20 infrared LEDs. Its tracking library

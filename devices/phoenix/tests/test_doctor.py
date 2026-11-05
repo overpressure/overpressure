@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The PICO 4's doctor checks: settings and private files, the tools, the Windows link, the build host, assets."""
 import json
 import tempfile
@@ -11,7 +12,7 @@ from overpressure import backup, doctor, tools
 from devices.phoenix.tooling import HEADSET, doctor as checks, localconfig
 
 IDENTITY = {"schema": 1, "serial": "ABC", "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/1:user/release-keys",
-            "oem_state": "false", "chip_id": 1234567}
+            "oem_state": "true", "chip_id": 1234567}
 
 
 class FakeHost(doctor.Host):
@@ -87,9 +88,9 @@ class PicoDoctorTests(unittest.TestCase):
         self.assertEqual(checks.ncm_checks(FakeHost(platform="linux"), s), [])
 
     def test_the_build_host_needs_binfmt_with_the_f_flag_and_prefers_native_llvm(self):
-        tools = {name.replace(".", "_"): f"/usr/bin/{name}" for name in
+        tools = {name.replace(".", "_").replace("-", "_"): f"/usr/bin/{name}" for name in
                  ("curl", "tar", "zstd", "xz", "chroot", "python3", "brotli", "debugfs", "mcopy", "mkfs.ext4", "e2fsck",
-                  "sha256sum")}
+                  "sha256sum", "aarch64-linux-gnu-gcc", "make", "flex", "bison", "bc", "git", "perl", "dtc")}
         found = by_name(checks.build_checks(FakeHost(linux={**tools, "ok": "1", "arch": "x86_64", "binfmt": "PO"})))
         self.assertEqual(found["aarch64 binfmt (F flag)"].status, doctor.MISSING)
         self.assertEqual(found["clang and lld"].status, doctor.WARNING)

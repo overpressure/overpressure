@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Running a headset's steps: the process each one is, on this host.
 
 A command step runs this package's command line for the headset; a script step runs a program

@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * The image processing PICO OS's tracking service applies to each head-tracking frame before its
  * tracker sees it (docs/xr.md#head-tracking), reimplemented: the first scene row doubled (it

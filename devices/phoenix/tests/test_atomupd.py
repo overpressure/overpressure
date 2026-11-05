@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import re
 import unittest
 from pathlib import Path

@@ -226,6 +226,11 @@ brought no suspend. Whether a key wake behaves alike is not known.
 
 - `dev restore` for an installed system: implemented and tested on the host, not on the headset
   ([install.md](install.md)).
+- A second headset: everything ran on one unit ([device-preparation.md](device-preparation.md#verified-hardware)).
+- macOS as the host: the host tests cover it, a headset was never installed from one; Linux hosts built images,
+  Windows also installed them.
+- The first run with only the headset, from an empty data partition.
+- Battery life unplugged: only inferred with the cable in.
 - Sessions much longer than 10 minutes ([cooling.md](cooling.md)).
 - MangoHud's `mangoapp`, the client's performance overlay: switching it on from the client's menu.
 - PICO OS's head tracker with a covered camera and in a dim room.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import contextlib
 import io
 import json
@@ -25,8 +26,8 @@ class WorkflowTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.identity = self.root / "device.json"
         self.record = {"schema": 1, "serial": "ABC", "chip_id": 1234567,
-                       "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.8/build:user/dev-keys",
-                       "oem_state": "false"}
+                       "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/build:user/dev-keys",
+                       "oem_state": "true"}
         self.identity.write_text(json.dumps(self.record))
         self.backup = self.root / "backup"
         self.backup.mkdir()
@@ -160,11 +161,51 @@ class WorkflowTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_unknown_firmware_blocks_execution(self):
-        self.record["fingerprint"] = self.record["fingerprint"].replace("5.13.8", "5.14.0")
+        self.record["fingerprint"] = self.record["fingerprint"].replace("5.13.7", "5.14.0")
         self.identity.write_text(json.dumps(self.record))
         with patch.object(device, "run") as run:
             self.assertEqual(self.call(self.args("unlock")), 1)
             run.assert_not_called()
+
+    def test_only_the_verified_firmware_passes(self):
+        for version, state in (("5.13.8", "true"), ("5.13.7", "false"), ("5.13.3", "true")):
+            self.record["fingerprint"] = f"Pico/Phoenix_ovs/PICOA8110:10/{version}/build:user/dev-keys"
+            self.record["oem_state"] = state
+            self.identity.write_text(json.dumps(self.record))
+            with self.assertRaisesRegex(ValueError, "not verified"):
+                device.read_identity(self.identity)
+
+    def test_other_pico_headsets_are_refused(self):
+        for model in ("Pico/Phoenix_ovs/PICOA9210:10/5.13.7/x:user/dev-keys",   # another model number
+                      "Pico/Sparrow/PICOA8110:10/5.13.7/x:user/dev-keys",       # another codename
+                      "Pico/Hermes/A7H10:10/5.13.7/x:user/dev-keys"):
+            self.record["fingerprint"] = model
+            self.identity.write_text(json.dumps(self.record))
+            with self.assertRaisesRegex(ValueError, "original PICO 4"):
+                device.read_identity(self.identity)
+
+    def test_the_panel_decides(self):
+        sharp = "console=x msm_drm.dsi_display0=qcom,mdss_dsi_sharp_ls026b3sa_90_video: pico4.part=recovery"
+        self.assertEqual(device.check_panel(sharp), "sharp_ls026b3sa")
+        with self.assertRaisesRegex(ValueError, "nt57900.*not verified"):
+            device.check_panel("msm_drm.dsi_display0=qcom,mdss_dsi_innolux_nt57900_90_video:")
+        with self.assertRaisesRegex(ValueError, "names no panel"):
+            device.check_panel("console=x")
+
+    def test_the_unlock_files_are_checked_before_they_are_written(self):
+        from devices.phoenix.tooling import unlockfiles
+
+        class Settings:
+            def path(_, name):
+                return self.root / "assets" / f"{name}.elf"
+
+        with self.assertRaisesRegex(ValueError, "not the known file"):
+            unlockfiles.fetch(Settings(), log=lambda _: None, read=lambda item: b"other")
+        self.assertFalse((self.root / "assets" / "engineering_abl.elf").exists())
+        self.assertEqual({f.setting for f in unlockfiles.FILES}, {"engineering_abl", "loader"})
+        for item in unlockfiles.FILES:
+            self.assertTrue(item.url.startswith("https://"))
+            self.assertRegex(item.sha256, "^[0-9a-f]{64}$")
 
     def test_write_and_readback(self):
         commands = []

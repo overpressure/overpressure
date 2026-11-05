@@ -1,0 +1,56 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: Unlicense
+"""Mutes the session's microphone while the headset is off the head (docs/session.md).
+
+The Frame does this with Valve's steamvr-proxmicmute, which sets the codec's capture volume
+through ALSA's simple mixer. The PICO 4 driver writes the wear sensor's
+state to $XDG_RUNTIME_DIR/pico4-worn ("1" worn, "0" off the head); this mutes PipeWire's default
+microphone while it reads 0 and unmutes it otherwise, and when it stops.
+
+    micmute [--once]
+"""
+import os
+import signal
+import subprocess
+import sys
+import time
+
+STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/run"), "pico4-worn")
+POLL_S = 0.5
+
+
+def worn():
+    """True worn, False off the head, None unknown (no sensor report yet)."""
+    try:
+        with open(STATE, encoding="ascii") as f:
+            value = f.read().strip()
+    except OSError:
+        return None
+    return {"1": True, "0": False}.get(value)
+
+
+def set_mute(muted: bool) -> bool:
+    return subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "1" if muted else "0"],
+                          check=False).returncode == 0
+
+
+def main(argv) -> int:
+    stopping = []
+    signal.signal(signal.SIGTERM, lambda *_: stopping.append(1))
+    applied = None
+    while not stopping:
+        state = worn()
+        muted = state is False
+        if muted != applied and set_mute(muted):
+            print(f"micmute: microphone {'muted (headset off)' if muted else 'on'}", flush=True)
+            applied = muted
+        if "--once" in argv:
+            return 0
+        time.sleep(POLL_S)
+    if applied:
+        set_mute(False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

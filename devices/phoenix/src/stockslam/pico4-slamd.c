@@ -1,10 +1,10 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * pico4-slamd: PICO OS's head tracker (libSlam.so, its front end on the Compute DSP) for the
  * PICO 4 driver, in the tracker's bionic root (docs/xr.md#head-tracking).
  *
- *   pico4-slamd [GID]   (in the root, through /usr/libexec/pico4-poc/stock-slam)
+ *   pico4-slamd [GID]   (in the root, through /usr/libexec/pico4/stock-slam)
  *
  * Creates the shared memory of pico4_slam_feed.h (group GID, mode 0660) and waits for the
  * driver. Each driver generation gets its own tracker: when the driver starts again, the process

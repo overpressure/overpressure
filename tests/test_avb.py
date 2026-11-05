@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import struct
 import unittest
 

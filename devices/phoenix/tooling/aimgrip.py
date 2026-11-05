@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """PICO OS's aim-to-grip transform of the PICO 4 controllers, from its tracking service.
 
 PICO OS publishes each controller's tracking pose as the aim pose and derives the grip pose from

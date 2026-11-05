@@ -17,7 +17,7 @@ After=pico4-vr-performance.service
 ConditionPathExists=/dev/dri/renderD128
 
 [Service]
-ExecStart=/usr/libexec/pico4-poc/monado-service
+ExecStart=/usr/libexec/pico4/monado-service
 Environment=XDG_RUNTIME_DIR=/run/pico4-monado
 Environment=XRT_NO_STDIN=1
 Restart=on-failure

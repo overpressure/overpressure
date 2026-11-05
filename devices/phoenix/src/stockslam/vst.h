@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * PICO OS's see-through depth mesh in pico4-slamd (docs/xr.md#passthrough): libphotoid.so, which
  * PICO OS's see-through service feeds on the PICO 4 with the grey forward camera pair, the head

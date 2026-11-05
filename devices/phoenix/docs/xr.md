@@ -20,7 +20,7 @@ the OpenXR test clients and `pico4-cam` in [src/xr/](../src/xr), and the Python 
 
 > **Rules for this hardware**
 >
-> - **DSP recovery.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4-poc/remoteproc-boot)
+> - **DSP recovery.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4/remoteproc-boot)
 >   starts a DSP only with remoteproc's crash recovery on: a crash then restarts only that DSP; with
 >   recovery off it would stay down.
 > - **No firmware commands.** The station link (`/dev/spidev0.0`) also carries station and
@@ -76,7 +76,7 @@ The IMU is not wired to the application processor. It hangs off the SLPI, a Hexa
 Qualcomm's Sensor Core:
 
 1. **Name service and service locator.** The kernel has both (`QRTR`, its own PD mapper).
-2. **Firmware boot.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4-poc/remoteproc-boot) starts
+2. **Firmware boot.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4/remoteproc-boot) starts
    `slpi.mdt`/`.bNN` from the headset's own modem partition (installed to `/usr/lib/firmware`) through
    remoteproc, whose recovery restarts only that DSP after a crash.
 3. **Registry server.** `hexagonrpcd` (linux-msm/hexagonrpc,
@@ -633,7 +633,7 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   property lookups with nothing (the tracker's defaults). Programs in the root are built with the
   host's clang for `aarch64-linux-android29` against the root's own libraries, without an NDK
   ([src/stockslam](../src/stockslam)).
-- **Its runner.** [`stock-slam`](../userspace/rootfs/usr/libexec/pico4-poc/stock-slam) starts a
+- **Its runner.** [`stock-slam`](../userspace/rootfs/usr/libexec/pico4/stock-slam) starts a
   program of the root in a private mount namespace, chrooted, with `/dev`, `/proc` and `/sys`
   bound in, the headset's factory calibration (persist's `pvr/`) at `/mnt/vendor/persist/pvr` and `/mnt/vendor/pvr`
   (where the tracker reads it and its gyro bias table) and `/data` and `/tmp` as tmpfs.
@@ -743,7 +743,7 @@ store (a, b, c) as (b, −a, c). The map is saved in the session's world: the tr
 the headset untouched relocalises with the same transform (−100.45° and −100.41°, shifts within
 2 mm).
 
-- **Where it lives.** [`stock-slam`](../userspace/rootfs/usr/libexec/pico4-poc/stock-slam)
+- **Where it lives.** [`stock-slam`](../userspace/rootfs/usr/libexec/pico4/stock-slam)
   binds `/var/lib/pico4-stock-slam/{maps,boundary}` (the data partition, mode 0700) onto those
   directories of the root, so the map survives reboots and system updates; it never leaves the
   headset.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Unlicense
 """Stream the PICO 4 head IMU from the Qualcomm Sensor Core (SSC) on the SLPI.
 
 The IMU is wired to the sensor DSP, not to the application processor. Clients

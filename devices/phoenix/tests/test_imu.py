@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import contextlib
 import importlib.machinery
 import importlib.util

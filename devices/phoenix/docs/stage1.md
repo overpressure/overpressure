@@ -27,7 +27,7 @@ Over the USB-C cable:
 | Function | What it offers |
 | --- | --- |
 | Network (CDC NCM) | the headset at `172.16.42.1/24`; DHCP gives the PC `172.16.42.2` and no router or DNS, so the PC keeps its internet route. SSH with SFTP, telnet, HTTP |
-| Log drive (mass storage) | a read-only FAT drive `PICO4POC` with the boot logs and the hardware report, readable without any network driver |
+| Log drive (mass storage) | a read-only FAT drive `PICO4LOGS` with the boot logs and the hardware report, readable without any network driver |
 | Serial shell (CDC ACM) | only on kernels with ACM; the stock kernel has none |
 
 ## Prerequisites
@@ -117,8 +117,8 @@ helpers and kernel arguments, and adds its own files (hostname, build record). T
    * `pico4-reboot` and `pico4-splash` from [prebuilt/aarch64/](../prebuilt/aarch64/);
    * static device nodes (`console`, `null`, `zero`, `kmsg`, `tty`, `ptmx`, `random`,
      `urandom`): the kernel opens `/dev/console` before `/init` runs, and there is no devtmpfs;
-   * a root account without password, the host name `pico4-poc` and the build record
-     `/etc/pico4-poc/build-info`.
+   * a root account without password, the host name `pico4` and the build record
+     `/etc/pico4/build-info`.
 4. Writes a gzip-compressed newc cpio, extends the command line and repacks the image with every
    other stock header field. It parses its own output and checks kernel, device trees, header
    version, page size, OS version, load addresses, the header ID and an executable `/init`
@@ -126,10 +126,10 @@ helpers and kernel arguments, and adds its own files (hostname, build record). T
 
 | Output in `out/` | Use |
 | --- | --- |
-| `pico4-poc-<firmware>.img` | the boot image |
-| `pico4-poc-<firmware>-initramfs.cpio.gz` | the bare ramdisk, for the QEMU tests |
-| `pico4-poc-<firmware>-rootfs.tar` | the root file system without device nodes, for the preflight |
-| `pico4-poc-<firmware>.json` | build record: image SHA-256 and size, command line, package versions, analysis of the stock image |
+| `pico4-stage1-<firmware>.img` | the boot image |
+| `pico4-stage1-<firmware>-initramfs.cpio.gz` | the bare ramdisk, for the QEMU tests |
+| `pico4-stage1-<firmware>-rootfs.tar` | the root file system without device nodes, for the preflight |
+| `pico4-stage1-<firmware>.json` | build record: image SHA-256 and size, command line, package versions, analysis of the stock image |
 | `stock-boot-<firmware>.img` | the untouched stock boot image of the same OTA |
 
 | Option | Effect |
@@ -144,7 +144,7 @@ without building and writes `out/inspect/<firmware>/`: `analysis.json` and the k
 `kernel.config`.
 
 With `SOURCE_DATE_EPOCH` set, the image is byte-reproducible from the same downloads, on
-Windows and Linux alike; without it, only the build time in `/etc/pico4-poc/build-info` differs
+Windows and Linux alike; without it, only the build time in `/etc/pico4/build-info` differs
 between builds. The build warns when the image is larger than the stock partition image; such
 an image can only be booted from RAM.
 
@@ -195,7 +195,7 @@ cannot start until the original image is flashed back; with the system installed
 
 ```sh
 fastboot oem <token> unlock               # engineering ABL: authorizes writes in this session
-fastboot flash boot out/pico4-poc-5.13.7-global-seko.img
+fastboot flash boot out/pico4-stage1-5.13.7-global-seko.img
 fastboot reboot                           # every normal boot now starts stage 1
 # back to PICO OS: into fastboot (pico4-reboot bootloader in stage 1, or its 5-minute
 # auto-reboot when no PC answers), then:
@@ -217,11 +217,11 @@ About 20–40 s after the boot the headset answers on the USB link:
 
 | How | Command |
 | --- | --- |
-| SSH (Windows has a client built in) | `ssh root@172.16.42.1`, empty password |
+| SSH (Windows has a client built in) | `ssh root@172.16.42.1`, empty password in the maintenance stage 1, the enrolled key in the installed system's |
 | Telnet (Windows: the optional client, or PuTTY) | `telnet 172.16.42.1` |
 | Browser: status, logs, report, probe and reboot buttons | <http://172.16.42.1/> |
-| Copy files (SFTP server included) | `scp root@172.16.42.1:/run/pico4-poc/report.tar.gz .` |
-| Logs without any network | the USB drive `PICO4POC` on the PC |
+| Copy files (SFTP server included) | `scp root@172.16.42.1:/run/pico4/report.tar.gz .` |
+| Logs without any network | the USB drive `PICO4LOGS` on the PC |
 | Serial shell, on kernels with CDC ACM | the gadget's serial port on the PC (`/dev/ttyACM0` on Linux); any login name, no password |
 
 dropbear runs with `-R` (host keys are generated at the first connection, so they are new on
@@ -258,9 +258,9 @@ medium, eject and replug it to see the newer files.
 
 The USB device is a composite gadget `1d6b:0104` (Linux Foundation Multifunction Composite
 Gadget, device class `EF/02/01` with interface association descriptors for Windows), product
-`PICO 4 Linux POC`. Its serial number is `androidboot.serialno` from the kernel command line,
+`PICO 4 Linux`. Its serial number is `androidboot.serialno` from the kernel command line,
 normally the headset's fastboot serial (the ADB serial under PICO OS can differ). The network
-function is the first one in `pico4poc.usbnet` that the kernel provides. Its MAC addresses are
+function is the first one in `pico4.usbnet` that the kernel provides. Its MAC addresses are
 locally administered and derived from the serial number, so the PC sees the same adapter on
 every boot. If the controller rejects the set of functions, the setup binds again without the
 serial function, then without the log drive.
@@ -288,19 +288,19 @@ The LED column applies on the stock-kernel dev image: only LEDs named red, green
 driven, never flash, torch, IR or backlight LEDs, and a failed USB setup shows blinking red.
 Valve's kernel has no `/sys/class/leds`, so on it the helper does nothing.
 
-Every step is logged to the kernel log (lines start with `pico4-poc:`), to
-`/run/pico4-poc/boot.log` and to pstore's `pmsg`, which survives a warm reboot. Services log to
-`/run/pico4-poc/svc-<name>.log`.
+Every step is logged to the kernel log (lines start with `pico4:`), to
+`/run/pico4/boot.log` and to pstore's `pmsg`, which survives a warm reboot. Services log to
+`/run/pico4/svc-<name>.log`.
 
 ### PID 1
 
-[pico4-init](../initramfs/usr/libexec/pico4-poc/pico4-init) runs the `::respawn:`,
+[pico4-init](../initramfs/usr/libexec/pico4/pico4-init) runs the `::respawn:`,
 `::shutdown:` and `::restart:` entries of [/etc/inittab](../initramfs/etc/inittab) like busybox
 init, but its stop signals reach only user processes (those with an executable), never kernel
 threads. busybox init stops everything with `kill(-1)`, which also reaches the kernel thread of
 the USB mass-storage function that serves the log drive; that thread exits on SIGTERM or
 SIGKILL, the PC then resets the composite device, and the NCM link is lost. Each service runs in
-its own respawn loop through [svc](../initramfs/usr/libexec/pico4-poc/svc), which waits for the
+its own respawn loop through [svc](../initramfs/usr/libexec/pico4/svc), which waits for the
 service's prerequisites and rate-limits restarts.
 
 | Signal to PID 1 | Effect |
@@ -312,9 +312,9 @@ service's prerequisites and rate-limits restarts.
 ## Recovery behaviour
 
 * **Watchdog.** `recovery-watch`, independent of the USB setup, reboots into fastboot after
-  300 s (`pico4poc.autoreboot`) unless a packet from the PC has arrived on the USB network or a
+  300 s (`pico4.autoreboot`) unless a packet from the PC has arrived on the USB network or a
   login shell has started (SSH, telnet or serial: the shell profile creates
-  `/run/pico4-poc/no-autoreboot`). USB enumeration and carrier alone do not count.
+  `/run/pico4/no-autoreboot`). USB enumeration and carrier alone do not count.
 * **Test images.** Images that the hardware runner prepares use its deadlines instead: the
   runner must authenticate over SSH within the connection deadline (network traffic and login
   shells do not count), and a maximum runtime returns the headset to fastboot even after
@@ -323,7 +323,7 @@ service's prerequisites and rate-limits restarts.
   link is configured but unusable returns to fastboot this way, and the runner restores PICO OS
   without a button press.
 * **USB re-plug.** If the link is configured but no packet has arrived from the PC for 20 s
-  (`pico4poc.usbkick`), the USB link watcher unbinds the gadget from the controller and binds it
+  (`pico4.usbkick`), the USB link watcher unbinds the gadget from the controller and binds it
   again, at most twice per boot and never after the first received packet. It then re-applies
   the address and restarts `udhcpd`. A PC whose side of the link is up sends packets at once
   (DHCP, IPv6 router solicitations). In QEMU, the PC side intermittently (about one run in
@@ -334,46 +334,46 @@ service's prerequisites and rate-limits restarts.
 * **Kernel panics.** The stock kernel enables Qualcomm download mode, so a panic would leave the
   headset in crash-dump mode (USB `05c6:900e`) until the power button is held. Stage 1 sets
   `msm_poweroff`'s `download_mode` to 0, so a panic reboots; a flashed stage 1 then starts again,
-  and its deadlines return the headset to fastboot. `pico4poc.ramdump=1` keeps crash-dump mode.
+  and its deadlines return the headset to fastboot. `pico4.ramdump=1` keeps crash-dump mode.
 * **Limits.** A kernel hard hang or loss of host power can still need a hardware reset (power
   button held for more than 10 s) or EDL recovery.
 
 ## Kernel command-line options
 
 Add them at build time, e.g.
-`python -m overpressure build --cmdline-append pico4poc.autoreboot=0 pico4poc.cpugov=keep`. A bare
-`pico4poc.NAME` means `pico4poc.NAME=1`. [lib.sh](../initramfs/usr/libexec/pico4-poc/lib.sh)
+`python -m overpressure build --cmdline-append pico4.autoreboot=0 pico4.cpugov=keep`. A bare
+`pico4.NAME` means `pico4.NAME=1`. [lib.sh](../initramfs/usr/libexec/pico4/lib.sh)
 reads them; the scripts next to it use them.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `pico4poc.usbnet=` | `ncm,rndis,ecm` | network functions to try, in order; the stock kernel has only NCM |
-| `pico4poc.usbserial=` | `acm` | serial shell function, absent from the stock kernel; `gser` needs a host driver, `none` disables it. The serial getty asks for a login name first (any name, no password) |
-| `pico4poc.logdisk=` | `1` | read-only USB log drive |
-| `pico4poc.autoreboot=` | `300` | seconds without a usable connection before rebooting into fastboot; `0` = never |
-| `pico4poc.usbkick=` | `20` | seconds of silence on a configured link before a software USB re-plug (at most 2); `0` = never |
-| `pico4poc.ip=`, `pico4poc.host_ip=` | `172.16.42.1`, `172.16.42.2` | addresses on the USB link (/24) |
-| `pico4poc.rw=` | `0` | `1` leaves block devices writable; the hardware runner refuses such images |
-| `pico4poc.led=` | `1` | drive the status LED where the kernel has one (only LEDs named red, green, blue; Valve's kernel has none) |
-| `pico4poc.cpugov=` | `schedutil` | cpufreq governor; `keep` leaves the stock `performance` |
-| `pico4poc.lpm=` | `1` | enable the CPU low-power idle states |
-| `pico4poc.ramdump=` | `0` | `1` keeps Qualcomm crash-dump mode after a kernel panic |
-| `pico4poc.probe=` | `1` | run `pico4-probe` automatically |
-| `pico4poc.modules=` | `1` | load modules from the stock ramdisk (none in current firmware) |
-| `pico4poc.devtmpfs=` | `1` | mount devtmpfs when the kernel has it (the stock kernel does not) |
-| `pico4poc.probe_delay=` | `15` | seconds between the USB setup and the automatic probe |
-| `pico4poc.lpm_delay=` | `30` | seconds before the idle states are enabled |
-| `pico4poc.udc_timeout=` | `60` | seconds to wait for a USB device controller |
-| `pico4poc.logdisk_mb=` | `32` | size of the log drive in MiB |
+| `pico4.usbnet=` | `ncm,rndis,ecm` | network functions to try, in order; the stock kernel has only NCM |
+| `pico4.usbserial=` | `acm` | serial shell function, absent from the stock kernel; `gser` needs a host driver, `none` disables it. The serial getty asks for a login name first (any name, no password) |
+| `pico4.logdisk=` | `1` | read-only USB log drive |
+| `pico4.autoreboot=` | `300` | seconds without a usable connection before rebooting into fastboot; `0` = never |
+| `pico4.usbkick=` | `20` | seconds of silence on a configured link before a software USB re-plug (at most 2); `0` = never |
+| `pico4.ip=`, `pico4.host_ip=` | `172.16.42.1`, `172.16.42.2` | addresses on the USB link (/24) |
+| `pico4.rw=` | `0` | `1` leaves block devices writable; the hardware runner refuses such images |
+| `pico4.led=` | `1` | drive the status LED where the kernel has one (only LEDs named red, green, blue; Valve's kernel has none) |
+| `pico4.cpugov=` | `schedutil` | cpufreq governor; `keep` leaves the stock `performance` |
+| `pico4.lpm=` | `1` | enable the CPU low-power idle states |
+| `pico4.ramdump=` | `0` | `1` keeps Qualcomm crash-dump mode after a kernel panic |
+| `pico4.probe=` | `1` | run `pico4-probe` automatically |
+| `pico4.modules=` | `1` | load modules from the stock ramdisk (none in current firmware) |
+| `pico4.devtmpfs=` | `1` | mount devtmpfs when the kernel has it (the stock kernel does not) |
+| `pico4.probe_delay=` | `15` | seconds between the USB setup and the automatic probe |
+| `pico4.lpm_delay=` | `30` | seconds before the idle states are enabled |
+| `pico4.udc_timeout=` | `60` | seconds to wait for a USB device controller |
+| `pico4.logdisk_mb=` | `32` | size of the log drive in MiB |
 
 Options for the test harnesses:
 
 | Option | Used by |
 | --- | --- |
-| `pico4poc.selftest=1` | the QEMU self-test ([QEMU self-test](#qemu-self-test)); with `pico4poc.selftest_hostdelay=N` the PC side stays silent for N s, with `pico4poc.selftest_poweroff=0` the VM stays on afterwards. The hardware runner refuses images with `selftest` |
-| `pico4poc.root=installed` (with `pico4poc.autoreboot=0`) | the install boot image: mount the installed system from `super` and `userdata` and switch to it; on failure, reboot into recovery ([install.md](install.md)) |
-| `pico4poc.part=recovery` | the dev image written to `recovery` (the maintenance stage 1), so the dev loop can tell which partition started it |
-| `pico4poc.test_run=ID` | set by the hardware runner in its per-run image |
+| `pico4.selftest=1` | the QEMU self-test ([QEMU self-test](#qemu-self-test)); with `pico4.selftest_hostdelay=N` the PC side stays silent for N s, with `pico4.selftest_poweroff=0` the VM stays on afterwards. The hardware runner refuses images with `selftest` |
+| `pico4.root=installed` (with `pico4.autoreboot=0`) | the install boot image: mount the installed system from `super` and `userdata` and switch to it; on failure, reboot into recovery ([install.md](install.md)) |
+| `pico4.part=recovery` | the dev image written to `recovery` (the maintenance stage 1), so the dev loop can tell which partition started it |
+| `pico4.test_run=ID` | set by the hardware runner in its per-run image |
 
 Do not add a bare `earlycon` (without a value). According to PICO's published kernel source
 ([bytedance/phoenix-kernel](https://github.com/bytedance/phoenix-kernel), 4.19.81, without the
@@ -385,7 +385,7 @@ anything is logged.
 | Command | Purpose |
 | --- | --- |
 | `pico4-info` | status summary, also the login banner |
-| `pico4-probe` | hardware inventory into `/run/pico4-poc/report/` and `report.tar.gz`, also on the web page and the log drive |
+| `pico4-probe` | hardware inventory into `/run/pico4/report/` and `report.tar.gz`, also on the web page and the log drive |
 | `pico4-mount-ro PART [DIR]` | mount a stock partition read-only, by default on `/mnt/PART`: ext4 with `noload` (no journal replay), f2fs with `norecovery`, vfat. The dynamic partitions inside `super` are not handled |
 | `pico4-reboot [bootloader\|recovery\|poweroff]` | reboot into a mode; without argument, a normal reboot. `-r STRING` passes any other reboot reason; unknown words are refused. Aliases: `fastboot-mode`, `android` |
 | `pico4-userspace installed` | the installed system: `super` read-only as the new root, `userdata` at `/data` with `/etc`, `/var`, `/home` and `/root` on it ([install.md](install.md)) |
@@ -404,7 +404,7 @@ of `pico4-info`, the login banner, starts with `#`; and `pico4-reboot` refuses u
 
 ## Troubleshooting
 
-* **The PC sees a "PICO 4 Linux POC" device but no network adapter (Windows).** Windows 11 ships
+* **The PC sees a "PICO 4 Linux" device but no network adapter (Windows).** Windows 11 ships
   `UsbNcm.sys` as the in-box class driver for CDC NCM (class 02h, subclass 0Dh) and should load
   it automatically ([Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/supported-usb-classes)).
   If it does not, use Device Manager: *Update driver → Browse my computer → Let me pick →
@@ -417,12 +417,12 @@ of `pico4-info`, the login banner, starts with `#`; and `pico4-reboot` refuses u
   `python -m overpressure dev connect` send it after every stage-1 boot; the setup and its limits
   are in [hardware-testing.md](hardware-testing.md#windows-ncm-initialization). Leave the adapter
   on DHCP.
-* **No network, but a PICO4POC drive appeared.** `boot.log` on it shows what the USB setup did.
+* **No network, but a PICO4LOGS drive appeared.** `boot.log` on it shows what the USB setup did.
   The drive is rebuilt after the probe; eject and replug it to see the newer files.
 * **Nothing appears on the PC.** After 5 minutes the watchdog reboots into fastboot. The next
   stage-1 boot shows the previous boot's logs from pstore (`pstore/` on the log drive,
   `/cgi-bin/log?pstore`); under PICO OS they are in `/sys/fs/pstore/console-ramoops*` and
-  `pmsg-ramoops*` (readable by root only). Every stage-1 line starts with `pico4-poc`.
+  `pmsg-ramoops*` (readable by root only). Every stage-1 line starts with `pico4`.
 * **`check-unlocked` fails although the bootloader is unlocked.** The stock ABL reports the
   state as `DeviceUnlocked=true`, which the tools do not accept; stage the engineering ABL
   ([device-preparation.md](device-preparation.md)).
@@ -445,8 +445,9 @@ of `pico4-info`, the login banner, starts with `#`; and `pico4-reboot` refuses u
   and cannot be downloaded again. Treat them as irreplaceable in every stage.
 * `pico4-mount-ro` mounts stock partitions read-only with journal replay disabled, e.g. `modem`
   for firmware files.
-* The shell has no password. The only network is the USB cable to one PC, and nothing is
-  forwarded.
+* The maintenance stage 1's shell has no password: its only network is the USB cable to one PC, and
+  nothing is forwarded. The installed system's stage 1 serves only SSH with the enrolled keys
+  ([security.md](security.md)).
 
 ## The stock kernel as found
 
@@ -484,24 +485,24 @@ Read from the boot image of PICO OS 5.13.8 and the kernel's embedded configurati
 * **Ramdisk.** GNU cpio lists it with the expected device nodes, symlinks and modes, and the
   scripts pass `sh -n` under the image's aarch64 BusyBox.
 * **Recovery policy.** `bash devices/phoenix/tests/test_recovery_policy.sh` checks the watchdog's decisions
-  ([recovery-policy.sh](../initramfs/usr/libexec/pico4-poc/recovery-policy.sh)) on the host.
+  ([recovery-policy.sh](../initramfs/usr/libexec/pico4/recovery-policy.sh)) on the host.
 
 ### QEMU self-test
 
 [tests/qemu/](../tests/qemu/) boots the exact ramdisk on a mainline arm64 kernel (6.18.56)
 configured like the stock one where it matters: no devtmpfs, no modules, a configfs gadget, 4K
 pages and a 39-bit address space. `dummy_hcd` connects the gadget to a virtual host controller
-in the same kernel, so the VM is both headset and PC. A 32 MiB GPT disk provides a `poc_test`
-partition for the read-only checks and a `poc_export` partition that receives the probe report.
+in the same kernel, so the VM is both headset and PC. A 32 MiB GPT disk provides a `stage1_test`
+partition for the read-only checks and a `stage1_export` partition that receives the probe report.
 
 ```sh
 devices/phoenix/tests/qemu/build-test-kernel.sh       # once, on Linux or WSL: cache/qemu/Image
 devices/phoenix/tests/qemu/run-selftest.sh            # newest out/*-initramfs.cpio.gz; prints PASS or FAIL
 ```
 
-Further arguments to `run-selftest.sh` are kernel arguments: `pico4poc.usbserial=none` gives
+Further arguments to `run-selftest.sh` are kernel arguments: `pico4.usbserial=none` gives
 the stock kernel's function set (NCM and log drive, no serial), and
-`pico4poc.selftest_hostdelay=35` keeps the PC side silent for 35 s, which forces the re-plug
+`pico4.selftest_hostdelay=35` keeps the PC side silent for 35 s, which forces the re-plug
 path. The console log goes to `out/qemu-console.log`, the probe report to `out/qemu-report/`.
 `make qemu-stage1` runs the test for the Makefile's firmware.
 

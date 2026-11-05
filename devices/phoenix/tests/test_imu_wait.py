@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """`pico4-imu wait`: the sensors target is reached once the IMU is listed."""
 import argparse
 import contextlib

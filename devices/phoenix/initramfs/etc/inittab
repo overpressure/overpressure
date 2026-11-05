@@ -1,14 +1,14 @@
-# Services of the PICO 4 Linux POC, run by /usr/libexec/pico4-poc/pico4-init
-# (busybox inittab syntax; see also /usr/libexec/pico4-poc/svc).
+# Services of the PICO 4 Linux, run by /usr/libexec/pico4/pico4-init
+# (busybox inittab syntax; see also /usr/libexec/pico4/svc).
 # /init has already done all one-time setup before exec'ing init.
-::respawn:/usr/libexec/pico4-poc/svc udhcpd
-::respawn:/usr/libexec/pico4-poc/svc telnetd
-::respawn:/usr/libexec/pico4-poc/svc dropbear
-::respawn:/usr/libexec/pico4-poc/svc httpd
-::respawn:/usr/libexec/pico4-poc/svc serial
-::respawn:/usr/libexec/pico4-poc/svc usb-watch
-::respawn:/usr/libexec/pico4-poc/svc recovery-watch
+::respawn:/usr/libexec/pico4/svc udhcpd
+::respawn:/usr/libexec/pico4/svc telnetd
+::respawn:/usr/libexec/pico4/svc dropbear
+::respawn:/usr/libexec/pico4/svc httpd
+::respawn:/usr/libexec/pico4/svc serial
+::respawn:/usr/libexec/pico4/svc usb-watch
+::respawn:/usr/libexec/pico4/svc recovery-watch
 ::ctrlaltdel:/sbin/reboot
 # SIGQUIT (pico4-userspace switch): hand PID 1 to the installed system's systemd.
-::restart:/usr/libexec/pico4-poc/switch-userspace
-::shutdown:/usr/libexec/pico4-poc/svc shutdown
+::restart:/usr/libexec/pico4/switch-userspace
+::shutdown:/usr/libexec/pico4/svc shutdown

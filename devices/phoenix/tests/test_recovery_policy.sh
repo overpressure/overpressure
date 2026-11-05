@@ -1,7 +1,8 @@
 #!/bin/sh
+# SPDX-License-Identifier: Unlicense
 set -eu
 cd "$(dirname "$0")/.."
-. initramfs/usr/libexec/pico4-poc/recovery-policy.sh
+. initramfs/usr/libexec/pico4/recovery-policy.sh
 
 # USB enumeration/carrier alone supplies neither reachability nor authentication.
 [ -z "$(recovery_reason 299 300 900 0 0 0)" ]

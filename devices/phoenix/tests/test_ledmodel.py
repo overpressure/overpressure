@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import json
 import math
 import struct
@@ -22,7 +23,7 @@ def outward(scale: float = 1.0) -> list[list[float]]:
     return [[scale * math.cos(i * math.pi / 10), scale * math.sin(i * math.pi / 10), 0.0] for i in range(ledmodel.LEDS)]
 
 
-def library(points: dict | None = None, mapped: bool = True, normals: list | None = None) -> bytes:
+def library(points=None, mapped: bool = True, normals=None) -> bytes:
     """A minimal ELF64 with one PT_LOAD segment holding the rings and normals at the expected addresses."""
     points = points or {"left": ring("left"), "right": ring("right")}
     normals = normals or outward()

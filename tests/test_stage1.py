@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure.stage1: the kernel arguments, the repacked stock image and the overlay."""
 import gzip
 import tempfile

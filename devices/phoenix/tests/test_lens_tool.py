@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """pico4-lens: only stock's lens frames can be built, and a move follows the stock service."""
 
 import importlib.machinery

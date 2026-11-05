@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * libpico4-fastrpc-bridge.so, preloaded into the tracker root's processes on a mainline kernel
  * (docs/xr.md#head-tracking): the vendor FastRPC node (/dev/adsprpc-smd, -secure) and /dev/ion

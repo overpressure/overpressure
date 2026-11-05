@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """devices.phoenix.tooling.stock: the PICO 4's members of PICO's full OTA, and its firmware default."""
 import json
 import re

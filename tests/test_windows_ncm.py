@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock

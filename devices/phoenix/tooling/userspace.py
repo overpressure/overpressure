@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Validators of the on-device checks' JSON, and their limits."""
 from __future__ import annotations
 

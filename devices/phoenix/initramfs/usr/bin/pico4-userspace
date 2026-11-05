@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Unlicense
 # Stage-2 handoff: hand PID 1 to the installed system's systemd (docs/install.md).
 #
 #   pico4-userspace installed
@@ -8,11 +9,11 @@
 #       carry over SSH identity, test-run state and USB network settings, then
 #       let pico4-init hand PID 1 to systemd (the SSH session is closed)
 #   pico4-userspace status
-. /usr/libexec/pico4-poc/lib.sh
+. /usr/libexec/pico4/lib.sh
 set -o pipefail
 
 NEW=/newroot
-STATE=$POC_RUN/userspace
+STATE=$P4_RUN/userspace
 die() { log "userspace: $*"; echo "pico4-userspace: $*" >&2; exit 1; }
 
 # The system image (super) is read-only and replaced whole by an update; the data partition
@@ -39,7 +40,7 @@ installed() {
 		blockdev --setrw "/dev/${disk##*/}" || die "could not make ${disk##*/} writable"
 	fi
 	mount -t ext4 -o noatime "$data" "$NEW/data" || die "mounting the data partition failed"
-	image=$(cat "$NEW/usr/share/pico4-poc/system-image" 2>/dev/null)
+	image=$(cat "$NEW/usr/share/pico4/system-image" 2>/dev/null)
 	if [ ! -e "$NEW/data/.pico4-initialized" ]; then
 		log "userspace: first boot of the installed system: data from the image"
 		for dir in var root home; do
@@ -47,6 +48,10 @@ installed() {
 			cp -a "$NEW/$dir/." "$NEW/data/$dir/" || die "copying /$dir"
 		done
 		mkdir -p "$NEW/data/etc/upper" "$NEW/data/etc/work"
+		# Settings an earlier system kept under its old folder name.
+		if [ -d "$NEW/data/etc/upper/pico4-poc" ] && [ ! -e "$NEW/data/etc/upper/pico4" ]; then
+			mv "$NEW/data/etc/upper/pico4-poc" "$NEW/data/etc/upper/pico4"
+		fi
 		touch "$NEW/data/.pico4-initialized"
 	elif [ "$(cat "$NEW/data/.pico4-system-image" 2>/dev/null)" != "$image" ]; then
 		# A new system image: its package database replaces the old one.
@@ -66,7 +71,7 @@ installed() {
 	[ -x "$NEW/usr/lib/systemd/systemd" ] || die "no systemd in the system image"
 	chroot "$NEW" /usr/lib/systemd/systemd --version > "$STATE/systemd-version" 2>&1 ||
 		die "the system's systemd does not run here: $(head -n 2 "$STATE/systemd-version")"
-	cp "$NEW/usr/share/pico4-poc/userspace-archive.sha256" "$STATE/archive.sha256" 2>/dev/null ||
+	cp "$NEW/usr/share/pico4/userspace-archive.sha256" "$STATE/archive.sha256" 2>/dev/null ||
 		echo "$image" > "$STATE/archive.sha256"
 	touch "$STATE/received"
 	log "userspace: installed system ${image:-unknown} mounted, data $(df -k "$NEW/data" | awk 'NR==2 {print int($3/1048576)}') of" \
@@ -95,13 +100,13 @@ host_keys() {
 
 network() {
 	local offset
-	. "$POC_RUN/net.env" 2>/dev/null
+	. "$P4_RUN/net.env" 2>/dev/null
 	[ -n "$IFACE" ] || { log "userspace: no USB network to carry over"; return 0; }
 	offset=${HOST_IP##*.}
 	# The PC keeps talking to this exact link: stage 2 checks it is unchanged.
-	mkdir -p "$NEW/etc/pico4-poc"
+	mkdir -p "$NEW/etc/pico4"
 	printf 'IFACE=%s\nMAC=%s\nIP=%s\n' "$IFACE" "$(cat "/sys/class/net/$IFACE/address")" "$IP" \
-		> "$NEW/etc/pico4-poc/usb-link.env"
+		> "$NEW/etc/pico4/usb-link.env"
 	mkdir -p "$NEW/etc/systemd/network"
 	cat > "$NEW/etc/systemd/network/50-pico4-usb.network" <<-EOF
 	# Written by pico4-userspace switch from the stage-1 USB setup.
@@ -133,12 +138,12 @@ switch() {
 	[ -e "$STATE/received" ] || die "no system mounted yet (pico4-userspace installed)"
 	grep -q " $NEW " /proc/mounts || die "$NEW is not mounted"
 	[ "$(cat /proc/1/comm)" = pico4-init ] || die "PID 1 is not pico4-init (rebuild the image)"
-	grep -q '^::restart:/usr/libexec/pico4-poc/switch-userspace' /etc/inittab || die "image lacks the handoff entry"
+	grep -q '^::restart:/usr/libexec/pico4/switch-userspace' /etc/inittab || die "image lacks the handoff entry"
 
 	host_keys
-	mkdir -p "$NEW/etc/pico4-poc" "$NEW/root/.ssh"
-	cp -a /etc/pico4-poc/. "$NEW/etc/pico4-poc/"
-	cp "$STATE/archive.sha256" "$NEW/etc/pico4-poc/userspace-archive.sha256"
+	mkdir -p "$NEW/etc/pico4" "$NEW/root/.ssh"
+	cp -a /etc/pico4/. "$NEW/etc/pico4/"
+	cp "$STATE/archive.sha256" "$NEW/etc/pico4/userspace-archive.sha256"
 	if [ -s /root/.ssh/authorized_keys ]; then
 		cp /root/.ssh/authorized_keys "$NEW/root/.ssh/authorized_keys"
 		chmod 700 "$NEW/root/.ssh"
@@ -164,5 +169,5 @@ status)
 	done
 	grep " $NEW " /proc/mounts
 	;;
-*) sed -n '2,10s/^# \{0,1\}//p' "$0"; exit 2 ;;
+*) sed -n '3,11s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

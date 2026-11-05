@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """steamvr-settings: the image's SteamVR settings reach the user's file on the data partition."""
 import importlib.machinery
 import importlib.util
@@ -8,7 +9,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PATH = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/steamvr-settings"
+PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/steamvr-settings"
 _loader = importlib.machinery.SourceFileLoader("steamvr_settings", str(PATH))
 _spec = importlib.util.spec_from_loader("steamvr_settings", _loader)
 tool = importlib.util.module_from_spec(_spec)
@@ -67,9 +68,9 @@ class WiringTests(unittest.TestCase):
     def test_steamvr_runs_it_first_and_the_image_carries_the_file(self):
         dropin = (ROOT / "userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(
             encoding="utf-8")
-        self.assertIn("ExecStartPre=/usr/libexec/pico4-poc/steamvr-settings\n", dropin)
+        self.assertIn("ExecStartPre=/usr/libexec/pico4/steamvr-settings\n", dropin)
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertIn('"$T/usr/share/pico4-poc/steamvr.vrsettings"', build)
+        self.assertIn('"$T/usr/share/pico4/steamvr.vrsettings"', build)
         self.assertNotIn(b"\r", PATH.read_bytes())
 
     def test_frame_chaperone_settings(self):

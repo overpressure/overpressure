@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """steam-proton-mapping: games Valve runs with Proton Experimental get Proton stable."""
 import importlib.machinery
 import importlib.util
@@ -7,7 +8,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PATH = ROOT / "userspace/rootfs/usr/libexec/pico4-poc/steam-proton-mapping"
+PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/steam-proton-mapping"
 _loader = importlib.machinery.SourceFileLoader("steam_proton_mapping", str(PATH))
 _spec = importlib.util.spec_from_loader("steam_proton_mapping", _loader)
 tool = importlib.util.module_from_spec(_spec)
@@ -121,7 +122,7 @@ class ProtonMappingTests(unittest.TestCase):
     def test_started_before_the_client(self):
         unit = (ROOT / "userspace/rootfs/usr/lib/systemd/user/steam.service.d/50-pico4.conf").read_text(
             encoding="utf-8")
-        self.assertIn("ExecStartPre=/usr/libexec/pico4-poc/steam-proton-mapping", unit)
+        self.assertIn("ExecStartPre=/usr/libexec/pico4/steam-proton-mapping", unit)
         self.assertTrue(os.access(PATH, os.X_OK) or os.name == "nt")
 
 

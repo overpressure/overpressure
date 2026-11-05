@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 # Shared by the headsets' extraction scripts (sourced): the stock firmware directory that
 # `python -m overpressure stock` builds from a vendor's public OTA (overpressure/ota.py:
 # its manifest.json holds the firmware and every file's sha256).

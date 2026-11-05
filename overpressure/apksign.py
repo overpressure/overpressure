@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Verify the RSA signature of an Alpine APKINDEX.tar.gz with the standard library.
 
 An APKINDEX.tar.gz is two concatenated gzip streams. The first holds a tar entry

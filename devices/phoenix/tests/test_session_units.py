@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The session's units: SteamVR's restart limit and the fallback to Monado's session."""
 import configparser
 import json
@@ -40,7 +41,7 @@ class SteamvrRestartTest(unittest.TestCase):
 
     def test_steamvr_ending_by_itself_ends_the_session(self):
         # RestartMode=direct does not reach gamescope, which stays without Steam's panel.
-        ended = "usr/libexec/pico4-poc/steamvr-ended"
+        ended = "usr/libexec/pico4/steamvr-ended"
         self.assertEqual(self.dropin["Service"]["ExecStopPost"], f"-/{ended}")
         script = (ROOT / "userspace/rootfs" / ended).read_text(encoding="utf-8")
         self.assertIn('[ -n "$job" ] && [ "$job" != 0 ] && exit 0', script)
@@ -172,7 +173,7 @@ class KthreadPrioritiesTest(unittest.TestCase):
             bash = shutil.which("bash")
             env = dict(os.environ, PICO4_SYSFS=Path(tmp, "sys").as_posix(),
                        PATH=f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}")
-            script = ROOTFS / "usr/libexec/pico4-poc/kthread-priorities"
+            script = ROOTFS / "usr/libexec/pico4/kthread-priorities"
             r = subprocess.run([bash, script.as_posix()], env=env, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
             calls = Path(log).read_text().splitlines()
@@ -226,9 +227,9 @@ class StoragePolicyRuleTest(unittest.TestCase):
         # The kernel's devtmpfs makes the nodes; the helper keeps the read-only policy.
         rules = (ROOTFS / "usr/lib/udev/rules.d/00-pico4-devnodes.rules").read_text(encoding="utf-8")
         self.assertLess(rules.index('SUBSYSTEM!="block", GOTO="pico4_devnodes_end"'),
-                        rules.index('RUN+="/usr/libexec/pico4-poc/devnode remove"'))
-        self.assertIn('PROGRAM="/usr/libexec/pico4-poc/devnode add"', rules)
-        helper = (ROOTFS / "usr/libexec/pico4-poc/devnode").read_text(encoding="utf-8")
+                        rules.index('RUN+="/usr/libexec/pico4/devnode remove"'))
+        self.assertIn('PROGRAM="/usr/libexec/pico4/devnode add"', rules)
+        helper = (ROOTFS / "usr/libexec/pico4/devnode").read_text(encoding="utf-8")
         self.assertNotIn("mknod", helper)
         self.assertIn('blockdev --setro "/dev/$name"', helper)
 
@@ -248,9 +249,9 @@ class MonadoServiceTest(unittest.TestCase):
         # Turnip's display WSI hands an image back only once the next flip completed: with
         # Monado's default of two images every second refresh was missed (45 Hz).
         unit = (ROOTFS / "usr/lib/systemd/system/pico4-monado.service").read_text(encoding="utf-8")
-        self.assertIn("ExecStart=/usr/libexec/pico4-poc/monado-service", unit)
+        self.assertIn("ExecStart=/usr/libexec/pico4/monado-service", unit)
         self.assertIn("ConditionPathExists=/dev/dri/renderD128\n", unit)
-        script = (ROOTFS / "usr/libexec/pico4-poc/monado-service").read_text(encoding="utf-8")
+        script = (ROOTFS / "usr/libexec/pico4/monado-service").read_text(encoding="utf-8")
         for setting in ("XRT_COMPOSITOR_FORCE_VK_DISPLAY=0", "XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3",
                         "XRT_COMPOSITOR_COMPUTE=0"):
             self.assertIn(setting, script)
@@ -270,7 +271,7 @@ class PanelProbeTest(unittest.TestCase):
 class SessionTest(unittest.TestCase):
     def test_valves_session_only(self):
         # The session is Valve's target, or another of Valve's that session.conf names.
-        script = (ROOTFS / "usr/libexec/pico4-poc/session").read_text(encoding="utf-8")
+        script = (ROOTFS / "usr/libexec/pico4/session").read_text(encoding="utf-8")
         self.assertIn("target=${PICO4_SESSION_TARGET:-gamescope-session.target}", script)
         self.assertIn('exec /usr/bin/start-gamescope-session "$target"', script)
 
@@ -308,7 +309,7 @@ class SessionTest(unittest.TestCase):
     def test_new_session_resets_the_start_limit(self):
         # The user manager outlives a session: without a reset, sessions started one after
         # another count against SteamVR's crash-loop limit.
-        script = (ROOTFS / "usr/libexec/pico4-poc/session").read_text(encoding="utf-8")
+        script = (ROOTFS / "usr/libexec/pico4/session").read_text(encoding="utf-8")
         self.assertLess(script.index("systemctl --user reset-failed"),
                         script.index("exec /usr/bin/start-gamescope-session"))
 

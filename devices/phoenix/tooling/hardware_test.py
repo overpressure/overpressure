@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Bounded, serial-bound PICO 4 tests: the preflight on PICO OS, and flash-run with the stock boot restored."""
 from __future__ import annotations
 
@@ -110,31 +111,31 @@ def prepare_image(source: Path, folder: Path, run_id: str, public_key: bytes,
     image = bootimg.parse(original)
     require(image.id == image.compute_id(), "Source boot image checksum mismatch")
     words = image.full_cmdline.split()
-    require(not any(w in ("pico4poc.rw", "pico4poc.selftest") or
-                    w.startswith(("pico4poc.rw=", "pico4poc.selftest=")) and not w.endswith("=0")
+    require(not any(w in ("pico4.rw", "pico4.selftest") or
+                    w.startswith(("pico4.rw=", "pico4.selftest=")) and not w.endswith("=0")
                     for w in words), "Hardware tests require read-only mode and QEMU selftest disabled")
     tree = cpio.Tree(nodes=dict(cpio.read_cpio(compress.decompress(image.ramdisk)[0])))
-    require("etc/pico4-poc/build-info" in tree.nodes, "Image is not a PICO 4 POC build")
-    require("usr/libexec/pico4-poc/recovery-watch" in tree.nodes and
+    require("etc/pico4/build-info" in tree.nodes, "Image is not a PICO 4 POC build")
+    require("usr/libexec/pico4/recovery-watch" in tree.nodes and
             "etc/inittab" in tree.nodes and b"svc recovery-watch" in tree.nodes["etc/inittab"].data,
-            "Rebuild the POC image: independent recovery watchdog is missing")
+            "Rebuild stage 1 image: independent recovery watchdog is missing")
     if userspace:
         require("usr/bin/pico4-userspace" in tree.nodes
-                and "usr/libexec/pico4-poc/pico4-init" in tree.nodes
-                and b"::restart:/usr/libexec/pico4-poc/switch-userspace" in tree.nodes["etc/inittab"].data,
-                "Rebuild the POC image: the userspace handoff is missing")
-    info = json.loads(tree.nodes["etc/pico4-poc/build-info"].data)
+                and "usr/libexec/pico4/pico4-init" in tree.nodes
+                and b"::restart:/usr/libexec/pico4/switch-userspace" in tree.nodes["etc/inittab"].data,
+                "Rebuild stage 1 image: the userspace handoff is missing")
+    info = json.loads(tree.nodes["etc/pico4/build-info"].data)
     require(0 < connect_timeout < test_timeout, "Invalid device recovery deadlines")
     # Preflight runs the exact source userspace, excluding device nodes.
     with (folder / "rootfs.tar").open("wb") as stream:
         tree.to_tar(stream)
     tree.mkdir("root/.ssh", 0o700)
     tree.add_file("root/.ssh/authorized_keys", public_key.rstrip() + b"\n", 0o600)
-    tree.add_file("etc/pico4-poc/test-run", run_id.encode() + b"\n")
-    tree.add_file("etc/pico4-poc/test-connect-timeout", f"{connect_timeout}\n".encode())
-    tree.add_file("etc/pico4-poc/test-timeout", f"{test_timeout}\n".encode())
-    words = [w for w in words if not w.startswith("pico4poc.test_run=")]
-    image = image.with_cmdline(" ".join(words + [f"pico4poc.test_run={run_id}"]))
+    tree.add_file("etc/pico4/test-run", run_id.encode() + b"\n")
+    tree.add_file("etc/pico4/test-connect-timeout", f"{connect_timeout}\n".encode())
+    tree.add_file("etc/pico4/test-timeout", f"{test_timeout}\n".encode())
+    words = [w for w in words if not w.startswith("pico4.test_run=")]
+    image = image.with_cmdline(" ".join(words + [f"pico4.test_run={run_id}"]))
     image.ramdisk = gzip.compress(tree.to_cpio(), mtime=0)
     image.boot_signature = b""
     data = image.pack()
@@ -283,7 +284,7 @@ class Runner:
         return {"fingerprint": lines[0], "oem_state": lines[1], "chip_id": qualcomm.chip_id(lines[2])}
 
     def preflight(self, rootfs):
-        remote = f"/data/local/tmp/pico4-poc-{self.run_id}"
+        remote = f"/data/local/tmp/pico4-stage1-{self.run_id}"
         try:
             self.adb("shell", f"mkdir -p {remote}")
             self.adb("push", str(rootfs), remote + "/rootfs.tar", timeout=180)
@@ -391,22 +392,22 @@ class Runner:
         self.authenticate(timeout)
 
     def authenticate(self, timeout):
-        output = self.ssh("cat /etc/pico4-poc/test-run; cat /sys/devices/soc0/serial_number", timeout)
+        output = self.ssh("cat /etc/pico4/test-run; cat /sys/devices/soc0/serial_number", timeout)
         lines = output.splitlines()
         require(len(lines) == 2 and lines[0] == self.run_id and qualcomm.chip_id(lines[1]) == self.baseline["chip_id"],
                 "SSH endpoint is not the expected test run and headset")
         self.authenticated = True
         # Only a verified endpoint may cancel the connection deadline. The
         # independent maximum test duration still recovers a crashed runner.
-        self.ssh("touch /run/pico4-poc/test-authenticated", timeout)
+        self.ssh("touch /run/pico4/test-authenticated", timeout)
 
     def assertions(self, suffix=""):
-        info = json.loads(self.ssh("cat /etc/pico4-poc/build-info"))
+        info = json.loads(self.ssh("cat /etc/pico4/build-info"))
         require(info == self.result["build_info"], "Running build metadata differs from supplied image")
         require(self.ssh("uname -m") == "aarch64", "Linux is not running ARM64")
         release = self.ssh("uname -r")
         require(info.get("kernel", "").startswith(f"Linux version {release} "), "Unexpected running kernel")
-        require(self.ssh("id -u") == "0", "SSH did not provide the POC root shell")
+        require(self.ssh("id -u") == "0", "SSH did not provide stage 1 root shell")
         require(self.ssh("printf 'SHELL-%s' $((6*7))") == "SHELL-42", "SSH shell execution failed")
         storage = self.ssh("for d in /sys/class/block/*; do [ -e \"$d\" ] || continue; "
                            "printf 'BLOCK %s %s\\n' \"${d##*/}\" \"$(cat \"$d/ro\")\"; done")
@@ -441,13 +442,13 @@ class Runner:
     def diagnostics(self):
         status = self.http("cgi-bin/status")
         (self.folder / "http-status.txt").write_bytes(status)
-        require(b"PICO 4 Linux POC" in status, "HTTP status page is not the POC")
+        require(b"PICO 4 Linux" in status, "HTTP status page is not stage 1")
         log = self.http("cgi-bin/log?boot")
         (self.folder / "boot.log").write_bytes(log)
         require(self.run_id.encode() in log, "HTTP log does not identify this boot")
         # Wait for the init-triggered probe instead of starting a competing probe.
         self.wait("hardware report", self.args.report_timeout,
-                  lambda timeout: require(self.ssh("test -s /run/pico4-poc/report.tar.gz && echo READY", timeout)
+                  lambda timeout: require(self.ssh("test -s /run/pico4/report.tar.gz && echo READY", timeout)
                                           == "READY", "Report not ready"))
         report = self.http("cgi-bin/report")
         (self.folder / "report.tar.gz").write_bytes(report)
@@ -558,11 +559,11 @@ class Runner:
         self.save()
         # Its stderr (systemctl's notes among it) stays out of the JSON.
         output = self.ssh(f"pico4-valve-session-check --seconds {userspace.VALVE_SESSION_SECONDS} "
-                          "2>/run/pico4-poc/valve-session.log; echo EXIT=$?", 400)
+                          "2>/run/pico4/valve-session.log; echo EXIT=$?", 400)
         report, _, code = output.rpartition("EXIT=")
         (self.folder / "userspace-valve-session.json").write_text(report.strip() + "\n", encoding="utf-8")
         logs = f"/home/{userspace.SESSION_USER}/.local/share/Steam/logs"
-        for name, command in (("valve-session.log", "cat /run/pico4-poc/valve-session.log"),
+        for name, command in (("valve-session.log", "cat /run/pico4/valve-session.log"),
                               ("valve-vrcompositor.txt", f"cat {logs}/vrcompositor.txt"),
                               ("valve-vrserver.txt", f"tail -n 400 {logs}/vrserver.txt"),
                               ("valve-journal.txt", "journalctl -b --no-pager -o short-monotonic _UID=1000 "
@@ -596,7 +597,7 @@ class Runner:
             try:
                 # Logs are best effort and must not prevent the recovery attempt.
                 (self.folder / "recovery-boot.log").write_text(
-                    self.ssh("cat /run/pico4-poc/boot.log", timeout=10), encoding="utf-8")
+                    self.ssh("cat /run/pico4/boot.log", timeout=10), encoding="utf-8")
             except (ValueError, OSError):
                 pass
             try:
@@ -687,7 +688,7 @@ class Runner:
 
 def newest_rootfs(out: Path = REPO / "out") -> Path:
     """The newest stage-1 root file system tar the image build wrote."""
-    tars = sorted(out.glob("pico4-poc-*-rootfs.tar"), key=lambda p: p.stat().st_mtime)
+    tars = sorted(out.glob("pico4-stage1-*-rootfs.tar"), key=lambda p: p.stat().st_mtime)
     if not tars:
         raise SystemExit("no rootfs tar in out/: run python -m overpressure build first")
     return tars[-1]
@@ -704,7 +705,7 @@ def main(argv=None):
                        help="new result directory (never overwritten)")
         if name == "preflight":
             p.add_argument("--rootfs", type=Path, help="the stage-1 root file system tar (default: the newest "
-                           "out/pico4-poc-*-rootfs.tar)")
+                           "out/pico4-stage1-*-rootfs.tar)")
         else:
             p.add_argument("--image", type=Path, required=True)
             p.add_argument("--fastboot", default="fastboot")

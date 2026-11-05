@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Unlicense
 # pico4-probe - collect a hardware/software inventory of the headset.
 #
 # Read-only and deliberately conservative: it reads procfs, sysfs and device
@@ -6,12 +7,12 @@
 # dumps, PCIe config space reads, poking audio DSP mixer controls) are left
 # out; run those tools by hand if you need them.
 #
-# Output: /run/pico4-poc/report/ and /run/pico4-poc/report.tar.gz, also on
+# Output: /run/pico4/report/ and /run/pico4/report.tar.gz, also on
 # http://172.16.42.1/ and on the USB log drive.
-. /usr/libexec/pico4-poc/lib.sh
+. /usr/libexec/pico4/lib.sh
 
-OUT=$POC_RUN/report
-rm -rf "$OUT" "$POC_RUN/probe.done"
+OUT=$P4_RUN/report
+rm -rf "$OUT" "$P4_RUN/probe.done"
 mkdir -p "$OUT"
 
 # Progress goes to pstore too, so a crash in the middle can be pinpointed.
@@ -46,7 +47,7 @@ attrs() {
 step "system"
 run system.txt uname -a
 run system.txt cat /proc/version /proc/cmdline
-run system.txt cat /etc/pico4-poc/build-info
+run system.txt cat /etc/pico4/build-info
 run system.txt free -m
 run system.txt cat /proc/meminfo
 run system.txt uptime
@@ -135,8 +136,8 @@ if [ -n "$(ls /sys/fs/pstore 2>/dev/null)" ]; then
 	cp /sys/fs/pstore/* "$OUT/pstore/" 2>/dev/null
 fi
 
-cp "$POC_LOG" "$OUT/boot.log"
-for f in "$POC_RUN"/svc-*.log; do
+cp "$P4_LOG" "$OUT/boot.log"
+for f in "$P4_RUN"/svc-*.log; do
 	[ -s "$f" ] && cp "$f" "$OUT/"
 done
 
@@ -175,10 +176,10 @@ done
 	echo "</ul>"
 } > "$OUT/index.html"
 
-tar -czf "$POC_RUN/report.tar.gz.new" -C "$POC_RUN" report && mv -f "$POC_RUN/report.tar.gz.new" "$POC_RUN/report.tar.gz"
-touch "$POC_RUN/probe.done"
+tar -czf "$P4_RUN/report.tar.gz.new" -C "$P4_RUN" report && mv -f "$P4_RUN/report.tar.gz.new" "$P4_RUN/report.tar.gz"
+touch "$P4_RUN/probe.done"
 step "done, $(du -sk "$OUT" | cut -f1) KiB in $OUT"
-"$POC_LIB/logdisk" refresh
+"$P4_LIB/logdisk" refresh
 
 [ "$1" = --boot ] || cat "$OUT/summary.txt"
 exit 0

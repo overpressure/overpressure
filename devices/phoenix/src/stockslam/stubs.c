@@ -1,5 +1,5 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
-// SPDX-License-Identifier: MIT
+// Copyright 2026, overpressure contributors.
+// SPDX-License-Identifier: Unlicense
 /*
  * Preloaded into PICO OS's tracker processes (libpico4-slam-stubs.so): there is no logd and no
  * property area in the tracker's root, so Android's log calls go to stderr (the journal) and

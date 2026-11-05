@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Android Verified Boot footers of partitions that carry their own vbmeta.
 
 The stock recovery is a chained AVB partition: its signed vbmeta follows the image, and a

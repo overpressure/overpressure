@@ -1,0 +1,37 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# CPU power management that PICO OS's post-boot script would normally do.
+#
+# The stock kernel boots with the "performance" cpufreq governor and with deep
+# CPU idle states disabled (lpm_levels.sleep_disabled=1 on the command line);
+# Android relaxes both once it is up. Without that every core would sit at its
+# maximum clock. Knobs: pico4.cpugov=<governor|keep>, pico4.lpm=0|1.
+. /usr/libexec/pico4/lib.sh
+
+# With Qualcomm download mode enabled (stock), a kernel panic leaves the
+# headset in crash-dump mode (USB 05c6:900e) until someone holds the power
+# button. Rebooting instead keeps every POC deadline effective: the flashed POC
+# comes back and returns to fastboot. pico4.ramdump=1 keeps it.
+dload=/sys/module/msm_poweroff/parameters/download_mode
+if [ "$(stage1_arg ramdump 0)" != 1 ] && [ -e "$dload" ]; then
+	write 0 "$dload" && log "crash-dump mode disabled: a kernel panic reboots"
+fi
+
+gov=$(stage1_arg cpugov schedutil)
+if [ "$gov" != keep ]; then
+	for p in /sys/devices/system/cpu/cpufreq/policy*; do
+		[ -e "$p/scaling_governor" ] || continue
+		if grep -qw "$gov" "$p/scaling_available_governors" 2>/dev/null; then
+			write "$gov" "$p/scaling_governor" && log "cpufreq ${p##*/}: governor $gov"
+		else
+			log "cpufreq ${p##*/}: governor $gov not available ($(cat "$p/scaling_available_governors" 2>/dev/null))"
+		fi
+	done
+fi
+
+lpm=/sys/module/lpm_levels/parameters/sleep_disabled
+if [ "$(stage1_arg lpm 1)" = 1 ] && [ -e "$lpm" ]; then
+	sleep "$(stage1_arg lpm_delay 30)"
+	write N "$lpm" && log "CPU low-power idle states enabled"
+fi
+exit 0

@@ -53,17 +53,17 @@ system: dsp_service, steamvr-program-ble (controller radio firmware), deckard-fp
 
 [`pico4-session.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-session.service)
 (system, wanted by `graphical.target`) runs
-[`/usr/libexec/pico4-poc/session`](../userspace/rootfs/usr/libexec/pico4-poc/session) as
+[`/usr/libexec/pico4/session`](../userspace/rootfs/usr/libexec/pico4/session) as
 `steamos` (uid 1000) with the PAM stack
 [`pico4-session`](../userspace/rootfs/etc/pam.d/pico4-session), without authentication
 (`User=` is fixed). `pam_env` runs before `pam_systemd` and gives the session class `user`,
 type `wayland` and seat `seat0`
-([`session.pam-env`](../userspace/rootfs/etc/pico4-poc/session.pam-env)), as sddm does on the
+([`session.pam-env`](../userspace/rootfs/etc/pico4/session.pam-env)), as sddm does on the
 Frame. A session without a terminal would not get class `user` by itself, and only with it
 does logind start the user manager and count the session as active. gamescope's Wayland server
 opens the seat through logind (libseat). The script waits up to 10 s for
 the user manager, then starts Valve's session through Valve's own `start-gamescope-session`:
-`gamescope-session.target`, or another of Valve's targets that `/etc/pico4-poc/session.conf`
+`gamescope-session.target`, or another of Valve's targets that `/etc/pico4/session.conf`
 names (`PICO4_SESSION_TARGET=...`, an optional `EnvironmentFile`). SteamVR is the OpenXR
 runtime (its first start links it into the user's `~/.config/openxr`) and `driver_monado`
 owns the hardware. Valve's session is the only one: there is no session without SteamVR. The
@@ -72,7 +72,7 @@ unit needs the GPU's node.
 A session that ends by itself starts again 5 s later (`Restart=always`), as sddm's
 `Relogin=true` does on the Frame. A SteamVR that ends without a stop being asked for, such as
 after a `vrcompositor` that dies, ends the session
-([`steamvr-ended`](../userspace/rootfs/usr/libexec/pico4-poc/steamvr-ended)): its unit would
+([`steamvr-ended`](../userspace/rootfs/usr/libexec/pico4/steamvr-ended)): its unit would
 restart it (`RestartMode=direct`, which does not reach gamescope), and gamescope stays bound to the
 compositor that is gone, every DMA-BUF import of Steam's panel fails and the panel never shows.
 gamescope ignores the stop, and its unit's 10 s end it. A SteamVR that failed for good
@@ -311,9 +311,9 @@ setup when a game starts without a play area (`promptForChaperoneAtGameLaunch`; 
 `requireChaperoneAtGameLaunch` off), no floor detection at the start, the play area not
 re-centred automatically, recentring not triggered by user interaction and the boundary
 style 2. The file is on the data partition, where an install copies it from the image only on
-its first boot, and SteamVR rewrites it; [`steamvr-settings`](../userspace/rootfs/usr/libexec/pico4-poc/steamvr-settings)
+its first boot, and SteamVR rewrites it; [`steamvr-settings`](../userspace/rootfs/usr/libexec/pico4/steamvr-settings)
 (`ExecStartPre` of `steamvr.service`) sets every key of the image's copy
-(`/usr/share/pico4-poc/steamvr.vrsettings`) in it before each start and keeps all other keys. Without it the compositor creates no compute queue and stops at an
+(`/usr/share/pico4/steamvr.vrsettings`) in it before each start and keeps all other keys. Without it the compositor creates no compute queue and stops at an
 assertion; with it, it shares Turnip's single queue for both.
 [openvrpaths.vrpath](../userspace/session/openvrpaths.vrpath), in `~/.config/openvr`, registers
 `/usr/share/steamvr-monado` as an external driver, with the runtime in `/opt/steamvr` and
@@ -511,7 +511,7 @@ and after. Its `status` is the integration verdict, and the exit status is 0 onl
 passed.
 
 `performance` is a verdict of its own, from
-[`session-performance`](../userspace/rootfs/usr/libexec/pico4-poc/session-performance). It
+[`session-performance`](../userspace/rootfs/usr/libexec/pico4/session-performance). It
 judges `msm-frame-stats`' recording of the measured window, so SteamVR's startup stays out of it,
 and holds the window to these limits:
 

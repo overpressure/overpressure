@@ -1,0 +1,42 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# pico4-init "restart" action (SIGQUIT to PID 1): it has already run the
+# shutdown entry and stopped every user process; this script replaces it as PID 1.
+#
+# With a userspace prepared by "pico4-userspace switch" it moves the kernel
+# file systems into /newroot and executes systemd there. Without one it
+# restarts stage-1 init. A failure before the switch returns to fastboot, so
+# the recovery path never depends on the new userspace.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+. /usr/libexec/pico4/lib.sh
+NEW=/newroot
+
+if [ ! -e "$P4_RUN/userspace/ready" ]; then
+	log "init restart without a prepared userspace: restarting stage-1 init"
+	exec /usr/libexec/pico4/pico4-init
+fi
+fail() {
+	if [ "$(stage1_arg root "")" = installed ]; then
+		log "userspace: switch failed: $*; rebooting into recovery"
+		sync
+		exec pico4-reboot recovery
+	fi
+	log "userspace: switch failed: $*; rebooting to fastboot"
+	sync
+	exec pico4-reboot bootloader
+}
+
+# The system runs only on Valve's kernel, whose devtmpfs stage 1 mounted. /dev is handed over as it
+# is, like any initramfs: systemd's device monitor only listens to udev when /dev is a devtmpfs or
+# udev already runs, and without it no device unit ever starts.
+[ "$(sed -n 's|^[^ ]* /dev \([^ ]*\) .*|\1|p' /proc/mounts)" = devtmpfs ] ||
+	fail "/dev is no devtmpfs: the system runs only on Valve's kernel"
+mount --move /dev "$NEW/dev" || fail "moving /dev"
+# Hotplug goes to udev (netlink) from now on; nothing may call stage-1 mdev.
+echo > /proc/sys/kernel/hotplug 2>/dev/null
+umount -l /tmp 2>/dev/null
+log "userspace: executing systemd from $(sed -n "s|^\([^ ]*\) $NEW .*|\1|p" /proc/mounts)"
+for m in /run /sys /proc; do
+	mount --move "$m" "$NEW$m" || fail "moving $m"
+done
+exec switch_root "$NEW" /usr/lib/systemd/systemd

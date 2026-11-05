@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The headset interface, the registry, the step runner, the command line and the GUI."""
 import contextlib
 import io

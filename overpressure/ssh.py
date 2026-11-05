@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """SSH to a headset with the project's key and a known-hosts file of its own.
 
 A headset's Linux stages make new host keys on every boot, so a run keeps its known hosts apart

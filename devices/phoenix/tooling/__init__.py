@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The PICO 4 (2022, codename phoenix, Snapdragon XR2) in overpressure.
 
 Its host tooling: the stage-1 boot image (the maintenance stage 1, on the stock kernel), the stock
@@ -14,7 +15,7 @@ from overpressure.headset import Command, Headset, Info, Param, Step, tools_step
 
 #: The firmware every default names; device.mk and .env.example repeat it (tests/test_stock.py).
 FIRMWARE = "5.13.7-global-seko"
-FIRMWARES = ("5.13.7-global-seko", "5.13.8-global-sek")
+FIRMWARES = (FIRMWARE,)
 _firmware = Param("firmware", "Firmware", FIRMWARE, "choice", FIRMWARES,
                   "the PICO OS build in firmware.json whose stock kernel the image takes")
 
@@ -49,7 +50,7 @@ class Phoenix(Headset):
                  script=True, linux_root=True),
             Step("stage1", "Stage-1 boot image", "Image",
                  ("build", "--firmware", "{firmware}"),
-                 "The Alpine initramfs with the stock kernel: out/pico4-poc-FIRMWARE.img.", (_firmware,)),
+                 "The Alpine initramfs with the stock kernel: out/pico4-stage1-FIRMWARE.img.", (_firmware,)),
             Step("userspace", "Userspace archive", "Image",
                  ("scripts/build-userspace.sh", "{build_root}", "{output}",
                   "--gpu-firmware", "assets/graphics-firmware-{version}", "--sensor-data", "assets/sensor-data-{version}",
@@ -70,6 +71,18 @@ class Phoenix(Headset):
             Step("dev-image", "Dev image (maintenance stage 1)", "Image", ("dev", "image"),
                  "out/dev/dev-boot.img, the whole-partition recovery image and install-boot.img from the "
                  "stage-1 image."),
+            Step("kernel", "Valve's kernel", "Image",
+                 ("scripts/build-kernel-step.sh", "{recovery}", "{stock}", "{work}"),
+                 "Valve's public source package (2.5 GB), the PICO 4's patches and drivers, into out/kernel. "
+                 "Needs the dev image's step first: it caches the stock recovery.",
+                 (Param("recovery", "Stock recovery image (or its folder)", "cache/stock", "path"),
+                  Param("stock", "Stock folder (Linux)", "/var/tmp/pico4-stock/" + FIRMWARE, "path"),
+                  Param("work", "Build folder (Linux)", "/var/tmp/pico4-kernel-build", "path")),
+                 script=True, linux_root=True),
+            Step("boot-image", "Boot image", "Image", ("dev", "boot-image"),
+                 "out/kernel/valve-boot.img: Valve's kernel with stage 1, the keys enrolled by the dev image."),
+            Step("unlock-files", "Unlock files", "Headset", ("device", "fetch-unlock-files"),
+                 "The engineering ABL and Firehose loader from PICO's public downloads, checked by hash."),
             Step("preflight", "Preflight on PICO OS", "Headset", ("hwtest", "preflight", "{serial}"),
                  "Runs the stage-1 image's programs on the real kernel from adb shell, without root, before any "
                  "bootloader work; PICO OS keeps running. Takes the newest rootfs tar in out/.",
@@ -91,6 +104,10 @@ class Phoenix(Headset):
                  "Reconnects to the installed system after a reboot."),
             Step("check", "Acceptance checks", "Headset", ("dev", "check"),
                  "The acceptance runner's stage-2 checks on the installed system."),
+            Step("release-check", "Release checks", "Headset", ("dev", "release-check"),
+                 "Everything automated of docs/release-checklist.md, with a result file in out/release."),
+            Step("support-bundle", "Support bundle", "Headset", ("dev", "support-bundle"),
+                 "The logs a bug report needs, identifiers masked, into out/support."),
             Step("reboot", "Reboot", "Headset", ("dev", "reboot"),
                  "What misc and boot select, also from fastboot."),
             Step("normal", "Normal boot", "Headset", ("dev", "normal"),

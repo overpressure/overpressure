@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The suspend check's measurement and verdict, on synthetic recordings."""
 import importlib.machinery
 import importlib.util

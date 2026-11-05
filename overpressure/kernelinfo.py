@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Inspect a stock Android kernel: version, embedded config, appended DTBs."""
 from __future__ import annotations
 

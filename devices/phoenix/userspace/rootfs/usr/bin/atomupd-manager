@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Stands in for SteamOS's atomupd-manager (docs/session.md#the-steam-client).
 #
 # The Steam client asks Valve's steamos-select-branch and steamos-update which OS branch the

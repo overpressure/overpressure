@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Extract PICO OS's head tracker and the Compute DSP it runs on from the stock firmware
 # (docs/xr.md#head-tracking).
 #

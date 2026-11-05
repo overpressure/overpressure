@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure.qualcomm: the SoC ID and EDL's partition maps."""
 import tempfile
 import unittest

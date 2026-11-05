@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 # Share this PC's internet with the PICO 4 over its USB link (docs/userspace.md#internet-over-usb).
 #
 # Usage (an elevated PowerShell 7, with the headset booted and its link up):

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """APKINDEX signature verification (overpressure/apksign.py) and its use in overpressure/alpine.py.
 
 The golden indexes are fake APKINDEX.tar.gz files whose index stream was signed once

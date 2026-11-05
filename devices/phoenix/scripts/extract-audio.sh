@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # Extract the audio (ADSP, sound card) inputs from the stock firmware.
 #
 # Usage (Linux/WSL, root):

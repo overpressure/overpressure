@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """Host tools overpressure fetches itself: pinned versions, checked by SHA-256, kept in cache/tools.
 
     python -m overpressure tools [NAME...]     fetch what is missing (all of this host's by default)

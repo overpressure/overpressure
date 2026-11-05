@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """overpressure's command line: python -m overpressure [--device CODENAME] COMMAND [ARGS...]
 
   devices              the headsets in devices/

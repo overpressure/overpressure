@@ -9,5 +9,5 @@ ConditionPathExists=/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/libexec/pico4-poc/vr-performance on
-ExecStop=/usr/libexec/pico4-poc/vr-performance off
+ExecStart=/usr/libexec/pico4/vr-performance on
+ExecStop=/usr/libexec/pico4/vr-performance off

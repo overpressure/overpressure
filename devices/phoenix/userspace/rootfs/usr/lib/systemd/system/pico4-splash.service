@@ -4,7 +4,7 @@
 [Unit]
 Description=Boot indication in the lenses
 DefaultDependencies=no
-ConditionKernelCommandLine=pico4poc.root=installed
+ConditionKernelCommandLine=pico4.root=installed
 # msm's panels have
 # their mode once pico4-panel-probe has run.
 After=pico4-storage-ro.service pico4-panel-probe.service

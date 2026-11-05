@@ -1,4 +1,4 @@
-// Copyright 2026, PICO 4 Linux POC contributors.
+// Copyright 2026, overpressure contributors.
 // SPDX-License-Identifier: BSL-1.0
 /*
  * pico4-lens-panel: the lens distance in SteamVR's dashboard (docs/xr.md#lens-distortion-and-ipd).

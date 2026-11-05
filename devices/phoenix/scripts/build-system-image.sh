@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Unlicense
 # The installed system's read-only image for super (docs/install.md), from
 # the userspace archive scripts/build-userspace.sh writes. Linux or WSL, as root (ownership and
 # file capabilities):
@@ -7,7 +8,7 @@
 #
 # ext4 without a journal (it is never written on the headset) and without the features the stock
 # kernel, under the maintenance stage 1, cannot mount. /data is the data partition's mount point; the image names the
-# archive it came from in /usr/share/pico4-poc.
+# archive it came from in /usr/share/pico4.
 set -euo pipefail
 
 SUPER_MIB=8192 # the super partition
@@ -24,9 +25,9 @@ tar --zstd -x --numeric-owner --xattrs --xattrs-include=security.capability --no
 [ -x "$tree/usr/lib/systemd/systemd" ] || { echo "the archive has no systemd" >&2; exit 1; }
 
 sha=$(sha256sum "$archive" | cut -d' ' -f1)
-install -d -m 0755 "$tree/data" "$tree/usr/share/pico4-poc"
-echo "$sha" > "$tree/usr/share/pico4-poc/userspace-archive.sha256"
-echo "$sha" > "$tree/usr/share/pico4-poc/system-image"
+install -d -m 0755 "$tree/data" "$tree/usr/share/pico4"
+echo "$sha" > "$tree/usr/share/pico4/userspace-archive.sha256"
+echo "$sha" > "$tree/usr/share/pico4/system-image"
 
 # The content plus a margin, rounded to MiB: free space on a read-only file system is unused.
 used_mib=$(( $(du -sk "$tree" | cut -f1) / 1024 ))

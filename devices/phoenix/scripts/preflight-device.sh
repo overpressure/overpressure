@@ -1,13 +1,14 @@
 #!/system/bin/sh
-# PICO 4 Linux POC preflight - runs ON the headset under PICO OS, as the
+# SPDX-License-Identifier: Unlicense
+# PICO 4 Linux preflight - runs ON the headset under PICO OS, as the
 # unprivileged adb shell user. Pushed and started by python -m overpressure hwtest preflight.
 #
-# It runs the POC's Alpine userspace binaries on the real PICO kernel (through
+# It runs stage 1's Alpine userspace binaries on the real PICO kernel (through
 # the musl loader, so nothing has to be installed) and records the facts the
 # POC relies on. No root, no unlock needed; it only touches
-# /data/local/tmp/pico4-poc and removes the unpacked files again.
+# /data/local/tmp/pico4 and removes the unpacked files again.
 
-D=${PICO4_PREFLIGHT_DIR:-/data/local/tmp/pico4-poc}
+D=${PICO4_PREFLIGHT_DIR:-/data/local/tmp/pico4}
 R=$D/rootfs
 LD=$R/lib/ld-musl-aarch64.so.1
 pass=0
@@ -69,7 +70,7 @@ t "strace" alp "$R/usr/bin/strace" -V
 t "pico4-reboot (static, --help only)" "$R/usr/sbin/pico4-reboot" --help
 
 echo
-echo "== facts the POC relies on (some may be hidden from the shell user)"
+echo "== facts stage 1 relies on (some may be hidden from the shell user)"
 echo "udc: $(ls /sys/class/udc 2>&1 | tr '\n' ' ')"
 echo "leds: $(ls /sys/class/leds 2>&1 | tr '\n' ' ')"
 echo "drm: $(ls /sys/class/drm 2>&1 | tr '\n' ' ')"

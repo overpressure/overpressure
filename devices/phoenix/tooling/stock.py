@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Unlicense
 """The stock firmware's partitions from PICO's public full OTA, in place of the user's backup.
 
     python -m overpressure stock [--firmware NAME] OUTPUT_DIR

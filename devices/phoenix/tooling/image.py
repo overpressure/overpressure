@@ -1,7 +1,8 @@
+# SPDX-License-Identifier: Unlicense
 """Build the PICO 4 Linux proof-of-concept boot image.
 
     python -m overpressure inspect --firmware 5.13.7-global-seko  # analyse a stock boot.img
-    python -m overpressure build   --firmware 5.13.7-global-seko  # -> out/pico4-poc-5.13.7-global-seko.img
+    python -m overpressure build   --firmware 5.13.7-global-seko  # -> out/pico4-stage1-5.13.7-global-seko.img
     python -m overpressure build   --stock-boot my-boot.img        # from your own dump/OTA
 
 overpressure's stage 1 (overpressure/stage1.py) with the PICO 4's spec: its packages, its
@@ -95,11 +96,11 @@ def load_stock(args) -> tuple[str, bytes]:
 def build_rootfs(args, stock_entries, build_info: dict) -> cpio.Tree:
     """overpressure's stage-1 root with the PICO 4's own files."""
     tree = stage1.build_rootfs(SPEC, CACHE, stock_entries, build_info, log=log)
-    tree.add_symlink("srv/www/report", "/run/pico4-poc/report")  # browsable via httpd
+    tree.add_symlink("srv/www/report", "/run/pico4/report")  # browsable via httpd
     tree.add_file("etc/motd", b"")  # the login banner comes from pico4-info
-    tree.add_file("etc/hostname", b"pico4-poc\n")
-    tree.add_file("etc/hosts", b"127.0.0.1\tlocalhost pico4-poc\n::1\tlocalhost\n")
-    tree.add_file("etc/pico4-poc/build-info", json.dumps(build_info, indent=2).encode() + b"\n")
+    tree.add_file("etc/hostname", b"pico4\n")
+    tree.add_file("etc/hosts", b"127.0.0.1\tlocalhost pico4\n::1\tlocalhost\n")
+    tree.add_file("etc/pico4/build-info", json.dumps(build_info, indent=2).encode() + b"\n")
     return tree
 
 
@@ -157,7 +158,7 @@ def cmd_build(args) -> int:
             "too big to flash")
 
     os.makedirs(args.out, exist_ok=True)
-    name = f"pico4-poc-{label}"
+    name = f"pico4-stage1-{label}"
     paths = {
         "image": os.path.join(args.out, f"{name}.img"),
         "ramdisk": os.path.join(args.out, f"{name}-initramfs.cpio.gz"),
@@ -231,7 +232,7 @@ def main(argv: list[str]) -> int:
         p.add_argument("--out", default=os.path.join(str(REPO), "out"), help="output directory")
         if name == "build":
             p.add_argument("--cmdline-append", nargs="*", default=[], metavar="ARG",
-                           help="extra kernel arguments, e.g. pico4poc.autoreboot=0")
+                           help="extra kernel arguments, e.g. pico4.autoreboot=0")
             p.add_argument("--force", action="store_true", help="build even if kernel checks fail")
     args = ap.parse_args(argv)
     return {"inspect": cmd_inspect, "build": cmd_build, "match": cmd_match}[args.cmd](args)
