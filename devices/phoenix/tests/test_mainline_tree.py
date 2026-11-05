@@ -444,5 +444,13 @@ class VenusRecoveryTests(unittest.TestCase):
         self.assertIn("inst->fmt_out->pixfmt == V4L2_PIX_FMT_H264", patch)
 
 
+class CodecInterruptTests(unittest.TestCase):
+    def test_the_codec_interrupt_loop_ends_on_a_failed_read(self):
+        patch = text(KERNEL / "patches/0034-asoc-wcd-the-interrupt-loop-ends-on-a-failed-read.patch")
+        for status in ("status0, &sts1", "status1, &sts2", "status2, &sts3"):
+            self.assertIn(f"-		regmap_read(regmap, wcd_intr_{status});", patch)
+        self.assertIn("+			break;", patch)
+
+
 if __name__ == "__main__":
     unittest.main()
