@@ -42,6 +42,11 @@ module_param(keep_supplies, charp, 0444);
 MODULE_PARM_DESC(keep_supplies,
 		 "supplies to leave as the bootloader set them (comma-separated: vddio)");
 
+static unsigned int wake_test_sleep_in;
+module_param(wake_test_sleep_in, uint, 0644);
+MODULE_PARM_DESC(wake_test_sleep_in,
+		 "this many next wakes put the panels to sleep after their first try, to test the resend");
+
 /* The stock timings of one panel at 90 Hz; the bonded mode puts two side by side. */
 static const struct drm_display_mode panel_mode = {
 	.clock = (PANEL_SIZE + 54 + 20 + 33) * (PANEL_SIZE + 57 + 4 + 4) * 90 / 1000,
@@ -249,6 +254,33 @@ static int pico4_disable(struct drm_panel *panel)
 }
 
 /*
+ * What each panel reports at a wake, in the kernel log, while its lens is dark: DCS errors on the link
+ * (read clears them), power mode, signal mode, self-diagnostic and compression mode. One lens can come
+ * back wrong after a wake with no error on our side; this is the panel's side of it. The first failed read
+ * ends a panel's report: each can take the host's whole timeout. True when both panels read as a
+ * working panel does: sleep out and display on (0x1c), compression on (0x01). A lost sleep out leaves
+ * a lens dark, a damaged compression command leaves it corrupted.
+ */
+static bool pico4_report(struct pico4_panel *ctx, const char *when)
+{
+	static const u8 regs[] = { 0x05, 0x0a, 0x0e, 0x0f, 0x03 };
+	bool good = true;
+	int i, j;
+
+	for (i = 0; i < 2; i++) {
+		u8 val[ARRAY_SIZE(regs)] = { };
+		ssize_t ret = 0;
+
+		for (j = 0; j < ARRAY_SIZE(regs) && ret >= 0; j++)
+			ret = mipi_dsi_dcs_read(ctx->dsi[i], regs[j], &val[j], 1);
+		dev_info(ctx->dev, "%s: panel %d errors %#04x mode %#04x signal %#04x diag %#04x dsc %#04x (%zd)\n",
+			 when, i, val[0], val[1], val[2], val[3], val[4], ret);
+		good = good && ret >= 0 && val[1] == 0x1c && val[4] == 0x01;
+	}
+	return good;
+}
+
+/*
  * A session's standby: its compositor keeps the panels on with black frames and holds the display,
  * and the MCU's brightness command showed no effect. The enable line darkens the lenses, but raising
  * it alone leaves them dark: with the power-on commands sent again while it is low, over the running
@@ -257,7 +289,7 @@ static int pico4_disable(struct drm_panel *panel)
 static int pico4_bl_update_status(struct backlight_device *bl)
 {
 	struct pico4_panel *ctx = bl_get_data(bl);
-	int ret;
+	int ret, tries;
 
 	if (!ctx->enabled || ctx->dimmed == backlight_is_blank(bl))
 		return 0;
@@ -266,9 +298,21 @@ static int pico4_bl_update_status(struct backlight_device *bl)
 		gpiod_set_value_cansleep(ctx->backlight, 0);
 		return 0;
 	}
-	ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);
-	if (ret)
-		dev_err(ctx->dev, "power-on commands: %d\n", ret);
+	/* The lens stays dark until a panel reads right: a wrong one is resent, as a next wake would. */
+	for (tries = 0; tries < 3; tries++) {
+		ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);
+		if (ret)
+			dev_err(ctx->dev, "power-on commands: %d\n", ret);
+		if (!tries && wake_test_sleep_in) {
+			wake_test_sleep_in--;
+			mipi_dsi_dcs_enter_sleep_mode(ctx->dsi[0]);
+			mipi_dsi_dcs_enter_sleep_mode(ctx->dsi[1]);
+			msleep(20);
+		}
+		if (pico4_report(ctx, "wake"))
+			break;
+		dev_warn(ctx->dev, "wake: a panel reads wrong after try %d\n", tries + 1);
+	}
 	gpiod_set_value_cansleep(ctx->backlight, 1);
 	return 0;
 }

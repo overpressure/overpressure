@@ -6,7 +6,8 @@ PICO's own drivers and device tree ([kernel-feasibility.md](kernel-feasibility.m
 stock Android kernel, which is no longer pursued; the way back to PICO OS stays. The plan has six steps,
 from a recoverable development device to Valve's VR session, and follows the strategy of the
 background research in [research.md](research.md). All six steps work on the tested headset,
-an original PICO 4. Open work: a lens that can go wrong after a wake.
+an original PICO 4. Open work: a power press after a long sleep, and the codec's alert after a cable
+replug during a suspend.
 
 ## Status
 
@@ -322,10 +323,10 @@ system updates. Open:
    by itself after an hour idle with the cable in, and the time asleep counts: after a longer sleep an
    RTC wake is back asleep within about 4 s.
 3. **Wake.** From a boot the picture comes by itself when the headset is picked up, repeatedly.
-   Why an earlier dark wake went away is not known. A lens can go wrong after a wake while the other
-   works: seen once grey (left, through three more wakes, cured by a suspend) and once corrupted
-   (right, cleared by the next wake), and once with pink lines on grey (left, cleared by the next wake);
-   the cause is not known.
+   Why an earlier dark wake went away is not known. A wake's commands over the running video can reach
+   a panel wrong, which showed as one lens corrupted or dark; a wake now reads both panels and resends
+   before the lenses light ([kernel-feasibility.md](kernel-feasibility.md)). Open: a resend on a real
+   fault has not been seen yet, and neither has a grey lens since the readback.
 
 ### Other hardware
 

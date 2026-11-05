@@ -444,6 +444,14 @@ class VenusRecoveryTests(unittest.TestCase):
         self.assertIn("inst->fmt_out->pixfmt == V4L2_PIX_FMT_H264", patch)
 
 
+class PanelReportTests(unittest.TestCase):
+    def test_a_wake_reads_the_panels_and_resends_while_the_lens_is_dark(self):
+        source = text(KERNEL / "src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c")
+        wake = source[source.index("static int pico4_bl_update_status"):source.index("static const struct backlight_ops")]
+        self.assertLess(wake.index('pico4_report(ctx, "wake")'), wake.index("gpiod_set_value_cansleep(ctx->backlight, 1);"))
+        self.assertIn("for (tries = 0; tries < 3; tries++)", wake)
+
+
 class CodecInterruptTests(unittest.TestCase):
     def test_the_codec_interrupt_loop_ends_on_a_failed_read(self):
         patch = text(KERNEL / "patches/0034-asoc-wcd-the-interrupt-loop-ends-on-a-failed-read.patch")

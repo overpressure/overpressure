@@ -118,7 +118,7 @@ class SessionTests(unittest.TestCase):
         panel = self.read("kernel/src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c")
         self.assertIn('"pico4-panel"', panel)
         # Raising the enable line alone leaves the lenses dark.
-        self.assertIn("ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);\n\tif (ret)\n\t\tdev_err", panel)
+        self.assertIn("ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);\n\t\tif (ret)\n\t\t\tdev_err", panel)
 
     def test_a_boots_panels_get_their_first_light(self):
         # They stay dark after their first power-on, and the boot's spinner with them.
