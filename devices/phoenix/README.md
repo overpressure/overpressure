@@ -27,7 +27,7 @@ them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL bac
 | 5 XR hardware | head IMU, Monado inside SteamVR, lens correction and IPD, four tracking cameras, 6DoF with PICO OS's tracker on the CDSP, controllers (inputs, vibration, positions), the colour room view |
 | 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path; the Steam client in the headset, games from its library through Proton and FEX, Android apps through Lepton, Steam Link from a PC |
 
-Open: a lens that can go wrong after a wake, USB after a reboot to fastboot. Plan and details:
+Open: a lens that can go wrong after a wake. Plan and details:
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Quick start
