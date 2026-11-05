@@ -2,10 +2,10 @@
 
 The project runs Linux, a SteamOS-compatible userspace and Valve's VR session on the original
 PICO 4 (2022, codename phoenix, Snapdragon XR2), on Valve's kernel from the Steam Frame with the
-PICO's own drivers and device tree ([kernel-feasibility.md](kernel-feasibility.md)). It began on the
-stock Android kernel, which is no longer pursued; the way back to PICO OS stays. The plan has six steps,
-from a recoverable development device to Valve's VR session, and follows the strategy of the
-background research in [research.md](research.md). All six steps work on the tested headset,
+PICO's own drivers and device tree ([kernel.md](kernel.md)). The stock Android
+kernel is no longer a target for the system; the way back to PICO OS stays. The plan has six steps,
+from a recoverable development device to Valve's VR session; [research.md](research.md) holds the
+background. All six steps work on the tested headset,
 an original PICO 4. Open work: a power press after a long sleep.
 
 ## Status
@@ -13,7 +13,7 @@ an original PICO 4. Open work: a power press after a long sleep.
 | Step | Status | Document |
 | --- | --- | --- |
 | 1. Recoverable development device | Works: EDL backup, engineering ABL, persistent unlock, stock restore verified by readback | [device-preparation.md](device-preparation.md) |
-| 2. Minimal Linux | Works: root shell over USB-C, read-only storage, automatic return to PICO OS | [stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md) |
+| 2. Minimal Linux | Works: root shell over USB-C, read-only storage, automatic return to fastboot | [stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md) |
 | 3. Native graphics | Works: Valve's Mesa on msm; both panels at 90 Hz | [graphics.md](graphics.md) |
 | 4. SteamOS-compatible userspace | Works: Holo Core aarch64 with the Frame's systemd 257.7, no failed units | [userspace.md](userspace.md) |
 | 5. Native XR hardware | Works: head IMU, display, lens correction, tracking cameras, 6DoF head and controller tracking, RGB camera and the colour room view | [xr.md](xr.md) |
@@ -23,19 +23,21 @@ Each step's document holds its design, measurements and reproduction steps.
 
 ## Constraints
 
-- **Valve's kernel.** Stage 1 and the installed system run on Valve's 7.2 kernel
-  ([kernel-feasibility.md](kernel-feasibility.md)) with both panels at 90 Hz, the GPU under Valve's
-  own Mesa (Turnip on msm, OpenGL through zink), the GD32 MCU with fan control, the three DSPs, the
-  head IMU at 1 kHz and the keys. The stock Android kernel is no longer pursued and the image no
-  longer drives the GPU there; its behaviour stays the reference for the hardware, and the way back
-  to PICO OS stays.
-- **Read-only storage.** Both stages switch every physical block device read-only. Only the
-  explicit, backup-validated flash and restore paths write to the headset's storage (`boot`
-  for the dev image or a test run, ABL through EDL); each write is checked against the
-  backup's hash and verified by readback.
+- **Valve's kernel.** `boot` carries Valve's 7.2 kernel ([kernel.md](kernel.md))
+  and starts the installed system, with both panels at 90 Hz, the GPU under Valve's own Mesa (Turnip on
+  msm, OpenGL through zink), the GD32 MCU with fan control, the three DSPs, the head IMU at 1 kHz and the
+  keys. The maintenance stage 1 in `recovery` stays on the stock Android kernel. The system no longer
+  runs on that kernel and the image no longer drives the GPU there; its behaviour stays the reference for
+  the hardware, and the way back to PICO OS stays.
+- **Read-only storage.** Both stages switch every physical block device read-only, except the installed
+  system's data partition. Only the explicit, backup-validated paths write to the headset's storage:
+  `dev flash` (`boot`, `recovery`), `pico4-install` in the maintenance stage 1 (`boot`, `super`, `userdata`,
+  `metadata`, `misc`'s bootloader message), `dev restore` and the EDL tools; each write is verified by
+  readback.
 - **Development mode, stock on request.** The headset stays in development mode between
-  tasks: the engineering ABL, and a development image in `boot` on which `python -m overpressure dev`
-  boots each userspace archive, bounded by device-side deadlines. Tasks do not end on stock.
+  tasks: the engineering ABL, the dev image as the maintenance stage 1 in `recovery`, on which
+  `python -m overpressure dev` boots each userspace archive, bounded by device-side deadlines, and the
+  installed system in `boot`, `super` and `userdata`. Tasks do not end on stock.
   The way back is verified whenever it is taken: `python -m overpressure cycle` checks stock boot by
   EDL readback, restores the stock ABL with readback and waits for PICO OS, either alone (after
   `python -m overpressure dev restore`, with `--restore-only`) or after an acceptance run
@@ -43,8 +45,8 @@ Each step's document holds its design, measurements and reproduction steps.
   from a git-ignored `.env` ([.env.example](../../../.env.example)); see
   [hardware-testing.md](hardware-testing.md).
 - **Private data.** Backups, vendor firmware, factory calibration, Valve's packages and the
-  built images stay out of the repository. Builds take the GPU firmware and sensor data from
-  the user's own backup and Valve's packages from its public repositories
+  built images stay out of the repository. Builds take the stock firmware files from PICO's public OTA,
+  the headset's own data from `persist` at boot, and Valve's packages from its public repositories
   ([development.md](development.md)).
 
 ## Steps
@@ -69,12 +71,12 @@ until recovery has been tested.
   next reboot. Unlocking wipes user data.
 - `adb reboot edl` enters EDL from PICO OS without buttons, so cycles run unattended.
 - The tested engineering ABL (a signed Neo3 build) has no `fastboot boot`, so Linux starts from
-  a flashed `boot` partition (step 2), which holds the dev image in development mode. Flashing
-  `boot` needs the engineering ABL and its per-session OEM authorization command.
+  a flashed partition: the maintenance stage 1 in `recovery`, the installed boot image in `boot`.
+  Flashing needs the engineering ABL and its per-session OEM authorization command.
 - After a cycle, full EDL readbacks of `boot` (96 MiB) and `abl` (1 MiB) match the backup. The
   bootloader stays unlocked; PICO OS boots with SELinux enforcing.
 
-**Open.** The EDL reset at the end of a cycle can leave the headset off, with stock boot and
+**Limits.** The EDL reset at the end of a cycle can leave the headset off, with stock boot and
 ABL already verified; a hard reset then starts PICO OS. The cause is not known.
 
 ### 2. Minimal Linux
@@ -84,11 +86,12 @@ serial or USB debugging. The first measurable success is a Linux shell, not a VR
 
 **Status.**
 
-- The stage-1 image is a standard Android boot image: the stock kernel and DTBs byte for byte,
+- The maintenance stage-1 image is a standard Android boot image: the stock kernel and DTBs byte for byte,
   with the ramdisk replaced by Alpine Linux 3.24 (aarch64) and the project's init, whose PID 1
   is `pico4-init`. `python -m overpressure build --firmware <build>` builds it from the boot image of
   the matching official OTA ([tooling/image.py](../tooling/image.py),
-  [tooling/firmware.json](../tooling/firmware.json)).
+  [tooling/firmware.json](../tooling/firmware.json)). The installed boot image carries Valve's kernel
+  and tree instead ([install.md](install.md)).
 - USB-C carries the debugging: an NCM network link (headset 172.16.42.1; DHCP gives the PC an
   address without gateway or DNS), SSH, telnet, a web page with logs and a hardware report,
   and a read-only log drive. There is no serial console: the stock kernel has no ACM function.
@@ -119,13 +122,14 @@ the two eye displays can be driven reliably at their native resolution and refre
 - **Display.** The DPU drives two bonded DSI links with DSC as one 4320×2160 connector for the two
   2160×2160 panels (Sharp LS026B3SA), with vblanks at 90.00 Hz. The panel driver comes from the stock
   tree's power-on commands and timings. SteamVR's compositor scans out compressed GPU-rendered images
-  without a copy.
+  without a copy. A wake reads both panels and resends before the lenses light
+  ([kernel.md](kernel.md)).
 - **GPU.** The Adreno 650 runs on the msm DRM driver as one device with the display, as on the Frame,
   under Valve's Mesa: Turnip on msm (Vulkan 1.3) and OpenGL 4.6 through zink. It runs at up to 587 MHz,
   the chip's speed bin and PICO OS's VR level.
 
 **Limits.** The tests are bounded runs, not a long-duration reliability or Vulkan conformance
-claim. The GPU firmware comes from the user's own backup.
+claim. The GPU firmware comes from PICO's public OTA.
 
 ### 4. SteamOS-compatible userspace
 
@@ -143,8 +147,8 @@ projects, and run the Frame's system services, input and graphics stack on the P
   USB link, the SSH host key, read-only storage and the recovery deadlines carry over into
   stage 2. Installed, the same system runs from `super` without the PC ([install.md](install.md)).
 - **Result.** systemd reaches `running` with no failed units and Turnip renders and verifies the
-  Vulkan test inside the userspace. Drop-ins keep systemd's `cpu` controller off, because with
-  `CONFIG_RT_GROUP_SCHED` the kernel refuses real-time threads inside it.
+  Vulkan test inside the userspace. Valve's kernel has `CONFIG_RT_GROUP_SCHED` off; the drop-ins that keep
+  systemd's `cpu` controller off remain.
 
 ### 5. Native XR hardware
 
@@ -190,147 +194,55 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
   one frame ahead, a lead of 5 ms.
 - **Tracking.** `driver_monado`, Monado's SteamVR plugin, runs the step-5 driver inside SteamVR: the
   headset and both controllers with 6DoF.
-- **Measured.** `dev check`: 90.0 commits/s, 0.04 % late, no stalls over 30 s. Worn the view shows no
-  visible stutter with Steam's panel in view. Beat Saber through Proton and FEX submits a median
-  44.8 frames/s while the compositor presents 89.6/s. POOLS is limited by the GPU, at about 32 frames/s.
+- **Measured.** `dev check` on the installed system: 90.03 commits/s over 30 s, 0.0 % late, no stalls,
+  hottest zone 65.5 °C. Worn the view shows no visible stutter with Steam's panel in view. Beat Saber
+  through Proton and FEX submits a median 44.8 frames/s while the compositor presents 89.6/s: the GPU holds
+  it there, at its top clock (92-96 % busy), not the CPU (every core below 50 %). POOLS is limited by the
+  GPU, at about 32 frames/s. Games start at 72 Hz, the Frame's default for apps; SteamVR's settings offer 72
+  and 90 Hz.
 - **Apps.** The Steam client signs in and starts games from its library, x86 games through Proton and
   FEX, Android apps through Lepton. Steam Link plays PC games from a PC with picture, sound, tracking
-  and controllers, and its end returns to the local session.
+  and controllers, and its end returns to the local session. Its first picture comes about 12 s after the
+  client starts, nearly all of it the PC's startup; a decoder reset at the first video costs at most about
+  0.6 s; 30-43 ms pass between a decoded picture and its illumination, by run, with a floor of about 22 ms.
 - **Heat.** `pico4-fan.service` runs PICO OS's fan policy ([cooling.md](cooling.md)): about 10 minutes
   of a worn game peak at 75.6 °C, the limit being 90 °C.
+- **Other hardware.** The speakers and the microphone are PipeWire's default sink and source, and playback
+  runs without xruns under Valve's session ([userspace.md](userspace.md#audio)); SteamVR's sound and volume
+  work in the headset, the microphone records speech at PICO OS's gain of 12, and PICO OS's calibration is
+  loaded per stream. Battery level and charging state reach UPower and SteamVR
+  ([userspace.md](userspace.md)).
 - **Session.** Valve's session is the only session; it starts at boot.
 - **Acceptance.** `dev check` runs 30 s of Valve's session on the installed system, with the headset
   and both controllers in SteamVR.
 
 **Open.** See [Open work](#open-work).
 
-## Milestones
-
-The milestones of the research's feasibility assessment ([research.md](research.md#feasibility))
-and where they stand.
-
-| Milestone | Status |
-| --- | --- |
-| Unlock the PICO 4 bootloader | Done: normal and critical unlock persist with the engineering ABL (step 1) |
-| Boot minimal Linux | Done: Valve's kernel with an Alpine initramfs, root shell over USB-C (step 2) |
-| Obtain accelerated Linux graphics | Done: Valve's Mesa on msm, both panels at 90 Hz, compressed scanout (step 3) |
-| Run the ARM64 SteamOS userspace | Done: Holo Core aarch64 with the Frame's systemd 257.7 and SteamOS services, no failed units (step 4) |
-| Display a Steam-style desktop in the headset | Done: SteamVR's environment and dashboard in the lenses, the Steam client's library as SteamVR's overlay (step 6) |
-| Full 6DoF and controllers | Done: head and controller tracking, all inputs and vibration (step 5) |
-| Complete standalone SteamVR experience | Done for the tested games: starts without the PC, Steam's library, x86 and Android apps, Steam Link (step 6) |
-
 ## Open work
 
-### Cooling
+**Open.** A short power press after more than an hour asleep. Steam suspends by itself after
+an hour idle with the cable in, and the time asleep counts, so an RTC wake past that limit is back asleep
+within about 4 s. Whether a key wake behaves alike is not known.
 
-Details: [cooling.md](cooling.md).
+**Not verified.**
 
-The kernel's `step_wise` zones throttle the prime core from 75 °C and the GPU only from 95 °C.
-On PICO OS the fan, an AVC blower, hangs off the GD32 MCU that also moves the lenses and drives
-the backlight; `pxrfanservice` sets its duty over that MCU's UART (`/dev/ttyHS1`). The kernel's
-`pwm-fan` driver has no device-tree node, and Qualcomm's `thermal-engine` is off on PICO OS as
-well.
+- `dev restore` for an installed system: implemented and tested on the host, not on the headset
+  ([install.md](install.md)).
+- Sessions much longer than 10 minutes ([cooling.md](cooling.md)).
+- MangoHud's `mangoapp`, the client's performance overlay: switching it on from the client's menu.
+- PICO OS's head tracker with a covered camera and in a dim room.
+- Bluetooth runs through `hci_qca` with PICO OS's firmware and the Frame's BlueZ
+  ([kernel.md](kernel.md)); a paired device is not recorded as tested.
 
-[`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan) runs PICO OS's policy with the same
-frames: 14 CPU and GPU zones every 200 ms, 10 s means, PICO's duty tables with their
-hysteresis. It adds full speed while any sensor reads 95 °C or more, until the hottest mean is
-below 90 °C, and 100 % without usable readings. It builds frames only from an allowlist
-(SetFanSpeed 0–100 % and four queries) and shares the UART with Monado's IPD read through an
-exclusive `flock`. The userspace build enables its service, and the acceptance checks require
-it on the headset, with a duty the MCU acknowledged, and record its duty and RPM. On the headset the MCU acknowledges its
-duty and reports the fan's speed (about 4,900 rpm at 30 %), and Valve's 30 s session check
-peaks at 69 °C instead of 86 °C. Remaining:
+**Limits.**
 
-1. **Longer sessions.** The hottest-zone limit is 90 °C. PICO OS's early table, the default,
-   holds 10 minutes of Valve's session at 90 fps at a hottest CPU/GPU mean of 65.6–72.1 °C with
-   the fan at 45 % ([cooling.md](cooling.md)); about 10 minutes of Beat Saber peak at 75.6 °C. Sessions
-   much longer than that are unmeasured.
-
-### Performance
-
-Details: [session.md](session.md), [xr.md](xr.md).
-
-Valve's session runs the Steam Frame's compositor path at 90 frames per second at 587 MHz, and worn
-the view is fluid, also with Steam's panel in view.
-
-- Beat Saber submits half the panels' rate. The GPU holds it there, at its top clock (92-96 % busy), not the
-  CPU (every core below 50 %), so half rate is what this hardware gives this game.
-- Games start at 72 Hz, the Frame's default for apps; SteamVR's settings offer 72 and 90 Hz.
-- Steam Link: the first picture comes about 12 s after the client starts, nearly all of it the PC's startup;
-  a decoder reset falls right at the first video and costs at most about 0.6 s. Then
-  30-43 ms pass between a decoded picture and its illumination, by run, with a floor of about 22 ms.
-
-### Steam client and network
-
-Details: [session.md](session.md), [userspace.md](userspace.md).
-
-- The Steam client signs in, and its store and library work in the headset. `vrcompositor` dumps core
-  when the session stops.
-- Wi-Fi joins WPA2 and WPA3 networks and reconnects after a reboot; the headset also reaches the
-  internet over the USB link when the PC shares its connection
-  ([userspace.md](userspace.md#internet-over-usb)).
-- MangoHud's `mangoapp`, the client's performance overlay: switching it on from the client's menu is
-  unverified.
-- Video: H.264, HEVC, VP9 and VP8 decode through Venus. MPEG-2 ends in a session error from the firmware.
-
-### Controllers
-
-Details: [xr.md](xr.md).
-
-- **Positions.** Constellation tracking of the controllers' IR LEDs: a reimplementation of PICO
-  OS's controller tracking, with the LED rings read from the headset's own firmware, runs in the
-  driver on the LED exposures and the controller IMU. Worn in Valve's session, both controllers
-  follow the hands (a 30 cm move, crossing hands, out of view and back); a controller that lies
-  still from the start with a still headset can stay unacquired (as with PICO OS's rules).
-- **Models.** SteamVR draws PICO OS's own controller models, read from the headset's firmware.
-- **Haptics.** Vibration goes to the addressed controller through the station's motor command,
-  the only controller command in the allowlist; firmware and OTA commands stay excluded.
-- **SteamVR.** The controllers are SteamVR's own PICO 4 controller type (`pico_controller`), so
-  games' bindings for it, or their Touch, Index and Vive bindings through SteamVR's remapping,
-  apply. A press of the PICO or menu button opens the dashboard,
-  whose content comes from the Steam client, a double press the room view, and the laser and
-  trigger clicks work in it.
-- **Battery.** The controllers' battery level goes to SteamVR as a fifth of a full charge per level, and
-  SteamVR's status panel shows it as pips where PICO OS has its bar. That 5 is the top of the scale is inferred.
-
-### Head tracking
-
-Details: [xr.md](xr.md).
-
-- PICO OS's tracker is the default; worn it tracks walking and fast turns (up to 458 °/s)
-  without a lost pose. A covered camera and a dim room are unchecked.
-- Its inputs are PICO OS's: the lens-shading table by the camera modules' vendor and PICO
-  OS's own auto exposure. Its maps persist on the data partition, and SteamVR gets a tracking
-  universe per room; SteamVR's room setup runs in the headset and its play area comes back
-  after a reboot; the floor height is hard to set exactly.
-
-### Standalone boot
-
-The system can be installed ([install.md](install.md)), following PICO OS's layout: stage 1 in
-`boot` mounts the system image from `super` read-only and the data from `userdata`, without
-deadlines; the maintenance stage 1 in `recovery` keeps the development loop (USB boots into
-RAM) and does installs. Installed, the system starts without the PC and reaches `running`
-with no failed units, and data in `/home`, `/var`, `/etc` and `/root` survives reboots and
-system updates. Open:
-
-1. **The way back.** `dev restore` for an installed system (stock `super`, `boot`, `recovery`,
-   wiped data) is not yet verified on the headset.
-2. **Power.** The lenses show a boot indication until Valve's session starts. The power key
-   follows PICO OS (a short press suspends, 2 s held powers off), and a power-off with the
-   cable attached ends in charger mode, from which the key starts the system. After a resume the
-   session goes on, with USB and sound back; `pico4-suspend-check` checks the sound. Steam suspends
-   by itself after an hour idle with the cable in, and the time asleep counts: after a longer sleep an
-   RTC wake is back asleep within about 4 s.
-3. **Wake.** From a boot the picture comes by itself when the headset is picked up, repeatedly.
-   Why an earlier dark wake went away is not known. A wake's commands over the running video can reach
-   a panel wrong, which showed as one lens corrupted or dark; a wake now reads both panels and resends
-   before the lenses light ([kernel-feasibility.md](kernel-feasibility.md)). Open: a resend on a real
-   fault has not been seen yet, and neither has a grey lens since the readback.
-
-### Other hardware
-
-Audio works: the speakers and
-the microphone are PipeWire's default sink and source, and playback runs without xruns under
-Valve's session ([userspace.md](userspace.md#audio)); SteamVR's sound and volume work in the
-headset, the microphone records speech at PICO OS's gain of 12, and PICO OS's calibration is loaded per stream. PICO OS's speaker protection is absent, as the amplifiers' voltage and current sense is off ([userspace.md](userspace.md#audio)). Bluetooth has not been brought up under the userspace. Battery
-level and charging state reach UPower and SteamVR ([userspace.md](userspace.md)).
+- The kernel's `step_wise` zones throttle the CPUs from 90 and 95 °C and the GPU from 95 °C.
+- PICO OS's speaker protection is absent, as the amplifiers' voltage and current sense is off
+  ([userspace.md](userspace.md#audio)).
+- `vrcompositor` dumps core when the session stops ([session.md](session.md)).
+- MPEG-2 ends in a session error from the firmware; H.264, HEVC, VP9 and VP8 decode through Venus.
+- A controller that lies still from the start with a still headset can stay unacquired, as with PICO OS's
+  rules ([xr.md](xr.md)).
+- The controllers' battery level goes to SteamVR as a fifth of a full charge per level; that 5 is the top
+  of the scale is inferred.
+- The floor height of SteamVR's room setup is hard to set exactly.

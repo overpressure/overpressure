@@ -2,7 +2,7 @@
 
 Roadmap step 3 ([roadmap.md](roadmap.md)): Vulkan through Valve's Turnip on msm, OpenGL through
 zink, and presentation on both panels through mainline's DPU and DSI drivers, on Valve's kernel
-([kernel-feasibility.md](kernel-feasibility.md)). PICO OS's interfaces stay here as the reference for the
+([kernel.md](kernel.md)). PICO OS's interfaces stay here as the reference for the
 hardware. A native test covers it: an offscreen Vulkan render with pixel readback. It comes with the userspace package `pico4-graphics-tests`
 ([userspace.md](userspace.md)). SteamVR's compositor presents through Turnip's display WSI
 ([session.md](session.md)).
@@ -28,25 +28,8 @@ Stock Android's live DRM properties show how PICO OS drives the panels:
   its right half through the source crop.
 - **Fences.** Every commit requests the CRTC's release fence (`output_fence`) and the
   connector's retire fence (`RETIRE_FENCE`). These vendor properties return file descriptors
-  through userspace pointers. The display userspace waits for the retire fence, then closes
+  through userspace pointers. PICO OS's composer waits for the retire fence, then closes
   both.
-
-Plane capabilities, property enum values and object IDs are read at run time, not assumed.
-
-Driver behaviour the tests account for:
-
-- **Mode timing.** The mode names say 90 and 72 Hz, but generic tools (`drm_info`, `modetest`)
-  compute about 32.83 and 26.27 Hz from the modes' clock and totals. Neither a mode name nor a
-  successful modeset proves the physical refresh, so the KMS test measures it.
-- **Events.** The driver takes no vblank reference for page-flip completions. Without a separate
-  vblank request, page-flip events carry zero timestamps and sequence numbers, which cannot
-  establish the refresh rate or dropped frames.
-- **First frame.** A first commit at 72 Hz fails with `DMS not supported on first frame`. The
-  switch to 72 Hz works after frames were presented at the boot-time 90 Hz mode, in the same DRM
-  session.
-- **Panel supply.** The kernel's cleanup of unused regulators disables `display_panel_avdd`
-  after boot. Stock PICO OS runs with the same supply disabled while the display is active, so
-  this alone does not indicate a power fault. No regulator or device-tree change is made.
 
 ## GPU firmware
 
@@ -96,11 +79,10 @@ inverted-looking picture. A change between the rates is a full mode set (patch 0
 
 ## Verified results
 
-Current results are in [kernel-feasibility.md](kernel-feasibility.md#results).
+Current results are in [kernel.md](kernel.md#results).
 
 ## References
 
 - [Mesa Freedreno/Turnip](https://docs.mesa3d.org/drivers/freedreno.html)
 - [Qualcomm display fence contract](https://android.googlesource.com/platform/hardware/qcom/sm7250/display/+/202e8c36/sdm/libs/core/drm/hw_device_drm.cpp)
 - [Linux DRM userspace interface](https://www.kernel.org/doc/html/latest/gpu/drm-uapi.html)
-- [Android logical partition format](https://android.googlesource.com/platform/system/core/+/refs/heads/main/fs_mgr/liblp/include/liblp/metadata_format.h)

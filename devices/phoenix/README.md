@@ -10,8 +10,8 @@ SteamVR, with a Monado driver for the PICO 4's hardware: the SteamVR environment
 lenses with 6DoF head and controller tracking.
 
 This is experimental work on an unlocked headset. During development it keeps an engineering
-bootloader and a development image in its boot partition; the acceptance cycle returns it to the
-stock boot image and stock bootloader, both verified by readback. Storage stays read-only
+bootloader, the development image in `recovery` and the installed system in `boot`; the acceptance
+cycle returns it to the stock boot image and stock bootloader, both verified by readback. Storage stays read-only
 otherwise; installing the system replaces PICO OS's system and data, and the way back restores
 them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL backup
 ([docs/device-preparation.md](docs/device-preparation.md)).
@@ -45,28 +45,47 @@ Open: a power press after a long sleep. Plan and details:
    ```
 
 3. **Build stage 2** (Linux or WSL, as root; [docs/development.md](docs/development.md) lists
-   the requirements):
+   the requirements): the stock firmware's assets, the userspace archive, its system image:
 
    ```sh
+   devices/phoenix/scripts/extract-assets.sh 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
    make userspace
+   devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
    ```
 
-4. **Run it on the headset.** Put it into development mode once, from PICO OS; it stays there
-   between runs:
+4. **Enter development mode** once, from PICO OS; the headset stays there between runs, with the
+   maintenance stage 1 in `recovery`:
 
    ```sh
    python -m overpressure dev stage-abl
    python -m overpressure dev image
-   python -m overpressure dev flash
+   python -m overpressure dev flash recovery
    python -m overpressure dev connect
    ```
 
-   Then boot and check each new archive:
+5. **Build Valve's kernel and the boot image** (Linux, as root). `SOURCE_PACKAGE` is Valve's source
+   package `linux-72-deckard` ([docs/kernel.md](docs/kernel.md)), and
+   `STOCK_RECOVERY` the stock recovery image that `dev image` caches as
+   `cache/stock/<firmware>.recovery.img`, `<firmware>` being the OTA's file name. Copy `Image.gz`,
+   `sm8250-pico4-phoenix.dtb`, `version` and `config` from `OUTDIR` into `out/kernel`, then build
+   the image:
 
    ```sh
-   python -m overpressure dev boot
+   devices/phoenix/kernel/build-kernel.sh SOURCE_PACKAGE STOCK_RECOVERY WORKDIR OUTDIR
+   python devices/phoenix/kernel/recovery_image.py --installed out/dev/install-boot.img --boot \
+       --gpu-firmware assets/graphics-firmware-5.13.7 --wlan-firmware assets/wlan-5.13.7 \
+       --stage1 devices/phoenix/initramfs out/kernel cache/stock/<firmware>.recovery.img \
+       out/dev/dev-recovery.img out/kernel/install-boot-valve-rgb.img
+   ```
+
+6. **Install and check it** ([docs/install.md](docs/install.md)); a new system image takes the same
+   commands:
+
+   ```sh
+   python -m overpressure dev recovery
+   python -m overpressure dev install
    python -m overpressure dev check
-   python -m overpressure dev reboot
+   python -m overpressure dev installed    # reconnects after a reboot
    ```
 
    `python -m overpressure dev restore`, then `python -m overpressure cycle --restore-only`, return the
@@ -82,9 +101,10 @@ Open: a power press after a long sleep. Plan and details:
 | [docs/device-preparation.md](docs/device-preparation.md) | identity, EDL backups, engineering ABL, unlock, restore |
 | [docs/stage1.md](docs/stage1.md) | the boot image: contents, boot sequence, options, troubleshooting |
 | [docs/hardware-testing.md](docs/hardware-testing.md) | acceptance runner, acceptance cycle, development loop |
-| [docs/kernel-feasibility.md](docs/kernel-feasibility.md) | Valve's kernel on the PICO 4: the study, its patches and what is verified on it |
+| [docs/kernel.md](docs/kernel.md) | Valve's kernel on the PICO 4: its files, its patches, what is verified on it and how it works |
 | [docs/graphics.md](docs/graphics.md) | the graphics stack and both panels |
 | [docs/userspace.md](docs/userspace.md) | the SteamOS-compatible userspace and the handoff |
+| [docs/install.md](docs/install.md) | the installed system: layout, boot modes, install and update, the way back |
 | [docs/xr.md](docs/xr.md) | IMU, Monado driver, display, lenses, cameras, 6DoF, controllers |
 | [docs/session.md](docs/session.md) | Valve's VR session: SteamVR, gamescope, games, Steam Link |
 | [docs/cooling.md](docs/cooling.md) | fan control and the thermal policy |
@@ -99,7 +119,7 @@ kernel/      Valve's kernel: build script, patches, the PICO's drivers and devic
 initramfs/   stage 1: the files added to the Alpine ramdisk
 userspace/   stage 2: package list, pacman.conf, adaptation layer, SteamVR configuration, PKGBUILDs
 src/         C sources: graphics tests, Monado's PICO 4 driver, the tracker's host, OpenXR clients, SteamVR helpers
-scripts/     userspace and system image builds, stock firmware extraction, the on-headset preflight
+scripts/     userspace and system image builds, stock firmware extraction, the on-headset preflight, sharing a Windows PC's internet
 prebuilt/    static aarch64 helpers for stage 1
 tests/       host tests and the QEMU boot tests
 docs/        documentation

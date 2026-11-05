@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * The PICO 4's tracking cameras (docs/kernel-feasibility.md): four OV7251 modules whose control
+ * The PICO 4's tracking cameras (docs/kernel.md): four OV7251 modules whose control
  * port belongs to the controller radio (the station's nRF52832), not to the SoC. The station
  * configures them over its own I2C and triggers each frame on FSIN; PICO's stock kernel accepts a
  * tracking camera's probe without reading its chip ID and never sends its register writes. The SoC

@@ -3,10 +3,10 @@
 Guidance for working on the PICO 4 in overpressure (the repository's [CLAUDE.md](../../CLAUDE.md)
 has the general rules): Linux and a SteamOS-compatible userspace on the original PICO 4 (2022,
 codename *phoenix*, Snapdragon XR2), on **Valve's kernel** (the Steam Frame's 7.2, built by
-`kernel/build-kernel.sh`, [docs/kernel-feasibility.md](docs/kernel-feasibility.md)) with Valve's Mesa.
-The stock Android kernel (4.19.81-perf+, PICO OS 5.13.7/5.13.8) is no longer pursued: the way back
-to PICO OS stays, the image no longer drives the GPU there, and the documents' stock-kernel paths are
-history until they are removed. Paths are relative to this folder (`devices/phoenix/`); commands run
+`kernel/build-kernel.sh`, [docs/kernel.md](docs/kernel.md)) with Valve's Mesa.
+The stock Android kernel (4.19.81-perf+, PICO OS 5.13.7/5.13.8) no longer runs the system, and the
+image no longer drives the GPU there; it stays under the maintenance stage 1 in `recovery` and on the
+way back to PICO OS. Paths are relative to this folder (`devices/phoenix/`); commands run
 from the repository root.
 
 ## Where things stand
@@ -29,7 +29,7 @@ across reboots and updates; the way back is open ([docs/install.md](docs/install
 Powering off with the USB cable attached starts the headset in charger mode (stage 1 waits for a
 2 s power press; `pico4-reboot` from there starts the system); a short power press does nothing.
 Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; on the headset the
-MCU acknowledges, and longer sessions and tuning are open ([docs/cooling.md](docs/cooling.md)).
+MCU acknowledges ([docs/cooling.md](docs/cooling.md)).
 Build system, tests and the Windows/WSL environment: [docs/development.md](docs/development.md).
 
 ## Backlog
@@ -59,8 +59,9 @@ README.md current.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
   the f_mass_storage kernel thread and with it the USB link. `pico4-userspace receive/switch`
   hands over to stage 2.
-- `kernel/`: Valve's kernel: `build-kernel.sh`, `patches/`, the PICO's drivers in `src/`, the device
-  tree `sm8250-pico4-phoenix.dts`, `recovery_image.py` for its boot images.
+- `kernel/`: Valve's kernel: `build-kernel.sh`, `pico4.config`, `patches/`, the PICO's drivers in
+  `src/`, the device tree `sm8250-pico4-phoenix.dts` (with `dtbo_sink.py` and `panel_sequence.py`),
+  `recovery_image.py` for its boot images, `tools/`.
 - `userspace/`: stage 2. `packages.txt` and `pacman.conf` (the Holo preview first; Frame
   packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
   layer), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,
@@ -70,8 +71,8 @@ README.md current.
   `swapchain/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
   them in. `stockslam/` is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a
   bionic root; `build-userspace.sh` builds it with clang for Android, without an NDK.
-- `scripts/`: `build-userspace.sh`, `build-system-image.sh`, the extraction
-  scripts `extract-graphics-firmware.sh`, `extract-sensor-data.sh`, `extract-wlan.sh`,
+- `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `windows-share-internet.ps1`, the
+  extraction scripts `extract-assets.sh` (runs the others), `extract-graphics-firmware.sh`, `extract-sensor-data.sh`, `extract-wlan.sh`,
   `extract-audio.sh`, `extract-stock-slam.sh` (from the stock directory of `python -m
   overpressure stock`, PICO's public OTA; overpressure's `scripts/stock-lib.sh`) and the on-headset preflight. The
   headset's own factory data is not extracted: the image links to persist, mounted read-only at
@@ -97,10 +98,8 @@ devices/phoenix/scripts/extract-assets.sh 5.13.7-global-seko /var/tmp/pico4-stoc
 devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
     --wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
-# The headset, which stays in development mode (settings from .env); the integration test:
-python -m overpressure dev boot && python -m overpressure dev check   # iterate on the flashed dev image
-python -m overpressure dev reboot                        # next attempt; also from fastboot
-# The installed system (docs/install.md): image as root, then from the maintenance stage 1:
+# The headset stays in development mode (settings from .env). The installed system is the integration
+# test (docs/install.md): image as root, then from the maintenance stage 1:
 devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
 python -m overpressure dev recovery && python -m overpressure dev install   # boot, super, data; starts it
 python -m overpressure dev installed && python -m overpressure dev check    # reconnect after a reboot; check
@@ -124,10 +123,9 @@ python -m overpressure cycle --restore-only              # verified stock boot a
   `kernel/`, following the stock kernel's behaviour where it is the reference. A new boot image goes
   through `dev recovery` and `dev install --boot`.
   - systemd stays at 257.x, pinned with `IgnorePkg` on the device (the Frame's version).
-  - Real-time threads (Monado's compositor) need cgroups without the `cpu` controller:
-    `CONFIG_RT_GROUP_SCHED` on cgroup v2 refuses `SCHED_FIFO` otherwise, even to root. The
-    drop-ins in `userspace/rootfs/etc/systemd` keep it off; units added later must not set
-    `CPUWeight`/`CPUQuota` or delegate `cpu`.
+  - The drop-ins in `userspace/rootfs/etc/systemd` keep systemd's `cpu` controller off. Valve's kernel
+    has `CONFIG_RT_GROUP_SCHED` off, so that no longer guards `SCHED_FIFO`; units added later still
+    follow them and don't set `CPUWeight`/`CPUQuota` or delegate `cpu`.
 - **Storage stays read-only, except the installed system's data.** Every physical block device
   is switched read-only in both stages; only the installed system's data partition (userdata,
   ext4 `pico4-data`) is mounted writable. Partitions are written only through the explicit,
@@ -166,7 +164,7 @@ passed.
   write it only as the whole-partition image `dev image` builds (stock vbmeta kept), never a
   plain boot image, or every boot ends in fastboot. Large raw fastboot downloads crash the ABL;
   `dev flash`/`dev restore-partition` send big images sparse.
-- **Entering development mode** (from PICO OS): `dev stage-abl`, `dev image`, `dev flash`,
+- **Entering development mode** (from PICO OS): `dev stage-abl`, `dev image`, `dev flash recovery`,
   `dev connect`. It runs unattended: `adb reboot edl` works from PICO OS, and EDL needs no
   buttons. `.env` holds the headset's serials and the paths of its backup, loader and
   engineering ABL (see `.env.example`).
@@ -174,23 +172,23 @@ passed.
   stage-abl`). The stock ABL reports `DeviceUnlocked=true`, and the runner refuses it. Writing
   boot also needs the per-session `fastboot oem <token> unlock` authorization, which the tools
   derive from the identity.
-- **Iterate in stage 2.** Repeat `dev reboot`, `dev boot [ARCHIVE] [--push LOCAL=REMOTE]`,
-  `dev check`, `dev ssh CMD` in the maintenance stage 1 (`dev recovery`); no flash or restore
-  between attempts or tasks. A changed stage-1 image needs `dev image`, `dev flash recovery` and
-  (for the installed boot) `dev install` again. `dev check` runs the acceptance runner's
-  stage-2 checks, also on the installed system after `dev installed`.
+- **Iterate on the installed system.** A new system image goes through `dev recovery` and
+  `dev install`, a new kernel through `dev recovery` and `dev install --boot`; `dev installed`
+  reconnects after a reboot, `dev check` runs the acceptance runner's stage-2 checks, `dev ssh CMD` a
+  command. The maintenance stage 1 runs the stock kernel, so `dev boot [ARCHIVE]` followed by
+  `dev check` needs a recovery image with Valve's kernel (`kernel/recovery_image.py`). A changed
+  stage-1 image needs `dev image`, `dev flash recovery` and a new installed boot image.
 - **Deadlines.** Device-side deadlines return the headset to fastboot; `dev reboot` starts
   stage 1 from there without a flash. The dev image's maximum runtime (an hour) counts from the
-  last `python -m overpressure dev` command, which renews it; plain `ssh` does not. A kernel panic reboots rather than parking in crash-dump
-  mode (stage 1 sets `msm_poweroff.download_mode=0`).
+  last `python -m overpressure dev` command, which renews it; plain `ssh` does not. A kernel panic reboots after 5 s (`panic=5`, the
+  tree's PS_HOLD reset).
 - **Heat.** `pico4-fan.service` drives the fan with PICO OS's policy: the 30 s Valve session check
-  peaks at about 64 °C. Qualcomm's `thermal-engine` does not run (it is off on PICO OS too), and
+  peaks at about 65 °C. Qualcomm's `thermal-engine` does not run (it is off on PICO OS too), and
   the kernel's `step_wise` zones throttle. Keep GPU-heavy runs short (`pico4-valve-session-check`
   runs 30 s), stop them as soon as the evidence is in, and read
   `/sys/class/thermal/thermal_zone*/temp` when in doubt.
-- **Back to stock, only when the user asks** (PICO OS needed, a release acceptance):
-  `dev restore`, then `python -m overpressure cycle --restore-only`, or `cycle --skip-stage
-  --userspace ...` for an acceptance run that ends on stock. Once the headset stayed off after
+- **Back to stock, only when the user asks** (PICO OS needed):
+  `dev restore`, then `python -m overpressure cycle --restore-only`. Once the headset stayed off after
   the final EDL reset with stock boot and ABL already verified; a hard reset by the user brought
   PICO OS back. If PICO OS does not appear, ask the user to look at the headset rather than
   retrying anything.

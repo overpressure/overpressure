@@ -10,7 +10,8 @@ drive with the boot logs. Every disk and partition of the headset is read-only w
 except what the installed system's tools write on purpose ([install.md](install.md)).
 Stage 1 runs on the tested headset (original PICO 4, PICO OS 5.13.7), returns to fastboot by
 itself when no PC uses it, and hands PID 1 over to the SteamOS-compatible userspace of stage 2
-([userspace.md](userspace.md)).
+([userspace.md](userspace.md)). The session runs only on Valve's kernel: the stock kernel gives
+that userspace no Vulkan.
 
 ## The image
 
@@ -59,9 +60,8 @@ DRM and backlight devices, CPU governors and idle state, pstore, kernel options)
 headset's fingerprint and OEM state for `python -m overpressure match`. It uses a directory under
 `/data/local/tmp` and removes it afterwards. Results go to a new `out/hardware-<id>/` directory;
 a failed check gives a nonzero exit status. `--serial` selects the headset when several are
-attached (`-Serial` for the PowerShell script, the second argument of the shell script). The
-preflight exists because the PICO community's Magisk port had to replace its bundled BusyBox to
-run on this kernel.
+attached. The preflight exists because the PICO community's Magisk port had to replace its bundled
+BusyBox to run on this kernel.
 
 ## Building
 
@@ -153,7 +153,7 @@ an image can only be booted from RAM.
 `pico4-reboot` ([source](../src/reboot/pico4-reboot.c)) is a freestanding aarch64 program
 without libc, about 1.5 KB. BusyBox's `reboot` cannot pass a command string to the kernel, and
 that string is how the Qualcomm restart driver chooses the next boot target (fastboot,
-recovery). Any aarch64 cross compiler rebuilds it:
+recovery). Any aarch64 cross compiler rebuilds it, from `devices/phoenix/`:
 
 ```sh
 aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector \
@@ -163,7 +163,7 @@ aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector 
 
 `pico4-splash` ([source](../src/splash/pico4-splash.c)), the installed system's boot indication
 in the lenses ([install.md](install.md)), is freestanding the same way (about 9 KB), so stage 1
-and stage 2 run the same file:
+and stage 2 run the same file. From `devices/phoenix/`:
 
 ```sh
 aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector \
@@ -196,9 +196,11 @@ Back to PICO OS: `python -m overpressure dev restore` ([hardware-testing.md](har
 ### Writing boot by hand
 
 The tools above check the headset's verified backup and the image before writing and restore
-the original boot image afterwards. The equivalent manual sequence replaces the only Android boot partition (the PICO 4 has no A/B slots), so PICO OS cannot start
-until the original image is flashed back. Keep the engineering ABL and a working EDL recovery
-path ([device-preparation.md](device-preparation.md)) available:
+the original boot image afterwards. On a headset without the installed system, the equivalent
+manual sequence replaces the only Android boot partition (the PICO 4 has no A/B slots), so PICO OS
+cannot start until the original image is flashed back; with the system installed, the way back is
+`dev restore`. Keep the engineering ABL and a working EDL recovery path
+([device-preparation.md](device-preparation.md)) available:
 
 ```sh
 fastboot oem <token> unlock               # engineering ABL: authorizes writes in this session
@@ -292,8 +294,9 @@ every core would stay at its maximum clock. Firmware requests fall back to users
 kernel; `/init` lets them fail after 5 s instead of waiting 60 s for Android's `ueventd`, which
 is absent. The USB setup waits up to 60 s for a device controller.
 
-The LED column applies when the kernel exposes LEDs named red, green and blue. Only those are
-driven, never flash, torch, IR or backlight LEDs. A failed USB setup shows blinking red.
+The LED column applies on the stock-kernel dev image: only LEDs named red, green and blue are
+driven, never flash, torch, IR or backlight LEDs, and a failed USB setup shows blinking red.
+Valve's kernel has no `/sys/class/leds`, so on it the helper does nothing.
 
 Every step is logged to the kernel log (lines start with `pico4-poc:`), to
 `/run/pico4-poc/boot.log` and to pstore's `pmsg`, which survives a warm reboot. Services log to
@@ -362,7 +365,7 @@ reads them; the scripts next to it use them.
 | `pico4poc.usbkick=` | `20` | seconds of silence on a configured link before a software USB re-plug (at most 2); `0` = never |
 | `pico4poc.ip=`, `pico4poc.host_ip=` | `172.16.42.1`, `172.16.42.2` | addresses on the USB link (/24) |
 | `pico4poc.rw=` | `0` | `1` leaves block devices writable; the hardware runner refuses such images |
-| `pico4poc.led=` | `1` | drive the status LED (only LEDs named red, green, blue) |
+| `pico4poc.led=` | `1` | drive the status LED where the kernel has one (only LEDs named red, green, blue; Valve's kernel has none) |
 | `pico4poc.cpugov=` | `schedutil` | cpufreq governor; `keep` leaves the stock `performance` |
 | `pico4poc.lpm=` | `1` | enable the CPU low-power idle states |
 | `pico4poc.ramdump=` | `0` | `1` keeps Qualcomm crash-dump mode after a kernel panic |
@@ -379,7 +382,6 @@ Options for the test harnesses:
 | Option | Used by |
 | --- | --- |
 | `pico4poc.selftest=1` | the QEMU self-test ([QEMU self-test](#qemu-self-test)); with `pico4poc.selftest_hostdelay=N` the PC side stays silent for N s, with `pico4poc.selftest_poweroff=0` the VM stays on afterwards. The hardware runner refuses images with `selftest` |
-| `pico4poc.userspace_payload=PART:BYTES:SHA256`, `pico4poc.userspace_selftest=1` | the QEMU userspace test: stage 1 receives the archive from a partition and switches to it ([userspace.md](userspace.md)) |
 | `pico4poc.root=installed` (with `pico4poc.autoreboot=0`) | the install boot image: mount the installed system from `super` and `userdata` and switch to it; on failure, reboot into recovery ([install.md](install.md)) |
 | `pico4poc.part=recovery` | the dev image written to `recovery` (the maintenance stage 1), so the dev loop can tell which partition started it |
 | `pico4poc.test_run=ID` | set by the hardware runner in its per-run image |
@@ -421,16 +423,11 @@ of `pico4-info`, the login banner, starts with `#`; and `pico4-reboot` refuses u
   stock kernel has no RNDIS function; there, use the log drive, a Windows 11 or Linux PC, or a
   Linux VM with USB passthrough.
 * **Windows has an NCM adapter, but no DHCP or SSH, and the kernel log shows `Wrong NDP SIGN`.**
-  The stock kernel's NCM function rejects the packets of Windows' driver. Sending the CDC
-  request `SET_CRC_MODE(0)` through UsbDk and handing the device back to UsbNcm makes DHCP, SSH
-  and HTTP work without changing the kernel. [overpressure/windows_ncm.py](../../../overpressure/windows_ncm.py)
-  does this; the hardware runner (`--windows-ncm-python`) and `python -m overpressure dev connect` run
-  it after every stage-1 boot ([hardware-testing.md](hardware-testing.md) has the setup). Leave
-  the adapter on DHCP. UsbDk briefly disconnects the whole composite device, including the log
-  drive. Run it once per stage-1 boot: running it again after the switch to stage 2 stalls
-  UsbDk and leaves the PC's NCM and storage drivers in an error state. Tested with Windows 11,
-  UsbDk 1.0.22 and the `windows-ncm` extra of [pyproject.toml](../../../pyproject.toml) (PyUSB 1.3.1,
-  libusb-package 1.0.30.0).
+  The stock kernel's NCM function rejects the packets of Windows' driver until the host sends one
+  CDC request through UsbDk. The hardware runner (`--windows-ncm-python`) and
+  `python -m overpressure dev connect` send it after every stage-1 boot; the setup and its limits
+  are in [hardware-testing.md](hardware-testing.md#windows-ncm-initialization). Leave the adapter
+  on DHCP.
 * **No network, but a PICO4POC drive appeared.** `boot.log` on it shows what the USB setup did.
   The drive is rebuilt after the probe; eject and replug it to see the newer files.
 * **Nothing appears on the PC.** After 5 minutes the watchdog reboots into fastboot. The next
@@ -443,8 +440,8 @@ of `pico4-info`, the login banner, starts with `#`; and `pico4-reboot` refuses u
 * **SSH warns about a changed host key.** Stage 1 creates new host keys on every boot;
   `ssh-keygen -R 172.16.42.1` removes the old entry.
 * **The headset is stuck.** Hold the power button for more than 10 s; that is a hardware reset.
-  The next boot starts what `boot` holds: stage 1 while it is flashed, PICO OS after the
-  restore.
+  The next boot starts the maintenance stage 1 while `misc` holds its request, else what `boot`
+  holds: the installed system, or PICO OS after `dev restore`.
 
 ## Safety notes
 
@@ -497,7 +494,7 @@ Read from the boot image of PICO OS 5.13.8 and the kernel's embedded configurati
   stock image's ID.
 * **Ramdisk.** GNU cpio lists it with the expected device nodes, symlinks and modes, and the
   scripts pass `sh -n` under the image's aarch64 BusyBox.
-* **Recovery policy.** `bash tests/test_recovery_policy.sh` checks the watchdog's decisions
+* **Recovery policy.** `bash devices/phoenix/tests/test_recovery_policy.sh` checks the watchdog's decisions
   ([recovery-policy.sh](../initramfs/usr/libexec/pico4-poc/recovery-policy.sh)) on the host.
 
 ### QEMU self-test

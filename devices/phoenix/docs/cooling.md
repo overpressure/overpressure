@@ -6,11 +6,13 @@ and drives the backlight ([xr.md](xr.md#lens-distortion-and-ipd)), and PICO OS's
 `pxrfanservice` sets its duty over that MCU's UART. [`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan)
 runs the same policy with the same frames under stage 2: the userspace build enables its
 service, and the acceptance checks require it on the headset. On the headset the MCU
-acknowledges its duty and reports the fan's speed, and Valve's 30 s session check takes the
-hottest thermal zone from 45 °C to 69 °C with the fan at 30 %. Without fan control the same
-check went from 47 °C to 86 °C, and a minute of the session from 54 °C to 92 °C
-([session.md](session.md#performance-and-heat)). The limit for the hottest zone is 90 °C; with
-PICO OS's early table, the default, 10 minutes of Valve's session stay below 80 °C.
+acknowledges its duty and reports the fan's speed, and Valve's 30 s session check on Valve's kernel
+peaks at a hottest zone of 65.5 °C. On the stock kernel, without fan control, the same check went
+from 47 °C to 86 °C, and a minute of the session from 54 °C to 92 °C. The limit for the hottest
+zone is 90 °C. PICO OS's early table is the default; that it holds 10 minutes of a rendering
+Valve's session below 80 °C rests on one run on the stock kernel (peak zone 79.5 °C,
+[Verified results](#verified-results)). On Valve's kernel, about 10 minutes of a worn game peak at
+75.6 °C ([kernel.md](kernel.md#results)).
 
 ## How PICO OS cools the PICO 4
 
@@ -40,8 +42,7 @@ What PICO OS does not use, on either system:
   `init_thermal-engine.rc`, and `thermal-engine.conf` is the empty default. The `*-usr` zones
   (`user_space` governor, trips at 115 and 125 °C) have no listener on either system.
 
-Valve's kernel takes the stock device tree's trip points onto mainline's zones, so they throttle
-alike:
+The stock tree's zones:
 
 | Zone | Trip | Cooling |
 | --- | --- | --- |
@@ -53,7 +54,14 @@ alike:
 | `apc-*-max-step` | 120 °C | none |
 | `pm8150*_tz` | 95, 115, 145 °C | none (PMIC) |
 
-PICO OS therefore cools with the fan and the kernel's throttling; stage 2 lacks only the fan.
+PICO OS therefore cools with the fan and the kernel's throttling; `pico4-fan` provides the fan
+here.
+
+Valve's kernel takes part of this onto mainline's zones
+([kernel.md](kernel.md#thermal-throttling)): the GPU from 95 °C; the big
+and prime cores from a DDR at 95 °C; the GPU held at 400 MHz from 100 °C at the WLAN, video, DDR,
+Q6/HVX, camera, compute and NPU sensors. The CPUs keep mainline's frequency trips at 90 and 95 °C,
+critical at 110 °C.
 
 ### The fan protocol
 
@@ -137,8 +145,7 @@ table.
   headset's batch is late.
 - **Stopping.** The fan keeps its last duty when the service stops.
 - **Where it runs.** The unit's condition is `/sys/class/tty/ttyHS1`, present from kernel boot
-  on the headset (udev creates the `/dev` node later); QEMU has none, so the unit is skipped
-  there.
+  on the headset (udev creates the `/dev` node later).
 
 Settings, in `/etc/pico4-poc/fan.conf` (the service's `EnvironmentFile`):
 
@@ -168,15 +175,15 @@ hint's clusters count big, little, prime):
 | `core_ctl` `min_cpus` | 3 big cores, 1 prime core |
 | KGSL `min_pwrlevel` / `max_pwrlevel` | 5 / 0 |
 
-Without limits the big cores reach 2419 MHz and the prime core 2842 MHz. The stock kernel has
-the same `msm_performance` and `core_ctl` nodes, and
-[`vr-performance`](../userspace/rootfs/usr/libexec/pico4-poc/vr-performance) applies the CPU part:
+Without limits the big cores reach 2419 MHz and the prime core 2842 MHz.
+[`vr-performance`](../userspace/rootfs/usr/libexec/pico4-poc/vr-performance) applies the CPU part
+through the cpufreq policies (every core stays online, which meets `core_ctl`'s minimum):
 [`pico4-vr-performance.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-vr-performance.service)
 runs it while `pico4-session.service` or `pico4-monado.service` runs (both want the unit, which
-stops when neither does) and puts the limits it found back when it stops. On a mainline kernel it
-also keeps the big cores, where the compositor runs, at their limit (governor `performance`),
-and puts `schedutil` back: without it the compositor misses frames while Steam's panel redraws
-([kernel-feasibility.md](kernel-feasibility.md)). In the session with the panel idle, 3 minutes
+stops when neither does) and puts the limits it found back when it stops. It also keeps the big
+cores, where the compositor runs, at their limit (governor `performance`), and puts the governor
+it found back: without it the compositor misses frames while Steam's panel redraws
+([kernel.md](kernel.md)). In the session with the panel idle, 3 minutes
 each, this costs about 0.6 °C: hottest zone mean 58.7 and 59.7 °C (peaks 60.5 and 64.0) against
 58.4 and 58.7 °C (59.7 and 61.6); the little cores' load falls from about 45 to about 31 %.
 The GPU's clock stays with msm's devfreq governor.
@@ -196,7 +203,7 @@ no further; `pico4-fan batch FILE` prints that word for a serial number file.
   `pico4-fan state`: profile, duty, reason, boost, RPM, hottest sensor and mean, and the MCU
   error if any. The MCU must have acknowledged a duty (the daemon's `duty` is the last
   acknowledged one) and report no error; otherwise the check fails and names the MCU's error.
-  It waits up to 10 s for the first acknowledgement. In QEMU the section is `skipped`.
+  It waits up to 10 s for the first acknowledgement. Without the UART the section is `skipped`.
 - **The acceptance runner** requires the service on the headset (`validate_check` with
   `require_fan` in [tooling/userspace.py](../tooling/userspace.py)), rejects a state without an
   acknowledged duty or with an MCU error, and keeps the `fan` object in `result.json`.
@@ -230,29 +237,22 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
 | Stock vendor partition | `thermal-engine` service commented out, its configuration empty |
 | Stock system partition: `pxrfanservice` | starts at boot as root; MCU path for product `Phoenix`; zones, means, tables, hysteresis, timing and overheating notice as above |
 | Stock system partition: GD32 service and client | SetFanSpeed `A0 0E 00 dd 00 xx` (duty < 101, ack `79`), GetFanSpeed `0F`, GetFanRPM `10` (`79 lo hi xx`); SetFanRPM `29` and GetFanInfo `30` through the generic command path, which recomputes the checksum |
-| Live tree thermal zones | trips and cooling maps as in the table above |
+| Stock live tree thermal zones | trips and cooling maps as in the table above |
 | Development headset (`pico4-fan batch /mnt/vendor/persist/falcon/sn`) | late batch; standard PICO 4, control type 1 |
 | Headset: `pico4-fan` with `PICO4_FAN_PROFILE=auto` | profile `late` from the serial's batch; at a hottest mean of 41 °C the fan stands (the late table runs it from 55 °C) |
 | Headset: GetFanInfo at 0, 30, 45 and 60 % | `00 0000 … 00`, `1e d312 … 01`, `2d 131b … 01`, `3c 0e23 … 01`: duty, RPM (4,819, 6,931, 8,974) and running; no fan identity |
 | Host: [tests/test_fan.py](../tests/test_fan.py) | passes: frames against the stock bytes and the allowlist, replies, both tables and their hysteresis, boost and failsafe, the loop's means and timing, retries, the state file and what the checks read from it, zone selection, profile choice, the batch rule on synthetic serial numbers (the serial is never printed), the unit; one UART transaction over a pty on Linux |
 | Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | pass: the userspace check's `fan` object (active with a state; skipped only without `require_fan`; a state without an acknowledged duty or with an MCU error fails) and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
 | Headset: `pico4-userspace-check` and `dev check` | pass with the duty acknowledged (30 %, about 5,080 rpm, no MCU error); a daemon state with a SetFanSpeed error fails the check and names it |
-| Headset: `pico4-fan.service` in the acceptance cycle | active; the MCU answers the queries and acknowledges SetFanSpeed, no MCU error in the journal; the fan reads 0 % and 0 rpm before the daemon, then runs at 30 % from the early table (hottest mean 35–43 °C) at 4,849–4,914 rpm; Monado reads the IPD (71.99 mm) through the shared port lock |
+| Headset, stock kernel: `pico4-fan.service` in the acceptance cycle | active; the MCU answers the queries and acknowledges SetFanSpeed, no MCU error in the journal; the fan reads 0 % and 0 rpm before the daemon, then runs at 30 % from the early table (hottest mean 35–43 °C) at 4,849–4,914 rpm; Monado reads the IPD (71.99 mm) through the shared port lock |
 | Headset: duty against RPM (`pico4-fan sweep`, 10–100 %) | 10 and 20 %: 3,650 and 3,670 rpm (the fan's lowest speed); 30 %: 5,265; 40 %: 6,770; 50 %: 8,160; 60 %: 9,470; 70 %: 10,740; 80 %: 11,940; 90 %: 13,070; 100 %: 14,150 rpm |
-| Headset: Valve's session (SteamVR's defaults, 54 frames per second) for 10 minutes from idle, late table | hottest zone 48 → 66 °C in the first minute (the load step: the hottest mean passed 60 °C and the fan went to 30 % within it), 73–75 °C from the fifth minute with the fan at 35 % (about 6,050 rpm), peak 91.1 °C (one CPU sensor, mean 73.9 °C) after 645 s |
-| Headset: Valve's session for 10 minutes on the Frame's compositor path (90 fps), late table | fan at 30 %, then 35 % (5,160–6,090 rpm); hottest CPU/GPU mean 61.8–73.5 °C in minutes 5–10, peak zone 77.5 °C; 31 gaps above 100 ms |
-| Headset: the same with the early table | fan at 45 % from the first minute (7,540–7,650 rpm); hottest mean 65.6–72.1 °C in minutes 5–10, peak zone 79.5 °C (from a warmer start); 8 gaps above 100 ms |
-| Headset: the same with `PICO4_FAN_TABLE=80:100,75:80,70:60,65:45,60:30,55:0` | fan at 45 % in the first minutes, 60 % (9,600 rpm) from the fourth; hottest zone 68–72 °C, peak 84.5 °C (mean 72.6 °C) |
-| Headset: Valve's session check (30 s) with the fan | hottest zone 45.3 °C before, 69.4 °C after; the fan stayed at 30 % (the early table holds 30 % up to a 70 °C mean); without fan control the same check went from 47.1 to 85.7 °C |
-| Headset: Valve's idle session with PICO OS's tracker, still, 3 minutes each without, with and again without the VR CPU limits | hottest zone mean 59.7, 59.4 and 59.4 °C; peaks 75.6, 60.8 and 70.9 °C (the limits cap the gold and prime cores' boosts); CPU 297, 289 and 307 % busy of 800; big-core clock 921, 1,047 (the hint's floor) and 938 MHz; the tracker lost no pose in the 10 minutes and stayed within 1.1 mm |
-| Headset: Valve's session with the VR CPU limits (`pico4-vr-performance.service` on with the session, off when it stops) | the big and prime cores capped at 2016/2054 MHz, `core_ctl` at least 3 big cores; Valve's 30 s session check passes (89.95 commits/s, 0.19 % late, no stall, hottest zone 64.7 °C); the tracker still holds within 0.6 mm, no pose lost |
-| Headset: Beat Saber (Proton, FEX) as SteamVR's scene application for 63 s, VR CPU limits on, PICO OS's tracker | hottest zone 70.5 °C at its peak, 59–61 °C for most of the run (with Basalt and without limits it passed 88 °C within a minute) |
+| Headset, stock kernel: Valve's session for 10 minutes on the Frame's compositor path (90 fps), late table | fan at 30 %, then 35 % (5,160–6,090 rpm); hottest CPU/GPU mean 61.8–73.5 °C in minutes 5–10, peak zone 77.5 °C; 31 gaps above 100 ms |
+| Headset, stock kernel: the same with the early table | fan at 45 % from the first minute (7,540–7,650 rpm); hottest mean 65.6–72.1 °C in minutes 5–10, peak zone 79.5 °C (from a warmer start); 8 gaps above 100 ms |
+| Headset, stock kernel: Valve's session check (30 s) with the fan | hottest zone 45.3 °C before, 69.4 °C after; the fan stayed at 30 % (the early table holds 30 % up to a 70 °C mean); without fan control the same check went from 47.1 to 85.7 °C |
+| Headset, stock kernel: Valve's idle session with PICO OS's tracker, still, 3 minutes each without, with and again without the VR CPU limits | hottest zone mean 59.7, 59.4 and 59.4 °C; peaks 75.6, 60.8 and 70.9 °C (the limits cap the gold and prime cores' boosts); CPU 297, 289 and 307 % busy of 800; big-core clock 921, 1,047 (the hint's floor) and 938 MHz; the tracker lost no pose in the 10 minutes and stayed within 1.1 mm |
+| Headset, stock kernel: Valve's session with the VR CPU limits (`pico4-vr-performance.service` on with the session, off when it stops) | the big and prime cores capped at 2016/2054 MHz, `core_ctl` at least 3 big cores; Valve's 30 s session check passes (89.95 commits/s, 0.19 % late, no stall, hottest zone 64.7 °C); the tracker still holds within 0.6 mm, no pose lost |
+| Headset, stock kernel: Beat Saber (Proton, FEX) as SteamVR's scene application for 63 s, VR CPU limits on, PICO OS's tracker | hottest zone 70.5 °C at its peak, 59–61 °C for most of the run (with Basalt and without limits it passed 88 °C within a minute) |
+| Headset, Valve's kernel: `dev check` on the installed system | Valve's session check (30 s): hottest zone 65.5 °C, 90.03 commits/s |
 | Build: [test_pico4_lens.c](../src/monado/test_pico4_lens.c) | the IPD reader gives up with `-EBUSY` after a second while another descriptor holds the port lock, and goes on once it is free |
 
-## Next steps
-
-1. **Longer sessions.** The limit for the hottest zone is 90 °C, and the session check holds
-   runs to it. On the Frame's compositor path both of PICO OS's tables keep a 10-minute Valve
-   session below 80 °C; the faster early table lowers the hottest mean by only about 1.5 °C,
-   because the heat sits in the CPU cores, which the kernel throttles from 75 °C. Sessions
-   much beyond 10 minutes are unmeasured.
+Sessions much beyond 10 minutes are unmeasured.

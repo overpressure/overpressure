@@ -7,7 +7,7 @@ through Turnip's own display WSI on msm, and Monado's SteamVR plugin, `driver_mo
 the headset and both controllers in 6DoF from the PICO 4 driver of [xr.md](xr.md). Verified worn:
 90 frames per second, the Steam client signed in with its library running games, x86 games
 through Proton and FEX, Android apps through Lepton, and Steam Link from a PC. The current results
-are in [kernel-feasibility.md](kernel-feasibility.md#results).
+are in [kernel.md](kernel.md#results).
 Valve's packages come from the Frame's public repository ([userspace.md](userspace.md)); the
 build output stays private.
 
@@ -42,7 +42,7 @@ system: dsp_service, steamvr-program-ble (controller radio firmware), deckard-fp
 | --- | --- |
 | sddm autologin | `pico4-session.service`: a logind session for `steamos` through PAM, whose user manager starts the session target |
 | `driver_cv`, `dsp_service`, FPGA, radio firmware | `driver_monado`, Monado's SteamVR plugin, with the PICO 4 driver of [xr.md](xr.md) in `vrserver` |
-| Direct mode through Valve's Turnip on `msm` | the same, with the stock path's pacing in `pico4-swapchain-usage` |
+| Direct mode through Valve's Turnip on `msm` | the same, paced by `pico4-swapchain-usage` (four images, one frame ahead, vblanks signalled 5 ms early) |
 | Semaphores shared between processes (DRM syncobjs on `msm`) | the same |
 | System V semaphores (SteamVR's process locks) | the same; the kernel provides them |
 | `driver_frame_hmd`'s SteamVR settings | `enableLinuxVulkanAsync` in the session user's `steamvr.vrsettings` ([below](#steamvr-configuration)) |
@@ -116,11 +116,9 @@ interrupt threads refuse `taskset`; `pico4-kthread-priorities` below sets its va
 (`steamvr-web-debug-portforward`, `steam-web-debug-portforward`). It masks these user units
 globally: `steamvr-v4l2cam` (the headset-view loopback camera), `steamvr-proxmicmute` and
 `steamos-scheduler` (the sched_ext scheduler `scx_lavd` needs an option Valve's kernel configuration
-leaves out; stage 1 already sets `schedutil`). Valve's `proxmicmute` mutes the microphone through ALSA's simple mixer (the
-codec's `VA_DEC0`/`VA_DEC1` capture volumes), and that mixer does not load on this kernel: the
-MSM PCM volume controls fail while their PCM is closed ("load error: No such device").
+leaves out; stage 1 already sets `schedutil`).
 [`pico4-micmute`](../userspace/rootfs/usr/lib/systemd/user/pico4-micmute.service), wanted by
-`steamvr.service`, takes its place: it mutes PipeWire's default microphone while the
+`steamvr.service`, takes `steamvr-proxmicmute`'s place: it mutes PipeWire's default microphone while the
 headset's wear sensor reports it off the head (`$XDG_RUNTIME_DIR/pico4-worn`, written by the
 driver) and unmutes it when the headset is worn, or when it stops. The session's input method, `ibus-gamescope`
 (Valve's unit running `ibus-daemon`), runs with the Frame's `ibus` package.
@@ -168,16 +166,10 @@ Further adaptations:
 | [`steamvr.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/50-pico4.conf) | `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` | `driver_monado` recommends the panel's render size, not Monado's default 140 % |
 | | `ExecStop=-…vrstartup -shutdown` (Valve's stop with its exit status ignored) | when the session stops, `vrserver` is often gone before the stop runs; the shutdown request then finds no server and exits 255. Every stop failed the unit, and Valve's `steamvr-health-check` counted a failed launch, which after three in a row resets the Steam installation (unpacked again, then updated). A crash still fails the unit through its main process |
 | [`/usr/bin/displays_turn_off_drm_master`](../userspace/rootfs/usr/bin/displays_turn_off_drm_master) | does nothing | stands in for the Frame's deckard-hw-support tool, which `steamvr.service` runs after SteamVR exits (`ExecStopPost` without `-`: a missing program fails the unit); the compositor releases the display itself |
-| [`pico4-kthread-priorities.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-kthread-priorities.service) | on Valve's kernel the Frame's values: `gpu-worker` and `crtc_event:N` at SCHED_RR 99, `atomic-worker-N` at 88, `spi0` and the soundwire interrupt threads at 80, the workqueues `msm`, `ring0`–`ring3` and `dsi_drm_work_0/1` at priority 90 through Valve's `prio` attribute. On the stock kernel the GPU dispatcher (`kgsl_worker_thr`, SCHED_FIFO 12) and the display's commit and event threads (`crtc_commit:N`, `crtc_event:N`, SCHED_FIFO 61) at SCHED_RR 99, at boot | SteamVR's render and compositor threads run at SCHED_RR 99, so on a shared CPU they would hold back their own submissions and flips. `ring0` hands the compositor's jobs to the GPU; at nice 0, on whichever little core is free, it delays them by up to 6 ms. On the stock kernel the station's SPI thread (`spi0`) already runs at SCHED_FIFO 99, and the GPU's workqueues (`kgsl-events`, `kgsl-workqueue`) at nice -20, which is all a workqueue takes there |
+| [`pico4-kthread-priorities.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-kthread-priorities.service) | the Frame's values: `gpu-worker` and `crtc_event:N` at SCHED_RR 99, `atomic-worker-N` at 88, `spi0` and the soundwire interrupt threads at 80, the workqueues `msm`, `ring0`–`ring3` and `dsi_drm_work_0/1` at priority 90 through Valve's `prio` attribute, at boot | SteamVR's render and compositor threads run at SCHED_RR 99, so on a shared CPU they would hold back their own submissions and flips. `ring0` hands the compositor's jobs to the GPU; at nice 0, on whichever little core is free, it delays them by up to 6 ms |
 | `/opt/steamvr/bin/linuxarm64/vrcompositor-launcher` | `cap_sys_nice=eip` | the compositor raises its priority, as SteamVR's setup does on desktops |
 | `~/.steam/steam`, `~/.steam/root` | links to `~/.local/share/Steam` | SteamVR finds its logs and the Steam folder through them; on the Frame the Steam client's `RUNSTEAM.sh` makes them |
-| [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, after which `pico4-steamvr-failed.service` ends the session (it starts again within its own limit); each new session resets the counter | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end. The user manager outlives a session, so the session script resets the user units' counters (`systemctl --user reset-failed`) before it starts its target: the limit is for a crash loop within one session. It waits for the session before to have stopped SteamVR first (its compositor crashes on the way out, so that stop can still run when the next session starts); a reset before the end of that stop did not count, and the third session check in five minutes hit the limit. `RestartMode=direct` keeps the unit out of the failed state between restarts |
-
-Every stop of SteamVR ends `vrcompositor` with a segmentation fault in its own shutdown code: a
-virtual call through an object that is already freed (its vtable and the call's target lie in
-freed heap memory). No frame of the display layer or of Turnip is on the stack. The unit does
-not fail, because the compositor is not its main process; systemd-coredump keeps a core of
-5–6 MB per stop, for two weeks and within 1 GB for all core dumps together.
+| [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, after which `pico4-steamvr-failed.service` ends the session (it starts again within its own limit); each new session resets the counter | Valve's unit restarts SteamVR always, and a start takes 15–20 s, so systemd's default limit never applies. Each start resets the controller radio: a compositor that crashed on start buzzed the controllers every few seconds without end. The user manager outlives a session, so the session script resets the user units' counters (`systemctl --user reset-failed`) before it starts its target: the limit is for a crash loop within one session. It first waits until the session before has stopped SteamVR (its compositor crashes on the way out, so that stop can still run when the next session starts); a reset before the end of that stop would not count. `RestartMode=direct` keeps the unit out of the failed state between restarts |
 
 ### The Steam client
 
@@ -193,9 +185,7 @@ session:
   -vrgamepadui` from that folder; its UI is a SteamVR overlay through gamescope.
 - **Update.** The bundle is older than the current client of its beta branch
   (`linux_arm64_beta_…`), so the first start downloads about 650 MB, installs it and restarts
-  (exit status 42). Extraction and the session's start load every core: at full clocks the
-  hottest CPU mean reaches 86–89 °C within 15–35 s, with the big cores at 1.48/1.52 GHz it stays
-  below 90 °C. The update is a one-time cost per client release.
+  (exit status 42). The update is a one-time cost per client release.
 - **Libraries the package does not declare.** The current client needs GTK 2
   (`libgtk-x11-2.0.so.0` for `steamui.so` and `vgui2_s.so`; without it the updated client exits
   with status 255 at once) and IBus (`libibus-1.0.so.5` for `steamwebhelper`). The Frame's
@@ -228,17 +218,8 @@ session:
   cores 3–7, which on the Frame's chip leaves its first cores to the system; on the XR2 core 3
   is a Cortex-A55 (`cpu_capacity` 351, the A77s 871, the prime core 1024), and Beat Saber's
   main thread ran there. The image sets `0xf0`, cores 4–7, the mask PICO OS's VR service gives
-  a VR app's threads (`qvrservice_config.txt`, `performance_thread_attributes`). The same song,
-  the same 15 s window: the game's GPU share 39.1 % against 54.0 %
-  (212.8 against 290.5 batches/s, a third more frames), SteamVR's mean application frame
-  35.8/35.9 ms against 30.8/28.7 ms (CPU/GPU); the compositor took 27 % of the GPU (about
-  3 ms per frame) either way. The GPU then runs 81 % busy at its 587 MHz, often 99 %.
-  KGSL's 670 MHz level is a turbo level on this kernel (`normal_pwrlevel` 1): with
-  `max_pwrlevel` 0 the governor stays at 587 MHz, and with `overclock_mode` 1 as well it
-  chose 670 MHz about 9 % of the time, with no gain (55.2 % GPU share). PICO OS does not use
-  it for VR apps either: only its system optimisation service's benchmark path (`sysoptservice`,
-  called from no code in 5.13.7) sets `overclock_mode`, and an app's GPU levels go through
-  `HmdServiceCore` to the boost framework, which tops out at 587 MHz (`max_pwrlevel` 1).
+  a VR app's threads (`qvrservice_config.txt`, `performance_thread_attributes`). The GPU's top
+  level here is 587 MHz, PICO OS's VR level too: the 670 MHz OPP is not in this speed bin.
 - **Which Proton.** The client takes Valve's recommendation per game (its compat log's "non-user
   mapping"): Proton stable (11.0 ARM64, DXVK 2.7) for Beat Saber and Pools, Proton Experimental
   (ARM64) for others, The Lab among them. Experimental's DXVK 3.1 requires
@@ -290,7 +271,7 @@ semaphores need and the System V semaphores of its process locks.
 
 - **Pacing and compressed scanout.** [`pico4-swapchain-usage`](../src/swapchain/pico4-swapchain-usage.c), an
   implicit Vulkan layer active only in `vrcompositor`, takes away the storage usage the compositor never
-  uses, so that its swapchain images can be compressed, and paces it as the stock path does: four images,
+  uses, so that its swapchain images can be compressed, and paces it: four images,
   one frame ahead (`PICO4_FRAMES_AHEAD`), vblanks signalled 5 ms early (`PICO4_VSYNC_LEAD_US`). It publishes
   the lead in `$XDG_RUNTIME_DIR/pico4-display-lead-us`, and `driver_monado` predicts that much further.
 - **What the check sees on msm.** `msm-frame-stats` also reports the web helpers' share of the GPU in
@@ -309,9 +290,8 @@ semaphores need and the System V semaphores of its process locks.
   before, destroyed the overlay and shut down cleanly. An overlay with a Vulkan image through
   `SetOverlayTexture`, as other overlay applications set theirs, stops cleanly, as does a client
   without an image, so the lens panel's images are Vulkan textures.
-  Long sessions before the panel existed crashed too, on both Mesas, and a stop still crashes with the
-  Steam client, the lens panel and the room view all stopped first, so what leaves that image now is not
-  known; SteamVR's dashboard is untested. It costs a core dump of about 6 MB and no data: `coredump.conf.d/50-pico4-limit.conf` keeps all core
+  A stop still crashes with the Steam client, the lens panel and the room view all stopped first, so
+  what leaves that image is not known; SteamVR's dashboard is untested. It costs a core dump of about 6 MB and no data: `coredump.conf.d/50-pico4-limit.conf` keeps all core
   dumps within 1 GB, removing the oldest, and Valve's health check reads `steamvr.service`'s result, which stays clean. Whether other SteamVR installations do this is not known.
 
 ### SteamVR configuration
@@ -409,7 +389,7 @@ reads for `pico_controller`. Without it the controllers stay at the origin, with
 
 ### Performance and heat
 
-Measured results are in [kernel-feasibility.md](kernel-feasibility.md#results) and
+Measured results are in [kernel.md](kernel.md#results) and
 [cooling.md](cooling.md); what is open is in [Open work](roadmap.md#open-work).
 
 ### Steam Link
@@ -421,12 +401,12 @@ SteamVR. The PC's `driver_vrlink` knows the client by the model "PICO 4" (its PI
 
 - **Finding it.** `vrlink` asks `vrdevice_path video_decode`; the image's
   [`vrdevice_path`](../userspace/rootfs/usr/local/bin/vrdevice_path) answers with the
-  `qcom,vidc` node whose card is `msm_vidc_vdec` (or `msm_vidc_venc`). It opens only those
-  nodes: the Frame's `v4l2-ctl --list-devices` opens every video node, the cameras' too, which
+  node of the codec's device (`aa00000.video-codec`) whose card is `Qualcomm Venus video decoder`
+  (or `Qualcomm Venus video encoder`). It opens only those nodes: the Frame's `v4l2-ctl --list-devices` opens every video node, the cameras' too, which
   stops head tracking. `steam-video-codec-setup.service` links `/dev/video-dec0` and
   `/dev/video-enc0` after the codec is probed.
 - **The decoder.** The decoder is mainline's Venus (`qcom-venus-decoder`), whose API is the
-  one `vrlink` is written for: the translation above stays unattached. `vrlink` picks its picture
+  one `vrlink` is written for. `vrlink` picks its picture
   format from what the driver reports after the source change: `QC10C` for `P010` (the PC sends
   Main10), `QC08C` otherwise. It builds a `DRM_FORMAT_MOD_QCOM_COMPRESSED` image from the reported
   pitch and its own offset of the second plane, and queues the image's dma-buf with the reported
@@ -462,11 +442,9 @@ SteamVR. The PC's `driver_vrlink` knows the client by the model "PICO 4" (its PI
 | Check | Result |
 | --- | --- |
 | Headset, Valve's kernel: `vrlink`'s path without the PC (Venus decodes into dma-bufs of images built as `vrlink` builds them, a compute shader samples them through a YCbCr sampler) | 8-bit and Main10 at 1280×5120: the image and the reported size match (9,891,840 and 13,885,440 bytes), the sampled picture is identical to FFmpeg's decode of the same frame; 8-bit 1536×6144: the sizes match (14,229,504 bytes) |
-| Headset: the decoder through the layer, driven as `vrlink` drives it (NVENC HEVC test streams at 90 fps, Vulkan pictures as `vrlink` creates them) | steady 1280×5120, a reset, a size increase, a size decrease and a decrease with a reset: 268–269 of 270 pictures each at 90 fps, Venus stays up |
-| Headset: a decoded picture through the GPU (`vrlink`'s explicit `QCOM_COMPRESSED` import, copied to linear NV12) | identical to FFmpeg's decode of the same frame, also after a size decrease; Turnip sizes the image as Venus does (9,891,840 bytes at 1280×5120) |
 | Headset, Valve's kernel: the decoder with frames before the first key frame (4, 12 and 40, Main10 at 1280×5120) | first picture 160, 261 and 438 ms after the decoder's start, no errors; without patch 0028 no picture within 5 s |
 | Headset, Valve's kernel: Steam Link from a PC (POOLS on an NVIDIA GPU, 1280×5120 Main10 over Wi-Fi), worn | picture, audio, head tracking and controllers work, by the wearer's report; about 22 minutes at 90 frames/s in one run |
-| The picture's start | about 8 s after `vrlink`'s start and 3 s after the PC's first frame, with 3 decoder restarts (without patch 0028: 18 and about 100 s) |
+| The picture's start | about 12 s after `vrlink`'s start, with a decoder reset right at the first video |
 | Frame times in a run of POOLS | from the game's frame start to illumination 73 ms (median; 67–78 ms, 5th to 95th percentile); of it encode 11–22 ms, send to receive 4 ms, decode 6 ms, decode end to illumination 30 ms. While the PC's encoder takes 22 ms the stream runs at about 67 frames/s, with 11 ms at 90 |
 
 ## Build
@@ -482,7 +460,7 @@ The session's parts are packages of the userspace archive, which `scripts/build-
 | `deckard-steamvr-rel`, `deckard-steamvr-session` | the Frame's repository | SteamVR in `/opt/steamvr`; the session's scripts and user units |
 
 The overlay in [userspace/rootfs](../userspace/rootfs) adds the units and drop-ins, the PAM
-stack, the udev rules, `/etc/ld.so.preload`, the session script and
+stack, the udev rules, the session script and
 `pico4-valve-session-check`; [userspace/session](../userspace/session) holds the session user's
 SteamVR files.
 
@@ -516,46 +494,44 @@ runs Valve's session for a bounded time and returns to the configured one:
 1. It saves `session.conf`, stops the Monado service, records the hottest thermal zone (the
    highest reading below 200 °C), selects `gamescope-session.target` and restarts
    `pico4-session.service`. SteamVR's old logs are removed.
-2. It waits up to 180 s for the compositor's "Startup Complete" and the layer's first
-   statistics (ten seconds of frames). As soon as `vrserver` answers, it sets
+2. It waits up to 180 s for the compositor's "Startup Complete". As soon as `vrserver` answers, it sets
    `power.turnOffScreensTimeout` to an hour (`vrcmd`): the headset lies still and off the head,
    so SteamVR would enter standby after 5 s and pause the compositor (the Frame's
    `pauseCompositorOnStandby`), leaving no frames to measure. SteamVR's startup still stalls the compositor a few
-   times while the dashboard starts, so the measured window begins with the first statistics
-   update (every ten seconds) that adds no stall, or after 60 s (`settle_seconds`). The
-   session then runs for SECONDS (default 30).
+   times while the dashboard starts, so it waits 20 s (`settle_seconds`), then `msm-frame-stats`
+   records SECONDS (default 30) of the kernel's flip, vblank and GPU job events.
 3. It checks that `gamescope-session.target`, `steamvr.service` and `gamescope-session.service`
    are active, that the compositor started without an assertion and gamescope connected to it,
-   that the layer wrote statistics, and that SteamVR reports the headset and both controllers
+   that `msm-frame-stats` recorded the frames, and that SteamVR reports the headset and both controllers
    (`vrcmd --pollposes`).
 4. It sets the standby timeout back to SteamVR's 5 s, restores the configured session and checks
    that `pico4-session.service` is active again.
 
 It prints one JSON object (schema 1): status and errors, the startup time, the units' states,
 what the compositor's log shows (startup, gamescope's connection, assertions, failed present
-waits), the layer's statistics, each device's position (m) and rotation (rad), and the hottest
+waits), the frame statistics (`frames`, from `msm-frame-stats`), each device's position (m) and rotation (rad), and the hottest
 zone and the fan daemon's state (`pico4-fan state`, [cooling.md](cooling.md#checks)) before
 and after. Its `status` is the integration verdict, and the exit status is 0 only if that
 passed.
 
 `performance` is a verdict of its own, from
 [`session-performance`](../userspace/rootfs/usr/libexec/pico4-poc/session-performance). It
-compares the layer's statistics at the start of the measured window with those at the end, so
-SteamVR's startup stays out of it, and holds the window to these limits:
+judges `msm-frame-stats`' recording of the measured window, so SteamVR's startup stays out of it,
+and holds the window to these limits:
 
 | Measure | Limit |
 | --- | --- |
 | commits per second | at least 85.5 (95 % of 90 Hz) |
 | late commits (more than 1.5 refreshes after the one before) | at most 1 % |
-| stalls (gaps between commits above 100 ms, the layer's `stalls`) | none |
-| SteamVR's present waits that ran out (`present_wait_timeouts`) | none |
+| stalls (gaps between commits above 100 ms, the recording's `stalls`) | none |
+| compositor's job margin before its vblank, p99 | at least 1 ms |
 | hottest thermal zone at the end of the run | at most 90 °C, the agreed limit ([cooling.md](cooling.md)) |
 
-It also reports the window's length and mean GPU wait per frame, the session's longest gap, and
-the stalls during startup (`startup`), which no limit covers. On the host,
-`validate_valve_session` in [tooling/userspace.py](../tooling/userspace.py) also requires at least
-36 commits/s over the whole session, vblanks within 1 % of 90 Hz, no retire or GPU timeouts, a
-scanned-out image that is not black, finite poses for the three devices, a position for each
+It also reports the window's length, the GPU's time per job (`gpu_ms`), the job margin, the web
+helpers' GPU share and the longest gap. On the host,
+`validate_valve_session` in [tooling/userspace.py](../tooling/userspace.py) also requires
+frames from msm's events (`target` msm), at least 36 commits/s, vblanks within 1 % of 90 Hz, finite
+poses for the three devices, a position for each
 controller, the fan record (a state or null, before and after), and a passed performance
 verdict. The runner prints both verdicts.
 
@@ -575,7 +551,7 @@ client have exited) and run Valve's session when the archive's manifest lists
 
 ## Verified results
 
-Current results are in [kernel-feasibility.md](kernel-feasibility.md#results).
+Current results are in [kernel.md](kernel.md#results).
 
 | Check | Result |
 | --- | --- |

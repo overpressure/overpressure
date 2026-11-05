@@ -102,7 +102,7 @@ deckard-arch-hotfixes-release-0.3/libibus
 deckard-arch-hotfixes-release-0.3/ibus
 # The client polls processes with lsof.
 lsof
-# Android games through Valve's Lepton, as on the Frame (docs/kernel-feasibility.md): rootless
+# Android games through Valve's Lepton, as on the Frame (docs/kernel.md): rootless
 # podman (user, PID, UTS and IPC namespaces, binderfs, which a mainline kernel has) with the
 # Frame's passt, Lepton's compatibility files, Valve's Android Mesa (Turnip on msm), the Android
 # and Linux Vulkan layers whose manifests Lepton names, adb, with which it installs and starts the

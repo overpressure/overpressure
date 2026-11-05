@@ -6,7 +6,7 @@
  * The A650 cannot compress storage images, so Mesa's display WSI would scan out uncompressed
  * images, which costs the compositor about 5 ms of GPU time per frame: 60-66 frames per second
  * instead of 90. Without that usage it resolves straight into compressed scanout images, with
- * Valve's Mesa as it is (docs/kernel-feasibility.md). Every other process passes through, and so
+ * Valve's Mesa as it is (docs/kernel.md). Every other process passes through, and so
  * does the stock kernel, whose Turnip does the same with a driconf option.
  *
  * It also paces the compositor one frame ahead, as the stock path paces it

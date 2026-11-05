@@ -17,7 +17,7 @@ tooling/          the PICO 4's host tooling (Python standard library): python -m
   image.py          stage-1 boot image (build, inspect, match) on overpressure/stage1.py; firmware.json: PICO's OTA builds
   stock.py          the members of PICO's full OTA the extraction needs (overpressure/ota.py)
   device.py         identity, EDL backups, engineering ABL, unlock and restore
-  hardware_test.py  the bounded acceptance runner (preflight, run, flash-run)
+  hardware_test.py  the bounded acceptance runner (preflight, flash-run)
   cycle.py          the unattended acceptance cycle that ends on stock boot and ABL
   devloop.py        the development loop on the flashed dev image
   ramboot.py        the target of overpressure's RAM boot (the engineering ABL refuses fastboot boot)
@@ -32,7 +32,7 @@ userspace/        stage 2: the SteamOS-compatible userspace
   pkgbuilds/        the project's packages: pico4-sensors, pico4-basalt, pico4-monado, pico4-gamescope,
                     pico4-vrlink, pico4-swapchain-usage, pico4-gtk2 and others
 kernel/           Valve's kernel: build-kernel.sh, patches/, the PICO's drivers, the device tree
-src/              C sources: graphics/ (Vulkan and KMS tests), monado/ (Monado's PICO 4 driver),
+src/              C sources: graphics/ (the Vulkan test), monado/ (Monado's PICO 4 driver),
                   stockslam/ (pico4-slamd), vrlink/ (Steam Link), xr/ (OpenXR test clients), swapchain/ (frame pacing),
                   reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
@@ -69,7 +69,7 @@ adb, fastboot, edl-ng and (Windows) the NCM venv, and the build container
 | Stage-1 image, host tests, headset commands | Python 3.9+ on Windows, Linux or macOS; Android platform-tools and OpenSSH for the headset |
 | Userspace archive, QEMU tests | Linux or WSL2 as root: curl, tar, zstd, python3, chroot, overlayfs |
 | on x86-64 hosts additionally | an aarch64 binfmt handler with the F flag (qemu-user-static) and LLVM: `apt install clang-20 lld-20` |
-| Windows NCM initialization | UsbDk and a Python with the `windows-ncm` extra: `pip install "pyusb==1.3.1" "libusb-package==1.0.30.0"` |
+| Windows NCM initialization | UsbDk and the NCM venv: `python -m overpressure tools ncm-venv` |
 
 The userspace build runs unchanged on an arm64 Linux host. There the build environment runs
 natively, without binfmt or LLVM.
@@ -103,8 +103,8 @@ LLVM's archiver in every build system).
 
 ## Stock firmware
 
-The image needs PICO OS's firmware, drivers and data files (DSP images, signed kernel modules,
-the head tracker, configuration). They are the same on every PICO 4 with that firmware and
+The image needs PICO OS's firmware and data files (DSP images, the head tracker,
+configuration). They are the same on every PICO 4 with that firmware and
 come from PICO's public full OTA, not from the user's backup:
 
 ```sh
@@ -130,8 +130,8 @@ proprietary: keep the stock directory and `assets/` private.
 | --- | --- | --- |
 | GPU firmware `a650_*` | extract-graphics-firmware.sh | vendor `/firmware` |
 | SLPI image, sensor configuration, lens configuration, controller models and data | extract-sensor-data.sh | modem, vendor, system |
-| Wi-Fi driver module, chip firmware and board data, driver configuration | extract-wlan.sh | vendor, modem |
-| Audio modules, ADSP image, audio process files, calibration database | extract-audio.sh | vendor, modem |
+| Wi-Fi chip firmware and board data, driver configuration | extract-wlan.sh | vendor, modem |
+| ADSP image, audio process files and DSP libraries, calibration database | extract-audio.sh | vendor, modem |
 | Compute DSP image, the tracker's bionic root, DSP modules and process shells | extract-stock-slam.sh | modem, system, vendor, dsp |
 
 For 5.13.7 every file these scripts take is byte-identical to the same file in an EDL backup of
@@ -156,8 +156,8 @@ devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/us
 | --- | --- |
 | `--gpu-firmware DIR` | `a650_*` GPU firmware from `scripts/extract-graphics-firmware.sh`; without it Vulkan cannot start |
 | `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data from `scripts/extract-sensor-data.sh` |
-| `--wlan DIR` | Wi-Fi driver module, firmware and configuration from `scripts/extract-wlan.sh` |
-| `--audio DIR` | audio modules, ADSP firmware and the audio process's files from `scripts/extract-audio.sh` |
+| `--wlan DIR` | Wi-Fi firmware and configuration from `scripts/extract-wlan.sh` |
+| `--audio DIR` | ADSP firmware and the audio process's files from `scripts/extract-audio.sh` |
 | `--stock-slam DIR` | PICO OS's head tracker, the Compute DSP's firmware and the tracker's bionic root from `scripts/extract-stock-slam.sh` ([xr.md](xr.md#head-tracking)); needs the host's clang |
 | `--refresh` | download current package databases and reinstall the base root |
 | `--clean` | rebuild the project packages from scratch |
@@ -165,7 +165,7 @@ devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/us
 
 Each step is skipped when its inputs did not change:
 
-1. **Snapshot.** The script copies its inputs (`pico4/`, `src/`, `userspace/`, the shared stage-1
+1. **Snapshot.** The script copies its inputs (`overpressure/`, `src/`, `userspace/`, the shared stage-1
    scripts, `prebuilt/`) into the build root first, so the tree can be edited during a build.
 2. **Build environment.** Valve's Holo Core aarch64 preview root file system, pinned by SHA-256,
    unpacked once. Package databases are downloaded by the first build and with `--refresh`
@@ -186,7 +186,7 @@ Each step is skipped when its inputs did not change:
 6. **Archive.** `pico4-userspace.tar.zst` (zstd level 12, multithreaded) and
    `pico4-userspace.manifest.json` with the sources, hashes and installed package versions.
 
-Times on the same host, for an archive of about 800 MB:
+Times on the same host, measured with an archive of about 800 MB:
 
 | Change | Build time |
 | --- | --- |
@@ -195,7 +195,7 @@ Times on the same host, for an archive of about 800 MB:
 | the package list or `pacman.conf` (new base root, packages reused) | 2 min |
 | everything: `--clean` packages and a new base root | about 16 min |
 
-Writing the archive takes about 25 s of every build (tar, zstd and the copy to the output
+Writing that archive took about 25 s of each (tar, zstd and the copy to the output
 directory). Package builds keep emulated overhead outside the compiler: makepkg's stripping,
 debug packages and compression take about a minute for Monado.
 
@@ -207,10 +207,10 @@ debug packages and compression take about a minute for Monado.
 | Stage-1 recovery policy | `bash devices/phoenix/tests/test_recovery_policy.sh` | seconds |
 | Stage-1 charger mode | `sh devices/phoenix/tests/test_charger.sh` | seconds |
 | Both of the above | `make test` | seconds |
-| On the headset: the integration test | `python -m overpressure dev boot` and `dev check`, in development mode | minutes; [hardware-testing.md](hardware-testing.md) |
+| On the headset: the integration test | `python -m overpressure dev install` and `dev check`, on the installed system | minutes; [hardware-testing.md](hardware-testing.md) |
 | Optional: stage 1 on a QEMU test kernel | `devices/phoenix/tests/qemu/run-selftest.sh` (`make qemu-stage1`) | about 3 min |
 
-The headset is the integration test: the development loop boots a new archive on the real
+The headset is the integration test: the development loop installs a new system image on Valve's
 kernel and runs the acceptance checks in minutes. The QEMU test covers stage 1 without a headset
 (its test kernel comes from `tests/qemu/build-test-kernel.sh`).
 
@@ -221,24 +221,25 @@ package builds, because makepkg runs with `--nocheck`.
 
 ## From a change to the headset
 
-The headset stays in development mode, with the engineering ABL, the dev image in `recovery` and
-the installed system in `boot`
-([hardware-testing.md](hardware-testing.md#development-mode)):
+The headset stays in development mode, with the engineering ABL, the dev image in `recovery` on
+the stock kernel and the installed system on Valve's kernel in `boot`, `super` and `userdata`
+([hardware-testing.md](hardware-testing.md#development-mode), [install.md](install.md)):
 
 1. Change the code, then build: `make userspace` (or the script above), incremental.
-2. `python -m overpressure dev reboot`, `python -m overpressure dev boot`, `python -m overpressure dev check`.
+2. `devices/phoenix/scripts/build-system-image.sh` (as root).
+3. `python -m overpressure dev recovery` (it stays until `dev normal`), then
+   `python -m overpressure dev install`, which starts the installed system.
+4. `python -m overpressure dev check`; `python -m overpressure dev installed` reconnects to the
+   system after a reboot.
 
-A changed stage-1 image is built with `python -m overpressure build` and written with
-`python -m overpressure dev image` and `python -m overpressure dev flash`; `dev connect` then takes the place of
-`dev reboot`. A task ends with the headset still in development mode. Returning it to stock is a
-separate step, for when PICO OS is needed
+The session runs only on Valve's kernel, so `dev boot` and `dev check` from the maintenance stage 1
+need a recovery image with Valve's kernel (`kernel/recovery_image.py`). A changed stage-1 image is
+built with `python -m overpressure build` and written with `python -m overpressure dev image` and
+`python -m overpressure dev flash recovery`; the installed boot image takes it through
+`recovery_image.py` and `dev install --boot PATH`
+([install.md](install.md#install-and-update)). A task ends with the headset still in development
+mode. Returning it to stock is a separate step, for when PICO OS is needed
 ([hardware-testing.md](hardware-testing.md#back-to-stock)).
-
-With the system installed ([install.md](install.md)), the dev image lives in `recovery` as the
-maintenance stage 1: `python -m overpressure dev recovery` enters it (and it stays until `dev normal`),
-where `dev boot`, `dev reboot` and `dev check` work as above. A new system image goes in with
-`scripts/build-system-image.sh` (as root) and `python -m overpressure dev install`, which starts the
-installed system; `python -m overpressure dev installed` reconnects to it after a reboot.
 
 ### Power while tethered
 

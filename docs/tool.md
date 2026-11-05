@@ -65,15 +65,13 @@ python -m overpressure gui
 
 - **Headset**: the headsets in `devices/`; their steps fill the list on the left, below
   *Check dependencies* ([above](#dependencies)).
-- **Steps**, in two groups: *Image* (building the images) and *Headset* (flashing, connecting,
-  checking, the way back). Selecting a step shows what it does, its parameters and the command
+- **Steps**, in three groups: *Setup* (the dependency checks, the host tools), *Image* (building
+  the images) and *Headset* (flashing, connecting, checking, the way back). Selecting a step shows what it does, its parameters and the command
   line it will run, which updates as the parameters change. *Copy command* puts it on the
   clipboard.
 - **Run** starts the step; its output goes to the log below and the status line shows how it
   ended. One step runs at a time: builds share their caches. *Stop* ends the running step.
 - A step that writes to the headset says so and asks before it starts.
-- Steps that need Linux as root (the userspace build mounts and chroots) run through WSL as root
-  on Windows and through `sudo` on Linux.
 
 Without a display (`tkinter` missing or no window system, as in WSL), the command line does
 everything the window does.

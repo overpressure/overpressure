@@ -8,7 +8,7 @@ module vendor 9): the kernel log for the WLAN files, the files a tracker start o
 is not listed: the image links it from the headset's own `persist` partition at boot
 ([userspace.md](userspace.md#the-headsets-own-data)).
 
-Classes: **signed** (firmware or kernel modules the stock kernel or a DSP verifies: they stay),
+Classes: **signed** (firmware or images that TrustZone, a DSP or the ABL verifies: they stay),
 **free** (free software can replace it), **data** (configuration or models that could be
 generated or shipped differently), **reimplementation** (a program whose behaviour would have to
 be reimplemented).
@@ -24,9 +24,8 @@ be reimplemented).
 | ADSP image and PD maps | modem `/image`: adsp.mdt, adsp.b00–.b18, adspr.jsn, adspua.jsn | `extract-audio.sh` | the ADSP | signed |
 | Audio PD libraries | vendor `/etc/acdbdata/adsp_avs_config.acdb`; `/lib/rfsa/adsp`: capi_v2_ailab_ecns, two aptX codecs, capi_v2_effectcpp, libapps_mem_heap, libc++.so.1, libc++abi.so.1, sami_audio_config.json | `extract-audio.sh` | the ADSP's audio PD | signed DSP code; which modules load is not measured |
 | Audio calibration | vendor `acdbdata/wsa8810/base/MTP`: Global, Handset, Speaker `_cal.acdb` | `extract-audio.sh` | `pico4-audiocal` | data |
-| WLAN firmware, board data, configuration | modem `/image/qca6390`: amss20.bin, m3.bin, 26 bdwlan.eNN, bdwlan/bdwlann/bdwlanq.elf; vendor WCNSS_qcom_cfg.ini | `extract-wlan.sh` | the QCA6390, qcacld | firmware signed; the board files data: this headset loads bdwlanq.elf (and asks for qca6390/regdb.bin, which PICO OS does not have either); the ini data |
+| WLAN firmware, board data, configuration | modem `/image/qca6390`: amss20.bin, m3.bin, 26 bdwlan.eNN, bdwlan/bdwlann/bdwlanq.elf; vendor WCNSS_qcom_cfg.ini | `extract-wlan.sh` | the QCA6390, ath11k | firmware signed; the board files data: this headset loads bdwlanq.elf as ath11k's `board.bin`; the ini is qcacld's, and nothing reads it |
 | CDSP image and PD map | modem `/image`: cdsp.mdt, cdsp.b00–.b11, cdspr.jsn | `extract-stock-slam.sh` | the CDSP | signed |
-| CVP image | modem `/image`: cvpss.mdt and parts | `extract-stock-slam.sh` | the CVP (the see-through's depth mesh) | signed |
 | CDSP process shells and libraries | dsp `/cdsp` (30 files: fastrpc_shell_3, fastrpc_shell_unsigned_3, libc++.so.1, libc++abi.so.1, sysmon, vpp, nn, dsp_streamer, hta, hcp, ubwcdma skels, map_SHARED_LIBS) | `extract-stock-slam.sh` | the CDSP's user PDs | signed; a tracker start opens only fastrpc_shell_3 |
 | CDSP root listener | vendor `/bin/cdsprpcd`, `/lib64/libcdsp_default_listener.so`, libcdsprpc.so | `extract-stock-slam.sh` | `pico4-cdsprpcd.service` | reimplementation (a FastRPC listener) |
 | Bionic runtime | system `/system/bin/bootstrap/linker64`, `/system/lib64/bootstrap`: libc, libm, libdl; `/system/lib64`: ld-android, libc++, liblog, libcutils, libbase, libion | `extract-stock-slam.sh` | `pico4-slamd`'s root | free (another bionic: an NDK or AOSP build) |
@@ -36,11 +35,11 @@ be reimplemented).
 | Tracker configuration | system `/system/etc/pvr/config`: config_3dof.yaml, config_exposure, config_gamma, config_gma8, config_gma10, config_head, config_lscLH/SY/neo3, config_marker.yaml, config_pico.yaml, config_reloc, selfcali.yaml, mask/cam0–3/mask.yaml | `extract-stock-slam.sh` | libSlam, `pico4-slamd` (lens shading, gamma), the auto exposure | data; a tracker start opens config_3dof, exposure, gma10, head, lscLH (the lens shading of camera vendor 9; lscSY and lscneo3 are the other vendors'), marker, pico, reloc, selfcali and the four masks |
 | Lens configuration | system `/system/etc/pxrconfig/config/SDK_Lens_ConfigFile.txt` | `extract-sensor-data.sh` | the driver (chromatic aberration) | data |
 | Controller render models | system `/system/pre_resource/data/misc/user/controller/Neo3Phx` (left/right .obj, .mtl, .png, .json) | `extract-sensor-data.sh` | SteamVR | data |
-| Controller LED models, aim-to-grip pose, lever arm | values read from libpico_controller_tracking.pxr.so, libpvrtrackingservice.so, libpico_controller_tracking.client.so | `extract-sensor-data.sh` (`tooling/ledmodel.py`, `leverarm.py`) | controller tracking, aim and grip poses | data (values, not files) |
+| Controller LED models, aim-to-grip pose, lever arm | values read from libpico_controller_tracking.pxr.so, libpvrtrackingservice.so, libpico_controller_tracking.client.so | `extract-sensor-data.sh` (`tooling/ledmodel.py`, `aimgrip.py`, `leverarm.py`) | controller tracking, aim and grip poses | data (values, not files) |
 
 Not taken from the stock image: the station, the IMU's SSC client, the fan, the IPD motor, the
 lens distortion, the wear sensor, the camera OTP reader, the power key, the VR CPU limits, the
 audio calibration loader, the image processing (`isp.h`), `pico4-slamd` and the Steam Link
-decoder layer are this project's own implementations; hexagonrpcd comes
+controller library (`pico4-vrlink`) are this project's own implementations; hexagonrpcd comes
 from linux-msm; the engineering ABL and the Firehose loader come
 from public Neo3 packages; Valve's packages are not from the stock image.

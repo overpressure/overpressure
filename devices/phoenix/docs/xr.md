@@ -1,7 +1,7 @@
 # Native XR hardware (roadmap step 5)
 
-The PICO 4's XR hardware under Linux, on Valve's kernel ([kernel-feasibility.md](kernel-feasibility.md));
-sections on the stock kernel's path, no longer pursued, say so. The head IMU streams through the
+The PICO 4's XR hardware under Linux, on Valve's kernel ([kernel.md](kernel.md)).
+The head IMU streams through the
 sensor DSP. Monado with this project's `pico4` driver runs inside SteamVR and gives it the head pose
 (6DoF from PICO OS's `libSlam` on the CDSP through `pico4-slamd`, with Basalt selectable), the
 factory lens model and the IPD read from the lens motor, and provides both
@@ -11,7 +11,7 @@ uses the same driver through `driver_monado`. The inventory comes from the stock
 device tree and from read-only `adb shell` observation of PICO OS; no vendor files are part of
 this repository.
 
-Code: the driver and the KMS compositor target in [src/monado/](../src/monado), the Monado
+Code: the driver in [src/monado/](../src/monado), the Monado
 recipe and patches in [userspace/pkgbuilds/pico4-monado/](../userspace/pkgbuilds/pico4-monado),
 the sensor daemons in [userspace/pkgbuilds/pico4-sensors/](../userspace/pkgbuilds/pico4-sensors),
 the OpenXR test clients and `pico4-cam` in [src/xr/](../src/xr), and the Python tools
@@ -20,10 +20,9 @@ the OpenXR test clients and `pico4-cam` in [src/xr/](../src/xr), and the Python 
 
 > **Rules for this hardware**
 >
-> - **SLPI restart level.** Set the SLPI subsystem's `restart_level` to `RELATED` before the
->   sensor DSP boots or restarts; [`slpi-boot`](../userspace/rootfs/usr/libexec/pico4-poc/slpi-boot)
->   does this. With the kernel default `SYSTEM`, any DSP crash or restart request reboots the
->   whole headset.
+> - **DSP recovery.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4-poc/remoteproc-boot)
+>   starts a DSP only with remoteproc's crash recovery on: a crash then restarts only that DSP; with
+>   recovery off it would stay down.
 > - **No firmware commands.** The station link (`/dev/spidev0.0`) also carries station and
 >   controller firmware updates (OTA), and the GD32 MCU (`/dev/ttyHS1`) also takes motor moves,
 >   calibration writes and firmware. Never send such commands. The station modules, the IPD
@@ -116,7 +115,7 @@ Behaviour of the DSP:
 | Unit (all in `pico4-sensors.target`) | Runs |
 | --- | --- |
 | `pico4-slpi.service` | `remoteproc-boot slpi` |
-| `pico4-sensorspd.service` | `hexagonrpcd -f /dev/fastrpc-sdsp -d sdsp -s -R /usr/share/qcom/pico4`, once udev has created the node (no devtmpfs); restarted whenever it ends, because it ends successfully when the DSP restarts and the restarted DSP needs it again |
+| `pico4-sensorspd.service` | `sensorspd`: `hexagonrpcd -f /dev/fastrpc-sdsp -d sdsp -s -R` on a runtime copy of `/usr/share/qcom/pico4` with the stock kernel's socinfo names, once udev has created the node (no devtmpfs); restarted whenever it ends, because it ends successfully when the DSP restarts and the restarted DSP needs it again |
 | `pico4-imu-ready.service` | `pico4-imu wait`: until the sensor service lists the accelerometer and gyroscope, at most 120 s; the target is reached after it |
 
 The DSP loads its sensor registry for about 35 s after it boots, and until then the sensor
@@ -140,7 +139,8 @@ with a userspace built with sensor data. Elsewhere (QEMU) their conditions skip 
 `pico4-monado` builds Monado 25.1.0 (pinned by commit) with the `pico4` driver from
 [src/monado/](../src/monado).
 [monado-pico4-driver.patch](../userspace/pkgbuilds/pico4-monado/monado-pico4-driver.patch)
-registers the driver and the KMS target and carries the compositor changes described below.
+registers the driver and carries Monado's compositor change: scratch images without the storage
+usage unless the compute path runs.
 Only the `pico4` driver and Monado's simulated HMD (headless fallback) are built. The package
 makes Monado the system's active runtime (`/etc/openxr/1/active_runtime.json`) and builds it as a
 service: `monado-service` owns the hardware, and the OpenXR runtime library is its IPC client.
@@ -152,7 +152,7 @@ The HMD ([pico4_hmd.c](../src/monado/pico4_hmd.c)):
   client, limited to service lookup, sensor lookup, enable/disable and sensor events. Its unit
   test checks the encoder byte for byte against messages produced by the hardware-verified
   Python client.
-- **Auto-probing.** The prober creates the HMD only where `/sys/kernel/boot_slpi` exists and the
+- **Auto-probing.** The prober creates the HMD only where a remoteproc named `slpi` exists and the
   SNS client service answers; sensor lookups are retried (five attempts of 3 s) while the DSP
   starts. Elsewhere Monado continues without the driver: QEMU, other kernels, or a userspace
   built without sensor data.
@@ -268,7 +268,7 @@ moves whole frames on the station's interrupt, so userspace only `write()`s, `se
   station streams them to the sensor DSP, where the SLPI firmware exposes them as the SSC sensor
   `ble_mcu`. The driver enables that sensor through the same client as the head IMU. SPI is
   only the control plane.
-- **Bring-up.** The vendor spidev's power ioctl (`_IOW('k', 9, int)`, `0x80046B09`; 1 on, 0 off)
+- **Bring-up.** The `station-power` regulator output's sysfs state (`enabled`, `disabled`)
   power-cycles the station: off, 100 ms, on. The station announces itself (`A5 06`: protocol,
   radio type) within 3 s and waits for the camera frame rate (command `19`, payload `01 00 01`:
   50 Hz as stock, device type 0) before it accepts camera commands. The controllers reconnect on
@@ -286,12 +286,10 @@ moves whole frames on the station's interrupt, so userspace only `write()`s, `se
   tried). After hours without a link they connect only after a button press. The time between is not
   measured.
 - **Firmware.** The station reports firmware 2.96, the version PICO OS ships.
-- **Mainline kernels.** Without the vendor spidev the bus is a plain spidev, whose every transfer
-  is full duplex: commands go out as transfers, zeros (no header, which the station ignores) ask
-  for the station's next frame, polled every 2 ms. The station returns its last frame on every
-  transfer until it has another, so only a frame that differs from the last is new. Its supply
-  is the `station-power` regulator output's sysfs state (`enabled`, `disabled`) in place of the
-  power ioctl. Both station modules pick this on their own where that switch exists.
+- **The spidev.** The bus is a plain spidev, whose every transfer is full duplex: commands go out
+  as transfers, zeros (no header, which the station ignores) ask for the station's next frame,
+  polled every 2 ms. The station returns its last frame on every transfer until it has another, so
+  only a frame that differs from the last is new.
 
 The same link carries station and controller firmware updates. The C module
 ([pico4_station.c](../src/monado/pico4_station.c)) and the `pico4-station` tool therefore build
@@ -341,7 +339,7 @@ as PICO OS's station service reads it:
 ## Tracking cameras
 
 The four OV7251s (640×480 mono, global shutter, RAW10) run on V4L2 through CAMSS
-([pico4_cam.c](../src/monado/pico4_cam.c), [kernel-feasibility.md](kernel-feasibility.md#results)): media
+([pico4_cam.c](../src/monado/pico4_cam.c), [kernel.md](kernel.md#results)): media
 links and formats per slot (CSIPHY, CSID, VFE RDI, 640×481 Y10), multi-planar buffers in a ring, Y10P
 unpacked to 16 bits. A frame's time comes from its buffer (the CSID's hardware start of frame); the
 QTimer time follows from an offset measured once a second. The sensors' control port belongs to the
@@ -375,7 +373,7 @@ station, which configures them over its own I2C and sends the frame sync:
   last frame is over 500 ms old, it has fewer than 80 % of its expected frames in a 2 s window,
   or 61 late frames in that window (checked every 100 ms). One restart runs at a time, and after
   6 failed ones it reports the system as irreparable. The driver keeps its own coarser triggers
-  and 5 s limit; with them it recovers within 1–2 s, and leaving a game no longer drops tracking.
+  and 5 s limit; with them it recovers within 1–2 s, and leaving a game keeps tracking.
 
 [`pico4-cam`](../src/xr/pico4-cam.c) tests the cameras on their own:
 
@@ -397,9 +395,9 @@ compositor's `set_camera_roomview_enabled`). How the Frame provides one:
   XR service captures the passthrough cameras for it. The Frame's settings turn the camera and
   the compositor's room view on (`camera.enableCamera`, `roomView`, `enableCompositorRoomView`).
 - **Not passthrough.** `steamvr-v4l2cam` copies SteamVR's view out to a V4L2 loopback device (a
-  virtual webcam); it stays masked, and the stock kernel has no `v4l2loopback`.
+  virtual webcam); it stays masked, as does `steamvr-v4l2loopback`.
 - **Signing in.** The Steam client's VR sign-in does not use the cameras: it offers "Mobile App -
-  Tap to confirm" (Bluetooth LE, which the stock kernel's Bluetooth stack does not serve), "Mobile
+  Tap to confirm" (Bluetooth LE), "Mobile
   App - Scan QR code" (the QR code is shown in the headset and the phone scans it) and the
   password.
 
@@ -450,8 +448,8 @@ station keep a single owner:
   - a meshData block: u64 `/meshData/meshId` and `layoutId` (the layout's), int32 `elementCount`
     (three per vertex), `rawFromMeshPose` (`HmdMatrix34`) and double `posePredictionBaseTime`
     (on the frames' clock); the buffer holds the vertices as float x, y, z.
-  A geometric stand-in (a sphere around the head) was worse than no mesh when worn: head
-  movements were over-corrected. The mesh has to be the measured room, as on the Frame.
+  A geometric stand-in (a sphere around the head) is worse than no mesh when worn: head
+  movements are over-corrected. The mesh has to be the measured room, as on the Frame.
 - **PICO OS's see-through.** On the PICO 4, `pxrseethroughservice` feeds `libphotoid.so` each
   pair of the grey forward cameras with the tracker's result at the pair's time, and the
   tracker's map points while it tracks. Its pipeline (`vst_releaseA`, the only one it loads)
@@ -566,10 +564,7 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
     in view, instead of 10–25 m.
 - **Timing.** Worn, with turns up to 137°/s: 25 frames per second, 40 ms apart, every one with a
   head pose; a frame reaches the ring 27–45 ms after the middle of its exposure (16–63 ms at the
-  extremes), so it is shown about 40–80 ms after it. Its rotation is as timely as the virtual
-  world's: against the vblank that starts scanout, the image's shift rate follows the head's yaw
-  rate 32 ms ahead in the room view and 28 ms ahead in the virtual space (display layer motion
-  log with linear scanout, worn turns up to 170°/s). Worn with the RGB camera on the depth mesh
+  extremes), so it is shown about 40–80 ms after it. Worn with the RGB camera on the depth mesh
   and the camera pose in raw space, turning and nodding show the room fixed in place, without
   warp or visible lag. With colour and the mesh on for 60 s, the still headset's stock tracker
   lost no pose and stayed within 0.5 mm and 0.10° of its start (0.4 mm and 0.04° with the room
@@ -578,13 +573,11 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
   PICO OS colours its see-through from the IMX471 RGB camera, every frame with its own capture
   pose, onto the depth mesh; the grey pair only builds the mesh. Here:
   - The IMX471 streams in the tracking cameras' capture as sensor slot 4
-    ([pico4_cam.c](../src/monado/pico4_cam.c)), as PICO OS's module describes it: I2C address 0x34,
-    ID 0x0471 at 0x0016, its power sequence, 2328×1748 RAW10 (RGGB, the 2×2-binned array)
-    free-running at 50 fps on four lanes of CSIPHY 1 at 2064.8 Mbit/s (settle count 17), into an
-    RDI of the free IFE-lite. The request manager has one owner, so it cannot run in a process of
-    its own. 49.9 fps measured. Exposure goes to the sensor while it streams as a CONFIG list
-    under group hold; the kernel then leaves the sensor in its CONFIG state, where
-    `CAM_STOP_DEV` is refused, so its stream-off goes the same way.
+    ([pico4_cam.c](../src/monado/pico4_cam.c)) through its own driver, `pico4-imx471`
+    ([kernel.md](kernel.md)): 2328×1748 RAW10 (RGGB, the 2×2-binned array)
+    free-running at 50 fps on four lanes of CSIPHY 1 at 2064.8 Mbit/s, CSID 4 and the third
+    IFE-lite, whose CSID writes the 16-bit samples the conversion takes, as PICO's stack has it.
+    50.01 fps measured. Exposure and gain are its V4L2 controls.
   - The driver converts each frame on a thread of its own, pinned to the Cortex-A77 cores 4–6
     (9 ms a frame there, 22 ms on the little cores): each 2×2 cell one pixel (1164×874), black
     level 64 off, grey-world white balance, sRGB, full-range BT.601 NV12. The camera thread hands
@@ -593,11 +586,8 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
     second reach the ring, 30.5 ms (median) after the middle of their exposure at the longest
     exposure; the conversion takes 44 % of a core.
   - The sensor streams only while the room view shows it, as PICO OS opens the camera only for
-    its see-through: 5 s after the room view closes the driver stops the IMX471's stream
-    (0x0100 = 0 as a CONFIG list) and starts it again when the room view opens. The ISP keeps
-    its requests queued and the link stays up; the request manager's 5 s start-of-frame
-    watchdog then fires on that link and is ignored. Opened again, 42–47 frames a second reach
-    the ring at once, 28–31 ms (median) after the middle of their exposure.
+    its see-through: 5 s after the room view closes the driver pauses the IMX471's stream
+    (`pico4-imx471`'s paused control) and resumes it when the room view opens.
   - The lens is PICO's omni model with its "fisheye62" distortion: the unified-model step with ξ,
     then θ = atan(|m|) of the omni-normalised point m, θd = θ(1 + k1θ² + … + k6θ¹²), the
     tangential terms on m, and the focal lengths. [pico4_tcam.c](../src/monado/pico4_tcam.c)
@@ -606,10 +596,7 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
     camera slots backed by the same images, and publishes each frame to both: the compositor's
     only colour input. A colour-bar test pattern (`pico4-roomview --test-pattern`) shows in the
     right colours.
-  - On Valve's kernel the sensor has its own driver (`pico4-imx471`, below in
-    [kernel-feasibility.md](kernel-feasibility.md)), and the exposure and the pause are its V4L2
-    controls. Its CSID writes the 16-bit samples the conversion takes, as PICO's stack has it.
-    The scanout is black above the camera's field of view; worn none of that shows, also looking up.
+  - The scanout is black above the camera's field of view; worn none of that shows, also looking up.
   - Shared memory version 2 carries the format: two grey cameras or one NV12 image.
 
 ## Head tracking
@@ -653,15 +640,14 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   bound in, the headset's factory calibration (persist's `pvr/`) at `/mnt/vendor/persist/pvr` and `/mnt/vendor/pvr`
   (where the tracker reads it and its gyro bias table) and `/data` and `/tmp` as tmpfs.
 - **The CDSP.** [`pico4-cdsp.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-cdsp.service)
-  boots it as the SLPI: restart level RELATED first (the kernel's SYSTEM would reboot the headset
-  on a DSP crash), then `/sys/kernel/boot_cdsp/boot`; its firmware (`cdsp.mdt`, `cdspr.jsn`) comes
+  boots it through `remoteproc-boot cdsp`, as the SLPI; its firmware (`cdsp.mdt`, `cdspr.jsn`) comes
   from the modem partition. `pico4-cdsprpcd.service` runs `cdsprpcd` in the root: without it the
   DSP's loader stalls on the tracker's first module. The tracker then opens a signed user PD on
   the CDSP (`fastrpc_shell_3`) and loads its modules there itself, through the stock
-  `libcdsprpc.so` on this kernel's own FastRPC driver.
-- **On a mainline kernel.** The stock libcdsprpc speaks the vendor kernel's FastRPC ioctls on
-  `/dev/adsprpc-smd` and allocates through ION on `/dev/ion`; a mainline kernel has the upstream
-  FastRPC driver (`/dev/fastrpc-cdsp`) and DMA-BUF heaps. `stock-slam` then preloads
+  `libcdsprpc.so` and the bridge below.
+- **The FastRPC bridge.** The stock libcdsprpc speaks the vendor kernel's FastRPC ioctls on
+  `/dev/adsprpc-smd` and allocates through ION on `/dev/ion`; Valve's kernel has the upstream
+  FastRPC driver (`/dev/fastrpc-cdsp`) and DMA-BUF heaps. `stock-slam` therefore preloads
   `libpico4-fastrpc-bridge.so` ([fastrpc_bridge.h](../src/stockslam/fastrpc_bridge.h)), which gives
   the vendor nodes descriptors of their own and translates the requests the stock libraries build
   (read from the stock `libcdsprpc.so` and `libion.so`): GETINFO opens the domain's upstream node
@@ -675,8 +661,7 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   maps such a client buffer through patch 0012, as the vendor driver does. On the headset
   `cdsprpcd` attaches to the CDSP's guest OS through the bridge, maps the DSP's memory and opens
   its listener, uses no measurable CPU, and the IMU keeps its 1 kHz stream beside it;
-  `pico4-cdsprpcd` and `pico4-slamd` run on either kernel; the DSP's context banks are coherent
-  there as in the stock device tree, or it reads stale frames.
+  the DSP's context banks are coherent, as in the stock device tree, or it reads stale frames.
 - **pico4-slamd.** [`pico4-slamd`](../src/stockslam/pico4-slamd.c)
   ([`pico4-slamd.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service),
   wanted by Valve's session and Monado) creates `/dev/shm/pico4-slam` (group video, mode 0660)
@@ -684,7 +669,7 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   `headSensorModel` `icm4x6xx`, `startAlgorithm`, the result callback, `start6DOF` `6`; from one
   thread every IMU sample as {gyro, accel, temperature} with its time and the pose after it, from
   another each frame set once the IMU is 30 ms past it (on PICO OS the camera's latency does that;
-  earlier, the tracker waited for the IMU in vain on nearly every frame). `updateImage` only
+  earlier, the tracker waits for the IMU in vain on nearly every frame). `updateImage` only
   queues a set (up to 2.5 ms); the tracker works on it inside a later `update6AxisIMU`, which
   then takes up to 11 ms, so poses can be up to about 18 ms apart. Each start of the driver bumps a generation in the
   shared memory; `pico4-slamd` then exits and comes back with a new tracker.
@@ -787,7 +772,7 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   keepOrigins)`, true): a 1 m default play area, room setup not done, so SteamVR asks for the
   playspace setup, and its entry written to the file. `vrserver` then sets the HMD's
   `Prop_CurrentUniverseId_Uint64` itself; it re-reads it every frame and, for a universe the file
-  does not hold, keeps no standing space at all, so setting only the property (as before) left a
+  does not hold, keeps no standing space at all, so setting only the property would leave a
   new room's playspace setup without a floor. SteamVR keeps a play area per room, back in its
   place whenever the tracker relocalises in that room. Until then the universe is 2. A new room's
   universe waits for a wearer: a headset started on a table can miss the tracker's 8 s to relocalise
@@ -840,7 +825,7 @@ the headset untouched relocalises with the same transform (−100.45° and −10
   `seated` pose, its `standing` pose stays ("Standing transform was not updated"), so the play
   area does not turn, and after a SteamVR restart the recenter is gone. The Frame keeps the
   chaperone universe (bounds and `standingAppWorldFromRawAppWorld`) in its XR service's
-  persistent world with the map instead; that is not followed yet.
+  persistent world with the map instead; here SteamVR's `chaperone_info.vrchap` keeps it.
 - **Turned relocalisations.** A play area drawn in a room stays where it was drawn after a
   tracker restart that relocalises with any turn (checked worn at -3 and 165 deg) and after a
   SteamVR restart. Play areas drawn before the room ids, against the plain square, can be off
@@ -852,12 +837,9 @@ the headset untouched relocalises with the same transform (−100.45° and −10
 
 ### Frame times
 
-The tracker, Basalt and the controller tracker take each frame's time from the camera hardware's
-start-of-frame stamp, the request manager's `V4L_EVENT_CAM_REQ_MGR_SOF` (QTimer in ns), onto
-`CLOCK_MONOTONIC` with the same offset as the IMU's samples, as PICO OS does. The boot-time stamp
-(`V4L_EVENT_CAM_REQ_MGR_SOF_BOOT_TS`) is that stamp plus an offset the kernel takes once, at the
-first frame after boot, late by however long that interrupt waited: on the headset it was 395 ms
-off (constant within 0.2 ms). It is only the fallback. The time of a frame is the middle of its
+The tracker, Basalt and the controller tracker take each frame's time from its buffer: the CSID's
+hardware start of frame (patch 0016) on `CLOCK_MONOTONIC`, carried in QTimer ns onto the IMU's
+clock, as PICO OS does. The time of a frame is the middle of its
 exposure: the start of frame minus 52 µs, seven lines (133.5 µs) and half the exposure in lines
 of 19.07 µs, from the frame's own metadata line, as PICO OS computes it.
 
@@ -1063,7 +1045,8 @@ level = amplitude × 255, the duration in whole milliseconds and at least 10 ms,
 duration as 500 ms, 0 ms as a stop, and PICO OS's default strength of 75 %. The controller ends
 the vibration itself. SteamVR's pulses without a duration (its hover feedback, 0 s at amplitude
 0.1–0.2) are single short pulses: the SteamVR driver sends them as 10 ms, the motor's shortest,
-not as Monado's minimum duration, which would buzz for half a second at every hover.
+not as Monado's minimum duration, which would buzz for half a second at every hover. SteamVR's
+own test pulses are 2.5 % strong.
 
 Either pose is the aim pose: PICO OS publishes the tracked pose as the aim and derives the grip as
 aim × T, where T is a position and a quaternion (w, x, y, z) per hand, left block first, that its
@@ -1242,16 +1225,12 @@ it first runs `test_isp` (the image processing against hand-computed values) nat
 
 - **`pico4-sensors`**: hexagonrpcd from a pinned linux-msm commit plus this project's patches.
 - **`pico4-basalt`**: Basalt and the submodules the library needs, at pinned commits.
-- **`pico4-monado`**: Monado plus `src/monado` and `src/xr`. It fetches the Spectra camera UAPI
-  headers from a pinned public kernel tree. Its build runs the C tests, because the userspace
-  build uses `--nocheck`: `test_pico4_ssc` (encoder against the Python client's messages),
-  `test_pico4_lens` (lens model, IPD request and reply parser) and `test_pico4_tracking` (station
-  frames against golden bytes and the allowlist, the calibration parser, the Kannala-Brandt
-  refit and the 180° turn, the controller packet parser).
+- **`pico4-monado`**: Monado plus `src/monado` and `src/xr`. Its build runs the driver's C tests,
+  because the userspace build uses `--nocheck`.
 
 The host tests (`python -m unittest`) cover `pico4-imu`'s protobuf/QMI
 encoding, a simulated DSP (lookup, attributes, streaming, disable), the IMU acceptance limits,
-the orientation filter, the runner's validators and the super-image reader.
+the orientation filter and the runner's validators.
 
 ## Run
 
@@ -1297,14 +1276,14 @@ systemctl start pico4-session.service
 The driver reads its options from the environment of the process that runs it: `monado-service`
 (`pico4-monado.service`) or SteamVR's `driver_monado`, not the OpenXR client. For example,
 Basalt's trajectory as CSV files (`tracking.csv` among them) from a headless pose session, with
-Monado's `SLAM_WRITE_CSVS`/`SLAM_CSV_PATH` and the null compositor instead of the KMS target:
+Monado's `SLAM_WRITE_CSVS`/`SLAM_CSV_PATH` and the null compositor instead of Vulkan's display:
 
 ```sh
 systemctl stop pico4-monado.service; mkdir -p /tmp/slam
-systemctl set-environment SLAM_WRITE_CSVS=1 SLAM_CSV_PATH=/tmp/slam/ XRT_COMPOSITOR_NULL=1
+systemctl set-environment PICO4_SLAM_BACKEND=basalt SLAM_WRITE_CSVS=1 SLAM_CSV_PATH=/tmp/slam/ XRT_COMPOSITOR_NULL=1
 XDG_RUNTIME_DIR=/run/pico4-monado pico4-openxr-pose 30
 systemctl stop pico4-monado.service
-systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
+systemctl unset-environment PICO4_SLAM_BACKEND SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 ```
 
 | Variable | Default | Effect |
@@ -1321,7 +1300,7 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_SLAMD_AE` | on | `0`: no PICO OS auto exposure in `pico4-slamd`; the driver's own sets the exposure |
 | `PICO4_SLAMD_RESTART_S` | 10 | seconds a tracker that lost its confidence stays lost before `pico4-slamd` restarts it, as PICO OS's service; `0` turns the restart off |
 | `PICO4_SLAM_CAMS` | `0,1,2,3` | factory cameras for Basalt in tracker order, at least two; Basalt matches the first against the others |
-| `PICO4_TCAM_SLOTS` | `0,2,1,3` | CSL slot of factory cameras cam0–cam3 |
+| `PICO4_TCAM_SLOTS` | `0,2,1,3` | capture slot of factory cameras cam0–cam3 |
 | `PICO4_SLAM_UPRIGHT` | on | turn images that are upside down relative to the first camera's |
 | `PICO4_SLAM_DIVISOR` | 1 | use every Nth scene frame set |
 | `PICO4_SLAM_IMU_DIVISOR` | 2 | use every Nth head IMU sample |
@@ -1332,7 +1311,7 @@ systemctl unset-environment SLAM_WRITE_CSVS SLAM_CSV_PATH XRT_COMPOSITOR_NULL
 | `PICO4_FUSION_SMOOTHING_MS` | 50 | time over which a correction reaches the output |
 | `PICO4_FUSION_CSV` | unset | directory for `fusion_slam.csv` (each Basalt pose: latency, disagreement, outcome, velocity disagreement with the IMU, speed) and `fusion_pose.csv` (each pose handed out) |
 | `PICO4_PREDICT_MS` | 12 | hand out the head pose this much later than asked for, to cover the time to the vblank that SteamVR does not predict |
-| `PICO4_LATENCY_PROBE_MS` | 0 (off) | latency probe for a headset lying still: 1 s phases (with 1000) of a 5° yaw step and of a reported 30°/s turn without turning; with `PICO4_VRDISPLAY_MOTION` and linear scanout (`PICO4_VRDISPLAY_UBWC=0`, session.md) |
+| `PICO4_LATENCY_PROBE_MS` | 0 (off) | latency probe for a headset lying still: 1 s phases (with 1000) of a 5° yaw step and of a reported 30°/s turn without turning; read from the scanned-out image |
 | `PICO4_SLAM_RESET_AFTER_S` | 0 (off) | test of the runaway path: reset Basalt once, this many seconds after the fusion started |
 | `SLAM_PREDICTION_TYPE` | 3 (gyro and acceleration) | without the fusion, Monado's prediction between Basalt's poses: 0 none, 1 pose only, 2 gyro, 4 dead reckoning |
 | `SLAM_ACCEL_DEADBAND` | 0.3 | world acceleration (m/s²) that prediction ignores |
@@ -1355,36 +1334,31 @@ pico4-station listen --seconds 5                  # frames the station sends
 ## Verified results
 
 On the headset, lying still unless stated otherwise. Current results on Valve's kernel:
-[kernel-feasibility.md](kernel-feasibility.md#results).
+[kernel.md](kernel.md#results).
 
 | Check | Result |
 | --- | --- |
-| SLPI boot from the headset's firmware | `Brought out of reset`, FastRPC and QRTR channels up, subsystem `ONLINE` |
-| Sensors process | `hexagonrpcd` attached on `adsprpc-smd-secure`; SNS client service (QMI 0x190) on QRTR node 9 |
 | Sensors reported | ICM-42688 accel/gyro 12.8–512 Hz, ICM-42688 temperature, AK0991x magnetometer 10–100 Hz |
 | `pico4-imu stream --check`, 500 Hz, 10 s | 5,066 samples per stream at 511.95 Hz, 0 gaps, 0 non-monotonic timestamps; \|g\| 9.796–9.797 m/s²; mean \|ω\| 0.005–0.006 rad/s |
 | 1 kHz request | DSP configures 1000 Hz, measured 1023.9 Hz |
 | `pico4-imu` orientation estimate | roll/pitch −11.1°/−83.6° against the accelerometer's −11.9°/−83.5°; uncorrected heading drift about −0.07°/s (−0.36° in 5 s, −0.69° in 10 s) |
 | Guided 90° turn, edge-aligned (`pico4-imu`) | plateau +90.3 to +90.5° (scale error below 0.6%); turned back to the start, the filter heading read +0.35° after 40 s |
-| OpenXR system | `Monado: PICO 4`, runtime `Monado(XRT) … v25.1.0`; orientation tracking, position tracking with Basalt |
+| OpenXR system | `Monado: PICO 4`, runtime `Monado(XRT) … v25.1.0`; orientation tracking, position tracking |
 | Head pose, 3DoF, 60 s at 100 Hz | 5,882 locations, none invalid after the first second; rotation 0.009°, heading −0.006° (−0.0001°/s); 10 s runs drift 0.0002–0.0005°/s |
 | Tilt against the accelerometer | within 0.2° (for example 9.12° against 8.96–9.11°, 4.02° against 4.06°); with Basalt drifting in front of a near surface 2.01° against 0.65°, heading 0.11°/s |
 | Latency, sensor sample to pose | 0.94–1.16 ms |
 | Learned gyro bias | (0.0039, −0.0009, −0.0056) rad/s in the head frame |
-| Two layers with Basalt running, 30 s | 2,698 frames at 89.996 Hz, 2 late; 88.8 commits per second; panels 89.998 Hz; no retire timeout; Basalt skipped 73 of 757 sets |
 | Scanned-out image | left half red L, right half blue R; eye means for example (70, 40, 25) and (26, 41, 72) |
 | Seen in the lenses | one layer: a steady image, red L only in the left eye, blue R only in the right eye. Two layers, head turning: the checkerboard has a stereo offset between the eyes, stays fixed in the room and moves smoothly, with no visible latency |
 | Lens correction, seen in the lenses | grid lines and checkerboard edges straight, image steady at 90 Hz; colour fringes not judged (each eye showed one colour) |
 | Field of view from the lens data | left eye −53.32/+53.38° horizontal, +53.58/−53.12° vertical; right eye −53.49/+53.17°, +53.41/−53.25° |
-| IPD | 71.99 mm (Hall reading 888, consistent with the factory table) with the wheel at its widest, 72 mm |
+| IPD | 71.99 mm (Hall reading 888, consistent with the factory table) with the lenses at their widest, 72 mm |
 | Station | power cycle, announcement and frame-rate answer every time; firmware 2.96 |
-| Capture, 30 s, all four cameras | 1,500/1,500 frames each, 0 errors, 49.99 Hz, monotonic timestamps; start of frame to delivery 17.5 ms mean, 27.2 ms max |
 | Exposure through the station | scene frames mean 76 → 446 (of 1023) at 400 lines and 4× gain; LED frames 23–28 either way |
 | Slot mapping | cover test: one slot dark per covered lens; a logo seen by the lower pair triangulates with a 0 mm ray gap at 0.14/0.16 m; with the 481-line capture (metadata line removed) a pen at 0.15–0.18 m triangulates with 1–2 mm gaps |
 | Controllers in OpenXR | both as `PICO 4 left/right controller`; per controller about 500 IMU samples and 100 input packets per second |
 | Controller inputs, each pressed in turn | trigger, grip, A/B/X/Y, menu, home, stick click and touch (A/X, B/Y, stick, thumb rest) decoded as pressed |
 | Sticks pushed right, left, up, down, both controllers | x (record byte 2): 255, 0; y (byte 1): 255, 0 |
-| Headset: SLPI restart (`RELATED`) during a Monado session, a pose client running 120 s | the driver saw the service go away at once and reported the pose untracked; `pico4-sensorspd` restarted after 2 s; the IMU stream came back after 36.6 s in the same Monado process; every pose valid, 1,652 of 2,376 tracked; the service stopped cleanly afterwards |
 | Headset: frame identity in Valve's sessions (several runs, over 1,250 frame sets each) | no inconsistent and no incomplete set, while auto exposure moved from 300 lines at gain 16 to 400 lines at gain 46: all four sensors take a new exposure on the same frame |
 | PICO OS's tracker in Valve's session, headset still on a table, 60 s | 61,391 poses, none lost, within 0.7 mm and 0.04° of the first; 25 frame sets and 1,024 IMU samples per second to `pico4-slamd`, none skipped, no frame without the hardware start of frame; `pico4-slamd` 71 % of one core, `vrserver` 116 % (with Basalt 346–388 %); hottest zone 55.8 °C (with Basalt 75.8 °C) |
 | PICO OS's tracker worn, untethered: a closed walk through the room back to the start spot, facing the same way | 12.14 m in 58 s; back within 1.8 cm of the start; no pose lost; largest step between consecutive poses 0.7 mm; fastest turn 86 °/s, top speed 0.7 m/s |
@@ -1396,7 +1370,6 @@ On the headset, lying still unless stated otherwise. Current results on Valve's 
 | IMU temperature to the tracker, Valve's session | `sensor_temperature` of the ICM-42688 at 44.1–44.3 °C with the SoC's hottest zone at 60–61 °C; still within 0.8 mm for 60 s, no pose lost |
 | PICO OS's tracker, a recorded walk replayed (4 cameras and the IMU, hardware start-of-frame times) | back within 9 cm of the start; lost in the fastest part of a turn and relocalised in its own map |
 | PICO OS's tracker, a still recording looped for 5 minutes | 39 % of one core, back within 6 mm of the start, farthest 7 mm, no jump |
-| Frame times: the boot-time start-of-frame stamp against the hardware one | 395 ms late, constant within 0.2 ms over a boot |
 | SLAM feed, 30 s, four cameras, no compositor | 744 frame sets at 25 Hz, 0–1 incomplete, none skipped while Basalt was busy, no IMU sample dropped; frame to tracker 15–23 ms |
 | 6DoF: headset on a table in a lit room, slid 50 cm (measured) and back, twice | 0.50 m and 0.52 m; back at the start within 1.5 and 1.8 cm; at rest within 5–11 mm. In a dim room (exposure at its limit, gain 202–230) 0.48 m and back within 3.7 and 4.9 cm, with a 9 cm wander at rest before the first slide |
 | 6DoF worn in Valve's session: a step forward and one to the left, each back onto a floor mark | steps of 0.57 m and 0.59 m at 92° to each other; back within 3.4 and 4.4 cm of the start; no reset in 2.8 minutes; user: tracking good, no freeze or jump |
@@ -1415,8 +1388,6 @@ On the headset, lying still unless stated otherwise. Current results on Valve's 
 | Fusion against Basalt, worn | the handed-out pose matches Basalt's at a 0 ms time shift (rotation within 0.35°), no lag of its own; still, it moves 0.36 mm and 0.024° around its 200 ms average (Monado's prediction 0.21 mm and 0.013°) |
 | Staged jiggle, headset still, 4 × 27 s | Basalt 0.22–1.06 mm and 0.004–0.032° around its 200 ms average; fusion output 0.06–0.21 mm and 0.001–0.003°; SteamVR's extrapolation with the reported velocities 0.06–0.29 mm; slow drift 11–76 mm peak to peak (Basalt's) |
 | IMU noise A/B (ours against PICO OS's values), still and worn blind | Basalt with PICO OS's values: 0.49–3.02 mm jiggle against 0.10–0.29 mm, two runaways worn against none; the user found ours calmer |
-| Latency probe, headless, 13 steps | pose handed out to scanout 33.0 ms (median; 32.6–33.5 ms for most); SteamVR extrapolates a reported turn by 9.2 ms (median); 21.6 px per degree at the eye's centre |
-| Latency probe in Valve's session check with the published 5 ms display lead (linear scanout, 74 commits/s), 36 phase changes | pose handed out to scanout 32.2–32.6 ms (medians of step on, step off and reported turn); 24 at 30.5–34.2 ms, 9 one frame earlier (19.3–22.1 ms), 3 later; SteamVR extrapolates a reported turn by 10.4 ms; 22.0 px per degree |
 | `libSlam`'s pose against the gyro, headset still, 30 s (fit R² 0.999) | orientation at stamp T = the gyro integrated up to T − 9.5 ms + `angular` × 6 ms; `angular` is a 36-tap FIR over the gyro from T − 11 to T − 46 ms, gain 1, about 3 ms behind its stamp below 8 Hz, 6.5× at 30 Hz, 8× at 50 Hz; at a constant rate the pose is about 3.5 ms behind its stamp; newest pose stamped 7.9–9.0 ms in the future, newest IMU sample 0.8–1.7 ms old |
 | Latency probe on Valve's kernel and Mesa, compressed scanout, 89 flips/s, period 1003 ms, 23 steps | pose handed out to the vblank that shows it 12–23 ms, 18 ms median; commit to vblank 10 ms; SteamVR extrapolates a reported turn by 10.6–12.1 ms (linear scanout) |
 | Head pose worn, standing still | 0.035° RMS around its 200 ms average at 1.7°/s, as in Basalt: the head's own motion (0.001° on a table) |
@@ -1447,17 +1418,4 @@ On the headset, lying still unless stated otherwise. Current results on Valve's 
 
 ## Next steps
 
-1. **PICO OS's tracker.** Worn it tracks walking and fast turns as on PICO OS; a covered
-   camera and a dim room are unchecked, and so is PICO OS's auto exposure worn.
-   [Room setup](#room-setup): SteamVR's room setup runs in the headset, the floor height and
-   the play area are set easily with the colour room view, and the play area comes back after a
-   reboot.
-2. **Controllers in applications.** A vibration strong enough to feel has not yet come from a SteamVR
-   application: SteamVR's own test pulses are 2.5 % strong.
-3. **Controller positions.** The tracker runs in the driver. A controller that lies still from
-   the start is acquired only through the identification table, as on PICO OS: the table path
-   trims the blob cluster to five, and with the LEDs as bright as in the session the five of a
-   controller lying 0.7 m ahead need not form one of the table's 44 LED groups, so it stays
-   unacquired until it or the head moves.
-4. **Passthrough.** On Valve's kernel the room view shows the RGB camera on PICO OS's depth mesh
-   ([Passthrough](#passthrough)), confirmed worn: a full colour picture, nothing black in view.
+See [Open work](roadmap.md#open-work).

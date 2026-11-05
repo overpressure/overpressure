@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
  * PICO 4 (phoenix) on a mainline-based kernel: the prototype of a Steam Frame-level kernel
- * (docs/kernel-feasibility.md). Phase 0: storage, the USB gadget, reboot modes and a RAM
+ * (docs/kernel.md). Phase 0: storage, the USB gadget, reboot modes and a RAM
  * console. Phase 1: the two panels on the bonded DSI links, and the GPU.
  *
  * The board is Qualcomm's "kona MTP" design (the stock tree is kona v2.1 with the MTP overlay,

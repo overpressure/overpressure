@@ -9,7 +9,7 @@ what can be done with it. The PICO 4 (`devices/phoenix`) is the worked example.
 
 ```text
 devices/<codename>/
-  __init__.py      empty: makes devices.<codename> importable
+  __init__.py      makes devices.<codename> importable
   README.md        what runs on the headset, its status, its quick start
   tooling/         its host tooling: HEADSET in __init__.py, the command modules
   tests/           its host tests (with an __init__.py), run by python -m unittest

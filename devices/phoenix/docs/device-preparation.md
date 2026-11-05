@@ -208,9 +208,9 @@ Keep the engineering ABL active while working with stage 1:
   runner accept. The stock ABL reports `DeviceUnlocked=true`, which they refuse, and restoring
   the stock ABL can remove usable fastboot commands even when the unlock bits persist.
 * The engineering ABL rejects `fastboot boot` with an unknown-command error, so stage 1 is
-  written to `boot`: the development loop keeps it there until `dev restore`, and the runner
-  restores stock boot after its run ([stage1.md](stage1.md),
-  [hardware-testing.md](hardware-testing.md)).
+  written to a partition: the development loop keeps it in `recovery` as the maintenance stage 1,
+  with the installed system in `boot`, until `dev restore`, and the runner restores stock boot
+  after its run ([stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md)).
 * Writing `boot` needs the engineering ABL's per-session command authorization first:
   `fastboot oem <token> unlock`, the command that `python -m overpressure device token` prints. The
   hardware runner and `python -m overpressure dev flash` send it.
@@ -250,22 +250,8 @@ mode, in which the headset stays between tasks; the second returns it to stock
 | `python -m overpressure cycle` | the same staging (`--skip-stage` skips it), `hwtest flash-run`, then `adb reboot edl`, an EDL readback of `boot` that must match the backup and come from the device with the configured EDL serial number, `device restore-abl` with readback, EDL reset, and PICO OS must finish booting. `--keep-abl` stops before the ABL restore; `--restore-only` runs only the readback, the restore and the reset |
 
 Both read the headset's settings from `.env` in the repository root, which Git ignores because
-it describes one particular headset; copy [.env.example](../../../.env.example) to start. Environment
-variables of the same names take precedence, and relative paths are relative to the repository
-root. The keys used here:
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `PICO4_ADB_SERIAL`, `PICO4_FASTBOOT_SERIAL`, `PICO4_EDL_SERIAL` | | the headset's serials in `adb devices`, `fastboot devices` and edl-ng's output ("Serial Number") |
-| `PICO4_IDENTITY` | `backup/device.json` | identity file |
-| `PICO4_BACKUP` | `backup/stock` | verified EDL backup |
-| `PICO4_LOADER` | `assets/firehose.elf` | signed Firehose loader |
-| `PICO4_ENGINEERING_ABL`, `PICO4_ENGINEERING_ABL_SHA256` | `assets/engineering-abl.elf` | engineering ABL and its expected SHA-256 |
-| `PICO4_EDL` | empty: the fetched edl-ng (`python -m overpressure tools`), else PATH | edl-ng executable |
-| `PICO4_PLATFORM_TOOLS` | empty: the fetched platform-tools, else PATH | folder with `adb` and `fastboot` |
-
-The other keys (`PICO4_FIRMWARE`, `PICO4_NCM_PYTHON`, `PICO4_SSH`, `PICO4_SSH_KEYGEN`) serve the
-hardware runs ([hardware-testing.md](hardware-testing.md)).
+it describes one particular headset; copy [.env.example](../../../.env.example) to start. The keys
+are in [hardware-testing.md](hardware-testing.md#settings-for-cycle-and-dev).
 
 ## Host tests
 
