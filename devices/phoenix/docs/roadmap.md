@@ -6,8 +6,7 @@ PICO's own drivers and device tree ([kernel-feasibility.md](kernel-feasibility.m
 stock Android kernel, which is no longer pursued; the way back to PICO OS stays. The plan has six steps,
 from a recoverable development device to Valve's VR session, and follows the strategy of the
 background research in [research.md](research.md). All six steps work on the tested headset,
-an original PICO 4. Open work: a power press after a long sleep, and the codec's alert after a cable
-replug during a suspend.
+an original PICO 4. Open work: a power press after a long sleep.
 
 ## Status
 

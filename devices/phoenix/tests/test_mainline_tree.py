@@ -452,6 +452,15 @@ class PanelReportTests(unittest.TestCase):
         self.assertIn("for (tries = 0; tries < 3; tries++)", wake)
 
 
+class CodecAlertTests(unittest.TestCase):
+    def test_an_alert_during_system_sleep_waits_for_the_resume(self):
+        patch = text(KERNEL / "patches/0035-asoc-wcd938x-an-alert-during-system-sleep-is-handled-at-the-resume.patch")
+        self.assertIn("+	if (!pm_runtime_enabled(&slave->dev)) {", patch)
+        self.assertIn("+	SYSTEM_SLEEP_PM_OPS(NULL, wcd938x_sdw_resume)", patch)
+        self.assertLess(patch.index("+	regmap_read(wcd->regmap, WCD938X_DIGITAL_INTR_STATUS_0"),
+                        patch.index("+	wcd_interrupt_callback(wcd->sdev"))
+
+
 class CodecInterruptTests(unittest.TestCase):
     def test_the_codec_interrupt_loop_ends_on_a_failed_read(self):
         patch = text(KERNEL / "patches/0034-asoc-wcd-the-interrupt-loop-ends-on-a-failed-read.patch")
