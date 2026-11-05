@@ -6,8 +6,8 @@ PICO's own drivers and device tree ([kernel-feasibility.md](kernel-feasibility.m
 stock Android kernel, which is no longer pursued; the way back to PICO OS stays. The plan has six steps,
 from a recoverable development device to Valve's VR session, and follows the strategy of the
 background research in [research.md](research.md). All six steps work on the tested headset,
-an original PICO 4. Open work: a lens that can go wrong after a wake, the battery drain while
-suspended and USB after a reboot to fastboot.
+an original PICO 4. Open work: a lens that can go wrong after a wake and USB after a reboot to
+fastboot.
 
 ## Status
 
@@ -218,7 +218,7 @@ and where they stand.
 | Run the ARM64 SteamOS userspace | Done: Holo Core aarch64 with the Frame's systemd 257.7 and SteamOS services, no failed units (step 4) |
 | Display a Steam-style desktop in the headset | Done: SteamVR's environment and dashboard in the lenses, the Steam client's library as SteamVR's overlay (step 6) |
 | Full 6DoF and controllers | Done: head and controller tracking, all inputs and vibration (step 5) |
-| Complete standalone SteamVR experience | Done for the tested games: starts without the PC, Steam's library, x86 and Android apps, Steam Link (step 6). Open: the battery drain while suspended, see [Open work](#open-work) |
+| Complete standalone SteamVR experience | Done for the tested games: starts without the PC, Steam's library, x86 and Android apps, Steam Link (step 6) |
 
 ## Open work
 
@@ -319,7 +319,9 @@ system updates. Open:
 2. **Power.** The lenses show a boot indication until Valve's session starts. The power key
    follows PICO OS (a short press suspends, 2 s held powers off), and a power-off with the
    cable attached ends in charger mode, from which the key starts the system. After a resume the
-   session goes on, with USB and sound back; `pico4-suspend-check` checks the sound.
+   session goes on, with USB and sound back; `pico4-suspend-check` checks the sound. Steam suspends
+   by itself after an hour idle with the cable in, and the time asleep counts: after a longer sleep an
+   RTC wake is back asleep within about 4 s.
 3. **Wake.** From a boot the picture comes by itself when the headset is picked up, repeatedly.
    Why an earlier dark wake went away is not known. A lens can go wrong after a wake while the other
    works: seen once grey (left, through three more wakes, cured by a suspend) and once corrupted
