@@ -64,7 +64,7 @@ README.md current.
 - `userspace/`: stage 2. `packages.txt` and `pacman.conf` (the Holo preview first; Frame
   packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
   layer), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,
-  pico4-gamescope, pico4-vrlink, pico4-gtk2 for the Steam client, pico4-mangohud, and others;
+  pico4-gamescope, pico4-spa-alsa, pico4-vrlink, pico4-gtk2 for the Steam client, pico4-mangohud, and others;
   `pico4-swapchain-usage`).
 - `src/`: the project's C sources (`graphics/`, `monado/` driver, `xr/` OpenXR clients, `vrlink/`,
   `swapchain/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies

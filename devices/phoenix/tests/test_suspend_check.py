@@ -64,6 +64,11 @@ class SuspendCheckTests(unittest.TestCase):
         failures = check.verdict({"room_db": -80.0, "tone_db": -41.0}, {"room_db": -80.0, "tone_db": -50.0})
         self.assertEqual(failures, ["the tone changed across the suspend"])
 
+    def test_pipewire_has_to_live_through_the_suspend(self):
+        self.assertEqual(check.pipewire_failure("1234", "1234"), [])
+        self.assertEqual(check.pipewire_failure("1234", "5678"), ["PipeWire did not survive the suspend"])
+        self.assertEqual(check.pipewire_failure("1234", None), ["PipeWire did not survive the suspend"])
+
     def test_the_tone_file_is_the_stated_length_and_level(self):
         frames = check.tone_frames()
         self.assertEqual(len(frames), check.TONE_SECONDS * check.RATE * 4)

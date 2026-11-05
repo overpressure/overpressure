@@ -66,6 +66,25 @@ class AudioTimingTests(unittest.TestCase):
         self.assertEqual(int(re.search(r"default\.clock\.min-quantum = (\d+)", conf).group(1)), 1024)
 
 
+class CaptureThroughSuspendTests(unittest.TestCase):
+    RECIPE = ROOT / "userspace/pkgbuilds/pico4-spa-alsa"
+
+    def test_the_plugin_is_built_from_the_version_valve_ships_with_the_fix(self):
+        recipe = (self.RECIPE / "PKGBUILD").read_text(encoding="utf-8")
+        self.assertIn("pkgver=1.4.9\n", recipe)
+        self.assertIn('"pipewire-audio=1:$pkgver"', recipe)
+        patch = (self.RECIPE / "early-wakeup-from-the-clock.patch").read_text(encoding="utf-8")
+        self.assertIn("+\t\tstate->next_time = SPA_MAX(current_time, get_time_ns(state)) +", patch)
+        self.assertIn("-\t\tstate->next_time = current_time + (state->read_size - avail)", patch)
+
+    def test_the_build_installs_it_over_valves(self):
+        packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8")
+        self.assertIn("pico4/pico4-spa-alsa", packages)
+        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+        self.assertIn("build_package pico4-spa-alsa", build)
+        self.assertIn('"$T/usr/lib/spa-0.2/alsa/libspa-alsa.so"', build)
+
+
 class MainlineAudioTests(unittest.TestCase):
     def test_every_verb_sets_what_a_saved_mixer_state_would_override(self):
         # alsa-restore's saved state wins over the profile's boot sequence.

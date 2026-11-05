@@ -67,6 +67,7 @@ The system's Mesa is Valve's `deckard-mesa-linux-aarch64`
 | `pico4-swapchain-usage` | the stock path's frame pacing and compressed scanout in SteamVR's compositor | [session.md](session.md) |
 | `pico4-gamescope` | the Frame's gamescope with a fix for a crash when a game starts | [session.md](session.md) |
 | `pico4-vrlink` | `vrlink` support for Steam Link | [session.md](session.md) |
+| `pico4-spa-alsa` | PipeWire's ALSA plugin at Valve's version with the capture fix of [Audio](#audio); the build installs it over `pipewire-audio`'s | this document |
 | `pico4-gtk2` | GTK 2 for the Steam client | [session.md](session.md) |
 | `pico4-mangohud` | MangoHud's mangoapp, the client's performance overlay | [session.md](session.md) |
 | `pico4-libdisplay-info` | libdisplay-info 0.1 for Valve's Mesa | [kernel.md](kernel.md#valves-mesa) |
@@ -400,6 +401,17 @@ the same settings, with patch 0024:
 | Steam's volume sound, volume 0.52 | repeats alike within 1 dB, into the room's noise | the same shape, repeats alike |
 
 The microphone reads about 7 dB lower here, its noise floor with it (−62 and −68 dBFS).
+
+### Capture through a suspend
+
+A capture stream that runs through a suspend is restarted by PipeWire at the wake. Its timer path takes the time
+from the planned wakeup, not the clock, so while no data has come yet its next timeout is already over: PipeWire's
+real-time thread spins, about 7 ms per second asleep on top of about a second, until the kernel's RT watchdog kills
+it at 200 ms (`RT Watchdog Timeout (hard): data-loop.0`). Without the fix all 9 of 9 such suspends killed PipeWire,
+none of 9 with playback alone; the recording ended, and Steam's interface kept a dead connection and stayed silent
+until a restart, while new clients had sound. `pico4-spa-alsa` takes that timeout from the clock: PipeWire then
+survives, the burst is 0 or 1 tick of 10 ms, and the recording goes on. Interrupt scheduling
+(`api.alsa.disable-tsched`) is no alternative here: its recordings stay empty.
 
 ## Memory
 

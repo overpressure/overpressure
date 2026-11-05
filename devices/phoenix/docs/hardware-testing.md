@@ -321,8 +321,8 @@ state (`fan`) before and after, and is bounded to 400 s.
 ### Suspend check
 
 `pico4-suspend-check [--seconds SECONDS]` on the installed system plays a tone on the speakers and records
-it on the microphone, suspends through the RTC (20 s by default), and repeats the tone. It passes when the
-kernel counts the suspend, the tone stands 10 dB above the room at its frequency both times, and the two differ by
+it on the microphone, suspends through the RTC (20 s by default), and repeats the tone. It passes when PipeWire lives through the suspend, the
+kernel counts it, the tone stands 10 dB above the room at its frequency both times, and the two differ by
 at most 6 dB. It needs someone near: the tones are audible, and a failed resume needs a hand on the headset.
 SSH over USB drops at the wake, so start it detached and read the result afterwards:
 

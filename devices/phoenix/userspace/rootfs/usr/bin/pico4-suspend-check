@@ -80,6 +80,16 @@ def verdict(before: dict, after: dict) -> list:
     return failures
 
 
+def pipewire_failure(before, after) -> list:
+    """What failed if PipeWire did not live through the suspend: Steam's interface stays silent then."""
+    return [] if before and before == after else ["PipeWire did not survive the suspend"]
+
+
+def pipewire_pid():
+    found = subprocess.run(["pgrep", "-x", "pipewire"], check=False, stdout=subprocess.PIPE, text=True).stdout.split()
+    return found[0] if found else None
+
+
 def session_env() -> list:
     import pwd  # the headset's; the host's tests load this file on any system
 
@@ -150,13 +160,14 @@ def main(argv=None) -> int:
             run_user("wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "0")
             result["before"] = tone_round(directory, "before")
             stats = suspend_stats()
+            pipewire = pipewire_pid()
             subprocess.run(["rtcwake", "-m", "freeze", "-s", str(args.seconds)], timeout=args.seconds + 60, check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             after_stats = suspend_stats()
             result["suspended"] = after_stats["success"] == stats["success"] + 1 and after_stats["fail"] == stats["fail"]
             time.sleep(3)
             result["after"] = tone_round(directory, "after")
-            failures = verdict(result["before"], result["after"])
+            failures = verdict(result["before"], result["after"]) + pipewire_failure(pipewire, pipewire_pid())
             if not result["suspended"]:
                 failures.append("the kernel did not count a successful suspend")
             result["failures"] = failures

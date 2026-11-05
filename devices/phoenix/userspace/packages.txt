@@ -44,6 +44,9 @@ xorg-xwayland
 pipewire
 pipewire-pulse
 wireplumber
+# PipeWire's ALSA plugin with a fix for capture through a suspend; the build installs it over
+# pipewire-audio's (docs/userspace.md#audio).
+pico4/pico4-spa-alsa
 # Real-time priority for PipeWire's audio threads, as on SteamOS: with a session bus PipeWire
 # asks RTKit and stays at normal priority without it, and sounds break up under the session's load
 rtkit

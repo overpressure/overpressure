@@ -1,0 +1,31 @@
+# PipeWire's ALSA plugin, built from the version Valve ships, with one fix: a capture stream that runs
+# through a suspend put PipeWire's real-time thread in a busy loop at the wake, until the kernel's
+# RT watchdog killed PipeWire (docs/userspace.md#audio). Only the plugin: the build installs it over
+# the one from Valve's pipewire-audio. The exact version in depends stops the build when Valve's moves.
+pkgname=pico4-spa-alsa
+pkgver=1.4.9
+pkgrel=1
+pkgdesc="PipeWire's ALSA plugin with the capture wakeup taken from the clock"
+arch=(aarch64)
+url="https://pipewire.org"
+license=(MIT)
+depends=(alsa-lib glibc systemd-libs "pipewire-audio=1:$pkgver")
+makedepends=(meson ninja)
+source=("pipewire-$pkgver.tar.gz::https://gitlab.freedesktop.org/pipewire/pipewire/-/archive/$pkgver/pipewire-$pkgver.tar.gz"
+        early-wakeup-from-the-clock.patch)
+sha256sums=(8066a7b220069e4c6e3b02bd2b6ea303bba66df255023c07c99323449ba8fe3c
+            466ce56db21086f7d7582adff68b10092bd566f938f6531ba0a8cd4f4cb1c70d)
+
+prepare() {
+  patch -d "pipewire-$pkgver" -p1 -N -r - < early-wakeup-from-the-clock.patch || true
+  grep -q 'SPA_MAX(current_time, get_time_ns(state))' "pipewire-$pkgver/spa/plugins/alsa/alsa-pcm.c"
+}
+
+build() {
+  [[ -f build/build.ninja ]] || meson setup "pipewire-$pkgver" build --prefix /usr --libdir lib --buildtype release     -Dauto_features=disabled -Dspa-plugins=enabled -Dalsa=enabled -Dudev=enabled -Dcompress-offload=enabled     -Dsession-managers=[] -Dexamples=disabled -Dtests=disabled -Dman=disabled -Ddocs=disabled
+  meson compile -C build spa/plugins/alsa/spa-alsa
+}
+
+package() {
+  install -Dm755 build/spa/plugins/alsa/libspa-alsa.so "$pkgdir/usr/lib/pico4-spa-alsa/libspa-alsa.so"
+}

@@ -156,6 +156,7 @@ in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bi
 sync=""
 [[ $refresh == 1 || -z "$(ls "$B"/var/lib/pacman/sync/*.db 2>/dev/null)" ]] && sync=y
 in_b pacman "-S$sync" --noconfirm --needed base-devel git meson ninja cmake eigen openxr python-mako python-yaml \
+    alsa-lib pipewire-audio \
     python-packaging glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
     wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache \
     glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage \
@@ -237,6 +238,7 @@ build_package() {
 }
 build_package pico4-graphics-tests "$project"/src/graphics/*
 build_package pico4-libdisplay-info
+build_package pico4-spa-alsa
 build_package pico4-sensors
 build_package pico4-basalt
 build_package pico4-swapchain-usage "$project"/src/swapchain/*
@@ -348,6 +350,8 @@ optional+='|^deckard-(mesa|vulkan-layers)-android-aarch64 '
 PYTHONPATH=$project python3 -m overpressure.elfdeps "$T" "${foreign[@]}" --ignore "$optional" >&2 ||
     { echo "unresolved ELF dependencies (above)" >&2; exit 1; }
 log "${#foreign[@]} Frame/project packages: all ELF dependencies resolve"
+# PipeWire's ALSA plugin with the capture fix over Valve's, of the version its recipe depends on.
+install -m755 "$T/usr/lib/pico4-spa-alsa/libspa-alsa.so" "$T/usr/lib/spa-0.2/alsa/libspa-alsa.so"
 
 phase "applying the PICO 4 adaptation layer"
 # overlay FILE DEST: root-owned; scripts executable, everything else 0644
