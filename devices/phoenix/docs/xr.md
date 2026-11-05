@@ -222,8 +222,7 @@ edges (one eye's panel: 2160 px at 21.3 µm, 46 mm) through the green channel: a
 eye (106.7° horizontally), against the stock runtime's symmetric 104°.
 
 The IPD comes from the GD32 MCU that drives the lens motor, on `/dev/ttyHS1` (115200 8N1, raw).
-[pico4_ipd.c](../src/monado/pico4_ipd.c) sends one command once at start, after the GENI UART
-clock-vote ioctl (`0x544D`) that the stock service also issues: `A0 08 00 00 00 A8` (get
+[pico4_ipd.c](../src/monado/pico4_ipd.c) sends one command once at start: `A0 08 00 00 00 A8` (get
 position; the last byte is the XOR of the others). The reply `79 a_lo a_hi b_lo b_hi xor`
 carries the lens separation in 0.01 mm and the Hall sensor reading, told apart by range (the
 separation lies within 57.00–73.00 mm); the driver waits up to 200 ms for it. The module cannot
@@ -310,13 +309,12 @@ frames only from an allowlist:
 | `22` | exactly `01 00` (reads; a first byte of 0 would set the tracker work mode) | work mode | – | yes |
 | `29`, `30` | none | crash info, whitelist (read-only queries of the stock wake-up) | – | yes |
 | `01` to `02`/`03` | play (`01`, or all zero to stop), amplitude, u16 duration in ms | controller vibration, as PICO OS's OpenXR haptics | yes | – |
-| `07` to `02`/`03` | as `01`, then u16 frequency (40–500 Hz) | controller vibration with a frequency | yes | – |
 | `02` to `02`/`03` | exactly one byte, the chunk index 1–12 | the controller's calibration record (read-only, as PICO OS on every connect) | yes | yes |
 | `03` to `02`/`03` | none | the controller's info (read-only; PICO OS sends it, these controllers do not answer) | – | yes |
 
 Neither can send firmware, bootloader or flash commands, and neither touches the boot pin. The C
 module's unit test checks its frames against golden bytes from the hardware-verified Python tool
-(the vibration frames against the layout above) and that every other command is refused.
+(the vibration frame against the layout above) and that every other command is refused.
 
 **Controller connections and calibration.** The station reports each controller's connection,
 as PICO OS's station service reads it:
@@ -382,7 +380,7 @@ station, which configures them over its own I2C and sends the frame sync:
   as 16-bit raw, metadata line first) and prints per camera the frames, errors, frame rate from
   the start-of-frame timestamps, their monotonicity, the sample statistics and the frames of
   each exposure phase. `--stats-log FILE` logs per frame the slot, start-of-frame time,
-  brightness, latency, request, phase, exposure and gain; `--exposure LINES --gain G` sets the
+  brightness, latency, frame counter, phase, exposure and gain; `--exposure LINES --gain G` sets the
   station exposure.
 
 ## Passthrough
@@ -1249,9 +1247,8 @@ rate, the measured rate is within 5% of the configured one, no timestamp goes ba
 within 0.5 m/s² of 9.81 and each component of the mean angular rate is below 0.05 rad/s. These
 limits are for a headset lying still.
 
-The stage-2 checks, `python -m overpressure dev check` in development mode and the same checks inside
-`python -m overpressure hwtest flash-run --userspace ARCHIVE …` and `python -m overpressure cycle --userspace
-ARCHIVE` ([hardware-testing.md](hardware-testing.md)), test an archive built with sensor data
+The stage-2 checks, `python -m overpressure dev check` on the installed system
+([hardware-testing.md](hardware-testing.md)), test an archive built with sensor data
 after the userspace check: they record the sensor units' status and `pico4-imu list accel gyro`,
 then require `pico4-imu stream --rate 500 --seconds 10 --check`. They continue with Valve's
 session ([session.md](session.md#acceptance)); Monado's own OpenXR
@@ -1299,6 +1296,8 @@ systemctl unset-environment PICO4_SLAM_BACKEND SLAM_WRITE_CSVS SLAM_CSV_PATH XRT
 | `PICO4_SLAMD_DEBUG` | unset | `pico4-slamd` passes the tracker's debug and verbose log lines to the journal |
 | `PICO4_SLAMD_AE` | on | `0`: no PICO OS auto exposure in `pico4-slamd`; the driver's own sets the exposure |
 | `PICO4_SLAMD_RESTART_S` | 10 | seconds a tracker that lost its confidence stays lost before `pico4-slamd` restarts it, as PICO OS's service; `0` turns the restart off |
+| `PICO4_SLAMD_RELOCALISE_S` | 10 | seconds from the tracker's first frames until `pico4-slamd` takes the session for a new room, without a relocalisation |
+| `PICO4_CAMERA_HZ` | 50 | the tracking cameras' rate: 50 as stock, or PICO OS's other rate, 60 (scene frames at 30 Hz instead of 25) |
 | `PICO4_SLAM_CAMS` | `0,1,2,3` | factory cameras for Basalt in tracker order, at least two; Basalt matches the first against the others |
 | `PICO4_TCAM_SLOTS` | `0,2,1,3` | capture slot of factory cameras cam0–cam3 |
 | `PICO4_SLAM_UPRIGHT` | on | turn images that are upside down relative to the first camera's |

@@ -83,9 +83,9 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_fusion_position_ms, "PICO4_FUSION_POSITION_MS", 
 DEBUG_GET_ONCE_NUM_OPTION(pico4_fusion_smoothing_ms, "PICO4_FUSION_SMOOTHING_MS", 50)
 /*!
  * Hand out the head pose this much later than asked for (fusion only), predicted from the
- * IMU-rate state. SteamVR asks for the present and extrapolates by only about 9 ms, while a
- * pose reaches the panels 33 ms after it was handed out (latency probe, docs/xr.md); the
- * rest showed as lag on head turns and as the world swimming with small head motion.
+ * IMU-rate state. SteamVR asks for the present and extrapolates by about 11 ms, while a pose
+ * handed out reaches the vblank 12 ms later, plus the display's lead (latency probe, docs/xr.md);
+ * the rest showed as lag on head turns and as the world swimming with small head motion.
  */
 DEBUG_GET_ONCE_NUM_OPTION(pico4_predict_ms, "PICO4_PREDICT_MS", 12)
 /*!
@@ -102,7 +102,6 @@ DEBUG_GET_ONCE_NUM_OPTION(pico4_slam_reset_after_s, "PICO4_SLAM_RESET_AFTER_S", 
 //! Directory for fusion_slam.csv (each SLAM pose) and fusion_pose.csv (each pose handed out).
 DEBUG_GET_ONCE_OPTION(pico4_fusion_csv, "PICO4_FUSION_CSV", NULL)
 
-#define P4_TRACE(h, ...) U_LOG_XDEV_IFL_T(&h->base, h->log_level, __VA_ARGS__)
 #define P4_DEBUG(h, ...) U_LOG_XDEV_IFL_D(&h->base, h->log_level, __VA_ARGS__)
 #define P4_INFO(h, ...) U_LOG_XDEV_IFL_I(&h->base, h->log_level, __VA_ARGS__)
 #define P4_WARN(h, ...) U_LOG_XDEV_IFL_W(&h->base, h->log_level, __VA_ARGS__)
@@ -111,13 +110,13 @@ DEBUG_GET_ONCE_OPTION(pico4_fusion_csv, "PICO4_FUSION_CSV", NULL)
 //! QTimer rate of the SSC timestamps; also the AP's arch counter on this SoC.
 #define QTIMER_HZ 19200000ULL
 
-//! Gyro samples ignored after enabling (the accelerometer settles), then averaged for the start pose.
 //! Accelerometer/gyroscope lookups of 3 s each before giving up (DSP still starting).
 #define PICO4_LOOKUP_ATTEMPTS 5
 //! The headset's battery in the power-supply class.
 #define PICO4_BATTERY "/sys/class/power_supply/battery"
 //! The panels' backlight (the panel driver's).
 #define PICO4_BACKLIGHT_POWER "/sys/class/backlight/pico4-panel/bl_power"
+//! Gyro samples ignored after enabling (the accelerometer settles), then averaged for the start pose.
 #define PICO4_WARMUP_SKIP 100
 #define PICO4_WARMUP_AVERAGE 100
 //! The ICM-42688's temperature stream: its fastest rate (it offers 1 and 5 Hz).
@@ -219,8 +218,6 @@ struct pico4_hmd
 
 	//! The newest gyro sample's time: the 3DoF filter needs each one later than the last.
 	int64_t last_gyro_ns;
-	//! Gyro samples dropped for not being later than the one before (around a suspend).
-	uint64_t gyro_backwards;
 
 	// Statistics, also shown in the debug GUI.
 	uint64_t gyro_samples;
@@ -513,7 +510,6 @@ handle_sample(struct pico4_hmd *h, const struct pico4_ssc_sample *s)
 	}
 	// Monado's 3DoF filter asserts on a step back, which killed vrserver after a resume.
 	if (ts <= h->last_gyro_ns) {
-		h->gyro_backwards++;
 		return;
 	}
 	h->last_gyro_ns = ts;

@@ -59,7 +59,7 @@ Open: a power press after a long sleep. Plan and details:
    ```sh
    python -m overpressure dev stage-abl
    python -m overpressure dev image
-   python -m overpressure dev flash recovery
+   python -m overpressure dev flash
    python -m overpressure dev connect
    ```
 
@@ -75,7 +75,7 @@ Open: a power press after a long sleep. Plan and details:
    python devices/phoenix/kernel/recovery_image.py --installed out/dev/install-boot.img --boot \
        --gpu-firmware assets/graphics-firmware-5.13.7 --wlan-firmware assets/wlan-5.13.7 \
        --stage1 devices/phoenix/initramfs out/kernel cache/stock/<firmware>.recovery.img \
-       out/dev/dev-recovery.img out/kernel/install-boot-valve-rgb.img
+       out/dev/dev-recovery.img out/kernel/valve-boot.img
    ```
 
 6. **Install and check it** ([docs/install.md](docs/install.md)); a new system image takes the same

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSL-1.0
 /*!
  * @file
- * @brief  Interface to the PICO 4 driver (IMU through the sensor DSP).
+ * @brief  Interface to the PICO 4 driver: the headset, its controllers and its cameras.
  * @ingroup drv_pico4
  */
 
@@ -21,18 +21,13 @@ extern "C" {
  * @defgroup drv_pico4 PICO 4 driver
  * @ingroup drv
  *
- * @brief Head orientation of the original PICO 4 from its ICM-42688 IMU, read
+ * @brief The original PICO 4: head tracking, lenses, controllers and cameras, with its IMU read
  * through the Qualcomm Sensor Core on the SLPI (QMI over QRTR).
  */
 
 struct xrt_auto_prober;
 struct xrt_device;
 
-/*!
- * Create the HMD device; NULL if the sensor DSP or its IMU is not available.
- *
- * @ingroup drv_pico4
- */
 /*!
  * Auto-prober: creates the HMD on a PICO 4 (an SLPI with an SNS client service).
  *

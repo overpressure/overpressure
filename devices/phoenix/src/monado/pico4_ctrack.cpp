@@ -32,8 +32,6 @@
 #include <string>
 
 DEBUG_GET_ONCE_BOOL_OPTION(pico4_ctrack, "PICO4_CTRACK", true)
-//! Directory to save the LED images of the 300th frame set as PGM (diagnostics).
-DEBUG_GET_ONCE_OPTION(pico4_ctrack_dump, "PICO4_CTRACK_DUMP", NULL)
 //! File to write one CSV row per hand after every publication (diagnostics; pico4_ctrack.h).
 DEBUG_GET_ONCE_OPTION(pico4_ctrack_trace, "PICO4_CTRACK_TRACE", NULL)
 
@@ -221,21 +219,6 @@ pico4_ctrack_push_frames(struct pico4_ctrack *t, int64_t timestamp_ns, const uin
 	t->runner->push_frames(timestamp_ns, views);
 	if (++t->pushed % 250 == 0) {
 		log_status(t);
-	}
-	const char *dump = debug_get_option_pico4_ctrack_dump();
-	if (dump != nullptr && t->pushed == 300) {
-		for (int k = 0; k < kCameras; k++) {
-			std::string path = std::string(dump) + "/leds-cam" + std::to_string(k) + ".pgm";
-			FILE *f = fopen(path.c_str(), "wb");
-			if (f == nullptr) {
-				continue;
-			}
-			fprintf(f, "P5\n%d %d\n255\n", kImageWidth, kImageHeight);
-			for (int y = 0; y < kImageHeight; y++) {
-				fwrite(images[k] + (size_t)y * stride, 1, kImageWidth, f);
-			}
-			fclose(f);
-		}
 	}
 }
 

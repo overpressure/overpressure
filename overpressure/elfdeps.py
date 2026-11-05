@@ -285,8 +285,8 @@ def package_files(root: str) -> dict:
 
 
 def checked(root: str, path: str) -> bool:
-    """Programs, public libraries, the private driver directory and SteamVR drivers;
-    libraries in other private directories are reached through their programs."""
+    """Programs, public libraries and SteamVR drivers; libraries in private directories are
+    reached through their programs."""
     try:
         mode = os.lstat(os.path.join(root, path.lstrip("/"))).st_mode
     except OSError:
@@ -294,7 +294,7 @@ def checked(root: str, path: str) -> bool:
     if not stat.S_ISREG(mode):
         return False
     program = mode & 0o111 and ".so" not in os.path.basename(path)
-    return bool(program or re.match(r"/usr/lib/[^/]+\.so", path) or path.startswith("/usr/lib/pico4/")
+    return bool(program or re.match(r"/usr/lib/[^/]+\.so", path)
                 or (path.startswith("/usr/share/steamvr-monado/") and path.endswith(".so")))
 
 

@@ -13,9 +13,8 @@
 #
 # --vendor puts the vendor libraries first (the DSP's root listener, cdsprpcd). The root has no
 # Android runtime: programs start through bionic's bootstrap linker.
-# On a mainline kernel (upstream FastRPC, no /dev/adsprpc-smd) the FastRPC bridge is preloaded as
-# well: it carries the stock libraries' vendor FastRPC and ION calls over to the upstream driver
-# and the DMA-BUF heap (src/stockslam/fastrpc_bridge.h).
+# The FastRPC bridge is preloaded as well: it carries the stock libraries' vendor FastRPC and ION
+# calls over to the upstream driver and the DMA-BUF heap (src/stockslam/fastrpc_bridge.h).
 set -euo pipefail
 root=/usr/lib/pico4-stock-slam
 calibration=/usr/share/qcom/pico4/calibration/pvr
@@ -27,10 +26,7 @@ libs=/system/lib64/bootstrap:/system/lib64
 [ "${1:-}" = --vendor ] && { libs=/vendor/lib64:$libs; shift; }
 [ -x "$root/system/bin/bootstrap/linker64" ] || { echo "stock-slam: no tracker root in $root" >&2; exit 1; }
 [ -d "$calibration/mav0" ] || { echo "stock-slam: no factory calibration in $calibration" >&2; exit 1; }
-preload=/pico4/libpico4-slam-stubs.so
-if [ ! -e /dev/adsprpc-smd ] && [ -e /dev/fastrpc-cdsp ]; then
-	preload=$preload:/pico4/libpico4-fastrpc-bridge.so
-fi
+preload=/pico4/libpico4-slam-stubs.so:/pico4/libpico4-fastrpc-bridge.so
 exec unshare -m --propagation private /bin/bash -c '
 	set -e
 	root=$1 calibration=$2 libs=$3 state=$4 preload=$5

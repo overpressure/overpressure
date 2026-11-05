@@ -74,8 +74,7 @@ class RamBootTests(unittest.TestCase):
 
     def test_boots_from_ram_and_waits_until_the_image_answers(self):
         target = FakeTarget(self.image, up_after=3)
-        result = self.boot(target)
-        self.assertEqual(result.image, self.image)
+        self.boot(target)
         self.assertEqual(target.polls, 3)
         self.assertIn(["-s", "SERIAL", "boot", str(self.image)], target.calls)
         # Every command but the device list names the headset, and nothing is ever written.

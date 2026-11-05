@@ -10,7 +10,7 @@ help: ## list the targets
 
 test: ## host tests of the package and every headset: no hardware, seconds
 	$(PYTHON) -m unittest
-	@for t in devices/*/tests/test_*.sh; do case "$$t" in *_fake.sh) ;; *) echo "$$t"; bash "$$t" || exit 1 ;; esac; done
+	@for t in devices/*/tests/test_*.sh; do echo "$$t"; bash "$$t" || exit 1; done
 
 gui: ## the window: image creation and flashing
 	$(PYTHON) -m overpressure gui

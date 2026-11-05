@@ -68,7 +68,7 @@ class VrPerformanceUnitTests(unittest.TestCase):
         self.assertRegex(unit, r"(?m)^StopWhenUnneeded=yes$")
         self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4-poc/vr-performance on$")
         self.assertRegex(unit, r"(?m)^ExecStop=/usr/libexec/pico4-poc/vr-performance off$")
-        self.assertNotRegex(unit, r"(?m)^(CPUWeight|CPUQuota)=|^\[Install\]")
+        self.assertNotRegex(unit, r"(?m)^\[Install\]")
         for name in ("pico4-session", "pico4-monado"):
             text = (ROOTFS / f"usr/lib/systemd/system/{name}.service").read_text(encoding="utf-8")
             self.assertRegex(text, r"(?m)^Wants=pico4-vr-performance\.service$", name)

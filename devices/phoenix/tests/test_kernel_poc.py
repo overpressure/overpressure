@@ -1,4 +1,4 @@
-"""The Frame-kernel prototype's host tools: the overlay sink and the one-shot recovery image."""
+"""Valve's kernel's host tools: the overlay sink and the one-shot recovery image."""
 from __future__ import annotations
 
 import gzip
@@ -170,6 +170,12 @@ class InstalledStage1Tests(unittest.TestCase):
         mount = next(line for line in stage1.splitlines() if "lowerdir=$NEW/etc" in line)
         self.assertIn(",index=off", mount)
 
+    def test_the_system_starts_only_with_the_kernels_devtmpfs(self):
+        # Without a devtmpfs systemd's device monitor does not follow udev: the switch refuses.
+        script = (Path(__file__).resolve().parents[1] / "initramfs/usr/libexec/pico4-poc/switch-userspace").read_text(encoding="utf-8")
+        self.assertIn('= devtmpfs ] ||\n\tfail "/dev is no devtmpfs', script)
+        self.assertLess(script.index("no devtmpfs"), script.index('mount --move /dev "$NEW/dev"'))
+
 
 class RecoveryImageTests(unittest.TestCase):
     def setUp(self):
@@ -197,7 +203,7 @@ class RecoveryImageTests(unittest.TestCase):
         words = image.full_cmdline.split()
         self.assertIn("pico4poc.part=recovery", words)
         self.assertIn("pico4poc.modules=0", words)
-        # The prototype's own panic setting replaces the image's; Android's words go.
+        # The test image's own panic setting replaces the image's; Android's words go.
         self.assertEqual([w for w in words if w.startswith("panic=")], ["panic=5"])
         self.assertNotIn("androidboot.hardware=qcom", words)
 
@@ -348,8 +354,8 @@ class RecoveryImageTests(unittest.TestCase):
         dev = self.dev_recovery("pico4poc.part=recovery panic=0")
         words = bootimg.parse(recovery_image.build(
             self.tmp / "out", self.tmp / "stock.img", dev,
-            cmdline_words=["panel_pico4_ls026b3sa.keep_boot_state=1", "panic=30"])).full_cmdline.split()
-        self.assertIn("panel_pico4_ls026b3sa.keep_boot_state=1", words)
+            cmdline_words=["panel_pico4_ls026b3sa.wake_test_sleep_in=1", "panic=30"])).full_cmdline.split()
+        self.assertIn("panel_pico4_ls026b3sa.wake_test_sleep_in=1", words)
         self.assertEqual([w for w in words if w.startswith("panic=")], ["panic=30"])
 
     def test_trace_records_one_function_graph(self):

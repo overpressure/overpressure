@@ -6,8 +6,7 @@
  * The A650 cannot compress storage images, so Mesa's display WSI would scan out uncompressed
  * images, which costs the compositor about 5 ms of GPU time per frame: 60-66 frames per second
  * instead of 90. Without that usage it resolves straight into compressed scanout images, with
- * Valve's Mesa as it is (docs/kernel.md). Every other process passes through, and so
- * does the stock kernel, whose Turnip does the same with a driconf option.
+ * Valve's Mesa as it is (docs/kernel.md). Every other process passes through.
  *
  * It also paces the compositor one frame ahead, as the stock path paces it
  * (PICO4_FRAMES_AHEAD=N): a present counts as shown once the present N before it is. The
@@ -237,14 +236,14 @@ wait_for_present(VkDevice device, VkSwapchainKHR swapchain, uint64_t present_id,
 	}
 	uint64_t ahead = frames_ahead();
 	if (present_id <= ahead) {
-		return ahead > 0 ? wait_for_new_count(device, swapchain, timeout, false) : VK_SUCCESS;
+		return wait_for_new_count(device, swapchain, timeout, false);
 	}
 	VkResult result = next(device, swapchain, present_id - ahead, 0);
 	bool blocked = result == VK_TIMEOUT;
 	if (blocked && timeout > 0) {
 		result = next(device, swapchain, present_id - ahead, timeout);
 	}
-	return result == VK_SUCCESS && ahead > 0 ? wait_for_new_count(device, swapchain, timeout, blocked) : result;
+	return result == VK_SUCCESS ? wait_for_new_count(device, swapchain, timeout, blocked) : result;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL
@@ -259,7 +258,7 @@ wait_for_present2(VkDevice device, VkSwapchainKHR swapchain, const VkPresentWait
 	}
 	uint64_t ahead = frames_ahead();
 	if (info->presentId <= ahead) {
-		return ahead > 0 ? wait_for_new_count(device, swapchain, info->timeout, false) : VK_SUCCESS;
+		return wait_for_new_count(device, swapchain, info->timeout, false);
 	}
 	VkPresentWait2InfoKHR earlier = *info;
 	earlier.presentId = info->presentId - ahead;
@@ -270,7 +269,7 @@ wait_for_present2(VkDevice device, VkSwapchainKHR swapchain, const VkPresentWait
 		earlier.timeout = info->timeout;
 		result = next(device, swapchain, &earlier);
 	}
-	return result == VK_SUCCESS && ahead > 0 ? wait_for_new_count(device, swapchain, info->timeout, blocked) : result;
+	return result == VK_SUCCESS ? wait_for_new_count(device, swapchain, info->timeout, blocked) : result;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL

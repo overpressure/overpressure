@@ -1,7 +1,7 @@
 #!/bin/sh
 # wlan0's address from persist's wlan_mac.bin (Intf0MacAddress=...), the one PICO assigned to the
-# headset: the stock driver reads the file itself, ath11k takes the chip's own. The interface is
-# down until NetworkManager takes it, which keeps the address ("preserve").
+# headset: ath11k takes the chip's own. The interface is down until NetworkManager takes it, which
+# keeps the address ("preserve").
 #
 # The chip's own address changes at each boot, and the Steam client names it in the Wi-Fi profiles
 # it saves: after a reboot NetworkManager would find no device for them. This runs before

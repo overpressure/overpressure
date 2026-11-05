@@ -25,25 +25,12 @@ fail() {
 	exec pico4-reboot bootloader
 }
 
-# A kernel with devtmpfs (a mainline kernel, where stage 1 mounted it) hands /dev over as it is,
-# like any initramfs: systemd's device monitor only listens to udev when /dev is a devtmpfs or udev
-# already runs, and without it no device unit ever starts.
-if [ "$(sed -n 's|^[^ ]* /dev \([^ ]*\) .*|\1|p' /proc/mounts)" = devtmpfs ]; then
-	mount --move /dev "$NEW/dev" || fail "moving /dev"
-else
-	# The stock kernel has no devtmpfs: /dev is a directory of the initramfs,
-	# which switch_root deletes. Give the new root a tmpfs copy of the nodes mdev
-	# made; udev's pico4 rules maintain it from then on.
-	mount -t tmpfs -o nosuid,mode=0755,size=16m dev "$NEW/dev" || fail "mounting $NEW/dev"
-	for m in pts shm; do
-		mkdir -p "$NEW/dev/$m"
-		mount --move "/dev/$m" "$NEW/dev/$m" || fail "moving /dev/$m"
-	done
-	for e in /dev/* /dev/.[!.]*; do
-		case "${e##*/}" in pts | shm | '.[!.]*') continue ;; esac
-		cp -a "$e" "$NEW/dev/" || fail "copying $e"
-	done
-fi
+# The system runs only on Valve's kernel, whose devtmpfs stage 1 mounted. /dev is handed over as it
+# is, like any initramfs: systemd's device monitor only listens to udev when /dev is a devtmpfs or
+# udev already runs, and without it no device unit ever starts.
+[ "$(sed -n 's|^[^ ]* /dev \([^ ]*\) .*|\1|p' /proc/mounts)" = devtmpfs ] ||
+	fail "/dev is no devtmpfs: the system runs only on Valve's kernel"
+mount --move /dev "$NEW/dev" || fail "moving /dev"
 # Hotplug goes to udev (netlink) from now on; nothing may call stage-1 mdev.
 echo > /proc/sys/kernel/hotplug 2>/dev/null
 umount -l /tmp 2>/dev/null

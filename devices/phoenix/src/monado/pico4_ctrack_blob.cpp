@@ -1105,29 +1105,6 @@ sort_blob_points(std::vector<BlobPoint> &blobs)
 	blobs = std::move(out);
 }
 
-void
-sort_blob_points_2(std::vector<BlobPoint> &blobs)
-{
-	if (blobs.size() < 3) {
-		return;
-	}
-	float x0 = blobs[0].x, x1 = x0, y0 = blobs[0].y, y1 = y0;
-	for (const BlobPoint &b : blobs) {
-		x0 = std::min(x0, b.x);
-		x1 = std::max(x1, b.x);
-		y0 = std::min(y0, b.y);
-		y1 = std::max(y1, b.y);
-	}
-	// Integer bounding rectangle of float points (floor / ceil, as cv::boundingRect).
-	const int w = (int)std::ceil(x1) - (int)std::floor(x0);
-	const int h = (int)std::ceil(y1) - (int)std::floor(y0);
-	if (w < h) {
-		std::stable_sort(blobs.begin(), blobs.end(), [](const BlobPoint &a, const BlobPoint &b) { return a.x < b.x; });
-	} else {
-		std::stable_sort(blobs.begin(), blobs.end(), [](const BlobPoint &a, const BlobPoint &b) { return a.y < b.y; });
-	}
-}
-
 /*
  *
  * Shared stages.

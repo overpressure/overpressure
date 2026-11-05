@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSL-1.0
 /*!
  * @file
- * @brief  PICO 4 6DoF head tracking: tracking cameras and IMU into Monado's SLAM tracker (Basalt).
+ * @brief  PICO 4 6DoF head tracking: PICO OS's tracker through pico4-slamd, or Basalt.
  * @ingroup drv_pico4
  */
 

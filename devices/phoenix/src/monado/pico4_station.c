@@ -30,7 +30,6 @@
 #define TARGET_LEFT 0x02  //!< Controller targets: StationService::SetMotor 0x72054.
 #define TARGET_RIGHT 0x03
 #define MOTOR_LEN 4       //!< SetMotor's payload (packetSendData at 0x72070).
-#define MOTOR_EVENT_LEN 6 //!< SetVCMotorEvent's payload (0x72294).
 #define NOTIFY_STREAM 0x01   //!< A5 01: streamed data, not acknowledged.
 #define NOTIFY_CONNECT 0x02  //!< A5 02: a controller connected (repeated a few times).
 #define NOTIFY_DISCONNECT 0x03 //!< A5 03: a controller disconnected.
@@ -127,7 +126,7 @@ allowed(uint8_t cmd, const uint8_t *p, size_t n)
 	}
 }
 
-//! Frames to a controller: the two motor commands (play flag 0 or 1) and the calibration query.
+//! Frames to a controller: the plain motor command (play flag 0 or 1) and the calibration query.
 static bool
 allowed_controller(uint8_t target, uint8_t cmd, const uint8_t *p, size_t n)
 {
@@ -136,7 +135,6 @@ allowed_controller(uint8_t target, uint8_t cmd, const uint8_t *p, size_t n)
 	}
 	switch (cmd) {
 	case PICO4_STATION_CMD_MOTOR: return n == MOTOR_LEN && p[0] <= 1;
-	case PICO4_STATION_CMD_MOTOR_EVENT: return n == MOTOR_EVENT_LEN && p[0] <= 1;
 	case PICO4_STATION_CMD_CALIBRATION: return n == 1 && p[0] >= 1 && p[0] <= PICO4_STATION_CALIBRATION_CHUNKS;
 	default: return false;
 	}
@@ -168,18 +166,15 @@ pico4_station_vibrate(uint8_t out[PICO4_STATION_FRAME],
                       enum pico4_station_hand hand,
                       unsigned level,
                       unsigned scale_percent,
-                      unsigned duration_ms,
-                      unsigned frequency_hz)
+                      unsigned duration_ms)
 {
 	if ((hand != PICO4_STATION_HAND_LEFT && hand != PICO4_STATION_HAND_RIGHT) || scale_percent > 100) {
 		return false;
 	}
 	const uint8_t target = hand == PICO4_STATION_HAND_LEFT ? TARGET_LEFT : TARGET_RIGHT;
-	const uint8_t cmd = frequency_hz == 0 ? PICO4_STATION_CMD_MOTOR : PICO4_STATION_CMD_MOTOR_EVENT;
-	const size_t n = cmd == PICO4_STATION_CMD_MOTOR ? MOTOR_LEN : MOTOR_EVENT_LEN;
-	uint8_t p[MOTOR_EVENT_LEN] = {0};
+	uint8_t p[MOTOR_LEN] = {0};
 
-	// Level 0 stops: the whole payload stays zero (SetMotor 0x72050, SetVCMotorEvent 0x72244).
+	// Level 0 stops: the whole payload stays zero (SetMotor 0x72050).
 	if (level != 0) {
 		if (level > 255) { // StationClient 0x37518
 			level = 255;
@@ -188,24 +183,15 @@ pico4_station_vibrate(uint8_t out[PICO4_STATION_FRAME],
 		if (duration_ms > 0xFFFF) {
 			duration_ms = 0xFFFF;
 		}
-		if (frequency_hz < PICO4_STATION_MOTOR_MIN_HZ) { // StationClient 0x37594..0x375ac
-			frequency_hz = PICO4_STATION_MOTOR_MIN_HZ;
-		} else if (frequency_hz > PICO4_STATION_MOTOR_MAX_HZ) {
-			frequency_hz = PICO4_STATION_MOTOR_MAX_HZ;
-		}
 		p[0] = 1;
 		p[1] = (uint8_t)(amplitude < 255 ? amplitude : 255);
 		p[2] = (uint8_t)(duration_ms & 0xff);
 		p[3] = (uint8_t)(duration_ms >> 8);
-		if (cmd == PICO4_STATION_CMD_MOTOR_EVENT) { // 0x72238..0x7223c
-			p[4] = (uint8_t)(frequency_hz & 0xff);
-			p[5] = (uint8_t)(frequency_hz >> 8);
-		}
 	}
-	if (!allowed_controller(target, cmd, p, n)) {
+	if (!allowed_controller(target, PICO4_STATION_CMD_MOTOR, p, MOTOR_LEN)) {
 		return false;
 	}
-	build(out, target, cmd, p, n);
+	build(out, target, PICO4_STATION_CMD_MOTOR, p, MOTOR_LEN);
 	return true;
 }
 
@@ -601,16 +587,6 @@ pico4_station_camera_start(struct pico4_station *st)
 }
 
 void
-pico4_station_camera_para(uint8_t out[CAMERA_SET_PARA_LEN],
-                          struct pico4_station_exposure scene,
-                          struct pico4_station_exposure leds,
-                          unsigned index)
-{
-	const struct pico4_station_exposure each[4] = {scene, scene, scene, scene};
-	pico4_station_camera_para_each(out, each, leds, index);
-}
-
-void
 pico4_station_camera_para_each(uint8_t out[CAMERA_SET_PARA_LEN],
                                const struct pico4_station_exposure scene[4],
                                struct pico4_station_exposure leds,
@@ -656,15 +632,6 @@ send_camera_para(struct pico4_station *st,
 }
 
 int
-pico4_station_camera_set_exposures(struct pico4_station *st,
-                                   struct pico4_station_exposure scene,
-                                   struct pico4_station_exposure leds)
-{
-	const struct pico4_station_exposure each[4] = {scene, scene, scene, scene};
-	return send_camera_para(st, each, leds);
-}
-
-int
 pico4_station_camera_set_each(struct pico4_station *st, const struct pico4_station_exposure scene[4])
 {
 	const struct pico4_station_exposure leds = {4, 26};
@@ -675,15 +642,16 @@ int
 pico4_station_camera_set_exposure(struct pico4_station *st, unsigned exposure_lines, unsigned gain)
 {
 	// The second set as PICO OS fills it: the station's own LED setting (4 lines, gain 26).
-	struct pico4_station_exposure scene = {exposure_lines, gain}, leds = {4, 26};
-	return pico4_station_camera_set_exposures(st, scene, leds);
+	const struct pico4_station_exposure scene = {exposure_lines, gain}, leds = {4, 26};
+	const struct pico4_station_exposure each[4] = {scene, scene, scene, scene};
+	return send_camera_para(st, each, leds);
 }
 
 int
 pico4_station_motor(struct pico4_station *st, enum pico4_station_hand hand, unsigned level, unsigned duration_ms)
 {
 	uint8_t f[PICO4_STATION_FRAME];
-	if (!pico4_station_vibrate(f, hand, level, PICO4_STATION_MOTOR_SCALE_PERCENT, duration_ms, 0)) {
+	if (!pico4_station_vibrate(f, hand, level, PICO4_STATION_MOTOR_SCALE_PERCENT, duration_ms)) {
 		return -EINVAL;
 	}
 	pthread_mutex_lock(&st->lock);

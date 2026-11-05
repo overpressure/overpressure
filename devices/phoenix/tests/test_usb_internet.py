@@ -35,8 +35,6 @@ class UsbInternetTests(unittest.TestCase):
         unit = (ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-usb-internet.service").read_text()
         self.assertIn("Before=systemd-networkd.service", unit)
         self.assertIn("ExecStart=/usr/libexec/pico4-poc/usb-internet", unit)
-        self.assertNotIn("CPUWeight", unit)
-        self.assertNotIn("CPUQuota", unit)
 
 
 if __name__ == "__main__":

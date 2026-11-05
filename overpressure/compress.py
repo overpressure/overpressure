@@ -12,7 +12,6 @@ import struct
 import zlib
 
 LZ4_LEGACY_MAGIC = 0x184C2102
-LZ4_FRAME_MAGIC = 0x184D2204
 
 SIGNATURES = [
     (b"\x1f\x8b", "gzip"),
@@ -116,8 +115,6 @@ def lz4_legacy_decompress(data: bytes) -> tuple[bytes, bytes]:
         if magic == LZ4_LEGACY_MAGIC:
             pos += 4
             continue
-        if pos + 4 > n:
-            break
         (size,) = struct.unpack_from("<I", data, pos)
         # Legacy streams have no end marker; anything implausible ends the stream.
         if size == 0 or size > 0x800000 + 0x10000 or pos + 4 + size > n:

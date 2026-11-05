@@ -10,7 +10,7 @@
  *       -fno-stack-protector -fno-asynchronous-unwind-tables \
  *       -Wl,--build-id=none -s -o pico4-reboot pico4-reboot.c
  *
- * usage: pico4-reboot                 plain reboot (back to PICO OS)
+ * usage: pico4-reboot                 plain reboot
  *        pico4-reboot bootloader      reboot into fastboot
  *        pico4-reboot recovery        reboot into recovery
  *        pico4-reboot poweroff        power off
@@ -22,7 +22,6 @@
  */
 
 #define NR_write 64
-#define NR_exit 93
 #define NR_sync 81
 #define NR_reboot 142
 

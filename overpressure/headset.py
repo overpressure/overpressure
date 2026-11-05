@@ -161,10 +161,10 @@ class Registry:
             raise KeyError(f"no headset {codename!r} in devices/ (known: {known})") from None
 
 
-def discover(root: Path = REPO) -> Registry:
+def discover() -> Registry:
     """Every devices/<codename>/tooling package that exports HEADSET."""
     registry = Registry()
-    for folder in sorted((root / "devices").glob("*/tooling/__init__.py")):
+    for folder in sorted((REPO / "devices").glob("*/tooling/__init__.py")):
         codename = folder.parent.parent.name
         module = importlib.import_module(f"devices.{codename}.tooling")
         headset = getattr(module, "HEADSET", None)

@@ -45,7 +45,6 @@ class Tool:
     version: str
     archives: Dict[str, Archive]           #: host key (see host_key) -> archive
     programs: Dict[str, str]               #: program name -> path inside the unpacked archive
-    about: str = ""
 
     def archive(self, host: Optional[str] = None) -> Optional[Archive]:
         host = host or host_key()
@@ -77,8 +76,7 @@ PLATFORM_TOOLS = Tool(
         "linux-x86_64": Archive(_GOOGLE.format("linux"), "3afdea91441815ab41254193df0343d92c1b1c0d0237165c3a345c8af8891c31"),
         "darwin": Archive(_GOOGLE.format("darwin"), "106a5d31fad8c1c0c5a180d06f5779767d129d7d5edbe629005c11a85eec5b4b"),
     },
-    {"adb": "platform-tools/adb" + EXE, "fastboot": "platform-tools/fastboot" + EXE},
-    "Android platform-tools: adb and fastboot")
+    {"adb": "platform-tools/adb" + EXE, "fastboot": "platform-tools/fastboot" + EXE})
 
 EDL_NG = Tool(
     "edl-ng", "1.6.0",
@@ -90,8 +88,7 @@ EDL_NG = Tool(
         "darwin-x86_64": Archive(_EDL.format("macos-x64"), "e69d523ebb00a2ef5b7f775fca606654fb45fa21f6b4e53c74c5b5a3e237ed24"),
         "darwin-arm64": Archive(_EDL.format("macos-arm64"), "531f32420698b657e44939653a7c18c34d2196f0807f2e3ca38840c56b8449ce"),
     },
-    {"edl-ng": "edl-ng" + EXE},
-    "the EDL client edl-ng (MIT)")
+    {"edl-ng": "edl-ng" + EXE})
 
 ARCHIVE_TOOLS = {tool.name: tool for tool in (PLATFORM_TOOLS, EDL_NG)}
 
@@ -225,7 +222,3 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

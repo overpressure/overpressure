@@ -52,30 +52,23 @@ failed=$(systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{p
 sd_version=$(systemctl --version 2>/dev/null | sed -n '1s/^systemd \([0-9.]*\).*/\1/p')
 taint=$(systemctl show --property=Tainted --value 2>/dev/null)
 need "PID 1 is systemd" [ "$pid1" = /usr/lib/systemd/systemd ]
-need "systemd 257 (258+ requires Linux >= 5.4)" [ "${sd_version%%.*}" = 257 ]
+need "systemd 257 (the Frame's version)" [ "${sd_version%%.*}" = 257 ]
 need "system state running (is: $state)" [ "$state" = running ]
 need "no failed units" [ -z "$failed" ]
 
-# -- /dev without devtmpfs ---------------------------------------------------
+# -- /dev ---------------------------------------------------------------------
 dev_fs=$(findmnt -no FSTYPE /dev 2>/dev/null)
 missing_nodes=$(
 	for u in /sys/dev/char/*/uevent /sys/dev/block/*/uevent; do
 		name=$(sed -n 's/^DEVNAME=//p' "$u" 2>/dev/null)
 		[ -n "$name" ] || continue
-		# The sound card's PCMs other than MultiMedia1 get no node (00-pico4-devnodes.rules).
-		case "$(readlink -f "${u%/uevent}")" in
-		*:qcom,q6core-audio:sound/sound/card*/pcmC*D0[pc]) ;;
-		*:qcom,q6core-audio:sound/sound/card*/pcmC*D*) continue ;;
-		esac
 		[ -e "/dev/$name" ] || echo "$name"
 	done
 )
 udev_devices=$(udevadm info --export-db 2>/dev/null | grep -c '^P:')
-# Stage 1 hands over the kernel's devtmpfs; QEMU's and other kernels without it get a tmpfs copy.
-dev_want=tmpfs
-grep -qw devtmpfs /proc/filesystems && dev_want=devtmpfs
-need "/dev is a $dev_want (the kernel's own)" [ "$dev_fs" = "$dev_want" ]
-need "every kernel device has a node (but the sound card's unused PCMs)" [ -z "$missing_nodes" ]
+# Stage 1 hands over the kernel's devtmpfs.
+need "/dev is the kernel's devtmpfs" [ "$dev_fs" = devtmpfs ]
+need "every kernel device has a node" [ -z "$missing_nodes" ]
 need "udev database populated" [ "${udev_devices:-0}" -gt 0 ]
 
 # -- storage policy ------------------------------------------------------------
@@ -87,7 +80,7 @@ writable=$(
 	done
 )
 root_src=$(findmnt -no SOURCE /)
-# The partition of a GPT name (stage 2 has no /dev/block/by-name links).
+# The partition of a GPT name.
 part_dev() {
 	local d
 	for d in /sys/class/block/*; do
@@ -97,29 +90,24 @@ part_dev() {
 installed=false
 system_dev=$(part_dev super)
 data_dev=$(part_dev userdata)
-if [ -n "$system_dev" ] && [ "$root_src" = "$system_dev" ]; then
-	# The installed system: the image in super read-only, data on userdata, the only writable partition.
-	installed=true
-	# The kernel counts a disk's read-only flag for its partitions too, so stage 1 makes
-	# userdata's disk writable; its other partitions keep their own flags and are checked here.
-	data_disk=$(basename "$(readlink -f "/sys/class/block/${data_dev##*/}/..")")
-	writable=$(grep -vx -e "${data_dev##*/}" -e "$data_disk" <<<"$writable")
-	need "every physical block device but userdata read-only" [ -z "$writable" ]
-	# Read-only under the mounted file system, its writeback fails and data is lost.
-	need "userdata writable" [ "$(cat "/sys/class/block/${data_dev##*/}/ro" 2>/dev/null)" = 0 ]
-	need "system image mounted read-only" sh -c "findmnt -no OPTIONS / | grep -q '^ro,'"
-	need "data on userdata" [ "$(findmnt -no SOURCE /data)" = "$data_dev" ]
-else
-	need "every physical block device read-only" [ -z "$writable" ]
-	need "root filesystem in RAM (zram)" sh -c "case '$root_src' in /dev/zram*) exit 0;; esac; exit 1"
-fi
+# The image in super read-only, data on userdata, the only writable partition.
+[ -n "$system_dev" ] && [ "$root_src" = "$system_dev" ] && installed=true
+need "root is the system image in super (is: $root_src)" [ "$installed" = true ]
+# The kernel counts a disk's read-only flag for its partitions too, so stage 1 makes
+# userdata's disk writable; its other partitions keep their own flags and are checked here.
+data_disk=$(basename "$(readlink -f "/sys/class/block/${data_dev##*/}/..")")
+writable=$(grep -vx -e "${data_dev##*/}" -e "$data_disk" <<<"$writable")
+need "every physical block device but userdata read-only" [ -z "$writable" ]
+# Read-only under the mounted file system, its writeback fails and data is lost.
+need "userdata writable" [ "$(cat "/sys/class/block/${data_dev##*/}/ro" 2>/dev/null)" = 0 ]
+need "system image mounted read-only" sh -c "findmnt -no OPTIONS / | grep -q '^ro,'"
+need "data on userdata" [ "$(findmnt -no SOURCE /data)" = "$data_dev" ]
 
 # -- services and SteamOS userspace -------------------------------------------
 seats=$(loginctl list-seats --no-legend 2>/dev/null | awk '{print $1}')
 need "D-Bus system bus" busctl --system status
 need "logind seat0" grep -qx seat0 <<<"$seats"
 need "sshd active" systemctl is-active --quiet sshd.service
-need "Android network groups" getent group aid_inet aid_net_raw
 # The USB link to the PC must survive the handoff exactly as stage 1 left it
 # (the PC's ARP entry and DHCP lease point at this name, MAC and address).
 link_status=absent
@@ -175,7 +163,7 @@ done
 session_user_state=$(loginctl show-user "$session_user" -p State --value 2>/dev/null)
 session_failed=$(user_systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
 # Device nodes the session user needs in Valve's session (SteamVR's
-# driver_monado and compositor run as steamos); those missing in QEMU are skipped.
+# driver_monado and compositor run as steamos).
 access_denied=$(
 	for node in /dev/dri/card0 /dev/spidev0.0 /dev/ttyHS1 /dev/media0 /dev/video0; do
 		[ -e "$node" ] || continue
@@ -184,7 +172,7 @@ access_denied=$(
 )
 monado_socket=$(systemctl is-active pico4-monado.socket 2>/dev/null)
 monado_service=$(systemctl is-active pico4-monado.service 2>/dev/null)
-# Valve's session runs where the GPU is (pico4-session.service): not in QEMU.
+# Valve's session runs where the GPU is (pico4-session.service).
 if [ -e /dev/dri/renderD128 ]; then
 	need "session service active (is: $session_service)" [ "$session_service" = active ]
 	need "session user logged in (is: $session_user_state)" [ "$session_user_state" = active ]
@@ -192,7 +180,7 @@ if [ -e /dev/dri/renderD128 ]; then
 fi
 
 # -- the fan (docs/cooling.md) ---------------------------------------------------
-# pico4-fan.service runs where the lens MCU's UART exists (not in QEMU) and
+# pico4-fan.service runs where the lens MCU's UART exists and
 # writes its state every second. The MCU must have acknowledged a duty and
 # answer without an error: a session must not run without cooling.
 fan_service=skipped
@@ -243,7 +231,7 @@ done
 os_id=$(. /etc/os-release && echo "${ID:-}")
 os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-}")
 
-# -- Vulkan through Turnip (needs the GPU firmware from your own backup) --------
+# -- Vulkan through Turnip (needs the GPU firmware from the stock firmware) ----
 vk_status=skipped
 vk_json=null
 if [ "$vulkan" = 1 ] && [ -c /dev/dri/renderD128 ]; then

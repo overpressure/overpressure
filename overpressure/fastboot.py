@@ -90,14 +90,8 @@ class RamBootTarget:
         raise NotImplementedError
 
 
-@dataclass
-class Result:
-    image: Path
-    seconds_to_up: float
-
-
 def ram_boot(target: RamBootTarget, image: Optional[Path] = None, log: Callable[[str], None] = print,
-             clock: Optional[Clock] = None) -> Result:
+             clock: Optional[Clock] = None) -> None:
     """Boots @p image (else the target's) from RAM and waits until it answers."""
     clock = clock or Clock()
     image = Path(image) if image is not None else target.image()
@@ -129,7 +123,6 @@ def ram_boot(target: RamBootTarget, image: Optional[Path] = None, log: Callable[
     until("the RAM-booted image", target.up_timeout, target.reached, clock)
     took = clock.monotonic() - started
     log(f">> up after {took:.0f} s; the next normal boot starts what the partitions hold")
-    return Result(image, took)
 
 
 def _refused(target: RamBootTarget, why) -> str:

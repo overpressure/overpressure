@@ -1,12 +1,12 @@
 #!/bin/bash
-# The installed system's read-only image for super (docs/userspace.md#installed-system), from
+# The installed system's read-only image for super (docs/install.md), from
 # the userspace archive scripts/build-userspace.sh writes. Linux or WSL, as root (ownership and
 # file capabilities):
 #
 #   scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
 #
-# ext4 without a journal (it is never written on the headset) and without the features the
-# 4.19 kernel cannot mount. /data is the data partition's mount point; the image names the
+# ext4 without a journal (it is never written on the headset) and without the features the stock
+# kernel, under the maintenance stage 1, cannot mount. /data is the data partition's mount point; the image names the
 # archive it came from in /usr/share/pico4-poc.
 set -euo pipefail
 

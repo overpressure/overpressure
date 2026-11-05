@@ -22,7 +22,7 @@ stock_name() {
 	esac
 }
 
-mainline_root() {
+runtime_root() {
 	local platform subtype soc e
 	platform=$(cat "$SMEM/hardware_platform" 2>/dev/null) && subtype=$(cat "$SMEM/hardware_platform_subtype" 2>/dev/null) ||
 		{ log "sensorspd: no socinfo in $SMEM"; return 1; }
@@ -33,7 +33,7 @@ mainline_root() {
 	rm -rf "$RUN_ROOT"
 	mkdir -p "$RUN_ROOT/socinfo"
 	for e in "$ROOT"/*; do
-		[ "${e##*/}" = socinfo ] || ln -s "$e" "$RUN_ROOT/${e##*/}"
+		ln -s "$e" "$RUN_ROOT/${e##*/}"
 	done
 	stock_name platform "$platform" > "$RUN_ROOT/socinfo/hw_platform"
 	stock_name subtype "$subtype" > "$RUN_ROOT/socinfo/platform_subtype"
@@ -45,12 +45,11 @@ mainline_root() {
 }
 
 node=/dev/fastrpc-sdsp
-mainline_root || exit 1
-root=$RUN_ROOT
+runtime_root || exit 1
 # udev creates the node during coldplug.
 for _ in $(seq 100); do
 	[ -c "$node" ] && break
 	sleep 0.1
 done
 [ -c "$node" ] || { log "sensorspd: no $node"; exit 1; }
-exec /usr/bin/hexagonrpcd -f "$node" -d sdsp -s -R "$root"
+exec /usr/bin/hexagonrpcd -f "$node" -d sdsp -s -R "$RUN_ROOT"

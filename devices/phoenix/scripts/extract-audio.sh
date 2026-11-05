@@ -6,7 +6,6 @@
 #
 # STOCK_DIR comes from `python -m overpressure stock` (vendor.img, modem.bin from PICO's public OTA).
 # OUTPUT_DIR receives (docs/userspace.md#audio):
-#                                      the stock kernel's build key; never strip them (vendor)
 #   firmware/adsp.mdt, adsp.bNN         the audio DSP's image, loaded by the kernel's PIL (modem)
 #   firmware/adspr.jsn, adspua.jsn      its protection-domain maps, for pd-mapper (modem)
 #   audiopd/acdb/adsp_avs_config.acdb   the audio process's AVS configuration (vendor acdbdata)

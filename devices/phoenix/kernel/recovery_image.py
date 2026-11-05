@@ -1,4 +1,5 @@
-"""The maintenance stage 1 on Valve's kernel: a recovery image for a one-shot test boot.
+"""Boot images with Valve's kernel: the installed system's (--installed --boot), and a recovery
+image for a one-shot test boot.
 
 It takes the dev loop's recovery image (out/dev/dev-recovery.img: stage 1's ramdisk, its command
 line, the stock recovery_dtbo) and replaces the kernel and the device tree with the ones
@@ -6,7 +7,7 @@ build-kernel.sh made. The result is a whole recovery partition with the stock vb
 as "dev image" builds it, because recovery is a chained AVB partition.
 
 Started by a reboot with reason "recovery", the ABL boots it once; any reboot after that (a
-panic, a deadline, a hard reset) starts the installed system on the stock kernel again.
+panic, a deadline, a hard reset) starts the installed system from boot again.
 
     python recovery_image.py [--debug] [--trace FUNCTION] [--gpu-firmware DIR] [--wlan-firmware DIR]
         [--cmdline WORD]... [--installed INSTALL_BOOT [--boot]] [--stage1 DIR]
@@ -28,8 +29,8 @@ so that the test image carries this tree's stage 1 without a new dev image.
 Stage 1's build information names the new kernel, and OUT.json beside the image records it, so
 that `dev check` recognises the test image's stage 1 as a known build.
 
---debug logs every driver probe, so the RAM console (read by the stock kernel after the reboot)
-ends with the probe a stalled boot waits for, the panic shows every task and CPU, and stage 1
+--debug logs every driver probe, so the RAM console (read by the installed system or the
+maintenance stage 1 after the reboot) ends with the probe a stalled boot waits for, the panic shows every task and CPU, and stage 1
 panics where it would return to fastboot. --trace records FUNCTION and everything it calls
 (ftrace's function graph) and prints the record on a panic: a call without a return is where a
 stalled function hangs.

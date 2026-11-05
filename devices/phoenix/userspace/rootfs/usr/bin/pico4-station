@@ -12,7 +12,7 @@ Safety: the station and controller firmware can be updated over this link. This
 tool can only build the frames listed in COMMANDS (version query, camera frame
 sync, IMU stream on/off, the controllers' slow advertising, acknowledge), the controller motor, the two read-only
 controller queries PICO OS sends on every connect (info, calibration) and the
-power ioctl; it has no way to send firmware, bootloader or flash commands, and it
+station-power switch; it has no way to send firmware, bootloader or flash commands, and it
 never touches the boot pin.
 """
 
@@ -125,7 +125,7 @@ def frame(command: int, payload: bytes = b"", seq: int = None) -> bytes:
 
 
 def motor_frame(hand: str, level: int, duration_ms: int) -> bytes:
-    """A vibration request for one controller (as pico4_station_vibrate() without frequency)."""
+    """A vibration request for one controller (as pico4_station_vibrate())."""
     if hand not in TARGET_CONTROLLER or not 0 <= level <= 255 or not 0 <= duration_ms <= 0xFFFF:
         raise ValueError("hand left|right, level 0-255, duration 0-65535 ms")
     payload = bytes(4)

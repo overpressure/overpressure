@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
- * PICO 4 (phoenix) on a mainline-based kernel: the prototype of a Steam Frame-level kernel
- * (docs/kernel.md). Phase 0: storage, the USB gadget, reboot modes and a RAM
- * console. Phase 1: the two panels on the bonded DSI links, and the GPU.
+ * PICO 4 (phoenix) on Valve's kernel (docs/kernel.md).
  *
  * The board is Qualcomm's "kona MTP" design (the stock tree is kona v2.1 with the MTP overlay,
  * board-id 0x10008). Supplies, memory carve-outs and GPIOs follow the headset's own stock tree,
@@ -109,7 +107,7 @@
 		/*
 		 * A RAM console that survives a warm reboot, laid out exactly as the stock kernel's
 		 * (ramoops_memreserve=2M: 1 MiB console, 1 MiB pmsg, no dump records, no ECC), so
-		 * that what a failed boot printed is in /sys/fs/pstore of the installed system on
+		 * that what a failed boot printed is in /sys/fs/pstore of the maintenance stage 1 on
 		 * the stock kernel. Directly above the ABL's ramdisk and device tree.
 		 */
 		ramoops@b0000000 {
@@ -339,7 +337,6 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
-		/* UFS 3.1 VCC: the stock driver asks for 2.504-2.95 V. */
 		/* The RGB camera's VIO. */
 		vreg_l14a_1p8: ldo14 {
 			regulator-name = "vreg_l14a_1p8";
@@ -348,6 +345,7 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
+		/* UFS 3.1 VCC: the stock driver asks for 2.504-2.95 V. */
 		vreg_l17a_2p5: ldo17 {
 			regulator-name = "vreg_l17a_2p5";
 			regulator-min-microvolt = <2504000>;
@@ -1375,8 +1373,6 @@
 	};
 };
 
-
-/* Cells 0 (left, 0xE2) and 1 (right, 0xE4) on CCI 1, master 0, in fast mode as well. */
 /*
  * Audio, as the stock tree wires it (kona-mtp-snd-card): two WSA8810 amplifiers, one per speaker,
  * on the WSA macro's SoundWire, and the WCD9380 codec (RX and TX SoundWire) whose ADC1 carries

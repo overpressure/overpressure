@@ -88,7 +88,7 @@ class PicoDoctorTests(unittest.TestCase):
 
     def test_the_build_host_needs_binfmt_with_the_f_flag_and_prefers_native_llvm(self):
         tools = {name.replace(".", "_"): f"/usr/bin/{name}" for name in
-                 ("curl", "tar", "zstd", "xz", "chroot", "python3", "brotli", "debugfs", "mkfs.ext4", "e2fsck",
+                 ("curl", "tar", "zstd", "xz", "chroot", "python3", "brotli", "debugfs", "mcopy", "mkfs.ext4", "e2fsck",
                   "sha256sum")}
         found = by_name(checks.build_checks(FakeHost(linux={**tools, "ok": "1", "arch": "x86_64", "binfmt": "PO"})))
         self.assertEqual(found["aarch64 binfmt (F flag)"].status, doctor.MISSING)

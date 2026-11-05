@@ -9,6 +9,9 @@ from unittest import mock
 from overpressure import REPO, __main__ as cli, runner
 from overpressure.headset import Command, Headset, Info, Param, Registry, Step, discover
 
+#: The command line's own words: a step may name them instead of a command of the headset.
+GENERIC = ("devices", "gui", "steps", "run", "ram-boot", "doctor", "tools", "container")
+
 
 class Fake(Headset):
     info = Info("fake", "Fake headset")
@@ -103,7 +106,7 @@ class RegistryTests(unittest.TestCase):
                     self.assertTrue((headset.root / words[0]).exists(), (codename, step.key))
                 elif words[0] == "ram-boot":
                     self.assertIsNotNone(headset.ram_boot(), codename)
-                elif words[0] in cli.GENERIC:
+                elif words[0] in GENERIC:
                     pass
                 else:
                     self.assertIn(words[0], headset.commands(), (codename, step.key))

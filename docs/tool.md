@@ -48,13 +48,15 @@ on Linux as root, in one of three places (`OVERPRESSURE_LINUX` in the environmen
 | `docker` | the build container: Docker or Podman, any host | macOS, Windows without WSL |
 
 The build container ([overpressure/container/Dockerfile](../overpressure/container/Dockerfile),
-Ubuntu 24.04 pinned by digest) holds every build tool, LLVM included, so the host needs only
-Docker: `python -m overpressure container build` builds its image (`overpressure-builder:HASH`,
+Ubuntu 24.04 pinned by digest) holds the tools of the userspace, system image and extraction
+builds, LLVM included, so these need only Docker on the host; the kernel build needs its own cross
+toolchain. `python -m overpressure container build` builds its image (`overpressure-builder:HASH`,
 the recipe's hash), `container run -- CMD` runs a command from the repository root (built first
-if missing), `container shell` opens a shell. It runs privileged (the builds mount and chroot);
-the repository is mounted at `/work` and `/var/tmp` (build roots, stock folders) is the named
-volume `overpressure-var`. The aarch64 programs of the build root run through the host
-kernel's binfmt handler: Docker Desktop registers one; on Linux,
+if missing), `container shell` opens a shell. The engine is Docker, else Podman;
+`OVERPRESSURE_CONTAINER_ENGINE` in the environment chooses it. It runs privileged (the builds
+mount and chroot); the repository is mounted at `/work` and `/var/tmp` (build roots, stock
+folders) is the named volume `overpressure-var`. The aarch64 programs of the build root run
+through the host kernel's binfmt handler: Docker Desktop registers one; on Linux,
 `docker run --privileged --rm tonistiigi/binfmt --install arm64` does.
 
 ## The window

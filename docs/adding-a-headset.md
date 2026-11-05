@@ -29,7 +29,7 @@ headset and calls these:
 | Need | Module |
 | --- | --- |
 | Stock firmware: a boot image or partitions from the vendor's OTA, checked against the zip | `overpressure.ota` (a catalog of builds, the members the headset needs) |
-| A stage 1: Alpine Linux in the stock boot image, kernel and device trees untouched | `overpressure.stage1` (a `Spec`: packages, overlay, prebuilt files, kernel arguments) |
+| A stage 1: Alpine Linux in the stock boot image, kernel and device trees untouched | `overpressure.stage1` (a `Spec`: packages, overlay, prebuilt files) |
 | adb and fastboot, fail-closed, every command naming the serial | `overpressure.android`, `overpressure.fastboot` (also the RAM boot) |
 | Qualcomm: the SoC ID, EDL with edl-ng or bkerler/edl, partition sizes from the rawprogram maps | `overpressure.qualcomm` |
 | Backups that every write is checked against | `overpressure.backup` |
@@ -128,9 +128,7 @@ class ExampleRamBoot(RamBootTarget):
 
 `ram_boot` checks the image and that this headset is the only device in fastboot, calls the
 target in that order, and tells a refusal (`Refused`: the bootloader has no `fastboot boot`) apart
-from a failure. The PICO 4's target is the worked example
-([devices/phoenix/tooling/ramboot.py](../devices/phoenix/tooling/ramboot.py)): its engineering
-ABL refuses, so there it ends refused.
+from a failure.
 
 ## Checks
 

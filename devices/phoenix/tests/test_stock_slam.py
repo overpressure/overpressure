@@ -34,11 +34,9 @@ class TrackerUnitTests(unittest.TestCase):
         self.assertIn("getent group video", unit)
         self.assertRegex(unit, r"(?m)^Restart=always$")
         self.assertRegex(unit, r"(?m)^Requires=pico4-cdsprpcd\.service$")
-        for name in ("pico4-slamd", "pico4-cdsprpcd", "pico4-cdsp"):
-            self.assertNotRegex(read(UNITS / f"{name}.service"), r"(?m)^(CPUWeight|CPUQuota)=", name)
 
     def test_tracker_runs_on_upstream_fastrpc(self):
-        # Without the bridge PICO OS's FastRPC finds no ION or adsprpc node on a mainline kernel
+        # Without the bridge PICO OS's FastRPC finds no ION or adsprpc node
         # and restarts its listener every 100 ms, which also changes the IMU's rate.
         for name in ("pico4-slamd", "pico4-cdsprpcd"):
             unit = read(UNITS / f"{name}.service")
@@ -60,16 +58,15 @@ class RootRunnerTests(unittest.TestCase):
         self.assertIn('mount --bind "$calibration" "$root/mnt/vendor/pvr"', script)
         self.assertIn("unshare -m --propagation private", script)
         self.assertIn("exec env -i", script)
-        self.assertIn("preload=/pico4/libpico4-slam-stubs.so\n", script)
+        self.assertIn("preload=/pico4/libpico4-slam-stubs.so:", script)
         self.assertIn('LD_PRELOAD="$preload"', script)
         self.assertIn('/usr/bin/chroot "$root" /system/bin/bootstrap/linker64 "$@"', script)
         self.assertIn("ADSP_LIBRARY_PATH=/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp", script)
 
-    def test_mainline_kernel_gets_the_fastrpc_bridge(self):
+    def test_the_fastrpc_bridge_is_preloaded(self):
         # The stock libraries' vendor FastRPC and ION calls, carried over to the upstream driver.
         script = read(LIBEXEC / "stock-slam")
-        self.assertIn("if [ ! -e /dev/adsprpc-smd ] && [ -e /dev/fastrpc-cdsp ]; then\n"
-                      "\tpreload=$preload:/pico4/libpico4-fastrpc-bridge.so\n", script)
+        self.assertIn("preload=/pico4/libpico4-slam-stubs.so:/pico4/libpico4-fastrpc-bridge.so\n", script)
         build = read(ROOT / "src/stockslam/build.sh")
         # Its translations are tested natively before the bionic library is built.
         self.assertLess(build.index('"$work/test_fastrpc_bridge"'), build.index("libpico4-fastrpc-bridge.so\" \\"))

@@ -9,9 +9,9 @@ USB-C cable it offers a network link with SSH, telnet and a status web page, and
 drive with the boot logs. Every disk and partition of the headset is read-only while it runs,
 except what the installed system's tools write on purpose ([install.md](install.md)).
 Stage 1 runs on the tested headset (original PICO 4, PICO OS 5.13.7), returns to fastboot by
-itself when no PC uses it, and hands PID 1 over to the SteamOS-compatible userspace of stage 2
-([userspace.md](userspace.md)). The session runs only on Valve's kernel: the stock kernel gives
-that userspace no Vulkan.
+itself when no PC uses it, and on Valve's kernel hands PID 1 over to the installed system, the
+SteamOS-compatible userspace of stage 2 ([userspace.md](userspace.md)). On a kernel without
+devtmpfs, such as the stock kernel under the maintenance stage 1, the switch refuses.
 
 ## The image
 
@@ -86,7 +86,7 @@ stock kernel, device trees and kernel configuration are identical across the 5.1
 builds compared, so a close match works. An exact match is the safe choice, because the stock
 boot image of the same build is what restores PICO OS after a flashed test.
 
-Without `--firmware`, the build uses `5.13.8-global-sek`. `--stock-boot` takes a `boot.img`
+Without `--firmware`, the build uses `5.13.7-global-seko`. `--stock-boot` takes a `boot.img`
 (for example from the headset's own EDL backup), an OTA zip, a `payload.bin`, or a URL of
 either. The first build downloads about 17 MB of the stock OTA and about 12 MB of Alpine
 packages into `cache/`: only the zip's central directory and its `boot.img` member are fetched,
@@ -136,14 +136,12 @@ helpers and kernel arguments, and adds its own files (hostname, build record). T
 | --- | --- |
 | `--firmware NAME`, `--stock-boot PATH` | source of the stock image (see above) |
 | `--cmdline-append ARG...` | extra kernel arguments ([options](#kernel-command-line-options)) |
-| `--minimal` | only the minirootfs and the overlay |
-| `--name NAME`, `--out DIR` | output base name (default `pico4-poc-<firmware>`) and directory (default `out/`) |
+| `--out DIR` | output directory (default `out/`) |
 | `--force` | build even if the kernel checks fail |
 
 `python -m overpressure inspect` (with `--firmware` or `--stock-boot`) prints the same analysis
-without building and writes `out/inspect/<firmware>/`: `analysis.json`, the kernel's
-`kernel.config`, and `userspace-compat.json`, the kernel's answers to what systemd and the
-SteamOS userspace need ([userspace.md](userspace.md)).
+without building and writes `out/inspect/<firmware>/`: `analysis.json` and the kernel's
+`kernel.config`.
 
 With `SOURCE_DATE_EPOCH` set, the image is byte-reproducible from the same downloads, on
 Windows and Linux alike; without it, only the build time in `/etc/pico4-poc/build-info` differs
@@ -175,20 +173,13 @@ aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector 
 ## Booting
 
 Stage 1 boots from a partition: the development loop writes the dev image to `recovery` (the
-maintenance stage 1) or to `boot` with `python -m overpressure dev flash`, and the acceptance
+maintenance stage 1) with `python -m overpressure dev flash`, and the acceptance
 runner and cycle write a test image to `boot` and restore the backup's image after their run
 (`python -m overpressure hwtest flash-run`, `python -m overpressure cycle`,
 [hardware-testing.md](hardware-testing.md)). The signed Neo3 engineering ABL used on the
 PICO 4 rejects `fastboot boot` with an unknown-command error after the image transfer, even
-after persistent normal and critical unlock. overpressure's RAM boot
-([tool.md](../../../docs/tool.md#ram-boot)) is there for the PICO 4 all the same, through
-[tooling/ramboot.py](../tooling/ramboot.py): `python -m overpressure ram-boot` sends the dev image
-(`out/dev/dev-boot.img`, from `dev image`) after the engineering ABL's unlock check, and with
-this ABL it ends refused (exit status 3), quoting the ABL's answer, with nothing written and the
-headset in fastboot, where `dev reboot` starts stage 1 from its partition (on an installed
-headset the installed system, unless `misc` holds the recovery request); checked on the headset.
-With a bootloader that has `fastboot boot` it
-waits for the dev image's SSH login (after the Windows NCM initialization).
+after persistent normal and critical unlock, so overpressure's RAM boot
+([tool.md](../../../docs/tool.md#ram-boot)) has no target on the PICO 4.
 
 Back to PICO OS: `python -m overpressure dev restore` ([hardware-testing.md](hardware-testing.md)).
 `pico4-reboot bootloader` in stage 1 returns to fastboot for the next attempt.
@@ -235,9 +226,8 @@ About 20–40 s after the boot the headset answers on the USB link:
 
 dropbear runs with `-R` (host keys are generated at the first connection, so they are new on
 every boot), `-B` (the empty root password is accepted) and `-W 4194304`, a 4 MiB receive
-window: with dropbear's 24 KiB default, uploads over the USB link, such as the userspace
-archive, are limited to about 4.4 MB/s; with the 4 MiB window the 801 MiB userspace archive
-arrives in 39 s (21.6 MB/s). Images that the hardware runner or the development loop prepare also carry an
+window: with dropbear's 24 KiB default, uploads over the USB link, such as the system image, are
+limited to about 4.4 MB/s; with the 4 MiB window 801 MiB arrive in 39 s (21.6 MB/s). Images that the hardware runner or the development loop prepare also carry an
 `authorized_keys` entry for the runner's per-run key or the loop's key
 ([hardware-testing.md](hardware-testing.md)).
 
@@ -328,8 +318,7 @@ service's prerequisites and rate-limits restarts.
 * **Test images.** Images that the hardware runner prepares use its deadlines instead: the
   runner must authenticate over SSH within the connection deadline (network traffic and login
   shells do not count), and a maximum runtime returns the headset to fastboot even after
-  authentication. After a switch to stage 2, the runner must reach it within the connection
-  deadline plus 120 s. These limits apply even when the image disables the watchdog
+  authentication. These limits apply even when the image disables the watchdog
   ([hardware-testing.md](hardware-testing.md)). On the tested headset, a test image whose USB
   link is configured but unusable returns to fastboot this way, and the runner restores PICO OS
   without a button press.
@@ -399,8 +388,8 @@ anything is logged.
 | `pico4-probe` | hardware inventory into `/run/pico4-poc/report/` and `report.tar.gz`, also on the web page and the log drive |
 | `pico4-mount-ro PART [DIR]` | mount a stock partition read-only, by default on `/mnt/PART`: ext4 with `noload` (no journal replay), f2fs with `norecovery`, vfat. The dynamic partitions inside `super` are not handled |
 | `pico4-reboot [bootloader\|recovery\|poweroff]` | reboot into a mode; without argument, a normal reboot. `-r STRING` passes any other reboot reason; unknown words are refused. Aliases: `fastboot-mode`, `android` |
-| `pico4-userspace receive\|switch\|status` | stage-2 handoff: unpack the userspace archive from stdin into an ext4 file system on `/dev/zram0` and check that its systemd runs on this kernel, then hand PID 1 to it ([userspace.md](userspace.md)) |
-| `pico4-userspace installed` | the installed system instead: `super` read-only as the new root, `userdata` at `/data` with `/etc`, `/var`, `/home` and `/root` on it ([install.md](install.md)) |
+| `pico4-userspace installed` | the installed system: `super` read-only as the new root, `userdata` at `/data` with `/etc`, `/var`, `/home` and `/root` on it ([install.md](install.md)) |
+| `pico4-userspace switch\|status` | stage-2 handoff: hand PID 1 to the installed system's systemd ([userspace.md](userspace.md)); what was mounted and prepared |
 | `pico4-install write\|format-data\|wipe\|bootmode\|status` | the installer of the maintenance stage 1: the only writer of `boot`, `super`, `userdata`, `metadata` and `misc`'s bootloader message, each against the backup's size and read back ([install.md](install.md)) |
 | `drm_info`, `modetest`, `evtest`, `i2cdetect`, `gpioinfo`, `tinymix`, `lsusb`, `lspci`, `lsblk`, `dtc`, `dmsetup`, `strace`, `htop` | exploration tools |
 

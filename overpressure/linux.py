@@ -6,7 +6,8 @@
 - sudo: this Linux host (the default on Linux; no sudo when already root).
 - docker: the build container (overpressure/container), on any host with Docker or Podman (the
   default on macOS, and on Windows without WSL). It needs nothing else on the host: its image
-  holds the build tools, the repository is mounted at /work and /var/tmp (build roots, stock
+  holds the tools of the userspace, system image and extraction builds (the kernel build needs
+  its own cross toolchain), the repository is mounted at /work and /var/tmp (build roots, stock
   folders) is a named volume.
 
     python -m overpressure container build      the image, overpressure-builder:HASH
@@ -71,14 +72,14 @@ def run_argv(command: List[str], interactive: bool = False, tool: Optional[str] 
             image(), *command]
 
 
-def image_present(tool: Optional[str] = None) -> bool:
-    return subprocess.run([tool or engine(), "image", "inspect", image()], stdout=subprocess.DEVNULL,
+def image_present() -> bool:
+    return subprocess.run([engine(), "image", "inspect", image()], stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL).returncode == 0
 
 
-def build(tool: Optional[str] = None) -> int:
+def build() -> int:
     print(f">> {image()} from {CONTAINER}", flush=True)
-    return subprocess.call([tool or engine(), "build", "-t", image(), str(CONTAINER)])
+    return subprocess.call([engine(), "build", "-t", image(), str(CONTAINER)])
 
 
 def main(argv: List[str]) -> int:

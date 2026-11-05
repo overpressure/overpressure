@@ -489,9 +489,6 @@ class UnitTest(unittest.TestCase):
     def test_service(self):
         text = (ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-fan.service").read_text(encoding="utf-8")
         self.assertIn("ExecStart=/usr/bin/pico4-fan run\n", text)
-        # Real-time threads need cgroups without the cpu controller (CLAUDE.md).
-        for key in ("CPUWeight=", "CPUQuota=", "Delegate="):
-            self.assertNotIn(key, text)
 
 
 @unittest.skipUnless(hasattr(os, "openpty"), "needs a pty")

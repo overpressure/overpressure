@@ -432,9 +432,6 @@ test_geometry()
 	std::vector<BlobPoint> tri = {blob(0, 0, 4), blob(5, 8, 4), blob(10, 1, 4)};
 	sort_blob_points(tri);
 	EXPECT(tri[0].x == 10 && tri[1].x == 5 && tri[2].x == 0);
-	std::vector<BlobPoint> tall = {blob(5, 30, 4), blob(1, 0, 4), blob(3, 10, 4)};
-	sort_blob_points_2(tall);
-	EXPECT(tall[0].x == 1 && tall[2].x == 5);
 }
 
 static void
@@ -748,15 +745,6 @@ test_init_path()
 	EXPECT(scene_is_bright(room.view(), 15, &mean) && mean == 20.0);
 	room.rect(0, 0, 160, 120, 10);
 	EXPECT(!scene_is_bright(room.view()));
-
-	// Conversion to the initialisers' record.
-	struct Rec
-	{
-		Vec2 px;
-		double size = 0, area = 0, brightness = 0, circularity = 0;
-	};
-	const std::vector<Rec> recs = to_init_blobs<Rec>(img.view(), det);
-	EXPECT(recs.size() == det.size() && recs[0].brightness == 255.0 && recs[0].size == det[0].size);
 }
 
 int

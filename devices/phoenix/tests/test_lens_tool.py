@@ -146,7 +146,6 @@ class ValveMesaTests(unittest.TestCase):
         packages = self.read("userspace/packages.txt").splitlines()
         self.assertIn("deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64", packages)
         self.assertNotIn("mesa", packages)
-        self.assertNotIn("pico4/pico4-turnip-kgsl", packages)
         self.assertIn("pico4/pico4-libdisplay-info", packages)
 
     def test_steams_wifi_connections_are_understood(self):

@@ -1,6 +1,6 @@
 # The microphone muted while the headset is off the head (docs/session.md): the PICO 4's
-# stand-in for Valve's steamvr-proxmicmute, which cannot load this kernel's mixer. With SteamVR,
-# which the driver's wear state comes from.
+# stand-in for Valve's steamvr-proxmicmute, which drives the Frame's codec's capture volume through
+# ALSA's simple mixer. With SteamVR, which the driver's wear state comes from.
 [Unit]
 Description=Microphone muted while the PICO 4 is off the head
 PartOf=steamvr.service

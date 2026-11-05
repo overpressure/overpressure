@@ -22,9 +22,7 @@ typedef struct
 	long tv_nsec;
 } timespec_t;
 
-int printf(const char *, ...);
 int fprintf(void *, const char *, ...);
-int vfprintf(void *, const char *, va_list);
 int snprintf(char *, size_t, const char *, ...);
 int vsnprintf(char *, size_t, const char *, va_list);
 int fflush(void *);
@@ -34,11 +32,8 @@ void *calloc(size_t, size_t);
 void free(void *);
 void *memset(void *, int, size_t);
 void *memcpy(void *, const void *, size_t);
-int memcmp(const void *, const void *, size_t);
-size_t strlen(const char *);
 int strcmp(const char *, const char *);
 int atoi(const char *);
-double atof(const char *);
 char *getenv(const char *);
 int usleep(unsigned);
 int clock_gettime(int, timespec_t *);
@@ -49,7 +44,6 @@ int ftruncate(int, off_t);
 int fchown(int, uid_t, gid_t);
 int fchmod(int, mode_t);
 void *mmap(void *, size_t, int, int, int, off_t);
-int munmap(void *, size_t);
 void exit(int);
 void *dlopen(const char *, int);
 void *dlsym(void *, const char *);
@@ -60,14 +54,12 @@ void (*signal(int, void (*)(int)))(int);
 ssize_t write(int, const void *, size_t);
 int rename(const char *, const char *);
 int unlink(const char *);
-int access(const char *, int);
 double atan2(double, double);
 double sin(double);
 double cos(double);
 double sqrt(double);
 
 #define RTLD_NOW 2
-#define R_OK 4
 #define O_RDONLY 0
 #define O_WRONLY 1
 #define O_RDWR 2

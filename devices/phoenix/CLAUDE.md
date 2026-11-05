@@ -51,17 +51,16 @@ README.md current.
   `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`, `PICO4_` keys),
   `userspace.py` and `graphics.py` (validators), `stock.py` (PICO's OTA members),
-  `ramboot.py` (its target for overpressure's RAM boot; the engineering ABL refuses it),
   `doctor.py` (its dependency checks), and the
   controller data extractors. What other headsets share is in the root package `overpressure/`: the stage-1 builder,
   OTA handling, adb/fastboot, Qualcomm EDL, verified backups, processes and waits, SSH, the RAM
   boot, the formats, `elfdeps.py` and `windows_ncm.py`.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
-  the f_mass_storage kernel thread and with it the USB link. `pico4-userspace receive/switch`
-  hands over to stage 2.
+  the f_mass_storage kernel thread and with it the USB link. `pico4-userspace installed`
+  and `switch` hand over to stage 2.
 - `kernel/`: Valve's kernel: `build-kernel.sh`, `pico4.config`, `patches/`, the PICO's drivers in
   `src/`, the device tree `sm8250-pico4-phoenix.dts` (with `dtbo_sink.py` and `panel_sequence.py`),
-  `recovery_image.py` for its boot images, `tools/`.
+  `recovery_image.py` for its boot images.
 - `userspace/`: stage 2. `packages.txt` and `pacman.conf` (the Holo preview first; Frame
   packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
   layer), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,
@@ -123,13 +122,10 @@ python -m overpressure cycle --restore-only              # verified stock boot a
   `kernel/`, following the stock kernel's behaviour where it is the reference. A new boot image goes
   through `dev recovery` and `dev install --boot`.
   - systemd stays at 257.x, pinned with `IgnorePkg` on the device (the Frame's version).
-  - The drop-ins in `userspace/rootfs/etc/systemd` keep systemd's `cpu` controller off. Valve's kernel
-    has `CONFIG_RT_GROUP_SCHED` off, so that no longer guards `SCHED_FIFO`; units added later still
-    follow them and don't set `CPUWeight`/`CPUQuota` or delegate `cpu`.
 - **Storage stays read-only, except the installed system's data.** Every physical block device
   is switched read-only in both stages; only the installed system's data partition (userdata,
   ext4 `pico4-data`) is mounted writable. Partitions are written only through the explicit,
-  backup-validated paths: `dev flash` (boot, recovery), `pico4-install` in the maintenance
+  backup-validated paths: `dev flash` (recovery), `pico4-install` in the maintenance
   stage 1 (boot, super, formatting userdata, wiping userdata and metadata, misc's bootloader
   message), `dev restore`/`dev restore-partition` and the EDL tools. `recovery` and `misc`
   must never be written by anything else: the ABL checks recovery's AVB chain on every boot.
@@ -175,8 +171,7 @@ passed.
 - **Iterate on the installed system.** A new system image goes through `dev recovery` and
   `dev install`, a new kernel through `dev recovery` and `dev install --boot`; `dev installed`
   reconnects after a reboot, `dev check` runs the acceptance runner's stage-2 checks, `dev ssh CMD` a
-  command. The maintenance stage 1 runs the stock kernel, so `dev boot [ARCHIVE]` followed by
-  `dev check` needs a recovery image with Valve's kernel (`kernel/recovery_image.py`). A changed
+  command. The session runs only on Valve's kernel, not in the maintenance stage 1. A changed
   stage-1 image needs `dev image`, `dev flash recovery` and a new installed boot image.
 - **Deadlines.** Device-side deadlines return the headset to fastboot; `dev reboot` starts
   stage 1 from there without a flash. The dev image's maximum runtime (an hour) counts from the

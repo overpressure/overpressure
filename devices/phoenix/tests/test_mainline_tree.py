@@ -202,7 +202,8 @@ class DspStreamAndPortTests(unittest.TestCase):
     def test_periods_have_no_step_and_the_device_path_runs_at_16_bits(self):
         patch = text(self.PATCH)
         self.assertIn("-		SNDRV_PCM_HW_PARAM_PERIOD_SIZE, 480);", patch)
-        self.assertIn("+	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);", patch)
+        self.assertIn("+	snd_mask_none(fmt);", patch)
+        self.assertIn(" 	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);", patch)
 
 
 class SoundWireFrameTests(unittest.TestCase):
@@ -254,13 +255,7 @@ class DeferredSplitShrinkerTests(unittest.TestCase):
 
 
 class SoundFormatTests(unittest.TestCase):
-    PATCH = KERNEL / "patches/0023-asoc-qcom-the-speakers-path-at-24-bits-and-the-dsps-24-bit-pcm-by-its-name.patch"
-
-    def test_the_speakers_path_runs_at_24_bits(self):
-        patch = text(self.PATCH)
-        self.assertIn("+\tsnd_mask_none(fmt);", patch)
-        self.assertIn("cpu_dai->id == WSA_CODEC_DMA_RX_0 ?", patch)
-        self.assertIn("SNDRV_PCM_FORMAT_S24_LE : SNDRV_PCM_FORMAT_S16_LE);", patch)
+    PATCH = KERNEL / "patches/0023-asoc-qcom-the-dsps-24-bit-pcm-by-its-name.patch"
 
     def test_the_dsps_24_bit_pcm_goes_by_its_name(self):
         patch = text(self.PATCH)

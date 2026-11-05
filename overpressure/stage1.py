@@ -36,9 +36,7 @@ class Spec:
     overlay: Path                                   #: the headset's files for the root (its initramfs/)
     packages: Sequence[str] = ()                    #: Alpine packages, resolved with their dependencies
     files: Mapping[str, Path] = field(default_factory=dict)  #: root path -> prebuilt executable
-    cmdline_append: Sequence[str] = ()              #: kernel arguments appended to the stock ones
     required_config: Mapping[str, str] = field(default_factory=lambda: dict(REQUIRED_CONFIG))
-    interesting_config: Sequence[str] = ()          #: options the stock-image report lists
     alpine_branch: str = "v3.24"
     alpine_version: str = "3.24.2"
     alpine_repos: Tuple[str, ...] = ("main", "community")
@@ -130,7 +128,7 @@ def build_rootfs(spec: Spec, cache: str, stock_entries, build_info: dict, minima
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
     tree = cpio.Tree(mtime=epoch)
     log(f">> Alpine Linux {spec.alpine_version} ({spec.arch}) minirootfs")
-    alpine.unpack_tar(tree, alpine.minirootfs(cache, spec.alpine_branch, spec.alpine_version, spec.arch, None, log))
+    alpine.unpack_tar(tree, alpine.minirootfs(cache, spec.alpine_branch, spec.alpine_version, spec.arch, log))
 
     wanted = [] if minimal else list(spec.packages)
     if wanted:

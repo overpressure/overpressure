@@ -4,8 +4,6 @@
 # first client starts it (socket activation); it keeps the hardware until it
 # is stopped. SteamVR's driver_monado opens the same hardware, so the two
 # never run together (docs/session.md).
-# No CPUWeight/CPUQuota here: the cpu controller would cost the compositor its
-# real-time threads (CLAUDE.md).
 [Unit]
 Description=Monado OpenXR runtime (PICO 4)
 Requires=pico4-monado.socket

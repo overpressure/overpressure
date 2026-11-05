@@ -1,4 +1,3 @@
-import re
 import struct
 import unittest
 from pathlib import Path
@@ -25,18 +24,15 @@ class SplashTests(unittest.TestCase):
 
     def test_source_hands_the_display_over(self):
         source = (ROOT / "src/splash/pico4-splash.c").read_text(encoding="utf-8")
-        # Master must be free for the next compositor: Monado and SteamVR's display layer
+        # Master must be free for the next compositor: Monado and SteamVR's compositor
         # become master by opening the device or with SET_MASTER.
         self.assertIn("DRM_IOCTL_DROP_MASTER", source)
-        # The stock six-layer arrangement, as Monado's KMS target and the display layer use.
-        for color in ('"blue", "blue", "red", "red", "green", "green"', "4320x2160x90x"):
-            self.assertIn(color, source)
         self.assertIn('quit("a compositor took the display", 0)', source)
 
-    def test_source_drives_a_mainline_kernels_msm_too(self):
+    def test_source_drives_msm(self):
         source = (ROOT / "src/splash/pico4-splash.c").read_text(encoding="utf-8")
         # Valve's kernel: the device is "msm", one primary plane over the whole mode.
-        self.assertIn('eq(name, "msm_drm") || eq(name, "msm")', source)
+        self.assertIn('eq(name, "msm")', source)
         self.assertIn("find_primary();", source)
         self.assertIn("DRM_PLANE_TYPE_PRIMARY", source)
 
@@ -60,12 +56,6 @@ class SplashTests(unittest.TestCase):
         self.assertRegex(build, r"systemctl enable [^\n]*(\\\n[^\n]*)*pico4-splash\.service")
         self.assertIn("for f in pico4-reboot pico4-splash; do", build)
 
-    def test_compositor_ends_it(self):
-        # Valve's session is the only one: SteamVR's compositor takes the display and the splash
-        # exits by itself; nothing stops it earlier.
-        session = (ROOTFS / "usr/lib/systemd/system/pico4-session.service").read_text(encoding="utf-8")
-        self.assertNotIn("splash", session)
-        self.assertFalse((ROOTFS / "usr/libexec/pico4-poc/splash-done").exists())
 
 
 if __name__ == "__main__":

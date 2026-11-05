@@ -11,14 +11,11 @@ class SessionCheckTests(unittest.TestCase):
         check = (BIN / "pico4-valve-session-check").read_text(encoding="utf-8")
         self.assertIn('msm-frame-stats record "$seconds"', check)
         self.assertIn('printf \',"frames":%s,"devices":%s', check)
-        for stale in ("kgsl", "dropin", "VRDISPLAY"):
-            self.assertNotIn(stale, check)
 
     def test_userspace_check_requires_the_session_where_the_gpu_is(self):
         check = (BIN / "pico4-userspace-check").read_text(encoding="utf-8")
         gate = check.index('if [ -e /dev/dri/renderD128 ]; then\n\tneed "session service active')
         self.assertIn('need "session target $session_target active', check[gate:])
-        self.assertNotIn("kgsl", check)
 
 
 if __name__ == "__main__":

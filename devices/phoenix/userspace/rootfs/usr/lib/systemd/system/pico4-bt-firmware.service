@@ -1,6 +1,5 @@
 # PICO OS's bluetooth partition read-only at /mnt/vendor/bt_firmware: the QCA6390's Bluetooth
 # firmware, which the image links to (docs/userspace.md). Before local-fs.target, as persist.
-# No CPUWeight/CPUQuota here (CLAUDE.md).
 [Unit]
 Description=PICO 4 Bluetooth firmware partition (read-only)
 DefaultDependencies=no

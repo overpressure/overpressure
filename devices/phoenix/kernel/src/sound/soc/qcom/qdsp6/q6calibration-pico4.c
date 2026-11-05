@@ -44,7 +44,6 @@ struct q6cal_path {
 };
 
 struct q6cal {
-	struct device *dev;
 	const struct firmware *fw;
 	const u8 *topologies;
 	u32 topologies_size;
@@ -163,7 +162,6 @@ static int q6cal_probe(struct platform_device *pdev)
 	cal = devm_kzalloc(dev, sizeof(*cal), GFP_KERNEL);
 	if (!cal)
 		return -ENOMEM;
-	cal->dev = dev;
 
 	/* The ADSP reaches the buffer through the audio SMMU stream, as q6asm-dai's. */
 	ret = of_parse_phandle_with_fixed_args(dev->of_node, "iommus", 1, 0, &args);

@@ -1,6 +1,5 @@
 # The PICO 4's counterpart of the Frame's steamvr-set-kernel-thread-priorities.service
-# (masked: its script stops at its first entry here). No CPUWeight/CPUQuota: the cpu
-# controller stays off for SCHED_FIFO in Monado's compositor.
+# (masked: its script stops at its first entry here).
 [Unit]
 Description=Real-time priority for the PICO 4's GPU and display kernel threads
 ConditionPathExists=/sys/bus/workqueue/devices/ring0/prio

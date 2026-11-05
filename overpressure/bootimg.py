@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
+
+from .avb import FOOTER, FOOTER_MAGIC
 
 BOOT_MAGIC = b"ANDROID!"
 BOOT_NAME_SIZE = 16
@@ -22,9 +24,6 @@ V3_PAGE_SIZE = 4096
 
 # Sizes of the header structs (packed).
 HDR_SIZE = {0: 1632, 1: 1648, 2: 1660, 3: 1580, 4: 1584}
-
-AVB_FOOTER_MAGIC = b"AVBf"
-AVB_FOOTER_SIZE = 64
 
 
 @dataclass
@@ -48,9 +47,7 @@ class BootImage:
     dtb_addr: int = 0
     id: bytes = b""
     # Information about the source image (not used when packing).
-    image_size: int = 0
     avb_footer: bool = False
-    extra: dict = field(default_factory=dict)
 
     # -- helpers -----------------------------------------------------------
     @property
@@ -154,8 +151,7 @@ def parse(data: bytes) -> BootImage:
         # v0 images with a garbage "unused" field exist; treat large values as v0.
         version = 0
     img = _parse_v3(data, version) if version >= 3 else _parse_v0_2(data, version)
-    img.image_size = len(data)
-    img.avb_footer = data[-AVB_FOOTER_SIZE:-AVB_FOOTER_SIZE + 4] == AVB_FOOTER_MAGIC
+    img.avb_footer = data[-FOOTER.size:-FOOTER.size + 4] == FOOTER_MAGIC
     return img
 
 

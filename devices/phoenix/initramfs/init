@@ -1,11 +1,12 @@
 #!/bin/sh
 # PICO 4 Linux POC - /init (PID 1)
 #
-# Runs from the boot image's ramdisk on top of the stock PICO kernel
-# (4.19, Qualcomm downstream). It never writes to the headset's flash: every
-# block device is switched to read-only as soon as it shows up.
+# Runs from the boot image's ramdisk, on the stock PICO kernel (4.19, Qualcomm
+# downstream: the maintenance stage 1) or on Valve's (the installed system). It
+# never writes to the headset's flash: every block device is switched to
+# read-only as soon as it shows up.
 #
-#   1. pseudo filesystems, /dev via mdev (the stock kernel has no devtmpfs)
+#   1. pseudo filesystems, /dev from devtmpfs or mdev (the stock kernel has no devtmpfs)
 #   2. logging to kmsg/pstore, status LED, CPU power management
 #   3. USB gadget: NCM network 172.16.42.1 (+ read-only log drive)
 #   4. hand over to pico4-init, which keeps telnetd/sshd/httpd running
@@ -76,19 +77,6 @@ if [ "$(poc_arg probe 1)" = 1 ]; then
 fi
 if [ "$(poc_arg selftest 0)" = 1 ]; then
 	"$POC_LIB/selftest" &
-fi
-# QEMU userspace test: pico4poc.userspace_payload=<partition>:<bytes>:<sha256>
-# unpacks the step-4 userspace from that partition and switches to it.
-payload=$(poc_arg userspace_payload "")
-if [ -n "$payload" ]; then
-	(
-		wait_for "$POC_RUN/usb.done" 120
-		IFS=: read -r part bytes sha <<-EOF
-		$payload
-		EOF
-		pico4-userspace receive --from "/dev/block/by-name/$part" --bytes "$bytes" --sha256 "$sha" &&
-			pico4-userspace switch
-	) &
 fi
 
 # The installed system (pico4poc.root=installed, the boot image pico4-install wrote): mount it

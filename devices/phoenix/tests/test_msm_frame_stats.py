@@ -52,28 +52,26 @@ class MsmFrameStatsTests(unittest.TestCase):
         end = stats.parse(trace(flips, 901, [(700, 5.9)]), {700})
         end["job_margin_ms"] = {"p50": 5.5, "p99": 0.0, "frames": 900, "without_a_job": 12}
         end["web_helper_gpu_percent"] = 12.5
-        start = {"target": "msm", "commits": 0, "commit_hz": 0, "late": 0, "stalls": 0}
-        v = perf.verdict(start, end, 60.0)
+        v = perf.verdict(end, 60.0)
         self.assertEqual(v["status"], "failed")
         self.assertIn("below 1.0 ms", v["failures"][0])
         self.assertEqual(v["web_helper_gpu_percent"], 12.5)
         end["job_margin_ms"]["p99"] = 6.3
-        self.assertEqual(perf.verdict(start, end, 60.0)["status"], "passed")
+        self.assertEqual(perf.verdict(end, 60.0)["status"], "passed")
 
     def test_a_window_without_a_panel_passes_with_a_warning(self):
         flips = [100 + i * REFRESH for i in range(901)]
         end = stats.parse(trace(flips, 901, [(700, 5.9)]), {700})
         end["job_margin_ms"] = {"p50": 7.1, "p99": 6.3, "frames": 900, "without_a_job": 0}
         end["web_helper_gpu_percent"] = 0.0
-        start = {"target": "msm", "commits": 0, "commit_hz": 0, "late": 0, "stalls": 0}
-        v = perf.verdict(start, end, 60.0)
+        v = perf.verdict(end, 60.0)
         self.assertEqual(v["status"], "passed")
         self.assertIn("no Steam panel was tested", v["warnings"][0])
         line = userspace.format_valve_performance(v)
         self.assertIn("job margin p99 6.3 ms, web helpers 0.0 % of the GPU", line)
         self.assertIn("warning: no Steam panel was tested", line)
         end["web_helper_gpu_percent"] = 12.5
-        self.assertEqual(perf.verdict(start, end, 60.0)["warnings"], [])
+        self.assertEqual(perf.verdict(end, 60.0)["warnings"], [])
 
     def test_the_web_helpers_threads_count_apart_from_the_compositors(self):
         flips = [100 + i * REFRESH for i in range(91)]
@@ -96,11 +94,10 @@ class MsmFrameStatsTests(unittest.TestCase):
         self.assertEqual(s["gpu_jobs"], 2)   # thread 701 belongs to another process
         self.assertAlmostEqual(s["gpu_ms"]["mean"], 6.0, places=3)
 
-    def test_performance_judges_the_recording_as_the_layers_window(self):
+    def test_performance_judges_the_recording(self):
         flips = [100 + i * REFRESH for i in range(900)]
         end = stats.parse(trace(flips, 900, [(700, 6.0)]), {700})
-        start = {"target": "msm", "commits": 0, "commit_hz": 0, "late": 0, "stalls": 0}
-        v = perf.verdict(start, end, 60.0)
+        v = perf.verdict(end, 60.0)
         self.assertEqual(v["status"], "passed", v["failures"])
         self.assertAlmostEqual(v["commit_hz"], 90.0, delta=0.2)
         self.assertEqual(v["gpu_ms"]["mean"], 6.0)

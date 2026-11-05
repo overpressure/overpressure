@@ -189,20 +189,6 @@ test_calibration()
 	acc[0] = 2.5; // above the 2.0 limit: rejected, old values kept
 	EXPECT(!c.load(gyro, acc));
 	EXPECT(c.M_accel(0, 0) == 2.0);
-
-	float rec[102] = {};
-	rec[0] = 1;
-	for (int i = 0; i < 12; i++) {
-		rec[1 + i] = float(gyro[i]);
-		rec[13 + i] = float(i < 9 ? (i % 4 == 0 ? 1.0 : 0.0) : 0.0);
-	}
-	rec[96] = 1;
-	ImuCalib rc;
-	bool valid = false, rate = false;
-	EXPECT(parse_calibration_record(rec, 102, rc, valid, rate));
-	EXPECT(valid && rate);
-	EXPECT(std::abs(rc.b_gyro.z() - 0.03) < 1e-6);
-	EXPECT(!parse_calibration_record(rec, 60, rc, valid, rate));
 }
 
 //! Float @p i of a station record, little-endian, as the controller sends it.

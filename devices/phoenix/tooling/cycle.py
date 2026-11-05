@@ -1,13 +1,12 @@
 """Unattended acceptance cycle that ends on stock boot and stock ABL (docs/hardware-testing.md).
 
-  python -m overpressure cycle [--userspace ARCHIVE] [--skip-stage] [--keep-abl | --restore-only]
+  python -m overpressure cycle [--skip-stage] [--keep-abl | --restore-only]
 
 1. Engineering ABL: ADB to EDL, write and read back (python -m overpressure device stage), EDL
    reset, PICO OS. --skip-stage when it is already staged (after the dev loop).
-2. python -m overpressure hwtest flash-run with the stage-1 image for PICO4_FIRMWARE and the
-   userspace archive. The runner restores stock boot itself; if it could not, the device
-   deadline returns the headset to fastboot and the runner's recorded commands flash the
-   pinned stock image.
+2. python -m overpressure hwtest flash-run with the stage-1 image for PICO4_FIRMWARE. The
+   runner restores stock boot itself; if it could not, the device deadline returns the headset
+   to fastboot and the runner's recorded commands flash the pinned stock image.
 3. ADB to EDL: read boot back and compare it with the backup, then restore stock ABL
    (python -m overpressure device restore-abl, read back). --keep-abl stops before this.
 4. EDL reset; PICO OS must finish booting.
@@ -29,12 +28,11 @@ from pathlib import Path
 
 from overpressure import backup as backups
 from overpressure.process import run, until
-from overpressure.qualcomm import EDL_USB, edl_devices
+from overpressure.qualcomm import edl_devices
 
 from . import localconfig
 
 ROOT = localconfig.ROOT
-EDL_USB = ("05c6", "9008")  # Qualcomm HS-USB QDLoader 9008
 
 
 class Headset:
@@ -123,7 +121,7 @@ class Headset:
 
 
 class Cycle(Headset):
-    def flash_run(self, archive: Path | None) -> int:
+    def flash_run(self) -> int:
         print(">> hardware acceptance (flash-run)", flush=True)
         image = ROOT / "out" / f"pico4-poc-{self.s.firmware}.img"
         if not image.exists():
@@ -133,8 +131,6 @@ class Cycle(Headset):
                 "--backup", self.s.path("backup"), "--image", image, "--adb", self.s.tool("adb"),
                 "--fastboot", self.s.tool("fastboot"), "--ssh", self.s.ssh, "--ssh-keygen", self.s.ssh_keygen,
                 "--out", self.folder / "run"]
-        if archive:
-            argv += ["--userspace", archive.resolve()]
         if self.s.ncm():
             argv += ["--windows-ncm-python", self.s.ncm()]
         try:
@@ -183,8 +179,6 @@ class Cycle(Headset):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m overpressure cycle", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--userspace", type=Path, metavar="ARCHIVE",
-                    help="pico4-userspace.tar.zst to hand over to and check (default: stage 1 only)")
     ap.add_argument("--skip-stage", action="store_true", help="the engineering ABL is already staged")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--keep-abl", action="store_true", help="stop before restoring the stock ABL")
@@ -200,7 +194,7 @@ def main(argv=None) -> int:
         if not args.restore_only:
             if not args.skip_stage:
                 cycle.stage_abl()
-            code = cycle.flash_run(args.userspace)
+            code = cycle.flash_run()
         if not args.keep_abl:
             cycle.restore_abl()
     except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:

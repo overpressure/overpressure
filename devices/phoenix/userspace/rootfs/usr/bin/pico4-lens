@@ -24,7 +24,6 @@ MOVING = 1
 # pressing on the nose, and the motor stops by itself at 59.4-59.9 mm.
 MIN_POSITION, MAX_POSITION = 6200, 7200
 TOLERANCE = 30  # 0.01 mm between the target and where a finished move ended
-GENI_CLOCK_VOTE = 0x544D  # as pico4-fan
 LOCK_TIMEOUT, REPLY_TIMEOUT, MOVE_TIMEOUT = 1.0, 0.2, 15.0
 
 
@@ -90,10 +89,6 @@ class Port:
             attrs[4] = attrs[5] = termios.B115200
             attrs[6][termios.VMIN], attrs[6][termios.VTIME] = 0, 0
             termios.tcsetattr(fd, termios.TCSANOW, attrs)
-            try:
-                fcntl.ioctl(fd, GENI_CLOCK_VOTE, 0)
-            except OSError:
-                pass  # mainline's GENI UART has no such ioctl
             termios.tcflush(fd, termios.TCIOFLUSH)
             if os.write(fd, tx) != len(tx):
                 raise OSError(f"short write to {self.device}")

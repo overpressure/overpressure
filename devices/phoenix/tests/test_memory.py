@@ -7,7 +7,7 @@ GENERATOR = "/usr/lib/systemd/system-generators/zram-generator"
 
 
 class ZramSwapTests(unittest.TestCase):
-    """The Frame's zram swap on the installed system, never on the dev boot's zram root."""
+    """The Frame's zram swap."""
 
     def setUp(self):
         self.unit = (UNITS / "pico4-zram-swap.service").read_text(encoding="utf-8")
@@ -18,7 +18,7 @@ class ZramSwapTests(unittest.TestCase):
         self.assertIn("deckard-arch-hotfixes-release-0.3/holo-zram-swap", packages)
 
     def test_the_frames_setup_without_device_units(self):
-        # zram-generator's swap unit waits for dev-zram0.device, which never appears here.
+        # zram-generator's swap unit has no PICO OS priority.
         self.assertIn('ln -sfn /dev/null "$T/etc/systemd/system-generators/zram-generator"', self.build)
         self.assertIn(f"ExecStart={GENERATOR} --setup-device zram0\n", self.unit)
         self.assertIn(f"ExecStop={GENERATOR} --reset-device zram0\n", self.unit)
@@ -42,10 +42,7 @@ class ZramSwapTests(unittest.TestCase):
         unit = (ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service").read_text(encoding="utf-8")
         self.assertIn("OOMScoreAdjust=-1000\n", unit)
 
-    def test_only_on_the_installed_system(self):
-        # The dev boot's root file system lives on zram0.
-        self.assertIn("ConditionKernelCommandLine=pico4poc.root=installed\n", self.unit)
-        self.assertIn('"pico4poc.root=installed"', (ROOT / "tooling/devloop.py").read_text(encoding="utf-8"))
+    def test_unit_stays_lf(self):
         self.assertNotIn("\r", self.unit)
 
 

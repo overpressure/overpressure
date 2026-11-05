@@ -1,7 +1,8 @@
 """Initialize the stock 4.19 NCM gadget for Windows, then release it to UsbNcm.
 
 Requires PyUSB, libusb-package and the separately installed UsbDk driver.
-Only the explicit POC USB serial may receive configuration changes or NCM setup.
+Only the headset's stage-1 gadget, by its exact USB serial, may receive configuration changes
+or NCM setup.
 The caller must bound this process: a Windows driver open/close can stall.
 """
 from __future__ import annotations
@@ -25,13 +26,13 @@ def command(python, serial: str | None = None) -> list:
 
 def initialize(devices, serial, dispose):
     if len(devices) != 1:
-        raise ValueError(f"Expected exactly one POC gadget; found {len(devices)}")
+        raise ValueError(f"Expected exactly one stage-1 gadget; found {len(devices)}")
     dev = devices[0]
     try:
         if dev.serial_number != serial:
-            raise ValueError("POC gadget serial mismatch; refusing control requests")
+            raise ValueError("Stage-1 gadget serial mismatch; refusing control requests")
         if dev.bNumConfigurations != 1:
-            raise ValueError("Unexpected POC USB configuration count")
+            raise ValueError("Unexpected stage-1 gadget USB configuration count")
         cfg = dev[0]
         controls = [i for i in cfg if i.bInterfaceClass == 2 and i.bInterfaceSubClass == 13]
         if len(controls) != 1:
@@ -77,7 +78,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="check dependencies without opening a device")
-    mode.add_argument("--serial", help="exact POC USB serial, normally the fastboot serial")
+    mode.add_argument("--serial", help="exact USB serial of the stage-1 gadget, normally the fastboot serial")
     args = parser.parse_args(argv)
     try:
         api, helper, core, util = backend()

@@ -100,7 +100,7 @@ def fetch_boot_image(location: str, cache_dir: str | None = None, log=print, par
     if magic == b"ANDROID!":
         data = src.read_at(0, src.size)
     elif magic[:4] == payload.PAYLOAD_MAGIC:
-        data = payload.extract_partition(payload.read_payload(src), "boot", log)
+        data = payload.extract_partition(payload.read_payload(src), partition, log)
     elif magic[:4] == b"PK\x03\x04":
         names = set(zip_infos(src))
         if f"{partition}.img" in names:
@@ -245,8 +245,7 @@ def extract(label: str, location: str, output: Path, copied: Mapping[str, str], 
     is this build's."""
     output.mkdir(parents=True, exist_ok=True)
     download = output / "download"
-    src = payload.HttpSource(location, log) if location.startswith(("http://", "https://")) \
-        else payload.FileSource(location)
+    src = payload.open_source(location, log)
     everything = zip_infos(src)
     infos = {name: everything[name] for name in members_needed(copied, block_images)}
     log(f">> {label}: {sum(i.compress_size for i in infos.values()) / 1e9:.1f} GB of OTA members")

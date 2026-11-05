@@ -34,12 +34,9 @@ class Package:
     version: str
     arch: str
     checksum: str  # "Q1" + base64(sha1(control segment))
-    size: int
-    installed_size: int
     depends: list[str]
     provides: list[str]
     repo_url: str = ""
-    origin: str = ""
     provider_priority: int = 0
 
     @property
@@ -101,10 +98,9 @@ def parse_records(text: str) -> list[dict[str, str]]:
 def _record_to_package(rec: dict[str, str], repo_url: str = "") -> Package:
     return Package(
         name=rec.get("P", ""), version=rec.get("V", ""), arch=rec.get("A", ""),
-        checksum=rec.get("C", ""), size=int(rec.get("S", 0) or 0),
-        installed_size=int(rec.get("I", 0) or 0),
+        checksum=rec.get("C", ""),
         depends=rec.get("D", "").split(), provides=rec.get("p", "").split(),
-        repo_url=repo_url, origin=rec.get("o", ""),
+        repo_url=repo_url,
         provider_priority=int(rec.get("k", 0) or 0),
     )
 
@@ -235,15 +231,14 @@ def _clean(name: str) -> str:
     return "/".join(parts)
 
 
-def unpack_tar(tree: Tree, tar_bytes: bytes, skip=lambda name: False) -> list[str]:
-    """Unpack a tar archive into ``tree``. Returns the list of regular files added."""
-    files = []
+def unpack_tar(tree: Tree, tar_bytes: bytes) -> None:
+    """Unpack a tar archive into ``tree``."""
     pending_hardlinks = []
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as tf:
         for m in _safe_members(tf):
             name = _clean(m.name)
             # Skip the root entry and apk metadata such as .PKGINFO / .SIGN.*
-            if not name or ("/" not in name and name.startswith(".")) or skip(name):
+            if not name or ("/" not in name and name.startswith(".")):
                 continue
             if m.isdir():
                 path = tree.mkdir(name, m.mode, m.uid, m.gid)
@@ -252,7 +247,6 @@ def unpack_tar(tree: Tree, tar_bytes: bytes, skip=lambda name: False) -> list[st
                     node.mode = (node.mode & ~0o7777) | (m.mode & 0o7777)
             elif m.isreg():
                 tree.add_file(name, tf.extractfile(m).read(), m.mode, m.uid, m.gid)
-                files.append(name)
             elif m.issym():
                 tree.add_symlink(name, m.linkname, m.uid, m.gid)
             elif m.islnk():
@@ -263,21 +257,17 @@ def unpack_tar(tree: Tree, tar_bytes: bytes, skip=lambda name: False) -> list[st
         src = tree.get(tree.resolve(target))
         if src is not None and src.is_file:
             tree.add_file(name, src.data, m.mode, m.uid, m.gid)
-            files.append(name)
-    return files
 
 
-def minirootfs(cache: str, branch: str, version: str, arch: str, sha256: str | None, log=print) -> bytes:
+def minirootfs(cache: str, branch: str, version: str, arch: str, log=print) -> bytes:
     fname = f"alpine-minirootfs-{version}-{arch}.tar.gz"
     url = f"{MIRROR}/{branch}/releases/{arch}/{fname}"
     path = _download(url, os.path.join(cache, branch, "releases", fname), log)
     with open(path, "rb") as f:
         raw = f.read()
-    if sha256 is None:
-        sha_url = url + ".sha256"
-        sha_path = _download(sha_url, path + ".sha256", log)
-        with open(sha_path) as f:
-            sha256 = f.read().split()[0]
+    sha_path = _download(url + ".sha256", path + ".sha256", log)
+    with open(sha_path) as f:
+        sha256 = f.read().split()[0]
     got = hashlib.sha256(raw).hexdigest()
     if got != sha256:
         os.remove(path)

@@ -32,12 +32,6 @@ while :; do
 	[ "$contact" -le "$now" ] || contact=0
 	reason=$(recovery_reason "$now" "$connect_limit" \
 		"$test_limit" "$test_mode" "$reachable" "$acknowledged" "$contact")
-	if [ -z "$reason" ]; then
-		reached=0
-		[ -e "$POC_RUN/userspace-authenticated" ] && reached=1
-		reason=$(userspace_reason "$now" "$(cat "$POC_RUN/userspace/ready" 2>/dev/null)" \
-			$((connect_limit + 120)) "$test_mode" "$reached")
-	fi
 	if [ -n "$reason" ]; then
 		log "Recovery: $reason; rebooting to fastboot"
 		sync

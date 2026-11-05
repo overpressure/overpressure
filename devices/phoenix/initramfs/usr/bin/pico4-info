@@ -17,7 +17,7 @@ fi
 
 cat <<EOF
 #
-# PICO 4 Linux POC - Alpine $(info alpine) userspace on the stock PICO kernel
+# PICO 4 Linux POC - Alpine $(info alpine) userspace on its boot image's kernel
 #   kernel   : $(uname -r) ($(uname -m)), up $(uptime_s)s
 #   stock fw : $(info stock), image built $(info built)
 #   usb      : ${IFACE:-no network} ${IP:+$IP (PC: $HOST_IP)}, link ${link:-unknown}
@@ -25,7 +25,7 @@ cat <<EOF
 #   report   : $report
 #
 #   commands : pico4-probe | pico4-mount-ro PART | pico4-info
-#              pico4-reboot [bootloader|recovery|poweroff]  (no argument: PICO OS)
+#              pico4-reboot [bootloader|recovery|poweroff]  (no argument: what boot holds)
 #   boot log : $POC_LOG
 #
 EOF

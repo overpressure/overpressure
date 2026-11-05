@@ -34,9 +34,8 @@
  * pico4-slamd runs it in its bionic root with its front end on the Compute DSP. This module
  * then writes each scene set's raw 10-bit frames (factory camera order, as read out) and every
  * IMU sample into the shared memory of pico4_slam_feed.h and takes the tracker's IMU-rate poses
- * back; Basalt is not started. Frame times come from the camera hardware's start of frame on the
- * QTimer, the IMU's clock: the kernel's boot-time stamp adds an offset taken once per boot (it
- * was 395 ms off on the headset).
+ * back; Basalt is not started. Frame times come from the CSID's hardware start of frame on
+ * CLOCK_MONOTONIC (patch 0016), the clock the IMU's samples are mapped to.
  *
  * @ingroup drv_pico4
  */
@@ -140,7 +139,6 @@ DEBUG_GET_ONCE_OPTION(pico4_slam_imu_noise, "PICO4_SLAM_IMU_NOISE", "0.016,0.001
  */
 DEBUG_GET_ONCE_OPTION(pico4_slam_vio_config, "PICO4_SLAM_VIO_CONFIG", "/usr/share/pico4-basalt/pico4-vio.json")
 
-#define SLAM_TRACE(s, ...) U_LOG_IFL_T(s->log_level, __VA_ARGS__)
 #define SLAM_DEBUG(s, ...) U_LOG_IFL_D(s->log_level, __VA_ARGS__)
 #define SLAM_INFO(s, ...) U_LOG_IFL_I(s->log_level, __VA_ARGS__)
 #define SLAM_WARN(s, ...) U_LOG_IFL_W(s->log_level, __VA_ARGS__)
@@ -205,7 +203,7 @@ struct pico4_slam
 		int64_t sof[PICO4_TCAM_COUNT];   //!< Each frame's start of frame.
 		float signal[PICO4_TCAM_COUNT];  //!< Mean signal above black of each frame (10-bit).
 		struct pico4_cam_meta applied;   //!< The exposure the set was taken with.
-		uint64_t frame_id[PICO4_TCAM_COUNT];          //!< Each frame's ISP frame counter.
+		uint64_t frame_id[PICO4_TCAM_COUNT];          //!< Each frame's counter (V4L2 sequence).
 		struct pico4_cam_meta meta[PICO4_TCAM_COUNT]; //!< Each frame's metadata.
 	} group;
 	//! What each camera's scene frames did since no set completed (scene_stall).
@@ -265,7 +263,6 @@ struct pico4_slam
 	//! CLOCK_MONOTONIC minus QTimer ns, for the hardware start-of-frame stamps.
 	int64_t qtimer_offset_ns, qtimer_measured_ns, qtimer_first_offset_ns;
 	int64_t slept_ns; //!< pico4_slept_ns() when the offset was taken.
-	uint64_t frames_boot_time; //!< Scene frames without a hardware stamp (boot-time stamp used).
 
 	//! PICO OS's tracker through pico4-slamd (PICO4_SLAM_BACKEND=stock).
 	bool stock;
@@ -615,27 +612,20 @@ qtimer_offset(void)
 }
 
 /*!
- * A frame's start of frame on CLOCK_MONOTONIC: the camera hardware's QTimer stamp, as PICO OS
- * takes it, on the IMU's clock. The kernel's boot-time stamp is that plus an offset it takes at
- * the first frame after boot, late by however long that interrupt waited (395 ms on the headset);
- * it is only the fallback.
+ * A frame's start of frame on the IMU's clock, from the buffer's hardware stamp (patch 0016).
  */
 static int64_t
 frame_sof_ns(struct pico4_slam *s, const struct pico4_cam_frame *f)
 {
-	if (f->sof_qtimer_ns != 0) {
-		// Taken again each second: timesyncd steers CLOCK_MONOTONIC against the QTimer (pico4_hmd.c).
-		// And at once after a suspend, through which the QTimer runs on (pico4_slept_ns()).
-		int64_t now = os_monotonic_get_ns(), slept = pico4_slept_ns();
-		if (now - s->qtimer_measured_ns >= U_TIME_1S_IN_NS || slept - s->slept_ns > PICO4_SLEEP_DETECT_NS) {
-			s->qtimer_offset_ns = qtimer_offset();
-			s->qtimer_measured_ns = now;
-			s->slept_ns = slept;
-		}
-		return f->sof_qtimer_ns + s->qtimer_offset_ns;
+	// Taken again each second: timesyncd steers CLOCK_MONOTONIC against the QTimer (pico4_hmd.c).
+	// And at once after a suspend, through which the QTimer runs on (pico4_slept_ns()).
+	int64_t now = os_monotonic_get_ns(), slept = pico4_slept_ns();
+	if (now - s->qtimer_measured_ns >= U_TIME_1S_IN_NS || slept - s->slept_ns > PICO4_SLEEP_DETECT_NS) {
+		s->qtimer_offset_ns = qtimer_offset();
+		s->qtimer_measured_ns = now;
+		s->slept_ns = slept;
 	}
-	s->frames_boot_time++;
-	return f->sof_monotonic_ns;
+	return f->sof_qtimer_ns + s->qtimer_offset_ns;
 }
 
 //! A module id PICO OS's station service keeps (camera_otp.json): 8 or 9.
@@ -720,9 +710,8 @@ stock_attach(struct pico4_slam *s)
 
 //! One scene frame's raw rows into the set being collected in the shared memory.
 static void
-stock_copy_frame(struct pico4_slam *s, const struct pico4_cam_frame *f, int index)
+stock_copy_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 {
-	(void)index;
 	stock_attach(s);
 	struct pico4_slam_feed *feed = s->feed;
 	int k = s->factory_of_slot[f->slot];
@@ -775,13 +764,13 @@ stock_publish(struct pico4_slam *s)
 		const struct pico4_slam_feed_pose *p = poses > 0 ? &feed->poses[(poses - 1) % PICO4_SLAM_FEED_POSES] : NULL;
 		SLAM_INFO(s,
 		          "frame set %llu to pico4-slamd: exposure %u lines gain %u, %llu IMU samples, %llu poses (newest "
-		          "%.1f ms old, confidence %u, error %d); %llu frames without a hardware SOF; %llu incomplete and "
+		          "%.1f ms old, confidence %u, error %d); %llu incomplete and "
 		          "%llu inconsistent sets dropped; clock offset moved %.2f ms since the start",
 		          (unsigned long long)s->stock_sets, s->exposure_lines, s->exposure_gain,
 		          (unsigned long long)s->stock_imu, (unsigned long long)poses,
 		          p != NULL ? (os_monotonic_get_ns() - p->ts_ns) / 1e6 : -1.0, p != NULL ? p->confidence : 0,
-		          p != NULL ? p->error : 0, (unsigned long long)s->frames_boot_time,
-		          (unsigned long long)s->sets_dropped, (unsigned long long)s->sets_inconsistent,
+		          p != NULL ? p->error : 0, (unsigned long long)s->sets_dropped,
+		          (unsigned long long)s->sets_inconsistent,
 		          (double)(s->qtimer_offset_ns - s->qtimer_first_offset_ns) / 1e6);
 		if (s->rgb) {
 			uint64_t taken, converted;
@@ -1125,7 +1114,7 @@ handle_frame(struct pico4_slam *s, const struct pico4_cam_frame *f)
 		return;
 	}
 	if (s->stock) {
-		stock_copy_frame(s, f, index);
+		stock_copy_frame(s, f);
 	} else {
 		s->group.frames[index] = convert(s, f, s->rotated[index]);
 	}

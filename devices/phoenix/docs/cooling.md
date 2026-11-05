@@ -204,8 +204,8 @@ no further; `pico4-fan batch FILE` prints that word for a serial number file.
   error if any. The MCU must have acknowledged a duty (the daemon's `duty` is the last
   acknowledged one) and report no error; otherwise the check fails and names the MCU's error.
   It waits up to 10 s for the first acknowledgement. Without the UART the section is `skipped`.
-- **The acceptance runner** requires the service on the headset (`validate_check` with
-  `require_fan` in [tooling/userspace.py](../tooling/userspace.py)), rejects a state without an
+- **The acceptance runner** requires the service (`validate_check` in
+  [tooling/userspace.py](../tooling/userspace.py)), rejects a state without an
   acknowledged duty or with an MCU error, and keeps the `fan` object in `result.json`.
 - **`pico4-valve-session-check`** records the daemon's state before and after the session
   (`fan.before`, `fan.after_run`; null without a daemon), next to the hottest zone.
@@ -242,7 +242,7 @@ pico4-fan run --dry-run              # the policy without the MCU: logs the duti
 | Headset: `pico4-fan` with `PICO4_FAN_PROFILE=auto` | profile `late` from the serial's batch; at a hottest mean of 41 °C the fan stands (the late table runs it from 55 °C) |
 | Headset: GetFanInfo at 0, 30, 45 and 60 % | `00 0000 … 00`, `1e d312 … 01`, `2d 131b … 01`, `3c 0e23 … 01`: duty, RPM (4,819, 6,931, 8,974) and running; no fan identity |
 | Host: [tests/test_fan.py](../tests/test_fan.py) | passes: frames against the stock bytes and the allowlist, replies, both tables and their hysteresis, boost and failsafe, the loop's means and timing, retries, the state file and what the checks read from it, zone selection, profile choice, the batch rule on synthetic serial numbers (the serial is never printed), the unit; one UART transaction over a pty on Linux |
-| Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | pass: the userspace check's `fan` object (active with a state; skipped only without `require_fan`; a state without an acknowledged duty or with an MCU error fails) and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
+| Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | pass: the userspace check's `fan` object (active with a state; a state without an acknowledged duty or with an MCU error fails) and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
 | Headset: `pico4-userspace-check` and `dev check` | pass with the duty acknowledged (30 %, about 5,080 rpm, no MCU error); a daemon state with a SetFanSpeed error fails the check and names it |
 | Headset, stock kernel: `pico4-fan.service` in the acceptance cycle | active; the MCU answers the queries and acknowledges SetFanSpeed, no MCU error in the journal; the fan reads 0 % and 0 rpm before the daemon, then runs at 30 % from the early table (hottest mean 35–43 °C) at 4,849–4,914 rpm; Monado reads the IPD (71.99 mm) through the shared port lock |
 | Headset: duty against RPM (`pico4-fan sweep`, 10–100 %) | 10 and 20 %: 3,650 and 3,670 rpm (the fan's lowest speed); 30 %: 5,265; 40 %: 6,770; 50 %: 8,160; 60 %: 9,470; 70 %: 10,740; 80 %: 11,940; 90 %: 13,070; 100 %: 14,150 rpm |

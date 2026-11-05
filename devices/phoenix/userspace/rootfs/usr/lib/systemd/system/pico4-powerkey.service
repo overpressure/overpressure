@@ -1,6 +1,5 @@
 # The power key as on PICO OS (docs/install.md#power-key): a short press suspends, a 2 s hold
 # powers off. logind ignores the key (logind.conf.d/50-pico4-power-key.conf).
-# No CPUWeight/CPUQuota here (CLAUDE.md).
 [Unit]
 Description=PICO 4 power key
 After=systemd-logind.service

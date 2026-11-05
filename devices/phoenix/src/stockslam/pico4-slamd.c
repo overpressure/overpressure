@@ -436,8 +436,6 @@ on_result(void)
 {
 }
 
-static char g_text[4 << 20];
-
 //! The whole file into g_text; its length, or -1.
 static long
 read_text(const char *path)
@@ -778,9 +776,8 @@ main(int argc, char **argv, char **envp)
 		fprintf(stderr, "pico4-slamd: libSlam.so lacks a function of its interface\n");
 		return 1;
 	}
-	// The see-through's depth mesh, unless PICO4_SLAMD_VST=0.
-	const char *vst_env = getenv("PICO4_SLAMD_VST");
-	g_vst = !(vst_env != 0 && strcmp(vst_env, "0") == 0) && vst_start(feed) == 0;
+	// The see-through's depth mesh.
+	g_vst = vst_start(feed) == 0;
 	void *h = tracker_start(&t, feed);
 	if (h == 0) {
 		fprintf(stderr, "pico4-slamd: createHandle failed\n");

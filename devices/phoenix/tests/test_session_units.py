@@ -147,10 +147,7 @@ class KthreadPrioritiesTest(unittest.TestCase):
     def test_unit_raises_the_gpu_workqueues(self):
         service = unit("usr/lib/systemd/system/pico4-kthread-priorities.service")
         script = (ROOTFS / service["Service"]["ExecStart"].lstrip("/")).read_text(encoding="utf-8")
-        self.assertIn("workqueue/devices/ring", script)
-        # Real-time threads (Monado's compositor) need the cpu controller off.
-        self.assertNotIn("CPUWeight", service["Service"])
-        self.assertNotIn("CPUQuota", service["Service"])
+        self.assertIn("for wq in msm ring0 ring1 ring2 ring3", script)
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertIn("pico4-kthread-priorities.service", build)
 
@@ -224,20 +221,26 @@ class CompositorPacingTest(unittest.TestCase):
         self.assertIn('"%s/pico4-display-lead-us"', (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8"))
 
 
+class StoragePolicyRuleTest(unittest.TestCase):
+    def test_only_block_devices_reach_the_helper(self):
+        # The kernel's devtmpfs makes the nodes; the helper keeps the read-only policy.
+        rules = (ROOTFS / "usr/lib/udev/rules.d/00-pico4-devnodes.rules").read_text(encoding="utf-8")
+        self.assertLess(rules.index('SUBSYSTEM!="block", GOTO="pico4_devnodes_end"'),
+                        rules.index('RUN+="/usr/libexec/pico4-poc/devnode remove"'))
+        self.assertIn('PROGRAM="/usr/libexec/pico4-poc/devnode add"', rules)
+        helper = (ROOTFS / "usr/libexec/pico4-poc/devnode").read_text(encoding="utf-8")
+        self.assertNotIn("mknod", helper)
+        self.assertIn('blockdev --setro "/dev/$name"', helper)
+
+
 class ConsoleQuietTest(unittest.TestCase):
     def test_only_critical_messages_on_the_headset_console(self):
         # journald forwards errors to the kernel log; printed on the UART console with
         # interrupts off they delayed the display interrupt.
-        service = unit("usr/lib/systemd/system/pico4-console-quiet.service")
-        self.assertEqual(service["Unit"]["ConditionPathExists"], "/sys/class/tty/ttyMSM0")
-        self.assertIn("echo 3 4 1 7 > /proc/sys/kernel/printk", service["Service"]["ExecStart"])
-        self.assertIn("systemd-sysctl.service", service["Unit"]["After"])
         journald = (ROOTFS / "usr/lib/systemd/journald.conf.d/50-pico4.conf").read_text(encoding="utf-8")
         level = int(re.search(r"(?m)^kernel\.printk = (\d)", (ROOTFS / "etc/sysctl.d/50-pico4-console.conf").read_text(encoding="utf-8")).group(1))
-        self.assertIn("MaxLevelKMsg=warning", journald)  # warning is 4: printed at the sysctl's level ...
-        self.assertGreater(level, 4)
-        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertIn("pico4-console-quiet.service", build)  # ... so the unit must be enabled
+        self.assertIn("MaxLevelKMsg=warning", journald)  # warning is 4: not printed below that level
+        self.assertLess(level, 4)
 
 
 class MonadoServiceTest(unittest.TestCase):
@@ -266,21 +269,10 @@ class PanelProbeTest(unittest.TestCase):
 
 class SessionTest(unittest.TestCase):
     def test_valves_session_only(self):
-        # Monado's session and its fallback are gone: the session is Valve's target, or another
-        # of Valve's that session.conf names.
+        # The session is Valve's target, or another of Valve's that session.conf names.
         script = (ROOTFS / "usr/libexec/pico4-poc/session").read_text(encoding="utf-8")
         self.assertIn("target=${PICO4_SESSION_TARGET:-gamescope-session.target}", script)
         self.assertIn('exec /usr/bin/start-gamescope-session "$target"', script)
-        self.assertNotIn("pico4-session.target", script)
-        self.assertNotIn("monado_comp_ipc", script)
-        for gone in ("usr/lib/systemd/user/pico4-session.target", "usr/libexec/pico4-poc/session-fallback",
-                     "usr/lib/systemd/system/pico4-session-failed.service",
-                     "usr/lib/systemd/system/pico4-session-fallback.path",
-                     "usr/lib/systemd/system/pico4-session-fallback.service",
-                     "usr/libexec/pico4-poc/splash-done"):
-            self.assertFalse((ROOTFS / gone).exists(), gone)
-        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertNotIn("pico4-session-fallback", build)
 
     def test_session_starts_again_after_it_ends(self):
         # A compositor that dies in a running session makes vrserver quit everything,
@@ -296,7 +288,7 @@ class SessionTest(unittest.TestCase):
         burst = int(session["Unit"]["StartLimitBurst"])
         self.assertGreaterEqual(interval, burst * (restart + 30))
         self.assertNotIn("OnFailure", session["Unit"])
-        # Valve's session needs the GPU (none in QEMU), and no longer the Monado service.
+        # Valve's session needs the GPU, and no longer the Monado service.
         text = (ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-session.service").read_text(encoding="utf-8")
         self.assertIn("\nConditionPathExists=/dev/dri/renderD128\n", text)
         self.assertNotIn("pico4-monado.socket", session["Unit"].get("Wants", ""))
@@ -323,7 +315,6 @@ class SessionTest(unittest.TestCase):
     def test_check_expects_valves_session(self):
         check = (ROOTFS / "usr/bin/pico4-userspace-check").read_text(encoding="utf-8")
         self.assertIn("session_target=gamescope-session.target", check)
-        self.assertNotIn("monado_comp_ipc", check)
 
 
 if __name__ == "__main__":

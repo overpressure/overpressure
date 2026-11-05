@@ -52,7 +52,7 @@ typedef void (*pico4_cam_log_fn)(void *user, enum pico4_cam_log_level level, con
 struct pico4_cam_config
 {
 	unsigned slots;               //!< Bitmask of sensor slots 0-4 (4: the RGB camera).
-	unsigned ring;                //!< In-flight requests per camera, 4-8.
+	unsigned ring;                //!< Buffers per camera, 4-8.
 	unsigned rgb_exposure_lines;  //!< The RGB camera's exposure (4-PICO4_CAM_RGB_MAX_LINES), 0: 1/100 s.
 	unsigned rgb_gain;            //!< Its analog gain, 16 = 1x (16-256), 0: 1x.
 	bool hold_frames;             //!< Frames stay owned until pico4_cam_release(); else the next call releases.
@@ -64,16 +64,14 @@ struct pico4_cam_config
 struct pico4_cam_frame
 {
 	int slot;                  //!< Sensor slot 0-4.
-	uint64_t request_id;       //!< The buffer's V4L2 sequence number.
-	uint64_t frame_id;         //!< The same: the stream's frame counter.
+	uint64_t frame_id;         //!< The stream's frame counter: the buffer's V4L2 sequence number.
 	int64_t sof_boottime_ns;   //!< CLOCK_BOOTTIME at the hardware's start of frame.
 	int64_t sof_monotonic_ns;  //!< The same instant on CLOCK_MONOTONIC.
 	int64_t sof_qtimer_ns;     //!< The same instant in QTimer ns (the IMU's clock).
 	uint32_t width;            //!< 640 (the RGB camera: 2328).
 	uint32_t height;           //!< Scene rows from data on (480, fewer if the buffer is shorter; RGB: 1748).
 	uint32_t lines;            //!< Lines in the buffer, the metadata line included (481; RGB: 1748).
-	uint32_t stride;           //!< Bytes per line.
-	uint32_t bytes_per_sample; //!< 2: RAW10, LSB-aligned in 16 bits.
+	uint32_t stride;           //!< Bytes per line. RAW10, LSB-aligned in 16 bits.
 	const void *meta;          //!< The buffer's first line: the OV7251's metadata (pico4_cam_meta_decode); RGB: the image.
 	const void *data;          //!< First scene row, after the metadata line; valid until the frame is released.
 	size_t size;               //!< stride * lines, from meta.
@@ -200,7 +198,7 @@ pico4_cam_assembly_add(
 
 /*!
  * Frame identity across one set of scene frames. All sensors start their frames on the
- * station's FSIN pulse, so each camera's ISP frame counter keeps a fixed offset from the
+ * station's FSIN pulse, so each camera's frame counter keeps a fixed offset from the
  * first camera's; a frame at another offset is from another pulse. An offset that changes
  * and then holds for PICO4_CAM_OFFSET_ADOPT sets is taken as the new one (a counter that
  * skipped).
@@ -280,13 +278,9 @@ pico4_cam_set_consistent(struct pico4_cam_set_check *c,
 //! Per-slot state for diagnostics.
 struct pico4_cam_slot_info
 {
-	bool enabled;
-	char sensor[64];
-	char csiphy[64];
 	int phy;            //!< CSIPHY index.
-	bool combo;         //!< PHY shared with another slot (combo mode).
 	unsigned lane_assign;
-	uint64_t frames, errors;
+	uint64_t errors;
 };
 
 struct pico4_cam;

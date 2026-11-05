@@ -26,8 +26,6 @@ from typing import List, Optional
 from . import localconfig, runner
 from .headset import Headset, Registry, discover
 
-GENERIC = ("devices", "gui", "steps", "run", "ram-boot", "doctor", "tools", "container")
-
 
 def select(registry: Registry, codename: Optional[str]) -> Optional[Headset]:
     """The headset to work on, or None when the choice is open."""

@@ -2,6 +2,7 @@
 images, as AOSP's updater writes them."""
 import io
 import json
+import struct
 import tempfile
 import unittest
 import zipfile
@@ -38,6 +39,28 @@ class TransferListTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ota.apply_transfer_list("4\n4\n0\n0\nmove 2,0,1\n", io.BytesIO(), io.BytesIO())
 
+
+def field(number: int, value) -> bytes:
+    """One protobuf field: a varint for a number below 128, else length-delimited bytes."""
+    if isinstance(value, int):
+        return bytes([number << 3, value])
+    return bytes([number << 3 | 2, len(value)]) + value
+
+
+class BarePayloadTests(unittest.TestCase):
+    def test_a_bare_payload_gives_the_partition_asked_for(self):
+        def partition(name: str, offset: int) -> bytes:
+            extent = field(1, 0) + field(2, 1)
+            operation = field(1, 0) + field(2, offset) + field(3, 8) + field(6, extent)
+            return field(1, name.encode()) + field(7, field(1, 8)) + field(8, operation)
+
+        manifest = field(3, 8) + field(13, partition("boot", 0)) + field(13, partition("recovery", 8))
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "payload.bin"
+            path.write_bytes(b"CrAU" + struct.pack(">QQI", 2, len(manifest), 0) + manifest + b"bootbootrecovery")
+            log = lambda _line: None
+            self.assertEqual(ota.fetch_boot_image(str(path), log=log), b"bootboot")
+            self.assertEqual(ota.fetch_boot_image(str(path), log=log, partition="recovery"), b"recovery")
 
 
 class ExtractTests(unittest.TestCase):

@@ -1,7 +1,6 @@
 # PICO OS's persist partition read-only at /mnt/vendor/persist (docs/userspace.md): the
 # headset's own factory data, which the sensor DSP, the driver, the tracker, the fan and Wi-Fi
 # read through links in the image. Before local-fs.target, so every service finds it.
-# No CPUWeight/CPUQuota here (CLAUDE.md).
 [Unit]
 Description=PICO 4 persist partition (read-only)
 DefaultDependencies=no

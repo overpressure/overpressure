@@ -44,10 +44,9 @@ def process(headset: Headset, step: Step, values: Dict[str, str], platform: str 
         if step.script:
             return ["wsl", "-u", "root", "--cd", str(REPO), "--", "bash", wsl_path(program), *words[1:]]
         return ["wsl", "-u", "root", "--cd", str(REPO), "--", *argv]
-    if step.linux_root:
-        root = (os.geteuid() == 0) if is_root is None and hasattr(os, "geteuid") else bool(is_root)
-        if not root:
-            argv = ["sudo", *argv]
+    root = (os.geteuid() == 0) if is_root is None and hasattr(os, "geteuid") else bool(is_root)
+    if not root:
+        argv = ["sudo", *argv]
     return argv
 
 

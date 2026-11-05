@@ -1,22 +1,27 @@
-"""Development loop on a headset whose boot partition holds the dev image.
+"""Development loop on a headset in development mode.
 
-The headset stays in development mode between tasks: the engineering ABL, and the dev image
-in boot, so every boot starts stage 1. Each attempt reboots into stage 1, streams a userspace
-archive, switches to it and runs the acceptance runner's checks; nothing is restored when a
-task ends. The device-side deadlines still return the headset to fastboot, where "dev reboot"
-picks it up. "dev restore", then "python -m overpressure cycle --restore-only", return it to stock.
-Settings come from .env (devices/phoenix/tooling/localconfig.py); the SSH key, images and check results live in
-out/dev/.
+The headset stays in development mode between tasks: the engineering ABL, the dev image as the
+maintenance stage 1 in recovery, and the installed system on Valve's kernel in boot, super and
+userdata. Each attempt goes into the maintenance stage 1, installs and runs the acceptance
+runner's stage-2 checks on the installed system; nothing is restored when a task ends. The
+device-side deadlines return the maintenance stage 1 to fastboot, where "dev reboot" picks it
+up. "dev restore", then "python -m overpressure cycle --restore-only", return it to stock.
+Settings come from .env (devices/phoenix/tooling/localconfig.py); the SSH key, images and check
+results live in out/dev/.
 
   python -m overpressure dev stage-abl         engineering ABL through EDL, then PICO OS
-  python -m overpressure dev image             out/dev/dev-boot.img from the stage-1 image
-  python -m overpressure dev flash             write it to boot (fastboot) and start stage 1
+  python -m overpressure dev image             the dev image and the install boot image in out/dev/
+  python -m overpressure dev flash             write the dev image to recovery (fastboot) and start it
   python -m overpressure dev connect           Windows NCM initialization and stage-1 login
-  python -m overpressure dev boot [ARCHIVE]    stream the userspace, switch, wait for stage 2
-  python -m overpressure dev check             the acceptance checks on the running stage 2
+  python -m overpressure dev recovery          into the maintenance stage 1, until dev normal
+  python -m overpressure dev install [SYSTEM]  boot, super and data from it; starts the installed system
+  python -m overpressure dev normal            from the maintenance stage 1 into the installed system
+  python -m overpressure dev installed         connect to the running installed system
+  python -m overpressure dev check             the acceptance checks on the installed system
   python -m overpressure dev ssh COMMAND...    run a command on the headset
-  python -m overpressure dev reboot            restart into stage 1, also from fastboot
-  python -m overpressure dev restore           leave development mode: stock boot, then PICO OS
+  python -m overpressure dev reboot            what misc and boot select, also from fastboot
+  python -m overpressure dev restore           leave development mode: PICO OS from the backup
+  python -m overpressure dev restore-partition PARTITION   one partition from the backup
 """
 from __future__ import annotations
 
@@ -42,7 +47,7 @@ HOST = "172.16.42.1"
 RUN_ID = "dev-loop"
 CONTACT = "/run/pico4-poc/host-contact"  # uptime of the last command (recovery-watch)
 ARCHIVE = ROOT / "out" / "userspace" / "pico4-userspace.tar.zst"
-#: Boot images the dev loop may write: stage 1 in boot, or in recovery for maintenance.
+#: Boot images the dev loop writes through fastboot: the dev image to recovery, stock boot back.
 BOOT_PARTITIONS = ("boot", "recovery")
 SYSTEM = ROOT / "out" / "userspace" / "pico4-system.img"
 #: Written by "dev install": PICO OS's system and data are gone, "dev restore" brings them back.
@@ -218,13 +223,14 @@ class Dev(Headset):
             self.fastboot("reboot")
         print(f"{name} restored from the backup")
 
-    def flash(self, name: str = "boot"):
-        image = self.work / f"dev-{name}.img"
+    def flash(self):
+        """The dev image into recovery, where it starts as the maintenance stage 1."""
+        image = self.work / "dev-recovery.img"
         if not image.exists():
             raise ValueError("run python -m overpressure dev image first")
         self.s.require("adb_serial", "fastboot_serial")
-        self.flash_boot(image, name)
-        print(f"dev image flashed to {name}; stage 1 is starting")
+        self.flash_boot(image, "recovery")
+        print("dev image flashed to recovery; the maintenance stage 1 is starting")
 
     def authenticate(self):
         lines = self.ssh("cat /etc/pico4-poc/test-run; cat /sys/devices/soc0/serial_number", 10).splitlines()
@@ -272,7 +278,7 @@ class Dev(Headset):
         """Install from the maintenance stage 1: the boot image with Valve's kernel in boot, the
         system image in super, userdata formatted if it holds no data yet (or when asked), then the
         installed system starts. @p boot replaces the boot image."""
-        boot = boot or self.work.parent / "kernel/install-boot-valve-rgb.img"
+        boot = boot or self.work.parent / "kernel/valve-boot.img"
         for path, hint in ((boot, "kernel/recovery_image.py --installed out/dev/install-boot.img --boot"),
                            (system, "scripts/build-system-image.sh")):
             if not path.exists():
@@ -342,7 +348,7 @@ class Dev(Headset):
                 raise RuntimeError("stage 1 is still running")
         self.until("installed system", 240, installed)
         # dev check's state: the archive the system image was built from, if it is a local one
-        # (out/userspace, or another build's output folder such as a kernel branch's).
+        # (out/userspace, or another build's output folder).
         archive = self.ssh("cat /usr/share/pico4-poc/userspace-archive.sha256", 10).strip()
         local = [ARCHIVE] + sorted(p for p in (ROOT / "out").glob("*/pico4-userspace.tar.zst") if p != ARCHIVE)
         found = next((p for p in local if p.exists() and backups.digest(p)["sha256"] == archive), None)
@@ -353,42 +359,9 @@ class Dev(Headset):
             (self.work / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
         print(f"installed system running (from archive {archive[:12]})")
 
-    def boot(self, archive: Path, pushes=()) -> dict:
-        state = hw.userspace_state(archive)
-        print(f"sending {state['bytes'] >> 20} MiB", flush=True)
-        started = self.clock.monotonic()
-        with archive.open("rb") as stream:
-            output = self.ssh(f"pico4-userspace receive --sha256 {state['sha256']}", 900, stdin=stream)
-        if output.splitlines()[-1:] != [f"received {state['sha256']}"]:
-            raise RuntimeError("the headset did not confirm the archive")
-        seconds = max(self.clock.monotonic() - started, 0.1)
-        state["receive_seconds"] = round(seconds, 1)
-        print(f"received in {seconds:.0f} s ({state['bytes'] / seconds / 1e6:.1f} MB/s)", flush=True)
-        for local, remote in pushes:
-            with open(local, "rb") as stream:
-                self.ssh(f"cat > /newroot{remote}", 60, stdin=stream)
-            print(f"pushed {local} -> {remote}")
-        # A stage 2 that never answers returns to fastboot 180 s after the switch (this
-        # timeout plus 120 s, recovery-watch), not 720 s as the dev image's 600 s would give.
-        self.ssh("echo 60 > /etc/pico4-poc/test-connect-timeout")
-        self.ssh("pico4-userspace switch", 30)
-        switched = self.clock.monotonic()
-        self.clock.sleep(5)
-
-        def stage2():
-            if self.ssh("cat /proc/1/comm", 10) != "systemd":
-                raise RuntimeError("stage 1 is still running")
-            self.ssh("touch /run/pico4-poc/userspace-authenticated", 10)
-        self.until("stage 2", 170, stage2)
-        state["ssh_seconds"] = round(self.clock.monotonic() - switched, 1)
-        state["booted"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-        (self.work / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-        print(f"stage 2 answered {state['ssh_seconds']:.0f} s after the switch")
-        return state
-
     def known_build_info(self, dev_image: dict) -> dict:
-        """The build information of the running stage 1: the dev image's, or a kernel test image's
-        (recovery_image.py records it in out/kernel/*.img.json) when that one runs."""
+        """The build information of the running stage 1: the dev image's, or that of an image from
+        recovery_image.py, the installed boot image or a test image (out/kernel/*.img.json)."""
         try:
             running = json.loads(self.ssh("cat /etc/pico4-poc/build-info", 10))
         except (RuntimeError, ValueError):
@@ -416,10 +389,9 @@ class Dev(Headset):
         return 0 if checks.result["status"] == "passed" else 1
 
     def reboot(self):
-        """Into stage 1 for the next attempt. A device deadline leaves the headset in fastboot;
-        boot still holds the dev image there, so a plain reboot is enough, without a flash. With
-        the system installed, boot holds the installed system: the maintenance stage 1 starts
-        only while misc holds its request (dev recovery), else the installed system comes back."""
+        """A device deadline leaves the headset in fastboot, and a plain reboot needs no flash. It
+        starts the maintenance stage 1 while misc holds its request (dev recovery), else what boot
+        holds, the installed system."""
         (self.work / "state.json").unlink(missing_ok=True)
         fastboot = self.s.tool("fastboot")
         if self.s.fastboot_serial and self.s.fastboot_serial in self.run([fastboot, "devices"], 30, check=False):
@@ -496,37 +468,30 @@ class DevChecks(hw.Runner):
     """The acceptance runner's stage-2 checks, through the dev loop's SSH key."""
 
     def __init__(self, dev: Dev, folder: Path, build_info: dict, identity: dict):
-        super().__init__(argparse.Namespace(command="dev-check", out=folder, serial=dev.s.adb_serial,
-                                            host=HOST, userspace=None))
+        super().__init__(argparse.Namespace(command="dev-check", out=folder, serial=dev.s.adb_serial, host=HOST))
         self.dev = dev
         self.run_id = RUN_ID
         self.baseline = {"chip_id": identity["chip_id"]}
         self.result["build_info"] = build_info
 
-    def ssh(self, command, timeout=30, stdin=None):
-        return self.command(self.dev.ssh_argv(command), timeout, **({"stdin": stdin} if stdin is not None else {}))
+    def ssh(self, command, timeout=30):
+        return self.command(self.dev.ssh_argv(command), timeout)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m overpressure dev", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
-    for name in ("stage-abl", "image", "connect", "check", "reboot", "restore", "normal", "recovery", "installed"):
+    for name in ("stage-abl", "image", "flash", "connect", "check", "reboot", "restore", "normal", "recovery",
+                 "installed"):
         sub.add_parser(name)
     inst = sub.add_parser("install")
     inst.add_argument("system", nargs="?", type=Path, default=SYSTEM)
     inst.add_argument("--format-data", action="store_true", help="format userdata even if it holds data")
-    inst.add_argument("--boot", type=Path, help="the boot image to install instead of out/kernel/install-boot-valve-rgb.img")
+    inst.add_argument("--boot", type=Path, help="the boot image to install instead of out/kernel/valve-boot.img")
     restore_part = sub.add_parser("restore-partition")
     restore_part.add_argument("partition", choices=RESTORABLE)
     restore_part.add_argument("--no-reboot", action="store_true")
-    flash = sub.add_parser("flash")
-    flash.add_argument("partition", nargs="?", choices=BOOT_PARTITIONS, default="boot",
-                       help="boot (default) or recovery, then start it")
-    boot = sub.add_parser("boot")
-    boot.add_argument("archive", nargs="?", type=Path, default=ARCHIVE)
-    boot.add_argument("--push", action="append", default=[], metavar="LOCAL=REMOTE",
-                      help="replace a file of the received root before the switch (repeatable)")
     shell = sub.add_parser("ssh")
     shell.add_argument("words", nargs="+")
     args = ap.parse_args(argv)
@@ -536,12 +501,8 @@ def main(argv=None) -> int:
             folder = WORK / ("stage-abl-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
             folder.mkdir(parents=True)
             Headset(dev.s, folder).stage_abl()
-        elif args.command == "boot":
-            dev.boot(args.archive, [item.split("=", 1) for item in args.push])
         elif args.command == "check":
             return dev.check()
-        elif args.command == "flash":
-            dev.flash(args.partition)
         elif args.command == "install":
             dev.install(args.system, args.format_data, args.boot)
         elif args.command == "restore-partition":

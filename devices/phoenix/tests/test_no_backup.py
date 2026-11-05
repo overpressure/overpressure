@@ -29,8 +29,7 @@ class ExtractionTests(unittest.TestCase):
         build = read(ROOT / "scripts/build-userspace.sh")
         self.assertNotIn("wlan_mac.bin; do", build)
         self.assertNotRegex(build, r'"\$sensor_data/sensors/registry"')
-        for link in ('/mnt/vendor/persist/wlan_mac.bin "$T/usr/lib/firmware/wlan/qca_cld/qca6390/wlan_mac.bin"',
-                     '/mnt/vendor/persist/sensors/registry/registry "$qcom/sensors/registry"',
+        for link in ('/mnt/vendor/persist/sensors/registry/registry "$qcom/sensors/registry"',
                      '/mnt/vendor/persist/sensors/registry/sns_reg_version "$qcom/sensors/sns_reg_version"',
                      '/mnt/vendor/persist/pvr "$qcom/calibration/pvr"'):
             self.assertIn("ln -sfn " + link, build)
@@ -46,7 +45,6 @@ class PersistTests(unittest.TestCase):
         unit = read(ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-persist.service")
         self.assertIn("After=pico4-storage-ro.service", unit)
         self.assertIn("Before=local-fs.target", unit)
-        self.assertNotIn("CPUWeight=", unit)
 
     def test_session_user_reads_a_copy_of_the_controller_bias_tables(self):
         script = read(ROOT / "userspace/rootfs/usr/libexec/pico4-poc/persist")
@@ -59,7 +57,6 @@ class PersistTests(unittest.TestCase):
     def test_fan_batch_from_the_serial_at_run_time(self):
         fan = read(ROOT / "userspace/rootfs/usr/bin/pico4-fan")
         self.assertIn('SERIAL_FILE = Path("/mnt/vendor/persist/falcon/sn")', fan)
-        self.assertNotIn("fan-profile", fan)
 
 
 class DevImageTests(unittest.TestCase):

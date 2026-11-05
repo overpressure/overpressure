@@ -14,8 +14,8 @@
  *
  * Safety: the station and controller firmware can be updated over this link.
  * This module builds only the frames in pico4_station_frame()'s allowlist
- * (acknowledge, camera frame rate, camera init/stream/exposure), the two
- * vibration frames to a controller (pico4_station_vibrate()), the read-only
+ * (acknowledge, camera frame rate, camera init/stream/exposure), the
+ * vibration frame to a controller (pico4_station_vibrate()), the read-only
  * calibration query (pico4_station_calibration_query()) and the supply's switch; it
  * has no way to send firmware, bootloader or flash commands and never touches
  * the boot pin.
@@ -40,7 +40,7 @@ extern "C" {
  * Commands this module may build. Byte 1 of a frame names the target: the station
  * (1) or a controller (2 left, 3 right), and a command byte means different things
  * for each; to the station 01 reads the firmware version and 07 switches the IMU
- * stream. The motor commands are therefore allowed only towards a controller.
+ * stream. The motor command is therefore allowed only towards a controller.
  */
 enum pico4_station_cmd
 {
@@ -50,8 +50,6 @@ enum pico4_station_cmd
 	PICO4_STATION_CMD_ACK = 0xFA,        //!< Payload: the acknowledged frame's bytes 37..38.
 	//! To a controller only: [play, amplitude, u16 duration ms].
 	PICO4_STATION_CMD_MOTOR = 0x01,
-	//! To a controller only: [play, amplitude, u16 duration ms, u16 frequency Hz].
-	PICO4_STATION_CMD_MOTOR_EVENT = 0x07,
 	//! To a controller only, read-only: [chunk index 1-12] of its calibration record.
 	PICO4_STATION_CMD_CALIBRATION = 0x02,
 };
@@ -81,27 +79,21 @@ enum pico4_station_hand
 	PICO4_STATION_HAND_RIGHT = 2,
 };
 
-//! The motor-event frequency range PICO OS's station client clamps to.
-#define PICO4_STATION_MOTOR_MIN_HZ 40
-#define PICO4_STATION_MOTOR_MAX_HZ 500
 //! PICO OS's default vibration strength, ctrl_motor_vibration_amplitude (StationService::SetMotor 0x72000).
 #define PICO4_STATION_MOTOR_SCALE_PERCENT 75
 
 /*!
  * Build a vibration request for one controller into @p out (40 bytes), laid out as
  * PICO OS's stationservice does (libstationopticsservice.so, StationService::SetMotor
- * 0x71eb4, SetVCMotorEvent 0x720e0; the level clamp is StationClient's,
- * libstationclient.pxr.so 0x374e4 and 0x3756c):
+ * 0x71eb4; the level clamp is StationClient's, libstationclient.pxr.so 0x374e4):
  *
  * - @p level (0-255, larger values count as 255) is PICO OS's motor level; 0 stops the
  *   motor and zeroes the whole payload.
  * - @p scale_percent (0-100) is the station service's amplitude setting; the amplitude
  *   byte is level × scale / 100, at most 255.
  * - @p duration_ms goes out as a u16 (larger values are clamped).
- * - @p frequency_hz is clamped to 40-500 Hz; 0 builds the plain motor command (01),
- *   anything else the motor event (07), which carries the frequency.
  *
- * The station sends nothing back for either. Returns false, building nothing, for a
+ * The station sends nothing back. Returns false, building nothing, for a
  * hand other than left or right or a scale above 100.
  */
 bool
@@ -109,8 +101,7 @@ pico4_station_vibrate(uint8_t out[PICO4_STATION_FRAME],
                       enum pico4_station_hand hand,
                       unsigned level,
                       unsigned scale_percent,
-                      unsigned duration_ms,
-                      unsigned frequency_hz);
+                      unsigned duration_ms);
 
 /*!
  * PICO OS's mapping of an OpenXR haptic vibration onto pico4_station_vibrate()
@@ -244,30 +235,17 @@ struct pico4_station_exposure
 
 /*!
  * CameraSetPara's 28-byte payload (u16 lines, u8 gain per camera): the scene phase's setting
- * for cameras 0-3 in bytes 1-12, PICO4_STATION_PARA_SYNC_50HZ in bytes 13-14, the event index
+ * for cameras 0-3, in camera order, in bytes 1-12, PICO4_STATION_PARA_SYNC_50HZ in bytes 13-14, the event index
  * in byte 15 (PICO OS counts it 0-9, one per command), a second set in bytes 16-27. By the
  * frames' metadata the first set drives the scene phase; the second changes neither phase on
  * this station (the LED phase stays at 4 lines, gain 26, whatever it holds). Here it carries
  * @p leds, clamped to PICO OS's LED limits.
  */
 void
-pico4_station_camera_para(uint8_t out[28],
-                          struct pico4_station_exposure scene,
-                          struct pico4_station_exposure leds,
-                          unsigned index);
-
-//! pico4_station_camera_para with a scene setting per camera, in camera order 0-3.
-void
 pico4_station_camera_para_each(uint8_t out[28],
                                const struct pico4_station_exposure scene[4],
                                struct pico4_station_exposure leds,
                                unsigned index);
-
-//! Both phases' exposure (see pico4_station_camera_para).
-int
-pico4_station_camera_set_exposures(struct pico4_station *st,
-                                   struct pico4_station_exposure scene,
-                                   struct pico4_station_exposure leds);
 
 /*!
  * The scene phase's exposure per camera (camera order 0-3), as PICO OS's auto exposure sends

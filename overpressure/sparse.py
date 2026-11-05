@@ -43,25 +43,3 @@ def encode(data: bytes, block_size: int = 4096) -> bytes:
         i = j
     header = HEADER.pack(MAGIC, 1, 0, HEADER.size, CHUNK.size, block_size, blocks, len(chunks), 0)
     return header + b"".join(chunks)
-
-
-def decode(image: bytes) -> bytes:
-    """The raw image a sparse image describes (RAW and FILL chunks)."""
-    magic, major, _minor, hdr, chunk_hdr, block_size, blocks, count, _crc = HEADER.unpack_from(image)
-    if magic != MAGIC or major != 1:
-        raise ValueError("not a sparse image")
-    out, pos = [], hdr
-    for _ in range(count):
-        kind, _res, size, total = CHUNK.unpack_from(image, pos)
-        body = image[pos + chunk_hdr:pos + total]
-        if kind == RAW:
-            out.append(body)
-        elif kind == FILL:
-            out.append(body * (size * block_size // 4))
-        else:
-            raise ValueError(f"unsupported chunk {kind:#x}")
-        pos += total
-    raw = b"".join(out)
-    if len(raw) != blocks * block_size:
-        raise ValueError("chunk sizes do not add up")
-    return raw

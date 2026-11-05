@@ -2,8 +2,8 @@
 # SteamVR's driver_monado opens it as steamos; the Monado service runs as root.
 # The controller radio (station, spidev0.0) and the lens motor MCU (ttyHS1).
 SUBSYSTEM=="spidev", KERNEL=="spidev0.0", GROUP="video", MODE="0660"
-# A mainline kernel's switch of the station's supply (the vendor spidev's power ioctl on the
-# stock kernel): for the same group, so that the driver in SteamVR can power-cycle the station.
+# The switch of the station's supply (the device tree's station-power): for the same group, so
+# that the driver in SteamVR can power-cycle the station.
 SUBSYSTEM=="platform", KERNEL=="station-power", ACTION=="add", RUN+="/bin/chgrp video /sys%p/state", RUN+="/bin/chmod 0664 /sys%p/state"
 SUBSYSTEM=="tty", KERNEL=="ttyHS1", GROUP="video", MODE="0660"
 # The panels' backlight: SteamVR's driver switches it in standby.

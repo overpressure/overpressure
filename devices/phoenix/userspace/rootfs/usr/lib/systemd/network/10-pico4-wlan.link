@@ -1,7 +1,7 @@
-# The Wi-Fi driver's interfaces keep the kernel's names: udev's predictable name (wlp1s0) would
-# collide with p2p0's and fail. The driver sets the MAC addresses from the headset's own file.
+# ath11k's interface keeps the kernel's name wlan0, which pico4-wlan-address and NetworkManager
+# expect; udev's predictable name would be wlp1s0.
 [Match]
-OriginalName=wlan0 p2p0
+OriginalName=wlan0
 
 [Link]
 NamePolicy=

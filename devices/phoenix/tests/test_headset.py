@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from overpressure.localconfig import parse
+
 from devices.phoenix.tooling import cycle, devloop, localconfig
 
 
@@ -23,12 +25,12 @@ class FakeClock:
 
 class SettingsTests(unittest.TestCase):
     def test_parse_skips_comments_and_strips_quotes(self):
-        values = localconfig.parse("# headset\nPICO4_ADB_SERIAL=ABC  # the ADB serial\n\n"
+        values = parse("# headset\nPICO4_ADB_SERIAL=ABC  # the ADB serial\n\n"
                                    "PICO4_EDL='C:/tools/edl ng/edl-ng.exe'\nPICO4_FIRMWARE=\"5.13.7-global-seko\"\n")
         self.assertEqual(values, {"PICO4_ADB_SERIAL": "ABC", "PICO4_EDL": "C:/tools/edl ng/edl-ng.exe",
                                   "PICO4_FIRMWARE": "5.13.7-global-seko"})
         with self.assertRaisesRegex(ValueError, "line 1"):
-            localconfig.parse("no assignment\n")
+            parse("no assignment\n")
 
     def test_environment_overrides_the_file_and_paths_are_rooted(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -134,7 +136,7 @@ class CycleTests(HeadsetFixture):
             (self.root / "out/pico4-poc-test.img").write_bytes(b"image")
             c.stage_abl()
             self.edl = 0
-            code = c.flash_run(self.root / "userspace.tar.zst")
+            code = c.flash_run()
             c.restore_abl()
         return code
 
@@ -145,7 +147,6 @@ class CycleTests(HeadsetFixture):
         stage = next(w for w in self.calls if "stage" in w)
         self.assertEqual(stage[stage.index("--confirm-device") + 1], "ADB1")
         run = next(w for w in self.calls if "flash-run" in w)
-        self.assertIn("--userspace", run)
         self.assertEqual(run[run.index("--fastboot-serial") + 1], "FB1")
 
     def test_boot_that_differs_from_the_backup_keeps_the_engineering_abl(self):
@@ -224,15 +225,6 @@ class DevTests(HeadsetFixture):
             return self.fake(argv, timeout, stdin, check, log)
         return devloop.Dev(self.settings, self.root / "dev", fake, self.clock)
 
-    def archive(self):
-        archive = self.root / "pico4-userspace.tar.zst"
-        archive.write_bytes(b"userspace")
-        digest = hashlib.sha256(b"userspace").hexdigest()
-        (self.root / "pico4-userspace.manifest.json").write_text(json.dumps({
-            "archive": {"sha256": digest}, "packages": {"systemd": "257.7", "pico4-monado": "25.1.0-3", "deckard-steamvr-rel": "1"},
-            "gpu_firmware": [{}], "sensor_data": []}))
-        return archive, digest
-
     def test_check_knows_the_stage1_of_a_kernel_test_image(self):
         stock = {"kernel": "Linux version 4.19.81-perf+", "stock": "5.13.7"}
         valve = {"kernel": "Linux version 7.2.0-pico4", "stock": "5.13.7"}
@@ -247,29 +239,10 @@ class DevTests(HeadsetFixture):
         running["info"] = {"kernel": "Linux version 9"}
         self.assertEqual(dev.known_build_info(stock), stock)
 
-    def test_boot_streams_switches_and_records_the_archive(self):
-        archive, digest = self.archive()
-        comm = iter(["init", "systemd"])
-        dev = self.make({"pico4-userspace receive": f"unpacking\nreceived {digest}",
-                         "cat /proc/1/comm": lambda: next(comm), "pico4-userspace switch": "switching"})
-        state = dev.boot(archive)
-        self.assertEqual((state["sha256"], state["steamvr"], state["gpu_firmware"]), (digest, True, True))
-        self.assertTrue(any(f"receive --sha256 {digest}" in c for c in self.texts()))
-        self.assertTrue(any("userspace-authenticated" in c for c in self.texts()))
-        saved = json.loads((self.root / "dev/state.json").read_text())
-        self.assertEqual(saved["archive"], str(archive.resolve()))
-
     def test_every_command_renews_the_host_contact(self):
         argv = self.make().ssh_argv("pico4-valve-session-check --seconds 30")
         self.assertEqual(argv[-1], "cut -d. -f1 /proc/uptime > /run/pico4-poc/host-contact 2>/dev/null; "
                                    "pico4-valve-session-check --seconds 30")
-
-    def test_unconfirmed_archive_never_switches(self):
-        archive, _ = self.archive()
-        dev = self.make({"pico4-userspace receive": "received 0000"})
-        with self.assertRaisesRegex(RuntimeError, "did not confirm"):
-            dev.boot(archive)
-        self.assertFalse(any("switch" in c for c in self.texts()))
 
     def test_login_requires_the_dev_image_on_this_headset(self):
         self.make({"cat /etc/pico4-poc/test-run": "dev-loop\n1234567"}).authenticate()
@@ -289,7 +262,7 @@ class DevTests(HeadsetFixture):
             dev = self.make()
             image.write_bytes(b"dev image")
             with self.assertRaisesRegex(RuntimeError, message):
-                dev.flash()
+                dev.flash_boot(image)
             self.assertNotIn("flash-boot", self.steps())
 
     def test_recovery_gets_the_same_checks_and_is_started(self):
@@ -304,7 +277,7 @@ class DevTests(HeadsetFixture):
         image = self.root / "dev/dev-recovery.img"
         image.parent.mkdir(exist_ok=True)
         image.write_bytes(b"dev image")
-        self.make().flash("recovery")
+        self.make().flash()
         flash = self.calls.index(["fastboot", "-s", "FB1", "flash", "recovery", str(image)])
         self.assertIn("unlock", self.texts()[flash - 1])
         self.assertEqual(self.calls[flash + 1], ["fastboot", "-s", "FB1", "reboot", "recovery"])
@@ -312,7 +285,7 @@ class DevTests(HeadsetFixture):
         self.calls.clear()
         self.partitions = [("boot", len(self.boot)), ("recovery", 4096)]
         with self.assertRaisesRegex(RuntimeError, "recovery partition"):
-            self.make().flash("recovery")
+            self.make().flash()
         self.assertFalse(any(" flash recovery " in t for t in self.texts()))
         # Any other partition is refused before fastboot is asked anything.
         with self.assertRaisesRegex(ValueError, "not a boot image partition"):
@@ -339,7 +312,7 @@ class DevTests(HeadsetFixture):
         dev_dir.mkdir(exist_ok=True)
         kernel_dir = self.root / "kernel"
         kernel_dir.mkdir(exist_ok=True)
-        (kernel_dir / "install-boot-valve-rgb.img").write_bytes(b"install boot")
+        (kernel_dir / "valve-boot.img").write_bytes(b"install boot")
         system = self.root / "pico4-system.img"
         system.write_bytes(b"system image")
         boot_sha = hashlib.sha256(confirmed_boot).hexdigest()

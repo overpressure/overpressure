@@ -27,7 +27,8 @@ come from the image ([stage1.md](stage1.md), [xr.md](xr.md)).
 
 - **System image.** [`scripts/build-system-image.sh`](../scripts/build-system-image.sh) turns the
   userspace archive into ext4 for `super`, as root in Linux or WSL: no journal (it is never
-  written on the headset), without `orphan_file` and `metadata_csum_seed`, file capabilities kept
+  written on the headset), without `orphan_file` and `metadata_csum_seed` (the stock kernel under the
+  maintenance stage 1 cannot mount them), file capabilities kept
   (gamescope's `cap_sys_nice`). Its size is the
   content plus 10 % and 128 MiB. It names the archive it came from in
   `/usr/share/pico4-poc/system-image`.
@@ -59,7 +60,7 @@ The ABL starts `recovery` instead of `boot` while `misc` holds the bootloader me
 | Mode | Starts | Entered by | Left by |
 | --- | --- | --- | --- |
 | Installed | `boot`: stage 1 mounts `super` and `userdata` and switches to systemd as soon as its USB setup is done, with or without a PC; if that fails, it reboots into recovery | a boot with an empty bootloader message | `dev recovery` |
-| Maintenance | `recovery`: the dev image's stage 1 on the stock kernel with its deadlines; `dev boot` streams a system into RAM, which runs the session only from a recovery image with Valve's kernel (`recovery_image.py`) | `fastboot reboot recovery` (the ABL writes `boot-recovery`), or a reboot with reason `recovery` (once) | `pico4-install bootmode normal` (`dev normal`) |
+| Maintenance | `recovery`: the dev image's stage 1 on the stock kernel with its deadlines; `dev install` writes from here | `fastboot reboot recovery` (the ABL writes `boot-recovery`), or a reboot with reason `recovery` (once) | `pico4-install bootmode normal` (`dev normal`) |
 
 The deadlines of the maintenance stage 1 return the headset to fastboot; with
 `boot-recovery` in `misc`, every boot from there starts the maintenance stage 1 again.
@@ -87,8 +88,9 @@ and the press that woke it is ignored), a press held 2 s runs `systemctl powerof
 
 After a resume Valve's session goes on with 6DoF, both controllers, the cameras, USB and sound.
 PICO OS also sleeps when the headset is taken off (screen off after 10 s, suspend after 15 s); here
-SteamVR's standby follows the wear sensor ([session.md](session.md)). Steam suspends by itself after
-an hour idle with the cable in, and the time asleep counts.
+SteamVR's standby follows the wear sensor ([session.md](session.md)). After a wake Steam can suspend again:
+seen about 4 s after an RTC wake from 3 h asleep, with the cable in. It left the headset awake through 80
+idle minutes in SteamVR's standby, so this is no plain idle timer.
 
 Across a suspend the QTimer, which stamps the IMU samples and the camera frames, runs on while
 CLOCK_MONOTONIC stands. The driver sees the system slept (CLOCK_BOOTTIME less CLOCK_MONOTONIC
@@ -132,9 +134,9 @@ python -m overpressure dev image
 python devices/phoenix/kernel/recovery_image.py --installed out/dev/install-boot.img --boot \
     --gpu-firmware assets/graphics-firmware-5.13.7 --wlan-firmware assets/wlan-5.13.7 \
     --stage1 devices/phoenix/initramfs out/kernel cache/stock/<firmware>.recovery.img \
-    out/dev/dev-recovery.img out/kernel/install-boot-valve-rgb.img
+    out/dev/dev-recovery.img out/kernel/valve-boot.img
 devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img  # as root
-python -m overpressure dev flash recovery     # a new dev image: the maintenance stage 1; starts it
+python -m overpressure dev flash              # a new dev image: the maintenance stage 1; starts it
 python -m overpressure dev recovery           # or, with the dev image in recovery already: into it
 python -m overpressure dev install            # boot, super, userdata (if new), then the installed system
 python -m overpressure dev check              # the acceptance checks, on the installed system
@@ -156,7 +158,7 @@ already holds its image (by a readback hash), and formats `userdata` only when i
 `pico4-data` file system (or with `--format-data`). An update is the same command with a new
 system image: the data stays, and `boot` and `super` are written only when they differ.
 
-**The boot image.** `dev install` writes `out/kernel/install-boot-valve-rgb.img` to `boot`: the
+**The boot image.** `dev install` writes `out/kernel/valve-boot.img` to `boot`: the
 installed system's boot image with Valve's kernel and tree
 ([kernel.md](kernel.md)), made by `recovery_image.py` as above. It carries
 the install boot image's stage 1 in installed mode with this tree's files and the GPU and Wi-Fi
@@ -194,7 +196,7 @@ the ABL to stock (`python -m overpressure cycle --restore-only`) and entering de
 | Installed boot | systemd `running`, no failed units; `/` read-only from `super`, `/data` and its binds writable from `userdata`, writing `/` refused |
 | Persistence | files in `/home`, `/var`, `/etc` and `/root` survive a reboot and a system update (a new image in `super`, its package database taken over) |
 | `dev check` on the installed system | the userspace, head IMU and Valve's session checks pass: 90.03 commits/s, 0.0 % late, 0 stalls, hottest zone 65.5 °C over 30 s |
-| Development loop | `dev recovery`, `dev boot` (root on zram again), `dev reboot` (stays in maintenance), `dev normal` (installed system again); from fastboot without the recovery request, `dev reboot` connects to the installed system that `boot` starts |
+| Development loop | `dev recovery`, `dev reboot` (stays in maintenance), `dev normal` (installed system again); from fastboot without the recovery request, `dev reboot` connects to the installed system that `boot` starts |
 | Boot without the PC (cable unplugged, power button) | stage 1 switches without waiting for a PC; systemd reaches the graphical target 13.2 s after power-on (8.8 s kernel, 4.4 s userspace; measured as a one-shot boot of this image from `recovery`) with no failed units; the data is there; the USB link comes up when the cable is plugged in later |
 | Boot indication | stage 1 shows it about 4 s after the kernel started, stage 2's service takes over at about 15 s without a gap, Monado and SteamVR's compositor take the display from it (it exits within 0.5 s) |
 | Power-off | stays off without the cable; with the cable attached the headset starts again in charger mode (`androidboot.mode=charger`), and stage 1 stays there: no system, lenses dark, waiting on the power key; held 2 s it starts the installed system, as `pico4-reboot` does |

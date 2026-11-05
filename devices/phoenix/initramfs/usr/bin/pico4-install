@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install the Linux system on the headset, from the maintenance stage 1 in recovery
-# (docs/stage1.md#installed-system). The only partitions it writes:
+# (docs/install.md). The only partitions it writes:
 #
 #   pico4-install write boot|super --size BYTES --bytes N --sha256 HEX [--zstd] < IMAGE
 #       write an image to the start of boot (the installed boot image) or super (the system
@@ -38,7 +38,7 @@ writable() { blockdev --setrw "$1" || die "could not make $1 writable"; }
 readonly_again() { blockdev --setro "$1" || log "install: could not set $1 read-only"; }
 
 write() {
-	local name=$1 size="" bytes="" sha="" zstd=0 dev got back
+	local name=$1 size="" bytes="" sha="" dev got back
 	shift
 	case "$name" in boot | super) ;; *) die "write refuses $name (boot or super only)" ;; esac
 	while [ $# -gt 0 ]; do
@@ -46,7 +46,6 @@ write() {
 		--size) size=$2; shift ;;
 		--bytes) bytes=$2; shift ;;
 		--sha256) sha=$2; shift ;;
-		--zstd) zstd=1 ;;
 		*) die "unknown option $1" ;;
 		esac
 		shift
@@ -61,7 +60,7 @@ write() {
 	local hasher=$!
 	writable "$dev"
 	log "install: writing $bytes bytes to $name ($dev)"
-	if [ $zstd = 1 ]; then zstd -dc; else cat; fi | head -c "$bytes" | tee "$STATE/fifo" |
+	head -c "$bytes" | tee "$STATE/fifo" |
 		dd of="$dev" bs=4M conv=fsync 2> "$STATE/dd.log"
 	local rc=$?
 	wait "$hasher"
@@ -86,7 +85,7 @@ format_data() {
 	command -v mkfs.ext4 >/dev/null || die "mkfs.ext4 missing from this image"
 	writable "$dev"
 	log "install: formatting userdata ($dev) as pico4-data"
-	# e2fsprogs >= 1.47 enables features this 4.19 kernel cannot mount.
+	# e2fsprogs >= 1.47 enables features the stock kernel, under this maintenance stage 1, cannot mount.
 	mkfs.ext4 -q -F -L pico4-data -O ^orphan_file,^metadata_csum_seed "$dev"
 	local rc=$?
 	sync

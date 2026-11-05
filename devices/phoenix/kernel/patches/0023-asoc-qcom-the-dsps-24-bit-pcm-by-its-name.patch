@@ -1,38 +1,12 @@
 From: overpressure <overpressure@pico4>
-Subject: [PATCH] ASoC: qcom: the speakers' path at 24 bits, and the DSP's 24-bit PCM by its name
+Subject: [PATCH] ASoC: qcom: the DSP's 24-bit PCM by its name
 
 The ADSP's multi-channel PCM format at 24 bits takes and gives the samples in the top 24 bits of a
 32-bit word, and q6asm-dai offered that as S24_LE, whose samples are in the low 24 bits: played
 samples arrived 48 dB low, and recorded ones 48 dB hot, wrapping at anything loud. Measured: a tone
 in the top bits under the S24_LE name plays as loud as at S16_LE, and every recorded word has a zero
 low byte. The front end now offers it as what it is, S32_LE.
-
-The back end's fixup only added S16_LE to the mask, where the lowest format wins, so that the device
-path's COPP, with PICO's processing in it, always ran at 16 bits. PICO OS's platform configuration
-has the speakers at 24 (SND_DEVICE_OUT_SPEAKER bit_width="24") and leaves the microphone at 16.
 ---
---- a/sound/soc/qcom/sm8250.c
-+++ b/sound/soc/qcom/sm8250.c
-@@ -63,10 +63,18 @@
- 	struct snd_interval *channels = hw_param_interval(params,
- 					SNDRV_PCM_HW_PARAM_CHANNELS);
- 	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
-+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
- 
- 	rate->min = rate->max = 48000;
- 	channels->min = channels->max = 2;
--	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
-+	/*
-+	 * The device path's processing runs at this width. The speakers at 24 bits, as PICO OS's
-+	 * platform configuration has them, everything else as before. The mask holds the front
-+	 * end's format too, and the lowest one set wins.
-+	 */
-+	snd_mask_none(fmt);
-+	snd_mask_set_format(fmt, cpu_dai->id == WSA_CODEC_DMA_RX_0 ?
-+			    SNDRV_PCM_FORMAT_S24_LE : SNDRV_PCM_FORMAT_S16_LE);
- 
- 	return 0;
- }
 --- a/sound/soc/qcom/qdsp6/q6asm-dai.c
 +++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
 @@ -90,7 +90,7 @@

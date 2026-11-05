@@ -6,7 +6,7 @@
  *   pico4-cam capture [--slots 0,1,2,3] [--frames N] [--out DIR]
  *                     [--ring N] [--timeout MS]
  *                     [--no-station] [--no-station-reset] [--stats-log FILE]
- *                     [--exposure LINES [--gain G]] [--led-exposure LINES [--led-gain G]]
+ *                     [--exposure LINES [--gain G]]
  *                     [--record-leds FILE] [--record-scene FILE]
  *                     [--record-imu FILE]
  *       Streams until every selected camera delivered N frames (default 30),
@@ -19,7 +19,7 @@
  *       is power-cycled first (unless --no-station-reset) and told to start
  *       once the sensors stream. It refuses unless all four sensors are on, so
  *       --slots only selects which cameras are reported. --stats-log writes
- *       "slot sof_boottime_ns mean latency_ns request phase lines gain peak
+ *       "slot sof_boottime_ns mean latency_ns frame phase lines gain peak
  *       saturated" per frame (mean of a sparse grid; latency from start of
  *       frame to delivery; the brightest sample and the samples at 1023;
  *       the applied exposure from the metadata line, phase 0 if it does not
@@ -30,9 +30,6 @@
  *       tenth or eleventh, after the setting took effect. Every other frame
  *       is the station's short controller-LED exposure; the saved frame is a
  *       scene frame by its metadata (or the brighter of two if it has none).
- *       --led-exposure and --led-gain (default 4 and 26, at most 10 and 32)
- *       fill the command's second set, which leaves both phases alone: the
- *       station keeps the LED phase at 4 lines and gain 26.
  *       --record-leds appends every controller-LED exposure of the selected
  *       cameras to FILE, for the controller tracking work: per frame a 48-byte
  *       header ("P4LF", version 1, slot, the frame counter, start of frame
@@ -93,7 +90,6 @@ usage(FILE *f)
 	fputs("usage: pico4-cam [-v] capture [--slots 0,1,2,3] [--frames N] [--out DIR]\n"
 	      "                 [--ring N] [--timeout MS] [--no-station]\n"
 	      "                 [--no-station-reset] [--stats-log FILE] [--exposure LINES [--gain G]]\n"
-	      "                 [--led-exposure LINES [--led-gain G]]\n"
 	      "                 [--record-leds FILE] [--record-scene FILE] [--record-imu FILE]\n"
 	      "       pico4-cam [-v] rgb [--frames N] [--out DIR] [--exposure LINES] [--gain G]\n"
 	      "                 [--step-exposure LINES [--step-gain G]]\n",
@@ -162,7 +158,6 @@ struct slot_stats
 	bool monotonic;
 	int64_t first_ts, last_ts, prev_ts;
 	uint64_t first_frame_id, last_frame_id;
-	uint64_t first_request;
 	uint64_t sum;
 	uint64_t count;
 	unsigned min, max;
@@ -174,12 +169,9 @@ struct slot_stats
 };
 
 static unsigned
-sample(const struct pico4_cam_frame *f, const uint8_t *line, unsigned x)
+sample(const uint8_t *line, unsigned x)
 {
-	if (f->bytes_per_sample == 2) {
-		return (unsigned)line[2 * x] | ((unsigned)line[2 * x + 1] << 8);
-	}
-	return line[x];
+	return (unsigned)line[2 * x] | ((unsigned)line[2 * x + 1] << 8);
 }
 
 //! Every frame: all pixels of the first one, every second row and column of the rest.
@@ -190,7 +182,7 @@ add_stats(struct slot_stats *st, const struct pico4_cam_frame *f, bool full)
 	for (unsigned y = 0; y < f->height; y += step) {
 		const uint8_t *line = (const uint8_t *)f->data + (size_t)y * f->stride;
 		for (unsigned x = 0; x < f->width; x += step) {
-			unsigned v = sample(f, line, x);
+			unsigned v = sample(line, x);
 			st->sum += v;
 			st->min = v < st->min ? v : st->min;
 			st->max = v > st->max ? v : st->max;
@@ -203,21 +195,8 @@ static int
 save_frame(struct slot_stats *st, const struct pico4_cam_frame *f, const char *dir)
 {
 	FILE *pgm, *raw;
-	unsigned shift = 0;
 	uint8_t row[PICO4_CAM_WIDTH];
 
-	if (f->bytes_per_sample == 2) {
-		// 10-bit samples, LSB-aligned; scan for set high bits in case the CSID aligns them up.
-		unsigned max = 0;
-		for (unsigned y = 0; y < f->height; y++) {
-			const uint8_t *line = (const uint8_t *)f->data + (size_t)y * f->stride;
-			for (unsigned x = 0; x < f->width; x++) {
-				unsigned v = sample(f, line, x);
-				max = v > max ? v : max;
-			}
-		}
-		shift = max > 1023 ? 8 : 2;
-	}
 	snprintf(st->pgm, sizeof(st->pgm), "%s/cam%d.pgm", dir, f->slot);
 	snprintf(st->raw, sizeof(st->raw), "%s/cam%d.raw16", dir, f->slot);
 	pgm = fopen(st->pgm, "wbe");
@@ -228,7 +207,7 @@ save_frame(struct slot_stats *st, const struct pico4_cam_frame *f, const char *d
 	for (unsigned y = 0; y < f->height; y++) {
 		const uint8_t *line = (const uint8_t *)f->data + (size_t)y * f->stride;
 		for (unsigned x = 0; x < f->width; x++) {
-			unsigned v = sample(f, line, x) >> shift;
+			unsigned v = sample(line, x) >> 2; // 10-bit samples, LSB-aligned
 			row[x] = (uint8_t)(v > 255 ? 255 : v);
 		}
 		fwrite(row, 1, f->width, pgm);
@@ -241,7 +220,7 @@ save_frame(struct slot_stats *st, const struct pico4_cam_frame *f, const char *d
 		return -errno;
 	}
 	for (unsigned y = 0; y < f->lines; y++) {
-		fwrite((const uint8_t *)f->meta + (size_t)y * f->stride, f->bytes_per_sample, f->width, raw);
+		fwrite((const uint8_t *)f->meta + (size_t)y * f->stride, 2, f->width, raw);
 	}
 	if (fclose(raw) != 0) {
 		return -errno;
@@ -258,7 +237,7 @@ grid_mean(const struct pico4_cam_frame *f)
 	for (unsigned y = 8; y < f->height; y += 16) {
 		const uint8_t *line = (const uint8_t *)f->data + (size_t)y * f->stride;
 		for (unsigned x = 8; x < f->width; x += 16) {
-			sum += sample(f, line, x);
+			sum += sample(line, x);
 			n++;
 		}
 	}
@@ -273,7 +252,7 @@ frame_peak(const struct pico4_cam_frame *f, unsigned *out_saturated)
 	for (unsigned y = 0; y < f->height; y++) {
 		const uint8_t *line = (const uint8_t *)f->data + (size_t)y * f->stride;
 		for (unsigned x = 0; x < f->width; x++) {
-			unsigned v = sample(f, line, x);
+			unsigned v = sample(line, x);
 			peak = v > peak ? v : peak;
 			saturated += v >= 1023;
 		}
@@ -294,7 +273,7 @@ log_frame(FILE *log, const struct pico4_cam_frame *f)
 	}
 	unsigned saturated, peak = frame_peak(f, &saturated);
 	fprintf(log, "%d %lld %.2f %lld %llu %u %u %u %u %u\n", f->slot, (long long)f->sof_boottime_ns, grid_mean(f),
-	        now - (long long)f->sof_boottime_ns, (unsigned long long)f->request_id, m.phase, m.exposure_lines,
+	        now - (long long)f->sof_boottime_ns, (unsigned long long)f->frame_id, m.phase, m.exposure_lines,
 	        m.gain, peak, saturated);
 }
 
@@ -320,7 +299,7 @@ record_frame(FILE *out, const struct pico4_cam_frame *f, const struct pico4_cam_
 	for (unsigned y = 0; y < f->height; y++) {
 		const uint8_t *line = (const uint8_t *)f->data + (size_t)y * f->stride;
 		for (unsigned x = 0; x < f->width && x < PICO4_CAM_WIDTH; x++) {
-			row[x] = (uint8_t)(sample(f, line, x) >> 2);
+			row[x] = (uint8_t)(sample(line, x) >> 2);
 		}
 		if (fwrite(row, 1, f->width, out) != f->width) {
 			return false;
@@ -332,9 +311,6 @@ record_frame(FILE *out, const struct pico4_cam_frame *f, const struct pico4_cam_
 static void
 on_frame(struct slot_stats *st, const struct pico4_cam_frame *f, const char *dir)
 {
-	if (st->frames == 0) {
-		st->first_request = f->request_id;
-	}
 	// The station alternates scene and controller-LED exposures; the metadata says which this is.
 	struct pico4_cam_meta m;
 	bool decoded = pico4_cam_meta_decode(f->meta, f->stride, &m);
@@ -499,7 +475,7 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 	struct imu_recorder imu = {0};
 	pthread_t imu_thread;
 	bool imu_running = false;
-	unsigned long exposure = 0, gain = 16, led_exposure = 4, led_gain = 26;
+	unsigned long exposure = 0, gain = 16;
 	unsigned long frames = 30, timeout = 3000;
 	struct slot_stats st[PICO4_CAM_NUM];
 	struct pico4_cam *cam = NULL;
@@ -533,8 +509,6 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 			dir = v;
 		} else if (strcmp(a, "--exposure") == 0 && parse_uint(v, 1700, &exposure)) {
 		} else if (strcmp(a, "--gain") == 0 && parse_uint(v, 1023, &gain) && gain >= 16) {
-		} else if (strcmp(a, "--led-exposure") == 0 && parse_uint(v, 1700, &led_exposure)) {
-		} else if (strcmp(a, "--led-gain") == 0 && parse_uint(v, 1023, &led_gain)) {
 		} else if (strcmp(a, "--stats-log") == 0) {
 			if (stats_log != NULL) {
 				fclose(stats_log);
@@ -617,9 +591,7 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 			station_started = true;
 			if (exposure != 0) {
 				g_save_frame = 10;
-				struct pico4_station_exposure scene = {(unsigned)exposure, (unsigned)gain};
-				struct pico4_station_exposure leds = {(unsigned)led_exposure, (unsigned)led_gain};
-				pico4_station_camera_set_exposures(station, scene, leds);
+				pico4_station_camera_set_exposure(station, (unsigned)exposure, (unsigned)gain);
 			}
 			polling = pthread_create(&poller, NULL, station_thread, station) == 0;
 		}
@@ -698,7 +670,7 @@ cmd_capture(struct pico4_cam_config *cfg, int argc, char **argv)
 		printf("%s\n    {\"slot\": %d, \"frames\": %u, \"errors\": %llu, \"with_timestamp\": %u, ", first ? "" : ",",
 		       s, t->frames, (unsigned long long)si.errors, t->with_ts);
 		printf("\"measured_fps\": %.3f, \"timestamps_monotonic\": %s, ", fps, t->monotonic ? "true" : "false");
-		printf("\"first_request\": %llu, \"sof_frames_spanned\": %llu, ", (unsigned long long)t->first_request,
+		printf("\"sof_frames_spanned\": %llu, ",
 		       (unsigned long long)(t->with_ts > 0 ? t->last_frame_id - t->first_frame_id + 1 : 0));
 		printf("\"first_sof_boottime_ns\": %lld, ", (long long)t->first_ts);
 		if (t->count > 0) {

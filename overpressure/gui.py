@@ -17,7 +17,7 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Dict, Optional
 
-from . import REPO, doctor, runner
+from . import REPO, doctor, linux, runner
 from .headset import Headset, Registry, Step
 
 GROUPS = ("Setup", "Image", "Headset")
@@ -248,7 +248,8 @@ class App:
             return
         notes = []
         if step.linux_root:
-            notes.append("Runs on Linux as root" + (" (WSL)." if sys.platform == "win32" else " (sudo)."))
+            where = {"wsl": "WSL", "sudo": "sudo", "docker": "the build container"}[linux.backend()]
+            notes.append(f"Runs on Linux as root ({where}).")
         if step.writes:
             notes.append("Writes to the headset: asks before it starts.")
         self.title.config(text=step.title)

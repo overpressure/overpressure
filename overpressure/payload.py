@@ -16,7 +16,6 @@ import hashlib
 import io
 import lzma
 import struct
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -240,7 +239,6 @@ class Payload:
     block_size: int
     data_start: int
     partitions: dict[str, Partition]
-    security_patch_level: str = ""
 
 
 def read_payload(src: Source) -> Payload:
@@ -267,9 +265,7 @@ def read_payload(src: Source) -> Payload:
                 extents.append((_one(ef, 1, 0), _one(ef, 2, 0)))
             part.operations.append(Operation(_one(of, 1, 0), _one(of, 2, 0), _one(of, 3, 0), extents, _one(of, 8)))
         parts[name] = part
-    spl = _one(manifest, 18, b"")
-    return Payload(src, block_size, 24 + manifest_size + sig_size, parts,
-                   spl.decode() if isinstance(spl, bytes) else "")
+    return Payload(src, block_size, 24 + manifest_size + sig_size, parts)
 
 
 def extract_partition(payload: Payload, name: str, log=print) -> bytes:
@@ -305,30 +301,3 @@ def extract_partition(payload: Payload, name: str, log=print) -> bytes:
             raise ValueError(f"{name}: partition hash mismatch after extraction")
         log(f"  {name}: sha256 verified against the payload manifest")
     return data
-
-
-def main(argv: list[str]) -> int:
-    import argparse
-
-    ap = argparse.ArgumentParser(description="Extract partitions from an A/B OTA payload")
-    ap.add_argument("ota", help="OTA zip, payload.bin, or http(s) URL of an OTA zip")
-    ap.add_argument("partitions", nargs="*", help="partitions to extract (default: list them)")
-    ap.add_argument("-o", "--out-dir", default=".")
-    args = ap.parse_args(argv)
-    payload = read_payload(payload_from(args.ota))
-    if not args.partitions:
-        for p in payload.partitions.values():
-            print(f"{p.name:24s} {p.size:>12d} bytes  {len(p.operations)} ops")
-        return 0
-    import os
-    for name in args.partitions:
-        data = extract_partition(payload, name)
-        path = os.path.join(args.out_dir, f"{name}.img")
-        with open(path, "wb") as f:
-            f.write(data)
-        print(f"wrote {path}")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

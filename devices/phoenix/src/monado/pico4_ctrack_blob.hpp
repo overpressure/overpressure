@@ -591,15 +591,6 @@ partition_labels(int n, const std::function<bool(int, int)> &same, int *classes 
 void
 sort_blob_points(std::vector<BlobPoint> &blobs);
 
-/*!
- * Stock sortBlobPoints_2 (3 or more blobs): by x if the bounding box is taller than wide, else by
- * y. Not on the phoenix path: its only call (0x38b4c0) is in the neo3 branch of
- * comControllerPoseForTracking (device type "neo3" tested at 0x38aec4; aspect < 2, >= 8 blobs
- * and more than n / 2 + 1 of them brighter than 250). Phoenix calls sortBlobPoints (0x389698).
- */
-void
-sort_blob_points_2(std::vector<BlobPoint> &blobs);
-
 /*
  *
  * Shared stages.
@@ -735,36 +726,6 @@ struct InitBlobs
  */
 InitBlobs
 prepare_init_clusters(const ImageView &full, const std::vector<BlobPoint> &detected, const InitInput &in);
-
-/*!
- * Convert to the initialisers' blob record (pico4_ctrack_init.hpp InitBlob, or any struct with
- * the fields px, size, area, brightness, circularity). The brightness is the 3x3 maximum in
- * @p full, which is what every stock consumer computes from the image.
- */
-template <typename Blob>
-Blob
-to_init_blob(const ImageView &full, const BlobPoint &b)
-{
-	Blob o;
-	o.px = Vec2(b.x, b.y);
-	o.size = b.size;
-	o.area = b.area;
-	o.brightness = neighbour_max_brightness(full, b.x, b.y);
-	o.circularity = b.circularity;
-	return o;
-}
-
-template <typename Blob>
-std::vector<Blob>
-to_init_blobs(const ImageView &full, const std::vector<BlobPoint> &blobs)
-{
-	std::vector<Blob> out;
-	out.reserve(blobs.size());
-	for (const BlobPoint &b : blobs) {
-		out.push_back(to_init_blob<Blob>(full, b));
-	}
-	return out;
-}
 
 /*
  * Init-path stages, exposed for the tests.

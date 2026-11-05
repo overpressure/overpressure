@@ -2,28 +2,18 @@
 /*
  * pico4-vrlink-compat: preloaded into SteamVR's Steam Link client (vrlink, through its
  * run_vrlink.sh; docs/session.md#steam-link) so that it takes the PICO 4's controllers for the
- * Steam Frame's. PICO4_VRLINK_COMPAT_LOG=0 silences the message on stderr.
+ * Steam Frame's.
  */
 #define _GNU_SOURCE
 
 #include <dlfcn.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 #define EXPORT __attribute__((visibility("default")))
-
-__attribute__((constructor)) static void
-init(void)
-{
-	const char *env = getenv("PICO4_VRLINK_COMPAT_LOG");
-	if (env == NULL || strcmp(env, "0") != 0) {
-		fprintf(stderr, "pico4-vrlink-compat: loaded\n");
-	}
-}
 
 /*
  * The controllers as vrlink sees them: the Frame's, the only ones it sends input for. On the PC,

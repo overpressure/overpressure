@@ -22,10 +22,4 @@ cd "$(dirname "$0")/.."
 [ "$(recovery_reason 3600 600 3600 1 1 1)" = "hardware test exceeded 3600s" ]
 # Contact never cancels the connection deadline of an unauthenticated run.
 [ -n "$(recovery_reason 600 600 3600 1 1 0 590)" ]
-# Step-4 userspace: only test runs, only after a switch, until the runner reaches it.
-[ -z "$(userspace_reason 929 600 330 1 0)" ]
-[ -n "$(userspace_reason 930 600 330 1 0)" ]
-[ -z "$(userspace_reason 930 600 330 1 1)" ]
-[ -z "$(userspace_reason 930 600 330 0 0)" ]
-[ -z "$(userspace_reason 930 '' 330 1 0)" ]
-echo 'Recovery policy: 19 checks passed'
+echo 'Recovery policy: 14 checks passed'

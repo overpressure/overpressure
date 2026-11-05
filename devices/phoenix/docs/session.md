@@ -61,13 +61,13 @@ type `wayland` and seat `seat0`
 ([`session.pam-env`](../userspace/rootfs/etc/pico4-poc/session.pam-env)), as sddm does on the
 Frame. A session without a terminal would not get class `user` by itself, and only with it
 does logind start the user manager and count the session as active. gamescope's Wayland server
-opens the seat through logind (libseat); the seat has no VTs. The script waits up to 10 s for
+opens the seat through logind (libseat). The script waits up to 10 s for
 the user manager, then starts Valve's session through Valve's own `start-gamescope-session`:
 `gamescope-session.target`, or another of Valve's targets that `/etc/pico4-poc/session.conf`
 names (`PICO4_SESSION_TARGET=...`, an optional `EnvironmentFile`). SteamVR is the OpenXR
 runtime (its first start links it into the user's `~/.config/openxr`) and `driver_monado`
 owns the hardware. Valve's session is the only one: there is no session without SteamVR. The
-unit needs the GPU's node, so it does not start in QEMU.
+unit needs the GPU's node.
 
 A session that ends by itself starts again 5 s later (`Restart=always`), as sddm's
 `Relogin=true` does on the Frame. A SteamVR that ends without a stop being asked for, such as
@@ -202,11 +202,7 @@ session:
   in a row (the count lives in `$XDG_RUNTIME_DIR`, so a reboot clears it).
 - **Games.** For Windows games the client downloads Proton 11 (ARM64), which runs the game
   inside Steam Linux Runtime 4 for arm64. Its container (pressure-vessel) is set up by
-  bubblewrap, which without user namespaces needs root: its own bubblewrap fails ("Creating
-  new namespace failed"), and it then takes the image's `/usr/bin/bwrap`, which is setuid
-  (pressure-vessel's `bwrap-setuid` mode). A setuid bubblewrap sets up mount namespaces as
-  root and runs the program as the user; without PID namespaces the container shares the
-  host's process IDs. Beat Saber starts this way: the game runs under Proton, its OpenXR
+  its own bubblewrap in the kernel's user namespaces. Beat Saber starts this way: the game runs under Proton, its OpenXR
   session reaches the focused state in SteamVR, and its Steam API initializes once the
   semaphore library reaches the container ([below](#steamvr-configuration));
   without that library the game waited in its Steam initialization and the headset stayed on
@@ -537,11 +533,10 @@ verdict. The runner prints both verdicts.
 
 ### Acceptance
 
-`python -m overpressure dev check` (development loop), `python -m overpressure hwtest flash-run --userspace
-ARCHIVE …` and `python -m overpressure cycle --userspace ARCHIVE` (unattended, ending on stock boot and
-ABL) run the same stage-2 checks ([hardware-testing.md](hardware-testing.md)). After the
-userspace check and the head IMU, they stop the session (waiting until SteamVR and the Steam
-client have exited) and run Valve's session when the archive's manifest lists
+`python -m overpressure dev check` runs the stage-2 checks on the installed system
+([hardware-testing.md](hardware-testing.md)). After the
+userspace check and the head IMU, it stops the session (waiting until SteamVR and the Steam
+client have exited) and runs Valve's session when the archive's manifest lists
 `deckard-steamvr-rel`; afterwards the session runs again, also after a failed check:
 
 - before Valve's session the runner waits until the hottest zone is below 70 °C (180 s at

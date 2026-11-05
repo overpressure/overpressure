@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from overpressure import localconfig as _base
-from overpressure.localconfig import EXE, ROOT, parse
+from overpressure.localconfig import EXE, ROOT
 
-__all__ = ["EXE", "ROOT", "Settings", "load", "parse"]
+from . import FIRMWARE
 
 
 @dataclass
@@ -28,7 +28,7 @@ class Settings(_base.Settings):
     engineering_abl: str = "assets/engineering-abl.elf"
     engineering_abl_sha256: str = ""
     edl: str = ""          #: empty: the fetched edl-ng (python -m overpressure tools)
-    firmware: str = "5.13.8-global-sek"
+    firmware: str = FIRMWARE
     ncm_python: str = ""   #: empty: the fetched NCM venv on Windows
 
     def edl_program(self) -> Path:

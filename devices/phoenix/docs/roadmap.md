@@ -31,7 +31,7 @@ Each step's document holds its design, measurements and reproduction steps.
   the hardware, and the way back to PICO OS stays.
 - **Read-only storage.** Both stages switch every physical block device read-only, except the installed
   system's data partition. Only the explicit, backup-validated paths write to the headset's storage:
-  `dev flash` (`boot`, `recovery`), `pico4-install` in the maintenance stage 1 (`boot`, `super`, `userdata`,
+  `dev flash` (`recovery`), `pico4-install` in the maintenance stage 1 (`boot`, `super`, `userdata`,
   `metadata`, `misc`'s bootloader message), `dev restore` and the EDL tools; each write is verified by
   readback.
 - **Development mode, stock on request.** The headset stays in development mode between
@@ -142,13 +142,11 @@ projects, and run the Frame's system services, input and graphics stack on the P
   builds come from its public hotfix repository, named explicitly in
   [packages.txt](../userspace/packages.txt): systemd 257.7 (pinned with `IgnorePkg`),
   `steamos-customizations-deckard`, `steamos-manager`, gamescope, Valve's Mesa and SteamVR.
-- **Handoff.** Stage 1 receives the archive over SSH into ext4 on zram
-  (`pico4-userspace receive`) and hands PID 1 to its systemd (`pico4-userspace switch`). The
-  USB link, the SSH host key, read-only storage and the recovery deadlines carry over into
-  stage 2. Installed, the same system runs from `super` without the PC ([install.md](install.md)).
+- **Handoff.** Stage 1 mounts the installed system from `super` (`pico4-userspace installed`,
+  [install.md](install.md)) and hands PID 1 to its systemd (`pico4-userspace switch`). The USB link,
+  the SSH host key, read-only storage and the recovery deadlines carry over into stage 2.
 - **Result.** systemd reaches `running` with no failed units and Turnip renders and verifies the
-  Vulkan test inside the userspace. Valve's kernel has `CONFIG_RT_GROUP_SCHED` off; the drop-ins that keep
-  systemd's `cpu` controller off remain.
+  Vulkan test inside the userspace.
 
 ### 5. Native XR hardware
 
@@ -220,9 +218,9 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
 
 ## Open work
 
-**Open.** A short power press after more than an hour asleep. Steam suspends by itself after
-an hour idle with the cable in, and the time asleep counts, so an RTC wake past that limit is back asleep
-within about 4 s. Whether a key wake behaves alike is not known.
+**Open.** A short power press after more than an hour asleep. After an RTC wake from 3 h
+asleep, with the cable in, Steam suspended again within about 4 s, while 80 idle minutes in SteamVR's standby
+brought no suspend. Whether a key wake behaves alike is not known.
 
 **Not verified.**
 

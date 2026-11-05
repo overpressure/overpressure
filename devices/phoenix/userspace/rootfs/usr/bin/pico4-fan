@@ -56,7 +56,6 @@ GET_FAN_SPEED, GET_FAN_RPM, GET_MCU_VERSION, GET_FAN_INFO = 0x0F, 0x10, 0x26, 0x
 QUERIES = (GET_FAN_SPEED, GET_FAN_RPM, GET_MCU_VERSION, GET_FAN_INFO)
 # Reply lengths, as gd32ipdservice reads them.
 REPLY_LENGTH = {SET_FAN_SPEED: 1, GET_FAN_SPEED: 4, GET_FAN_RPM: 4, GET_MCU_VERSION: 8, GET_FAN_INFO: 10}
-GENI_CLOCK_VOTE = 0x544D  # TIOCPMGET: the stock service votes the UART's clocks before each transaction
 REPLY_TIMEOUT = 0.1  # s
 LOCK_TIMEOUT = 2.0   # s
 
@@ -299,7 +298,7 @@ def fan_info(frame: bytes) -> Dict:
 
 
 class Uart:
-    """One transaction on the MCU's UART, as gd32ipdservice does it: open, clock vote,
+    """One transaction on the MCU's UART, as gd32ipdservice does it: open,
     flush, write the request, poll for the reply, close. An exclusive flock keeps the
     port's other user (the IPD read of Monado's PICO 4 driver) out meanwhile."""
 
@@ -331,10 +330,6 @@ class Uart:
             cc[termios.VMIN], cc[termios.VTIME] = 0, 0
             termios.tcsetattr(fd, termios.TCSANOW,
                               [iflag, oflag, cflag, lflag, termios.B115200, termios.B115200, cc])
-            try:
-                fcntl.ioctl(fd, GENI_CLOCK_VOTE, 0)
-            except OSError:
-                pass  # not a GENI UART (tests)
             termios.tcflush(fd, termios.TCIOFLUSH)
             if os.write(fd, tx) != len(tx):
                 raise OSError(f"short write to {self.device}")

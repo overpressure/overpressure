@@ -1,24 +1,13 @@
 #!/bin/sh
-# Stage-2 handoff: run the SteamOS-compatible userspace (roadmap step 4) from
-# compressed RAM, without writing to the headset's storage.
+# Stage-2 handoff: hand PID 1 to the installed system's systemd (docs/install.md).
 #
-#   pico4-userspace receive [--sha256 HEX] [--size-mb N] < pico4-userspace.tar.zst
-#   pico4-userspace receive --from FILE --bytes N [--sha256 HEX]
-#       unpack the archive (scripts/build-userspace.sh) into an ext4 file
-#       system on /dev/zram0, mounted at /newroot, and check that its systemd
-#       runs on this kernel
 #   pico4-userspace installed
-#       the installed system instead: super read-only at /newroot, userdata
-#       (pico4-data) at /newroot/data, with /etc as an overlay and /var, /home
-#       and /root on the data (pico4-install)
+#       super read-only at /newroot, userdata (pico4-data) at /newroot/data, with
+#       /etc as an overlay and /var, /home and /root on the data (pico4-install)
 #   pico4-userspace switch
 #       carry over SSH identity, test-run state and USB network settings, then
 #       let pico4-init hand PID 1 to systemd (the SSH session is closed)
 #   pico4-userspace status
-#
-# From the PC:
-#   ssh root@172.16.42.1 pico4-userspace receive < out/userspace/pico4-userspace.tar.zst
-#   ssh root@172.16.42.1 pico4-userspace switch
 . /usr/libexec/pico4-poc/lib.sh
 set -o pipefail
 
@@ -26,68 +15,7 @@ NEW=/newroot
 STATE=$POC_RUN/userspace
 die() { log "userspace: $*"; echo "pico4-userspace: $*" >&2; exit 1; }
 
-receive() {
-	local sha="" size_mb=8192 from="" bytes="" dev=/dev/zram0 zram=/sys/block/zram0 got
-	while [ $# -gt 0 ]; do
-		case "$1" in
-		--sha256) sha=$2; shift ;;
-		--size-mb) size_mb=$2; shift ;;
-		--from) from=$2; shift ;;
-		--bytes) bytes=$2; shift ;;
-		*) die "unknown option $1" ;;
-		esac
-		shift
-	done
-	[ -z "$from" ] || [ -n "$bytes" ] || die "--from needs --bytes"
-	tar --version 2>/dev/null | grep GNU >/dev/null || die "GNU tar is missing from this image (rebuild it)"
-	command -v zstd >/dev/null && command -v mkfs.ext4 >/dev/null || die "zstd/mkfs.ext4 missing from this image"
-	[ -e "$zram" ] || die "this kernel has no zram0"
-	grep -q " $NEW " /proc/mounts && die "$NEW is already mounted; reboot for a new attempt"
-	[ "$(cat "$zram/disksize")" = 0 ] || die "zram0 is already in use"
-	mkdir -p "$STATE" "$NEW"
-	rm -f "$STATE"/*
-
-	# zram stores pages compressed; the stock kernel offers lzo. Only the
-	# data actually written takes RAM. ext4 without journal: nothing to recover.
-	# The image takes 5.6 GiB unpacked; the rest is the session's room (SteamVR's
-	# first start unpacks its runtime into home).
-	echo lzo > "$zram/comp_algorithm" 2>/dev/null
-	echo "${size_mb}M" > "$zram/disksize" || die "could not size zram0"
-	[ -b "$dev" ] || mknod "$dev" b "$(cut -d: -f1 "$zram/dev")" "$(cut -d: -f2 "$zram/dev")"
-	# e2fsprogs >= 1.47 enables features this 4.19 kernel cannot mount.
-	mkfs.ext4 -q -F -L pico4-steamos -O ^has_journal,^orphan_file,^metadata_csum_seed \
-		-E nodiscard,lazy_itable_init=0 "$dev" || die "mkfs.ext4 failed"
-	mount -t ext4 -o discard,noatime "$dev" "$NEW" || die "mounting the zram file system failed"
-	log "userspace: receiving archive into $dev (${size_mb} MiB virtual)"
-
-	mkfifo "$STATE/fifo"
-	sha256sum < "$STATE/fifo" | cut -d' ' -f1 > "$STATE/sha256" &
-	local hasher=$!
-	if [ -n "$from" ]; then
-		head -c "$bytes" "$from"
-	else
-		cat
-	fi | tee "$STATE/fifo" | zstd -dc |
-		tar -x --numeric-owner --xattrs --xattrs-include=security.capability --no-acls -C "$NEW" 2> "$STATE/tar.log"
-	local rc=$?
-	wait "$hasher"
-	got=$(cat "$STATE/sha256")
-	rm -f "$STATE/fifo"
-	[ $rc = 0 ] || die "unpacking failed ($(tail -n 3 "$STATE/tar.log" | tr '\n' ' '))"
-	[ -z "$sha" ] || [ "$got" = "$sha" ] || die "archive sha256 $got does not match $sha"
-	echo "$got" > "$STATE/archive.sha256"
-
-	# The new root must be able to run on this kernel before PID 1 depends on it.
-	[ -x "$NEW/usr/lib/systemd/systemd" ] || die "no systemd in the archive"
-	chroot "$NEW" /usr/lib/systemd/systemd --version > "$STATE/systemd-version" 2>&1 ||
-		die "the archive's systemd does not run here: $(head -n 2 "$STATE/systemd-version")"
-	touch "$STATE/received"
-	log "userspace: received sha256 $got, $(df -k "$NEW" | awk 'NR==2 {print int($3/1024)}') MiB used," \
-		"zram $(awk '{print int($2/1048576)}' "$zram/mm_stat") MiB, $(head -n 1 "$STATE/systemd-version")"
-	echo "received $got"
-}
-
-#   The system image (super) is read-only and replaced whole by an update; the data partition
+# The system image (super) is read-only and replaced whole by an update; the data partition
 # keeps what changes: /etc's changes (an overlay), /var, /home and /root. On the first boot, and
 # for /var/lib/pacman after each new system image, they start as the image has them.
 installed() {
@@ -202,7 +130,7 @@ network() {
 }
 
 switch() {
-	[ -e "$STATE/received" ] || die "nothing received yet (pico4-userspace receive)"
+	[ -e "$STATE/received" ] || die "no system mounted yet (pico4-userspace installed)"
 	grep -q " $NEW " /proc/mounts || die "$NEW is not mounted"
 	[ "$(cat /proc/1/comm)" = pico4-init ] || die "PID 1 is not pico4-init (rebuild the image)"
 	grep -q '^::restart:/usr/libexec/pico4-poc/switch-userspace' /etc/inittab || die "image lacks the handoff entry"
@@ -228,7 +156,6 @@ switch() {
 }
 
 case "${1:-}" in
-receive) shift; receive "$@" ;;
 installed) installed ;;
 switch) switch ;;
 status)
@@ -237,5 +164,5 @@ status)
 	done
 	grep " $NEW " /proc/mounts
 	;;
-*) sed -n '2,22s/^# \{0,1\}//p' "$0"; exit 2 ;;
+*) sed -n '2,10s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

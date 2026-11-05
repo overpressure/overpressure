@@ -1,9 +1,9 @@
 # Replaces SteamOS's home.mount, which mounts /home from the Frame's partition
-# set (/dev/disk/by-partsets/shared/home). On the PICO 4, /home is part of the
-# zram root. A self-bind keeps the unit, so the SteamOS offload bind mounts
-# (steamos-offload.target) that require it work as on the Frame.
+# set (/dev/disk/by-partsets/shared/home). On the PICO 4, /home is on the data
+# partition, where stage 1 mounts it. A self-bind keeps the unit, so the SteamOS
+# offload bind mounts (steamos-offload.target) that require it work as on the Frame.
 [Unit]
-Description=Home (directory on the zram root)
+Description=Home (directory on the data partition)
 DefaultDependencies=no
 Before=local-fs.target
 

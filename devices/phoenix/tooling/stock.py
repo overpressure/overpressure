@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Iterable
 
 from overpressure import ota
 
+from . import FIRMWARE
+
 CATALOG = Path(__file__).with_name("firmware.json")
-DEFAULT_FIRMWARE = "5.13.7-global-seko"
 
 #: Output file -> OTA member, copied as they are.
 COPIED = {
@@ -39,24 +39,19 @@ COPIED = {
 BLOCK_IMAGES = {"system.img": "system", "vendor.img": "vendor"}
 
 
-def members_needed() -> Iterable[str]:
-    return ota.members_needed(COPIED, BLOCK_IMAGES)
-
-
-def build(firmware: str, output: Path, location: str | None = None, log=print) -> dict:
+def build(firmware: str, output: Path, log=print) -> dict:
     builds = ota.load_catalog(CATALOG)
     if firmware not in builds:
         raise SystemExit(f"unknown --firmware {firmware!r}; known: {', '.join(builds)}")
-    return ota.extract(firmware, location or builds[firmware]["url"], output, COPIED, BLOCK_IMAGES, log)
+    return ota.extract(firmware, builds[firmware]["url"], output, COPIED, BLOCK_IMAGES, log)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m overpressure stock", description=__doc__.split("\n\n")[0])
     ap.add_argument("output", type=Path)
-    ap.add_argument("--firmware", default=DEFAULT_FIRMWARE, help=f"firmware.json entry (default {DEFAULT_FIRMWARE})")
-    ap.add_argument("--ota", help="a local copy of the OTA zip instead of the catalog's URL")
+    ap.add_argument("--firmware", default=FIRMWARE, help=f"firmware.json entry (default {FIRMWARE})")
     args = ap.parse_args(argv)
-    build(args.firmware, args.output, args.ota)
+    build(args.firmware, args.output)
     return 0
 
 

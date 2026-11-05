@@ -12,13 +12,9 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/file.h>
-#include <sys/ioctl.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
-
-//! GENI UART clock vote, as the stock service issues before each transaction.
-#define PICO4_GENI_CLOCK_VOTE 0x544D
 
 const uint8_t pico4_ipd_get_position[6] = {0xA0, 0x08, 0x00, 0x00, 0x00, 0xA0 ^ 0x08};
 
@@ -78,7 +74,6 @@ pico4_ipd_read(const char *device, double *out_ipd_m)
 		ret = -errno;
 		goto out;
 	}
-	ioctl(fd, PICO4_GENI_CLOCK_VOTE, 0);
 	tcflush(fd, TCIOFLUSH);
 	if (write(fd, pico4_ipd_get_position, sizeof(pico4_ipd_get_position)) != sizeof(pico4_ipd_get_position)) {
 		ret = -EIO;

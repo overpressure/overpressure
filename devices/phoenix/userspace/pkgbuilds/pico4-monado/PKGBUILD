@@ -2,8 +2,8 @@
 # (docs/xr.md): head orientation from the ICM-42688 behind the sensor DSP,
 # through the same Qualcomm Sensor Core client protocol as pico4-imu, and 6DoF
 # from the four OV7251 tracking cameras (V4L2 through CAMSS, frame sync from the
-# controller radio) through Monado's SLAM tracker with Basalt (pico4-basalt),
-# plus the two controllers (inputs, 3DoF) from the radio's packets.
+# controller radio) through PICO OS's tracker (pico4-slamd) or Monado's SLAM tracker
+# with Basalt (pico4-basalt), plus the two controllers from the radio's packets.
 # Upstream Monado, pinned by commit, plus this project's driver files and a
 # patch that registers them. Built as a service (monado-service owns the
 # hardware for clients of any user, docs/session.md; the runtime library is its IPC
@@ -38,7 +38,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_lens.h pico4_lens.c pico4_ipd.h pico4_ipd.c test_pico4_lens.c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
         pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4-roomview.c
-        pico4_lens_panel.h pico4-lens-panel.cpp
+        pico4_lens_panel.h pico4-lens-panel.cpp test_pico4_lens_panel.c
         pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
         pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
@@ -54,6 +54,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
 # Project files (src/monado, src/xr) are SKIP: build-userspace.sh copies them in.
 sha256sums=(SKIP
             SKIP SKIP SKIP SKIP
+            SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
@@ -120,6 +121,8 @@ build() {
   ${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -Imonado/src/xrt/include -o test_pico4_fusion test_pico4_fusion.c \
     pico4_fusion.c -lm
   ./test_pico4_fusion
+  ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_lens_panel test_pico4_lens_panel.c -lm
+  ./test_pico4_lens_panel
   # The controller tracker (C++17, Eigen), compiled once for its tests and the replay tool.
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -c pico4_tcam.c pico4_blemcu.c
   local ctrack=(model solve init blob imu engine runner calib) objs=(pico4_tcam.o) m t

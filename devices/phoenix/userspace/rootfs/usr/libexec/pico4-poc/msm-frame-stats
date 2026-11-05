@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""The panels' frame statistics on a mainline kernel's msm, from its own events (docs/session.md).
+"""The panels' frame statistics on msm, from its own events (docs/session.md).
 
 The compositor
 drives the display itself, and the kernel's tracepoints tell the same: the flips the display
 completed (dpu_crtc_complete_flip), the vblanks (drm_vblank_event) and the GPU jobs of the
 presenting process's threads (msm_gpu_submit_retired names the submitting thread, with the GPU's
-own time per job). The statistics
-carry the layer's keys (commits, commit_hz, late, stalls, max_interval_ms, vblank_hz), so
-session-performance judges both kernels alike, and the GPU time per job (gpu_ms).
+own time per job). The statistics (commits, commit_hz, late, stalls, max_interval_ms, vblank_hz)
+are what session-performance judges, with the GPU time per job (gpu_ms).
 
   msm-frame-stats record SECONDS PID OUT.json   root: records SECONDS of tracefs events
   msm-frame-stats parse TRACE TID...            the statistics of a recorded trace
@@ -24,8 +23,8 @@ from pathlib import Path
 TRACING = Path("/sys/kernel/tracing")
 EVENTS = ("dpu/dpu_crtc_complete_flip", "drm/drm_vblank_event", "drm_msm_gpu/msm_gpu_submit_retired")
 LINE = re.compile(r"\s*.+?-\d+\s+\[\d+\]\s+\S+\s+([\d.]+): (\w+): ?(.*)")
-LATE_REFRESHES = 1.5   # as the layer: a commit more than 1.5 refreshes after the one before
-STALL_S = 0.100        # as the layer: a gap above 100 ms
+LATE_REFRESHES = 1.5   # a commit more than 1.5 refreshes after the one before
+STALL_S = 0.100        # a gap above 100 ms
 HELPERS = {"steamwebhelper", "vrwebhelper"}
 
 

@@ -135,7 +135,7 @@ pixel(bool bgra, uint8_t r, uint8_t g, uint8_t b)
 	            : (uint32_t)r | (uint32_t)g << 8 | (uint32_t)b << 16 | 0xff000000u;
 }
 
-//! Eye pattern: dim grid in the eye's colour, light border and a large L or R (as pico4-kms-test).
+//! Eye pattern: dim grid in the eye's colour, light border and a large L or R.
 static void
 fill_eye(uint32_t *px, uint32_t w, uint32_t h, int eye, bool bgra)
 {

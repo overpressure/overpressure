@@ -9,11 +9,12 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from overpressure import bootimg, cpio
 
-from devices.phoenix.tooling import hardware_test as hw
+from devices.phoenix.tooling import devloop, hardware_test as hw
 
 
 def report(run_id):
@@ -91,7 +92,6 @@ class HarnessTests(unittest.TestCase):
         tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4-poc/svc recovery-watch\n"
                       b"::restart:/usr/libexec/pico4-poc/switch-userspace\n")
         tree.add_file("usr/bin/pico4-userspace", b"#!/bin/sh\n", 0o755)
-        tree.add_file("usr/bin/zstd", b"\x7fELF", 0o755)
         tree.add_file("usr/libexec/pico4-poc/pico4-init", b"#!/bin/sh\n", 0o755)
         tree.mkdir("root", 0o700)
         cls.image.write_bytes(bootimg.BootImage(2, 4096, b"kernel", gzip.compress(tree.to_cpio()), dtb=b"dtb").pack())
@@ -130,28 +130,13 @@ class HarnessTests(unittest.TestCase):
         self.save_backup_manifest()
         self.runner = hw.Runner(self.args)
 
-    def enable_userspace(self, firmware=False, sensors=False, steamvr=False):
-        archive = self.root / "userspace" / "pico4-userspace.tar.zst"
-        archive.parent.mkdir()
-        archive.write_bytes(b"userspace archive")
-        self.userspace_sha = hw.hashlib.sha256(archive.read_bytes()).hexdigest()
-        (archive.parent / "pico4-userspace.manifest.json").write_text(json.dumps({
-            "archive": {"sha256": self.userspace_sha},
-            "packages": {"systemd": "257.7-2.2",
-                         **({"deckard-steamvr-rel": "r25358740-1"} if steamvr else {})},
-            "gpu_firmware": [{"file": "a650_sqe.fw", "sha256": "0" * 64}] if firmware else [],
-            "sensor_data": [{"file": "usr/lib/firmware/slpi.mdt", "sha256": "0" * 64}] if sensors else []}))
-        self.args.userspace = archive
-        self.args.userspace_timeout = 60
-        self.args.out = self.root / "userspace-results"
-        self.runner = hw.Runner(self.args)
-
     def userspace_check(self):
         value = {"schema": 1, "status": "passed", "errors": [],
                  "systemd": {"pid1": "/usr/lib/systemd/systemd", "version": "257.7", "state": "running",
                              "failed_units": []},
-                 "dev": {"fstype": "tmpfs", "missing_nodes": [], "udev_devices": 300},
-                 "storage": {"root": "/dev/zram0", "writable_block_devices": []}, "seats": ["seat0"],
+                 "dev": {"fstype": "devtmpfs", "missing_nodes": [], "udev_devices": 300},
+                 "storage": {"root": "/dev/sda7", "installed": True, "writable_block_devices": []},
+                 "seats": ["seat0"],
                  "session": {"user": "steamos", "user_state": "active", "service": "active",
                              "target": "gamescope-session.target", "target_state": "active", "failed_units": [],
                              "monado_socket": "active", "monado_service": "inactive"},
@@ -173,8 +158,8 @@ class HarnessTests(unittest.TestCase):
     SYSTEMCTL_NOTE = ("Stopping 'pico4-monado.service', but its triggering units are still active:\n"
                       "pico4-monado.socket\n")
 
-    def fake_command(self, argv, timeout=30, stdin=None):
-        output = self.fake_device(argv, timeout, stdin)
+    def fake_command(self, argv, timeout=30):
+        output = self.fake_device(argv, timeout)
         if str(argv[0]) == "ssh" and isinstance(output, str):
             # As on the headset: SSH passes systemctl's note on unless the command discards it.
             command = str(argv[-1])
@@ -184,10 +169,8 @@ class HarnessTests(unittest.TestCase):
                 output = self.SYSTEMCTL_NOTE + output
         return output
 
-    def fake_device(self, argv, timeout=30, stdin=None):
+    def fake_device(self, argv, timeout=30):
         argv = list(map(str, argv))
-        if stdin is not None:
-            self.assertEqual(stdin.read(), b"userspace archive")
         self.calls.append(argv)
         if argv[0] == "ncm-python":
             if argv[-1] == "--check":
@@ -241,14 +224,6 @@ class HarnessTests(unittest.TestCase):
             return "OKAY"
         if argv[0] == "ssh":
             command = argv[-1]
-            if command.startswith("pico4-userspace receive"):
-                self.assertIn(f"--sha256 {self.userspace_sha}", command)
-                return "received " + ("0" * 64 if self.scenario == "userspace-sha" else self.userspace_sha)
-            if command == "pico4-userspace switch":
-                self.switched = True
-                return "switching"
-            if command == "cat /proc/1/comm":
-                return "systemd" if getattr(self, "switched", False) else "init"
             if command.startswith("pico4-userspace-check"):
                 return self.userspace_check()
             if command.startswith("pico4-imu stream"):
@@ -288,28 +263,30 @@ class HarnessTests(unittest.TestCase):
                     "performance": {"status": "failed" if self.scenario == "slow" else "passed",
                                     "failures": ["52.0 commits/s, below 85.5"] if self.scenario == "slow" else [],
                                     "commit_hz": 52.0 if self.scenario == "slow" else 90.0, "late_percent": 0.1,
-                                    "stalls": 0, "present_wait_timeouts": 0, "hottest_c": 61.5,
-                                    "window_seconds": 30.0, "startup": {"stalls": 2}}}) + \
+                                    "stalls": 0, "hottest_c": 61.5,
+                                    "window_seconds": 30.0}}) + \
                     "\nEXIT=" + ("1" if failed else "0")
             if command.startswith(("pico4-imu list", "systemctl status")):
                 return "sensor evidence"
             if "test-run" in command:
-                wrong = self.scenario == "identity" or (self.scenario == "session-identity"
-                        and self.runner.result.get("development_session", {}).get("status") == "active")
-                return ("wrong-run" if wrong else self.runner.run_id) + "\n1234567"
+                return ("wrong-run" if self.scenario == "identity" else self.runner.run_id) + "\n1234567"
             if command == "cat /etc/pico4-poc/build-info":
                 return json.dumps({} if self.scenario == "build" else self.info)
             if command == "uname -m":
                 return "aarch64"
             if command == "uname -r":
-                return "4.19.81"
+                return "7.2.0-pico4" if self.installed_system else "4.19.81"
             if command == "id -u":
                 return "0"
             if "SHELL-" in command:
                 return "SHELL-42"
             if command.startswith("for d in /sys/class/block"):
+                if self.installed_system:
+                    return "BLOCK sda 0\nBLOCK sda7 " + ("0" if self.scenario == "storage" else "1") + "\nBLOCK sda16 0"
                 return "BLOCK sda 1\nBLOCK sda1 " + ("0" if self.scenario == "storage" else "1")
             if command == "cat /proc/mounts":
+                if self.installed_system:
+                    return "/dev/sda7 / ext4 ro,noatime 0 0\n/dev/sda16 /data ext4 rw,noatime 0 0"
                 return "rootfs / rootfs rw 0 0"
             if command.startswith("head -c "):
                 return ("bad" if self.scenario == "readback" else self.runner.result["boot_sha256"]) + "  -"
@@ -328,6 +305,20 @@ class HarnessTests(unittest.TestCase):
         if endpoint == "cgi-bin/log?boot":
             return self.runner.run_id.encode()
         return report(self.runner.run_id)
+
+    installed_system = False
+
+    def stage2_checks(self, firmware=False, sensors=False, steamvr=False):
+        """The stage-2 checks as `dev check` runs them on the installed system; their state."""
+        self.installed_system = True
+        self.info = {"kernel": "Linux version 7.2.0-pico4 test", "stock": "test"}
+        dev = SimpleNamespace(s=SimpleNamespace(adb_serial="ABC"), ssh_argv=lambda command: ["ssh", command])
+        self.runner = devloop.DevChecks(dev, self.root / "check", self.info, {"chip_id": 1234567})
+        self.state = {"installed": True, "gpu_firmware": firmware, "sensor_data": sensors, "steamvr": steamvr}
+        with patch.object(self.runner, "command", side_effect=self.fake_command), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.runner.userspace_checks(self.state)
+        return self.state
 
     def execute(self):
         with patch.object(self.runner, "command", side_effect=self.fake_command), \
@@ -356,74 +347,70 @@ class HarnessTests(unittest.TestCase):
             if cmd[0] in ("adb", "fastboot") and cmd[-1] != "devices":
                 self.assertEqual(cmd[1:3], ["-s", "ABC"])
 
-    def test_userspace_handoff_is_checked_and_restored(self):
-        self.enable_userspace()
-        self.assertEqual(self.execute(), 0)
-        self.assertTrue(self.restored)
-        state = self.runner.result["userspace"]
-        self.assertEqual((state["sha256"], state["check"]["status"]), (self.userspace_sha, "passed"))
+    def test_userspace_check_and_storage_on_the_installed_system(self):
+        state = self.stage2_checks()
+        self.assertEqual(state["check"]["status"], "passed")
         self.assertEqual(state["check"]["fan"], {"service": "active", "state": self.FAN_STATE})
-        # Two deadlines of 60 s plus 300 s handoff margin on top of the normal budget.
-        self.assertEqual(self.runner.result["device_recovery"]["test_timeout"], 302 + 420)
         self.assertTrue((self.runner.folder / "userspace-check.json").exists())
         self.assertTrue((self.runner.folder / "storage-userspace.txt").exists())
-        receive = [c for c in self.calls if c[0] == "ssh" and c[-1].startswith("pico4-userspace receive")]
-        self.assertEqual(len(receive), 1)
+
+    def test_a_writable_partition_fails_the_stage2_checks(self):
+        self.scenario = "storage"
+        with self.assertRaisesRegex(ValueError, "writable disk or partition"):
+            self.stage2_checks()
+
+    def test_a_failed_userspace_check_stops_the_stage2_checks(self):
+        self.scenario = "userspace-check"
+        with self.assertRaisesRegex(ValueError, "Userspace check failed"):
+            self.stage2_checks(sensors=True, steamvr=True)
+        self.assertFalse(any(c[0] == "ssh" and "pico4-imu" in c[-1] for c in self.calls))
 
     def test_head_imu_is_checked_with_sensor_data(self):
-        for scenario, code in (("", 0), ("imu", 1)):
+        for scenario, failed in (("", False), ("imu", True)):
             with self.subTest(scenario or "passing"):
                 self.setUp()
-                self.enable_userspace(sensors=True)
                 self.scenario = scenario
-                self.assertEqual(self.execute(), code)
-                self.assertTrue(self.restored)
-                self.assertEqual(self.runner.result["userspace"]["imu"]["status"], "fail" if code else "pass")
+                if failed:
+                    with self.assertRaisesRegex(ValueError, "Head IMU check failed"):
+                        self.stage2_checks(sensors=True)
+                else:
+                    self.stage2_checks(sensors=True)
+                self.assertEqual(self.state["imu"]["status"], "fail" if failed else "pass")
                 self.assertTrue((self.runner.folder / "userspace-imu.json").exists())
                 self.assertTrue((self.runner.folder / "userspace-sensors-list.txt").exists())
 
     def test_valve_session_is_checked_with_steamvr(self):
-        for scenario, code in (("", 0), ("valve", 1), ("slow", 1)):
+        for scenario, message in (("", None), ("valve", "Valve session check failed"),
+                                  ("slow", "missed its performance limits")):
             with self.subTest(scenario or "passing"):
                 self.setUp()
-                self.enable_userspace(sensors=True, steamvr=True)
                 self.scenario = scenario
-                self.assertEqual(self.execute(), code)
-                self.assertTrue(self.restored)
-                state = self.runner.result["userspace"]
-                valve = state["valve_session"]
+                if message:
+                    with self.assertRaisesRegex(ValueError, message):
+                        self.stage2_checks(sensors=True, steamvr=True)
+                else:
+                    self.stage2_checks(sensors=True, steamvr=True)
+                valve = self.state["valve_session"]
                 self.assertEqual((valve["frames"]["target"], len(valve["devices"])), ("msm", 3))
                 self.assertEqual(valve["fan"]["after_run"]["duty"], 50)
                 self.assertEqual(valve["performance"]["status"], "failed" if scenario == "slow" else "passed")
-                self.assertEqual(state["valve_session_cooldown"], {"seconds": 0, "hottest_c": 61.2})
+                self.assertEqual(self.state["valve_session_cooldown"], {"seconds": 0, "hottest_c": 61.2})
                 self.assertTrue((self.runner.folder / "userspace-valve-session.json").exists())
                 self.assertTrue((self.runner.folder / "userspace-valve-vrcompositor.txt").exists())
+                # The session comes back, also after a failed check.
+                self.assertTrue(self.resumed_session)
 
     def test_valve_session_skipped_without_steamvr(self):
-        self.enable_userspace(sensors=True)
-        self.assertEqual(self.execute(), 0)
-        self.assertNotIn("valve_session", self.runner.result["userspace"])
+        state = self.stage2_checks(sensors=True)
+        self.assertNotIn("valve_session", state)
         self.assertFalse(any("pico4-valve-session-check" in command[-1] for command in self.calls))
 
     def test_head_imu_skipped_without_sensor_data(self):
-        self.enable_userspace()
-        self.assertEqual(self.execute(), 0)
-        self.assertNotIn("imu", self.runner.result["userspace"])
+        state = self.stage2_checks()
+        self.assertNotIn("imu", state)
         self.assertFalse(any(c[0] == "ssh" and "pico4-imu" in c[-1] for c in self.calls))
 
-    def test_userspace_failures_still_restore_stock(self):
-        for scenario in ("userspace-check", "userspace-sha"):
-            with self.subTest(scenario):
-                self.setUp()
-                self.enable_userspace()
-                self.scenario = scenario
-                self.assertEqual(self.execute(), 1)
-                self.assertTrue(self.restored)
-                self.assertEqual(self.runner.result["recovery"], "verified")
-                self.assertFalse(self.runner.result["boot_restore_required"])
-
     def test_userspace_requires_handoff_image(self):
-        self.enable_userspace()
         tree = cpio.Tree()
         tree.add_file("etc/pico4-poc/build-info", json.dumps(self.info).encode())
         tree.add_file("usr/libexec/pico4-poc/recovery-watch", b"#!/bin/sh\n", 0o755)
@@ -432,35 +419,6 @@ class HarnessTests(unittest.TestCase):
         self.source.write_bytes(bootimg.BootImage(2, 4096, b"kernel", gzip.compress(tree.to_cpio()), dtb=b"dtb").pack())
         with self.assertRaisesRegex(ValueError, "handoff"):
             hw.prepare_image(self.source, self.root, "run", b"key", userspace=True)
-
-    def test_development_session_restores_once_after_requested_end(self):
-        self.args.debug_session_seconds=60
-        with patch.object(hw.time,"sleep",side_effect=lambda _: (self.runner.folder/"end-session").touch()):
-            self.assertEqual(self.execute(),0)
-        state=self.runner.result["development_session"]
-        self.assertEqual((state["status"],state["end_reason"]),("completed","requested"))
-        self.assertTrue(self.restored)
-        self.assertEqual(len([c for c in self.calls if c[0]=="fastboot" and c[3:5]==["flash","boot"]]),2)
-        self.assertEqual(self.runner.result["device_recovery"]["test_timeout"],362)
-        self.assertFalse((self.runner.folder/"id_ed25519").exists())
-
-    def test_development_session_identity_failure_restores(self):
-        self.args.debug_session_seconds=60
-        self.scenario="session-identity"
-        self.assertEqual(self.execute(),1)
-        self.assertEqual(self.runner.result["development_session"]["status"],"failed")
-        self.assertTrue(self.restored)
-        self.assertEqual(self.runner.result["recovery"],"verified")
-
-    def test_development_session_deadline_does_not_wait_indefinitely(self):
-        self.args.debug_session_seconds=60
-        with patch.object(hw.time,"monotonic",side_effect=[0,61]), \
-                patch.object(self.runner,"assertions") as assertions, \
-                patch.object(self.runner,"ssh",return_value="kernel log"), \
-                contextlib.redirect_stdout(io.StringIO()):
-            self.runner.development_session()
-        self.assertEqual(self.runner.result["development_session"]["end_reason"],"deadline")
-        assertions.assert_called_once()
 
     def test_preflight_failure_never_reboots(self):
         self.scenario = "preflight"

@@ -1,7 +1,7 @@
 #!/bin/bash
-# udev helper for the stock PICO 4 kernel, which has no devtmpfs:
-#   devnode add     create the node for $DEVNAME (from 00-pico4-devnodes.rules)
-#   devnode remove  delete it again
+# udev helper for block devices (00-pico4-devnodes.rules); the kernel's devtmpfs makes the nodes:
+#   devnode add     apply the storage policy to $DEVNAME
+#   devnode remove  delete its by-name links
 #   devnode sweep   apply the storage policy to every block device present
 #
 # Block devices are made read-only as soon as they appear, exactly like the
@@ -10,7 +10,6 @@
 # exception is the installed system's data partition (userdata holding the
 # pico4-data file system), which stage 1 made writable and mounted: set
 # read-only under the mounted file system, its writeback fails and data is lost.
-# udev runs this for every device event: the common path stays builtin-only.
 set -u
 
 block_policy() {
@@ -47,40 +46,18 @@ installed_data_disk() {
 	return 1
 }
 
-# matches NODE TYPE: true if NODE is a TYPE (b/c) node with $MAJOR:$MINOR.
-matches() {
-	local want
-	[ "$2" = b ] && want="block special file" || want="character special file"
-	[ "$(stat -c '%F %t:%T' "$1" 2>/dev/null)" = "$want $(printf '%x:%x' "$MAJOR" "$MINOR")" ]
-}
-
 case "${1:-}" in
 add)
-	[ -n "${DEVNAME:-}" ] && [ -n "${MAJOR:-}" ] && [ -n "${MINOR:-}" ] || exit 0
-	node=/dev/${DEVNAME#/dev/}
-	type=c
-	[ "${SUBSYSTEM:-}" = block ] && type=b
-	if ! matches "$node" "$type"; then
-		rm -f "$node"
-		mkdir -p "${node%/*}"
-		# Same default as devtmpfs: the driver's mode, else root-only.
-		mknod -m "${DEVMODE:-0600}" "$node" "$type" "$MAJOR" "$MINOR" || exit 0
-	fi
-	if [ "$type" = b ] && [ "${ACTION:-add}" != change ]; then
-		block_policy "${node#/dev/}"
+	[ -n "${DEVNAME:-}" ] || exit 0
+	if [ "${ACTION:-add}" != change ]; then
+		block_policy "${DEVNAME#/dev/}"
 	fi
 	;;
 remove)
-	[ -n "${DEVNAME:-}" ] && [ -n "${MAJOR:-}" ] || exit 0
-	node=/dev/${DEVNAME#/dev/}
-	type=c
-	[ "${SUBSYSTEM:-}" = block ] && type=b
-	matches "$node" "$type" && rm -f "$node"
-	if [ "$type" = b ]; then
-		for l in /dev/block/by-name/*; do
-			[ "$(readlink "$l")" = "../../${node#/dev/}" ] && rm -f "$l"
-		done
-	fi
+	[ -n "${DEVNAME:-}" ] || exit 0
+	for l in /dev/block/by-name/*; do
+		[ "$(readlink "$l")" = "../../${DEVNAME#/dev/}" ] && rm -f "$l"
+	done
 	;;
 sweep)
 	for d in /sys/class/block/*; do

@@ -143,7 +143,7 @@ struct pico4_fusion
 	uint32_t consistent;    //!< While lost: consistent poses in a row.
 
 	// Statistics.
-	uint64_t corrected, rejected, resets, anchors, runaways, ignored;
+	uint64_t corrected, rejected, resets, anchors, runaways;
 	float last_error_m, last_error_rad;
 	float last_innovation; //!< The newest velocity disagreement with the IMU, m/s.
 	float last_speed;      //!< The tracker's newest speed, m/s.

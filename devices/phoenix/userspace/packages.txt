@@ -2,7 +2,7 @@
 # their dependencies resolved by pacman. One name per line; '#' starts a comment.
 # "deckard-arch-hotfixes-release-0.3/<name>" takes the Steam Frame's own build.
 
-# Arch/Holo base system, with the Frame's systemd (258+ needs Linux >= 5.4)
+# Arch/Holo base system, with the Frame's systemd
 base
 deckard-arch-hotfixes-release-0.3/systemd
 deckard-arch-hotfixes-release-0.3/systemd-libs
@@ -20,7 +20,7 @@ zstd
 deckard-arch-hotfixes-release-0.3/steamos-customizations-deckard
 deckard-arch-hotfixes-release-0.3/steamos-manager
 # The Frame's swap: zram at half the RAM through zram-generator (PICO OS swaps to zram
-# the same way); only the installed system, the dev boot's root is on zram0
+# the same way)
 deckard-arch-hotfixes-release-0.3/holo-zram-swap
 # The Frame's build: the Steam client's Wi-Fi connections ask for its 802-11-wireless.band "no6"
 deckard-arch-hotfixes-release-0.3/networkmanager
@@ -38,6 +38,7 @@ upower
 pico4/pico4-gamescope
 libxxf86vm
 deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64
+# libsensors.so.5, which Valve's Mesa links (gallium's HUD) and does not declare
 lm_sensors
 xorg-xwayland
 pipewire
@@ -50,7 +51,7 @@ rtkit
 alsa-utils
 vulkan-icd-loader
 vulkan-tools
-# GL test clients (glxgears, glxinfo, eglinfo): X11 presentation in gamescope (docs/session.md)
+# GL test clients (glxgears, glxinfo, eglinfo): X11 presentation in gamescope
 mesa-utils
 
 # Project-built: the step-3 graphics test

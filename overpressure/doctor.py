@@ -88,13 +88,12 @@ class Host:
         return self.linux_cache[script]
 
 
-def version_check(host: Host, name: str, argv: Sequence[str], needed_for: str, fix: str,
-                  required: bool = True) -> Check:
+def version_check(host: Host, name: str, argv: Sequence[str], needed_for: str, fix: str) -> Check:
     """A program that answers a version query: its first output line, or how to get it."""
     code, out = host.run(argv, 30)
     if code == 0:
         return Check(name, needed_for, OK, (out.splitlines() or [""])[0][:120])
-    return Check(name, needed_for, MISSING if required else OPTIONAL, (out.splitlines() or [""])[-1][:120], fix)
+    return Check(name, needed_for, MISSING, (out.splitlines() or [""])[-1][:120], fix)
 
 
 def linux_commands(host: Host, needed_for: str, commands: Dict[str, str], fix: str) -> List[Check]:

@@ -12,7 +12,7 @@
 #   --sensor-data DIR   sensor DSP firmware and config, lens and controller data
 #                       (scripts/extract-sensor-data.sh, docs/xr.md). Without it the head IMU
 #                       stack stays inactive.
-#   --wlan DIR          Wi-Fi driver module, firmware and configuration (scripts/extract-wlan.sh,
+#   --wlan DIR          Wi-Fi firmware and board data (scripts/extract-wlan.sh,
 #                       docs/userspace.md). Without it Wi-Fi stays off.
 #   --audio DIR         ADSP firmware and the audio process's files
 #                       (scripts/extract-audio.sh, docs/userspace.md). Without it there is no
@@ -38,7 +38,7 @@
 # 4. Image root: an overlay on the base root with the current project packages and the
 #    PICO 4 adaptation layer (userspace/rootfs, shared stage-1 scripts, users, units),
 #    checked natively for unresolved ELF dependencies (overpressure/elfdeps.py), written as:
-#      OUTPUT_DIR/pico4-userspace.tar.zst        root filesystem for the handoff
+#      OUTPUT_DIR/pico4-userspace.tar.zst        root filesystem for scripts/build-system-image.sh
 #      OUTPUT_DIR/pico4-userspace.manifest.json  sources, hashes, package list
 #
 # Requires curl, tar, zstd, sha256sum, python3, chroot and overlayfs; on x86-64 an
@@ -290,7 +290,7 @@ if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null
         "-S$sync" --noconfirm --needed "${assumed[@]}" "${packages[@]}"
     unmount_below "$base" inner
     systemd_version=$(chroot "$base" /usr/bin/pacman -Q systemd | cut -d' ' -f2)
-    [[ "$systemd_version" == 257.* ]] || { echo "systemd $systemd_version was selected; the PICO 4 kernel needs 257.x" >&2; exit 1; }
+    [[ "$systemd_version" == 257.* ]] || { echo "systemd $systemd_version was selected; the image stays on the Frame's 257.x" >&2; exit 1; }
     # The project packages in the base root, by package file hash.
     (cd "$B/var/cache/pico4-repo" && sha256sum ./*.pkg.tar.zst) > "$build_root/base.project"
     echo "$base_key" > "$build_root/base.key"
@@ -403,27 +403,20 @@ if [[ -n "$firmware" ]]; then
     fi
     firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* $(ls venus.* 2>/dev/null) | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
-# Wi-Fi: the QCA6390's firmware and board data and the driver's configuration, where the
-# kernel's firmware loader looks. The
-# MAC file links to the headset's own in persist, as PICO OS links it.
+# Wi-Fi: the QCA6390's firmware and the headset's board data, under ath11k's names, where the
+# kernel's firmware loader looks. PICO OS's driver picks bdwlanq.elf on this headset: ath11k's board.bin.
 wlan_json="[]"
 if [[ -n "$wlan" ]]; then
-    for f in firmware/qca6390/amss20.bin firmware/qca6390/m3.bin \
-        firmware/wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini; do
-        [[ -s "$wlan/$f" ]] || { echo "missing $wlan/$f (see scripts/extract-wlan.sh)" >&2; exit 1; }
+    mkdir -p "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0"
+    for f in amss20.bin m3.bin bdwlanq.elf; do
+        [[ -s "$wlan/firmware/qca6390/$f" ]] || { echo "missing $wlan/firmware/qca6390/$f (see scripts/extract-wlan.sh)" >&2; exit 1; }
+        install -m 0644 "$wlan/firmware/qca6390/$f" "$T/usr/lib/firmware/qca6390/"
     done
-    mkdir -p "$T/usr/lib/firmware"
-    cp -r --no-preserve=ownership "$wlan/firmware/." "$T/usr/lib/firmware/"
-    ln -sfn /mnt/vendor/persist/wlan_mac.bin "$T/usr/lib/firmware/wlan/qca_cld/qca6390/wlan_mac.bin"
-    # ath11k on a mainline kernel loads the same files under its own names; the headset's board
-    # data (cnss2 picks bdwlanq.elf) is its board.bin.
-    [[ -s "$wlan/firmware/qca6390/bdwlanq.elf" ]] || { echo "missing $wlan/firmware/qca6390/bdwlanq.elf" >&2; exit 1; }
-    mkdir -p "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0"
     ln -sfn ../../../qca6390/amss20.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin"
     ln -sfn ../../../qca6390/m3.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/m3.bin"
     ln -sfn ../../../qca6390/bdwlanq.elf "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/board.bin"
-    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/wlan" "$T/usr/lib/firmware/ath11k"
-    wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 usr/lib/firmware/wlan -type f -print0 |
+    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/ath11k"
+    wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 -type f -print0 |
         sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
@@ -475,7 +468,6 @@ if [[ -n "$sensor_data" ]]; then
         cp -r --no-preserve=ownership "$sensor_data"/rendermodels/* "$models/"
         chown -R 0:0 "$models"
     fi
-    ln -sfn /sys/devices/soc0 "$qcom/socinfo"
     sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/share/qcom/pico4 \
         $( [[ -d usr/share/steamvr-monado/resources/rendermodels ]] && echo usr/share/steamvr-monado/resources/rendermodels ) \
         -type f -print0 | sort -z | xargs -0 sha256sum |
@@ -520,7 +512,7 @@ if [[ ! -d "$T/home/$user" ]]; then
     in_t chmod 0700 "/home/$user"   # HOME_MODE in login.defs
     in_t chown -R "$user:$user" "/home/$user"
 fi
-in_t usermod -a -G wheel,video,render,input,audio,aid_inet,aid_net_raw,aid_bt,aid_bt_net "$user"
+in_t usermod -a -G wheel,video,render,input,audio "$user"
 # Subordinate IDs for rootless podman (Lepton's Android runs in it), as useradd gives a user
 # from login.defs; sysusers created this one without them.
 grep -q "^$user:" "$T/etc/subuid" 2>/dev/null || in_t usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$user"
@@ -542,24 +534,23 @@ for f in htbtfw20.tlv htnv20.bin; do
     ln -sfn "/mnt/vendor/bt_firmware/image/$f" "$T/usr/lib/firmware/qca/$f"
 done
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
-    pico4-recovery-watch.service pico4-storage-ro.service pico4-userspace-selftest.service \
-    pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service pico4-console-quiet.service \
+    pico4-recovery-watch.service pico4-storage-ro.service \
+    pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service \
     pico4-monado.socket pico4-session.service pico4-fan.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-audio.target \
     pico4-splash.service pico4-powerkey.service pico4-persist.service pico4-zram-swap.service \
     pico4-venus-probe.service steam-video-codec-setup.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service     pico4-panel-probe.service pico4-clock.service
 # Units that would wait for console input, erase stage-1 evidence from pstore,
-# need cgroup memory control, or manage boot partitions the POC never touches.
+# or manage boot partitions the POC never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
 # (steamos-bootconf), which do not exist here, and then fails. The Frame's
 # USB gadget units would take the controller from the POC's NCM link. The kernel
-# console's getty (the generator adds it for console=ttyMSM0) waits 90 s for a
-# device unit that never appears and holds the graphical target back that long.
-in_t systemctl mask systemd-firstboot.service systemd-pstore.service systemd-oomd.service \
-    systemd-oomd.socket systemd-boot-update.service systemd-repart.service steamos-dump-info.service \
+# console's getty (the generator adds it for console=ttyMSM0): no one logs in on the UART.
+in_t systemctl mask systemd-firstboot.service systemd-pstore.service \
+    systemd-boot-update.service systemd-repart.service steamos-dump-info.service \
     usb-gadget.target usb-ncm-gadget@.service usb-ncm-dnsmasq@.service serial-getty@ttyMSM0.service
-# zram-generator's swap unit waits for the same kind of device unit; pico4-zram-swap.service
-# runs its setup from the Frame's configuration instead, and only on the installed system.
+# zram-generator's swap unit has no PICO OS priority; pico4-zram-swap.service runs its setup from
+# the Frame's configuration instead.
 mkdir -p "$T/etc/systemd/system-generators"
 ln -sfn /dev/null "$T/etc/systemd/system-generators/zram-generator"
 # Valve's VR session (docs/session.md): no display manager (pico4-session.service
@@ -572,7 +563,7 @@ in_t systemctl mask sddm.service dsp_service.service steamvr-program-ble.service
     steamvr-set-kernel-thread-priorities.service steamvr-v4l2loopback.service \
     steamvr-web-debug-portforward.service steam-web-debug-portforward.service
 # The session's user units for Frame hardware (the headset-view loopback camera; the
-# proximity microphone mute, which cannot load this kernel's mixer: pico4-micmute does it) and
+# proximity microphone mute, which drives the Frame's codec's mixer: pico4-micmute does it) and
 # the sched_ext CPU scheduler (scx_lavd needs an option Valve's kernel configuration leaves out;
 # steamos-manager offers no scheduler interface here, and stage 1 already sets schedutil).
 in_t systemctl --global mask steamvr-v4l2cam.service steamvr-proxmicmute.service steamos-scheduler.service
@@ -615,11 +606,6 @@ vrlink_run=$T/opt/steamvr/tools/vrlink/bin/linuxarm64/run_vrlink.sh
 grep -qx '\./vrlink "\$@" &' "$vrlink_run" ||
     { echo "$vrlink_run does not start vrlink as expected; check pico4-vrlink's preload" >&2; exit 1; }
 sed -i 's|^\./vrlink "\$@" &$|LD_PRELOAD=/usr/lib/libpico4-vrlink-compat.so${LD_PRELOAD:+:$LD_PRELOAD} ./vrlink "$@" \&|' "$vrlink_run"
-# Steam Linux Runtime's containers (pressure-vessel) need bubblewrap, which without user
-# namespaces (not in the stock kernel) only works setuid; pressure-vessel takes a setuid
-# /usr/bin/bwrap when its own fails (docs/session.md#the-steam-client).
-[[ -x "$T/usr/bin/bwrap" ]] || { echo "bubblewrap is missing from the image" >&2; exit 1; }
-chmod 4755 "$T/usr/bin/bwrap"
 mkdir -p "$T/etc/systemd/system-generators"
 ln -sfn /dev/null "$T/etc/systemd/system-generators/systemd-gpt-auto-generator"
 in_t systemctl set-default graphical.target

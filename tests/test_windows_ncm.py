@@ -32,7 +32,7 @@ class NcmTests(unittest.TestCase):
 
     def test_absent_or_ambiguous_device_is_not_opened(self):
         for devices in ([], [self.dev, self.dev]):
-            with self.assertRaisesRegex(ValueError, "exactly one POC"):
+            with self.assertRaisesRegex(ValueError, "exactly one stage-1 gadget"):
                 initialize(devices, "POC123", self.dispose)
         self.dev.set_configuration.assert_not_called()
         self.dispose.assert_not_called()

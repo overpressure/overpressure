@@ -32,16 +32,6 @@
 #define PANEL_SIZE	2160
 #define PPS_COMMAND	0xe6
 
-static bool keep_boot_state;
-module_param(keep_boot_state, bool, 0444);
-MODULE_PARM_DESC(keep_boot_state,
-		 "leave the panels as the bootloader set them up: no power changes, no reset, no commands");
-
-static char *keep_supplies = "";
-module_param(keep_supplies, charp, 0444);
-MODULE_PARM_DESC(keep_supplies,
-		 "supplies to leave as the bootloader set them (comma-separated: vddio)");
-
 static unsigned int wake_test_sleep_in;
 module_param(wake_test_sleep_in, uint, 0644);
 MODULE_PARM_DESC(wake_test_sleep_in,
@@ -129,24 +119,10 @@ static int pico4_send(struct pico4_panel *ctx, const u8 *seq, int len, bool lpm)
 	return pos == len ? 0 : -EINVAL;
 }
 
-static bool supply_kept(const char *name)
-{
-	const char *pos = keep_supplies;
-	size_t len = strlen(name);
-
-	while ((pos = strstr(pos, name))) {
-		if ((pos == keep_supplies || pos[-1] == ',') && (pos[len] == ',' || !pos[len]))
-			return true;
-		pos += len;
-	}
-	return false;
-}
-
 static void pico4_supplies_off(struct pico4_panel *ctx, int count)
 {
 	while (--count >= 0)
-		if (!supply_kept(ctx->supplies[count].supply))
-			regulator_disable(ctx->supplies[count].consumer);
+		regulator_disable(ctx->supplies[count].consumer);
 }
 
 static int pico4_prepare(struct drm_panel *panel)
@@ -154,18 +130,8 @@ static int pico4_prepare(struct drm_panel *panel)
 	struct pico4_panel *ctx = to_pico4_panel(panel);
 	int ret, i;
 
-	/* Each step is logged: a bring-up that stalls the SoC leaves only the RAM console. */
-	dev_info(ctx->dev, "prepare%s\n", keep_boot_state ? ": keeping the boot state" : "");
-	if (keep_boot_state)
-		return 0;
-
-	/* One after the other in the stock order, each logged, not the bulk call's parallel ones. */
+	/* One after the other in the stock order, not the bulk call's parallel ones. */
 	for (i = 0; i < ARRAY_SIZE(ctx->supplies); i++) {
-		if (supply_kept(ctx->supplies[i].supply)) {
-			dev_info(ctx->dev, "keeping %s as the bootloader set it\n", ctx->supplies[i].supply);
-			continue;
-		}
-		dev_info(ctx->dev, "enabling %s\n", ctx->supplies[i].supply);
 		ret = regulator_enable(ctx->supplies[i].consumer);
 		if (ret) {
 			pico4_supplies_off(ctx, i);
@@ -174,7 +140,6 @@ static int pico4_prepare(struct drm_panel *panel)
 	}
 	/* vddio settles 20 ms (the stock supply table) */
 	msleep(20);
-	dev_info(ctx->dev, "supplies on, VIO enable\n");
 	/*
 	 * The lines were taken as the bootloader left them, and it leaves VIO an input: a plain
 	 * set would only latch the value, so each line becomes an output on its first use.
@@ -182,7 +147,6 @@ static int pico4_prepare(struct drm_panel *panel)
 	gpiod_direction_output(ctx->vio, 1);
 
 	/* The stock reset sequence: released 20 ms, held 20 ms, released 30 ms. */
-	dev_info(ctx->dev, "reset\n");
 	gpiod_direction_output(ctx->reset, 0);
 	msleep(20);
 	gpiod_set_value_cansleep(ctx->reset, 1);
@@ -190,9 +154,7 @@ static int pico4_prepare(struct drm_panel *panel)
 	gpiod_set_value_cansleep(ctx->reset, 0);
 	msleep(30);
 
-	dev_info(ctx->dev, "power-on commands\n");
 	ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);
-	dev_info(ctx->dev, "power-on commands: %d\n", ret);
 	/* The panels' own answer: power mode bit 4 is sleep out, bit 2 display on. */
 	for (i = 0; !ret && i < 2; i++) {
 		u8 mode = 0;
@@ -223,7 +185,7 @@ static void pico4_first_light(struct work_struct *work)
 		gpiod_set_value_cansleep(ctx->backlight, 0);
 		ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);
 		gpiod_set_value_cansleep(ctx->backlight, 1);
-		dev_info(ctx->dev, "first light: %d\n", ret);
+		dev_dbg(ctx->dev, "first light: %d\n", ret);
 	}
 	mutex_unlock(&ctx->bl->update_lock);
 }
@@ -232,11 +194,10 @@ static int pico4_enable(struct drm_panel *panel)
 {
 	struct pico4_panel *ctx = to_pico4_panel(panel);
 
-	dev_info(ctx->dev, "backlight on\n");
 	gpiod_direction_output(ctx->backlight, !backlight_is_blank(ctx->bl));
 	ctx->enabled = true;
 	ctx->dimmed = backlight_is_blank(ctx->bl);
-	if (!ctx->lit && !keep_boot_state) {
+	if (!ctx->lit) {
 		ctx->lit = true;
 		schedule_delayed_work(&ctx->first_light, msecs_to_jiffies(300));
 	}
@@ -325,8 +286,6 @@ static int pico4_unprepare(struct drm_panel *panel)
 {
 	struct pico4_panel *ctx = to_pico4_panel(panel);
 
-	if (keep_boot_state)
-		return 0;
 	/* The stock power-off commands go in high-speed mode. */
 	pico4_send(ctx, ctx->off_cmds, ctx->off_len, false);
 	gpiod_set_value_cansleep(ctx->reset, 1);

@@ -1,6 +1,6 @@
 # PICO OS's CPU limits for VR (docs/cooling.md#vr-cpu-limits): held while
 # Valve's session or Monado runs, which both want this unit; it stops once
-# neither does. No CPUWeight/CPUQuota (CLAUDE.md).
+# neither does.
 [Unit]
 Description=PICO OS's VR CPU frequency limits
 StopWhenUnneeded=yes

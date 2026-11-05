@@ -4,8 +4,8 @@ Roadmap step 4 ([roadmap.md](roadmap.md)): the Steam Frame's ARM64 SteamOS users
 SteamOS services, gamescope, PipeWire, NetworkManager) on **Valve's kernel from the Frame**
 ([kernel.md](kernel.md)), with the PICO's own drivers and device tree. The
 stage-1 initramfs ([stage1.md](stage1.md)) stays the recoverable entry point:
-it receives the userspace into compressed RAM and hands PID 1 to its systemd. Flash storage
-stays read-only throughout. The userspace reaches `running` with no failed units on the headset, where Valve's Mesa runs
+it mounts the installed system ([install.md](install.md)) and hands PID 1 to its systemd. Flash
+storage stays read-only, except the installed system's data partition. The userspace reaches `running` with no failed units on the headset, where Valve's Mesa runs
 Turnip on msm. The XR stack ([xr.md](xr.md)) and Valve's VR session ([session.md](session.md)) run
 in it.
 
@@ -62,7 +62,7 @@ The system's Mesa is Valve's `deckard-mesa-linux-aarch64`
 | --- | --- | --- |
 | `pico4-graphics-tests` | the native Vulkan test | [graphics.md](graphics.md) |
 | `pico4-sensors` | hexagonrpcd with this project's patches, for the DSPs | [xr.md](xr.md) |
-| `pico4-monado` | Monado 25.1.0 with the PICO 4 driver, the KMS compositor target and `pico4-cam` | [xr.md](xr.md) |
+| `pico4-monado` | Monado 25.1.0 with the PICO 4 driver and `pico4-cam` | [xr.md](xr.md) |
 | `pico4-basalt` | Basalt for Monado's VIT interface, built for `armv8.2-a` | [xr.md](xr.md) |
 | `pico4-swapchain-usage` | the stock path's frame pacing and compressed scanout in SteamVR's compositor | [session.md](session.md) |
 | `pico4-gamescope` | the Frame's gamescope with a fix for a crash when a game starts | [session.md](session.md) |
@@ -79,9 +79,10 @@ its own sources in [src/](../src/).
 ```text
 stage 1   Alpine initramfs, PID 1 pico4-init: USB NCM 172.16.42.1, SSH, read-only storage,
           recovery-watch (stage1.md)
-receive   ssh root@172.16.42.1 pico4-userspace receive < pico4-userspace.tar.zst
-            zram0 (LZO) -> ext4 -> /newroot; SHA-256 checked; the archive's systemd must run here
-switch    ssh root@172.16.42.1 pico4-userspace switch
+installed pico4-userspace installed
+            super read-only -> /newroot; userdata at /newroot/data, with /etc, /var, /home and
+            /root on it; the system's systemd must run here
+switch    pico4-userspace switch
             SSH host keys, test-run state, machine-id, USB network settings -> /newroot;
             SIGQUIT to PID 1
 pico4-init        shutdown entry; stops user processes only; execs ::restart: switch-userspace
@@ -91,15 +92,10 @@ stage 2   systemd 257.7: udev devnode rules, read-only sweep, recovery-watch,
           systemd-networkd (same address, DHCP for the PC), sshd (same host key)
 ```
 
-**Receive.** [`pico4-userspace receive`](../initramfs/usr/bin/pico4-userspace) unpacks the
-archive from stdin (or `--from FILE --bytes N`) and hashes it on the way; with `--sha256` a
-mismatch refuses the switch. It sizes `zram0` at 8192 MiB virtual (`--size-mb`), of which only
-written data takes RAM (the image takes 5.6 GiB, the rest is room for the session), formats it as ext4 without a journal and mounts it at `/newroot` with
-`discard`. Before PID 1 depends on the new root, its systemd must run on this kernel
-(`systemd --version` in a chroot). A second attempt needs a reboot. Stage 1's dropbear runs
-with a 4 MiB receive window (`-W 4194304` in [svc](../initramfs/usr/libexec/pico4-poc/svc)):
-with dropbear's default 24 KiB window, uploads over the USB link stop at about 4.4 MB/s; with
-the 4 MiB window the 801 MiB archive arrives in 39 s (21.6 MB/s).
+**Installed.** [`pico4-userspace installed`](../initramfs/usr/bin/pico4-userspace) mounts the
+system image in `super` read-only at `/newroot` and the data partition under it
+([install.md](install.md)). Before PID 1 depends on the new root, its systemd must run on this
+kernel (`systemd --version` in a chroot).
 
 **Switch.** `pico4-userspace switch` converts the stage-1 dropbear host keys for OpenSSH, so the
 hardware runner's pinned key stays valid. It copies the test-run state (`/etc/pico4-poc`) and
@@ -120,9 +116,9 @@ does.
 
 [`switch-userspace`](../initramfs/usr/libexec/pico4-poc/switch-userspace) moves the kernel's
 devtmpfs, which stage 1 mounted, into the new root: systemd's device monitor listens to udev only
-when `/dev` is a devtmpfs or udev already runs. On the stock kernel, which has no devtmpfs, the new
-root gets a tmpfs copy of the stage-1 nodes, and udev's rules maintain it. Without a prepared
-userspace it restarts stage-1 init.
+when `/dev` is a devtmpfs or udev already runs. On a kernel without devtmpfs, such as the stock
+kernel, it refuses: the system runs only on Valve's kernel. Without a prepared userspace it restarts
+stage-1 init.
 
 Guarantees carried into stage 2:
 
@@ -136,9 +132,7 @@ Guarantees carried into stage 2:
   are masked.
 - **Recovery**: `pico4-recovery-watch.service` runs the same script and policy as stage 1
   (`recovery-watch`, `recovery-policy.sh`) with the carried-over test deadlines and survives
-  isolation. In a hardware run, the runner must reach stage 2 over SSH within the connect
-  deadline + 120 s of the switch, or the headset returns to fastboot without waiting for the
-  whole test deadline. Emergency and rescue mode log the failed units and reboot to fastboot
+  isolation. Emergency and rescue mode log the failed units and reboot to fastboot
   after 30 s (`pico4poc.emergency_delay`) instead of waiting for a console. A crashed PID 1
   reboots (`CrashAction=reboot`); stop timeouts are 15 s. A failure before `switch_root`
   returns to fastboot from stage 1; on the installed system it reboots into recovery.
@@ -158,26 +152,26 @@ Guarantees carried into stage 2:
 Adaptations in the image:
 
 - **Session user**: `steamos` (UID 1000), which the Frame's tmpfiles rules and
-  `steamos-customizations-deckard` require; groups `wheel`, `video`, `render`, `input`, `audio`
-  and the four Android network groups. Root and `steamos` have empty passwords. Hostname
+  `steamos-customizations-deckard` require; groups `wheel`, `video`, `render`, `input`, `audio`.
+  Root and `steamos` have empty passwords. Hostname
   `pico4-steamos`.
 - **`/home`**: SteamOS's `home.mount` mounts the Frame's `/dev/disk/by-partsets/shared/home`;
   without that device it waits 90 s and fails `basic.target`. The image replaces it with a
-  self-bind of `/home` on the zram root, which keeps the offload bind mounts
+  self-bind of `/home` on the data partition, which keeps the offload bind mounts
   (`steamos-offload.target`) working; their source directories are created in the image.
 - **USB**: `/tmp/usb_gadget_block` makes the Frame's Type-C plug handler leave the POC's USB
   gadget alone. systemd-networkd configures the USB link; NetworkManager manages every other
   interface.
 - **Masked units**: `systemd-firstboot` (would wait for console input), `systemd-pstore`,
-  `systemd-oomd` and its socket (needs memcg), `systemd-boot-update`, `systemd-repart`,
+  `systemd-boot-update`, `systemd-repart`,
   `steamos-dump-info` (needs the Frame's EEPROM and EFI boot configuration, `steamos-bootconf`),
-  `serial-getty@ttyMSM0` (waits 90 s for a device unit that never appears), and the Frame's USB
+  `serial-getty@ttyMSM0` (no one logs in on the UART), and the Frame's USB
   gadget units (`usb-gadget.target`, `usb-ncm-gadget@`, `usb-ncm-dnsmasq@`), which would take
   the controller from the POC's link. The session's masks are in [session.md](session.md).
 - **Enabled**: sshd, systemd-networkd, NetworkManager, systemd-timesyncd, bluetoothd, the
-  recovery, storage, log and self-test units, the sensor and audio targets, Monado's socket,
+  recovery, storage and log units, the sensor and audio targets, Monado's socket,
   `pico4-session.service`, and the units for the fan, USB internet, splash, power key, persist,
-  zram swap, clock, kernel-thread priorities, quiet console, IMU readiness, panel and Venus probes,
+  zram swap, clock, kernel-thread priorities, IMU readiness, panel and Venus probes,
   Bluetooth firmware and address, Wi-Fi address and the video codec links. The default target is
   `graphical.target`.
 - **Battery.** The charger and fuel gauge (PM8150B) appear as power supplies:
@@ -206,7 +200,7 @@ bash devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build "
 | --- | --- |
 | `--gpu-firmware DIR` | the six `a650_*` GPU firmware files from the stock firmware ([development.md](development.md#stock-firmware), [graphics.md](graphics.md)); without them the userspace boots, but Vulkan cannot start |
 | `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data, extracted from the stock firmware by `scripts/extract-sensor-data.sh` ([xr.md](xr.md)); without it the head IMU stack stays inactive |
-| `--wlan DIR` | Wi-Fi firmware and configuration, extracted by `scripts/extract-wlan.sh`; without it Wi-Fi stays off |
+| `--wlan DIR` | Wi-Fi firmware and board data, extracted by `scripts/extract-wlan.sh`; without it Wi-Fi stays off |
 | `--audio DIR` | ADSP firmware and the audio process's files, extracted by `scripts/extract-audio.sh`; without it there is no sound card |
 | `--stock-slam DIR` | PICO OS's head tracker, its Compute DSP firmware and bionic root, extracted by `scripts/extract-stock-slam.sh` ([xr.md](xr.md)); without it head tracking falls back to 3DoF unless `PICO4_SLAM_BACKEND=basalt` |
 | `--refresh` | downloads current package databases and reinstalls the base root |
@@ -233,32 +227,31 @@ bootstrap rootfs, the SHA-256 of every repository database, package file, GPU fi
 sensor-data file, and the installed package versions; the hardware runner selects its checks
 from it. The build does not touch the headset; keep its output private. Build hosts, the steps
 in detail and timings are in [development.md](development.md). The stage-1 image includes the
-handoff tools (GNU tar, zstd, e2fsprogs, dropbear-convert) by default
+handoff tools (e2fsprogs, dropbear-convert) by default
 (`python -m overpressure build --firmware BUILD` or `make image`).
 
 ## Run
 
-Interactively, with stage 1 running:
+The archive becomes a read-only system image in `super` with its data in `userdata`
+([install.md](install.md)):
 
 ```sh
-ssh root@172.16.42.1 pico4-userspace receive < out/userspace/pico4-userspace.tar.zst
-ssh root@172.16.42.1 pico4-userspace switch
-ssh root@172.16.42.1 pico4-userspace-check     # JSON on stdout; exit status 0 when it passed
+devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img  # as root
+python -m overpressure dev recovery
+python -m overpressure dev install
+python -m overpressure dev check
+python -m overpressure dev installed    # reconnects after a reboot
 ```
 
-`pico4-userspace status` shows what was received. SSH answers again from systemd's sshd, with
-the same host key, once stage 2 is up.
 [`pico4-userspace-check`](../userspace/rootfs/usr/bin/pico4-userspace-check)
-`[--wait SECONDS] [--no-vulkan]` waits up to 180 s by default for the boot to settle, then
-checks:
+`[--wait SECONDS] [--no-vulkan]` prints JSON on stdout, with exit status 0 when it passed. It waits
+up to 180 s by default for the boot to settle, then checks:
 
 - systemd 257 as PID 1, state `running`, no failed units;
-- `/dev` the kernel's devtmpfs (a tmpfs copy on the stock kernel), with a node for every kernel
-  device but the sound card's unused PCMs, and a populated udev database;
-- every physical block device read-only, the root on zram; or, on the installed system, the
-  root read-only from `super`, `/data` on `userdata`, the only writable partition
+- `/dev` the kernel's devtmpfs, with a node for every kernel device, and a populated udev database;
+- the root read-only from `super`, `/data` on `userdata`, the only writable partition
   ([install.md](install.md));
-- D-Bus, logind's seat0, sshd and the Android network groups;
+- D-Bus, logind's seat0 and sshd;
 - the USB link unchanged (interface, MAC, address, link up), no stage-1 process left, the
   mass-storage thread alive;
 - the session user logged in with its session target active, Monado's socket listening, and the
@@ -270,27 +263,12 @@ checks:
 
 `devices.phoenix.tooling.userspace.validate_check` validates the JSON on the host.
 
-The session runs only on Valve's kernel. The everyday route is the installed system on it: the
-same archive becomes a read-only system image in `super` with its data in `userdata`
-([install.md](install.md)):
-
-```sh
-devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img  # as root
-python -m overpressure dev recovery
-python -m overpressure dev install
-python -m overpressure dev check
-python -m overpressure dev installed    # reconnects after a reboot
-```
-
-The maintenance stage 1 stays on the stock kernel, so `python -m overpressure dev boot ARCHIVE`
-followed by `dev check` needs a recovery image with Valve's kernel
-([`recovery_image.py`](kernel.md#a-one-shot-test-boot)); the device-side deadlines
-return the headset to fastboot after a failure, and `python -m overpressure dev reboot` starts
-stage 1 again ([hardware-testing.md](hardware-testing.md#development-mode)).
+The device-side deadlines return the maintenance stage 1 to fastboot after a failure, and
+`python -m overpressure dev reboot` starts it again
+([hardware-testing.md](hardware-testing.md#development-mode)).
 
 `python -m overpressure hwtest flash-run` and `python -m overpressure cycle` verify stage 1 and the
-way back, on the stock kernel ([hardware-testing.md](hardware-testing.md)). Their `--userspace`
-fails on this userspace: its checks need Vulkan, which Valve's Mesa has only on msm.
+way back, on the stock kernel ([hardware-testing.md](hardware-testing.md)).
 
 ## The headset's own data
 
@@ -305,7 +283,7 @@ shipping a copy:
 | `/usr/share/qcom/pico4/sensors/registry/` | `persist/sensors/registry/registry/` (registry and factory calibration of every sensor) | hexagonrpcd for the sensor DSP |
 | `/usr/share/qcom/pico4/sensors/sns_reg_version` | `persist/sensors/registry/sns_reg_version` | hexagonrpcd |
 | `/usr/share/qcom/pico4/calibration/pvr/` | `persist/pvr/` (camera, IMU and lens calibration, gyro bias tables) | Monado's driver, PICO OS's tracker |
-| `/usr/lib/firmware/wlan/qca_cld/qca6390/wlan_mac.bin` | `persist/wlan_mac.bin` | the Wi-Fi driver |
+| (read directly) | `persist/wlan_mac.bin` | `pico4-wlan-address` (Wi-Fi) |
 | (read directly) | `persist/falcon/sn` | `pico4-fan`'s `auto` profile (the production batch, [cooling.md](cooling.md)) |
 | (read directly) | `persist/time/ats_2` (the wall clock's offset to the PMIC's RTC, ms) | `pico4-clock`: the clock at boot is RTC + offset, as PICO OS's time daemon keeps it, before timesyncd; only forward |
 | (read directly) | `persist/pico_bt_mac` | `pico4-bt-address` (Bluetooth) |
@@ -437,21 +415,18 @@ GPU memory about 0.7 GB, and the page cache about 2.7 GB.
   [`50-pico4-memory.conf`](../userspace/rootfs/etc/sysctl.d/50-pico4-memory.conf) sets what
   PICO OS's script sets for this kernel: `vm.swappiness` 100, `vm.watermark_scale_factor` 90,
   `vm.watermark_boost_factor` 0.
-- **Without device units.** zram-generator's own swap unit waits for `dev-zram0.device`, and
-  systemd here never sees udev's devices as plugged (they stay "tentative"), so it timed out
-  after 90 s. The image masks the generator, and
+- **The swap unit.** zram-generator's own swap unit has no PICO OS priority. The image masks the
+  generator, and
   [`pico4-zram-swap.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-zram-swap.service)
   runs zram-generator's `--setup-device zram0` from the Frame's configuration (size,
   algorithm, `mkswap`) and `swapon` at priority 32758.
-- **Only on the installed system.** In the dev boot the root file system lives on `zram0`; the
-  unit starts only with `pico4poc.root=installed` on the kernel command line.
 - **A game larger than the free memory.** POOLS under Proton and FEX takes about 3 GB of GPU
   memory and 1.5 GB of its own. Without swap it left 76-226 MB available for about two minutes:
   the kernel could only drop the page cache that the running processes needed again, the whole
   headset froze (head tracking lost, the session's compositor and gamescope crashed), and the
   OOM killer killed the game. With the swap above it starts and runs: 1.5 GB of the session's
   and the game's memory went to zram, at most 2.3 % memory pressure, no kill. `systemd-oomd`
-  stays masked; the Frame does not enable it either.
+  is not enabled, as on the Frame.
 - **PICO OS's overcommit and its tracker.** `vm.overcommit_memory` 1, as PICO OS's `init.rc`
   sets it: allocations never fail, and when memory and swap run out the OOM killer takes the
   process with the highest score. `pico4-slamd` runs at `oom_score_adj` −1000, as Android's init

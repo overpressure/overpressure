@@ -213,7 +213,7 @@ Keep the engineering ABL active while working with stage 1:
   after its run ([stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md)).
 * Writing `boot` needs the engineering ABL's per-session command authorization first:
   `fastboot oem <token> unlock`, the command that `python -m overpressure device token` prints. The
-  hardware runner and `python -m overpressure dev flash` send it.
+  hardware runner and `python -m overpressure dev restore` send it.
 
 ## 6. Stock ABL
 

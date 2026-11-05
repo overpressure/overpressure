@@ -5,7 +5,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 UNITS = ROOTFS / "usr/lib/systemd/system"
-UCM = ROOTFS / "usr/share/alsa/ucm2/conf.d/kona-mtp-snd-ca"
 
 
 def unit(name: str) -> str:
@@ -36,45 +35,6 @@ class AudioUnitTests(unittest.TestCase):
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertRegex(build, r"systemctl enable [^\n]*(\\\n[^\n]*)*pico4-audio\.target")
 
-    def test_no_cpu_controller_settings(self):
-        for name in ("pico4-adsp.service", "pico4-audiopd.service"):
-            self.assertNotIn("CPUWeight", unit(name))
-            self.assertNotIn("CPUQuota", unit(name))
-
-class AudioNodeTests(unittest.TestCase):
-    def test_only_multimedia1_gets_device_nodes(self):
-        # Opening other PCMs of this card can crash the stock kernel (docs/userspace.md#audio).
-        rules = (ROOTFS / "usr/lib/udev/rules.d/00-pico4-devnodes.rules").read_text(encoding="utf-8")
-        skip = next(l for l in rules.splitlines() if "q6core-audio:sound" in l and not l.startswith("#"))
-        self.assertIn('KERNEL!="pcmC*D0[pc]"', skip)
-        self.assertIn('GOTO="pico4_devnodes_end"', skip)
-        self.assertLess(rules.index(skip), rules.index('PROGRAM="/usr/libexec/pico4-poc/devnode add"'))
-
-
-class AudioUcmTests(unittest.TestCase):
-    def test_card_file_names_the_verb(self):
-        card = (UCM / "kona-mtp-snd-ca.conf").read_text(encoding="utf-8")
-        self.assertIn('File "/conf.d/kona-mtp-snd-ca/HiFi.conf"', card)
-        self.assertTrue((UCM / "HiFi.conf").exists())
-
-    def test_devices_use_multimedia1_both_ways(self):
-        hifi = (UCM / "HiFi.conf").read_text(encoding="utf-8")
-        self.assertIn('PlaybackPCM "hw:${CardId},0"', hifi)
-        self.assertIn('CapturePCM "hw:${CardId},0"', hifi)
-        self.assertIn("'WSA_CDC_DMA_RX_0 Audio Mixer MultiMedia1' 1", hifi)
-        self.assertIn("'MultiMedia1 Mixer TX_CDC_DMA_TX_3' 1", hifi)
-
-    def test_every_enabled_control_is_reset(self):
-        hifi = (UCM / "HiFi.conf").read_text(encoding="utf-8")
-        verb = hifi[hifi.index("SectionVerb"):hifi.index("SectionDevice")]
-        enable = verb[verb.index("EnableSequence"):verb.index("DisableSequence")]
-        disable = verb[verb.index("DisableSequence"):verb.index("Value")]
-        names = lambda text: re.findall(r"name='([^']+)'", text)
-        self.assertEqual(sorted(names(enable)), sorted(names(disable)))
-        # The paths are complete before ACP probes the PCM: both live in the verb.
-        self.assertNotIn("EnableSequence", hifi[hifi.index("SectionDevice"):])
-
-
 class AudioTimingTests(unittest.TestCase):
     def test_rtkit_runs_with_the_frames_limits(self):
         # Same name as the Frame's vendor drop-in, so that it replaces it (docs/userspace.md#audio).
@@ -89,7 +49,7 @@ class AudioTimingTests(unittest.TestCase):
 
     def test_sound_card_keeps_two_periods_of_headroom(self):
         rule = (ROOTFS / "etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf").read_text(encoding="utf-8")
-        self.assertIn('node.name = "~alsa_output.platform-soc_qcom_msm-audio-apr.*"', rule)
+        self.assertIn('node.name = "~alsa_output.platform-sound.*"', rule)
         period = int(re.search(r"api\.alsa\.period-size = (\d+)", rule).group(1))
         headroom = int(re.search(r"api\.alsa\.headroom = (\d+)", rule).group(1))
         self.assertEqual((period, headroom), (1024, 2 * period))
@@ -141,11 +101,10 @@ class MainlineAudioTests(unittest.TestCase):
         # The stock kernel's names have no place in the mainline profile.
         self.assertNotIn("CDC_DMA", verb)
         self.assertNotIn("DAC_Port", verb)
-        # PICO OS's levels, as in the stock profile.
-        stock = UCM / "kona-mtp-snd-ca.conf"
-        for line in stock.read_text(encoding="utf-8").splitlines():
-            if "Volume" in line and "cset" in line:
-                self.assertIn(line.strip(), card)
+        # PICO OS's levels (mixer_paths.xml).
+        for line in ("cset \"name='WSA_RX0 Digital Volume' 84\"", "cset \"name='WSA_RX1 Digital Volume' 84\"",
+                     "cset \"name='TX_DEC0 Volume' 84\"", "cset \"name='ADC1 Volume' 12\""):
+            self.assertIn(line, card)
 
 
 if __name__ == "__main__":

@@ -18,13 +18,3 @@ recovery_reason() {
 		fi
 	fi
 }
-
-# Step-4 userspace: a hardware run must reach the new userspace over SSH soon
-# after the switch, or the headset returns to fastboot without waiting for
-# the whole test deadline.
-# Arguments: uptime, uptime at the switch (empty: no switch), limit, test mode, reached.
-userspace_reason() {
-	if [ "$4" = 1 ] && [ -n "$2" ] && [ "$5" != 1 ] && [ "$(($1 - $2))" -ge "$3" ]; then
-		echo "hardware runner did not reach the userspace within ${3}s of the switch"
-	fi
-}

@@ -37,7 +37,7 @@ dropbear)
 	mkdir -p /etc/dropbear
 	# -R: generate host keys on first connection, -B: allow the empty root password.
 	# -W: a 4 MiB receive window. With the default 24 KiB, uploads over the USB link
-	# (the userspace archive) stopped at about 4.4 MB/s.
+	# (the system image) stopped at about 4.4 MB/s.
 	exec dropbear -F -E -R -B -p 22 -W 4194304
 	;;
 httpd)

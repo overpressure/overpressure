@@ -33,7 +33,6 @@
 #define QRTR_CMD_NEW_LOOKUP 10
 
 #define QMI_REQUEST 0
-#define QMI_RESPONSE 2
 #define QMI_INDICATION 4
 #define SSC_MSG_CONTROL 0x20
 #define SSC_IND_SMALL 0x21

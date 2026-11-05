@@ -9,6 +9,6 @@
 ::respawn:/usr/libexec/pico4-poc/svc usb-watch
 ::respawn:/usr/libexec/pico4-poc/svc recovery-watch
 ::ctrlaltdel:/sbin/reboot
-# SIGQUIT (pico4-userspace switch): hand PID 1 to systemd in the received userspace.
+# SIGQUIT (pico4-userspace switch): hand PID 1 to the installed system's systemd.
 ::restart:/usr/libexec/pico4-poc/switch-userspace
 ::shutdown:/usr/libexec/pico4-poc/svc shutdown

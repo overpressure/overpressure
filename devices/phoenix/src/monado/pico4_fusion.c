@@ -334,7 +334,6 @@ pico4_fusion_slam(struct pico4_fusion *f, const struct pico4_fusion_slam *m)
 	}
 	f->seen_ts_ns = m->ts_ns;
 	if (!lookup(f, m->ts_ns, &then) || (f->lost && m->ts_ns < f->ignore_until_ns)) {
-		f->ignored++;
 		return PICO4_FUSION_IGNORED;
 	}
 

@@ -64,13 +64,6 @@ struct ImuCalib
 	apply(const Vec3 &gyro_raw, const Vec3 &accel_raw, Vec3 &gyro_M, Vec3 &accel_M) const;
 };
 
-/*!
- * The station's calibration record (spec 03 3/5), as far as this module uses it: the IMU block
- * and the rate flag. False if the record is rejected (p[0] <= 0 or num <= 69).
- */
-bool
-parse_calibration_record(const float *p, int num, ImuCalib &calib, bool &imu_valid, bool &rate_flag);
-
 /*
  *
  * 3DoF attitude filter

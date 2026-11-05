@@ -157,7 +157,6 @@ struct v4l_buffer
 	const uint8_t *raw;
 	size_t length;
 	uint16_t *samples;
-	bool queued;
 	uint32_t sequence;
 	int64_t sof_monotonic_ns;
 };
@@ -170,7 +169,7 @@ struct v4l_cam
 	unsigned count;
 	uint32_t raw_stride;
 	struct v4l_buffer buffers[PICO4_CAM_RING_MAX];
-	uint64_t frames, errors;
+	uint64_t errors;
 };
 
 struct v4l_done
@@ -184,7 +183,6 @@ struct v4l_capture
 	struct v4l_done done[PICO4_CAM_SLOTS * PICO4_CAM_RING_MAX];
 	int rgb_sensor; //!< The IMX471's subdevice, -1 if none.
 	unsigned done_head, done_count;
-	bool streaming;
 	int64_t qtimer_offset_ns, qtimer_measured_ns;
 };
 
@@ -333,7 +331,6 @@ v4l_queue(struct v4l_cam *k, unsigned index)
 	if (ioctl(k->fd, VIDIOC_QBUF, &b) < 0) {
 		return -errno;
 	}
-	k->buffers[index].queued = true;
 	return 0;
 }
 
@@ -523,7 +520,6 @@ v4l_stream(struct pico4_cam *c, bool on)
 			}
 		}
 	}
-	v->streaming = on;
 	return 0;
 }
 
@@ -579,19 +575,16 @@ v4l_fill_frame(struct pico4_cam *c, int slot, unsigned index, struct pico4_cam_f
 	}
 	memset(f, 0, sizeof(*f));
 	f->slot = slot;
-	f->request_id = vb->sequence;
 	f->frame_id = vb->sequence;
 	f->sof_monotonic_ns = vb->sof_monotonic_ns;
 	f->sof_boottime_ns = vb->sof_monotonic_ns + pico4_slept_ns();
 	f->sof_qtimer_ns = vb->sof_monotonic_ns - v->qtimer_offset_ns;
 	f->buffer = index;
-	k->frames++;
 	if (k->rgb) {
 		f->width = PICO4_CAM_RGB_WIDTH;
 		f->height = PICO4_CAM_RGB_HEIGHT;
 		f->lines = PICO4_CAM_RGB_HEIGHT;
 		f->stride = k->raw_stride;
-		f->bytes_per_sample = 2;
 		f->meta = vb->raw;
 		f->data = vb->raw;
 		f->size = vb->length;
@@ -601,7 +594,6 @@ v4l_fill_frame(struct pico4_cam *c, int slot, unsigned index, struct pico4_cam_f
 	f->height = PICO4_CAM_HEIGHT;
 	f->lines = V4L_LINES;
 	f->stride = V4L_STRIDE;
-	f->bytes_per_sample = 2;
 	f->meta = vb->samples;
 	f->data = (const uint8_t *)vb->samples + V4L_STRIDE;
 	f->size = (size_t)V4L_STRIDE * V4L_LINES;
@@ -629,7 +621,6 @@ v4l_dequeue(struct pico4_cam *c, int slot)
 			return errno == EAGAIN;
 		}
 		struct v4l_buffer *vb = &k->buffers[b.index];
-		vb->queued = false;
 		vb->sequence = b.sequence;
 		vb->sof_monotonic_ns = (int64_t)b.timestamp.tv_sec * 1000000000 + (int64_t)b.timestamp.tv_usec * 1000;
 		if ((b.flags & V4L2_BUF_FLAG_ERROR) != 0) {
@@ -847,13 +838,8 @@ pico4_cam_get_slot_info(const struct pico4_cam *c, int slot, struct pico4_cam_sl
 	}
 	const struct v4l_cam *v = &c->v4l->cams[slot];
 	memset(out, 0, sizeof(*out));
-	out->enabled = v->enabled;
-	snprintf(out->sensor, sizeof(out->sensor), slot == PICO4_CAM_RGB_SLOT ? "pico4-imx471" : "pico4-ov7251 %d", slot);
-	snprintf(out->csiphy, sizeof(out->csiphy), "msm_csiphy%d", v4l_pipes[slot].phy);
 	out->phy = v4l_pipes[slot].phy;
-	out->combo = v4l_pipes[slot].phy == 3;
 	out->lane_assign = v4l_pipes[slot].phy_source_pad == 3 ? 2 : 0;
-	out->frames = v->frames;
 	out->errors = v->errors;
 	return 0;
 }

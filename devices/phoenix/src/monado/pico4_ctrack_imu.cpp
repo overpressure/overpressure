@@ -172,32 +172,6 @@ ImuCalib::apply(const Vec3 &gyro_raw, const Vec3 &accel_raw, Vec3 &gyro_M, Vec3 
 	accel_M = sensor_to_model(M_accel * (accel_raw - b_accel));
 }
 
-bool
-parse_calibration_record(const float *p, int num, ImuCalib &calib, bool &imu_valid, bool &rate_flag)
-{
-	imu_valid = false;
-	rate_flag = false;
-	if (p == nullptr || num <= 69 || !(p[0] > 0.0f)) {
-		return false;
-	}
-	if (p[1] != 0.0f && p[13] != 0.0f) {
-		double g[12], a[12];
-		for (int i = 0; i < 12; i++) {
-			g[i] = p[1 + i];
-			a[i] = p[13 + i];
-		}
-		imu_valid = calib.load(g, a);
-	}
-	if (num <= 78) {
-		rate_flag = num > 72 && p[72] == 1.0f;
-	} else if (num <= 93) {
-		rate_flag = num > 84 && p[84] == 1.0f;
-	} else {
-		rate_flag = num > 96 && p[96] == 1.0f;
-	}
-	return true;
-}
-
 /*
  *
  * OrientationController (spec 03 3/4)

@@ -1,7 +1,7 @@
 """Build the PICO 4 Linux proof-of-concept boot image.
 
-    python -m overpressure inspect --firmware 5.13.8-global-sek   # analyse a stock boot.img
-    python -m overpressure build   --firmware 5.13.8-global-sek   # -> out/pico4-poc-5.13.8-global-sek.img
+    python -m overpressure inspect --firmware 5.13.7-global-seko  # analyse a stock boot.img
+    python -m overpressure build   --firmware 5.13.7-global-seko  # -> out/pico4-poc-5.13.7-global-seko.img
     python -m overpressure build   --stock-boot my-boot.img        # from your own dump/OTA
 
 overpressure's stage 1 (overpressure/stage1.py) with the PICO 4's spec: its packages, its
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from overpressure import REPO, compress, cpio, ota, stage1
 
-from . import userspace
+from . import FIRMWARE
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # devices/phoenix
 
@@ -38,8 +38,8 @@ PACKAGES = [
     "mtools",  # builds the read-only FAT "log drive" exposed over USB
     "kmod", "dtc", "evtest", "i2c-tools", "libgpiod", "tinyalsa", "strace", "htop",
     "drm_info", "libdrm-tests", "usbutils", "pciutils", "lsblk", "device-mapper",
-    # pico4-userspace: unpack the step-4 userspace into zram, keep the SSH host key
-    "tar", "zstd", "e2fsprogs", "dropbear-convert",
+    # pico4-userspace: mount the installed system and switch to it, keep the SSH host key
+    "e2fsprogs", "dropbear-convert",
 ]
 
 # Appended to the stock command line:
@@ -64,8 +64,6 @@ SPEC = stage1.Spec(
     overlay=Path(OVERLAY),
     packages=PACKAGES,
     files={f"usr/sbin/{name}": Path(PREBUILT) / name for name in ("pico4-reboot", "pico4-splash")},
-    cmdline_append=CMDLINE_APPEND,
-    interesting_config=INTERESTING_CONFIG,
 )
 
 
@@ -96,7 +94,7 @@ def load_stock(args) -> tuple[str, bytes]:
 
 def build_rootfs(args, stock_entries, build_info: dict) -> cpio.Tree:
     """overpressure's stage-1 root with the PICO 4's own files."""
-    tree = stage1.build_rootfs(SPEC, CACHE, stock_entries, build_info, args.minimal, log)
+    tree = stage1.build_rootfs(SPEC, CACHE, stock_entries, build_info, log=log)
     tree.add_symlink("srv/www/report", "/run/pico4-poc/report")  # browsable via httpd
     tree.add_file("etc/motd", b"")  # the login banner comes from pico4-info
     tree.add_file("etc/hostname", b"pico4-poc\n")
@@ -118,11 +116,6 @@ def cmd_inspect(args) -> int:
     if kinfo.config_text:
         with open(os.path.join(out_dir, "kernel.config"), "w", encoding="utf-8", newline="\n") as f:
             f.write(kinfo.config_text)
-        # Roadmap step 4: what the SteamOS userspace gets from this kernel.
-        compat = userspace.kernel_compat(kinfo.config, kinfo.version)
-        print(userspace.format_compat(compat))
-        with open(os.path.join(out_dir, "userspace-compat.json"), "w", encoding="utf-8") as f:
-            json.dump(compat, f, indent=2)
     log(f">> wrote {out_dir}")
     for p in stage1.check_requirements(kinfo, SPEC.required_config):
         log(f"!! {p}")
@@ -164,7 +157,7 @@ def cmd_build(args) -> int:
             "too big to flash")
 
     os.makedirs(args.out, exist_ok=True)
-    name = args.name or f"pico4-poc-{label}"
+    name = f"pico4-poc-{label}"
     paths = {
         "image": os.path.join(args.out, f"{name}.img"),
         "ramdisk": os.path.join(args.out, f"{name}-initramfs.cpio.gz"),
@@ -180,7 +173,7 @@ def cmd_build(args) -> int:
     # The rootfs as a tar (no device nodes) for inspection and for the
     # preflight check, which runs these binaries on the headset under PICO OS.
     with open(os.path.join(args.out, f"{name}-rootfs.tar"), "wb") as f:
-        tree.to_tar(f, skip_devices=True)
+        tree.to_tar(f)
     summary = {
         "image": os.path.basename(paths["image"]),
         "image_sha256": hashlib.sha256(image).hexdigest(),
@@ -232,13 +225,11 @@ def main(argv: list[str]) -> int:
     for name in ("inspect", "build"):
         p = sub.add_parser(name)
         src = p.add_mutually_exclusive_group()
-        src.add_argument("--firmware", default="5.13.8-global-sek",
+        src.add_argument("--firmware", default=FIRMWARE,
                          help="stock build from firmware.json (default: %(default)s)")
         src.add_argument("--stock-boot", help="stock boot.img, OTA zip, or URL of either")
         p.add_argument("--out", default=os.path.join(str(REPO), "out"), help="output directory")
         if name == "build":
-            p.add_argument("--name", help="output base name (default: pico4-poc-<firmware>)")
-            p.add_argument("--minimal", action="store_true", help="only the minirootfs + overlay")
             p.add_argument("--cmdline-append", nargs="*", default=[], metavar="ARG",
                            help="extra kernel arguments, e.g. pico4poc.autoreboot=0")
             p.add_argument("--force", action="store_true", help="build even if kernel checks fail")

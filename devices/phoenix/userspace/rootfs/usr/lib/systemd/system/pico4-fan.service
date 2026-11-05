@@ -2,9 +2,7 @@
 # from the CPU and GPU sensors with PICO OS's table, plus full speed from
 # 95 °C. Settings (PICO4_FAN_PROFILE, PICO4_FAN_TABLE, PICO4_FAN_BOOST) go in
 # /etc/pico4-poc/fan.conf. When the service stops, the fan keeps its duty.
-# The sysfs condition is there from kernel boot (the /dev node comes later
-# from udev) and keeps the service out of QEMU.
-# No CPUWeight/CPUQuota here (CLAUDE.md).
+# The condition is the fan's UART, by its sysfs entry.
 [Unit]
 Description=PICO 4 fan control
 ConditionPathExists=/sys/class/tty/ttyHS1

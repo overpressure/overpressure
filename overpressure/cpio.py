@@ -94,12 +94,6 @@ class Tree:
         fmt = {"c": stat.S_IFCHR, "b": stat.S_IFBLK}[kind]
         self.nodes[path] = Node(fmt | (mode & 0o7777), rdev=(major, minor), mtime=self.mtime)
 
-    def remove(self, path: str) -> None:
-        path = _norm(path)
-        prefix = path + "/"
-        for key in [k for k in self.nodes if k == path or k.startswith(prefix)]:
-            del self.nodes[key]
-
     def get(self, path: str) -> Node | None:
         return self.nodes.get(_norm(path))
 
@@ -123,12 +117,9 @@ class Tree:
             out.append(part)
         return "/".join(out)
 
-    def total_size(self) -> int:
-        return sum(len(n.data) for n in self.nodes.values() if n.is_file)
-
     # -- serialisation ----------------------------------------------------
-    def to_tar(self, fileobj, skip_devices: bool = False) -> None:
-        """Write the tree as an uncompressed tar (handy for inspecting the rootfs)."""
+    def to_tar(self, fileobj) -> None:
+        """Write the tree as an uncompressed tar without device nodes (handy for inspecting the rootfs)."""
         import io
         import tarfile
 
@@ -146,10 +137,7 @@ class Tree:
                     tf.addfile(info, io.BytesIO(node.data))
                     continue
                 else:
-                    if skip_devices:
-                        continue
-                    info.type = tarfile.CHRTYPE if stat.S_ISCHR(node.mode) else tarfile.BLKTYPE
-                    info.devmajor, info.devminor = node.rdev
+                    continue
                 tf.addfile(info)
 
     def to_cpio(self) -> bytes:

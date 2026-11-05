@@ -14,13 +14,13 @@ from typing import List
 from overpressure import REPO, backup, windows_ncm
 from overpressure.doctor import MISSING, OK, WARNING, Check, Host, linux_commands, version_check
 
-from . import device, localconfig
+from . import FIRMWARE, device, localconfig
 
 HEADSET = "working on the headset"
 EDL = "EDL (development mode, way back)"
 BUILD = "userspace and system image (Linux, as root)"
 ASSETS = "userspace build: extracted stock files"
-FIRMWARE_VERSION = "5.13.7"
+FIRMWARE_VERSION = FIRMWARE.split("-")[0]
 #: assets/<name>-VERSION and the extraction script that writes it.
 ASSET_KINDS = {"graphics-firmware": "extract-graphics-firmware.sh", "sensor-data": "extract-sensor-data.sh",
                "wlan": "extract-wlan.sh", "audio": "extract-audio.sh", "stock-slam": "extract-stock-slam.sh"}
@@ -114,9 +114,9 @@ def ncm_checks(host: Host, settings=None) -> List[Check]:
 def build_checks(host: Host) -> List[Check]:
     """The Linux side of the builds: tools, the aarch64 binfmt handler, native LLVM."""
     commands = {"curl": "downloads", "tar": "archives", "zstd": "archives", "xz": "archives", "chroot": "the build root",
-                "python3": "the build's checks", "brotli": "the stock OTA's images", "debugfs": "the extraction",
+                "python3": "the build's checks", "brotli": "the stock OTA's images", "debugfs": "the extraction", "mcopy": "the extraction",
                 "mkfs.ext4": "the system image", "e2fsck": "the system image", "sha256sum": "checks"}
-    packages = "curl tar zstd xz-utils coreutils python3 brotli e2fsprogs"
+    packages = "curl tar zstd xz-utils coreutils python3 brotli e2fsprogs mtools"
     if host.backend == "docker" and not host.container_ready():
         return []  # the host checks name the image to build; its tools are checked once it is there
     checks = linux_commands(host, BUILD, commands, APT + packages)

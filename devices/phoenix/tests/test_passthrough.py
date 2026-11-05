@@ -68,7 +68,6 @@ class RoomViewTests(unittest.TestCase):
         service = read(units / "pico4-roomview.service")
         self.assertIn("PartOf=steamvr.service", service)
         self.assertIn("ExecStart=/usr/bin/pico4-roomview", service)
-        self.assertNotRegex(service, r"CPUWeight|CPUQuota")  # RT groups (CLAUDE.md)
         self.assertIn("Wants=pico4-roomview.service", read(units / "steamvr.service.d/52-pico4-roomview.conf"))
 
     def test_both_sides_share_one_layout(self):

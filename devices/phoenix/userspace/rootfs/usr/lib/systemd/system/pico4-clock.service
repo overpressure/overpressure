@@ -1,5 +1,5 @@
 # The wall clock from the RTC and PICO OS's offset in persist (docs/userspace.md), before
-# timesyncd and everything that waits for time-set.target. No CPUWeight/CPUQuota (CLAUDE.md).
+# timesyncd and everything that waits for time-set.target.
 [Unit]
 Description=Wall clock from the RTC and PICO OS's offset
 DefaultDependencies=no

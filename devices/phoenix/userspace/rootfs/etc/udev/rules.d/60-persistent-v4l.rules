@@ -1,6 +1,3 @@
-# Overrides systemd's rule of the same name: no v4l_id probing of video nodes.
-# On the PICO 4 kernel, the camera nodes go through PICO's CAM-HUB, which opens
-# the real devices on one work queue. v4l_id opening the ICP node at boot (its
-# firmware load fails) blocks that queue, and every later open of cam_sync then
-# times out, so the tracking cameras cannot be used. The persistent /dev/v4l
-# links this rule would create are not needed.
+# Overrides systemd's rule of the same name: no v4l_id probing of video nodes. Opening a tracking
+# camera's node stops head tracking (docs/session.md#steam-link). The persistent /dev/v4l links
+# this rule would create are not needed.
