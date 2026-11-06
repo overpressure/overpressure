@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """steamvr-settings: the image's SteamVR settings reach the user's file on the data partition."""
+
 import importlib.machinery
 import importlib.util
 import json
@@ -7,11 +8,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/steamvr-settings"
 _loader = importlib.machinery.SourceFileLoader("steamvr_settings", str(PATH))
 _spec = importlib.util.spec_from_loader("steamvr_settings", _loader)
+assert _spec is not None
 tool = importlib.util.module_from_spec(_spec)
 _loader.exec_module(tool)
 
@@ -19,27 +22,37 @@ _loader.exec_module(tool)
 class MergeTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
-        self.image = os.path.join(self.dir.name, "image.vrsettings")
-        self.user = os.path.join(self.dir.name, "config", "steamvr.vrsettings")
-        with open(self.image, "w", encoding="utf-8") as f:
-            json.dump({"steamvr": {"promptForChaperoneAtGameLaunch": True, "forcedDriver": "monado"},
-                       "collisionBounds": {"CollisionBoundsStyle": 2}}, f)
+        self.image = Path(self.dir.name) / "image.vrsettings"
+        self.user = Path(self.dir.name) / "config" / "steamvr.vrsettings"
+        with self.image.open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "steamvr": {"promptForChaperoneAtGameLaunch": True, "forcedDriver": "monado"},
+                    "collisionBounds": {"CollisionBoundsStyle": 2},
+                },
+                f,
+            )
 
     def tearDown(self):
         self.dir.cleanup()
 
-    def run_tool(self):
-        return tool.main(["steamvr-settings", self.image, self.user])
+    def run_tool(self) -> int:
+        return tool.main(["steamvr-settings", str(self.image), str(self.user)])
 
-    def read_user(self):
-        with open(self.user, encoding="utf-8") as f:
+    def read_user(self) -> dict[str, Any]:
+        with self.user.open(encoding="utf-8") as f:
             return json.load(f)
 
     def test_image_keys_set_and_steamvrs_own_kept(self):
-        os.makedirs(os.path.dirname(self.user))
-        with open(self.user, "w", encoding="utf-8") as f:
-            json.dump({"steamvr": {"promptForChaperoneAtGameLaunch": False, "lastVersion": "2.17"},
-                       "GpuSpeed": {"gpuSpeed0": 450}}, f)
+        self.user.parent.mkdir(parents=True)
+        with self.user.open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "steamvr": {"promptForChaperoneAtGameLaunch": False, "lastVersion": "2.17"},
+                    "GpuSpeed": {"gpuSpeed0": 450},
+                },
+                f,
+            )
         self.assertEqual(self.run_tool(), 0)
         user = self.read_user()
         self.assertTrue(user["steamvr"]["promptForChaperoneAtGameLaunch"])
@@ -51,23 +64,24 @@ class MergeTests(unittest.TestCase):
     def test_missing_or_broken_file_gets_the_image_settings(self):
         self.assertEqual(self.run_tool(), 0)
         self.assertEqual(self.read_user()["steamvr"]["forcedDriver"], "monado")
-        with open(self.user, "w", encoding="utf-8") as f:
+        with self.user.open("w", encoding="utf-8") as f:
             f.write("{ half")
         self.assertEqual(self.run_tool(), 0)
         self.assertEqual(self.read_user()["collisionBounds"]["CollisionBoundsStyle"], 2)
 
     def test_unchanged_file_is_not_rewritten(self):
         self.run_tool()
-        before = os.stat(self.user).st_mtime_ns
+        before = self.user.stat().st_mtime_ns
         os.utime(self.user, ns=(before - 10**9, before - 10**9))
         self.run_tool()
-        self.assertEqual(os.stat(self.user).st_mtime_ns, before - 10**9)
+        self.assertEqual(self.user.stat().st_mtime_ns, before - 10**9)
 
 
 class WiringTests(unittest.TestCase):
     def test_steamvr_runs_it_first_and_the_image_carries_the_file(self):
         dropin = (ROOT / "userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(
-            encoding="utf-8")
+            encoding="utf-8"
+        )
         self.assertIn("ExecStartPre=/usr/libexec/pico4/steamvr-settings\n", dropin)
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertIn('"$T/usr/share/pico4/steamvr.vrsettings"', build)

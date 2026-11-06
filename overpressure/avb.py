@@ -7,6 +7,7 @@ not only on recovery boots; an image that overwrites the vbmeta leaves every boo
 An unlocked ABL tolerates a hash mismatch but not missing metadata, so another image goes in
 front of the stock vbmeta, unchanged, with a footer that points to it again.
 """
+
 from __future__ import annotations
 
 import struct
@@ -16,26 +17,30 @@ FOOTER_MAGIC = b"AVBf"
 VBMETA_MAGIC = b"AVB0"
 
 
-def footer(partition: bytes) -> tuple:
-    """(original image size, vbmeta offset, vbmeta size) of a partition image with a footer."""
-    magic, _major, _minor, original, offset, size = FOOTER.unpack(partition[-FOOTER.size:])
-    if magic != FOOTER_MAGIC or partition[offset:offset + 4] != VBMETA_MAGIC:
-        raise ValueError("no AVB footer and vbmeta")
+def footer(partition: bytes) -> tuple[int, int, int]:
+    """Return (original image size, vbmeta offset, vbmeta size) of a partition image with a footer."""
+    magic, _major, _minor, original, offset, size = FOOTER.unpack(partition[-FOOTER.size :])
+    if magic != FOOTER_MAGIC or partition[offset : offset + 4] != VBMETA_MAGIC:
+        msg = "no AVB footer and vbmeta"
+        raise ValueError(msg)
     return original, offset, size
 
 
 def with_stock_vbmeta(stock_partition: bytes, image: bytes, block: int = 4096) -> bytes:
-    """A whole partition image: @p image, the stock partition's vbmeta after it (block-aligned)
-    and a footer that points to it, in the stock footer's version."""
+    """Return a whole partition image: @p image and the stock partition's vbmeta after it.
+
+    The vbmeta is block-aligned, and a footer in the stock footer's version points to it.
+    """
     _original, offset, size = footer(stock_partition)
-    vbmeta = stock_partition[offset:offset + size]
+    vbmeta = stock_partition[offset : offset + size]
     new_offset = -(-len(image) // block) * block
     total = len(stock_partition)
     if new_offset + size > total - FOOTER.size:
-        raise ValueError("the image leaves no room for the vbmeta")
+        msg = "the image leaves no room for the vbmeta"
+        raise ValueError(msg)
     out = bytearray(total)
-    out[:len(image)] = image
-    out[new_offset:new_offset + size] = vbmeta
-    out[-FOOTER.size:] = stock_partition[-FOOTER.size:]
+    out[: len(image)] = image
+    out[new_offset : new_offset + size] = vbmeta
+    out[-FOOTER.size :] = stock_partition[-FOOTER.size :]
     struct.pack_into(">QQQ", out, len(out) - FOOTER.size + 12, len(image), new_offset, size)
     return bytes(out)

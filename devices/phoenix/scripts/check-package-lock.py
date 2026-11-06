@@ -7,13 +7,13 @@
 HASHES and LOCK hold sha256sum lines. Project packages (pico4-*) are built here and stay out of it.
 With --write the build's packages become a new lock file for review, instead of being checked.
 """
+
 import sys
 from pathlib import Path
-from typing import Dict, List
 
 
-def read(text: str) -> Dict[str, str]:
-    """file name -> SHA-256, without the project's own packages."""
+def read(text: str) -> dict[str, str]:
+    """File name -> SHA-256, without the project's own packages."""
     entries = {}
     for line in text.splitlines():
         if line.strip():
@@ -24,8 +24,8 @@ def read(text: str) -> Dict[str, str]:
     return entries
 
 
-def differences(built: Dict[str, str], lock: Dict[str, str]) -> List[str]:
-    """What keeps this build from being the tested one; a locked package the build no longer holds is fine."""
+def differences(built: dict[str, str], lock: dict[str, str]) -> list[str]:
+    """List what keeps this build from being the tested one; a locked package the build no longer holds is fine."""
     problems = []
     for name, sha in sorted(built.items()):
         if name not in lock:
@@ -35,7 +35,8 @@ def differences(built: Dict[str, str], lock: Dict[str, str]) -> List[str]:
     return problems
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
+    """Check the build's packages against the lock, or write them as a new lock."""
     built = read(Path(argv[0]).read_text(encoding="utf-8"))
     if argv[2:4] and argv[2] == "--write":
         Path(argv[3]).write_text("".join(f"{sha}  {name}\n" for name, sha in sorted(built.items())), encoding="utf-8")

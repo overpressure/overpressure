@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Unlicense
-"""The QCA6390 on a mainline kernel: ath11k for Wi-Fi, hci_qca for Bluetooth, with PICO OS's
-firmware, board data and addresses."""
+"""The QCA6390 on a mainline kernel: ath11k (Wi-Fi) and hci_qca with PICO OS's firmware, board data, addresses."""
+
 import importlib.machinery
 import importlib.util
 import os
@@ -15,20 +15,25 @@ ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 UNITS = ROOTFS / "usr/lib/systemd/system"
 _loader = importlib.machinery.SourceFileLoader("bt_address", str(ROOTFS / "usr/libexec/pico4/bt-address"))
-bt_address = importlib.util.module_from_spec(importlib.util.spec_from_loader("bt_address", _loader))
+_spec = importlib.util.spec_from_loader("bt_address", _loader)
+assert _spec is not None
+bt_address = importlib.util.module_from_spec(_spec)
 _loader.exec_module(bt_address)
 
 
 def text(path: Path) -> str:
+    """Return a file's text."""
     return path.read_text(encoding="utf-8")
 
 
 class WifiTests(unittest.TestCase):
     def test_ath11k_finds_the_stock_files_under_its_names(self):
         build = text(ROOT / "scripts/build-userspace.sh")
-        for link in ('ln -sfn ../../../qca6390/amss20.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin"',
-                     'ln -sfn ../../../qca6390/m3.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/m3.bin"',
-                     'ln -sfn ../../../qca6390/bdwlanq.elf "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/board.bin"'):
+        for link in (
+            'ln -sfn ../../../qca6390/amss20.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin"',
+            'ln -sfn ../../../qca6390/m3.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/m3.bin"',
+            'ln -sfn ../../../qca6390/bdwlanq.elf "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/board.bin"',
+        ):
             self.assertIn(link, build)
 
     def test_ath11k_gets_the_address_pico_assigned(self):
@@ -45,14 +50,23 @@ class WifiTests(unittest.TestCase):
             bin_dir.mkdir()
             log = Path(tmp, "ip.log")
             Path(bin_dir, "ip").write_bytes(f'#!/bin/sh\necho "$@" >> {log.as_posix()}\n'.encode())
-            os.chmod(bin_dir / "ip", 0o755)
+            (bin_dir / "ip").chmod(0o755)
             env = dict(os.environ, PATH=f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}")
             script = ROOTFS / "usr/libexec/pico4/wlan-address"
-            r = subprocess.run([shutil.which("sh"), script.as_posix(), Path(tmp, "wlan_mac.bin").as_posix()],
-                               env=env, capture_output=True, text=True)
+            sh = shutil.which("sh")
+            assert sh is not None  # the test is skipped without sh
+            r = subprocess.run(  # noqa: S603  # the repository's script under sh, no shell string
+                [sh, script.as_posix(), Path(tmp, "wlan_mac.bin").as_posix()],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertEqual(log.read_text().splitlines(),
-                             ["link set dev wlan0 down", "link set dev wlan0 address 00:aa:11:bb:22:cc"])
+            self.assertEqual(
+                log.read_text().splitlines(),
+                ["link set dev wlan0 down", "link set dev wlan0 address 00:aa:11:bb:22:cc"],
+            )
 
     def test_profiles_lose_the_chips_changing_address(self):
         # The chip's own address differs at each boot; a profile naming it never matches again.
@@ -61,15 +75,30 @@ class WifiTests(unittest.TestCase):
             bin_dir = Path(tmp, "bin")
             bin_dir.mkdir()
             Path(bin_dir, "ip").write_bytes(b"#!/bin/sh\nexit 0\n")
-            os.chmod(bin_dir / "ip", 0o755)
+            (bin_dir / "ip").chmod(0o755)
             profiles = Path(tmp, "profiles")
             profiles.mkdir()
             profile = profiles / "home.nmconnection"
-            profile.write_bytes(b"[wifi]\nband=no6\nmac-address=00:03:7F:12:C5:E0\nssid=home\n[wifi-security]\npsk=secret\n")
+            profile.write_bytes(
+                b"[wifi]\nband=no6\nmac-address=00:03:7F:12:C5:E0\nssid=home\n[wifi-security]\npsk=secret\n"
+            )
             env = dict(os.environ, PATH=f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}")
             script = ROOTFS / "usr/libexec/pico4/wlan-address"
-            r = subprocess.run([shutil.which("sh"), script.as_posix(), Path(tmp, "wlan_mac.bin").as_posix(), "wlan0",
-                                profiles.as_posix()], env=env, capture_output=True, text=True)
+            sh = shutil.which("sh")
+            assert sh is not None  # the test is skipped without sh
+            r = subprocess.run(  # noqa: S603  # the repository's script under sh, no shell string
+                [
+                    sh,
+                    script.as_posix(),
+                    Path(tmp, "wlan_mac.bin").as_posix(),
+                    "wlan0",
+                    profiles.as_posix(),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(profile.read_bytes(), b"[wifi]\nband=no6\nssid=home\n[wifi-security]\npsk=secret\n")
 
@@ -85,11 +114,15 @@ class WifiTests(unittest.TestCase):
 
     def test_tree_powers_the_chip_from_the_stock_supplies(self):
         tree = text(ROOT / "kernel/sm8250-pico4-phoenix.dts")
-        pmu = tree[tree.index("qca6390-pmu {"):tree.index("regulators {", tree.index("qca6390-pmu {"))]
-        for supply in ("vddaon-supply = <&vreg_s6a_0p95>", "vddrfa1p3-supply = <&vreg_s8c_1p3>",
-                       "vddrfa1p9-supply = <&vreg_s5a_1p9>", "vddio-supply = <&vreg_s4a_1p8>",
-                       "wlan-enable-gpios = <&tlmm 20 GPIO_ACTIVE_HIGH>",
-                       "bt-enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>"):
+        pmu = tree[tree.index("qca6390-pmu {") : tree.index("regulators {", tree.index("qca6390-pmu {"))]
+        for supply in (
+            "vddaon-supply = <&vreg_s6a_0p95>",
+            "vddrfa1p3-supply = <&vreg_s8c_1p3>",
+            "vddrfa1p9-supply = <&vreg_s5a_1p9>",
+            "vddio-supply = <&vreg_s4a_1p8>",
+            "wlan-enable-gpios = <&tlmm 20 GPIO_ACTIVE_HIGH>",
+            "bt-enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>",
+        ):
             self.assertIn(supply, pmu)
         self.assertIn('compatible = "pci17cb,1101"', tree)
         self.assertIn('compatible = "qcom,qca6390-bt"', tree)
@@ -117,8 +150,10 @@ class BluetoothTests(unittest.TestCase):
 
     def test_address_command_is_the_management_interfaces(self):
         # Set Public Address (0x0039) for index 0, six address bytes least significant first.
-        self.assertEqual(bt_address.command(0, bt_address.address("00:AA:11:BB:22:CC\n")),
-                         bytes.fromhex("3900 0000 0600 cc22bb11aa00"))
+        self.assertEqual(
+            bt_address.command(0, bt_address.address("00:AA:11:BB:22:CC\n")),
+            bytes.fromhex("3900 0000 0600 cc22bb11aa00"),
+        )
         with self.assertRaises(ValueError):
             bt_address.address("00:AA:11")
 
@@ -137,11 +172,13 @@ class BluetoothTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mac = Path(tmp, "pico_bt_mac")
             mac.write_text("00:AA:11:BB:22:CC\n")
-            with mock.patch.object(bt_address, "control_socket", return_value=7), \
-                    mock.patch.object(bt_address.os, "write", side_effect=lambda fd, b: sent.append(b)), \
-                    mock.patch.object(bt_address.os, "read", side_effect=lambda fd, n: replies.pop(0)), \
-                    mock.patch.object(bt_address.select, "select", return_value=([7], [], [])), \
-                    mock.patch.object(bt_address.time, "sleep"):
+            with (
+                mock.patch.object(bt_address, "control_socket", return_value=7),
+                mock.patch.object(bt_address.os, "write", side_effect=lambda _fd, b: sent.append(b)),
+                mock.patch.object(bt_address.os, "read", side_effect=lambda *_: replies.pop(0)),
+                mock.patch.object(bt_address.select, "select", return_value=([7], [], [])),
+                mock.patch.object(bt_address.time, "sleep"),
+            ):
                 self.assertEqual(bt_address.main(["bt-address", str(mac), "0"]), 0)
         self.assertEqual(len(sent), 2)
 
@@ -150,7 +187,7 @@ class BluetoothTests(unittest.TestCase):
         self.assertIn("deckard-arch-hotfixes-release-0.3/bluez", packages)
         self.assertIn("deckard-arch-hotfixes-release-0.3/bluez-utils", packages)
         build = text(ROOT / "scripts/build-userspace.sh")
-        enabled = build[build.index("in_t systemctl enable"):]
+        enabled = build[build.index("in_t systemctl enable") :]
         for name in ("pico4-bt-firmware.service", "pico4-bt-address.service", "bluetooth.service"):
             self.assertIn(name, enabled)
 

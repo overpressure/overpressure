@@ -5,15 +5,20 @@ The Linux kernel unpacks an initramfs from a newc cpio archive. Building the
 archive in memory (instead of on disk) lets us create device nodes, symlinks,
 setuid bits and root ownership on any host OS, including Windows.
 """
+
 from __future__ import annotations
 
+import io
 import posixpath
 import stat
+import tarfile
 from dataclasses import dataclass, field
+from typing import IO
 
 NEWC_MAGIC = b"070701"
 NEWC_CRC_MAGIC = b"070702"
 TRAILER = "TRAILER!!!"
+MAX_SYMLINKS = 40  # as Linux follows at most 40 symbolic links in one lookup
 
 
 @dataclass
@@ -29,14 +34,17 @@ class Node:
 
     @property
     def is_dir(self) -> bool:
+        """Tell whether this is a directory."""
         return stat.S_ISDIR(self.mode)
 
     @property
     def is_file(self) -> bool:
+        """Tell whether this is a regular file."""
         return stat.S_ISREG(self.mode)
 
     @property
     def is_symlink(self) -> bool:
+        """Tell whether this is a symbolic link."""
         return stat.S_ISLNK(self.mode)
 
 
@@ -83,47 +91,50 @@ class Tree:
         return posixpath.join(parent, posixpath.basename(path))
 
     def add_file(self, path: str, data: bytes, mode: int = 0o644, uid: int = 0, gid: int = 0) -> None:
+        """Add a regular file, its parent directories made."""
         path = self._place(path)
         self.nodes[path] = Node(stat.S_IFREG | (mode & 0o7777), data=data, uid=uid, gid=gid, mtime=self.mtime)
 
     def add_symlink(self, path: str, target: str, uid: int = 0, gid: int = 0) -> None:
+        """Add a symbolic link to TARGET."""
         path = self._place(path)
         self.nodes[path] = Node(stat.S_IFLNK | 0o777, data=target.encode(), uid=uid, gid=gid, mtime=self.mtime)
 
     def add_device(self, path: str, kind: str, major: int, minor: int, mode: int = 0o600) -> None:
+        """Add a device node: KIND "c" for a character, "b" for a block device."""
         path = self._place(path)
         fmt = {"c": stat.S_IFCHR, "b": stat.S_IFBLK}[kind]
         self.nodes[path] = Node(fmt | (mode & 0o7777), rdev=(major, minor), mtime=self.mtime)
 
     def get(self, path: str) -> Node | None:
+        """Return the node at PATH (symlinks not followed), None if there is none."""
         return self.nodes.get(_norm(path))
 
     def exists(self, path: str) -> bool:
+        """Tell whether there is a node at PATH (symlinks not followed)."""
         return _norm(path) in self.nodes
 
     def resolve(self, path: str, _depth: int = 0) -> str:
         """Resolve symlinks in ``path`` (inside the tree, never on the host)."""
-        if _depth > 40:
-            raise RuntimeError(f"symlink loop resolving {path}")
+        if _depth > MAX_SYMLINKS:
+            msg = f"symlink loop resolving {path}"
+            raise RuntimeError(msg)
         parts = _norm(path).split("/") if _norm(path) else []
         out: list[str] = []
         for i, part in enumerate(parts):
-            cur = "/".join(out + [part])
+            cur = "/".join([*out, part])
             node = self.nodes.get(cur)
             if node is not None and node.is_symlink:
                 target = node.data.decode()
                 base = "" if target.startswith("/") else "/".join(out)
-                rest = "/".join(parts[i + 1:])
+                rest = "/".join(parts[i + 1 :])
                 return self.resolve(posixpath.join(base, target, rest), _depth + 1)
             out.append(part)
         return "/".join(out)
 
     # -- serialisation ----------------------------------------------------
-    def to_tar(self, fileobj) -> None:
+    def to_tar(self, fileobj: IO[bytes]) -> None:
         """Write the tree as an uncompressed tar without device nodes (handy for inspecting the rootfs)."""
-        import io
-        import tarfile
-
         with tarfile.open(fileobj=fileobj, mode="w", format=tarfile.GNU_FORMAT) as tf:
             for path in sorted(self.nodes):
                 node = self.nodes[path]
@@ -150,8 +161,8 @@ class Tree:
             ino += 1
             nlink = 2 if node.is_dir else 1
             payload = node.data if (node.is_file or node.is_symlink) else b""
-            out += _newc_entry(path, node.mode, node.uid, node.gid, nlink, node.mtime, payload, ino, node.rdev)
-        out += _newc_entry(TRAILER, 0, 0, 0, 1, 0, b"", 0, (0, 0))
+            out += _newc_entry(path, node, ino, nlink, payload)
+        out += _newc_entry(TRAILER, Node(0), 0, 1, b"")
         # Pad to 512 bytes like GNU cpio does; harmless for the kernel.
         out += b"\0" * (-len(out) % 512)
         return bytes(out)
@@ -161,10 +172,9 @@ def _pad4(n: int) -> int:
     return -n % 4
 
 
-def _newc_entry(name: str, mode: int, uid: int, gid: int, nlink: int, mtime: int,
-                payload: bytes, ino: int, rdev: tuple[int, int]) -> bytes:
+def _newc_entry(name: str, node: Node, ino: int, nlink: int, payload: bytes) -> bytes:
     name_b = name.encode() + b"\0"
-    fields = [ino, mode, uid, gid, nlink, mtime, len(payload), 0, 0, rdev[0], rdev[1], len(name_b), 0]
+    fields = [ino, node.mode, node.uid, node.gid, nlink, node.mtime, len(payload), 0, 0, *node.rdev, len(name_b), 0]
     header = NEWC_MAGIC + b"".join(b"%08X" % f for f in fields)
     entry = header + name_b + b"\0" * _pad4(len(header) + len(name_b))
     entry += payload + b"\0" * _pad4(len(payload))
@@ -177,20 +187,21 @@ def read_cpio(data: bytes) -> list[tuple[str, Node]]:
     pos = 0
     n = len(data)
     while pos + 110 <= n:
-        magic = data[pos:pos + 6]
+        magic = data[pos : pos + 6]
         if magic not in (NEWC_MAGIC, NEWC_CRC_MAGIC):
             # Skip zero padding between concatenated archives.
-            if data[pos:pos + 4] == b"\0\0\0\0":
+            if data[pos : pos + 4] == b"\0\0\0\0":
                 pos += 4
                 continue
-            raise ValueError(f"bad cpio magic {magic!r} at offset {pos}")
-        f = [int(data[pos + 6 + 8 * i: pos + 14 + 8 * i], 16) for i in range(13)]
-        ino, mode, uid, gid, nlink, mtime, fsize, _dmaj, _dmin, rmaj, rmin, namesize, _chk = f
+            msg = f"bad cpio magic {magic!r} at offset {pos}"
+            raise ValueError(msg)
+        f = [int(data[pos + 6 + 8 * i : pos + 14 + 8 * i], 16) for i in range(13)]
+        _ino, mode, uid, gid, _nlink, mtime, fsize, _dmaj, _dmin, rmaj, rmin, namesize, _chk = f
         name_start = pos + 110
-        name = data[name_start:name_start + namesize - 1].decode("utf-8", "replace")
+        name = data[name_start : name_start + namesize - 1].decode("utf-8", "replace")
         pos = name_start + namesize
         pos += _pad4(pos)
-        payload = data[pos:pos + fsize]
+        payload = data[pos : pos + fsize]
         pos += fsize
         pos += _pad4(pos)
         if name == TRAILER:

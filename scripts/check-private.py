@@ -11,6 +11,7 @@ personal paths, private keys, the private remote's name, register tables of a ve
 binary files. With a local .env and identity file it also searches for this headset's own serials and
 IDs; those values are never printed. Fake values in tests are listed below.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,26 +19,37 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Tuple
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 REPO = Path(__file__).resolve().parent.parent
 
 PATTERNS = {
     "MAC address": re.compile(rb"\b[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\b"),
     "Steam ID": re.compile(rb"\b7656119\d{10}\b"),
-    "private address": re.compile(rb"\b(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b"),
-    "personal path": re.compile(rb"(?:[A-Za-z]:[\\/]+|/mnt/[a-z]/)[Uu]sers[\\/]+(?!x\b|name\b|USER\b|YOU\b)[A-Za-z0-9_.-]+"),
+    "private address": re.compile(
+        rb"\b(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b"
+    ),
+    "personal path": re.compile(
+        rb"(?:[A-Za-z]:[\\/]+|/mnt/[a-z]/)[Uu]sers[\\/]+(?!x\b|name\b|USER\b|YOU\b)[A-Za-z0-9_.-]+"
+    ),
     "private key": re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----(?!\\n)"),
     "private remote": re.compile(rb"git\.example\.net"),
 }
 #: A table of many {register, value} pairs is a vendor part's settings, not code (kernel/panel_sequence.py).
 REGISTER_PAIR = re.compile(rb"\{\s*0x[0-9a-fA-F]{4},\s*0x[0-9a-fA-F]{2}\s*\}")
 REGISTER_TABLE = 16
+#: Shorter .env values would match by chance.
+MIN_SECRET = 4
 
 #: What may appear: the USB link, Windows' shared internet, the documentation's addresses, and fakes.
 ALLOWED = {
     "MAC address": re.compile(rb"^AA:BB:CC:DD:EE:FF$"),  # the format's placeholder in a document
-    "private address": re.compile(rb"^(?:172\.16\.42\.\d+|192\.168\.137\.1|192\.168\.178\.23|10\.9\.8\.\d+|192\.168\.1\.1)$"),
+    "private address": re.compile(
+        rb"^(?:172\.16\.42\.\d+|192\.168\.137\.1|192\.168\.178\.23|10\.9\.8\.\d+|192\.168\.1\.1)$"
+    ),
 }
 #: Fake identifiers of the tests.
 TEST_PATHS = re.compile(r"^(?:tests/|devices/[^/]+/tests/|scripts/check-private\.py$)")
@@ -47,14 +59,11 @@ BINARIES = re.compile(r"^devices/[^/]+/prebuilt/aarch64/pico4-(?:reboot|splash)$
 BINARY_SUFFIXES = {".png", ".jpg", ".svg"}
 
 
-def findings(path: str, data: bytes, secrets: Iterable[bytes] = ()) -> List[str]:
-    """What is wrong with this file's @p data; the local @p secrets are named, never shown."""
-    found = []
+def findings(path: str, data: bytes, secrets: Iterable[bytes] = ()) -> list[str]:
+    """Return what is wrong with this file's @p data; the local @p secrets are named, never shown."""
     if b"\0" in data[:8192] and not BINARIES.match(path) and Path(path).suffix not in BINARY_SUFFIXES:
         return [f"{path}: binary file"]
-    for secret in secrets:
-        if secret and secret in data:
-            found.append(f"{path}: a value from this PC's .env or identity file")
+    found = [f"{path}: a value from this PC's .env or identity file" for secret in secrets if secret and secret in data]
     if BINARIES.match(path):
         return found
     for name, pattern in PATTERNS.items():
@@ -72,14 +81,14 @@ def findings(path: str, data: bytes, secrets: Iterable[bytes] = ()) -> List[str]
     return found
 
 
-def local_secrets(root: Path = REPO) -> List[bytes]:
-    """This headset's own identifiers, when this PC has them."""
+def local_secrets(root: Path = REPO) -> list[bytes]:
+    """Return this headset's own identifiers, when this PC has them."""
     values = []
     env = root / ".env"
     if env.exists():
         for line in env.read_text(encoding="utf-8", errors="replace").splitlines():
             key, _, value = line.partition("=")
-            if key.strip().endswith("_SERIAL") and len(value.strip()) >= 4:
+            if key.strip().endswith("_SERIAL") and len(value.strip()) >= MIN_SECRET:
                 values.append(value.strip().strip("'\"").encode())
     identity = root / "backup" / "device.json"
     if identity.exists():
@@ -88,27 +97,32 @@ def local_secrets(root: Path = REPO) -> List[bytes]:
     return values
 
 
-def git(*words: str) -> bytes:
-    return subprocess.run(["git", "-C", str(REPO), *words], check=True, stdout=subprocess.PIPE).stdout
+def git(repo: Path, *words: str) -> bytes:
+    """Return the output of a git command in REPO."""
+    argv = ["git", "-C", str(repo), *words]
+    return subprocess.run(argv, check=True, stdout=subprocess.PIPE).stdout  # noqa: S603  # git from PATH, no shell
 
 
-def tracked() -> Iterator[Tuple[str, bytes]]:
-    """The tracked files and the new ones a commit would add (not ignored)."""
-    for name in git("ls-files", "-z", "--cached", "--others", "--exclude-standard").decode().split("\0"):
-        path = REPO / name
+def tracked(repo: Path = REPO) -> Iterator[tuple[str, bytes]]:
+    """Yield the tracked files and the new ones a commit would add (not ignored)."""
+    for name in git(repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard").decode().split("\0"):
+        path = repo / name
         if name and path.is_file():
             yield name, path.read_bytes()
 
 
-def history() -> Iterator[Tuple[str, bytes]]:
-    """Every blob reachable from HEAD under one of its names, and every commit message."""
-    names: Dict[str, str] = {}
-    for line in git("rev-list", "--objects", "HEAD").decode("utf-8", "replace").splitlines():
+def history(repo: Path = REPO) -> Iterator[tuple[str, bytes]]:
+    """Yield every blob reachable from HEAD under one of its names, and every commit message."""
+    names: dict[str, str] = {}
+    for line in git(repo, "rev-list", "--objects", "HEAD").decode("utf-8", "replace").splitlines():
         sha, _, name = line.partition(" ")
         if name:
             names.setdefault(sha, name)
-    process = subprocess.Popen(["git", "-C", str(REPO), "cat-file", "--batch"], stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE)
+    argv = ["git", "-C", str(repo), "cat-file", "--batch"]
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)  # noqa: S603  # git from PATH, no shell
+    if process.stdin is None or process.stdout is None:
+        msg = "git cat-file has no pipes"
+        raise RuntimeError(msg)
     try:
         for sha, name in names.items():
             process.stdin.write(sha.encode() + b"\n")
@@ -121,22 +135,24 @@ def history() -> Iterator[Tuple[str, bytes]]:
     finally:
         process.stdin.close()
         process.wait()
-    for entry in git("log", "--format=%H%x00%an <%ae>%n%B%x01", "HEAD").split(b"\x01"):
+    for entry in git(repo, "log", "--format=%H%x00%an <%ae>%n%B%x01", "HEAD").split(b"\x01"):
         sha, _, message = entry.strip().partition(b"\0")
         if sha:
             yield f"commit {sha[:10].decode()}", message
 
 
-def main(argv: List[str]) -> int:
-    global REPO
+def main(argv: list[str]) -> int:
+    """Scan the files, or with --history every version, and print each finding."""
     secrets = local_secrets()
-    if "--repo" in argv:
-        REPO = Path(argv[argv.index("--repo") + 1]).resolve()
-    found: List[str] = []
-    for name, data in (history() if "--history" in argv else tracked()):
+    repo = Path(argv[argv.index("--repo") + 1]).resolve() if "--repo" in argv else REPO
+    found: list[str] = []
+    for name, data in history(repo) if "--history" in argv else tracked(repo):
         path = name.split("@")[0]
-        found += findings(path, data, secrets) if path == name else [f"{name}: {line.partition(': ')[2]}"
-                                                                     for line in findings(path, data, secrets)]
+        found += (
+            findings(path, data, secrets)
+            if path == name
+            else [f"{name}: {line.partition(': ')[2]}" for line in findings(path, data, secrets)]
+        )
     for line in found:
         print(line)
     print(f"{len(found)} finding(s)")

@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Unlicense
 """devices.phoenix.tooling.stock: the PICO 4's members of PICO's full OTA, and its firmware default."""
+
 import json
 import re
 import unittest
 from pathlib import Path
 
-from overpressure import ota
-
 from devices.phoenix.tooling import FIRMWARE, doctor, localconfig, stock
+from overpressure import ota
 
 ROOT = Path(__file__).resolve().parents[1]
 

@@ -1,4 +1,8 @@
 # SPDX-License-Identifier: Unlicense
+"""pico4-imu: the head IMU through the sensor DSP's client service, against a fake service."""
+
+from __future__ import annotations
+
 import contextlib
 import importlib.machinery
 import importlib.util
@@ -8,11 +12,13 @@ import math
 import struct
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 PATH = Path(__file__).resolve().parents[1] / "userspace/rootfs/usr/bin/pico4-imu"
 _loader = importlib.machinery.SourceFileLoader("pico4_imu", str(PATH))
 _spec = importlib.util.spec_from_loader("pico4_imu", _loader)
+assert _spec is not None
 imu = importlib.util.module_from_spec(_spec)
 _loader.exec_module(imu)
 
@@ -24,7 +30,12 @@ SERVER = (9, 77)
 class FakeDsp:
     """The SNS client service and QRTR name service, as seen through a socket."""
 
-    def __init__(self, rate_scale=1.0, gyro=(0.001, -0.002, 0.0005), gravity=(0.0, 0.0, 9.80665)):
+    def __init__(
+        self,
+        rate_scale: float = 1.0,
+        gyro: tuple[float, float, float] = (0.001, -0.002, 0.0005),
+        gravity: tuple[float, float, float] = (0.0, 0.0, 9.80665),
+    ):
         self.queue = []
         self.enabled = {}
         self.ticks = {ACCEL: 1_000_000, GYRO: 1_000_000}
@@ -33,21 +44,23 @@ class FakeDsp:
         self.requests = []
 
     # socket interface
-    def getsockname(self):
+    def getsockname(self) -> tuple[int, int]:
         return (1, 4242)
 
-    def sendto(self, data, addr):
+    def sendto(self, data: bytes, addr: tuple[int, int]) -> None:
         if addr == (1, imu.QRTR_PORT_CTRL):
             cmd, service = struct.unpack_from("<II", data)
-            assert cmd == imu.QRTR_TYPE_NEW_LOOKUP and service == imu.SNS_CLIENT_SERVICE
+            assert cmd == imu.QRTR_TYPE_NEW_LOOKUP
+            assert service == imu.SNS_CLIENT_SERVICE
             self.queue.append(struct.pack("<IIIII", imu.QRTR_TYPE_NEW_SERVER, service, 1, *SERVER))
             self.queue.append(struct.pack("<IIIII", imu.QRTR_TYPE_NEW_SERVER, 0, 0, 0, 0))
             return
         assert addr == SERVER
         msg_type, txn, msg_id, tlvs = imu.qmi_parse(data)
-        assert msg_type == imu.QMI_REQUEST and msg_id == imu.SSC_MSG_CONTROL
+        assert msg_type == imu.QMI_REQUEST
+        assert msg_id == imu.SSC_MSG_CONTROL
         (length,) = struct.unpack_from("<H", tlvs[0x01])
-        request = imu.pb_parse(tlvs[0x01][2:2 + length])
+        request = imu.pb_parse(tlvs[0x01][2 : 2 + length])
         suid = imu.parse_suid(imu.pb_first(request, 1))
         req_id = imu.u32(imu.pb_first(request, 2))
         body = imu.pb_parse(imu.pb_first(request, 4))
@@ -63,8 +76,9 @@ class FakeDsp:
         elif req_id == imu.MSG_ATTR_REQ:
             name = imu.pb_bytes(1, imu.pb_bytes(2, b"icm4x6xx"))
             rates = imu.pb_bytes(1, imu.pb_bytes(3, struct.pack("<f", 500.0)))
-            attrs = (imu.pb_bytes(1, imu.pb_varint(1, 0) + imu.pb_bytes(2, name))
-                     + imu.pb_bytes(1, imu.pb_varint(1, 6) + imu.pb_bytes(2, rates)))
+            attrs = imu.pb_bytes(1, imu.pb_varint(1, 0) + imu.pb_bytes(2, name)) + imu.pb_bytes(
+                1, imu.pb_varint(1, 6) + imu.pb_bytes(2, rates)
+            )
             self._indicate(suid, [(imu.MSG_ATTR_EVENT, 0, attrs)])
         elif req_id == imu.MSG_CONFIG:
             rate = struct.unpack("<f", imu.pb_first(imu.pb_parse(payload), 1))[0]
@@ -73,26 +87,28 @@ class FakeDsp:
         elif req_id == imu.MSG_DISABLE:
             self.enabled.pop(suid, None)
 
-    def recvfrom(self, _size):
+    def recvfrom(self, _size: int) -> tuple[bytes, tuple[int, int]]:
         if not self.queue:
             self._samples()
         return self.queue.pop(0), SERVER
 
-    def ready(self):
+    def ready(self) -> bool:
         return bool(self.queue or self.enabled)
 
     # helpers
-    def _indicate(self, suid, events, large=False):
+    def _indicate(self, suid: tuple[int, int], events: list[tuple[int, int, bytes]], *, large: bool = False) -> None:
         msg = imu.pb_bytes(1, imu.suid_bytes(suid))
         for msg_id, ts, payload in events:
             msg += imu.pb_bytes(2, imu.pb_fixed32(1, msg_id) + imu.pb_fixed64(2, ts) + imu.pb_bytes(3, payload))
         tlvs = imu.qmi_tlv(0x01, struct.pack("<Q", 5)) + imu.qmi_tlv(0x02, struct.pack("<H", len(msg)) + msg)
-        self.queue.append(imu.qmi_message(imu.QMI_INDICATION, 0, imu.SSC_IND_LARGE if large else imu.SSC_IND_SMALL, tlvs))
+        self.queue.append(
+            imu.qmi_message(imu.QMI_INDICATION, 0, imu.SSC_IND_LARGE if large else imu.SSC_IND_SMALL, tlvs)
+        )
 
-    def _samples(self):
+    def _samples(self) -> None:
         for suid, rate in self.enabled.items():
             events = []
-            for i in range(10):
+            for _i in range(10):
                 self.ticks[suid] += int(imu.QTIMER_HZ / rate)
                 x, y, z = self.values[suid]
                 noise = 0.001 * math.sin(self.ticks[suid])
@@ -101,16 +117,22 @@ class FakeDsp:
             self._indicate(suid, events, large=True)
 
 
-def run(dsp, argv):
-    def fake_select(rlist, _w, _x, _timeout=None):
+def run(dsp: FakeDsp, argv: list[str]) -> tuple[int, dict[str, Any]]:
+    """Run pico4-imu against the fake service; return its exit code and its JSON output."""
+
+    def fake_select(
+        rlist: list[object], _w: list[object], _x: list[object], _timeout: float | None = None
+    ) -> tuple[list[object], list[object], list[object]]:
         return (rlist, [], []) if dsp.ready() else ([], [], [])
 
-    clock = iter(range(10 ** 9))
+    clock = iter(range(10**9))
     out = io.StringIO()
-    with mock.patch.object(imu.socket, "socket", lambda *a: dsp), \
-            mock.patch.object(imu.select, "select", fake_select), \
-            mock.patch.object(imu.time, "monotonic", lambda: next(clock) * 0.0005), \
-            contextlib.redirect_stdout(out):
+    with (
+        mock.patch.object(imu.socket, "socket", return_value=dsp),
+        mock.patch.object(imu.select, "select", fake_select),
+        mock.patch.object(imu.time, "monotonic", side_effect=lambda: next(clock) * 0.0005),
+        contextlib.redirect_stdout(out),
+    ):
         code = imu.main(argv)
     return code, json.loads(out.getvalue())
 
@@ -209,7 +231,7 @@ class StreamTests(unittest.TestCase):
 
     def test_missing_service_is_reported(self):
         dsp = FakeDsp()
-        dsp.sendto = lambda data, addr: None
+        dsp.sendto = mock.Mock(return_value=None)
         code, out = run(dsp, ["stream"])
         self.assertEqual(code, 1)
         self.assertIn("SNS client service", out["error"])

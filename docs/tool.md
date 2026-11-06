@@ -146,3 +146,27 @@ fastboot. It never falls back to flashing.
 A step is a command line: either a command of the headset (`python -m overpressure --device
 CODENAME ...`) or a script in the headset's folder. The window adds nothing a terminal cannot
 do, so a step that works in the window works in a terminal and the other way round.
+
+## Development
+
+The tool needs no package to run, but working on it uses [uv](https://docs.astral.sh/uv/) and Astral's
+[ruff](https://docs.astral.sh/ruff/) and [ty](https://docs.astral.sh/ty/). `pyproject.toml` pins them in the
+`dev` dependency group and configures them; `uv.lock` holds the exact versions.
+
+```sh
+uv sync                        # .venv with the tool (editable), ruff, ty and pyusb for the types
+uv run python -m unittest      # the host tests in that environment
+uv run ruff format .           # formatting (line length 120)
+uv run ruff check .            # lint, every rule; --fix applies the safe fixes
+uv run ty check                # types, for Python 3.9 on every platform
+```
+
+ruff runs every rule (`select = ["ALL"]`). `pyproject.toml` turns off only what conflicts: ruff's incompatible
+docstring pairs, the trailing commas the formatter places, pytest's assertion style (the tests are unittest);
+tests need no docstrings or return annotations on their test methods, and `print` is allowed outside the tests,
+since everything else is a command-line program. Any other exception is a `# noqa: RULE` with its reason on the
+line.
+
+`make lint` runs the three checks as CI does, `make format` formats and applies the safe fixes. Both also cover
+the headset's Python programs without a suffix in `devices/*/userspace/rootfs/`, which `pyproject.toml` lists
+by name; `tests/test_repo_checks.py` fails when one is missing there.

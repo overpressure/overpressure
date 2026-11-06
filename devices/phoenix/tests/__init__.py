@@ -12,4 +12,4 @@ from overpressure import tools as _tools
 
 _tools.CACHE = _Path(_tempfile.mkdtemp(prefix="overpressure-tools-"))
 _tools.NCM_VENV = _tools.CACHE / _tools.NCM_VENV.name
-_atexit.register(_shutil.rmtree, _tools.CACHE, True)
+_atexit.register(_shutil.rmtree, _tools.CACHE, ignore_errors=True)

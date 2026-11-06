@@ -9,6 +9,7 @@ tar with APKINDEX and DESCRIPTION. ``<key>`` names one of Alpine's signing keys.
 HTTPS only authenticates the mirror; the signature ties the index (and through its
 "C:" checksums every package) to Alpine's own keys, as apk-tools does.
 """
+
 from __future__ import annotations
 
 import base64
@@ -70,10 +71,17 @@ _DIGEST_INFO = {
 # Signature entry prefixes and the hash each one implies.
 _SIGN_PREFIXES = ((".SIGN.RSA256.", "sha256"), (".SIGN.RSA.", "sha1"))
 _RSA_ENCRYPTION_OID = bytes.fromhex("2a864886f70d010101")  # 1.2.840.113549.1.1.1
+_DER_MAX_LENGTH_BYTES = 4  # longer length fields than this are no key's
+_PEM_MIN_LINES = 3  # the BEGIN line, the base64 and the END line
+_RSA_MIN_BITS = 1024
+_RSA_MIN_EXPONENT = 3
+_SIGNED_INDEX_STREAMS = 2  # the signature stream and the index stream
 
 
 @dataclass(frozen=True)
 class RsaPublicKey:
+    """An RSA public key: modulus and public exponent."""
+
     n: int
     e: int
 
@@ -86,53 +94,69 @@ class RsaPublicKey:
 def _der_read(data: bytes, pos: int, tag: int) -> tuple[bytes, int]:
     """Read one DER element with ``tag`` at ``pos``; return (content, next position)."""
     if pos + 2 > len(data) or data[pos] != tag:
-        raise SignatureError(f"public key: expected DER tag 0x{tag:02x} at offset {pos}")
+        msg = f"public key: expected DER tag 0x{tag:02x} at offset {pos}"
+        raise SignatureError(msg)
     length, pos = data[pos + 1], pos + 2
     if length & 0x80:
         count = length & 0x7F
-        if count == 0 or count > 4 or pos + count > len(data):
-            raise SignatureError("public key: unsupported DER length")
-        length, pos = int.from_bytes(data[pos:pos + count], "big"), pos + count
+        if count == 0 or count > _DER_MAX_LENGTH_BYTES or pos + count > len(data):
+            msg = "public key: unsupported DER length"
+            raise SignatureError(msg)
+        length, pos = int.from_bytes(data[pos : pos + count], "big"), pos + count
     if pos + length > len(data):
-        raise SignatureError("public key: truncated DER element")
-    return data[pos:pos + length], pos + length
+        msg = "public key: truncated DER element"
+        raise SignatureError(msg)
+    return data[pos : pos + length], pos + length
 
 
 def _der_uint(content: bytes) -> int:
     if not content or content[0] & 0x80:
-        raise SignatureError("public key: negative or empty INTEGER")
+        msg = "public key: negative or empty INTEGER"
+        raise SignatureError(msg)
     return int.from_bytes(content, "big")
 
 
 def parse_public_key(pem: str) -> RsaPublicKey:
     """Parse a PEM SubjectPublicKeyInfo holding an RSA key (what Alpine publishes)."""
-    lines = [l.strip() for l in pem.strip().splitlines()]
-    if len(lines) < 3 or lines[0] != "-----BEGIN PUBLIC KEY-----" or lines[-1] != "-----END PUBLIC KEY-----":
-        raise SignatureError("public key: not a PEM PUBLIC KEY")
+    lines = [line.strip() for line in pem.strip().splitlines()]
+    if (
+        len(lines) < _PEM_MIN_LINES
+        or lines[0] != "-----BEGIN PUBLIC KEY-----"
+        or lines[-1] != "-----END PUBLIC KEY-----"
+    ):
+        msg = "public key: not a PEM PUBLIC KEY"
+        raise SignatureError(msg)
     try:
         der = base64.b64decode("".join(lines[1:-1]), validate=True)
     except binascii.Error as exc:
-        raise SignatureError(f"public key: bad base64 ({exc})") from None
+        msg = f"public key: bad base64 ({exc})"
+        raise SignatureError(msg) from None
     spki, end = _der_read(der, 0, 0x30)
     if end != len(der):
-        raise SignatureError("public key: trailing data")
+        msg = "public key: trailing data"
+        raise SignatureError(msg)
     algorithm, pos = _der_read(spki, 0, 0x30)
     oid, _ = _der_read(algorithm, 0, 0x06)
     if oid != _RSA_ENCRYPTION_OID:
-        raise SignatureError("public key: not an RSA key")
+        msg = "public key: not an RSA key"
+        raise SignatureError(msg)
     bits, pos = _der_read(spki, pos, 0x03)
     if pos != len(spki) or not bits or bits[0] != 0:
-        raise SignatureError("public key: malformed BIT STRING")
+        msg = "public key: malformed BIT STRING"
+        raise SignatureError(msg)
     rsa_key, end = _der_read(bits, 1, 0x30)
     if end != len(bits):
-        raise SignatureError("public key: trailing data in RSAPublicKey")
+        msg = "public key: trailing data in RSAPublicKey"
+        raise SignatureError(msg)
     n_der, pos = _der_read(rsa_key, 0, 0x02)
     e_der, pos = _der_read(rsa_key, pos, 0x02)
     if pos != len(rsa_key):
-        raise SignatureError("public key: trailing data in RSAPublicKey")
+        msg = "public key: trailing data in RSAPublicKey"
+        raise SignatureError(msg)
     n, e = _der_uint(n_der), _der_uint(e_der)
-    if n.bit_length() < 1024 or e < 3 or e % 2 == 0:
-        raise SignatureError("public key: implausible RSA parameters")
+    if n.bit_length() < _RSA_MIN_BITS or e < _RSA_MIN_EXPONENT or e % 2 == 0:
+        msg = "public key: implausible RSA parameters"
+        raise SignatureError(msg)
     return RsaPublicKey(n, e)
 
 
@@ -164,9 +188,11 @@ def split_gzip_streams(raw: bytes) -> list[bytes]:
         try:
             d.decompress(raw[pos:])
         except zlib.error as exc:
-            raise SignatureError(f"corrupt gzip stream at offset {pos}: {exc}") from None
+            msg = f"corrupt gzip stream at offset {pos}: {exc}"
+            raise SignatureError(msg) from None
         if not d.eof:
-            raise SignatureError(f"truncated gzip stream at offset {pos}")
+            msg = f"truncated gzip stream at offset {pos}"
+            raise SignatureError(msg)
         end = len(raw) - len(d.unused_data)
         streams.append(raw[pos:end])
         pos = end
@@ -181,7 +207,11 @@ def _signatures(stream: bytes) -> list[tuple[str, str, bytes]]:
             for m in tf:
                 for prefix, digest in _SIGN_PREFIXES:
                     if m.isreg() and m.name.startswith(prefix):
-                        found.append((m.name[len(prefix):], digest, tf.extractfile(m).read()))
+                        reader = tf.extractfile(m)
+                        if reader is None:
+                            msg = f"{m.name}: not a file in the index"
+                            raise SignatureError(msg)
+                        found.append((m.name[len(prefix) :], digest, reader.read()))
                         break
         except tarfile.ReadError:
             pass  # apk writes signature tars without the end-of-archive blocks
@@ -195,27 +225,33 @@ def verify_index(raw: bytes, keys: dict[str, str], what: str = "APKINDEX.tar.gz"
     by other keys are ignored, as apk-tools does. Returns the name of the key used.
     """
     streams = split_gzip_streams(raw)
-    if len(streams) != 2:
-        raise SignatureError(f"{what}: expected a signature and an index stream, found {len(streams)} gzip stream(s)")
+    if len(streams) != _SIGNED_INDEX_STREAMS:
+        msg = f"{what}: expected a signature and an index stream, found {len(streams)} gzip stream(s)"
+        raise SignatureError(msg)
     try:
         sigs = _signatures(streams[0])
     except (tarfile.TarError, zlib.error) as exc:
-        raise SignatureError(f"{what}: unreadable signature stream ({exc})") from None
+        msg = f"{what}: unreadable signature stream ({exc})"
+        raise SignatureError(msg) from None
     if not sigs:
-        raise SignatureError(f"{what}: not signed (no .SIGN.RSA entry)")
+        msg = f"{what}: not signed (no .SIGN.RSA entry)"
+        raise SignatureError(msg)
     trusted = [(name, digest, sig) for name, digest, sig in sigs if name in keys]
     if not trusted:
         names = ", ".join(name for name, _, _ in sigs)
-        raise SignatureError(f"{what}: signed by unknown key(s) {names}; pinned: {', '.join(sorted(keys))}")
+        msg = f"{what}: signed by unknown key(s) {names}; pinned: {', '.join(sorted(keys))}"
+        raise SignatureError(msg)
     for name, digest, sig in trusted:
         if not verify_pkcs1v15(parse_public_key(keys[name]), streams[1], sig, digest):
-            raise SignatureError(f"{what}: bad {digest} signature by {name}")
+            msg = f"{what}: bad {digest} signature by {name}"
+            raise SignatureError(msg)
     return trusted[0][0]
 
 
 def alpine_keys(arch: str) -> dict[str, str]:
-    """The pinned Alpine signing keys for ``arch``."""
+    """Return the pinned Alpine signing keys for ``arch``."""
     try:
         return ALPINE_KEYS[arch]
     except KeyError:
-        raise SignatureError(f"no pinned Alpine signing keys for {arch}") from None
+        msg = f"no pinned Alpine signing keys for {arch}"
+        raise SignatureError(msg) from None

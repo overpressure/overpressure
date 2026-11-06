@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """The PICO 4's tree and configuration for Valve's kernel: battery, audio and the cameras."""
+
 import re
 import unittest
 from pathlib import Path
@@ -9,15 +10,25 @@ KERNEL = ROOT / "kernel"
 
 
 def text(path: Path) -> str:
+    """Return a file's text."""
     return path.read_text(encoding="utf-8")
 
 
 def tree() -> str:
+    """Return the headset's device tree source."""
     return text(KERNEL / "sm8250-pico4-phoenix.dts")
 
 
 def config() -> str:
+    """Return the headset's kernel configuration fragment."""
     return text(KERNEL / "pico4.config")
+
+
+def search(pattern: str, string: str, flags: int = 0) -> "re.Match[str]":
+    """re.search that fails the test when the pattern is missing."""
+    match = re.search(pattern, string, flags)
+    assert match is not None, pattern
+    return match
 
 
 class BatteryTests(unittest.TestCase):
@@ -26,8 +37,8 @@ class BatteryTests(unittest.TestCase):
     def test_driver_is_built_in_and_matches_the_tree(self):
         self.assertIn("CONFIG_BATTERY_PICO4_PM8150B=y", config())
         self.assertIn('#include "pm8150b.dtsi"', tree())
-        compatible = re.search(r'\.compatible = "([^"]+)"', text(self.DRIVER)).group(1)
-        node = re.search(r"battery@4000 \{(.*?)\};", tree(), re.S).group(1)
+        compatible = search(r'\.compatible = "([^"]+)"', text(self.DRIVER)).group(1)
+        node = search(r"battery@4000 \{(.*?)\};", tree(), re.DOTALL).group(1)
         self.assertIn(f'compatible = "{compatible}";', node)
         # The fuel gauge's SOC block, the charger and the USB input, in the driver's order.
         self.assertIn("reg = <0x4000>, <0x1000>, <0x1300>;", node)
@@ -60,15 +71,19 @@ class BatteryTests(unittest.TestCase):
 
 class AudioTreeTests(unittest.TestCase):
     def test_kernel_has_the_cards_drivers(self):
-        for option in ("CONFIG_SND_SOC_SM8250=y", "CONFIG_SND_SOC_WSA881X=y", "CONFIG_SND_SOC_WCD938X_SDW=y",
-                       "CONFIG_PINCTRL_SM8250_LPASS_LPI=y"):
+        for option in (
+            "CONFIG_SND_SOC_SM8250=y",
+            "CONFIG_SND_SOC_WSA881X=y",
+            "CONFIG_SND_SOC_WCD938X_SDW=y",
+            "CONFIG_PINCTRL_SM8250_LPASS_LPI=y",
+        ):
             self.assertIn(option, config())
 
     def test_speakers_are_the_stock_units(self):
         t = tree()
         # The stock 0x1020170211 (right, shutdown GPIO 127) and 0x1020170212 (left, GPIO 129).
-        right = re.search(r"right_spkr: speaker@0,1 \{(.*?)\};", t, re.S).group(1)
-        left = re.search(r"left_spkr: speaker@0,2 \{(.*?)\};", t, re.S).group(1)
+        right = search(r"right_spkr: speaker@0,1 \{(.*?)\};", t, re.DOTALL).group(1)
+        left = search(r"left_spkr: speaker@0,2 \{(.*?)\};", t, re.DOTALL).group(1)
         for node, gpio, prefix in ((right, 127, "SpkrRight"), (left, 129, "SpkrLeft")):
             self.assertIn('compatible = "sdw10217201000";', node)
             self.assertIn(f"powerdown-gpios = <&tlmm {gpio} GPIO_ACTIVE_LOW>;", node)
@@ -76,7 +91,7 @@ class AudioTreeTests(unittest.TestCase):
 
     def test_codec_has_the_stock_supplies_and_bias(self):
         t = tree()
-        codec = re.search(r"wcd938x: audio-codec \{(.*?)\n\t\};", t, re.S).group(1)
+        codec = search(r"wcd938x: audio-codec \{(.*?)\n\t\};", t, re.DOTALL).group(1)
         self.assertIn("reset-gpios = <&tlmm 32 GPIO_ACTIVE_LOW>;", codec)
         self.assertIn("vdd-mic-bias-supply = <&vreg_bob>;", codec)
         self.assertEqual(codec.count("-microvolt = <2700000>;"), 4)
@@ -85,10 +100,10 @@ class AudioTreeTests(unittest.TestCase):
 
     def test_audio_process_gets_the_stock_remote_heap(self):
         t = tree()
-        heap = re.search(r"adsp_rpc_heap: adsp-rpc-heap \{(.*?)\};", t, re.S).group(1)
+        heap = search(r"adsp_rpc_heap: adsp-rpc-heap \{(.*?)\};", t, re.DOTALL).group(1)
         self.assertIn("size = <0x0 0xc00000>;", heap)
         self.assertIn("reusable;", heap)
-        fastrpc = re.search(r"&\{/soc@0/remoteproc@17300000/glink-edge/fastrpc\} \{(.*?)\};", t, re.S).group(1)
+        fastrpc = search(r"&\{/soc@0/remoteproc@17300000/glink-edge/fastrpc\} \{(.*?)\};", t, re.DOTALL).group(1)
         self.assertIn("memory-region = <&adsp_rpc_heap>;", fastrpc)
         # The stock tree's qcom,adsp-remoteheap-vmid = <0x16 0x25>.
         self.assertIn("qcom,vmids = <QCOM_SCM_VMID_LPASS QCOM_SCM_VMID_ADSP_HEAP>;", fastrpc)
@@ -100,8 +115,12 @@ class AudioCalibrationTests(unittest.TestCase):
     def test_core_commands_are_the_stock_drivers(self):
         # Opcodes as PICO's audio_q6.ko builds them (q6core_set_cal, q6core_map_memory_regions).
         patch = text(self.PATCH)
-        for define in ("AVCS_CMD_SHARED_MEM_MAP_REGIONS\t\t0x00012924", "AVCS_CMD_REGISTER_TOPOLOGIES\t\t0x00012923",
-                       "AVCS_CMD_DEREGISTER_TOPOLOGIES\t\t0x0001292a", "ADM_CMD_SET_PP_PARAMS_V6\t0x0001035d"):
+        for define in (
+            "AVCS_CMD_SHARED_MEM_MAP_REGIONS\t\t0x00012924",
+            "AVCS_CMD_REGISTER_TOPOLOGIES\t\t0x00012923",
+            "AVCS_CMD_DEREGISTER_TOPOLOGIES\t\t0x0001292a",
+            "ADM_CMD_SET_PP_PARAMS_V6\t0x0001035d",
+        ):
             self.assertIn(define, patch)
 
     def test_routing_opens_with_the_paths_topology_and_falls_back(self):
@@ -113,9 +132,9 @@ class AudioCalibrationTests(unittest.TestCase):
         self.assertIn("+obj-$(CONFIG_SND_SOC_QDSP6_ROUTING) += q6routing.o q6calibration-pico4.o", text(self.PATCH))
 
     def test_tree_gives_the_driver_the_audio_smmu_stream(self):
-        node = re.search(r"&q6adm \{\s*calibration \{(.*?)\};", tree(), re.S).group(1)
+        node = search(r"&q6adm \{\s*calibration \{(.*?)\};", tree(), re.DOTALL).group(1)
         driver = text(KERNEL / "src/sound/soc/qcom/qdsp6/q6calibration-pico4.c")
-        compatible = re.search(r'\.compatible = "([^"]+)"', driver).group(1)
+        compatible = search(r'\.compatible = "([^"]+)"', driver).group(1)
         self.assertIn(f'compatible = "{compatible}";', node)
         # The stream q6asm-dai's buffers use (sm8250.dtsi), which the ADSP reads them through.
         self.assertIn("iommus = <&apps_smmu 0x1801 0x0>;", node)
@@ -125,14 +144,14 @@ class CameraTests(unittest.TestCase):
     DRIVER = KERNEL / "src/drivers/media/i2c/pico4-ov7251.c"
 
     def sensors(self):
-        return re.findall(r"camera-([0-3]) \{(.*?)\n\t\};", tree(), re.S)
+        return re.findall(r"camera-([0-3]) \{(.*?)\n\t\};", tree(), re.DOTALL)
 
     def test_sensors_are_no_i2c_clients(self):
         # The station owns their control port: the stock kernel never talks to them either.
         self.assertNotIn("ovti,ov7251", tree())
         self.assertIn("CONFIG_VIDEO_PICO4_OV7251=y", config())
         self.assertNotIn("CONFIG_VIDEO_OV7251=y", config())
-        compatible = re.search(r'\.compatible = "([^"]+)"', text(self.DRIVER)).group(1)
+        compatible = search(r'\.compatible = "([^"]+)"', text(self.DRIVER)).group(1)
         for slot, sensor in self.sensors():
             self.assertIn(f'compatible = "{compatible}";', sensor)
             self.assertIn(f"pico,camera-slot = <{slot}>;", sensor)
@@ -147,8 +166,12 @@ class CameraTests(unittest.TestCase):
 
     def test_stock_wiring(self):
         # Each slot's MCLK and CSIPHY endpoint, as the stock overlay's cells 0-3.
-        wiring = {"0": ("3", "csiphy5_ep"), "1": ("4", "csiphy3_cam1_ep"), "2": ("2", "csiphy3_cam2_ep"),
-                  "3": ("5", "csiphy4_ep")}
+        wiring = {
+            "0": ("3", "csiphy5_ep"),
+            "1": ("4", "csiphy3_cam1_ep"),
+            "2": ("2", "csiphy3_cam2_ep"),
+            "3": ("5", "csiphy4_ep"),
+        }
         for slot, sensor in self.sensors():
             mclk, remote = wiring[slot]
             self.assertIn(f"clocks = <&camcc CAM_CC_MCLK{mclk}_CLK>;", sensor)
@@ -157,8 +180,8 @@ class CameraTests(unittest.TestCase):
     def test_combo_phy_uses_the_stock_lanes(self):
         # On CSIPHY 3: one sensor on data lane 0 with the clock lane, the other on lane 2, lane 3 its clock.
         t = tree()
-        first = re.search(r"csiphy3_cam1_ep: endpoint@0 \{(.*?)\};", t, re.S).group(1)
-        second = re.search(r"csiphy3_cam2_ep: endpoint@1 \{(.*?)\};", t, re.S).group(1)
+        first = search(r"csiphy3_cam1_ep: endpoint@0 \{(.*?)\};", t, re.DOTALL).group(1)
+        second = search(r"csiphy3_cam2_ep: endpoint@1 \{(.*?)\};", t, re.DOTALL).group(1)
         self.assertIn("data-lanes = <0>;", first)
         self.assertIn("clock-lanes = <3>;", second)
         self.assertIn("data-lanes = <2>;", second)
@@ -172,7 +195,7 @@ class CameraTests(unittest.TestCase):
     def test_ccis_run_at_the_stock_rate(self):
         t = tree()
         for n in (0, 1):
-            cci = re.search(rf"&cci{n} \{{(.*?)\}};", t, re.S).group(1)
+            cci = search(rf"&cci{n} \{{(.*?)\}};", t, re.DOTALL).group(1)
             self.assertIn(f"assigned-clocks = <&camcc CAM_CC_CCI_{n}_CLK_SRC>;", cci)
             self.assertIn("assigned-clock-rates = <37500000>;", cci)
 
@@ -208,7 +231,11 @@ class DspStreamAndPortTests(unittest.TestCase):
 
 
 class SoundWireFrameTests(unittest.TestCase):
-    PATCH = KERNEL / "patches/0026-soundwire-qcom-the-frames-sync-points-and-the-port-offsets-as-the-stock-kernel-programs-them.patch"
+    PATCH = (
+        KERNEL
+        / "patches"
+        / "0026-soundwire-qcom-the-frames-sync-points-and-the-port-offsets-as-the-stock-kernel-programs-them.patch"
+    )
 
     def test_sync_points_run_at_the_stock_kernels_rate(self):
         patch = text(self.PATCH)
@@ -307,8 +334,8 @@ class GpuPreemptionTests(unittest.TestCase):
 
     def test_a_preemption_restores_the_blocks_addressing(self):
         patch = text(self.PATCH)
-        list_ = patch[patch.index("+static const u32 a650_pwrup_reglist_regs[] = {"):]
-        list_ = list_[:list_.index("+};")]
+        list_ = patch[patch.index("+static const u32 a650_pwrup_reglist_regs[] = {") :]
+        list_ = list_[: list_.index("+};")]
         for block in ("VSC", "GRAS", "RB", "PC", "HLSQ", "VFD", "VPC", "UCHE", "SP", "TPL1"):
             self.assertIn(f"REG_A6XX_{block}_ADDR_MODE_CNTL,", list_)
         self.assertEqual(list_.count("+\tREG_"), 35)  # KGSL's 28 and the A650's 7
@@ -322,11 +349,11 @@ class RgbCameraTests(unittest.TestCase):
     CAM = ROOT / "src/monado/pico4_cam.c"
 
     def node(self) -> str:
-        return re.search(r"camera@1a \{(.*?)\n\t\};", tree(), re.S).group(1)
+        return search(r"camera@1a \{(.*?)\n\t\};", tree(), re.DOTALL).group(1)
 
     def test_driver_is_built_in_and_matches_the_tree(self):
         self.assertIn("CONFIG_VIDEO_PICO4_IMX471=y", config())
-        compatible = re.search(r'\.compatible = "([^"]+)"', text(self.DRIVER)).group(1)
+        compatible = search(r'\.compatible = "([^"]+)"', text(self.DRIVER)).group(1)
         self.assertIn(f'compatible = "{compatible}";', self.node())
 
     def test_wired_as_picos_board_overlay(self):
@@ -343,23 +370,23 @@ class RgbCameraTests(unittest.TestCase):
         # A voltage between the 8 mV steps takes the PMIC's whole regulator node down, with Wi-Fi,
         # audio and the station's power.
         for label, microvolts in (("vreg_l14a_1p8", 1800000), ("vreg_l2c_1p08", 1080000)):
-            node = re.search(label + r": ldo\d+ \{(.*?)\};", tree(), re.S).group(1)
+            node = search(label + r": ldo\d+ \{(.*?)\};", tree(), re.DOTALL).group(1)
             self.assertIn(f"regulator-min-microvolt = <{microvolts}>;", node)
             self.assertIn(f"regulator-max-microvolt = <{microvolts}>;", node)
             self.assertEqual(microvolts % 8000, 0)
 
     def test_the_camera_noc_is_above_its_boot_rate(self):
         # CAMSS never sets it: at 19.2 MHz the RGB camera's IFE-lite overflows on every frame.
-        camss = re.search(r"&camss \{(.*?)ports \{", tree(), re.S).group(1)
+        camss = search(r"&camss \{(.*?)ports \{", tree(), re.DOTALL).group(1)
         self.assertIn("assigned-clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK_SRC>;", camss)
         self.assertIn("assigned-clock-rates = <300000000>;", camss)
 
     def test_a_missing_sensor_fails_only_its_stream(self):
         # A probe error would keep CAMSS's notifier, and the tracking cameras, from completing.
         driver = text(self.DRIVER)
-        probe = driver[driver.index("static int pico4_imx471_probe"):driver.index("static void pico4_imx471_remove")]
+        probe = driver[driver.index("static int pico4_imx471_probe") : driver.index("static void pico4_imx471_remove")]
         self.assertNotIn("IMX471_REG_CHIP_ID", probe)
-        start = driver[driver.index("static int pico4_imx471_start"):driver.index("static int pico4_imx471_s_stream")]
+        start = driver[driver.index("static int pico4_imx471_start") : driver.index("static int pico4_imx471_s_stream")]
         self.assertIn("IMX471_REG_CHIP_ID", start)
 
     def test_the_third_lite_pair(self):
@@ -403,7 +430,7 @@ class FastRpcTests(unittest.TestCase):
         self.assertIn("ctx->pid != current->pid", added)
         self.assertIn("ctx->msg.handle == handle && ctx->sc == sc", added)
         # The resumed context waits without a second send, on the restarted call's arguments.
-        resume = added[added.index("ctx = fastrpc_context_resume"):]
+        resume = added[added.index("ctx = fastrpc_context_resume") :]
         self.assertLess(resume.index("ctx->args = args;"), resume.index("goto wait;"))
         self.assertIn("wait:\n\tif (kernel) {", patch.replace("\n+", "\n").replace("\n ", "\n"))
 
@@ -419,7 +446,6 @@ class FastRpcTests(unittest.TestCase):
         self.assertIn("if (req.fd < 0) {", added)
 
 
-
 class PanicResetTests(unittest.TestCase):
     def test_a_refused_warm_reset_has_two_more_ways_out(self):
         self.assertIn('compatible = "qcom,pshold";', tree())
@@ -431,8 +457,12 @@ class PanicResetTests(unittest.TestCase):
 
 class VenusRecoveryTests(unittest.TestCase):
     def test_a_failed_recovery_masks_the_interrupt_before_it_powers_down(self):
-        patch = text(KERNEL / "patches/0032-media-venus-a-failed-recovery-masks-the-interrupt-before-it-powers-down.patch")
-        self.assertLess(patch.index("+		disable_irq(core->irq);"), patch.index(" 	pm_runtime_put_sync(core->dev);"))
+        patch = text(
+            KERNEL / "patches/0032-media-venus-a-failed-recovery-masks-the-interrupt-before-it-powers-down.patch"
+        )
+        self.assertLess(
+            patch.index("+		disable_irq(core->irq);"), patch.index(" 	pm_runtime_put_sync(core->dev);")
+        )
         self.assertIn("-		disable_irq_nosync(core->irq);", patch)
 
     def test_h264_ends_its_stream_with_a_null_address(self):
@@ -443,8 +473,12 @@ class VenusRecoveryTests(unittest.TestCase):
 class PanelReportTests(unittest.TestCase):
     def test_a_wake_reads_the_panels_and_resends_while_the_lens_is_dark(self):
         source = text(KERNEL / "src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c")
-        wake = source[source.index("static int pico4_bl_update_status"):source.index("static const struct backlight_ops")]
-        self.assertLess(wake.index('pico4_report(ctx, "wake")'), wake.index("gpiod_set_value_cansleep(ctx->backlight, 1);"))
+        wake = source[
+            source.index("static int pico4_bl_update_status") : source.index("static const struct backlight_ops")
+        ]
+        self.assertLess(
+            wake.index('pico4_report(ctx, "wake")'), wake.index("gpiod_set_value_cansleep(ctx->backlight, 1);")
+        )
         self.assertIn("for (tries = 0; tries < 3; tries++)", wake)
 
 
@@ -453,8 +487,10 @@ class CodecAlertTests(unittest.TestCase):
         patch = text(KERNEL / "patches/0035-asoc-wcd938x-an-alert-during-system-sleep-is-handled-at-the-resume.patch")
         self.assertIn("+	if (!pm_runtime_enabled(&slave->dev)) {", patch)
         self.assertIn("+	SYSTEM_SLEEP_PM_OPS(NULL, wcd938x_sdw_resume)", patch)
-        self.assertLess(patch.index("+	regmap_read(wcd->regmap, WCD938X_DIGITAL_INTR_STATUS_0"),
-                        patch.index("+	wcd_interrupt_callback(wcd->sdev"))
+        self.assertLess(
+            patch.index("+	regmap_read(wcd->regmap, WCD938X_DIGITAL_INTR_STATUS_0"),
+            patch.index("+	wcd_interrupt_callback(wcd->sdev"),
+        )
 
 
 class CodecInterruptTests(unittest.TestCase):

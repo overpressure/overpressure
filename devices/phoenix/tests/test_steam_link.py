@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""Steam Link's client on the PICO 4: its video decoder and controllers."""
+
 import json
 import re
 import unittest
@@ -10,6 +12,7 @@ UNITS = ROOTFS / "usr/lib/systemd/system"
 
 
 def read(path: Path) -> str:
+    """Return a file's text."""
     return path.read_text(encoding="utf-8")
 
 
@@ -21,7 +24,7 @@ class SteamLinkTests(unittest.TestCase):
 
     def test_venus_firmware_from_the_modem_partition(self):
         extract = read(ROOT / "scripts/extract-graphics-firmware.sh")
-        self.assertIn("mcopy -n -i \"$stock/modem.bin\" '::/image/venus.*' \"$output/\"", extract)
+        self.assertIn('mcopy -n -i "$stock/modem.bin" \'::/image/venus.*\' "$output/"', extract)
         self.assertIn('install -m 0644 "$firmware"/venus.* "$T/usr/lib/firmware/"', self.build)
 
     def test_mainline_probes_venus_once_its_firmware_is_there(self):
@@ -49,7 +52,7 @@ class SteamLinkTests(unittest.TestCase):
     def test_the_compatibility_layer_reaches_vrlink_only(self):
         self.assertIn('build_package pico4-vrlink "$project"/src/vrlink/*', self.build)
         self.assertIn("pico4/pico4-vrlink", read(ROOT / "userspace/packages.txt").split())
-        self.assertIn("grep -qx '\\./vrlink \"\\$@\" &' \"$vrlink_run\"", self.build)
+        self.assertIn('grep -qx \'\\./vrlink "\\$@" &\' "$vrlink_run"', self.build)
         self.assertIn("LD_PRELOAD=/usr/lib/libpico4-vrlink-compat.so${LD_PRELOAD:+:$LD_PRELOAD} ./vrlink", self.build)
 
     def test_the_hook_is_exported_and_finds_the_real_interface(self):
@@ -74,7 +77,8 @@ class SteamLinkTests(unittest.TestCase):
         self.assertEqual(len(paths), 4)
         remapping = json.loads(read(ROOT / "userspace/session/frame-controller-remapping.json"))
         remapped = {(entry["from"], entry["to"]) for entry in remapping["autoremappings"]}
-        for frame, ours in paths:
+        for path in paths:
+            frame, ours = path
             if frame.startswith("/user/hand/left/input/thumbstick"):
                 # The file names the right hand's stick; the left's is its mirror.
                 frame, ours = frame.replace("left", "right"), ours.replace("left", "right")

@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""The audio units: started and timed as on PICO OS, capture through a suspend, the mainline kernel."""
+
 import re
 import unittest
 from pathlib import Path
@@ -9,11 +11,11 @@ UNITS = ROOTFS / "usr/lib/systemd/system"
 
 
 def unit(name: str) -> str:
+    """Return a system unit's text."""
     return (UNITS / name).read_text(encoding="utf-8")
 
 
 class AudioUnitTests(unittest.TestCase):
-
     def test_audio_process_is_started_as_on_pico_os(self):
         pd = unit("pico4-audiopd.service")
         self.assertIn("Requires=pico4-adsp.service", pd)
@@ -36,12 +38,13 @@ class AudioUnitTests(unittest.TestCase):
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertRegex(build, r"systemctl enable [^\n]*(\\\n[^\n]*)*pico4-audio\.target")
 
+
 class AudioTimingTests(unittest.TestCase):
     def test_rtkit_runs_with_the_frames_limits(self):
         # Same name as the Frame's vendor drop-in, so that it replaces it (docs/userspace.md#audio).
         dropin = (ROOTFS / "etc/systemd/system/rtkit-daemon.service.d/rtkit-limits.conf").read_text(encoding="utf-8")
         self.assertIn("ExecStart=\n", dropin)
-        command = dropin[dropin.rindex("ExecStart=/usr/lib/rtkit-daemon"):]
+        command = dropin[dropin.rindex("ExecStart=/usr/lib/rtkit-daemon") :]
         self.assertNotIn("--no-polkit", command)
         for option in ("--max-realtime-priority=80", "--our-realtime-priority=81", "--no-chroot"):
             self.assertIn(option, command)
@@ -51,8 +54,12 @@ class AudioTimingTests(unittest.TestCase):
     def test_sound_card_keeps_two_periods_of_headroom(self):
         rule = (ROOTFS / "etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf").read_text(encoding="utf-8")
         self.assertIn('node.name = "~alsa_output.platform-sound.*"', rule)
-        period = int(re.search(r"api\.alsa\.period-size = (\d+)", rule).group(1))
-        headroom = int(re.search(r"api\.alsa\.headroom = (\d+)", rule).group(1))
+        match = re.search(r"api\.alsa\.period-size = (\d+)", rule)
+        assert match is not None
+        period = int(match.group(1))
+        match = re.search(r"api\.alsa\.headroom = (\d+)", rule)
+        assert match is not None
+        headroom = int(match.group(1))
         self.assertEqual((period, headroom), (1024, 2 * period))
 
     def test_the_mainline_card_keeps_its_period_as_a_batch_device(self):
@@ -64,7 +71,9 @@ class AudioTimingTests(unittest.TestCase):
     def test_the_graph_stays_at_about_the_deep_buffer_period(self):
         # A game's 5 ms request runs the graph at 128 frames, where clients miss cycles under its load.
         conf = (ROOTFS / "etc/pipewire/pipewire.conf.d/51-pico4-quantum.conf").read_text(encoding="utf-8")
-        self.assertEqual(int(re.search(r"default\.clock\.min-quantum = (\d+)", conf).group(1)), 1024)
+        match = re.search(r"default\.clock\.min-quantum = (\d+)", conf)
+        assert match is not None
+        self.assertEqual(int(match.group(1)), 1024)
 
 
 class CaptureThroughSuspendTests(unittest.TestCase):
@@ -115,15 +124,24 @@ class MainlineAudioTests(unittest.TestCase):
         card = (d / "PICO4.conf").read_text(encoding="utf-8")
         self.assertIn('File "/conf.d/sm8250/PICO4-HiFi.conf"', card)
         verb = (d / "PICO4-HiFi.conf").read_text(encoding="utf-8")
-        for name in ("WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia1", "MultiMedia2 Mixer TX_CODEC_DMA_TX_3",
-                     "SpkrLeft DAC Switch", "SpkrRight DAC Switch", "ADC1 Switch"):
+        for name in (
+            "WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia1",
+            "MultiMedia2 Mixer TX_CODEC_DMA_TX_3",
+            "SpkrLeft DAC Switch",
+            "SpkrRight DAC Switch",
+            "ADC1 Switch",
+        ):
             self.assertIn(f"name='{name}'", verb)
         # The stock kernel's names have no place in the mainline profile.
         self.assertNotIn("CDC_DMA", verb)
         self.assertNotIn("DAC_Port", verb)
         # PICO OS's levels (mixer_paths.xml).
-        for line in ("cset \"name='WSA_RX0 Digital Volume' 84\"", "cset \"name='WSA_RX1 Digital Volume' 84\"",
-                     "cset \"name='TX_DEC0 Volume' 84\"", "cset \"name='ADC1 Volume' 12\""):
+        for line in (
+            "cset \"name='WSA_RX0 Digital Volume' 84\"",
+            "cset \"name='WSA_RX1 Digital Volume' 84\"",
+            "cset \"name='TX_DEC0 Volume' 84\"",
+            "cset \"name='ADC1 Volume' 12\"",
+        ):
             self.assertIn(line, card)
 
 

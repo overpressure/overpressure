@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: Unlicense
-"""The IMX471 RGB camera: the settings PICO OS's camera module gives it, in the kernel's
-driver, and its V4L2 path in pico4_cam."""
+"""The IMX471 RGB camera: PICO OS's settings in the kernel's driver, and its V4L2 path in pico4_cam."""
 
 import importlib.util
-import re
 import unittest
 from pathlib import Path
 
@@ -15,12 +13,14 @@ DRIVER = ROOT / "kernel/src/drivers/media/i2c/pico4-imx471.c"
 
 
 def read(path: Path) -> str:
+    """Return a file's text."""
     return path.read_text(encoding="utf-8")
 
 
 def function(source: str, name: str) -> str:
+    """Return a C function's definition from its source, up to its closing brace."""
     start = source.index("\n" + name + "(")
-    return source[start:source.index("\n}\n", start)]
+    return source[start : source.index("\n}\n", start)]
 
 
 class RgbCameraTests(unittest.TestCase):
@@ -34,6 +34,8 @@ class RgbCameraTests(unittest.TestCase):
     def test_the_50_fps_mode_fits_the_driver(self):
         # The table is generated at the build (kernel/imx471_mode.py) for this mode.
         spec = importlib.util.spec_from_file_location("imx471_mode", ROOT / "kernel/imx471_mode.py")
+        assert spec is not None
+        assert spec.loader is not None
         mode = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mode)
         source = read(DRIVER)
@@ -64,7 +66,7 @@ class RgbCameraTests(unittest.TestCase):
 
     def test_frames_have_no_metadata_line(self):
         fill = function(read(CAM), "v4l_fill_frame")
-        rgb = fill[fill.index("if (k->rgb) {\n\t\tf->width"):fill.index("return;")]
+        rgb = fill[fill.index("if (k->rgb) {\n\t\tf->width") : fill.index("return;")]
         self.assertIn("f->lines = PICO4_CAM_RGB_HEIGHT;", rgb)
         self.assertIn("f->data = vb->raw;", rgb)
 

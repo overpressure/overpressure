@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: Unlicense
+"""PICO OS's head tracker on the Compute DSP: its units, the driver's camera path, rooms, depth mesh and floor."""
+
+import math
 import re
 import unittest
+from collections.abc import Sequence
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +14,7 @@ LIBEXEC = ROOTFS / "usr/libexec/pico4"
 
 
 def read(path: Path) -> str:
+    """Return a file's text."""
     return path.read_text(encoding="utf-8")
 
 
@@ -41,7 +46,9 @@ class TrackerUnitTests(unittest.TestCase):
         # and restarts its listener every 100 ms, which also changes the IMU's rate.
         for name in ("pico4-slamd", "pico4-cdsprpcd"):
             unit = read(UNITS / f"{name}.service")
-            self.assertRegex(unit, r"(?m)^ConditionPathExists=/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge\.so$", name)
+            self.assertRegex(
+                unit, r"(?m)^ConditionPathExists=/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge\.so$", name
+            )
         # The bridge's path in the root is the one stock-slam preloads.
         self.assertIn("/pico4/libpico4-fastrpc-bridge.so", read(ROOT / "userspace/rootfs/usr/libexec/pico4/stock-slam"))
 
@@ -70,7 +77,7 @@ class RootRunnerTests(unittest.TestCase):
         self.assertIn("preload=/pico4/libpico4-slam-stubs.so:/pico4/libpico4-fastrpc-bridge.so\n", script)
         build = read(ROOT / "src/stockslam/build.sh")
         # Its translations are tested natively before the bionic library is built.
-        self.assertLess(build.index('"$work/test_fastrpc_bridge"'), build.index("libpico4-fastrpc-bridge.so\" \\"))
+        self.assertLess(build.index('"$work/test_fastrpc_bridge"'), build.index('libpico4-fastrpc-bridge.so" \\'))
         bridge = read(ROOT / "src/stockslam/fastrpc-bridge.c")
         for symbol in ("\nopen(", "\n__open_2(", "\nopenat(", "\n__openat_2(", "\nioctl(", "\nclose("):
             self.assertIn(symbol, bridge)
@@ -78,8 +85,13 @@ class RootRunnerTests(unittest.TestCase):
         self.assertNotIn("dlsym", bridge)
 
     def test_files_stay_lf(self):
-        for path in (LIBEXEC / "stock-slam", LIBEXEC / "remoteproc-boot", UNITS / "pico4-slamd.service",
-                     ROOT / "scripts/extract-stock-slam.sh", ROOT / "src/stockslam/build.sh"):
+        for path in (
+            LIBEXEC / "stock-slam",
+            LIBEXEC / "remoteproc-boot",
+            UNITS / "pico4-slamd.service",
+            ROOT / "scripts/extract-stock-slam.sh",
+            ROOT / "src/stockslam/build.sh",
+        ):
             self.assertNotIn(b"\r", path.read_bytes(), path.name)
 
 
@@ -87,10 +99,27 @@ class ExtractionTests(unittest.TestCase):
     def test_extracts_what_the_tracker_needs(self):
         script = read(ROOT / "scripts/extract-stock-slam.sh")
         # libion: without it the tracker's DSP optical flow cannot allocate and 6DoF never starts.
-        for name in ("libSlam.so", "libslamDSP.so", "libceres.so", "libminiglog.so", "libcdsprpc.so", "libion.so",
-                     "libslamDSP_skel.so", "libpico_cv_dsp_skel.so", "libfastcvadsp.so", "libdspCV_skel.so",
-                     "cdsprpcd", "libcdsp_default_listener.so", "linker64", "fastrpc_shell_3", "cdsp.mdt",
-                     "cdspr.jsn", "libExposureImageProcess.so", "libtianti_shm_dynamic.so", "libc++_shared.so"):
+        for name in (
+            "libSlam.so",
+            "libslamDSP.so",
+            "libceres.so",
+            "libminiglog.so",
+            "libcdsprpc.so",
+            "libion.so",
+            "libslamDSP_skel.so",
+            "libpico_cv_dsp_skel.so",
+            "libfastcvadsp.so",
+            "libdspCV_skel.so",
+            "cdsprpcd",
+            "libcdsp_default_listener.so",
+            "linker64",
+            "fastrpc_shell_3",
+            "cdsp.mdt",
+            "cdspr.jsn",
+            "libExposureImageProcess.so",
+            "libtianti_shm_dynamic.so",
+            "libc++_shared.so",
+        ):
             self.assertIn(name, script, name)
         # From the stock firmware (PICO's public OTA), checked against its manifest first.
         self.assertIn('stock_dir "${1:-}" system.img vendor.img modem.bin dsp.bin', script)
@@ -110,7 +139,9 @@ class BuildTests(unittest.TestCase):
         self.assertIn('install -m 0644 "$stock_slam"/firmware/cdsp* "$T/usr/lib/firmware/"', build)
         self.assertIn('bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" "$llvm"', build)
         self.assertIn('mv "$island/pico4/libandroid.so" "$island/system/lib64/libandroid.so"', build)
-        self.assertRegex(build, r"mkdir -p \"\$island\"/\{dev,proc,sys,data,tmp,mnt/vendor/persist/pvr,mnt/vendor/pvr\}")
+        self.assertRegex(
+            build, r"mkdir -p \"\$island\"/\{dev,proc,sys,data,tmp,mnt/vendor/persist/pvr,mnt/vendor/pvr\}"
+        )
         self.assertIn('"stock_slam": json.loads(stock)', build)
         # The manifest's script gets the list as its last argument.
         self.assertIn('"$wlan_json" "$audio_json" "$stock_json" >', build)
@@ -144,15 +175,15 @@ class ClockTests(unittest.TestCase):
         self.assertIn("if (now - clock_ns >= U_TIME_1S_IN_NS) {", hmd[thread:refresh])
         slam = read(ROOT / "src/monado/pico4_slam.c")
         sof = slam.index("frame_sof_ns(struct pico4_slam *s")
-        body = slam[sof:slam.index("\n}\n", sof)]
+        body = slam[sof : slam.index("\n}\n", sof)]
         self.assertIn("if (now - s->qtimer_measured_ns >= U_TIME_1S_IN_NS ||", body)
         self.assertIn("s->qtimer_offset_ns = qtimer_offset();", body)
 
     def test_controller_tracker_gets_the_head_pose_of_its_exposure(self):
         slam = read(ROOT / "src/monado/pico4_slam.c")
         head = slam.index("pico4_slam_get_head_pose(struct pico4_slam *s")
-        self.assertIn("if (at_ns < p.ts_ns) {", slam[head:head + 900])
-        self.assertIn("stock_pose_at(s, at_ns, &then)", slam[head:head + 900])
+        self.assertIn("if (at_ns < p.ts_ns) {", slam[head : head + 900])
+        self.assertIn("stock_pose_at(s, at_ns, &then)", slam[head : head + 900])
 
 
 class SlamdThreadTests(unittest.TestCase):
@@ -161,7 +192,7 @@ class SlamdThreadTests(unittest.TestCase):
         # up the samples and their poses.
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
         frame = slamd.index("frame_thread(void *arg)")
-        self.assertIn("c->image(c->h, 0, &frames);", slamd[frame:slamd.index("\n}\n", frame)])
+        self.assertIn("c->image(c->h, 0, &frames);", slamd[frame : slamd.index("\n}\n", frame)])
         self.assertIn("pthread_create(&thread, 0, frame_thread, &frames)", slamd)
         main = slamd.index("main(int argc")
         self.assertNotIn("image(h,", slamd[main:])
@@ -179,8 +210,9 @@ class TemperatureTests(unittest.TestCase):
         self.assertIn("pico4_ssc_enable(h->ssc, &h->temperature_suid, PICO4_TEMPERATURE_HZ)", hmd)
         # Single-value samples are taken before the three-axis check drops them.
         handle = hmd.index("handle_sample(struct pico4_hmd *h")
-        self.assertLess(hmd.index("suid_equal(&s->suid, &h->temperature_suid)", handle),
-                        hmd.index("if (s->count < 3)", handle))
+        self.assertLess(
+            hmd.index("suid_equal(&s->suid, &h->temperature_suid)", handle), hmd.index("if (s->count < 3)", handle)
+        )
         self.assertIn("pico4_slam_push_imu(h->slam, ts, h->last_accel_raw, s->values, h->temperature_c);", hmd)
         # Found again after a sensor DSP restart.
         recover = hmd.index("recover_imu(struct pico4_hmd *h")
@@ -207,15 +239,19 @@ class CameraOtpTests(unittest.TestCase):
         self.assertIn("isp_otp_valid(ids) ? open(OTP_PATH", slamd)
         # Once saved, a driver started again while this pico4-slamd runs reads no OTP.
         self.assertIn("memcpy(feed->otp_saved, ids, sizeof(ids));", slamd)
-        self.assertLess(slamd.index("memcpy(feed->otp_saved, saved, sizeof(saved));"),
-                        slamd.index("load_tables(camera_vendor(feed, generation))"))
+        self.assertLess(
+            slamd.index("memcpy(feed->otp_saved, saved, sizeof(saved));"),
+            slamd.index("load_tables(camera_vendor(feed, generation))"),
+        )
         self.assertIn("isp_lsc_file(vendor)", slamd)
 
     def test_driver_reads_the_otp_only_without_valid_saved_ids(self):
         slam = read(ROOT / "src/monado/pico4_slam.c")
-        attach = slam[slam.index("stock_attach(struct pico4_slam *s)"):]
-        self.assertLess(attach.index("stock_camera_otp(s, feed);"), attach.index("__atomic_add_fetch(&feed->generation"))
-        body = slam[slam.index("stock_camera_otp(struct pico4_slam *s"):]
+        attach = slam[slam.index("stock_attach(struct pico4_slam *s)") :]
+        self.assertLess(
+            attach.index("stock_camera_otp(s, feed);"), attach.index("__atomic_add_fetch(&feed->generation")
+        )
+        body = slam[slam.index("stock_camera_otp(struct pico4_slam *s") :]
         self.assertLess(body.index("if (otp_valid(saved))"), body.index("pico4_station_camera_otp(s->station, ids)"))
 
 
@@ -254,8 +290,8 @@ class SetAssemblyTests(unittest.TestCase):
     LINE_NS = 19069
     WINDOW_NS = 4_000_000
 
-    def complete(self, sofs, keys):
-        """The driver's assembly (pico4_cam_assembly_add) over one pulse's frames, in SOF order."""
+    def complete(self, sofs: Sequence[int], keys: Sequence[int]) -> bool:
+        """Run the driver's assembly (pico4_cam_assembly_add) over one pulse's frames, in SOF order."""
         first = None
         have = 0
         for _, key in sorted(zip(sofs, keys)):
@@ -272,9 +308,9 @@ class SetAssemblyTests(unittest.TestCase):
         lines = [308, 737, 510, 510]
         # Measured on the headset: the sensors centre their exposures on the pulse, so each start
         # of frame comes half its exposure after it (camera 1 +4.14 ms, cameras 2 and 3 +1.95 ms).
-        sofs = [l * self.LINE_NS // 2 for l in lines]
+        sofs = [n * self.LINE_NS // 2 for n in lines]
         self.assertFalse(self.complete(sofs, sofs))  # by start of frame: never a set (the stall)
-        keys = [sof - (self.LINE_NS * l >> 1) for sof, l in zip(sofs, lines)]
+        keys = [sof - (self.LINE_NS * n >> 1) for sof, n in zip(sofs, lines)]
         self.assertTrue(self.complete(sofs, keys))
 
     def test_both_assemblies_group_by_the_pulse(self):
@@ -288,8 +324,8 @@ class CaptureRecoveryTests(unittest.TestCase):
 
     def test_stall_is_logged_per_camera(self):
         slam = read(ROOT / "src/monado/pico4_slam.c")
-        stall = slam[slam.index("\nscene_stall(struct pico4_slam *s)"):]
-        stall = stall[:stall.index("\n}\n")]
+        stall = slam[slam.index("\nscene_stall(struct pico4_slam *s)") :]
+        stall = stall[: stall.index("\n}\n")]
         self.assertIn('"no complete scene set for %.1f s (%llu started): %s"', stall)
         # A camera without frames while the others deliver: its link is stuck.
         self.assertIn('s->restart_why = "a camera delivers no frames";', stall)
@@ -300,34 +336,43 @@ class CaptureRecoveryTests(unittest.TestCase):
 
     def test_camera_thread_restarts_the_capture(self):
         slam = read(ROOT / "src/monado/pico4_slam.c")
-        thread = slam[slam.index("\ncamera_thread(void *ptr)"):]
-        thread = thread[:thread.index("\n}\n")]
+        thread = slam[slam.index("\ncamera_thread(void *ptr)") :]
+        thread = thread[: thread.index("\n}\n")]
         self.assertIn('why = timeouts >= 5 ? "no camera frames for 1 s" : why;', thread)
         self.assertIn("now - restarted_ns >= (int64_t)5 * U_TIME_1S_IN_NS", thread)
         self.assertIn("restart_capture(s, why);", thread)
-        restart = slam[slam.index("\nrestart_capture(struct pico4_slam *s, const char *why)"):]
-        restart = restart[:restart.index("\n}\n")]
+        restart = slam[slam.index("\nrestart_capture(struct pico4_slam *s, const char *why)") :]
+        restart = restart[: restart.index("\n}\n")]
         # As the start: sync off, sessions again, sync on (a second stop when it refuses), exposure.
-        order = ["pico4_station_camera_stop(s->station);", "pico4_cam_close(s->cam);",
-                 "pico4_cam_open(&s->cam, &s->cam_config)", "pico4_cam_start(s->cam)",
-                 "pico4_station_camera_start(s->station)", "pico4_station_camera_set_exposure("]
+        order = [
+            "pico4_station_camera_stop(s->station);",
+            "pico4_cam_close(s->cam);",
+            "pico4_cam_open(&s->cam, &s->cam_config)",
+            "pico4_cam_start(s->cam)",
+            "pico4_station_camera_start(s->station)",
+            "pico4_station_camera_set_exposure(",
+        ]
         at = [restart.index(o) for o in order]
         self.assertEqual(at, sorted(at))
         self.assertIn("s->cam_config = cc;", slam)
 
     def test_a_new_rooms_universe_waits_for_a_wearer(self):
         patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
-        self.assertLess(patch.index("+					if (!known && m_worn != 1) {"),
-                        patch.index("+						((create_fn)vtable[0])(m_chaperone_server, universe, true);"))
+        self.assertLess(
+            patch.index("+					if (!known && m_worn != 1) {"),
+            patch.index("+						((create_fn)vtable[0])(m_chaperone_server, universe, true);"),
+        )
 
     def test_a_refused_camera_sync_at_the_start_is_tried_again(self):
         slam = read(ROOT / "src/monado/pico4_slam.c")
-        start = slam[slam.index("A timeout here would leave the head in 3DoF"):]
-        start = start[:start.index("goto fail;")]
+        start = slam[slam.index("A timeout here would leave the head in 3DoF") :]
+        start = start[: start.index("goto fail;")]
         self.assertIn("(r = pico4_station_camera_start(s->station)) < 0 && tries < 3", start)
         # After a timeout the radio refuses further starts: only its reset helps, as measured.
-        self.assertLess(start.index("SLAM_WARN(s, \"The controller radio refused camera sync (%s): resetting it\""),
-                        start.index("pico4_station_reset(s->station);"))
+        self.assertLess(
+            start.index('SLAM_WARN(s, "The controller radio refused camera sync (%s): resetting it"'),
+            start.index("pico4_station_reset(s->station);"),
+        )
         self.assertNotIn("pico4_station_camera_stop(", start)
 
     def test_overflow_free_durations(self):
@@ -368,7 +413,9 @@ class RoomTests(unittest.TestCase):
         self.assertIn("lost_since = now_ns(CLOCK_BOOTTIME);", slamd)
         restart = slamd.index("restarting the tracker")
         self.assertLess(slamd.index("pthread_join(thread, 0);", restart), slamd.index("tracker_stop(&t, h);", restart))
-        self.assertLess(slamd.index("tracker_stop(&t, h);", restart), slamd.index("h = tracker_start(&t, feed);", restart))
+        self.assertLess(
+            slamd.index("tracker_stop(&t, h);", restart), slamd.index("h = tracker_start(&t, feed);", restart)
+        )
         self.assertIn("PICO4_SLAMD_RESTART_S", read(LIBEXEC / "stock-slam"))
 
     def test_slamd_takes_a_late_relocalisation(self):
@@ -379,18 +426,25 @@ class RoomTests(unittest.TestCase):
         start = slamd.index("tracker_start(const struct tracker *t")
         self.assertLess(slamd.index("unlink(RELOCALISED_BOUNDARY);", start), slamd.index("t->create(", start))
         loop = slamd.index("relocalised in a saved map")
-        self.assertLess(slamd.index("if (!relocalised && read_boundary(RELOCALISED_BOUNDARY, g_seen) == 4) {", loop - 400),
-                        loop)
-        self.assertLess(loop, slamd.index("if (!room_settled && input_since != 0 && now - input_since > relocalise_ns) {"))
+        self.assertLess(
+            slamd.index("if (!relocalised && read_boundary(RELOCALISED_BOUNDARY, g_seen) == 4) {", loop - 400), loop
+        )
+        self.assertLess(
+            loop, slamd.index("if (!room_settled && input_since != 0 && now - input_since > relocalise_ns) {")
+        )
         settle = slamd.index("settle_room(struct pico4_slam_feed *feed")
-        self.assertLess(slamd.index("__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);", settle),
-                        slamd.index("__atomic_store_n(&feed->room_state, state, __ATOMIC_RELEASE);", settle))
+        self.assertLess(
+            slamd.index("__atomic_store_n(&feed->room_state, 0, __ATOMIC_RELEASE);", settle),
+            slamd.index("__atomic_store_n(&feed->room_state, state, __ATOMIC_RELEASE);", settle),
+        )
 
     def test_the_time_to_relocalise_runs_from_the_trackers_first_frames(self):
         # Cameras that start 10 s late after a failed sync must not decide a new room unseen.
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
         self.assertIn("#define RELOCALISE_DEFAULT_S 10", slamd)
-        self.assertIn("if (input_since == 0 && __atomic_load_n(&frames.sets_fed, __ATOMIC_RELAXED) != sets_at_start) {", slamd)
+        self.assertIn(
+            "if (input_since == 0 && __atomic_load_n(&frames.sets_fed, __ATOMIC_RELAXED) != sets_at_start) {", slamd
+        )
         # A restarted tracker starts over: its copy is removed and its first frames count again.
         restart = slamd.index("restarting the tracker")
         for reset in ("relocalised = false;", "sets_at_start = __atomic_load_n(&frames.sets_fed", "input_since = 0;"):
@@ -399,8 +453,9 @@ class RoomTests(unittest.TestCase):
 
     def test_steamvr_gets_a_universe_per_map(self):
         patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
-        self.assertIn("pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe) __attribute__((weak));",
-                      patch)
+        self.assertIn(
+            "pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe) __attribute__((weak));", patch
+        )
         self.assertIn("vr::Prop_CurrentUniverseId_Uint64", patch)
         recipe = read(ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD")
         self.assertLess(recipe.index("< monado-steamvr-camera.patch"), recipe.index("< monado-steamvr-room.patch"))
@@ -416,8 +471,8 @@ class RoomTests(unittest.TestCase):
         self.assertIn('GetGenericInterface("IVRChaperoneServerDriver_XXX", &err)', patch)
         self.assertIn("using create_fn = void (*)(void *self, uint64_t universe, bool keep_origins);", patch)
         self.assertIn("const vr::HmdMatrix34_t *persistent_map_from_map, bool refine);", patch)
-        switch = patch[patch.index("void **vtable = *(void ***)m_chaperone_server;"):]
-        switch = switch[:switch.index("} else {")]
+        switch = patch[patch.index("void **vtable = *(void ***)m_chaperone_server;") :]
+        switch = switch[: switch.index("} else {")]
         self.assertIn("((restore_fn)vtable[1])(m_chaperone_server, universe, &identity, false);", switch)
         self.assertIn("if (!known) {\n+\t\t\t\t\t\t((create_fn)vtable[0])(m_chaperone_server, universe, true);", switch)
         # vrserver reports the universe itself: the property only without its chaperone server.
@@ -431,57 +486,81 @@ class DepthMeshTests(unittest.TestCase):
         # libphotoid takes the head and the map points in libSlam's world turned (-y, x, z): fed
         # unchanged, a head turned right put the hemisphere below the horizon.
         vst = read(ROOT / "src/stockslam/vst.c")
-        turn = vst[vst.index("\nto_y_up("):]
-        turn = turn[:turn.index("\n}\n")]
+        turn = vst[vst.index("\nto_y_up(") :]
+        turn = turn[: turn.index("\n}\n")]
         self.assertIn("v[0] = -v[1];\n\tv[1] = x;", turn)
-        feed = vst[vst.index("\nvst_feed("):]
-        feed = feed[:feed.index("\n}\n")]
+        feed = vst[vst.index("\nvst_feed(") :]
+        feed = feed[: feed.index("\n}\n")]
         self.assertIn("to_y_up(position);\n\tto_y_up(orientation + 1);", feed)
         self.assertIn("f->head = head;", feed)
-        points = vst[vst.index("\nvst_points("):]
-        points = points[:points.index("\n}\n")]
+        points = vst[vst.index("\nvst_points(") :]
+        points = points[: points.index("\n}\n")]
         self.assertIn("p[0] = -p[1];\n\t\t\tp[1] = x;", points)
         self.assertIn("g_vst.points(&turned);", points)
         # The turn keeps a quaternion's rotation consistent: q' = (w, C v) is C R C^T.
-        import math
         w, x, y, z = 0.82, -0.56, 0.05, -0.02
         n = math.sqrt(w * w + x * x + y * y + z * z)
         w, x, y, z = w / n, x / n, y / n, z / n
 
-        def rot(w, x, y, z):
-            return [[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
-                    [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
-                    [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]]
-        C = [[0, -1, 0], [1, 0, 0], [0, 0, 1]]
-        R = rot(w, x, y, z)
-        CRCt = [[sum(C[i][a] * R[a][b] * C[j][b] for a in range(3) for b in range(3)) for j in range(3)]
-                for i in range(3)]
+        def rot(w: float, x: float, y: float, z: float) -> list[list[float]]:
+            return [
+                [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+                [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+                [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+            ]
+
+        c = [[0, -1, 0], [1, 0, 0], [0, 0, 1]]
+        r = rot(w, x, y, z)
+        c_r_ct = [
+            [sum(c[i][a] * r[a][b] * c[j][b] for a in range(3) for b in range(3)) for j in range(3)] for i in range(3)
+        ]
         turned = rot(w, -y, x, z)
         for i in range(3):
             for j in range(3):
-                self.assertAlmostEqual(turned[i][j], CRCt[i][j])
+                self.assertAlmostEqual(turned[i][j], c_r_ct[i][j])
 
     def test_extracts_libphotoid_and_its_backends(self):
         script = read(ROOT / "scripts/extract-stock-slam.sh")
-        for name in ("libphotoid.so", "libSNPE.so", "libhexagon_runtime.so", "libcvp2.so", "libcvp2_hfi.so",
-                     "libcvp_common.so", "vst_releaseA.json.cpt", "FLNet_lite_v2", "libcvpdsp_skel.so",
-                     "libhexagon_nn_skel.so"):
+        for name in (
+            "libphotoid.so",
+            "libSNPE.so",
+            "libhexagon_runtime.so",
+            "libcvp2.so",
+            "libcvp2_hfi.so",
+            "libcvp_common.so",
+            "vst_releaseA.json.cpt",
+            "FLNet_lite_v2",
+            "libcvpdsp_skel.so",
+            "libhexagon_nn_skel.so",
+        ):
             self.assertIn(name, script, name)
         # SNPE has the DSP load its skel by the system path, as on PICO OS.
-        self.assertIn("for f in libsnpe_dsp_v66_domains_v2_skel.so libsnpe_dsp_domains_v2.so; do\n"
-                      '    dump "$stock/system.img" "/system/lib64/$f" "$root/system/lib64/$f"', script)
+        self.assertIn(
+            "for f in libsnpe_dsp_v66_domains_v2_skel.so libsnpe_dsp_domains_v2.so; do\n"
+            '    dump "$stock/system.img" "/system/lib64/$f" "$root/system/lib64/$f"',
+            script,
+        )
 
     def test_cvp_session_answered_without_the_hardware(self):
         # vst_releaseA opens a CVP session and takes its depth from FLNet on the Compute DSP.
         stubs = read(ROOT / "src/stockslam/stubs.c")
-        for name in ("cvpCreateSession", "cvpStartSession", "cvpStopSession", "cvpDeleteSession", "cvpInitDfs",
-                     "cvpDeInitDfs", "cvpDfs_Sync", "cvpMemAlloc", "cvpMemFree"):
+        for name in (
+            "cvpCreateSession",
+            "cvpStartSession",
+            "cvpStopSession",
+            "cvpDeleteSession",
+            "cvpInitDfs",
+            "cvpDeInitDfs",
+            "cvpDfs_Sync",
+            "cvpMemAlloc",
+            "cvpMemFree",
+        ):
             self.assertIn(f"{name}(", stubs, name)
         # Its image sizes stay libcvp2's own calculation.
         self.assertNotIn("cvpQueryImageInfo(", stubs)
         # A run of the depth from stereo fails loudly: nothing here computes it.
-        sync = stubs[stubs.index("cvpDfs_Sync("):]
-        self.assertIn("return -1;", sync[:sync.index("cvpMemAlloc(")])
+        sync = stubs[stubs.index("cvpDfs_Sync(") :]
+        self.assertIn("return -1;", sync[: sync.index("cvpMemAlloc(")])
         self.assertNotIn("cvp_restart_related", read(ROOT / "src/stockslam/vst.c"))
         self.assertNotIn("cvpss", read(ROOT / "scripts/build-userspace.sh"))
 
@@ -491,8 +570,9 @@ class DepthMeshTests(unittest.TestCase):
         # libSlam's ground detection: the floor in every result, which libphotoid takes as its ground.
         self.assertIn('t->set(h, "plane", "1");', slamd)
         # The forward pair (cam3 left, cam2 right) with the tracker's result at the pair's time.
-        self.assertIn("vst_feed(g_images[3], g_images[2], PICO4_SLAM_FEED_W, PICO4_SLAM_FEED_H, ts, exposure_ns, head);",
-                      slamd)
+        self.assertIn(
+            "vst_feed(g_images[3], g_images[2], PICO4_SLAM_FEED_W, PICO4_SLAM_FEED_H, ts, exposure_ns, head);", slamd
+        )
         # The map points only while the tracker tracks (type 1, confidence 1).
         self.assertIn("head[0x40] == 1 && head[0x41] == 1", slamd)
         self.assertIn('dlsym(lib, "AlgorithmPointCallbackRegister")', slamd)
@@ -510,8 +590,9 @@ class DepthMeshTests(unittest.TestCase):
         self.assertIn("#define PICO4_SLAM_FEED_MESH_INDICES (6 * 127 * 127)", header)
         self.assertIn("#define PICO4_DEPTH_MESH_INDICES (6 * 127 * 127)", passthrough)
         # After the rings: the mesh slots are the largest part of the feed.
-        self.assertGreater(header.index("struct pico4_slam_feed_mesh meshes["),
-                           header.index("struct pico4_slam_feed_set sets["))
+        self.assertGreater(
+            header.index("struct pico4_slam_feed_mesh meshes["), header.index("struct pico4_slam_feed_set sets[")
+        )
 
 
 class FloorTests(unittest.TestCase):
@@ -521,13 +602,15 @@ class FloorTests(unittest.TestCase):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
         self.assertIn("p->floor_status = (uint32_t)plane_status;", slamd)
         self.assertIn("p->floor_height = plane_height;", slamd)
-        self.assertLess(slamd.index("p->floor_height = plane_height;"),
-                        slamd.index("__atomic_store_n(&feed->poses_written, w + 1, __ATOMIC_RELEASE);"))
+        self.assertLess(
+            slamd.index("p->floor_height = plane_height;"),
+            slamd.index("__atomic_store_n(&feed->poses_written, w + 1, __ATOMIC_RELEASE);"),
+        )
 
     def test_driver_takes_only_a_detected_floor_below_the_origin(self):
         slam = read(ROOT / "src/monado/pico4_slam.c")
-        floor = slam[slam.index("\npico4_slam_floor(struct pico4_slam *s, float *out_y)\n{\n\tstruct"):]
-        floor = floor[:floor.index("\n}\n")]
+        floor = slam[slam.index("\npico4_slam_floor(struct pico4_slam *s, float *out_y)\n{\n\tstruct") :]
+        floor = floor[: floor.index("\n}\n")]
         self.assertIn("p.floor_status != 1", floor)  # 2 and 3: the height a saved map carries
         self.assertIn("double y = -p.floor_height;", floor)
         self.assertIn("y += feed->room_t[0];", floor)
@@ -536,7 +619,9 @@ class FloorTests(unittest.TestCase):
 
     def test_room_setup_steps_as_driver_cv(self):
         recipe = read(ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD")
-        self.assertLess(recipe.index("< monado-steamvr-roomview-mesh.patch"), recipe.index("< monado-steamvr-floor.patch"))
+        self.assertLess(
+            recipe.index("< monado-steamvr-roomview-mesh.patch"), recipe.index("< monado-steamvr-floor.patch")
+        )
         patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch")
         self.assertIn("static_cast<vr::EVREventType>(809)", patch)
         self.assertIn("SetFloorDetection(step == 3 || step == 6 || step == 7);", patch)
@@ -549,25 +634,25 @@ class FloorTests(unittest.TestCase):
         self.assertIn("read.tag != vr::k_unHmdMatrix34PropertyTag", patch)
         self.assertIn("m.m[1][1] * y + m.m[1][3]", patch)
         # Off: NaN clears the compositor's value.
-        off = patch[patch.index("ovrd_log(\"Room setup: floor detection %s\\n\""):]
-        self.assertIn("SendFloor(NAN);", off[:off.index("m_floor_sent = NAN;")])
+        off = patch[patch.index('ovrd_log("Room setup: floor detection %s\\n"') :]
+        self.assertIn("SendFloor(NAN);", off[: off.index("m_floor_sent = NAN;")])
 
     def test_room_setup_detects_the_floor_again(self):
         # libSlam's ground is fitted once, in the first second after a start; a step that
         # detects the floor starts its ground detection again (setPlaneDetect, "plane" 1).
         patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch")
         self.assertIn("pico4_hmd_detect_floor(struct xrt_device *xdev) __attribute__((weak));", patch)
-        on = patch[patch.index("ovrd_log(\"Room setup: floor detection %s\\n\""):]
-        on = on[:on.index("m_floor_sent = NAN;")]
+        on = patch[patch.index('ovrd_log("Room setup: floor detection %s\\n"') :]
+        on = on[: on.index("m_floor_sent = NAN;")]
         self.assertIn("if (on && pico4_hmd_detect_floor != NULL && m_xhmd != NULL)", on)
         hmd = read(ROOT / "src/monado/pico4_hmd.c")
         self.assertIn("pico4_slam_detect_floor(pico4_hmd(xdev)->slam);", hmd)
         slam = read(ROOT / "src/monado/pico4_slam.c")
         self.assertIn("__atomic_fetch_add(&feed->floor_requests, 1, __ATOMIC_ACQ_REL);", slam)
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
-        loop = slamd[slamd.index("uint64_t floor_requests = __atomic_load_n(&feed->floor_requests"):]
-        request = loop[loop.index("if (fr != floor_requests) {"):]
-        self.assertIn('t.set(h, "plane", "1");', request[:request.index("}")])
+        loop = slamd[slamd.index("uint64_t floor_requests = __atomic_load_n(&feed->floor_requests") :]
+        request = loop[loop.index("if (fr != floor_requests) {") :]
+        self.assertIn('t.set(h, "plane", "1");', request[: request.index("}")])
         # A new field: a new feed layout, which the driver and pico4-slamd check by the magic.
         header = read(ROOT / "src/monado/pico4_slam_feed.h")
         self.assertIn('0x37444546344f4350ull //!< "PCO4FED7"', header)

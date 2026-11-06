@@ -2,25 +2,25 @@
 # SPDX-License-Identifier: Unlicense
 """Every relative link in the Markdown documents leads somewhere: the file, and its heading if named.
 
-    python scripts/check-docs.py
+python scripts/check-docs.py
 """
+
 from __future__ import annotations
 
 import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Set
 
 REPO = Path(__file__).resolve().parent.parent
 LINK = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
-FENCE = re.compile(r"^```.*?^```", re.M | re.S)
+FENCE = re.compile(r"^```.*?^```", re.MULTILINE | re.DOTALL)
 CODE = re.compile(r"`[^`\n]*`")
 
 
-def anchors(text: str) -> Set[str]:
+def anchors(text: str) -> set[str]:
     """GitHub's anchors for the document's headings."""
-    found: Set[str] = set()
+    found: set[str] = set()
     for line in FENCE.sub("", text).splitlines():
         match = re.match(r"#{1,6}\s+(.*)", line)
         if match:
@@ -30,8 +30,8 @@ def anchors(text: str) -> Set[str]:
     return found
 
 
-def broken(path: Path, text: str) -> List[str]:
-    """The links of the document at @p path that lead nowhere."""
+def broken(path: Path, text: str) -> list[str]:
+    """Return the links of the document at @p path that lead nowhere."""
     bad = []
     body = CODE.sub("", FENCE.sub("", text))
     for target in LINK.findall(body):
@@ -41,15 +41,16 @@ def broken(path: Path, text: str) -> List[str]:
         file = (path.parent / name).resolve() if name else path
         if not file.exists():
             bad.append(f"{target}: no such file")
-        elif anchor and file.suffix == ".md":
-            if anchor.lower() not in anchors(file.read_text(encoding="utf-8")):
-                bad.append(f"{target}: no such heading")
+        elif anchor and file.suffix == ".md" and anchor.lower() not in anchors(file.read_text(encoding="utf-8")):
+            bad.append(f"{target}: no such heading")
     return bad
 
 
 def main() -> int:
-    names = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z", "--cached", "--others", "--exclude-standard",
-                            "*.md"], check=True, stdout=subprocess.PIPE).stdout.decode().split("\0")
+    """Check every tracked or new Markdown document and print what is broken."""
+    ls_files = ["git", "-C", str(REPO), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*.md"]
+    result = subprocess.run(ls_files, check=True, stdout=subprocess.PIPE)  # noqa: S603  # git from PATH, no shell
+    names = result.stdout.decode().split("\0")
     count = 0
     for name in names:
         path = REPO / name

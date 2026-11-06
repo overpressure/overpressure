@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Unlicense
 """The power key as on PICO OS (docs/install.md#power-key)."""
+
 import configparser
 import importlib.machinery
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,6 +13,7 @@ DROPIN = ROOT / "userspace/rootfs/usr/lib/systemd/logind.conf.d/50-pico4-power-k
 PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/powerkey"
 _loader = importlib.machinery.SourceFileLoader("powerkey", str(PATH))
 _spec = importlib.util.spec_from_loader("powerkey", _loader)
+assert _spec is not None
 tool = importlib.util.module_from_spec(_spec)
 _loader.exec_module(tool)
 
@@ -24,20 +27,19 @@ class LogindTests(unittest.TestCase):
         unit = (ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-powerkey.service").read_text(encoding="utf-8")
         self.assertIn("ExecStart=/usr/libexec/pico4/powerkey\n", unit)
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertIn("pico4-powerkey.service", build[build.index("in_t systemctl enable"):])
+        self.assertIn("pico4-powerkey.service", build[build.index("in_t systemctl enable") :])
         self.assertNotIn(b"\r", PATH.read_bytes())
 
 
 class DeviceTests(unittest.TestCase):
     def test_the_pmic_key(self):
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             for event, device in (("event0", "gpio-keys"), ("event2", "pm8941_pwrkey"), ("event3", "pm8941_resin")):
                 (Path(tmp) / event / "device").mkdir(parents=True)
                 (Path(tmp) / event / "device/name").write_text(device + "\n")
-            self.assertEqual(tool.key_device(f"{tmp}/event*/device/name"), "/dev/input/event2")
+            self.assertEqual(tool.key_device(Path(tmp)), "/dev/input/event2")
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertIsNone(tool.key_device(f"{tmp}/event*/device/name"))
+            self.assertIsNone(tool.key_device(Path(tmp)))
 
 
 class KeyTests(unittest.TestCase):
@@ -69,7 +71,7 @@ class KeyTests(unittest.TestCase):
     def test_press_after_another_wake_source_counts(self):
         # Woken by the RTC: the idle poll notices the resume; a press a minute later suspends.
         waking = tool.Waking(asleep=0.0)
-        self.assertTrue(waking.update(200.0, asleep=20.0))   # the poll after the resume
+        self.assertTrue(waking.update(200.0, asleep=20.0))  # the poll after the resume
         self.assertFalse(waking.update(260.0, asleep=20.0))  # the press: no new sleep
         self.assertFalse(waking.quiet(260.0))
         self.assertLessEqual(tool.POLL_S, tool.SETTLE_S)

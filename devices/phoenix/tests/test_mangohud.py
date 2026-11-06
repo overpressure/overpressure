@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
-import re
+"""MangoHud: a pinned, offline package."""
+
 import unittest
 from pathlib import Path
 
@@ -23,6 +24,7 @@ class MangoHudTests(unittest.TestCase):
         self.assertNotRegex(build, r"sed -i [^\n]*--mangoapp")
         packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
         self.assertIn("pico4/pico4-mangohud", packages)
+
 
 if __name__ == "__main__":
     unittest.main()

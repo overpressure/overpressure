@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Unlicense
 """SPDX headers: every tracked source file names its license at its top, the one its path expects."""
+
+from __future__ import annotations
+
 import re
 import shutil
 import subprocess
 import unittest
 from pathlib import Path
-from typing import List, Optional, Set
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -31,8 +33,8 @@ HEADER_LINES = 3
 _SPDX = re.compile(rb"SPDX-License-Identifier:\s*(\S+)")
 
 
-def spdx_id(data: bytes) -> Optional[str]:
-    """The identifier in @p data's header, or None."""
+def spdx_id(data: bytes) -> str | None:
+    """Return the identifier in @p data's header, or None."""
     for line in data.splitlines()[:HEADER_LINES]:
         match = _SPDX.search(line)
         if match:
@@ -40,8 +42,8 @@ def spdx_id(data: bytes) -> Optional[str]:
     return None
 
 
-def allowed(path: str) -> Set[str]:
-    """The identifiers allowed for the repository path @p path."""
+def allowed(path: str) -> set[str]:
+    """Return the identifiers allowed for the repository path @p path."""
     return LICENSES[max((prefix for prefix in LICENSES if path.startswith(prefix)), key=len)]
 
 
@@ -52,13 +54,18 @@ def is_source(path: str, data: bytes) -> bool:
     return Path(path).suffix in SOURCE_SUFFIXES or data.startswith(b"#!")
 
 
-def tracked() -> List[str]:
-    """The tracked files, a test's skip where git or the repository's history is not there."""
-    if shutil.which("git") is None:
-        raise unittest.SkipTest("no git")
-    result = subprocess.run(["git", "ls-files", "-z"], cwd=REPO, capture_output=True, timeout=60)
+def tracked() -> list[str]:
+    """Return the tracked files; skip the test where git or the repository's history is not there."""
+    git = shutil.which("git")
+    if git is None:
+        msg = "no git"
+        raise unittest.SkipTest(msg)
+    result = subprocess.run(  # noqa: S603  # git from PATH with fixed arguments
+        [git, "ls-files", "-z"], cwd=REPO, capture_output=True, timeout=60, check=False
+    )
     if result.returncode != 0:
-        raise unittest.SkipTest("not a git repository")
+        msg = "not a git repository"
+        raise unittest.SkipTest(msg)
     return [name for name in result.stdout.decode().split("\0") if name and (REPO / name).is_file()]
 
 
@@ -88,7 +95,7 @@ class RuleTests(unittest.TestCase):
 
 class RepositoryTests(unittest.TestCase):
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         cls.sources = {}
         for path in tracked():
             data = (REPO / path).read_bytes()

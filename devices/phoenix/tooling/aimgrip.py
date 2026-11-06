@@ -33,10 +33,14 @@ HANDS = ("left", "right")
 MAX_OFFSET_M = 0.2
 #: The quaternions are stored as unit quaternions.
 UNIT_TOLERANCE = 1e-6
+#: A position has three coordinates, a quaternion four.
+POSITION, QUATERNION = 3, 4
+#: The command line: LIBRARY OUTPUT.json.
+ARGUMENTS = ("LIBRARY", "OUTPUT.json")
 
 
 class AimGripError(ValueError):
-    pass
+    """The library holds no plausible aim-to-grip transform."""
 
 
 def transforms(elf: bytes) -> dict[str, dict[str, list[float]]]:
@@ -46,39 +50,52 @@ def transforms(elf: bytes) -> dict[str, dict[str, list[float]]]:
     except LedModelError as exc:
         raise AimGripError(str(exc)) from exc
     values = struct.unpack("<14d", raw)
-    result = {hand: {"position": list(values[7 * i:7 * i + 3]), "orientation": list(values[7 * i + 3:7 * i + 7])}
-              for i, hand in enumerate(HANDS)}
+    result = {
+        hand: {"position": list(values[7 * i : 7 * i + 3]), "orientation": list(values[7 * i + 3 : 7 * i + 7])}
+        for i, hand in enumerate(HANDS)
+    }
     validate(result)
     return result
 
 
 def validate(result: dict[str, dict[str, list[float]]]) -> None:
-    """A different library version puts other data at this address: refuse anything implausible."""
+    """Refuse anything implausible: a different library version puts other data at this address."""
     for hand in HANDS:
         block = result.get(hand) or {}
         p, q = block.get("position") or [], block.get("orientation") or []
-        if len(p) != 3 or len(q) != 4 or not all(math.isfinite(v) for v in p + q):
-            raise AimGripError(f"{hand}: expected a finite position and quaternion")
+        if len(p) != POSITION or len(q) != QUATERNION or not all(math.isfinite(v) for v in p + q):
+            msg = f"{hand}: expected a finite position and quaternion"
+            raise AimGripError(msg)
         if abs(math.sqrt(sum(v * v for v in q)) - 1.0) > UNIT_TOLERANCE:
-            raise AimGripError(f"{hand}: the orientation is not a unit quaternion")
+            msg = f"{hand}: the orientation is not a unit quaternion"
+            raise AimGripError(msg)
         if math.hypot(*p) >= MAX_OFFSET_M:
-            raise AimGripError(f"{hand}: the grip is {math.hypot(*p):.3f} m from the aim, not on the controller")
+            msg = f"{hand}: the grip is {math.hypot(*p):.3f} m from the aim, not on the controller"
+            raise AimGripError(msg)
 
 
 def to_json(result: dict[str, dict[str, list[float]]], library: str) -> str:
-    return json.dumps({
-        "schema": 1,
-        "source": library,
-        "units": "m",
-        "convention": "grip = aim * transform; position (x, y, z), orientation (w, x, y, z), in the aim frame",
-        "left": result["left"],
-        "right": result["right"],
-    }, indent=1) + "\n"
+    """Render the transforms as the extracted JSON file."""
+    return (
+        json.dumps(
+            {
+                "schema": 1,
+                "source": library,
+                "units": "m",
+                "convention": "grip = aim * transform; position (x, y, z), orientation (w, x, y, z), in the aim frame",
+                "left": result["left"],
+                "right": result["right"],
+            },
+            indent=1,
+        )
+        + "\n"
+    )
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the extractor's command line."""
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2:
+    if len(args) != len(ARGUMENTS):
         print(__doc__.strip().splitlines()[-1].strip(), file=sys.stderr)
         return 2
     library, output = Path(args[0]), Path(args[1])

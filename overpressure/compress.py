@@ -5,6 +5,7 @@ gzip/xz/lzma/bzip2 come from the standard library; LZ4 (legacy and frame
 format, both used by Android build systems) is implemented here because the
 standard library has no LZ4 support.
 """
+
 from __future__ import annotations
 
 import bz2
@@ -13,6 +14,11 @@ import struct
 import zlib
 
 LZ4_LEGACY_MAGIC = 0x184C2102
+LZ4_LENGTH_MORE = 15  # a token's 4-bit length of 15 continues in the bytes after it
+LZ4_BYTE_MORE = 255  # a length byte of 255 continues in the next one
+LZ4_MIN_MATCH = 4
+# The arm64 Image header: "ARM\x64" at 0x38.
+ARM64_MAGIC_START, ARM64_MAGIC_END = 0x38, 0x3C
 
 SIGNATURES = [
     (b"\x1f\x8b", "gzip"),
@@ -28,10 +34,11 @@ SIGNATURES = [
 
 
 def detect(data: bytes) -> str:
+    """Return the format of DATA by its magic: a name of SIGNATURES, "arm64-image" or "unknown"."""
     for magic, name in SIGNATURES:
         if data.startswith(magic):
             return name
-    if len(data) > 0x3C and data[0x38:0x3C] == b"ARM\x64":
+    if len(data) > ARM64_MAGIC_END and data[ARM64_MAGIC_START:ARM64_MAGIC_END] == b"ARM\x64":
         return "arm64-image"
     return "unknown"
 
@@ -60,8 +67,21 @@ def decompress(data: bytes) -> tuple[bytes, bytes, str]:
     if fmt == "lz4-frame":
         return (*lz4_frame_decompress(data), fmt)
     if fmt == "zstd":
-        raise ValueError("zstd-compressed data is not supported by this tool")
+        msg = "zstd-compressed data is not supported by this tool"
+        raise ValueError(msg)
     return data, b"", fmt
+
+
+def _lz4_length(src: bytes, i: int, length: int) -> tuple[int, int]:
+    """Return a token's length with the bytes that continue it, and the position after them."""
+    if length == LZ4_LENGTH_MORE:
+        while True:
+            b = src[i]
+            i += 1
+            length += b
+            if b != LZ4_BYTE_MORE:
+                break
+    return length, i
 
 
 def lz4_block_decompress(src: bytes | memoryview, out: bytearray) -> None:
@@ -70,37 +90,24 @@ def lz4_block_decompress(src: bytes | memoryview, out: bytearray) -> None:
     i, n = 0, len(src)
     while i < n:
         token = src[i]
-        i += 1
-        lit = token >> 4
-        if lit == 15:
-            while True:
-                b = src[i]
-                i += 1
-                lit += b
-                if b != 255:
-                    break
-        out += src[i:i + lit]
+        lit, i = _lz4_length(src, i + 1, token >> 4)
+        out += src[i : i + lit]
         i += lit
         if i >= n:  # the last sequence carries literals only
             break
         offset = src[i] | (src[i + 1] << 8)
         i += 2
         if offset == 0:
-            raise ValueError("corrupt LZ4 block (zero match offset)")
-        mlen = token & 15
-        if mlen == 15:
-            while True:
-                b = src[i]
-                i += 1
-                mlen += b
-                if b != 255:
-                    break
-        mlen += 4
+            msg = "corrupt LZ4 block (zero match offset)"
+            raise ValueError(msg)
+        mlen, i = _lz4_length(src, i, token & LZ4_LENGTH_MORE)
+        mlen += LZ4_MIN_MATCH
         start = len(out) - offset
         if start < 0:
-            raise ValueError("corrupt LZ4 block (offset before start)")
+            msg = "corrupt LZ4 block (offset before start)"
+            raise ValueError(msg)
         if offset >= mlen:
-            out += out[start:start + mlen]
+            out += out[start : start + mlen]
         else:  # overlapping copy: repeat the last `offset` bytes
             pattern = bytes(out[start:])
             reps = mlen // offset + 1
@@ -108,6 +115,7 @@ def lz4_block_decompress(src: bytes | memoryview, out: bytearray) -> None:
 
 
 def lz4_legacy_decompress(data: bytes) -> tuple[bytes, bytes]:
+    """Return the data of a legacy LZ4 stream (the kernel's lz4 -l) and the bytes after it."""
     out = bytearray()
     pos = 0
     n = len(data)
@@ -120,12 +128,13 @@ def lz4_legacy_decompress(data: bytes) -> tuple[bytes, bytes]:
         # Legacy streams have no end marker; anything implausible ends the stream.
         if size == 0 or size > 0x800000 + 0x10000 or pos + 4 + size > n:
             break
-        lz4_block_decompress(memoryview(data)[pos + 4:pos + 4 + size], out)
+        lz4_block_decompress(memoryview(data)[pos + 4 : pos + 4 + size], out)
         pos += 4 + size
     return bytes(out), data[pos:]
 
 
 def lz4_frame_decompress(data: bytes) -> tuple[bytes, bytes]:
+    """Return the data of an LZ4 frame and the bytes after it."""
     out = bytearray()
     pos = 4
     flg = data[pos]
@@ -146,7 +155,7 @@ def lz4_frame_decompress(data: bytes) -> tuple[bytes, bytes]:
             break
         raw = bool(bsize & 0x80000000)
         bsize &= 0x7FFFFFFF
-        block = memoryview(data)[pos:pos + bsize]
+        block = memoryview(data)[pos : pos + bsize]
         if raw:
             out += block
         else:

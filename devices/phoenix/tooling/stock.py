@@ -18,10 +18,12 @@ receives:
 The OTA members are kept under OUTPUT_DIR/download (about 3.9 GB) and fetched again only when
 missing or corrupt. Decompressing needs the brotli command (Debian/Ubuntu: apt install brotli).
 """
+
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Callable
 
 from overpressure import ota
 
@@ -40,14 +42,17 @@ COPIED = {
 BLOCK_IMAGES = {"system.img": "system", "vendor.img": "vendor"}
 
 
-def build(firmware: str, output: Path, log=print) -> dict:
+def build(firmware: str, output: Path, log: Callable[[str], None] = print) -> dict:
+    """Extract the stock files of a firmware in firmware.json into @p output; return its manifest."""
     builds = ota.load_catalog(CATALOG)
     if firmware not in builds:
-        raise SystemExit(f"unknown --firmware {firmware!r}; known: {', '.join(builds)}")
-    return ota.extract(firmware, builds[firmware]["url"], output, COPIED, BLOCK_IMAGES, log)
+        msg = f"unknown --firmware {firmware!r}; known: {', '.join(builds)}"
+        raise SystemExit(msg)
+    return ota.extract(firmware, builds[firmware]["url"], output, COPIED, BLOCK_IMAGES, log=log)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the stock command line."""
     ap = argparse.ArgumentParser(prog="python -m overpressure stock", description=__doc__.split("\n\n")[0])
     ap.add_argument("output", type=Path)
     ap.add_argument("--firmware", default=FIRMWARE, help=f"firmware.json entry (default {FIRMWARE})")

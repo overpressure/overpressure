@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""The memory setup: the Frame's zram swap."""
+
 import unittest
 from pathlib import Path
 
@@ -32,8 +34,12 @@ class ZramSwapTests(unittest.TestCase):
 
     def test_pico_os_reclaim_settings(self):
         conf = (ROOT / "userspace/rootfs/etc/sysctl.d/50-pico4-memory.conf").read_text(encoding="utf-8")
-        for line in ("vm.swappiness = 100", "vm.watermark_scale_factor = 90", "vm.watermark_boost_factor = 0",
-                     "vm.overcommit_memory = 1"):
+        for line in (
+            "vm.swappiness = 100",
+            "vm.watermark_scale_factor = 90",
+            "vm.watermark_boost_factor = 0",
+            "vm.overcommit_memory = 1",
+        ):
             self.assertIn(line + "\n", conf)
         self.assertNotIn("\r", conf)
 

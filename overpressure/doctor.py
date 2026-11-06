@@ -7,15 +7,21 @@ only look: they run version queries and `command -v`, read files and settings, a
 nothing. The generic ones cover the host (Python, Tk, OpenSSH, Linux as root); a headset adds
 its own through Headset.dependencies().
 """
+
 from __future__ import annotations
 
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable
 
 from . import REPO, linux
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
+    from .headset import Headset
 
 OK, MISSING, OPTIONAL, WARNING = "ok", "missing", "optional", "warning"
 MARK = {OK: "ok", MISSING: "MISSING", OPTIONAL: "optional", WARNING: "warning"}
@@ -23,18 +29,27 @@ MARK = {OK: "ok", MISSING: "MISSING", OPTIONAL: "optional", WARNING: "warning"}
 
 @dataclass(frozen=True)
 class Check:
+    """One thing the workflow needs, and whether this host has it."""
+
     name: str
-    needed_for: str            #: the part of the workflow that needs it
-    status: str                #: ok, missing (needed), optional (missing, not needed), warning
-    detail: str = ""           #: what was found, or why it is missing
-    fix: str = ""              #: how to get it, when it is not ok
+    needed_for: str  #: the part of the workflow that needs it
+    status: str  #: ok, missing (needed), optional (missing, not needed), warning
+    detail: str = ""  #: what was found, or why it is missing
+    fix: str = ""  #: how to get it, when it is not ok
 
 
-def run_tool(argv: Sequence[str], timeout: float = 30) -> Tuple[int, str]:
-    """A program's exit status and combined output; (127, reason) when it cannot start."""
+def run_tool(argv: Sequence[str], timeout: float = 30) -> tuple[int, str]:
+    """Return a program's exit status and combined output; (127, reason) when it cannot start."""
     try:
-        process = subprocess.run([str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                 stdin=subprocess.DEVNULL, timeout=timeout, cwd=REPO)
+        process = subprocess.run(  # noqa: S603  # the checks' fixed version queries, no shell
+            [str(a) for a in argv],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+            cwd=REPO,
+        )
     except FileNotFoundError:
         return 127, f"{argv[0]}: not found"
     except OSError as exc:
@@ -49,22 +64,26 @@ class Host:
     """What the checks may ask of this host; tests pass fakes."""
 
     platform: str = sys.platform
-    run: Callable[[Sequence[str], float], Tuple[int, str]] = run_tool
-    which: Callable[[str], Optional[str]] = shutil.which
-    linux_cache: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    run: Callable[[Sequence[str], float], tuple[int, str]] = run_tool
+    which: Callable[[str], str | None] = shutil.which
+    linux_cache: dict[str, dict[str, str]] = field(default_factory=dict)
     backend: str = ""  #: the Linux backend (overpressure/linux.py); empty: this host's
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Pick this host's Linux backend unless one is given."""
         if not self.backend:
             self.backend = linux.backend(self.platform, self.which)
 
     def container_ready(self) -> bool:
-        """The build container's image is built (the docker backend)."""
+        """Tell whether the build container's image is built (the docker backend)."""
         return self.run([linux.engine(self.which), "image", "inspect", linux.image()], 30)[0] == 0
 
-    def linux(self, script: str, timeout: float = 90) -> Dict[str, str]:
-        """KEY=VALUE lines that @p script prints where the Linux-root steps run (WSL as root, this
-        Linux, or the build container); {} when there is no such Linux. Cached per script."""
+    def linux(self, script: str, timeout: float = 90) -> dict[str, str]:
+        """Return the KEY=VALUE lines that @p script prints where the Linux-root steps run.
+
+        That is WSL as root, this Linux, or the build container; {} when there is no such Linux.
+        Cached per script.
+        """
         if script not in self.linux_cache:
             if self.backend == "docker":
                 if not self.container_ready():
@@ -90,44 +109,70 @@ class Host:
 
 
 def version_check(host: Host, name: str, argv: Sequence[str], needed_for: str, fix: str) -> Check:
-    """A program that answers a version query: its first output line, or how to get it."""
+    """Check a program that answers a version query: its first output line, or how to get it."""
     code, out = host.run(argv, 30)
     if code == 0:
         return Check(name, needed_for, OK, (out.splitlines() or [""])[0][:120])
     return Check(name, needed_for, MISSING, (out.splitlines() or [""])[-1][:120], fix)
 
 
-def linux_commands(host: Host, needed_for: str, commands: Dict[str, str], fix: str) -> List[Check]:
+def linux_commands(host: Host, needed_for: str, commands: dict[str, str], fix: str) -> list[Check]:
     """Programs the Linux side needs: each found with `command -v`, or the fix (an apt line)."""
-    script = "; ".join(f'echo {k}=$(command -v {c} || true)' for k, c in
-                       ((name.replace("-", "_").replace(".", "_"), name) for name in commands))
+    script = "; ".join(
+        f"echo {k}=$(command -v {c} || true)"
+        for k, c in ((name.replace("-", "_").replace(".", "_"), name) for name in commands)
+    )
     found = host.linux(script)
     checks = []
     for name, purpose in commands.items():
         path = found.get(name.replace("-", "_").replace(".", "_"), "")
-        checks.append(Check(name, needed_for, OK if path else MISSING, path or f"not in Linux ({purpose})",
-                            "" if path else fix))
+        checks.append(
+            Check(name, needed_for, OK if path else MISSING, path or f"not in Linux ({purpose})", "" if path else fix)
+        )
     return checks
 
 
-def host_checks(host: Host) -> List[Check]:
-    """The checks every headset's workflow shares."""
+def host_checks(host: Host) -> list[Check]:
+    """Return the checks every headset's workflow shares."""
     checks = []
     version = sys.version_info
-    checks.append(Check("Python", "everything", OK if version >= (3, 9) else MISSING,
-                        f"{version.major}.{version.minor}.{version.micro}", "Python 3.9 or newer"))
+    checks.append(
+        Check(
+            "Python",
+            "everything",
+            OK if version >= (3, 9) else MISSING,
+            f"{version.major}.{version.minor}.{version.micro}",
+            "Python 3.9 or newer",
+        )
+    )
     try:
-        import tkinter  # noqa: F401  (only whether it is there)
-        checks.append(Check("Tk", "the window", OK, f"Tk {tkinter.TkVersion}"))
+        import tkinter as tk  # noqa: PLC0415  # optional: whether this Python has Tk is the check
+
+        checks.append(Check("Tk", "the window", OK, f"Tk {tk.TkVersion}"))
     except ImportError:
-        checks.append(Check("Tk", "the window", OPTIONAL, "this Python has no tkinter",
-                            "a Python with Tk (python.org's installers have it; Debian/Ubuntu: apt install "
-                            "python3-tk); the command line works without it"))
+        checks.append(
+            Check(
+                "Tk",
+                "the window",
+                OPTIONAL,
+                "this Python has no tkinter",
+                "a Python with Tk (python.org's installers have it; Debian/Ubuntu: apt install "
+                "python3-tk); the command line works without it",
+            )
+        )
     for tool in ("ssh", "ssh-keygen"):
         path = host.which(tool)
-        checks.append(Check(tool, "working on the headset", OK if path else MISSING, path or "not on PATH",
-                            "" if path else "OpenSSH (Windows 10/11: optional feature \"OpenSSH Client\"; "
-                                            "Linux: apt install openssh-client)"))
+        checks.append(
+            Check(
+                tool,
+                "working on the headset",
+                OK if path else MISSING,
+                path or "not on PATH",
+                ""
+                if path
+                else 'OpenSSH (Windows 10/11: optional feature "OpenSSH Client"; Linux: apt install openssh-client)',
+            )
+        )
     if host.backend == "docker":
         checks.extend(container_checks(host))
     elif host.platform == "win32":
@@ -135,51 +180,79 @@ def host_checks(host: Host) -> List[Check]:
         if values.get("user") == "0":
             checks.append(Check("WSL (as root)", "Linux-root steps", OK, values.get("distro", "")))
         else:
-            checks.append(Check("WSL (as root)", "Linux-root steps", MISSING,
-                                "no WSL distribution answers as root" if host.which("wsl") else "wsl not found",
-                                "wsl --install -d Ubuntu-24.04 (then reboot and open it once)"))
+            checks.append(
+                Check(
+                    "WSL (as root)",
+                    "Linux-root steps",
+                    MISSING,
+                    "no WSL distribution answers as root" if host.which("wsl") else "wsl not found",
+                    "wsl --install -d Ubuntu-24.04 (then reboot and open it once)",
+                )
+            )
     elif host.platform.startswith("linux"):
         sudo = host.which("sudo")
-        checks.append(Check("sudo", "Linux-root steps", OK if sudo else WARNING, sudo or "not on PATH",
-                            "" if sudo else "run the Linux-root steps as root, or install sudo"))
+        checks.append(
+            Check(
+                "sudo",
+                "Linux-root steps",
+                OK if sudo else WARNING,
+                sudo or "not on PATH",
+                "" if sudo else "run the Linux-root steps as root, or install sudo",
+            )
+        )
     return checks
 
 
-def container_checks(host: Host) -> List[Check]:
-    """The docker backend: the engine answers, and the build container's image is built."""
+def container_checks(host: Host) -> list[Check]:
+    """Check the docker backend: the engine answers, and the build container's image is built."""
     needed_for = "Linux-root steps (build container)"
     tool = linux.engine(host.which)
     code, out = host.run([tool, "version", "--format", "{{.Server.Version}}"], 30)
     if code != 0:
-        return [Check(tool, needed_for, MISSING, (out.splitlines() or ["no answer"])[-1][:120],
-                      "Docker Desktop (started) or Docker/Podman on Linux; OVERPRESSURE_LINUX=wsl or sudo "
-                      "uses WSL or this Linux instead")]
+        return [
+            Check(
+                tool,
+                needed_for,
+                MISSING,
+                (out.splitlines() or ["no answer"])[-1][:120],
+                "Docker Desktop (started) or Docker/Podman on Linux; OVERPRESSURE_LINUX=wsl or sudo "
+                "uses WSL or this Linux instead",
+            )
+        ]
     checks = [Check(tool, needed_for, OK, f"engine {out.splitlines()[-1]}")]
     ready = host.container_ready()
-    checks.append(Check("build container image", needed_for, OK if ready else MISSING, linux.image(),
-                        "" if ready else "python -m overpressure container build"))
+    checks.append(
+        Check(
+            "build container image",
+            needed_for,
+            OK if ready else MISSING,
+            linux.image(),
+            "" if ready else "python -m overpressure container build",
+        )
+    )
     return checks
 
 
-def run(headset=None, host: Optional[Host] = None) -> List[Check]:
-    """Every check: the host's, then the headset's."""
+def run(headset: Headset | None = None, host: Host | None = None) -> list[Check]:
+    """Run every check: the host's, then the headset's."""
     host = host or Host()
     checks = host_checks(host)
     if headset is not None:
         for probe in headset.dependencies():
             try:
                 checks.extend(probe(host))
-            except Exception as exc:  # a broken probe must not hide the others
+            except Exception as exc:  # noqa: BLE001, PERF203  # a broken probe must not hide the others
                 checks.append(Check(getattr(probe, "__name__", "check"), "?", WARNING, f"the check failed: {exc}"))
     return checks
 
 
-def failed(checks: Iterable[Check]) -> List[Check]:
+def failed(checks: Iterable[Check]) -> list[Check]:
+    """Return the checks of what is needed and missing."""
     return [c for c in checks if c.status == MISSING]
 
 
 def report(checks: Sequence[Check]) -> str:
-    """The checks grouped by what they are needed for, the fixes below each missing one."""
+    """Return the checks grouped by what they are needed for, the fixes below each missing one."""
     lines, groups = [], {}
     for check in checks:
         groups.setdefault(check.needed_for, []).append(check)
@@ -192,6 +265,8 @@ def report(checks: Sequence[Check]) -> str:
                 lines.append(f"  {'':<8} {'':<{width}}  -> {c.fix}")
     missing = failed(checks)
     lines.append("")
-    lines.append(f"{len(missing)} missing" + (": " + ", ".join(c.name for c in missing) if missing else
-                                              ": everything needed is there"))
+    lines.append(
+        f"{len(missing)} missing"
+        + (": " + ", ".join(c.name for c in missing) if missing else ": everything needed is there")
+    )
     return "\n".join(lines)

@@ -52,7 +52,8 @@ docs/           the tool and how to add a headset
 ```
 
 `make test` (or `python -m unittest`) runs every host test, the generic and each headset's, in
-seconds. Adding a headset: [docs/adding-a-headset.md](docs/adding-a-headset.md).
+seconds; `make lint` checks formatting, lint and types with uv, ruff and ty
+([docs/tool.md](docs/tool.md#development)). Adding a headset: [docs/adding-a-headset.md](docs/adding-a-headset.md).
 
 Device data and vendor files never enter the repository: backups, bootloader images, firmware,
 Valve's packages and the built archives stay private in the ignored `backup/`, `assets/`,

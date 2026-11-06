@@ -14,6 +14,7 @@
     python -m overpressure container run -- CMD  CMD in the container, from the repository root
     python -m overpressure container shell      an interactive shell there
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -22,17 +23,24 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, Callable
 
 from . import REPO, localconfig
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 BACKENDS = ("wsl", "sudo", "docker")
 CONTAINER = Path(__file__).resolve().parent / "container"
 VOLUME = "overpressure-var"  # /var/tmp in the container: build roots and stock folders, on a Linux disk
 
 
-def backend(platform: str = sys.platform, which=shutil.which, environ=None) -> str:
-    """The configured backend (OVERPRESSURE_LINUX), else this host's default."""
+def backend(
+    platform: str = sys.platform,
+    which: Callable[[str], str | None] = shutil.which,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Return the configured backend (OVERPRESSURE_LINUX), else this host's default."""
     environ = os.environ if environ is None else environ
     choice = environ.get("OVERPRESSURE_LINUX")
     if choice is None:
@@ -40,7 +48,8 @@ def backend(platform: str = sys.platform, which=shutil.which, environ=None) -> s
         choice = localconfig.parse(env.read_text(encoding="utf-8")).get("OVERPRESSURE_LINUX") if env.exists() else None
     if choice:
         if choice not in BACKENDS:
-            raise ValueError(f"OVERPRESSURE_LINUX={choice!r}: one of {', '.join(BACKENDS)}")
+            msg = f"OVERPRESSURE_LINUX={choice!r}: one of {', '.join(BACKENDS)}"
+            raise ValueError(msg)
         return choice
     if platform == "win32":
         return "wsl" if which("wsl") else "docker"
@@ -49,8 +58,8 @@ def backend(platform: str = sys.platform, which=shutil.which, environ=None) -> s
     return "sudo"
 
 
-def engine(which=shutil.which) -> str:
-    """docker, else podman (OVERPRESSURE_CONTAINER_ENGINE chooses)."""
+def engine(which: Callable[[str], str | None] = shutil.which) -> str:
+    """Return the container engine: docker, else podman (OVERPRESSURE_CONTAINER_ENGINE chooses)."""
     chosen = os.environ.get("OVERPRESSURE_CONTAINER_ENGINE")
     if chosen:
         return chosen
@@ -58,31 +67,52 @@ def engine(which=shutil.which) -> str:
 
 
 def image() -> str:
-    """The image's tag: its recipe's hash, so a changed recipe is a new image."""
+    """Return the image's tag: its recipe's hash, so a changed recipe is a new image."""
     h = hashlib.sha256()
     for name in sorted(p.name for p in CONTAINER.iterdir() if p.is_file()):
         h.update(name.encode() + b"\0" + (CONTAINER / name).read_bytes().replace(b"\r\n", b"\n"))
     return f"overpressure-builder:{h.hexdigest()[:12]}"
 
 
-def run_argv(command: List[str], interactive: bool = False, tool: Optional[str] = None) -> List[str]:
-    """The container command line that runs @p command from the repository root."""
-    return [tool or engine(), "run", "--rm", "--privileged", *(["-it"] if interactive else ["-i"]),
-            "-v", f"{REPO}:/work", "-w", "/work", "-v", f"{VOLUME}:/var/tmp", "-e", "PYTHONUNBUFFERED=1",
-            image(), *command]
+def run_argv(command: list[str], *, interactive: bool = False, tool: str | None = None) -> list[str]:
+    """Return the container command line that runs @p command from the repository root."""
+    return [
+        tool or engine(),
+        "run",
+        "--rm",
+        "--privileged",
+        *(["-it"] if interactive else ["-i"]),
+        "-v",
+        f"{REPO}:/work",
+        "-w",
+        "/work",
+        "-v",
+        f"{VOLUME}:/var/tmp",
+        "-e",
+        "PYTHONUNBUFFERED=1",
+        image(),
+        *command,
+    ]
 
 
 def image_present() -> bool:
-    return subprocess.run([engine(), "image", "inspect", image()], stdout=subprocess.DEVNULL,
-                          stderr=subprocess.DEVNULL).returncode == 0
+    """Tell whether the container engine has the image."""
+    return (
+        subprocess.run(  # noqa: S603  # the container engine, by name, no shell
+            [engine(), "image", "inspect", image()], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
+        ).returncode
+        == 0
+    )
 
 
 def build() -> int:
+    """Build the image; return the engine's exit status."""
     print(f">> {image()} from {CONTAINER}", flush=True)
-    return subprocess.call([engine(), "build", "-t", image(), str(CONTAINER)])
+    return subprocess.call([engine(), "build", "-t", image(), str(CONTAINER)])  # noqa: S603  # the container engine, no shell
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
+    """Run the container command line: build, run or shell."""
     word = argv[0] if argv else ""
     if word == "build":
         return build()
@@ -97,6 +127,6 @@ def main(argv: List[str]) -> int:
             code = build()
             if code:
                 return code
-        return subprocess.call(run_argv(command, interactive=word == "shell"))
+        return subprocess.call(run_argv(command, interactive=word == "shell"))  # noqa: S603  # the user's command in the container
     print(__doc__.strip())
     return 0 if word in ("-h", "--help") else 2

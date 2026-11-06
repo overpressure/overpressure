@@ -16,16 +16,18 @@
 at the first failure and says where the headset is. Evidence goes to out/cycle-<time>/.
 Settings come from .env (devices/phoenix/tooling/localconfig.py).
 """
+
 from __future__ import annotations
 
 import argparse
-import datetime
+import datetime as dt
 import json
 import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable, TypeVar
 
 from overpressure import backup as backups
 from overpressure.process import run, until
@@ -33,107 +35,207 @@ from overpressure.qualcomm import edl_devices
 
 from . import localconfig
 
+if TYPE_CHECKING:
+    from overpressure.process import Timing
+
 ROOT = localconfig.ROOT
+T = TypeVar("T")
 
 
 class Headset:
     """Waits and ADB/EDL steps shared by the cycle and the dev loop."""
 
-    def __init__(self, settings, folder: Path, runner=run, clock=time, edl_count=edl_devices):
+    def __init__(
+        self,
+        settings: localconfig.Settings,
+        folder: Path,
+        runner: Callable[..., str] = run,
+        clock: Timing = time,
+        edl_count: Callable[[], int] = edl_devices,
+    ) -> None:
+        """Work on the headset @p settings name, with evidence in @p folder; tests pass fakes."""
         self.s = settings
         self.folder = folder
         self.run = runner
         self.clock = clock
         self.edl_count = edl_count
 
-    def until(self, name, seconds, operation):
+    def until(self, name: str, seconds: float, operation: Callable[[], T]) -> T:
+        """Retry @p operation until it succeeds, for at most @p seconds."""
         return until(name, seconds, operation, self.clock)
 
-    def wait_pico_os(self, seconds=300) -> str:
-        def ready():
-            lines = self.run([self.s.tool("adb"), "-s", self.s.adb_serial, "shell",
-                              "getprop sys.boot_completed; getprop ro.build.fingerprint"], 15).splitlines()
+    def wait_pico_os(self, seconds: float = 300) -> str:
+        """Wait until PICO OS has finished booting; return its build fingerprint."""
+
+        def ready() -> str:
+            lines = self.run(
+                [
+                    self.s.tool("adb"),
+                    "-s",
+                    self.s.adb_serial,
+                    "shell",
+                    "getprop sys.boot_completed; getprop ro.build.fingerprint",
+                ],
+                15,
+            ).splitlines()
             if not lines or lines[0].strip() != "1":
-                raise RuntimeError("PICO OS has not finished booting")
+                msg = "PICO OS has not finished booting"
+                raise RuntimeError(msg)
             return lines[1].strip() if len(lines) > 1 else ""
+
         return self.until("PICO OS", seconds, ready)
 
-    def enter_edl(self):
+    def enter_edl(self) -> None:
+        """Bring the headset from PICO OS to EDL, unless it is the one EDL device already."""
         if self.edl_count() == 1:
             return
         self.run([self.s.tool("adb"), "-s", self.s.adb_serial, "reboot", "edl"], 30)
 
-        def one():
+        def one() -> None:
             if self.edl_count() != 1:
-                raise RuntimeError("expected exactly one EDL device")
+                msg = "expected exactly one EDL device"
+                raise RuntimeError(msg)
+
         self.until("EDL", 30, one)
 
-    def edl(self, *words, log: str, timeout=600) -> str:
-        return self.run([self.s.edl_program(), "--loader", self.s.path("loader"), "--memory", "Ufs", *words],
-                        timeout, log=self.folder / f"{log}.log")
+    def edl(self, *words: str | Path, log: str, timeout: float = 600) -> str:
+        """Run edl-ng with the headset's loader; its output goes to @p log.log in the evidence folder."""
+        return self.run(
+            [self.s.edl_program(), "--loader", self.s.path("loader"), "--memory", "Ufs", *words],
+            timeout,
+            log=self.folder / f"{log}.log",
+        )
 
     def reset_to_pico_os(self, log: str) -> str:
-        """EDL reset (edl-ng's plain reset mode), then PICO OS. Once the headset stayed off after the
-        final reset, with nothing on USB, and only a hard reset by the user brought PICO OS back: the
-        cycle then stops and says so instead of retrying anything."""
+        """Reset from EDL (edl-ng's plain reset mode), then wait for PICO OS.
+
+        Once the headset stayed off after the final reset, with nothing on USB, and only a hard
+        reset by the user brought PICO OS back: the cycle then stops and says so instead of
+        retrying anything.
+        """
         self.edl("reset", "--mode", "Reset", log=log)
         try:
             return self.wait_pico_os()
         except RuntimeError as exc:
             where = "still in EDL" if self.edl_count() else "no ADB or EDL device"
-            raise RuntimeError(f"PICO OS did not come up after the EDL reset ({where}): hard reset needed; "
-                               "hold the power button until the headset restarts, nothing is retried") from exc
+            msg = (
+                f"PICO OS did not come up after the EDL reset ({where}): hard reset needed; "
+                "hold the power button until the headset restarts, nothing is retried"
+            )
+            raise RuntimeError(msg) from exc
 
-    def check_edl_serial(self, output: str):
+    def check_edl_serial(self, output: str) -> None:
         """edl-ng reports the device serial when it connects: only the configured headset may be written."""
-        if not re.search(rf"Serial Number:\s*{re.escape(self.s.edl_serial)}\b", output, re.I):
-            raise RuntimeError("the EDL device is not the configured headset (headset in EDL)")
+        if not re.search(rf"Serial Number:\s*{re.escape(self.s.edl_serial)}\b", output, re.IGNORECASE):
+            msg = "the EDL device is not the configured headset (headset in EDL)"
+            raise RuntimeError(msg)
 
-    def device_args(self) -> list:
-        return ["--identity", self.s.path("identity"), "--backup", self.s.path("backup"),
-                "--loader", self.s.path("loader"), "--edl-backend", "edl-ng", "--edl", self.s.edl_program(),
-                "--partition", "abl"]
+    def device_args(self) -> list[str | Path]:
+        """Return the device command's arguments for the ABL with this headset's backup and loader."""
+        return [
+            "--identity",
+            self.s.path("identity"),
+            "--backup",
+            self.s.path("backup"),
+            "--loader",
+            self.s.path("loader"),
+            "--edl-backend",
+            "edl-ng",
+            "--edl",
+            self.s.edl_program(),
+            "--partition",
+            "abl",
+        ]
 
-    def stage_abl(self):
+    def stage_abl(self) -> None:
         """Engineering ABL through EDL (hash and readback checked), then PICO OS."""
         self.s.require("adb_serial", "edl_serial", "engineering_abl_sha256")
         print(">> engineering ABL", flush=True)
         self.enter_edl()
         # A read-only first session identifies the device before anything is written.
         self.check_edl_serial(self.edl("printgpt", log="edl-identify", timeout=120))
-        self.run([sys.executable, "-m", "overpressure", "--device", "phoenix", "device", "stage", *self.device_args(),
-                  "--image", self.s.path("engineering_abl"), "--sha256", self.s.engineering_abl_sha256,
-                  "--readback", self.folder / "engineering-abl-readback.bin", "--execute",
-                  "--confirm-device", self.s.adb_serial], 900, log=self.folder / "stage-abl.log")
+        self.run(
+            [
+                sys.executable,
+                "-m",
+                "overpressure",
+                "--device",
+                "phoenix",
+                "device",
+                "stage",
+                *self.device_args(),
+                "--image",
+                self.s.path("engineering_abl"),
+                "--sha256",
+                self.s.engineering_abl_sha256,
+                "--readback",
+                self.folder / "engineering-abl-readback.bin",
+                "--execute",
+                "--confirm-device",
+                self.s.adb_serial,
+            ],
+            900,
+            log=self.folder / "stage-abl.log",
+        )
         print(f"   PICO OS with engineering ABL: {self.reset_to_pico_os('reset-stage')}", flush=True)
 
-    def stock_partition(self, name: str) -> tuple:
-        """A partition's image in the backup and its manifest entry."""
+    def stock_partition(self, name: str) -> tuple[Path, dict]:
+        """Return a partition's image in the backup and its manifest entry."""
         backup = self.s.path("backup")
         manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
         names = [n for n in manifest["files"] if Path(n).stem == name and Path(n).suffix in (".bin", ".img")]
         if len(names) != 1:
-            raise ValueError(f"the backup must hold exactly one {name} partition image")
+            msg = f"the backup must hold exactly one {name} partition image"
+            raise ValueError(msg)
         return backup / names[0], manifest["files"][names[0]]
 
-    def stock_boot(self) -> tuple:
-        """The stock boot image of the backup and its manifest entry."""
+    def stock_boot(self) -> tuple[Path, dict]:
+        """Return the stock boot image of the backup and its manifest entry."""
         return self.stock_partition("boot")
 
 
 class Cycle(Headset):
+    """The acceptance cycle's steps: stage the ABL, the runner's flash-run, verify and restore."""
+
     def flash_run(self) -> int:
+        """Run the acceptance runner's flash-run; restore stock boot if it could not; wait for PICO OS."""
         print(">> hardware acceptance (flash-run)", flush=True)
         image = ROOT / "out" / f"pico4-stage1-{self.s.firmware}.img"
         if not image.exists():
-            raise ValueError(f"missing {image}: run python -m overpressure build --firmware {self.s.firmware}")
-        argv = [sys.executable, "-m", "overpressure", "--device", "phoenix", "hwtest", "flash-run", "--serial", self.s.adb_serial,
-                "--confirm-device", self.s.adb_serial, "--fastboot-serial", self.s.fastboot_serial,
-                "--backup", self.s.path("backup"), "--image", image, "--adb", self.s.tool("adb"),
-                "--fastboot", self.s.tool("fastboot"), "--ssh", self.s.ssh, "--ssh-keygen", self.s.ssh_keygen,
-                "--out", self.folder / "run"]
-        if self.s.ncm():
-            argv += ["--windows-ncm-python", self.s.ncm()]
+            msg = f"missing {image}: run python -m overpressure build --firmware {self.s.firmware}"
+            raise ValueError(msg)
+        argv = [
+            sys.executable,
+            "-m",
+            "overpressure",
+            "--device",
+            "phoenix",
+            "hwtest",
+            "flash-run",
+            "--serial",
+            self.s.adb_serial,
+            "--confirm-device",
+            self.s.adb_serial,
+            "--fastboot-serial",
+            self.s.fastboot_serial,
+            "--backup",
+            self.s.path("backup"),
+            "--image",
+            image,
+            "--adb",
+            self.s.tool("adb"),
+            "--fastboot",
+            self.s.tool("fastboot"),
+            "--ssh",
+            self.s.ssh,
+            "--ssh-keygen",
+            self.s.ssh_keygen,
+            "--out",
+            self.folder / "run",
+        ]
+        ncm = self.s.ncm()
+        if ncm:
+            argv += ["--windows-ncm-python", ncm]
         try:
             self.run(argv, 4 * 3600, log=self.folder / "run.log")
             code = 0
@@ -146,23 +248,25 @@ class Cycle(Headset):
         print(f"   PICO OS after the run: {self.wait_pico_os()}", flush=True)
         return code
 
-    def restore_boot(self, result: dict):
-        """The runner could not restore boot: its device deadline brings the headset to fastboot."""
+    def restore_boot(self, result: dict) -> None:
+        """Flash stock boot with the runner's recorded commands once its deadline brings fastboot."""
         print("   boot restore pending: waiting for fastboot", flush=True)
 
-        def in_fastboot():
+        def in_fastboot() -> None:
             if self.s.fastboot_serial not in self.run([self.s.tool("fastboot"), "devices"], 30, check=False):
-                raise RuntimeError("not in fastboot yet")
+                msg = "not in fastboot yet"
+                raise RuntimeError(msg)
+
         self.until("fastboot", 45 * 60, in_fastboot)
         saved = result["stock_boot"]
         if backups.digest(Path(saved["path"])) != {"size": saved["size"], "sha256": saved["sha256"]}:
-            raise RuntimeError("the pinned stock boot image changed; headset left in fastboot")
-        with open(self.folder / "manual-restore.log", "w", encoding="utf-8") as log:
-            for command in result["manual_restore_commands"]:
-                log.write(self.run(command, 300) + "\n")
+            msg = "the pinned stock boot image changed; headset left in fastboot"
+            raise RuntimeError(msg)
+        with (self.folder / "manual-restore.log").open("w", encoding="utf-8") as log:
+            log.writelines(self.run(command, 300) + "\n" for command in result["manual_restore_commands"])
         print("   stock boot flashed by the cycle", flush=True)
 
-    def restore_abl(self):
+    def restore_abl(self) -> None:
         """Stock boot verified by a full EDL readback, then stock ABL, then PICO OS."""
         self.s.require("adb_serial", "edl_serial")
         print(">> verify stock boot, restore stock ABL", flush=True)
@@ -170,23 +274,42 @@ class Cycle(Headset):
         self.enter_edl()
         self.check_edl_serial(self.edl("read-part", "boot", self.folder / "boot-readback.bin", log="boot-readback"))
         if backups.digest(self.folder / "boot-readback.bin")["sha256"] != expected["sha256"]:
-            raise RuntimeError(f"boot differs from {stock.name} in the backup (headset in EDL)")
-        self.run([sys.executable, "-m", "overpressure", "--device", "phoenix", "device", "restore-abl", *self.device_args(),
-                  "--readback", self.folder / "stock-abl-readback.bin", "--execute",
-                  "--confirm-device", self.s.adb_serial], 900, log=self.folder / "restore-abl.log")
+            msg = f"boot differs from {stock.name} in the backup (headset in EDL)"
+            raise RuntimeError(msg)
+        self.run(
+            [
+                sys.executable,
+                "-m",
+                "overpressure",
+                "--device",
+                "phoenix",
+                "device",
+                "restore-abl",
+                *self.device_args(),
+                "--readback",
+                self.folder / "stock-abl-readback.bin",
+                "--execute",
+                "--confirm-device",
+                self.s.adb_serial,
+            ],
+            900,
+            log=self.folder / "restore-abl.log",
+        )
         print(f"   final PICO OS: {self.reset_to_pico_os('reset-final')}", flush=True)
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="python -m overpressure cycle", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+def main(argv: list[str] | None = None) -> int:
+    """Run the acceptance cycle; it stops at the first failure and says where the headset is."""
+    ap = argparse.ArgumentParser(
+        prog="python -m overpressure cycle", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--skip-stage", action="store_true", help="the engineering ABL is already staged")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--keep-abl", action="store_true", help="stop before restoring the stock ABL")
     mode.add_argument("--restore-only", action="store_true", help="only verify stock boot and restore stock ABL")
     args = ap.parse_args(argv)
     settings = localconfig.load()
-    folder = ROOT / "out" / ("cycle-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    folder = ROOT / "out" / ("cycle-" + dt.datetime.now(dt.timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S"))
     folder.mkdir(parents=True)
     cycle = Cycle(settings, folder)
     code = 0

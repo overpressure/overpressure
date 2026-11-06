@@ -1,15 +1,26 @@
 # SPDX-License-Identifier: Unlicense
 """The repository's own checks: the private-data scan, the link check and the changelog."""
+
+from __future__ import annotations
+
 import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from types import ModuleType
 
 REPO = Path(__file__).resolve().parents[1]
 
 
-def load(name):
+def load(name: str) -> ModuleType:
+    """Load one of the repository's check scripts, whose names have dashes, as a module."""
     spec = importlib.util.spec_from_file_location(name.replace("-", "_"), REPO / "scripts" / f"{name}.py")
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -21,18 +32,18 @@ changelog = load("changelog")
 
 
 class PrivateDataTests(unittest.TestCase):
-    def kinds(self, path, data, secrets=()):
+    def kinds(self, path: str, data: bytes, secrets: Iterable[bytes] = ()) -> list[str]:
         return [line.split(": ")[1] for line in private.findings(path, data, secrets)]
 
     def test_what_it_finds(self):
         cases = {
             b"mac aa:bb:cc:dd:ee:ff": "MAC address",
             b"steam 76561198000000001": "Steam ID",
-            # Split, so that the scan of this file finds nothing.
-            b"host 192.168" b".2.40": "private address",
-            b"host 10" b".1.2.3": "private address",
-            b"C:\\Users\\" b"someone\\x": "personal path",
-            b"/mnt/c/Users/" b"someone/x": "personal path",
+            # Joined at run time, so that the scan of this file finds nothing.
+            b"host 192.168." + b"2.40": "private address",
+            b"host 10." + b"1.2.3": "private address",
+            b"C:\\Users\\" + b"someone\\x": "personal path",
+            b"/mnt/c/Users/" + b"someone/x": "personal path",
             b"-----BEGIN OPENSSH PRIVATE KEY-----": "private key",
         }
         for data, kind in cases.items():
@@ -68,19 +79,58 @@ class LinkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "b.md").write_text("# A Title: here\n", encoding="utf-8")
-            text = ("[good](b.md) [good](b.md#a-title-here) [web](https://example.com) `[code](none.md)`\n"
-                    "```\n[fenced](none.md)\n```\n[gone](c.md) [nohead](b.md#other)\n")
+            text = (
+                "[good](b.md) [good](b.md#a-title-here) [web](https://example.com) `[code](none.md)`\n"
+                "```\n[fenced](none.md)\n```\n[gone](c.md) [nohead](b.md#other)\n"
+            )
             self.assertEqual(docs.broken(root / "a.md", text), ["c.md: no such file", "b.md#other: no such heading"])
 
 
 class ChangelogTests(unittest.TestCase):
     def test_features_and_fixes_for_users_the_rest_as_a_count(self):
-        text = changelog.notes(["fix: PipeWire survives a suspend", "docs: remove what is obsolete",
-                                "feat(steam): 72 Hz", "feat!: a new layout", "not conventional"], "1.0-beta")
+        text = changelog.notes(
+            [
+                "fix: PipeWire survives a suspend",
+                "docs: remove what is obsolete",
+                "feat(steam): 72 Hz",
+                "feat!: a new layout",
+                "not conventional",
+            ],
+            "1.0-beta",
+        )
         self.assertIn("## 1.0-beta", text)
         self.assertIn("### Features\n\n- 72 Hz\n- a new layout (breaking)\n", text)
         self.assertIn("### Fixes\n\n- PipeWire survives a suspend\n", text)
         self.assertIn("2 other commit(s)", text)
+
+
+class LintScopeTests(unittest.TestCase):
+    """ruff and ty find Python files by their suffix: the headset's programs without one are listed by name."""
+
+    @staticmethod
+    def listed(text: str, table: str) -> set[str]:
+        section = text[text.index(f"[{table}]") :]
+        block = section[section.index(" = [") : section.index("\n]")]
+        return {line.strip().strip('",') for line in block.splitlines()[1:] if line.strip().startswith('"devices/')}
+
+    @staticmethod
+    def python_program(path: Path) -> bool:
+        if not path.is_file() or path.suffix:
+            return False
+        with path.open("rb") as file:
+            first = file.readline(128)
+        return first.startswith(b"#!") and b"python" in first
+
+    def test_every_python_program_without_a_suffix_is_linted_and_type_checked(self):
+        programs = {
+            path.relative_to(REPO).as_posix()
+            for path in REPO.glob("devices/*/userspace/rootfs/**/*")
+            if self.python_program(path)
+        }
+        self.assertTrue(programs)
+        text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertEqual(self.listed(text, "tool.ruff"), programs)
+        self.assertEqual(self.listed(text, "tool.ty.src"), programs)
 
 
 if __name__ == "__main__":

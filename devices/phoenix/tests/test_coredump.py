@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """The limit on the core dumps that vrcompositor leaves at each SteamVR stop."""
+
 import configparser
 import unittest
 from pathlib import Path

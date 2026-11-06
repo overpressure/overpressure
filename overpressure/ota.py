@@ -9,45 +9,56 @@ downloaded (HTTP Range requests: the zip's central directory and the members), a
 is checked against the CRC-32 the zip records. A headset keeps a catalog of its vendor's builds
 (``{"builds": {NAME: {"url": ...}}}``) and says which members it needs.
 """
+
 from __future__ import annotations
 
 import hashlib
 import io
 import json
-import os
 import shutil
 import struct
 import subprocess
 import zipfile
 import zlib
 from pathlib import Path
-from typing import BinaryIO, Dict, Iterable, Mapping
+from typing import IO, TYPE_CHECKING, Callable, cast
 
 from . import payload
 
+if TYPE_CHECKING:
+    import os
+    from collections.abc import Iterable, Mapping
+
 CHUNK = 8 * 1024 * 1024
 BLOCK = 4096
+#: The transfer list versions AOSP's block OTAs write.
+TRANSFER_LIST_VERSIONS = range(1, 5)
+#: From this version on, two more header lines count the stash.
+TRANSFER_LIST_STASH_VERSION = 2
 
 
-def load_catalog(path) -> dict:
-    """A headset's catalog of its vendor's builds: name -> {"url": ..., ...}."""
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)["builds"]
+def load_catalog(path: str | os.PathLike[str]) -> dict:
+    """Return a headset's catalog of its vendor's builds: name -> {"url": ..., ...}."""
+    return json.loads(Path(path).read_text(encoding="utf-8"))["builds"]
 
 
 def _member_start(src: payload.Source, info: zipfile.ZipInfo) -> int:
     """Where a zip member's data begins, after its local file header."""
     local = src.read_at(info.header_offset, 30)
     if local[:4] != b"PK\x03\x04":
-        raise ValueError(f"bad local file header for {info.filename}")
+        msg = f"bad local file header for {info.filename}"
+        raise ValueError(msg)
     name_len, extra_len = struct.unpack_from("<HH", local, 26)
     if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
-        raise ValueError(f"{info.filename}: unsupported zip compression method {info.compress_type}")
+        msg = f"{info.filename}: unsupported zip compression method {info.compress_type}"
+        raise ValueError(msg)
     return info.header_offset + 30 + name_len + extra_len
 
 
-def stream_member(src: payload.Source, info: zipfile.ZipInfo, out, log=print) -> None:
-    """A zip member's data into @p out (a writable binary stream), checked against its CRC-32."""
+def stream_member(
+    src: payload.Source, info: zipfile.ZipInfo, out: IO[bytes], log: Callable[[str], None] = print
+) -> None:
+    """Write a zip member's data into @p out, checked against its CRC-32."""
     start = _member_start(src, info)
     inflater = zlib.decompressobj(-15) if info.compress_type == zipfile.ZIP_DEFLATED else None
     crc, done, written = 0, 0, 0
@@ -66,15 +77,18 @@ def stream_member(src: payload.Source, info: zipfile.ZipInfo, out, log=print) ->
         out.write(tail)
         written += len(tail)
     if written != info.file_size or crc != info.CRC:
-        raise ValueError(f"{info.filename}: CRC/size mismatch after download (corrupt transfer?)")
+        msg = f"{info.filename}: CRC/size mismatch after download (corrupt transfer?)"
+        raise ValueError(msg)
 
 
-def zip_infos(src: payload.Source) -> Dict[str, zipfile.ZipInfo]:
+def zip_infos(src: payload.Source) -> dict[str, zipfile.ZipInfo]:
+    """Return a zip's members by name, from its central directory."""
     with zipfile.ZipFile(io.BufferedReader(payload.SourceFile(src), buffer_size=65536)) as zf:
         return {info.filename: info for info in zf.infolist()}
 
 
-def read_member(src: payload.Source, name: str, log=print) -> bytes:
+def read_member(src: payload.Source, name: str, log: Callable[[str], None] = print) -> bytes:
+    """Return a zip member's data, checked against its CRC-32."""
     info = zip_infos(src)[name]
     log(f"  {name}: {info.compress_size / 1e6:.1f} MB compressed, {info.file_size / 1e6:.1f} MB unpacked")
     out = io.BytesIO()
@@ -83,18 +97,20 @@ def read_member(src: payload.Source, name: str, log=print) -> bytes:
     return out.getvalue()
 
 
-def fetch_boot_image(location: str, cache_dir: str | None = None, log=print, partition: str = "boot") -> bytes:
-    """Return the raw stock boot.img (or another partition's image, such as recovery's) from a
-    .img file, OTA zip/payload, or URL."""
+def fetch_boot_image(
+    location: str, cache_dir: str | None = None, log: Callable[[str], None] = print, partition: str = "boot"
+) -> bytes:
+    """Return the raw stock boot.img, or another partition's image such as recovery's.
+
+    LOCATION is an .img file, an OTA zip or payload, or the URL of one.
+    """
+    cached: Path | None = None
     if cache_dir and location.startswith(("http://", "https://")):
         key = location.rstrip("/").rsplit("/", 1)[-1]
-        cached = os.path.join(cache_dir, "stock", f"{key}.{partition}.img")
-        if os.path.exists(cached):
+        cached = Path(cache_dir, "stock", f"{key}.{partition}.img")
+        if cached.exists():
             log(f"  using cached {cached}")
-            with open(cached, "rb") as f:
-                return f.read()
-    else:
-        cached = None
+            return cached.read_bytes()
 
     src = payload.open_source(location, log)
     magic = src.read_at(0, 8)
@@ -109,37 +125,43 @@ def fetch_boot_image(location: str, cache_dir: str | None = None, log=print, par
         elif "payload.bin" in names:
             data = payload.extract_partition(payload.read_payload(payload.payload_from(location, log)), partition, log)
         else:
-            raise ValueError(f"zip contains neither {partition}.img nor payload.bin")
+            msg = f"zip contains neither {partition}.img nor payload.bin"
+            raise ValueError(msg)
     else:
-        raise ValueError(f"{location}: not a boot image, OTA zip or payload (magic {magic!r})")
+        msg = f"{location}: not a boot image, OTA zip or payload (magic {magic!r})"
+        raise ValueError(msg)
 
     if isinstance(src, payload.HttpSource):
         log(f"  downloaded {src.downloaded / 1e6:.1f} MB of a {src.size / 1e9:.2f} GB file")
     if cached:
-        os.makedirs(os.path.dirname(cached), exist_ok=True)
-        with open(cached + ".part", "wb") as f:
-            f.write(data)
-        os.replace(cached + ".part", cached)
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        part = cached.with_name(cached.name + ".part")
+        part.write_bytes(data)
+        part.replace(cached)
     return data
 
 
 def parse_rangeset(text: str) -> list[tuple[int, int]]:
-    """A transfer list's range set ("4,0,10,20,30": two ranges) as (first, end) block pairs."""
+    """Return a transfer list's range set ("4,0,10,20,30": two ranges) as (first, end) block pairs."""
     values = [int(v) for v in text.split(",")]
     if values[0] != len(values) - 1 or values[0] % 2:
-        raise ValueError(f"malformed range set {text!r}")
+        msg = f"malformed range set {text!r}"
+        raise ValueError(msg)
     return [(values[i], values[i + 1]) for i in range(1, len(values), 2)]
 
 
-def apply_transfer_list(transfer_list: str, new_data: BinaryIO, out: BinaryIO) -> int:
-    """Rebuild a partition image from a full OTA's transfer list and its decompressed new data
-    (as AOSP's block-based OTA writes it: 'new' takes the next blocks of the data in order,
-    'zero' and 'erase' leave zeros). Returns the image's size in bytes."""
+def apply_transfer_list(transfer_list: str, new_data: IO[bytes], out: IO[bytes]) -> int:
+    """Rebuild a partition image from a full OTA's transfer list and its decompressed new data.
+
+    As AOSP's block-based OTA writes it: 'new' takes the next blocks of the data in order, 'zero'
+    and 'erase' leave zeros. Returns the image's size in bytes.
+    """
     lines = transfer_list.splitlines()
     version, total = int(lines[0]), int(lines[1])
-    if version < 1 or version > 4:
-        raise ValueError(f"unsupported transfer list version {version}")
-    commands = lines[4:] if version >= 2 else lines[2:]
+    if version not in TRANSFER_LIST_VERSIONS:
+        msg = f"unsupported transfer list version {version}"
+        raise ValueError(msg)
+    commands = lines[4:] if version >= TRANSFER_LIST_STASH_VERSION else lines[2:]
     for line in commands:
         if not line.strip():
             continue
@@ -151,13 +173,15 @@ def apply_transfer_list(transfer_list: str, new_data: BinaryIO, out: BinaryIO) -
                 while left:
                     data = new_data.read(min(left, CHUNK))
                     if not data:
-                        raise ValueError("the new data ends before the transfer list")
+                        msg = "the new data ends before the transfer list"
+                        raise ValueError(msg)
                     out.write(data)
                     left -= len(data)
         elif cmd in ("zero", "erase"):
             continue  # a fresh file is zero already
         else:
-            raise ValueError(f"a full OTA's transfer list has no {cmd!r} command")
+            msg = f"a full OTA's transfer list has no {cmd!r} command"
+            raise ValueError(msg)
     size = total * BLOCK
     out.seek(0, io.SEEK_END)
     if out.tell() < size:  # trailing zero blocks: extend (truncate need not)
@@ -168,6 +192,7 @@ def apply_transfer_list(transfer_list: str, new_data: BinaryIO, out: BinaryIO) -
 
 
 def member_ok(path: Path, info: zipfile.ZipInfo) -> bool:
+    """Tell whether PATH holds the member already: its size and CRC-32 match."""
     if not path.exists() or path.stat().st_size != info.file_size:
         return False
     crc = 0
@@ -177,8 +202,8 @@ def member_ok(path: Path, info: zipfile.ZipInfo) -> bool:
     return crc == info.CRC
 
 
-def download_member(src: payload.Source, info: zipfile.ZipInfo, path: Path, log=print) -> None:
-    """One zip member into @path, its CRC-32 checked against the zip directory; kept if it is there."""
+def download_member(src: payload.Source, info: zipfile.ZipInfo, path: Path, log: Callable[[str], None] = print) -> None:
+    """Download one zip member into @p path, checked against its CRC-32; keep it if it is there."""
     if member_ok(path, info):
         log(f"  {info.filename}: already downloaded")
         return
@@ -193,35 +218,43 @@ def download_member(src: payload.Source, info: zipfile.ZipInfo, path: Path, log=
     tmp.replace(path)
 
 
-def rebuild_image(download: Path, name: str, out_path: Path, log=print) -> None:
-    """vendor.new.dat.br + vendor.transfer.list -> an ext4 image, through the brotli command."""
+def rebuild_image(download: Path, name: str, out_path: Path, log: Callable[[str], None] = print) -> None:
+    """Rebuild an ext4 image from NAME.new.dat.br and NAME.transfer.list, through the brotli command."""
     brotli = shutil.which("brotli")
     if brotli is None:
-        raise SystemExit("the brotli command is required (Debian/Ubuntu: apt install brotli)")
+        msg = "the brotli command is required (Debian/Ubuntu: apt install brotli)"
+        raise SystemExit(msg)
     transfer = (download / f"{name}.transfer.list").read_text(encoding="ascii")
     tmp = out_path.with_name(out_path.name + ".part")
     log(f">> {out_path.name} from {name}.new.dat.br")
-    proc = subprocess.Popen([brotli, "-d", "-c", str(download / f"{name}.new.dat.br")], stdout=subprocess.PIPE)
+    proc = subprocess.Popen(  # noqa: S603  # the brotli found on PATH, on a file of the OTA
+        [brotli, "-d", "-c", str(download / f"{name}.new.dat.br")], stdout=subprocess.PIPE
+    )
+    stdout = cast("IO[bytes]", proc.stdout)  # stdout=PIPE
     try:
         with tmp.open("wb") as out:
-            size = apply_transfer_list(transfer, proc.stdout, out)
-        rest = proc.stdout.read(1)
+            size = apply_transfer_list(transfer, stdout, out)
+        rest = stdout.read(1)
     finally:
-        proc.stdout.close()
+        stdout.close()
         code = proc.wait()
     if code != 0:
-        raise SystemExit(f"brotli failed on {name}.new.dat.br ({code})")
+        msg = f"brotli failed on {name}.new.dat.br ({code})"
+        raise SystemExit(msg)
     if rest:
-        raise ValueError(f"{name}.new.dat.br holds more data than its transfer list places")
+        msg = f"{name}.new.dat.br holds more data than its transfer list places"
+        raise ValueError(msg)
     with tmp.open("rb") as f:
         f.seek(0x438)  # ext4 superblock magic
         if f.read(2) != b"\x53\xef":
-            raise ValueError(f"{out_path.name} is not an ext4 image")
+            msg = f"{out_path.name} is not an ext4 image"
+            raise ValueError(msg)
     tmp.replace(out_path)
     log(f"  {out_path.name}: {size / 1e6:.0f} MB")
 
 
 def sha256(path: Path) -> str:
+    """Return a file's SHA-256, in hex."""
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(CHUNK), b""):
@@ -230,20 +263,29 @@ def sha256(path: Path) -> str:
 
 
 def members_needed(copied: Mapping[str, str], block_images: Mapping[str, str]) -> Iterable[str]:
-    """The OTA members a set of copied files and block images needs."""
+    """Yield the OTA members a set of copied files and block images needs."""
     yield from copied.values()
     for base in block_images.values():
         yield f"{base}.new.dat.br"
         yield f"{base}.transfer.list"
 
 
-def extract(label: str, location: str, output: Path, copied: Mapping[str, str], block_images: Mapping[str, str],
-            log=print) -> dict:
-    """A full block OTA's files into @p output: @p copied (output name -> member) as they are,
-    @p block_images (output name -> base name) rebuilt from their transfer lists, and
-    manifest.json with every file's SHA-256. The members stay under output/download and are
-    fetched again only when missing or corrupt; a rebuilt image stays while the manifest says it
-    is this build's."""
+def extract(  # noqa: PLR0913  # the build, its OTA, the output and what to take; log keyword-only
+    label: str,
+    location: str,
+    output: Path,
+    copied: Mapping[str, str],
+    block_images: Mapping[str, str],
+    *,
+    log: Callable[[str], None] = print,
+) -> dict:
+    """Extract a full block OTA's files into @p output.
+
+    @p copied (output name -> member) as they are, @p block_images (output name -> base name)
+    rebuilt from their transfer lists, and manifest.json with every file's SHA-256. The members
+    stay under output/download and are fetched again only when missing or corrupt; a rebuilt image
+    stays while the manifest says it is this build's.
+    """
     output.mkdir(parents=True, exist_ok=True)
     download = output / "download"
     src = payload.open_source(location, log)

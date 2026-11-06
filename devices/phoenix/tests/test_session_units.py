@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """The session's units: SteamVR's restart limit and the fallback to Monado's session."""
+
 import configparser
 import json
 import os
@@ -14,9 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 
 
-def unit(path):
+def unit(path: str) -> configparser.ConfigParser:
+    """Parse a systemd unit below the rootfs, keys in their case."""
     parser = configparser.ConfigParser(strict=False, interpolation=None)
-    parser.optionxform = str
+    parser.optionxform = lambda optionstr: optionstr  # keep the keys' case
     parser.read_string((ROOTFS / path).read_text(encoding="utf-8"))
     return parser
 
@@ -91,6 +93,7 @@ class OpenGLTest(unittest.TestCase):
         self.assertRegex(dropin, r"(?m)^Environment=STEAM_LAUNCH_WRAPPER_AFFINITY_LIST=0xf0$")
         self.assertRegex(dropin, r"(?m)^Environment=STEAM_DESKTOP_APP_AFFINITY_LIST=0xf0$")
 
+
 class VsyncLeadTest(unittest.TestCase):
     def test_steamvr_runs_with_the_lead(self):
         # SteamVR starts its compositor about 4 ms before the vblank it sees.
@@ -107,7 +110,6 @@ class VsyncLeadTest(unittest.TestCase):
 
 
 class CompressedScanoutTest(unittest.TestCase):
-
     def test_steamvr_keeps_one_frame_ahead(self):
         # SteamVR waits for each present to be shown before it starts the next
         # frame; without a frame ahead the GPU idles a third of the time (about 58 fps).
@@ -116,27 +118,35 @@ class CompressedScanoutTest(unittest.TestCase):
         layer = (ROOT / "src/swapchain/pico4-swapchain-usage.c").read_text(encoding="utf-8")
         self.assertIn('"PICO4_FRAMES_AHEAD"', layer)
 
+
 class FrameSettingsTest(unittest.TestCase):
     def test_session_takes_the_frames_compositor_path(self):
         # The Steam Frame's compositor settings are the baseline; they live in its
         # driver's frame_hmd_additional.vrsettings, which SteamVR loads only with that driver.
         settings = json.loads((ROOT / "userspace/session/steamvr.vrsettings").read_text(encoding="utf-8"))
         steamvr = settings["steamvr"]
-        for key in ("useFacetRenderer", "renderSystemLayerInDistortPass", "enableSimplifiedShaders",
-                    "enableAchromaticDistortion", "enableScanoutScaling", "enableLinuxVulkanAsync"):
-            self.assertIs(steamvr[key], True, key)
+        for key in (
+            "useFacetRenderer",
+            "renderSystemLayerInDistortPass",
+            "enableSimplifiedShaders",
+            "enableAchromaticDistortion",
+            "enableScanoutScaling",
+            "enableLinuxVulkanAsync",
+        ):
+            self.assertIs(steamvr[key], True, key)  # noqa: FBT003  # a JSON true, not only a truthy value
         self.assertEqual(steamvr["systemLayerWidth"], 1400)
         self.assertEqual(steamvr["overlayRenderQuality_2"], 1)
         self.assertEqual(steamvr["forcedDriver"], "monado")
-        self.assertIs(settings["driver_frame_hmd"]["enable"], False)
+        self.assertIs(settings["driver_frame_hmd"]["enable"], False)  # noqa: FBT003  # a JSON false, not only falsy
         # Standby follows the wear sensor and pauses the compositor, as on the Frame.
-        self.assertIs(settings["power"]["pauseCompositorOnStandby"], True)
+        self.assertIs(settings["power"]["pauseCompositorOnStandby"], True)  # noqa: FBT003  # a JSON true, not only truthy
         # The dashboard's room setup in the headset needs the HMD to say it supports it,
         # and its steps past the recenter need 11004 too.
         room = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch").read_text(encoding="utf-8")
         for prop in (11003, 11004):
-            self.assertIn(f"SetBoolProperty(m_ulPropertyContainer, static_cast<vr::ETrackedDeviceProperty>({prop}), true)",
-                          room)
+            self.assertIn(
+                f"SetBoolProperty(m_ulPropertyContainer, static_cast<vr::ETrackedDeviceProperty>({prop}), true)", room
+            )
         self.assertNotIn("inHMDRoomSetupDebug", json.dumps(settings))
         # Facet builds its mesh from the driver's exact inverse distortion.
         patch = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-pico4.patch").read_text(encoding="utf-8")
@@ -157,12 +167,20 @@ class KthreadPrioritiesTest(unittest.TestCase):
             bin_dir = Path(tmp, "bin")
             bin_dir.mkdir()
             log = Path(tmp, "log").as_posix()
-            processes = ("10 gpu-worker", "11 crtc_event:91", "12 atomic-worker-0", "13 spi0",
-                         "14 irq/252-soundwi", "15 kworker/0:1")
-            for name, body in (("ps", "printf '%s\\n' " + " ".join(f"'{p}'" for p in processes)),
-                               ("chrt", f'echo "chrt $*" >> {log}'),
-                               # An interrupt thread refuses a new affinity.
-                               ("taskset", f'echo "taskset $*" >> {log}; [ "$3" != 14 ]')):
+            processes = (
+                "10 gpu-worker",
+                "11 crtc_event:91",
+                "12 atomic-worker-0",
+                "13 spi0",
+                "14 irq/252-soundwi",
+                "15 kworker/0:1",
+            )
+            for name, body in (
+                ("ps", "printf '%s\\n' " + " ".join(f"'{p}'" for p in processes)),
+                ("chrt", f'echo "chrt $*" >> {log}'),
+                # An interrupt thread refuses a new affinity.
+                ("taskset", f'echo "taskset $*" >> {log}; [ "$3" != 14 ]'),
+            ):
                 path = bin_dir / name
                 path.write_bytes(f"#!/bin/sh\n{body}\n".encode())
                 path.chmod(0o755)
@@ -171,14 +189,26 @@ class KthreadPrioritiesTest(unittest.TestCase):
                 (workqueues / wq).mkdir(parents=True)
                 (workqueues / wq / "prio").write_text("255\n")
             bash = shutil.which("bash")
-            env = dict(os.environ, PICO4_SYSFS=Path(tmp, "sys").as_posix(),
-                       PATH=f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}")
+            assert bash is not None, "needs bash"
+            env = dict(
+                os.environ,
+                PICO4_SYSFS=Path(tmp, "sys").as_posix(),
+                PATH=f"{bin_dir.as_posix()}{os.pathsep}{os.environ['PATH']}",
+            )
             script = ROOTFS / "usr/libexec/pico4/kthread-priorities"
-            r = subprocess.run([bash, script.as_posix()], env=env, capture_output=True, text=True)
+            r = subprocess.run(  # noqa: S603  # the repository's script under bash, no shell
+                [bash, script.as_posix()], env=env, capture_output=True, text=True, check=False
+            )
             self.assertEqual(r.returncode, 0, r.stderr)
             calls = Path(log).read_text().splitlines()
-            for line in ("chrt -r -p 99 10", "chrt -r -p 99 11", "chrt -r -p 88 12", "chrt -r -p 80 13",
-                         "taskset -p 0x0f 13", "chrt -r -p 80 14"):
+            for line in (
+                "chrt -r -p 99 10",
+                "chrt -r -p 99 11",
+                "chrt -r -p 88 12",
+                "chrt -r -p 80 13",
+                "taskset -p 0x0f 13",
+                "chrt -r -p 80 14",
+            ):
                 self.assertIn(line, calls)
             self.assertFalse([c for c in calls if c.endswith(" 15")])
             self.assertEqual((workqueues / "ring0/prio").read_text().strip(), "90")
@@ -191,7 +221,7 @@ class SoundCardFormatTest(unittest.TestCase):
         # at 16 bits the tails of sounds are crunchy.
         conf = (ROOTFS / "etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf").read_text(encoding="utf-8")
         self.assertNotIn("audio.format", conf)
-        self.assertIn('alsa_output.platform-sound', conf)
+        self.assertIn("alsa_output.platform-sound", conf)
 
 
 class CompositorPacingTest(unittest.TestCase):
@@ -226,8 +256,10 @@ class StoragePolicyRuleTest(unittest.TestCase):
     def test_only_block_devices_reach_the_helper(self):
         # The kernel's devtmpfs makes the nodes; the helper keeps the read-only policy.
         rules = (ROOTFS / "usr/lib/udev/rules.d/00-pico4-devnodes.rules").read_text(encoding="utf-8")
-        self.assertLess(rules.index('SUBSYSTEM!="block", GOTO="pico4_devnodes_end"'),
-                        rules.index('RUN+="/usr/libexec/pico4/devnode remove"'))
+        self.assertLess(
+            rules.index('SUBSYSTEM!="block", GOTO="pico4_devnodes_end"'),
+            rules.index('RUN+="/usr/libexec/pico4/devnode remove"'),
+        )
         self.assertIn('PROGRAM="/usr/libexec/pico4/devnode add"', rules)
         helper = (ROOTFS / "usr/libexec/pico4/devnode").read_text(encoding="utf-8")
         self.assertNotIn("mknod", helper)
@@ -239,7 +271,12 @@ class ConsoleQuietTest(unittest.TestCase):
         # journald forwards errors to the kernel log; printed on the UART console with
         # interrupts off they delayed the display interrupt.
         journald = (ROOTFS / "usr/lib/systemd/journald.conf.d/50-pico4.conf").read_text(encoding="utf-8")
-        level = int(re.search(r"(?m)^kernel\.printk = (\d)", (ROOTFS / "etc/sysctl.d/50-pico4-console.conf").read_text(encoding="utf-8")).group(1))
+        match = re.search(
+            r"(?m)^kernel\.printk = (\d)",
+            (ROOTFS / "etc/sysctl.d/50-pico4-console.conf").read_text(encoding="utf-8"),
+        )
+        assert match is not None
+        level = int(match.group(1))
         self.assertIn("MaxLevelKMsg=warning", journald)  # warning is 4: not printed below that level
         self.assertLess(level, 4)
 
@@ -252,8 +289,11 @@ class MonadoServiceTest(unittest.TestCase):
         self.assertIn("ExecStart=/usr/libexec/pico4/monado-service", unit)
         self.assertIn("ConditionPathExists=/dev/dri/renderD128\n", unit)
         script = (ROOTFS / "usr/libexec/pico4/monado-service").read_text(encoding="utf-8")
-        for setting in ("XRT_COMPOSITOR_FORCE_VK_DISPLAY=0", "XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3",
-                        "XRT_COMPOSITOR_COMPUTE=0"):
+        for setting in (
+            "XRT_COMPOSITOR_FORCE_VK_DISPLAY=0",
+            "XRT_COMPOSITOR_PREFERRED_IMAGE_COUNT=3",
+            "XRT_COMPOSITOR_COMPUTE=0",
+        ):
             self.assertIn(setting, script)
         self.assertIn('exec /usr/bin/monado-service "$@"', script)
 
@@ -265,7 +305,7 @@ class PanelProbeTest(unittest.TestCase):
         self.assertIn("pico4-session.service", probe["Unit"]["Before"])
         self.assertIn('echo detect > "$c"', probe["Service"]["ExecStart"])
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertIn("pico4-panel-probe.service", build[build.index("in_t systemctl enable"):])
+        self.assertIn("pico4-panel-probe.service", build[build.index("in_t systemctl enable") :])
 
 
 class SessionTest(unittest.TestCase):
@@ -310,8 +350,9 @@ class SessionTest(unittest.TestCase):
         # The user manager outlives a session: without a reset, sessions started one after
         # another count against SteamVR's crash-loop limit.
         script = (ROOTFS / "usr/libexec/pico4/session").read_text(encoding="utf-8")
-        self.assertLess(script.index("systemctl --user reset-failed"),
-                        script.index("exec /usr/bin/start-gamescope-session"))
+        self.assertLess(
+            script.index("systemctl --user reset-failed"), script.index("exec /usr/bin/start-gamescope-session")
+        )
 
     def test_check_expects_valves_session(self):
         check = (ROOTFS / "usr/bin/pico4-userspace-check").read_text(encoding="utf-8")

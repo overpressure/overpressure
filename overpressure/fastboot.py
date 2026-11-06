@@ -10,34 +10,44 @@ The sequence never falls back to flashing. A bootloader without `fastboot boot` 
 the transfer (the PICO 4's engineering ABL: "unknown command"); that is Refused, a result of its
 own, and the headset stays in fastboot.
 """
+
 from __future__ import annotations
 
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable
 
 from . import bootimg
-from .process import Clock, until
+from .process import Clock, Timing, until
 
 #: How bootloaders say that they do not boot from RAM.
-REFUSED = re.compile(r"unknown command|not allowed|not supported|unsupported|command not found|"
-                     r"boot is disabled|not implemented", re.I)
+REFUSED = re.compile(
+    r"unknown command|not allowed|not supported|unsupported|command not found|"
+    r"boot is disabled|not implemented",
+    re.IGNORECASE,
+)
 
 
-class Refused(RuntimeError):
+class Refused(RuntimeError):  # noqa: N818  # a result of its own, not a failure: the documented name
     """The bootloader has no `fastboot boot` (or refuses it): nothing was written."""
 
 
-def run(argv: List[str], timeout: float) -> str:
-    """A program's combined output; a nonzero exit or a FAILED line raises RuntimeError with it."""
-    process = subprocess.run([str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             timeout=timeout)
+def run(argv: list[str], timeout: float) -> str:
+    """Return a program's combined output; a nonzero exit or a FAILED line raises RuntimeError with it."""
+    process = subprocess.run(  # noqa: S603  # fastboot with the sequence's fixed words, no shell
+        [str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False
+    )
     output = process.stdout.decode("utf-8", "replace").strip()
     if process.returncode or re.search(r"\bFAILED\b", output):
-        raise RuntimeError(f"{Path(str(argv[0])).name} {' '.join(map(str, argv[1:3]))} failed: {output[-800:]}")
+        msg = f"{Path(str(argv[0])).name} {' '.join(map(str, argv[1:3]))} failed: {output[-800:]}"
+        raise RuntimeError(msg)
     return output
+
+
+#: The fields of a `fastboot devices` line that matter: the serial and the state.
+DEVICE_ROW_FIELDS = 2
 
 
 @dataclass
@@ -46,19 +56,22 @@ class Fastboot:
 
     tool: str
     serial: str
-    runner: Callable[[List[str], float], str] = run
+    runner: Callable[[list[str], float], str] = run
 
     def __call__(self, *words: str, timeout: float = 60) -> str:
+        """Run fastboot -s SERIAL WORDS...; return its output."""
         if not self.serial:
-            raise ValueError("no fastboot serial for this headset (see .env.example)")
+            msg = "no fastboot serial for this headset (see .env.example)"
+            raise ValueError(msg)
         return self.runner([self.tool, "-s", self.serial, *words], timeout)
 
     def present(self) -> bool:
-        """The headset is in fastboot: listed with its serial, and nothing else is."""
+        """Tell whether the headset is in fastboot: listed with its serial, and nothing else is."""
         rows = [line.split() for line in self.runner([self.tool, "devices"], 30).splitlines() if line.strip()]
-        serials = [row[0] for row in rows if len(row) >= 2 and row[1] == "fastboot"]
+        serials = [row[0] for row in rows if len(row) >= DEVICE_ROW_FIELDS and row[1] == "fastboot"]
         if len(serials) > 1:
-            raise RuntimeError(f"{len(serials)} devices in fastboot; connect only this headset")
+            msg = f"{len(serials)} devices in fastboot; connect only this headset"
+            raise RuntimeError(msg)
         return serials == [self.serial]
 
 
@@ -73,40 +86,49 @@ class RamBootTarget:
 
     @property
     def fastboot(self) -> Fastboot:
+        """Return fastboot for this headset."""
         raise NotImplementedError
 
     def image(self) -> Path:
-        """The image to boot when none is given."""
+        """Return the image to boot when none is given."""
         raise NotImplementedError
 
     def enter(self) -> None:
-        """Brings the headset into fastboot (from Android, say); called when it is not there."""
-        raise RuntimeError("the headset is not in fastboot")
+        """Bring the headset into fastboot (from Android, say); called when it is not there."""
+        msg = "the headset is not in fastboot"
+        raise RuntimeError(msg)
 
     def check_unlocked(self) -> None:
-        """Raises unless the bootloader reports a state that may boot an unsigned image."""
+        """Raise unless the bootloader reports a state that may boot an unsigned image."""
 
     def reached(self) -> None:
-        """Raises until the booted image answers; returns once it does."""
+        """Raise until the booted image answers; return once it does."""
         raise NotImplementedError
 
 
-def ram_boot(target: RamBootTarget, image: Optional[Path] = None, log: Callable[[str], None] = print,
-             clock: Optional[Clock] = None) -> None:
-    """Boots @p image (else the target's) from RAM and waits until it answers."""
+def ram_boot(
+    target: RamBootTarget,
+    image: Path | None = None,
+    log: Callable[[str], None] = print,
+    clock: Timing | None = None,
+) -> None:
+    """Boot @p image (else the target's) from RAM and wait until it answers."""
     clock = clock or Clock()
     image = Path(image) if image is not None else target.image()
     if not image.is_file():
-        raise ValueError(f"no image {image}")
+        msg = f"no image {image}"
+        raise ValueError(msg)
     bootimg.parse(image.read_bytes())  # an Android boot image, or ValueError
     fb = target.fastboot
     if not fb.present():
         log(">> into fastboot")
         target.enter()
 
-        def present():
+        def present() -> None:
             if not fb.present():
-                raise RuntimeError("not in fastboot yet")
+                msg = "not in fastboot yet"
+                raise RuntimeError(msg)
+
         until("fastboot", 60, present, clock)
     log(">> unlock state")
     target.check_unlocked()
@@ -126,7 +148,7 @@ def ram_boot(target: RamBootTarget, image: Optional[Path] = None, log: Callable[
     log(f">> up after {took:.0f} s; the next normal boot starts what the partitions hold")
 
 
-def _refused(target: RamBootTarget, why) -> str:
+def _refused(target: RamBootTarget, why: object) -> str:
     # The bootloader's own answer (fastboot's FAILED line), not the transfer's progress around it.
     lines = [line.strip() for line in str(why).splitlines() if line.strip()]
     answer = next((line for line in lines if REFUSED.search(line)), lines[-1] if lines else "")

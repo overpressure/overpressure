@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """Android games through Valve's Lepton the Frame's way on a mainline kernel: rootless podman."""
+
 import unittest
 from pathlib import Path
 
@@ -7,17 +8,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def text(path: str) -> str:
+    """Return a repository file's text."""
     return (ROOT / path).read_text(encoding="utf-8")
 
 
 class LeptonFrameTests(unittest.TestCase):
     def test_the_frames_container_stack_is_in_the_image(self):
         packages = text("userspace/packages.txt").split()
-        for name in ("podman", "deckard-arch-hotfixes-release-0.3/passt",
-                     "deckard-arch-hotfixes-release-0.3/lepton-compat",
-                     "deckard-arch-hotfixes-release-0.3/deckard-mesa-android-aarch64",
-                     "deckard-arch-hotfixes-release-0.3/deckard-vulkan-layers-android-aarch64",
-                     "deckard-arch-hotfixes-release-0.3/android-platform-tools", "which", "inotify-tools"):
+        for name in (
+            "podman",
+            "deckard-arch-hotfixes-release-0.3/passt",
+            "deckard-arch-hotfixes-release-0.3/lepton-compat",
+            "deckard-arch-hotfixes-release-0.3/deckard-mesa-android-aarch64",
+            "deckard-arch-hotfixes-release-0.3/deckard-vulkan-layers-android-aarch64",
+            "deckard-arch-hotfixes-release-0.3/android-platform-tools",
+            "which",
+            "inotify-tools",
+        ):
             self.assertIn(name, packages)
 
     def test_steamvrs_android_client_stays(self):

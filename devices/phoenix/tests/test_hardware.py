@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""The hardware test's runner and its checks, against a fake headset, fastboot, adb, SSH and HTTP."""
+
 import argparse
 import contextlib
 import gzip
@@ -9,16 +11,19 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, ClassVar, cast
 from unittest.mock import patch
 
+from devices.phoenix.tooling import devloop
+from devices.phoenix.tooling import hardware_test as hw
 from overpressure import bootimg, cpio
 
-from devices.phoenix.tooling import devloop, hardware_test as hw
 
-
-def report(run_id):
+def report(run_id: str) -> bytes:
+    """Build the headset's report archive for this run."""
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
         for name, content in (("summary.txt", b"kernel"), ("system.txt", run_id.encode()), ("dmesg.txt", b"boot")):
@@ -31,8 +36,13 @@ def report(run_id):
 class ValidationTests(unittest.TestCase):
     def test_preflight_failures_and_missing_summary(self):
         hw.validate_preflight("ok test\nPREFLIGHT: 20 passed, 0 failed\n")
-        for value in ("PREFLIGHT: 19 passed, 1 failed", "PREFLIGHT: 0 passed, 0 failed", "", "truncated",
-                      "PREFLIGHT: 20 passed, 0 failed\nPREFLIGHT: 20 passed, 0 failed"):
+        for value in (
+            "PREFLIGHT: 19 passed, 1 failed",
+            "PREFLIGHT: 0 passed, 0 failed",
+            "",
+            "truncated",
+            "PREFLIGHT: 20 passed, 0 failed\nPREFLIGHT: 20 passed, 0 failed",
+        ):
             with self.assertRaises(ValueError):
                 hw.validate_preflight(value)
 
@@ -51,14 +61,19 @@ class ValidationTests(unittest.TestCase):
 
     def test_mounts_cannot_hide_writable_storage_or_disk_root(self):
         hw.validate_mounts("rootfs / rootfs rw 0 0\n/dev/sda1 /mnt rofs ro 0 0")
-        for value in ("", "proc /proc proc rw 0 0", "/dev/root / ext4 ro 0 0",
-                      "rootfs / rootfs rw 0 0\n/dev/sda1 /mnt ext4 rw 0 0"):
+        for value in (
+            "",
+            "proc /proc proc rw 0 0",
+            "/dev/root / ext4 ro 0 0",
+            "rootfs / rootfs rw 0 0\n/dev/sda1 /mnt ext4 rw 0 0",
+        ):
             with self.assertRaises(ValueError):
                 hw.validate_mounts(value)
 
     def test_fastboot_variables_reject_missing_and_ambiguous_values(self):
-        self.assertEqual(hw.fastboot_value("(bootloader) partition-size:boot: 0x6000000\nOKAY",
-                                          "partition-size:boot"), "0x6000000")
+        self.assertEqual(
+            hw.fastboot_value("(bootloader) partition-size:boot: 0x6000000\nOKAY", "partition-size:boot"), "0x6000000"
+        )
         for output in ("", "has-slot:boot: no\nhas-slot:boot: yes", "has-slot:boot: \nOKAY"):
             with self.assertRaises(ValueError):
                 hw.fastboot_value(output, "has-slot:boot")
@@ -70,18 +85,18 @@ class FakeClock:
     def __init__(self):
         self.now = 1000.0
 
-    def monotonic(self):
+    def monotonic(self) -> float:
         return self.now
 
-    def sleep(self, seconds):
+    def sleep(self, seconds: float) -> None:
         self.now += max(0.0, seconds)
 
 
 class HarnessTests(unittest.TestCase):
-    INFO = {"kernel": "Linux version 4.19.81 test", "stock": "test"}
+    INFO: ClassVar[dict] = {"kernel": "Linux version 4.19.81 test", "stock": "test"}
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         # One source image for every test: Windows' real-time scan of a freshly written
         # boot image costs about a quarter of a second on its first read.
         cls.shared = tempfile.TemporaryDirectory()
@@ -90,15 +105,17 @@ class HarnessTests(unittest.TestCase):
         tree.add_file("etc/pico4/build-info", json.dumps(cls.INFO).encode())
         tree.add_file("init", b"#!/bin/sh\n", 0o755)
         tree.add_file("usr/libexec/pico4/recovery-watch", b"#!/bin/sh\n", 0o755)
-        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4/svc recovery-watch\n"
-                      b"::restart:/usr/libexec/pico4/switch-userspace\n")
+        tree.add_file(
+            "etc/inittab",
+            b"::respawn:/usr/libexec/pico4/svc recovery-watch\n::restart:/usr/libexec/pico4/switch-userspace\n",
+        )
         tree.add_file("usr/bin/pico4-userspace", b"#!/bin/sh\n", 0o755)
         tree.add_file("usr/libexec/pico4/pico4-init", b"#!/bin/sh\n", 0o755)
         tree.mkdir("root", 0o700)
         cls.image.write_bytes(bootimg.BootImage(2, 4096, b"kernel", gzip.compress(tree.to_cpio()), dtb=b"dtb").pack())
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         cls.shared.cleanup()
 
     def setUp(self):
@@ -111,10 +128,23 @@ class HarnessTests(unittest.TestCase):
         clock = patch.object(hw, "time", self.clock)
         clock.start()
         self.addCleanup(clock.stop)
-        self.args = argparse.Namespace(command="flash-run", serial="ABC", fastboot_serial=None, adb="adb",
-                fastboot="fastboot", ssh="ssh", ssh_keygen="ssh-keygen", image=self.source,
-                out=self.root / "flash-results", host="172.16.42.1", boot_timeout=1, report_timeout=1,
-                recovery_timeout=3, backup=self.root / "backup", confirm_device="ABC")
+        self.args = argparse.Namespace(
+            command="flash-run",
+            serial="ABC",
+            fastboot_serial=None,
+            adb="adb",
+            fastboot="fastboot",
+            ssh="ssh",
+            ssh_keygen="ssh-keygen",
+            image=self.source,
+            out=self.root / "flash-results",
+            host="172.16.42.1",
+            boot_timeout=1,
+            report_timeout=1,
+            recovery_timeout=3,
+            backup=self.root / "backup",
+            confirm_device="ABC",
+        )
         self.calls = []
         self.stock = True
         self.scenario = None
@@ -124,25 +154,42 @@ class HarnessTests(unittest.TestCase):
         stock = bootimg.parse(self.source.read_bytes())
         stock.ramdisk = b"original stock ramdisk"
         (self.args.backup / "boot.bin").write_bytes(stock.pack().ljust(65536, b"\0"))
-        self.backup_manifest = {"schema": 1, "identity": {"schema": 1, "serial": "ABC",
-            "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/test:user/dev-keys",
-            "oem_state": "true", "chip_id": 1234567},
-            "files": {"boot.bin": hw.backups.digest(self.args.backup / "boot.bin")}}
+        self.backup_manifest: dict[str, Any] = {
+            "schema": 1,
+            "identity": {
+                "schema": 1,
+                "serial": "ABC",
+                "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/test:user/dev-keys",
+                "oem_state": "true",
+                "chip_id": 1234567,
+            },
+            "files": {"boot.bin": hw.backups.digest(self.args.backup / "boot.bin")},
+        }
         self.save_backup_manifest()
         self.runner = hw.Runner(self.args)
 
     def userspace_check(self):
-        value = {"schema": 1, "status": "passed", "errors": [],
-                 "systemd": {"pid1": "/usr/lib/systemd/systemd", "version": "257.7", "state": "running",
-                             "failed_units": []},
-                 "dev": {"fstype": "devtmpfs", "missing_nodes": [], "udev_devices": 300},
-                 "storage": {"root": "/dev/sda7", "installed": True, "writable_block_devices": []},
-                 "seats": ["seat0"],
-                 "session": {"user": "steamos", "user_state": "active", "service": "active",
-                             "target": "gamescope-session.target", "target_state": "active", "failed_units": [],
-                             "monado_socket": "active", "monado_service": "inactive"},
-                 "fan": {"service": "active", "state": self.FAN_STATE},
-                 "vulkan": {"status": "skipped", "result": None}}
+        value = {
+            "schema": 1,
+            "status": "passed",
+            "errors": [],
+            "systemd": {"pid1": "/usr/lib/systemd/systemd", "version": "257.7", "state": "running", "failed_units": []},
+            "dev": {"fstype": "devtmpfs", "missing_nodes": [], "udev_devices": 300},
+            "storage": {"root": "/dev/sda7", "installed": True, "writable_block_devices": []},
+            "seats": ["seat0"],
+            "session": {
+                "user": "steamos",
+                "user_state": "active",
+                "service": "active",
+                "target": "gamescope-session.target",
+                "target_state": "active",
+                "failed_units": [],
+                "monado_socket": "active",
+                "monado_service": "inactive",
+            },
+            "fan": {"service": "active", "state": self.FAN_STATE},
+            "vulkan": {"status": "skipped", "result": None},
+        }
         if self.scenario == "userspace-check":
             value.update(status="failed", errors=["no failed units"])
             value["systemd"].update(state="degraded", failed_units=["sshd.service"])
@@ -152,34 +199,48 @@ class HarnessTests(unittest.TestCase):
         (self.args.backup / "manifest.json").write_text(json.dumps(self.backup_manifest))
 
     # `pico4-fan state` (docs/cooling.md).
-    FAN_STATE = {"profile": "late", "duty": 30, "reason": "table", "boost": False, "rpm": 5700,
-                 "hottest": "cpu-1-4-usr", "hottest_mean_c": 61.2, "error": None}
+    FAN_STATE: ClassVar[dict] = {
+        "profile": "late",
+        "duty": 30,
+        "reason": "table",
+        "boost": False,
+        "rpm": 5700,
+        "hottest": "cpu-1-4-usr",
+        "hottest_mean_c": 61.2,
+        "error": None,
+    }
 
     # What systemctl writes to stderr when it stops a socket-activated service.
-    SYSTEMCTL_NOTE = ("Stopping 'pico4-monado.service', but its triggering units are still active:\n"
-                      "pico4-monado.socket\n")
+    SYSTEMCTL_NOTE = (
+        "Stopping 'pico4-monado.service', but its triggering units are still active:\npico4-monado.socket\n"
+    )
 
-    def fake_command(self, argv, timeout=30):
+    def fake_command(self, argv: Sequence[object], timeout: float = 30) -> str:
         output = self.fake_device(argv, timeout)
         if str(argv[0]) == "ssh" and isinstance(output, str):
             # As on the headset: SSH passes systemctl's note on unless the command discards it.
             command = str(argv[-1])
             stops = command.count("systemctl stop pico4-monado.service")
-            if stops > command.count("systemctl stop pico4-monado.service 2>/dev/null") or \
-                    (command.startswith("pico4-valve-session-check") and "2>" not in command):
+            if stops > command.count("systemctl stop pico4-monado.service 2>/dev/null") or (
+                command.startswith("pico4-valve-session-check") and "2>" not in command
+            ):
                 output = self.SYSTEMCTL_NOTE + output
         return output
 
-    def fake_device(self, argv, timeout=30):
-        argv = list(map(str, argv))
+    def fake_device(  # noqa: C901, PLR0911, PLR0912, PLR0915  # a fake headset: one branch per command it answers
+        self, command_line: Sequence[object], _timeout: float = 30
+    ) -> str:
+        argv = list(map(str, command_line))
         self.calls.append(argv)
         if argv[0] == "ncm-python":
             if argv[-1] == "--check":
                 if self.scenario == "ncm-dependencies":
-                    raise ValueError("NCM dependencies missing")
+                    msg = "NCM dependencies missing"
+                    raise ValueError(msg)
                 return json.dumps({"status": "ready"})
             if self.scenario == "ncm-device":
-                raise ValueError("NCM gadget did not appear")
+                msg = "NCM gadget did not appear"
+                raise ValueError(msg)
             return json.dumps({"status": "initialized", "serial": self.args.fastboot_serial or self.args.serial})
         if argv[0] == "ssh-keygen":
             (self.runner.folder / "id_ed25519").write_text("private")
@@ -187,11 +248,16 @@ class HarnessTests(unittest.TestCase):
             return ""
         if argv[0] == "adb":
             if "getprop ro.build.fingerprint" in argv[-1]:
-                if not self.stock or self.scenario == "recovery" and self.runner.moved:
-                    raise ValueError("Android did not return")
+                if not self.stock or (self.scenario == "recovery" and self.runner.moved):
+                    msg = "Android did not return"
+                    raise ValueError(msg)
                 return "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/test:user/dev-keys\ntrue\n1234567\n1"
             if "preflight.sh" in argv[-1] and "PICO4_PREFLIGHT_DIR=" in argv[-1]:
-                return "PREFLIGHT: 20 passed, 1 failed" if self.scenario == "preflight" else "PREFLIGHT: 21 passed, 0 failed"
+                return (
+                    "PREFLIGHT: 20 passed, 1 failed"
+                    if self.scenario == "preflight"
+                    else "PREFLIGHT: 21 passed, 0 failed"
+                )
             if argv[-2:] == ["reboot", "bootloader"]:
                 self.stock = False
             return ""
@@ -201,11 +267,14 @@ class HarnessTests(unittest.TestCase):
             if argv[-1] == "device-info":
                 return "Device unlocked: false" if self.scenario == "locked" else "Device unlocked: true"
             if argv[-2:] == ["getvar", "has-slot:boot"]:
-                raise ValueError("GetVar Variable Not found")
+                msg = "GetVar Variable Not found"
+                raise ValueError(msg)
             if argv[-2:] == ["getvar", "all"]:
                 output = "(bootloader) partition-size:boot: " + ("0x20000" if self.scenario == "size" else "0x10000")
                 if self.scenario == "slotted":
-                    output += "\n(bootloader) partition-size:boot_a: 0x10000\n(bootloader) partition-size:boot_b: 0x10000"
+                    output += (
+                        "\n(bootloader) partition-size:boot_a: 0x10000\n(bootloader) partition-size:boot_b: 0x10000"
+                    )
                 return output
             if argv[3:5] == ["flash", "boot"]:
                 restoring = Path(argv[-1]).name == "stock-boot.img"
@@ -213,9 +282,12 @@ class HarnessTests(unittest.TestCase):
                 self.assertTrue(journal["boot_restore_required"])
                 self.assertTrue(journal["manual_restore_commands"])
                 if self.scenario == "interrupted-write" and not restoring:
-                    raise KeyboardInterrupt()
-                if self.scenario == "restore-write" and restoring or self.scenario == "flash-write" and not restoring:
-                    raise ValueError("flash failed after partial write")
+                    raise KeyboardInterrupt
+                if (self.scenario == "restore-write" and restoring) or (
+                    self.scenario == "flash-write" and not restoring
+                ):
+                    msg = "flash failed after partial write"
+                    raise ValueError(msg)
                 if restoring:
                     self.restored = True
                 elif self.scenario == "restore-tamper":
@@ -229,14 +301,29 @@ class HarnessTests(unittest.TestCase):
                 return self.userspace_check()
             if command.startswith("pico4-imu stream"):
                 self.assertIn("--rate 500 ", command)
-                stream = {"samples": 5120, "rate_hz": 511.95, "non_increasing_timestamps": 0,
-                          "config": {"sample_rate_hz": 500.0}, "mean": [9.7, 0.0, 1.5]}
+                stream = {
+                    "samples": 5120,
+                    "rate_hz": 511.95,
+                    "non_increasing_timestamps": 0,
+                    "config": {"sample_rate_hz": 500.0},
+                    "mean": [9.7, 0.0, 1.5],
+                }
                 failed = self.scenario == "imu"
-                return json.dumps({"schema": 1, "seconds": 10, "requested_rate_hz": 500.0,
-                                   "streams": {"accel": stream, "gyro": stream}, "orientation": {},
-                                   "status": "fail" if failed else "pass",
-                                   "failures": ["accel: |g| 3.0 m/s^2"] if failed else []}) + \
-                    "\nEXIT=" + ("1" if failed else "0")
+                return (
+                    json.dumps(
+                        {
+                            "schema": 1,
+                            "seconds": 10,
+                            "requested_rate_hz": 500.0,
+                            "streams": {"accel": stream, "gyro": stream},
+                            "orientation": {},
+                            "status": "fail" if failed else "pass",
+                            "failures": ["accel: |g| 3.0 m/s^2"] if failed else [],
+                        }
+                    )
+                    + "\nEXIT="
+                    + ("1" if failed else "0")
+                )
             if command.startswith("if systemctl is-active -q pico4-session.service; then"):
                 return "SESSION-PAUSED" if getattr(self, "session_running", True) else ""
             if command.startswith("systemctl is-active -q pico4-session.service ||"):
@@ -247,26 +334,56 @@ class HarnessTests(unittest.TestCase):
             if command.startswith("pico4-valve-session-check"):
                 self.assertIn("--seconds 30", command)
                 failed = self.scenario == "valve"
-                return json.dumps({
-                    "schema": 1, "status": "failed" if failed else "passed",
-                    "errors": ["steamvr.service is failed"] if failed else [], "seconds": 30, "startup_seconds": 21,
-                    "session": {"target": "gamescope-session.target", "target_state": "active",
-                                "steamvr": "failed" if failed else "active", "gamescope": "active",
-                                "failed_units": [], "restored": "active"},
-                    "compositor": {"started": True, "gamescope_client": True, "asserts": 0,
-                                   "present_wait_errors": 2689},
-                    "frames": {"target": "msm", "commits": 2700, "commit_hz": 89.7, "vblank_hz": 90.0, "late": 2},
-                    "devices": [{"index": 0, "position": [-0.01, 1.61, 0.07], "rotation": [-2.5, -1.56, 2.42]},
+                return (
+                    json.dumps(
+                        {
+                            "schema": 1,
+                            "status": "failed" if failed else "passed",
+                            "errors": ["steamvr.service is failed"] if failed else [],
+                            "seconds": 30,
+                            "startup_seconds": 21,
+                            "session": {
+                                "target": "gamescope-session.target",
+                                "target_state": "active",
+                                "steamvr": "failed" if failed else "active",
+                                "gamescope": "active",
+                                "failed_units": [],
+                                "restored": "active",
+                            },
+                            "compositor": {
+                                "started": True,
+                                "gamescope_client": True,
+                                "asserts": 0,
+                                "present_wait_errors": 2689,
+                            },
+                            "frames": {
+                                "target": "msm",
+                                "commits": 2700,
+                                "commit_hz": 89.7,
+                                "vblank_hz": 90.0,
+                                "late": 2,
+                            },
+                            "devices": [
+                                {"index": 0, "position": [-0.01, 1.61, 0.07], "rotation": [-2.5, -1.56, 2.42]},
                                 {"index": 1, "position": [0.09, 0.96, -0.6], "rotation": [-0.27, 0.05, 0.86]},
-                                {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]}],
-                    "max_temp_c": {"before": 80.1, "after_run": 92.3},
-                    "fan": {"before": self.FAN_STATE, "after_run": {**self.FAN_STATE, "duty": 50}},
-                    "performance": {"status": "failed" if self.scenario == "slow" else "passed",
-                                    "failures": ["52.0 commits/s, below 85.5"] if self.scenario == "slow" else [],
-                                    "commit_hz": 52.0 if self.scenario == "slow" else 90.0, "late_percent": 0.1,
-                                    "stalls": 0, "hottest_c": 61.5,
-                                    "window_seconds": 30.0}}) + \
-                    "\nEXIT=" + ("1" if failed else "0")
+                                {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]},
+                            ],
+                            "max_temp_c": {"before": 80.1, "after_run": 92.3},
+                            "fan": {"before": self.FAN_STATE, "after_run": {**self.FAN_STATE, "duty": 50}},
+                            "performance": {
+                                "status": "failed" if self.scenario == "slow" else "passed",
+                                "failures": ["52.0 commits/s, below 85.5"] if self.scenario == "slow" else [],
+                                "commit_hz": 52.0 if self.scenario == "slow" else 90.0,
+                                "late_percent": 0.1,
+                                "stalls": 0,
+                                "hottest_c": 61.5,
+                                "window_seconds": 30.0,
+                            },
+                        }
+                    )
+                    + "\nEXIT="
+                    + ("1" if failed else "0")
+                )
             if command.startswith(("pico4-imu list", "systemctl status")):
                 return "sensor evidence"
             if "test-run" in command:
@@ -298,9 +415,10 @@ class HarnessTests(unittest.TestCase):
             return "boot log"
         raise AssertionError(argv)
 
-    def fake_http(self, endpoint, timeout=15):
+    def fake_http(self, endpoint: str, _timeout: float = 15) -> bytes:
         if self.scenario == "http":
-            raise OSError("HTTP unavailable")
+            msg = "HTTP unavailable"
+            raise OSError(msg)
         if endpoint == "cgi-bin/status":
             return b"PICO 4 Linux"
         if endpoint == "cgi-bin/log?boot":
@@ -309,22 +427,32 @@ class HarnessTests(unittest.TestCase):
 
     installed_system = False
 
-    def stage2_checks(self, firmware=False, sensors=False, steamvr=False):
-        """The stage-2 checks as `dev check` runs them on the installed system; their state."""
+    def stage2_checks(self, *, firmware: bool = False, sensors: bool = False, steamvr: bool = False) -> dict[str, Any]:
+        """Run the stage-2 checks as `dev check` runs them on the installed system; return their state."""
         self.installed_system = True
         self.info = {"kernel": "Linux version 7.2.0-pico4 test", "stock": "test"}
         dev = SimpleNamespace(s=SimpleNamespace(adb_serial="ABC"), ssh_argv=lambda command: ["ssh", command])
-        self.runner = devloop.DevChecks(dev, self.root / "check", self.info, {"chip_id": 1234567})
-        self.state = {"installed": True, "gpu_firmware": firmware, "sensor_data": sensors, "steamvr": steamvr}
-        with patch.object(self.runner, "command", side_effect=self.fake_command), \
-                contextlib.redirect_stdout(io.StringIO()):
+        # A stand-in with only what DevChecks uses of a Dev.
+        self.runner = devloop.DevChecks(cast("devloop.Dev", dev), self.root / "check", self.info, {"chip_id": 1234567})
+        self.state: dict[str, Any] = {
+            "installed": True,
+            "gpu_firmware": firmware,
+            "sensor_data": sensors,
+            "steamvr": steamvr,
+        }
+        with (
+            patch.object(self.runner, "command", side_effect=self.fake_command),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             self.runner.userspace_checks(self.state)
         return self.state
 
     def execute(self):
-        with patch.object(self.runner, "command", side_effect=self.fake_command), \
-                patch.object(self.runner, "http", side_effect=self.fake_http), \
-                contextlib.redirect_stdout(io.StringIO()):
+        with (
+            patch.object(self.runner, "command", side_effect=self.fake_command),
+            patch.object(self.runner, "http", side_effect=self.fake_http),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             return self.runner.execute()
 
     def test_success_preserves_image_and_collects_verified_recovery(self):
@@ -381,8 +509,11 @@ class HarnessTests(unittest.TestCase):
                 self.assertTrue((self.runner.folder / "userspace-sensors-list.txt").exists())
 
     def test_valve_session_is_checked_with_steamvr(self):
-        for scenario, message in (("", None), ("valve", "Valve session check failed"),
-                                  ("slow", "missed its performance limits")):
+        for scenario, message in (
+            ("", None),
+            ("valve", "Valve session check failed"),
+            ("slow", "missed its performance limits"),
+        ):
             with self.subTest(scenario or "passing"):
                 self.setUp()
                 self.scenario = scenario
@@ -525,8 +656,9 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual([Path(cmd[-1]).name for cmd in flashes], ["test-boot.img", "stock-boot.img"])
         self.assertEqual(self.runner.result["boot_restore"], "android_boot_verified")
         self.assertFalse(self.runner.result["boot_restore_required"])
-        self.assertEqual((self.runner.folder / "stock-boot.img").read_bytes(),
-                         (self.args.backup / "boot.bin").read_bytes())
+        self.assertEqual(
+            (self.runner.folder / "stock-boot.img").read_bytes(), (self.args.backup / "boot.bin").read_bytes()
+        )
         self.assertTrue((self.runner.folder / "boot-readback.txt").exists())
         self.assertTrue(any("pico4-reboot bootloader" in cmd[-1] for cmd in self.calls))
         self.assertFalse(any("flashing" in cmd or "erase" in cmd for cmd in self.calls))

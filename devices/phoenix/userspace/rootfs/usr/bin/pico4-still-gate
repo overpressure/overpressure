@@ -6,11 +6,19 @@
 
 Compare with the previous release's numbers: a tracking change is judged against the old driver.
 """
+
+from __future__ import annotations
+
 import math
 import mmap
 import struct
 import sys
 import time
+from pathlib import Path
+from typing import Callable
+
+#: The shared memory the tracker's feed writes (pico4_slam_feed.h), a fixed name.
+FEED = Path("/dev/shm/pico4-slam")  # noqa: S108  # the feed's fixed shared-memory name, not a temporary file
 
 #: The pose ring in pico4_slam_feed.h: after the header and the frame ring.
 POSES = 192 + 40 * 8192
@@ -18,8 +26,13 @@ POSE_SIZE = 136
 POSE_COUNT = 4096
 
 
-def measure(memory, seconds, clock=time.monotonic, sleep=time.sleep):
-    """Poses, lost poses, furthest distance from the first (m), furthest angle (degrees), longest gap (ns)."""
+def measure(
+    memory: mmap.mmap | bytearray,
+    seconds: float,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], object] = time.sleep,
+) -> tuple[int, int, float, float, int]:
+    """Return poses, lost poses, furthest distance from the first (m), furthest angle (degrees), longest gap (ns)."""
     written = struct.unpack_from("<Q", memory, 32)[0]
     read = written
     first = None
@@ -52,12 +65,16 @@ def measure(memory, seconds, clock=time.monotonic, sleep=time.sleep):
     return count, lost, furthest, angle, gap
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
+    """Measure for SECONDS (60 by default) and print one line; exit status 1 without a pose."""
     seconds = float(argv[0]) if argv else 60
-    with open("/dev/shm/pico4-slam", "rb") as file:
-        memory = mmap.mmap(file.fileno(), 0, prot=mmap.PROT_READ)
+    with FEED.open("rb") as file:
+        memory = mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ)
         count, lost, furthest, angle, gap = measure(memory, seconds)
-    print(f"{count} poses, {lost} lost, furthest {furthest * 1000:.2f} mm, {angle:.3f} deg, longest gap {gap / 1e6:.1f} ms")
+    print(
+        f"{count} poses, {lost} lost, furthest {furthest * 1000:.2f} mm, {angle:.3f} deg, "
+        f"longest gap {gap / 1e6:.1f} ms"
+    )
     return 0 if count else 1
 
 

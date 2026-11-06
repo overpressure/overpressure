@@ -1,26 +1,43 @@
 # SPDX-License-Identifier: Unlicense
+"""overpressure.elfdeps: an image's ELF dependencies resolved inside its root, as the dynamic loader would."""
+
+from __future__ import annotations
+
 import io
-import os
 import struct
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from overpressure import elfdeps
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 AARCH64, X86_64 = 183, 62
 
 
-def make_elf(machine=AARCH64, soname="", needed=(), rpath="", runpath="", interp="",
-             verdef=(), verneed=None):
-    """A minimal 64-bit little-endian ELF object with the given dynamic linking facts.
+def make_elf(  # noqa: PLR0913  # one keyword per dynamic linking fact
+    *,
+    machine: int = AARCH64,
+    soname: str = "",
+    needed: Sequence[str] = (),
+    rpath: str = "",
+    runpath: str = "",
+    interp: str = "",
+    verdef: Sequence[str] = (),
+    verneed: dict[str, list[tuple[str, bool]]] | None = None,
+) -> bytes:
+    """Build a minimal 64-bit little-endian ELF object with the given dynamic linking facts.
 
-    verneed maps a library name to [(version, weak)], like elfdeps.Elf.verneed."""
+    verneed maps a library name to [(version, weak)], like elfdeps.Elf.verneed.
+    """
     verneed = verneed or {}
     strtab = bytearray(b"\0")
 
-    def add(text):
+    def add(text: str) -> int:
         offset = len(strtab)
         strtab.extend(text.encode() + b"\0")
         return offset
@@ -53,21 +70,43 @@ def make_elf(machine=AARCH64, soname="", needed=(), rpath="", runpath="", interp
             after = 16 if j < len(versions) - 1 else 0
             verneed_bytes += struct.pack("<IHHII", 0, elfdeps.VER_FLG_WEAK if weak else 0, 0, name, after)
     dynamic_offset = verneed_offset + len(verneed_bytes)
-    tags += [(elfdeps.DT_STRTAB, strtab_offset), (10, len(strtab)),
-             (elfdeps.DT_VERDEF, verdef_offset), (elfdeps.DT_VERDEFNUM, len(definitions))]
+    tags += [
+        (elfdeps.DT_STRTAB, strtab_offset),
+        (10, len(strtab)),
+        (elfdeps.DT_VERDEF, verdef_offset),
+        (elfdeps.DT_VERDEFNUM, len(definitions)),
+    ]
     if requirements:
         tags += [(elfdeps.DT_VERNEED, verneed_offset), (elfdeps.DT_VERNEEDNUM, len(requirements))]
-    dynamic = b"".join(struct.pack("<qQ", tag, value) for tag, value in tags + [(0, 0)])
+    dynamic = b"".join(struct.pack("<qQ", tag, value) for tag, value in [*tags, (0, 0)])
     total = dynamic_offset + len(dynamic)
 
     header = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(8)
     header += struct.pack("<HHIQQQIHHHHHH", 3, machine, 1, 0, 64, 0, 0, 64, 56, phnum, 64, 0, 0)
     phdrs = struct.pack("<IIQQQQQQ", elfdeps.PT_LOAD, 5, 0, 0, 0, total, total, 0x1000)
-    phdrs += struct.pack("<IIQQQQQQ", elfdeps.PT_DYNAMIC, 6, dynamic_offset, dynamic_offset, dynamic_offset,
-                         len(dynamic), len(dynamic), 8)
+    phdrs += struct.pack(
+        "<IIQQQQQQ",
+        elfdeps.PT_DYNAMIC,
+        6,
+        dynamic_offset,
+        dynamic_offset,
+        dynamic_offset,
+        len(dynamic),
+        len(dynamic),
+        8,
+    )
     if interp:
-        phdrs += struct.pack("<IIQQQQQQ", elfdeps.PT_INTERP, 4, interp_offset, interp_offset, interp_offset,
-                             len(interp_bytes), len(interp_bytes), 1)
+        phdrs += struct.pack(
+            "<IIQQQQQQ",
+            elfdeps.PT_INTERP,
+            4,
+            interp_offset,
+            interp_offset,
+            interp_offset,
+            len(interp_bytes),
+            len(interp_bytes),
+            1,
+        )
     return header + phdrs + interp_bytes + bytes(strtab) + bytes(verdef_bytes) + bytes(verneed_bytes) + dynamic
 
 
@@ -77,20 +116,29 @@ class ElfDepsTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
 
-    def put(self, path, data):
+    def put(self, path: str, data: bytes | str) -> None:
         target = self.root / path.lstrip("/")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data if isinstance(data, bytes) else data.encode())
 
-    def check(self, path):
+    def check(self, path: str) -> list[str]:
         return elfdeps.Loader(str(self.root)).check(path)
 
     def test_parses_dynamic_section_and_versions(self):
-        elf = elfdeps.parse(make_elf(soname="libfoo.so.1", needed=["libc.so.6"], runpath="$ORIGIN",
-                                     verdef=["FOO_1"], verneed={"libc.so.6": [("GLIBC_2.17", False)]}),
-                            "/usr/lib/libfoo.so.1")
-        self.assertEqual((elf.machine, elf.soname, elf.needed, elf.runpath), (AARCH64, "libfoo.so.1", ["libc.so.6"],
-                                                                              ["$ORIGIN"]))
+        elf = elfdeps.parse(
+            make_elf(
+                soname="libfoo.so.1",
+                needed=["libc.so.6"],
+                runpath="$ORIGIN",
+                verdef=["FOO_1"],
+                verneed={"libc.so.6": [("GLIBC_2.17", False)]},
+            ),
+            "/usr/lib/libfoo.so.1",
+        )
+        assert elf is not None
+        self.assertEqual(
+            (elf.machine, elf.soname, elf.needed, elf.runpath), (AARCH64, "libfoo.so.1", ["libc.so.6"], ["$ORIGIN"])
+        )
         self.assertEqual(elf.verdef, {"FOO_1"})
         self.assertEqual(elf.verneed, {"libc.so.6": [("GLIBC_2.17", False)]})
         self.assertIsNone(elfdeps.parse(b"#!/bin/sh\n" + bytes(64), "/usr/bin/script"))
@@ -128,8 +176,9 @@ class ElfDepsTests(unittest.TestCase):
         self.put("/usr/bin/new", make_elf(needed=["libv.so.1"], verneed={"libv.so.1": [("V_2", False)]}))
         self.put("/usr/bin/weak", make_elf(needed=["libv.so.1"], verneed={"libv.so.1": [("V_2", True)]}))
         self.assertEqual(self.check("/usr/bin/old"), [])
-        self.assertEqual(self.check("/usr/bin/new"),
-                         ["/usr/lib/libv.so.1: version `V_2' not found (required by /usr/bin/new)"])
+        self.assertEqual(
+            self.check("/usr/bin/new"), ["/usr/lib/libv.so.1: version `V_2' not found (required by /usr/bin/new)"]
+        )
         self.assertEqual(self.check("/usr/bin/weak"), [])
 
     def test_other_architectures_are_skipped_like_the_loader_does(self):
@@ -144,14 +193,15 @@ class ElfDepsTests(unittest.TestCase):
 
     def test_missing_interpreter_and_relative_names(self):
         self.put("/usr/bin/prog", make_elf(interp="/lib/ld-linux-aarch64.so.1", needed=["./libsteam_api.so"]))
-        self.assertEqual(self.check("/usr/bin/prog"),
-                         ["/lib/ld-linux-aarch64.so.1 => not found", "./libsteam_api.so => not found"])
+        self.assertEqual(
+            self.check("/usr/bin/prog"), ["/lib/ld-linux-aarch64.so.1 => not found", "./libsteam_api.so => not found"]
+        )
 
     def test_symlinks_resolve_inside_the_root(self):
         self.put("/usr/lib/libreal.so.1.2", make_elf(soname="libreal.so.1"))
         try:
-            os.symlink("libreal.so.1.2", self.root / "usr/lib/libreal.so.1")
-            os.symlink("/usr/lib", self.root / "lib")
+            (self.root / "usr/lib/libreal.so.1").symlink_to("libreal.so.1.2")
+            (self.root / "lib").symlink_to("/usr/lib")
         except OSError:
             self.skipTest("symlinks need more privileges on this host")
         self.put("/usr/bin/prog", make_elf(needed=["libreal.so.1"], rpath="/lib"))
@@ -160,12 +210,15 @@ class ElfDepsTests(unittest.TestCase):
 
     def test_packages_from_the_pacman_database_and_ignored_lines(self):
         self.put("/var/lib/pacman/local/foo-1.0-1/desc", "%NAME%\nfoo\n\n%VERSION%\n1.0-1\n")
-        self.put("/var/lib/pacman/local/foo-1.0-1/files",
-                 "%FILES%\nusr/\nusr/lib/\nusr/lib/libfoo.so.1\nusr/share/doc/foo.txt\n\n%BACKUP%\n")
+        self.put(
+            "/var/lib/pacman/local/foo-1.0-1/files",
+            "%FILES%\nusr/\nusr/lib/\nusr/lib/libfoo.so.1\nusr/share/doc/foo.txt\n\n%BACKUP%\n",
+        )
         self.put("/usr/lib/libfoo.so.1", make_elf(soname="libfoo.so.1", needed=["libgone.so"]))
         self.put("/usr/share/doc/foo.txt", "not checked")
-        self.assertEqual(elfdeps.problems(str(self.root), ["foo"]),
-                         ["foo /usr/lib/libfoo.so.1:\tlibgone.so => not found"])
+        self.assertEqual(
+            elfdeps.problems(str(self.root), ["foo"]), ["foo /usr/lib/libfoo.so.1:\tlibgone.so => not found"]
+        )
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(elfdeps.main([str(self.root), "foo"]), 1)
         self.assertIn("libgone.so", out.getvalue())

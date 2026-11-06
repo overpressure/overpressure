@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""session-performance: the verdict on a session's frame recording."""
+
 import importlib.machinery
 import importlib.util
 import json
@@ -7,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from devices.phoenix.tooling import userspace
 
@@ -14,15 +17,24 @@ ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/session-performance"
 _loader = importlib.machinery.SourceFileLoader("session_performance", str(PATH))
 _spec = importlib.util.spec_from_loader("session_performance", _loader)
+assert _spec is not None
 perf = importlib.util.module_from_spec(_spec)
 _loader.exec_module(perf)
 
 
-def stats(commits, seconds, late, stalls, max_interval=20.4):
+def stats(commits: int, seconds: float, late: int, stalls: int, max_interval: float = 20.4) -> dict[str, Any]:
     """msm-frame-stats' recording of the window (only the fields the verdict reads, and some)."""
-    return {"target": "msm", "commits": commits, "commit_hz": round((commits - 1) / seconds, 4),
-            "max_interval_ms": max_interval, "late": late, "stalls": stalls, "vblank_hz": 89.9982, "gpu_jobs": commits,
-            "gpu_ms": {"mean": 3.1, "p90": 4.0, "max": 9.8}}
+    return {
+        "target": "msm",
+        "commits": commits,
+        "commit_hz": round((commits - 1) / seconds, 4),
+        "max_interval_ms": max_interval,
+        "late": late,
+        "stalls": stalls,
+        "vblank_hz": 89.9982,
+        "gpu_jobs": commits,
+        "gpu_ms": {"mean": 3.1, "p90": 4.0, "max": 9.8},
+    }
 
 
 # Valve's session on the Frame's compositor path: 90 commits per second over 30 s.
@@ -62,11 +74,21 @@ class VerdictTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             frames = Path(temp) / "frames.json"
             frames.write_text(json.dumps(FRAMES))
-            out = subprocess.run([sys.executable, str(PATH), str(frames), "61.5"],
-                                 capture_output=True, text=True, encoding="utf-8", check=True).stdout
+            out = subprocess.run(  # noqa: S603  # this Python on the repository's program
+                [sys.executable, str(PATH), str(frames), "61.5"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=True,
+            ).stdout
             self.assertEqual(json.loads(out)["status"], "passed")
-            out = subprocess.run([sys.executable, str(PATH), str(Path(temp) / "missing"), "nan"],
-                                 capture_output=True, text=True, encoding="utf-8", check=True).stdout
+            out = subprocess.run(  # noqa: S603  # this Python on the repository's program
+                [sys.executable, str(PATH), str(Path(temp) / "missing"), "nan"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=True,
+            ).stdout
             self.assertEqual(json.loads(out)["status"], "failed")
 
     def test_runner_line_names_both_numbers_and_failures(self):

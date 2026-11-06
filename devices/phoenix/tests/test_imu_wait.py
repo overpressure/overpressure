@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Unlicense
 """`pico4-imu wait`: the sensors target is reached once the IMU is listed."""
+
+from __future__ import annotations
+
 import argparse
 import contextlib
 import importlib.machinery
@@ -8,11 +11,13 @@ import io
 import json
 import unittest
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 _loader = importlib.machinery.SourceFileLoader("pico4_imu", str(ROOTFS / "usr/bin/pico4-imu"))
 _spec = importlib.util.spec_from_loader("pico4_imu", _loader)
+assert _spec is not None
 imu = importlib.util.module_from_spec(_spec)
 _loader.exec_module(imu)
 
@@ -21,38 +26,40 @@ class Clock:
     def __init__(self):
         self.now = 0.0
 
-    def __call__(self):
+    def __call__(self) -> float:
         return self.now
 
-    def sleep(self, seconds):
+    def sleep(self, seconds: float) -> None:
         self.now += seconds
 
 
 class FakeSsc:
     """The sensor service: absent, then empty lookups, then the IMU (seconds of the clock)."""
 
-    def __init__(self, clock, up_at, listed_at):
+    def __init__(self, clock: Clock, up_at: float, listed_at: float):
         self.clock, self.up_at, self.listed_at = clock, up_at, listed_at
         self.sock = self
         self.closed = 0
 
-    def connect(self, timeout):
+    def connect(self, timeout: float) -> FakeSsc:
         if self.clock() < self.up_at:
             self.clock.now += timeout
-            raise RuntimeError("SNS client service (QMI 0x190) not found")
+            msg = "SNS client service (QMI 0x190) not found"
+            raise RuntimeError(msg)
         return self
 
-    def find(self, data_type, timeout=3.0):
+    def find(self, data_type: str, timeout: float = 3.0) -> list[tuple[int, int]]:
         if self.clock() < self.listed_at:
             self.clock.now += timeout
             return []
         return [(1, 2)] if data_type in ("accel", "gyro") else []
 
-    def close(self):
+    def close(self) -> None:
         self.closed += 1
 
 
-def run(timeout, up_at, listed_at):
+def run(timeout: float, up_at: float, listed_at: float) -> tuple[int, dict[str, Any], FakeSsc]:
+    """Run `pico4-imu wait` against the fake sensor service and clock; return its code, output and service."""
     clock = Clock()
     ssc = FakeSsc(clock, up_at, listed_at)
     out = io.StringIO()
@@ -97,8 +104,8 @@ class UnitTest(unittest.TestCase):
 
     def test_session_starts_after_the_imu(self):
         session = (ROOTFS / "usr/lib/systemd/system/pico4-session.service").read_text(encoding="utf-8")
-        after = [l for l in session.splitlines() if l.startswith("After=")]
-        self.assertTrue(any("pico4-sensors.target" in l for l in after))
+        after = [line for line in session.splitlines() if line.startswith("After=")]
+        self.assertTrue(any("pico4-sensors.target" in line for line in after))
         # Ordering only: without the sensor DSP (QEMU) the session must still start.
         self.assertNotIn("Requires=pico4-sensors.target", session)
 

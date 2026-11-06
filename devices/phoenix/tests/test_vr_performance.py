@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""The VR performance hint: cpufreq limits and governors for a VR session, and its unit."""
+
 import shutil
 import subprocess
 import tempfile
@@ -29,16 +31,22 @@ class VrPerformanceMainlineTests(unittest.TestCase):
             (d / "scaling_governor").write_text("schedutil\n")
         self.state = self.tmp / "run/vr-performance"
 
-    def run_script(self, *args):
-        env = {"PATH": str(Path(BASH).parent), "PICO4_SYSFS": (self.tmp / "sys").as_posix(),
-               "PICO4_VR_PERFORMANCE_STATE": self.state.as_posix()}
-        return subprocess.run([BASH, SCRIPT.as_posix(), *args], env=env, capture_output=True, text=True)
+    def run_script(self, *args: str) -> subprocess.CompletedProcess[str]:
+        assert BASH is not None  # the class is skipped without bash
+        env = {
+            "PATH": str(Path(BASH).parent),
+            "PICO4_SYSFS": (self.tmp / "sys").as_posix(),
+            "PICO4_VR_PERFORMANCE_STATE": self.state.as_posix(),
+        }
+        return subprocess.run(  # noqa: S603  # the repository's script under bash, no shell
+            [BASH, SCRIPT.as_posix(), *args], env=env, capture_output=True, text=True, check=False
+        )
 
-    def limits(self, policy):
+    def limits(self, policy: int) -> tuple[str, str]:
         d = self.tmp / f"sys/devices/system/cpu/cpufreq/policy{policy}"
         return (d / "scaling_min_freq").read_text().strip(), (d / "scaling_max_freq").read_text().strip()
 
-    def governor(self, policy):
+    def governor(self, policy: int) -> str:
         d = self.tmp / f"sys/devices/system/cpu/cpufreq/policy{policy}"
         return (d / "scaling_governor").read_text().strip()
 

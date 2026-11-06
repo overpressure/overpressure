@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Unlicense
 """overpressure's RAM boot (fastboot boot) against a fake fastboot and a fake headset."""
+
+from __future__ import annotations
+
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,10 +14,10 @@ class FakeClock:
     def __init__(self):
         self.now = 0.0
 
-    def monotonic(self):
+    def monotonic(self) -> float:
         return self.now
 
-    def sleep(self, seconds):
+    def sleep(self, seconds: float) -> None:
         self.now += seconds
 
 
@@ -22,15 +25,24 @@ class FakeTarget(fastboot.RamBootTarget):
     refused_hint = "Boot it from a partition instead."
     up_timeout = 30
 
-    def __init__(self, image, in_fastboot=True, devices=1, boot_error=None, boot_output="OKAY", up_after=2,
-                 locked=False):
+    def __init__(  # noqa: PLR0913  # a fake headset: one keyword per behaviour a test sets
+        self,
+        image: Path,
+        *,
+        in_fastboot: bool = True,
+        devices: int = 1,
+        boot_error: str | None = None,
+        boot_output: str = "OKAY",
+        up_after: int = 2,
+        locked: bool = False,
+    ):
         self.image_path = image
         self.in_fastboot, self.devices = in_fastboot, devices
         self.boot_error, self.boot_output = boot_error, boot_output
         self.up_after, self.locked = up_after, locked
         self.calls, self.entered, self.polls = [], False, 0
 
-    def run(self, argv, timeout):
+    def run(self, argv: list[str], _timeout: float) -> str:
         self.calls.append(argv[1:])
         if argv[1:] == ["devices"]:
             rows = [f"OTHER{i}\tfastboot" for i in range(self.devices - 1)]
@@ -42,24 +54,26 @@ class FakeTarget(fastboot.RamBootTarget):
         return "OKAY"
 
     @property
-    def fastboot(self):
+    def fastboot(self):  # the property shadows the module in an annotation
         return fastboot.Fastboot("fastboot", "SERIAL", self.run)
 
-    def image(self):
+    def image(self) -> Path:
         return self.image_path
 
-    def enter(self):
+    def enter(self) -> None:
         self.entered = True
         self.in_fastboot = True
 
-    def check_unlocked(self):
+    def check_unlocked(self) -> None:
         if self.locked:
-            raise RuntimeError("locked")
+            msg = "locked"
+            raise RuntimeError(msg)
 
-    def reached(self):
+    def reached(self) -> None:
         self.polls += 1
         if self.polls < self.up_after:
-            raise RuntimeError("no answer yet")
+            msg = "no answer yet"
+            raise RuntimeError(msg)
 
 
 class RamBootTests(unittest.TestCase):
@@ -70,7 +84,7 @@ class RamBootTests(unittest.TestCase):
         self.image.write_bytes(bootimg.BootImage(2, 4096, b"kernel", b"ramdisk", dtb=b"dtb").pack())
         self.clock = FakeClock()
 
-    def boot(self, target, image=None):
+    def boot(self, target: FakeTarget, image: Path | None = None) -> None:
         return fastboot.ram_boot(target, image, log=lambda _line: None, clock=self.clock)
 
     def test_boots_from_ram_and_waits_until_the_image_answers(self):
@@ -102,9 +116,11 @@ class RamBootTests(unittest.TestCase):
 
     def test_the_refusal_quotes_the_bootloaders_answer(self):
         # fastboot's progress lines come first; the answer is its FAILED line, quoted whole.
-        error = ("fastboot failed (1): Sending 'boot.img' (47616 KB)" + " " * 30 + "OKAY [  1.129s]\n"
-                 "Booting" + " " * 40 + "FAILED (remote: 'unknown command')\n"
-                 "fastboot: error: Command failed")
+        error = (
+            "fastboot failed (1): Sending 'boot.img' (47616 KB)" + " " * 30 + "OKAY [  1.129s]\n"
+            "Booting" + " " * 40 + "FAILED (remote: 'unknown command')\n"
+            "fastboot: error: Command failed"
+        )
         with self.assertRaises(fastboot.Refused) as raised:
             self.boot(FakeTarget(self.image, boot_error=error))
         self.assertIn("(Booting" + " " * 40 + "FAILED (remote: 'unknown command'))", str(raised.exception))
@@ -129,14 +145,14 @@ class RamBootTests(unittest.TestCase):
             self.assertFalse(any(call[2:3] == ["boot"] for call in target.calls))
 
     def test_an_image_that_never_answers_times_out(self):
-        target = FakeTarget(self.image, up_after=10 ** 6)
+        target = FakeTarget(self.image, up_after=10**6)
         with self.assertRaisesRegex(RuntimeError, "timed out waiting for the RAM-booted image"):
             self.boot(target)
         self.assertGreaterEqual(self.clock.now, target.up_timeout)
 
     def test_fastboot_needs_the_serial(self):
         with self.assertRaises(ValueError):
-            fastboot.Fastboot("fastboot", "", lambda argv, timeout: "")("boot", "x")
+            fastboot.Fastboot("fastboot", "", lambda *_: "")("boot", "x")
 
 
 if __name__ == "__main__":

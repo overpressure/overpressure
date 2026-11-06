@@ -4,16 +4,27 @@
 The stock files come from PICO's public OTA (python -m overpressure stock), the headset's own factory data
 from its persist partition at boot (pico4-persist.service).
 """
+
 import re
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
+from overpressure import ota
+
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ["extract-graphics-firmware.sh", "extract-sensor-data.sh", "extract-wlan.sh", "extract-audio.sh",
-           "extract-stock-slam.sh"]
+SCRIPTS = [
+    "extract-graphics-firmware.sh",
+    "extract-sensor-data.sh",
+    "extract-wlan.sh",
+    "extract-audio.sh",
+    "extract-stock-slam.sh",
+]
 
 
 def read(path: Path) -> str:
+    """Return a file's text."""
     return path.read_text(encoding="utf-8")
 
 
@@ -30,12 +41,14 @@ class ExtractionTests(unittest.TestCase):
         build = read(ROOT / "scripts/build-userspace.sh")
         self.assertNotIn("wlan_mac.bin; do", build)
         self.assertNotRegex(build, r'"\$sensor_data/sensors/registry"')
-        for link in ('/mnt/vendor/persist/sensors/registry/registry "$qcom/sensors/registry"',
-                     '/mnt/vendor/persist/sensors/registry/sns_reg_version "$qcom/sensors/sns_reg_version"',
-                     '/mnt/vendor/persist/pvr "$qcom/calibration/pvr"'):
+        for link in (
+            '/mnt/vendor/persist/sensors/registry/registry "$qcom/sensors/registry"',
+            '/mnt/vendor/persist/sensors/registry/sns_reg_version "$qcom/sensors/sns_reg_version"',
+            '/mnt/vendor/persist/pvr "$qcom/calibration/pvr"',
+        ):
             self.assertIn("ln -sfn " + link, build)
         self.assertIn('mkdir -p "$T/mnt/vendor/persist"', build)
-        self.assertIn("pico4-persist.service", build[build.index("in_t systemctl enable"):])
+        self.assertIn("pico4-persist.service", build[build.index("in_t systemctl enable") :])
 
 
 class PersistTests(unittest.TestCase):
@@ -62,19 +75,17 @@ class PersistTests(unittest.TestCase):
 
 class DevImageTests(unittest.TestCase):
     def test_recovery_from_the_ota(self):
-        import tempfile
-        import zipfile
-        from overpressure import ota
         with tempfile.TemporaryDirectory() as tmp:
             zip_path = Path(tmp) / "ota.zip"
             with zipfile.ZipFile(zip_path, "w") as zf:
                 zf.writestr("boot.img", b"ANDROID!boot")
                 zf.writestr("recovery.img", b"ANDROID!recovery")
-            self.assertEqual(ota.fetch_boot_image(str(zip_path), log=lambda *a: None), b"ANDROID!boot")
-            self.assertEqual(ota.fetch_boot_image(str(zip_path), log=lambda *a: None, partition="recovery"),
-                             b"ANDROID!recovery")
+            self.assertEqual(ota.fetch_boot_image(str(zip_path), log=lambda *_: None), b"ANDROID!boot")
+            self.assertEqual(
+                ota.fetch_boot_image(str(zip_path), log=lambda *_: None, partition="recovery"), b"ANDROID!recovery"
+            )
         devloop = read(ROOT / "tooling/devloop.py")
-        image = devloop[devloop.index("    def image(self):"):devloop.index("    def install_image(")]
+        image = devloop[devloop.index("    def image(self)") : devloop.index("    def install_image(")]
         self.assertIn('ota.fetch_boot_image(self.stock_location(), str(ROOT / "cache"), print, "recovery")', image)
         self.assertNotIn("stock_partition", image)
 

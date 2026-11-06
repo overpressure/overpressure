@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: Unlicense
-"""overpressure.ota: OTA members checked against the zip, and partition images from a full OTA's block
-images, as AOSP's updater writes them."""
+"""overpressure.ota: OTA members checked against the zip, and partition images from a full OTA's block images.
+
+The block images are applied as AOSP's updater writes them.
+"""
+
+from __future__ import annotations
+
 import io
 import json
 import struct
@@ -28,11 +33,11 @@ class TransferListTests(unittest.TestCase):
         image = out.getvalue()
         self.assertEqual(size, 8 * B)
         self.assertEqual(len(image), 8 * B)
-        self.assertEqual(image[5 * B:6 * B], b"\x01" * B)
-        self.assertEqual(image[6 * B:7 * B], b"\x02" * B)
-        self.assertEqual(image[2 * B:3 * B], b"\x03" * B)
-        self.assertEqual(image[0:2 * B], bytes(2 * B))
-        self.assertEqual(image[7 * B:], bytes(B))
+        self.assertEqual(image[5 * B : 6 * B], b"\x01" * B)
+        self.assertEqual(image[6 * B : 7 * B], b"\x02" * B)
+        self.assertEqual(image[2 * B : 3 * B], b"\x03" * B)
+        self.assertEqual(image[0 : 2 * B], bytes(2 * B))
+        self.assertEqual(image[7 * B :], bytes(B))
 
     def test_short_data_and_unknown_commands_refused(self):
         with self.assertRaises(ValueError):
@@ -41,8 +46,8 @@ class TransferListTests(unittest.TestCase):
             ota.apply_transfer_list("4\n4\n0\n0\nmove 2,0,1\n", io.BytesIO(), io.BytesIO())
 
 
-def field(number: int, value) -> bytes:
-    """One protobuf field: a varint for a number below 128, else length-delimited bytes."""
+def field(number: int, value: int | bytes) -> bytes:
+    """Encode one protobuf field: a varint for a number below 128, else length-delimited bytes."""
     if isinstance(value, int):
         return bytes([number << 3, value])
     return bytes([number << 3 | 2, len(value)]) + value
@@ -59,7 +64,10 @@ class BarePayloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "payload.bin"
             path.write_bytes(b"CrAU" + struct.pack(">QQI", 2, len(manifest), 0) + manifest + b"bootbootrecovery")
-            log = lambda _line: None
+
+            def log(_line: str) -> None:
+                return None
+
             self.assertEqual(ota.fetch_boot_image(str(path), log=log), b"bootboot")
             self.assertEqual(ota.fetch_boot_image(str(path), log=log, partition="recovery"), b"recovery")
 
@@ -88,6 +96,7 @@ class ExtractTests(unittest.TestCase):
     def test_members_for_copies_and_block_images(self):
         members = set(ota.members_needed({"a.bin": "dir/a.bin"}, {"system.img": "system"}))
         self.assertEqual(members, {"dir/a.bin", "system.new.dat.br", "system.transfer.list"})
+
 
 if __name__ == "__main__":
     unittest.main()

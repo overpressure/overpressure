@@ -7,18 +7,23 @@ settings as a dataclass derived from Settings, with its own key prefix (PICO4_ f
 so several headsets can share one .env. Environment variables of the same names take precedence
 over the file.
 """
+
 from __future__ import annotations
 
 import os
 import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import ClassVar, Type, TypeVar
+from typing import TYPE_CHECKING, ClassVar, TypeVar
 
-from . import REPO
+from . import REPO, tools
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 ROOT = REPO
 EXE = ".exe" if sys.platform == "win32" else ""
+QUOTE_PAIR = 2  # a quoted value is at least its two quotes
 
 S = TypeVar("S", bound="Settings")
 
@@ -35,40 +40,46 @@ class Settings:
 
     @classmethod
     def key(cls, name: str) -> str:
+        """Return the .env key of setting NAME: the prefix and the name in capitals."""
         return cls.PREFIX + name.upper()
 
     def path(self, name: str) -> Path:
-        """A path setting, relative to the repository root unless absolute."""
+        """Return a path setting, relative to the repository root unless absolute."""
         value = Path(getattr(self, name))
         return value if value.is_absolute() else ROOT / value
 
     def tool(self, name: str) -> str:
-        """adb or fastboot: from the platform_tools setting when set, else the fetched
-        platform-tools (python -m overpressure tools), else from PATH."""
+        """Return adb or fastboot to run.
+
+        From the platform_tools setting when set, else the fetched platform-tools (python -m
+        overpressure tools), else from PATH.
+        """
         if self.platform_tools:
             return str(Path(self.platform_tools) / (name + EXE))
-        from . import tools
         fetched = tools.program(name)
         return str(fetched) if fetched else name
 
     def require(self, *names: str) -> None:
+        """Raise unless every setting of NAMES is set, naming the missing keys."""
         missing = [self.key(n) for n in names if not getattr(self, n)]
         if missing:
-            raise ValueError(f"set {', '.join(missing)} in .env (see .env.example)")
+            msg = f"set {', '.join(missing)} in .env (see .env.example)"
+            raise ValueError(msg)
 
 
 def parse(text: str) -> dict:
-    """KEY=VALUE lines; blank lines and # comments are skipped, quotes around a value removed."""
+    """Return the KEY=VALUE lines; blank lines and # comments are skipped, quotes around a value removed."""
     values = {}
-    for number, line in enumerate(text.splitlines(), 1):
-        line = line.strip()
+    for number, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
         if not line or line.startswith("#"):
             continue
         key, sep, value = line.partition("=")
         if not sep or not key.strip():
-            raise ValueError(f".env line {number}: expected KEY=VALUE")
+            msg = f".env line {number}: expected KEY=VALUE"
+            raise ValueError(msg)
         value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        if len(value) >= QUOTE_PAIR and value[0] == value[-1] and value[0] in "'\"":
             value = value[1:-1]
         elif " #" in value:
             value = value.split(" #", 1)[0].rstrip()
@@ -76,8 +87,9 @@ def parse(text: str) -> dict:
     return values
 
 
-def load(cls: Type[S] = Settings, path: Path | None = None, environ=None) -> S:
-    """The settings of class @p cls from .env and the environment."""
+# The default is the bound of S: sound, but ty does not accept a default for a type[S] parameter.
+def load(cls: type[S] = Settings, path: Path | None = None, environ: Mapping[str, str] | None = None) -> S:  # ty: ignore[invalid-parameter-default]
+    """Return the settings of class @p cls from .env and the environment."""
     path = ROOT / ".env" if path is None else path
     environ = os.environ if environ is None else environ
     values = parse(path.read_text(encoding="utf-8")) if path.exists() else {}

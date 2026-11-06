@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: Unlicense
+"""pico4-fan: the stock fan service's frames, tables and controller, the sensors, the daemon and the batch rule."""
+
+from __future__ import annotations
+
 import contextlib
 import importlib.machinery
 import importlib.util
 import io
 import json
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -15,30 +20,73 @@ ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "userspace/rootfs/usr/bin/pico4-fan"
 _loader = importlib.machinery.SourceFileLoader("pico4_fan", str(PATH))
 _spec = importlib.util.spec_from_loader("pico4_fan", _loader)
+assert _spec is not None
 fan = importlib.util.module_from_spec(_spec)
+# Dataclasses resolve their string annotations through sys.modules.
+sys.modules[_spec.name] = fan
 _loader.exec_module(fan)
 
 LATE, EARLY = fan.PROFILES["late"], fan.PROFILES["early"]
 # The 14 zones pxrfanservice reads on kona (thermal_zone1-4, 7-15, 24), by type.
-STOCK_SENSORS = ["cpu-0-0-usr", "cpu-0-1-usr", "cpu-0-2-usr", "cpu-0-3-usr",
-                 "cpu-1-0-usr", "cpu-1-1-usr", "cpu-1-2-usr", "cpu-1-3-usr",
-                 "cpu-1-4-usr", "cpu-1-5-usr", "cpu-1-6-usr", "cpu-1-7-usr",
-                 "gpuss-0-usr", "gpuss-1-usr"]
+STOCK_SENSORS = [
+    "cpu-0-0-usr",
+    "cpu-0-1-usr",
+    "cpu-0-2-usr",
+    "cpu-0-3-usr",
+    "cpu-1-0-usr",
+    "cpu-1-1-usr",
+    "cpu-1-2-usr",
+    "cpu-1-3-usr",
+    "cpu-1-4-usr",
+    "cpu-1-5-usr",
+    "cpu-1-6-usr",
+    "cpu-1-7-usr",
+    "gpuss-0-usr",
+    "gpuss-1-usr",
+]
 # Zone types in the headset's numbering (pico4-probe thermal.txt), up to the GPU's second sensor.
-LIVE_ZONES = ["aoss0-usr", "cpu-0-0-usr", "cpu-0-1-usr", "cpu-0-2-usr", "cpu-0-3-usr",
-              "cpuss-0-usr", "cpuss-1-usr", "cpu-1-0-usr", "cpu-1-1-usr", "cpu-1-2-usr",
-              "cpu-1-3-usr", "cpu-1-4-usr", "cpu-1-5-usr", "cpu-1-6-usr", "cpu-1-7-usr",
-              "gpuss-0-usr", "aoss-1-usr", "cwlan-usr", "video-usr", "ddr-usr", "q6-hvx-usr",
-              "camera-usr", "cmpss-usr", "npu-usr", "gpuss-1-usr", "gpuss-max-step",
-              "apc-0-max-step", "apc-1-max-step", "pop-mem-step", "cpu-0-0-step"]
+LIVE_ZONES = [
+    "aoss0-usr",
+    "cpu-0-0-usr",
+    "cpu-0-1-usr",
+    "cpu-0-2-usr",
+    "cpu-0-3-usr",
+    "cpuss-0-usr",
+    "cpuss-1-usr",
+    "cpu-1-0-usr",
+    "cpu-1-1-usr",
+    "cpu-1-2-usr",
+    "cpu-1-3-usr",
+    "cpu-1-4-usr",
+    "cpu-1-5-usr",
+    "cpu-1-6-usr",
+    "cpu-1-7-usr",
+    "gpuss-0-usr",
+    "aoss-1-usr",
+    "cwlan-usr",
+    "video-usr",
+    "ddr-usr",
+    "q6-hvx-usr",
+    "camera-usr",
+    "cmpss-usr",
+    "npu-usr",
+    "gpuss-1-usr",
+    "gpuss-max-step",
+    "apc-0-max-step",
+    "apc-1-max-step",
+    "pop-mem-step",
+    "cpu-0-0-step",
+]
 
 
 def mc(celsius: float) -> int:
+    """Return a temperature in millidegrees, as the thermal zones give it."""
     return round(celsius * 1000)
 
 
 def reply(*payload: int) -> bytes:
-    body = bytes((fan.REPLY,) + payload)
+    """Build the MCU's reply frame around this payload."""
+    body = bytes((fan.REPLY, *payload))
     return body + bytes((fan.xor(body),))
 
 
@@ -51,11 +99,14 @@ class FakeMcu:
         self.stalled = False
 
     def __call__(self, tx: bytes, command: int) -> bytes:
-        assert len(tx) == 6 and tx[0] == fan.REQUEST and fan.xor(tx[:5]) == tx[5], tx.hex()
+        assert len(tx) == 6, tx.hex()
+        assert tx[0] == fan.REQUEST, tx.hex()
+        assert fan.xor(tx[:5]) == tx[5], tx.hex()
         self.frames.append(tx)
         if self.fail:
             self.fail -= 1
-            raise TimeoutError("no reply")
+            msg = "no reply"
+            raise TimeoutError(msg)
         cmd = tx[1]
         if cmd == fan.SET_FAN_SPEED:
             self.duty = tx[3] | tx[4] << 8
@@ -66,7 +117,8 @@ class FakeMcu:
             rpm = 0 if self.stalled else self.duty * self.rpm_per_percent
             data = reply(rpm & 0xFF, rpm >> 8)
         else:
-            raise AssertionError(f"unexpected command {cmd:#x}")
+            msg = f"unexpected command {cmd:#x}"
+            raise AssertionError(msg)
         # Through the real parser, behind a stray byte.
         return fan.find_reply(command, b"\x00" + data)
 
@@ -96,9 +148,8 @@ class FrameTest(unittest.TestCase):
         self.assertEqual(fan.request(fan.GET_FAN_INFO).hex(), "a03000000090")
 
     def test_only_the_allowlist_can_be_built(self):
-        built = [cmd for cmd in range(256) for duty in (None, 0)
-                 if self._builds(cmd, duty)]
-        self.assertEqual(sorted(set(built)), sorted(fan.QUERIES + (fan.SET_FAN_SPEED,)))
+        built = [cmd for cmd in range(256) for duty in (None, 0) if self._builds(cmd, duty)]
+        self.assertEqual(sorted(set(built)), sorted((*fan.QUERIES, fan.SET_FAN_SPEED)))
         # IPD read and move, calibration import, OTA, backlight, SetFanRPM: never.
         for cmd in (0x08, 0x07, 0x19, 0x25, 0x05, 0x29, 0x00, 0x01, 0xFF):
             with self.assertRaises(ValueError):
@@ -110,19 +161,19 @@ class FrameTest(unittest.TestCase):
             fan.request(fan.GET_FAN_SPEED, 5)
 
     @staticmethod
-    def _builds(cmd, duty):
+    def _builds(cmd: int, duty: int | None) -> bool:
         try:
             fan.request(cmd, duty)
-            return True
         except ValueError:
             return False
+        return True
 
     def test_replies(self):
         self.assertEqual(fan.find_reply(fan.SET_FAN_SPEED, b"\x00\xff\x79"), b"\x79")
         self.assertIsNone(fan.find_reply(fan.SET_FAN_SPEED, b"\x00\xff"))
         good = reply(0x32, 0x00)
         self.assertEqual(fan.find_reply(fan.GET_FAN_SPEED, good), good)
-        self.assertIsNone(fan.find_reply(fan.GET_FAN_SPEED, good[:3]))          # not yet
+        self.assertIsNone(fan.find_reply(fan.GET_FAN_SPEED, good[:3]))  # not yet
         self.assertIsNone(fan.find_reply(fan.GET_FAN_SPEED, good[:3] + b"\x00"))  # bad checksum
         # A stray 79 before the reply, and a payload byte that is 79 itself.
         self.assertEqual(fan.find_reply(fan.GET_FAN_SPEED, b"\x79" + good), good)
@@ -141,7 +192,7 @@ class TableTest(unittest.TestCase):
         self.assertEqual(LATE.thresholds, (90000, 85000, 80500, 72000, 60000, 55000))
         self.assertEqual(LATE.duties, (50, 45, 40, 35, 30, 0))
 
-    def run_steps(self, table, temps, last=None):
+    def run_steps(self, table: object, temps: list[float], last: int | None = None) -> list[int | None]:
         out = []
         for t in temps:
             duty = fan.table_duty(table, mc(t), last)
@@ -151,18 +202,19 @@ class TableTest(unittest.TestCase):
         return out
 
     def test_late_rising(self):
-        self.assertEqual(self.run_steps(LATE, [40, 55, 60, 71.9, 72, 80.5, 85, 90, 100]),
-                         [0, None, 30, 30, 35, 40, 45, 50, 50])
+        self.assertEqual(
+            self.run_steps(LATE, [40, 55, 60, 71.9, 72, 80.5, 85, 90, 100]), [0, None, 30, 30, 35, 40, 45, 50, 50]
+        )
 
     def test_late_falling_holds_one_step(self):
-        self.assertEqual(self.run_steps(LATE, [89, 84.9, 84.9, 80.4, 71.9, 59.9, 54.9, 57, 60], last=50),
-                         [50, 45, 45, 40, 35, None, 0, None, 30])
+        self.assertEqual(
+            self.run_steps(LATE, [89, 84.9, 84.9, 80.4, 71.9, 59.9, 54.9, 57, 60], last=50),
+            [50, 45, 45, 40, 35, None, 0, None, 30],
+        )
 
     def test_early(self):
-        self.assertEqual(self.run_steps(EARLY, [45, 52, 60, 70, 85, 90]),
-                         [30, None, 30, 45, 60, 75])
-        self.assertEqual(self.run_steps(EARLY, [89, 84, 69, 59, 52, 49], last=75),
-                         [75, 60, 45, 30, None, 30])
+        self.assertEqual(self.run_steps(EARLY, [45, 52, 60, 70, 85, 90]), [30, None, 30, 45, 60, 75])
+        self.assertEqual(self.run_steps(EARLY, [89, 84, 69, 59, 52, 49], last=75), [75, 60, 45, 30, None, 30])
 
     def test_parse(self):
         self.assertEqual(fan.Table.parse("90:50, 85:45,80.5:40,72:35,60:30,55:0"), LATE)
@@ -248,12 +300,34 @@ class ZonesTest(unittest.TestCase):
     def test_the_same_channels_under_mainline_names(self):
         # Mainline's sm8250 zones as Valve's kernel lists them, with their TSENS channels; the
         # stock sensors are TSENS0 1-4 and 7-15 and TSENS1 8.
-        mainline = ["aoss0-thermal", "cpu0-thermal", "cpu1-thermal", "cpu2-thermal", "cpu3-thermal",
-                    "cluster0-thermal", "cluster1-thermal", "cpu4-top-thermal", "cpu5-top-thermal",
-                    "cpu6-top-thermal", "cpu7-top-thermal", "cpu4-bottom-thermal", "cpu5-bottom-thermal",
-                    "cpu6-bottom-thermal", "cpu7-bottom-thermal", "gpu-top-thermal", "aoss1-thermal",
-                    "wlan-thermal", "video-thermal", "mem-thermal", "q6-hvx-thermal", "camera-thermal",
-                    "compute-thermal", "npu-thermal", "gpu-bottom-thermal", "pm8150-thermal"]
+        mainline = [
+            "aoss0-thermal",
+            "cpu0-thermal",
+            "cpu1-thermal",
+            "cpu2-thermal",
+            "cpu3-thermal",
+            "cluster0-thermal",
+            "cluster1-thermal",
+            "cpu4-top-thermal",
+            "cpu5-top-thermal",
+            "cpu6-top-thermal",
+            "cpu7-top-thermal",
+            "cpu4-bottom-thermal",
+            "cpu5-bottom-thermal",
+            "cpu6-bottom-thermal",
+            "cpu7-bottom-thermal",
+            "gpu-top-thermal",
+            "aoss1-thermal",
+            "wlan-thermal",
+            "video-thermal",
+            "mem-thermal",
+            "q6-hvx-thermal",
+            "camera-thermal",
+            "compute-thermal",
+            "npu-thermal",
+            "gpu-bottom-thermal",
+            "pm8150-thermal",
+        ]
         with tempfile.TemporaryDirectory() as tmp:
             for i, kind in enumerate(mainline):
                 (Path(tmp) / f"thermal_zone{i}").mkdir()
@@ -287,14 +361,21 @@ class DaemonTest(unittest.TestCase):
         self.logs = []
         sensors = [fan.Sensor(name, name) for name in STOCK_SENSORS]
         self.state = Path(self.tmp.name) / "state.json"
-        self.daemon = fan.Daemon(fan.Controller(LATE), sensors, fan.Fan(self.mcu), self.temps.get,
-                                 clock=self.clock, log=self.logs.append, state_path=self.state,
-                                 profile="late")
+        self.daemon = fan.Daemon(
+            fan.Controller(LATE),
+            sensors,
+            fan.Fan(self.mcu),
+            self.temps.get,
+            clock=self.clock,
+            log=self.logs.append,
+            state_path=self.state,
+            profile="late",
+        )
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def advance(self, seconds):
+    def advance(self, seconds: float) -> None:
         for _ in range(round(seconds / fan.PERIOD)):
             self.daemon.cycle()
             self.clock.ticks += 1
@@ -313,9 +394,9 @@ class DaemonTest(unittest.TestCase):
         self.advance(10)
         for name in self.temps:
             self.temps[name] = mc(61)
-        self.advance(9.4)   # 47 readings at 61 °C: the means are still below 60 °C
+        self.advance(9.4)  # 47 readings at 61 °C: the means are still below 60 °C
         self.assertEqual(self.mcu.duty, 0)
-        self.advance(0.2)   # the 48th
+        self.advance(0.2)  # the 48th
         self.assertEqual(self.mcu.duty, 30)
         self.assertIn("duty 30 % (table; hottest mean 60.2 °C, cpu-0-0-usr)", self.logs)
 
@@ -334,12 +415,14 @@ class DaemonTest(unittest.TestCase):
         self.assertEqual(self.mcu.sets(), [0])
         self.assertIsNone(self.daemon.sent)
         self.advance(0.6)
-        self.assertEqual(len(self.mcu.sets()), 1)   # no retry before a second has passed
+        self.assertEqual(len(self.mcu.sets()), 1)  # no retry before a second has passed
         self.advance(3)
-        self.assertEqual(len(self.mcu.sets()), 4)   # at 1, 2 and 3 s
+        self.assertEqual(len(self.mcu.sets()), 4)  # at 1, 2 and 3 s
         self.assertEqual(self.daemon.sent, 0)
-        self.assertEqual([m for m in self.logs if m.startswith("MCU")],
-                         ["MCU: SetFanSpeed 0 %: no reply", "MCU answers again after 4 errors"])
+        self.assertEqual(
+            [m for m in self.logs if m.startswith("MCU")],
+            ["MCU: SetFanSpeed 0 %: no reply", "MCU answers again after 4 errors"],
+        )
         self.assertIsNone(self.daemon.last["error"])
 
     def test_state_file(self):
@@ -352,8 +435,7 @@ class DaemonTest(unittest.TestCase):
         self.assertEqual(set(state["sensors"]), set(STOCK_SENSORS))
         self.assertEqual(state["sensors"]["cpu-1-4-usr"], {"now_c": 40.0, "mean_c": 40.0})
         # What the checks read through `pico4-fan state`.
-        self.assertEqual(fan.fan_state(self.state, now=state["time"]),
-                         {k: state[k] for k in fan.STATE_FIELDS})
+        self.assertEqual(fan.fan_state(self.state, now=state["time"]), {k: state[k] for k in fan.STATE_FIELDS})
 
     def test_overheat_warning_like_pico_os(self):
         for name in self.temps:
@@ -373,7 +455,7 @@ class DaemonTest(unittest.TestCase):
         self.assertEqual(self.mcu.duty, 30)
         self.assertEqual(len([m for m in self.logs if "0 rpm" in m]), 1)
 
-    def hot(self, celsius=96):
+    def hot(self, celsius: float = 96) -> None:
         for name in self.temps:
             self.temps[name] = mc(celsius)
 
@@ -381,7 +463,7 @@ class DaemonTest(unittest.TestCase):
         offs = []
         self.daemon.power_off = lambda: offs.append(self.clock())
         self.hot()
-        self.mcu.fail = 10 ** 6
+        self.mcu.fail = 10**6
         self.advance(119.8)
         self.assertEqual(offs, [])
         self.advance(0.4)
@@ -399,8 +481,9 @@ class DaemonTest(unittest.TestCase):
         self.hot()
         self.advance(120.2)
         self.assertEqual(len(offs), 1)
-        self.assertEqual([m for m in self.logs if m.startswith("powering off")],
-                         ["powering off: the fan reports 0 rpm at 100 %"])
+        self.assertEqual(
+            [m for m in self.logs if m.startswith("powering off")], ["powering off: the fan reports 0 rpm at 100 %"]
+        )
 
     def test_a_cooling_fan_never_powers_off(self):
         # PICO OS shows only its notice; the kernel's critical trips end the rest.
@@ -414,8 +497,8 @@ class DaemonTest(unittest.TestCase):
     def test_a_silent_mcu_below_the_limit_does_not_power_off(self):
         offs = []
         self.daemon.power_off = lambda: offs.append(self.clock())
-        self.mcu.fail = 10 ** 6
-        self.hot(95)    # below PICO OS's 95.1 °C
+        self.mcu.fail = 10**6
+        self.hot(95)  # below PICO OS's 95.1 °C
         self.advance(300)
         self.assertEqual(offs, [])
         self.assertIn("no reply", self.daemon.last["error"])
@@ -424,7 +507,7 @@ class DaemonTest(unittest.TestCase):
         offs = []
         self.daemon.power_off = lambda: offs.append(self.clock())
         self.hot()
-        self.mcu.fail = 50      # about 50 s of failed transactions
+        self.mcu.fail = 50  # about 50 s of failed transactions
         self.advance(120.2)
         self.assertEqual(self.mcu.fail, 0)
         self.assertEqual(offs, [])
@@ -432,11 +515,11 @@ class DaemonTest(unittest.TestCase):
     def test_cooling_down_restarts_the_two_minutes(self):
         offs = []
         self.daemon.power_off = lambda: offs.append(self.clock())
-        self.mcu.fail = 10 ** 6
+        self.mcu.fail = 10**6
         self.hot()
         self.advance(100)
         self.hot(40)
-        self.advance(12)    # the means follow within 10 s
+        self.advance(12)  # the means follow within 10 s
         self.hot()
         self.advance(100)
         self.assertEqual(offs, [])
@@ -445,16 +528,25 @@ class DaemonTest(unittest.TestCase):
         with mock.patch.object(fan.subprocess, "run") as run:
             fan.poweroff()
         self.assertEqual(run.call_args[0][0], ["systemctl", "--no-block", "poweroff"])
-        with mock.patch.object(fan.subprocess, "run", side_effect=OSError("no systemctl")), \
-                contextlib.redirect_stderr(io.StringIO()) as err:
-            fan.poweroff()   # the control loop goes on
+        with (
+            mock.patch.object(fan.subprocess, "run", side_effect=OSError("no systemctl")),
+            contextlib.redirect_stderr(io.StringIO()) as err,
+        ):
+            fan.poweroff()  # the control loop goes on
         self.assertIn("no systemctl", err.getvalue())
 
     def test_dry_run_never_powers_off(self):
         offs = []
-        daemon = fan.Daemon(fan.Controller(LATE), [fan.Sensor("cpu-0-0-usr", "x")], None,
-                            {"x": mc(96)}.get, clock=self.clock, log=self.logs.append, state_path=None,
-                            power_off=lambda: offs.append(1))
+        daemon = fan.Daemon(
+            fan.Controller(LATE),
+            [fan.Sensor("cpu-0-0-usr", "x")],
+            None,
+            {"x": mc(96)}.get,
+            clock=self.clock,
+            log=self.logs.append,
+            state_path=None,
+            power_off=lambda: offs.append(1),
+        )
         for _ in range(round(130 / fan.PERIOD)):
             daemon.cycle()
             self.clock.ticks += 1
@@ -462,16 +554,22 @@ class DaemonTest(unittest.TestCase):
         self.assertTrue([m for m in self.logs if "overheating" in m])
 
     def test_dry_run_never_touches_the_mcu(self):
-        daemon = fan.Daemon(fan.Controller(LATE), [fan.Sensor("cpu-0-0-usr", "x")], None,
-                            {"x": mc(73)}.get, clock=self.clock, log=self.logs.append, state_path=None)
+        daemon = fan.Daemon(
+            fan.Controller(LATE),
+            [fan.Sensor("cpu-0-0-usr", "x")],
+            None,
+            {"x": mc(73)}.get,
+            clock=self.clock,
+            log=self.logs.append,
+            state_path=None,
+        )
         daemon.cycle()
         self.assertEqual(daemon.sent, 35)
         self.assertEqual(self.mcu.frames, [])
 
 
 def synthetic_serial(ninth: str, code: str = "000", seventeenth: str = "0") -> bytes:
-    """A made-up serial number: FanControl reads only the ninth character, the three after
-    it and the seventeenth."""
+    """Return a made-up serial number: FanControl reads only its 9th character, the three after it and the 17th."""
     return f"00000000{ninth}{code}0000{seventeenth}00".encode()
 
 
@@ -480,12 +578,12 @@ class BatchTest(unittest.TestCase):
         cases = [
             (synthetic_serial("F"), "early"),
             (synthetic_serial("H"), "late"),
-            (synthetic_serial("G", "716", "Z"), "early"),   # date code below limit1
-            (synthetic_serial("G", "717", "C"), "early"),   # between the limits: the 17th character
+            (synthetic_serial("G", "716", "Z"), "early"),  # date code below limit1
+            (synthetic_serial("G", "717", "C"), "early"),  # between the limits: the 17th character
             (synthetic_serial("G", "717", "D"), "late"),
             (synthetic_serial("G", "725", "Z"), "late"),
-            (synthetic_serial("G", "726", "A"), "late"),    # from limit2 on
-            (b"0000000", "early"),                          # too short: the zeroed buffer reads 0
+            (synthetic_serial("G", "726", "A"), "late"),  # from limit2 on
+            (b"0000000", "early"),  # too short: the zeroed buffer reads 0
             (synthetic_serial("H")[:12] + b"\n", "late"),
         ]
         for serial, batch in cases:
@@ -538,14 +636,36 @@ class StateTest(unittest.TestCase):
             self.assertIsNone(fan.fan_state(path))
             path.write_text("{not json")
             self.assertIsNone(fan.fan_state(path))
-            state = {"pid": 7, "time": 5000.0, "profile": "late", "duty": 45, "target": 45, "reason": "table",
-                     "boost": False, "hottest": "gpuss-1-usr", "hottest_mean_c": 86.1, "hottest_now_c": 87.0,
-                     "rpm": 7800, "error": None, "sensors": {}}
+            state = {
+                "pid": 7,
+                "time": 5000.0,
+                "profile": "late",
+                "duty": 45,
+                "target": 45,
+                "reason": "table",
+                "boost": False,
+                "hottest": "gpuss-1-usr",
+                "hottest_mean_c": 86.1,
+                "hottest_now_c": 87.0,
+                "rpm": 7800,
+                "error": None,
+                "sensors": {},
+            }
             path.write_text(json.dumps(state))
-            self.assertEqual(fan.fan_state(path, now=5004.0),
-                             {"profile": "late", "duty": 45, "reason": "table", "boost": False, "rpm": 7800,
-                              "hottest": "gpuss-1-usr", "hottest_mean_c": 86.1, "error": None})
-            self.assertIsNone(fan.fan_state(path, now=5005.5))   # the daemon stopped writing
+            self.assertEqual(
+                fan.fan_state(path, now=5004.0),
+                {
+                    "profile": "late",
+                    "duty": 45,
+                    "reason": "table",
+                    "boost": False,
+                    "rpm": 7800,
+                    "hottest": "gpuss-1-usr",
+                    "hottest_mean_c": 86.1,
+                    "error": None,
+                },
+            )
+            self.assertIsNone(fan.fan_state(path, now=5005.5))  # the daemon stopped writing
 
     def test_cli_without_a_daemon(self):
         out = io.StringIO()
@@ -587,7 +707,7 @@ class UartTest(unittest.TestCase):
         master, slave = os.openpty()
         received = []
 
-        def mcu():
+        def mcu() -> None:
             buf = b""
             while len(buf) < 6:
                 buf += os.read(master, 6 - len(buf))

@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""gamescope: the Frame's, built here with the fix for a window added twice."""
+
 import re
 import unittest
 from pathlib import Path
@@ -28,7 +30,7 @@ class GamescopeTests(unittest.TestCase):
     def test_a_window_is_added_once(self):
         patch = (RECIPE / "gamescope-add-win-once.patch").read_text(encoding="utf-8")
         self.assertIn("+++ b/src/steamcompmgr.cpp", patch)
-        added = patch[patch.index("add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)"):]
+        added = patch[patch.index("add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)") :]
         self.assertIn("+\tif (find_win(ctx, id, false))\n+\t\treturn;", added)
         # Before the new entry is allocated.
         self.assertLess(added.index("find_win(ctx, id, false)"), added.index("new steamcompmgr_win_t{}"))
@@ -42,7 +44,9 @@ class GamescopeTests(unittest.TestCase):
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertIn("build_package pico4-gamescope", build)
         # Its libraries in the build root (makepkg runs without -s).
-        deps = re.search(r"in_b pacman \"-S\$sync\" --noconfirm --needed (.*?)\nin_b id builder", build, re.S).group(1)
+        match = re.search(r"in_b pacman \"-S\$sync\" --noconfirm --needed (.*?)\nin_b id builder", build, re.DOTALL)
+        assert match is not None
+        deps = match.group(1)
         for dep in ("libei", "luajit", "libdecor", "seatd", "xorg-xwayland", "sdl2", "libavif"):
             self.assertIn(dep, deps.split())
 

@@ -1,21 +1,36 @@
 # SPDX-License-Identifier: Unlicense
 """overpressure.doctor: the host's checks, Linux probes, the report, the command and the panel."""
+
+from __future__ import annotations
+
 import contextlib
 import io
 import os
+import time
 import unittest
+from typing import TYPE_CHECKING, NoReturn
 from unittest import mock
 
-from overpressure import __main__ as cli, doctor
+from overpressure import __main__ as cli
+from overpressure import doctor
 from overpressure.headset import Command, Headset, Info, Registry
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class FakeHost(doctor.Host):
-    def __init__(self, platform="linux", tools=("ssh", "ssh-keygen", "sudo", "wsl"), linux=None, runs=None):
+    def __init__(
+        self,
+        platform: str = "linux",
+        tools: Sequence[str] = ("ssh", "ssh-keygen", "sudo", "wsl"),
+        linux: dict[str, str] | None = None,
+        runs: dict[str, tuple[int, str]] | None = None,
+    ):
         super().__init__(platform=platform, run=self.fake_run, which=lambda t: f"/usr/bin/{t}" if t in tools else None)
         self.linux_output, self.runs, self.calls = linux or {}, runs or {}, []
 
-    def fake_run(self, argv, timeout):
+    def fake_run(self, argv: Sequence[str], _timeout: float) -> tuple[int, str]:
         self.calls.append(list(argv))
         if argv[0] in ("wsl", "bash"):
             script = argv[-1]
@@ -31,14 +46,16 @@ class Probe(Headset):
         return {"x": Command("x", "x")}
 
     def dependencies(self):
-        def ok(host):
+        def ok(_host: doctor.Host) -> list[doctor.Check]:
             return [doctor.Check("tool", "building", doctor.OK, "1.0")]
 
-        def missing(host):
+        def missing(_host: doctor.Host) -> list[doctor.Check]:
             return [doctor.Check("thing", "building", doctor.MISSING, "not there", "install thing")]
 
-        def broken(host):
-            raise RuntimeError("probe broke")
+        def broken(_host: doctor.Host) -> NoReturn:
+            msg = "probe broke"
+            raise RuntimeError(msg)
+
         return (ok, missing, broken)
 
 
@@ -73,8 +90,10 @@ class DoctorTests(unittest.TestCase):
 
     def test_version_and_linux_command_checks(self):
         host = FakeHost(runs={"adb": (0, "Android Debug Bridge version 1.0.41\nmore")}, linux={"curl": "/usr/bin/curl"})
-        self.assertEqual(doctor.version_check(host, "adb", ["adb", "version"], "headset", "fix").detail,
-                         "Android Debug Bridge version 1.0.41")
+        self.assertEqual(
+            doctor.version_check(host, "adb", ["adb", "version"], "headset", "fix").detail,
+            "Android Debug Bridge version 1.0.41",
+        )
         self.assertEqual(doctor.version_check(host, "fb", ["fastboot"], "headset", "get it").status, doctor.MISSING)
         checks = doctor.linux_commands(host, "build", {"curl": "downloads", "mkfs.ext4": "images"}, "apt install x")
         self.assertEqual([c.status for c in checks], [doctor.OK, doctor.MISSING])
@@ -94,21 +113,33 @@ class DoctorTests(unittest.TestCase):
     def test_the_command_fails_while_something_is_missing(self):
         out = io.StringIO()
         registry = Registry({"probe": Probe()})
-        for checks, expected in (([doctor.Check("a", "b", doctor.MISSING)], 1), ([doctor.Check("a", "b", doctor.OK)], 0)):
-            with contextlib.redirect_stdout(out), mock.patch.dict(os.environ, {"OVERPRESSURE_DEVICE": ""}), \
-                    mock.patch.object(cli, "discover", return_value=registry), \
-                    mock.patch.object(doctor, "run", return_value=checks):
+        for checks, expected in (
+            ([doctor.Check("a", "b", doctor.MISSING)], 1),
+            ([doctor.Check("a", "b", doctor.OK)], 0),
+        ):
+            with (
+                contextlib.redirect_stdout(out),
+                mock.patch.dict(os.environ, {"OVERPRESSURE_DEVICE": ""}),
+                mock.patch.object(cli, "discover", return_value=registry),
+                mock.patch.object(doctor, "run", return_value=checks),
+            ):
                 self.assertEqual(cli.main(["doctor"]), expected)
 
     def test_the_panel_lists_the_checks_and_shows_the_fix(self):
         try:
-            import tkinter as tk
+            import tkinter as tk  # noqa: PLC0415  # optional: Python without Tk skips
+        except ImportError as exc:
+            self.skipTest(f"no Tk: {exc}")
+        try:
             root = tk.Tk()
-        except Exception as exc:
+        except tk.TclError as exc:  # no display
             self.skipTest(f"no Tk display: {exc}")
-        from overpressure import gui
-        checks = [doctor.Check("thing", "building", doctor.MISSING, "not there", "install thing"),
-                  doctor.Check("tool", "building", doctor.OK, "1.0")]
+        from overpressure import gui  # noqa: PLC0415  # needs Tk, which this test checks first
+
+        checks = [
+            doctor.Check("thing", "building", doctor.MISSING, "not there", "install thing"),
+            doctor.Check("tool", "building", doctor.OK, "1.0"),
+        ]
         try:
             with mock.patch.object(doctor, "run", return_value=checks):
                 app = gui.App(root, Registry({"probe": Probe()}), None)
@@ -117,8 +148,8 @@ class DoctorTests(unittest.TestCase):
                     root.update()
                     if app.checks:
                         break
-                    root.after(20)
-                app._drain()
+                    time.sleep(0.02)  # what Tk's after(20) without a callback does
+                app._drain()  # noqa: SLF001  # what Tk's idle loop runs, at once
                 root.update()
             self.assertEqual(app.tree.item(gui.DOCTOR, "text"), "Check dependencies (1 missing)")
             self.assertEqual(len(app.doctor_table.get_children()), 2)

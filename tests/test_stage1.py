@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """overpressure.stage1: the kernel arguments, the repacked stock image and the overlay."""
+
 import gzip
 import tempfile
 import unittest
@@ -8,9 +9,11 @@ from pathlib import Path
 from overpressure import bootimg, cpio, stage1
 
 
-def stock_image(cmdline=b"console=ttyMSM0 quiet"):
-    return bootimg.parse(bootimg.BootImage(2, 4096, b"kernel", gzip.compress(b"old"), dtb=b"dtb",
-                                           cmdline=cmdline).pack())
+def stock_image(cmdline: bytes = b"console=ttyMSM0 quiet") -> bootimg.BootImage:
+    """Return a parsed stock-like boot image with this kernel command line."""
+    return bootimg.parse(
+        bootimg.BootImage(2, 4096, b"kernel", gzip.compress(b"old"), dtb=b"dtb", cmdline=cmdline).pack()
+    )
 
 
 class Stage1Tests(unittest.TestCase):
@@ -38,9 +41,12 @@ class Stage1Tests(unittest.TestCase):
             (root / ".gitkeep").write_bytes(b"")
             tree = cpio.Tree()
             stage1.add_overlay(tree, root)
-            self.assertEqual(tree.get("usr/bin/tool").data, b"#!/bin/sh\necho hi\n")
-            self.assertEqual(tree.get("usr/bin/tool").mode & 0o777, 0o755)
-            self.assertEqual(tree.get("etc/conf").mode & 0o777, 0o644)
+            tool, conf = tree.get("usr/bin/tool"), tree.get("etc/conf")
+            assert tool is not None
+            assert conf is not None
+            self.assertEqual(tool.data, b"#!/bin/sh\necho hi\n")
+            self.assertEqual(tool.mode & 0o777, 0o755)
+            self.assertEqual(conf.mode & 0o777, 0o644)
             self.assertIsNone(tree.get(".gitkeep"))
 
 

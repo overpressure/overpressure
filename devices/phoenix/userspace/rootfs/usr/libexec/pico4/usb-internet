@@ -11,9 +11,15 @@ metric is above NetworkManager's Wi-Fi and Ethernet routes, so those win when th
     usb-internet [CMDLINE_FILE [OUTPUT]]
 """
 
+from __future__ import annotations
+
 import ipaddress
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 DEFAULT_HOST_IP = "172.16.42.2"
 #: Above NetworkManager's defaults (Ethernet 100, Wi-Fi 600): the USB link is the last resort.
@@ -22,7 +28,7 @@ DROPIN = Path("/run/systemd/network/50-pico4-usb.network.d/60-pico4-internet.con
 
 
 def host_ip(cmdline: str) -> str:
-    """The PC's address on the USB link from the kernel command line (stage 1's setting)."""
+    """Return the PC's address on the USB link from the kernel command line (stage 1's setting)."""
     value = DEFAULT_HOST_IP
     for arg in cmdline.split():
         if arg.startswith("pico4.host_ip="):
@@ -31,6 +37,7 @@ def host_ip(cmdline: str) -> str:
 
 
 def dropin(gateway: str) -> str:
+    """Return the network drop-in's text: GATEWAY as the route and the DNS server."""
     return (
         "# Written by pico4-usb-internet.service: the PC shares its internet over the USB link.\n"
         "[Network]\n"
@@ -42,7 +49,8 @@ def dropin(gateway: str) -> str:
     )
 
 
-def main(argv=None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    """Write the drop-in from the kernel command line (arguments: its file and the output for tests)."""
     args = sys.argv[1:] if argv is None else argv
     cmdline = Path(args[0] if args else "/proc/cmdline").read_text()
     output = Path(args[1]) if len(args) > 1 else DROPIN

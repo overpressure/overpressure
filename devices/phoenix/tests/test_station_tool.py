@@ -1,15 +1,22 @@
 # SPDX-License-Identifier: Unlicense
+"""pico4-station: the station's SPI frames, the controller queries, mainline spidev transfers and the device lock."""
+
+from __future__ import annotations
+
+import ctypes
 import importlib.machinery
 import importlib.util
 import struct
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 # The tool uses fcntl for the power ioctl and the device lock; Windows has no fcntl.
 try:
-    import fcntl  # noqa: F401
+    import fcntl  # noqa: F401  # only whether it exists
 except ImportError:
     sys.modules.setdefault("fcntl", types.ModuleType("fcntl"))
 
@@ -17,14 +24,16 @@ ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "userspace/rootfs/usr/bin/pico4-station"
 _loader = importlib.machinery.SourceFileLoader("pico4_station_tool", str(PATH))
 _spec = importlib.util.spec_from_loader("pico4_station_tool", _loader)
+assert _spec is not None
 station = importlib.util.module_from_spec(_spec)
 _loader.exec_module(station)
 
 
 def reply(target: int, command: int, body: bytes) -> bytes:
+    """Build a frame the station sends: header, target, command, body, CRC."""
     buf = bytearray(40)
     buf[0], buf[1], buf[2] = 0xBB, target, command
-    buf[3:3 + len(body)] = body
+    buf[3 : 3 + len(body)] = body
     buf[39] = station.crc8(bytes(buf[:39]))
     return bytes(buf)
 
@@ -32,18 +41,18 @@ def reply(target: int, command: int, body: bytes) -> bytes:
 class FakeStation(station.Station):
     """Answers the controller queries from a script instead of /dev/spidev0.0."""
 
-    def __init__(self, answers):
+    def __init__(self, answers: dict[tuple[int, int], list[bytes]]):
         self.answers = answers  # (command, payload) -> list of replies, one per request
         self.sent, self.pending, self.log, self.seq, self.announced = [], [], [], 0, False
 
-    def send(self, data: bytes):
+    def send(self, data: bytes) -> None:
         self.sent.append(data)
         if data[2] != station.CMD_ACK:
             queue = self.answers.get((data[2], data[3]), [])
             if queue:
                 self.pending.append(queue.pop(0))
 
-    def read(self, timeout: float):
+    def read(self, timeout: float) -> bytes | None:  # noqa: ARG002  # Station.read's signature
         if not self.pending:
             return None
         buf = self.pending.pop(0)
@@ -124,7 +133,7 @@ class StationToolTests(unittest.TestCase):
         self.assertEqual(len(record["imu_ir"]), 8)
         self.assertAlmostEqual(record["imu"][8], 2.0, places=5)
         requests = [f[3] for f in fake.sent if f[2] == station.CMD_CONTROLLER_CALIBRATION]
-        self.assertEqual(requests, [1, 2, 2] + list(range(3, 13)))
+        self.assertEqual(requests, [1, 2, 2, *list(range(3, 13))])
 
     def test_late_replies_for_an_earlier_chunk_are_skipped(self):
         answers = {}
@@ -137,10 +146,11 @@ class StationToolTests(unittest.TestCase):
         fake = FakeStation(answers)
         real_send = fake.send
 
-        def send(data):
+        def send(data: bytes) -> None:
             real_send(data)
             if data[2] == station.CMD_CONTROLLER_CALIBRATION and data[3] == 4:
                 fake.pending.extend(answers[(station.CMD_CONTROLLER_CALIBRATION, 4)])
+
         fake.send = send
         chunks = fake.controller_calibration("left")
         self.assertEqual(chunks[4], bytes([4]) * 32)
@@ -156,24 +166,25 @@ class StationToolTests(unittest.TestCase):
 class PlainSpidevTests(unittest.TestCase):
     """A mainline kernel: full-duplex transfers instead of the vendor spidev's reads and writes."""
 
-    def station(self, replies):
+    def station(self, replies: list[bytes | None]):
         st = station.Station.__new__(station.Station)
         st.spidev, st.queue, st.sent, st.seq, st.log, st.announced = True, [], [], 0, [], False
 
-        def transfer(data):
+        def transfer(data: bytes) -> None:
             # Each transfer brings the station's next frame back, or nothing (None).
             st.sent.append(data)
             if replies:
                 frame = replies.pop(0)
                 if frame is not None:
                     st.queue.append(frame)
-        st._transfer = transfer
+
+        st._transfer = transfer  # noqa: SLF001  # the fake replaces the private transfer
         return st
 
     def test_reads_send_zeros_until_a_frame_comes_back(self):
         frame = reply(1, station.CMD_VERSION, bytes([2, 0x60]))
         st = self.station([None, None, frame])
-        self.assertEqual(st._next(1.0), frame)
+        self.assertEqual(st._next(1.0), frame)  # noqa: SLF001  # tests the private read
         self.assertEqual(st.sent, [bytes(40)] * 3)
 
     def test_commands_go_out_as_transfers(self):
@@ -184,24 +195,26 @@ class PlainSpidevTests(unittest.TestCase):
 
     def test_a_repeated_frame_is_no_new_one(self):
         # The station returns its last frame on every transfer until it has another.
-        import ctypes
-        from unittest import mock
         st = station.Station.__new__(station.Station)
         st.fd, st.spidev, st.queue, st.last = 3, True, [], None
-        st._tx, st._rx = ctypes.create_string_buffer(40), ctypes.create_string_buffer(40)
-        frames = [reply(1, station.CMD_VERSION, bytes([1])), reply(1, station.CMD_VERSION, bytes([1])),
-                  reply(1, station.CMD_VERSION, bytes([2]))]
+        st._tx, st._rx = ctypes.create_string_buffer(40), ctypes.create_string_buffer(40)  # noqa: SLF001  # the transfer's buffers
+        frames = [
+            reply(1, station.CMD_VERSION, bytes([1])),
+            reply(1, station.CMD_VERSION, bytes([1])),
+            reply(1, station.CMD_VERSION, bytes([2])),
+        ]
 
-        def ioctl(fd, request, arg):
-            ctypes.memmove(st._rx, frames.pop(0), 40)
+        def ioctl(*_: object) -> None:
+            ctypes.memmove(st._rx, frames.pop(0), 40)  # noqa: SLF001  # the transfer's receive buffer
+
         with mock.patch.object(station.fcntl, "ioctl", ioctl, create=True):
             for _ in range(3):
-                st._transfer(bytes(40))
+                st._transfer(bytes(40))  # noqa: SLF001  # tests the private transfer
         self.assertEqual([f[3] for f in st.queue], [1, 2])
 
     def test_nothing_within_the_timeout(self):
         st = self.station([])
-        self.assertIsNone(st._next(0.01))
+        self.assertIsNone(st._next(0.01))  # noqa: SLF001  # tests the private read
 
 
 class StationLockTests(unittest.TestCase):
@@ -209,7 +222,6 @@ class StationLockTests(unittest.TestCase):
 
     @unittest.skipUnless(hasattr(station.fcntl, "flock"), "needs POSIX flock")
     def test_second_owner_is_refused(self):
-        import tempfile
         with tempfile.NamedTemporaryFile() as f:
             first = station.Station(f.name)
             try:
@@ -222,11 +234,13 @@ class StationLockTests(unittest.TestCase):
     def test_driver_locks_before_any_reset(self):
         source = (ROOT / "src/monado/pico4_station.c").read_text(encoding="utf-8")
         opened = source.index("pico4_station_open(struct pico4_station **out")
-        self.assertIn("flock(st->fd, LOCK_EX | LOCK_NB)", source[opened:source.index("\n}\n", opened)])
+        self.assertIn("flock(st->fd, LOCK_EX | LOCK_NB)", source[opened : source.index("\n}\n", opened)])
         hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
         setup = hmd.index("setup_station(struct pico4_hmd *h)")
-        self.assertLess(hmd.index("pico4_station_open(&h->station, NULL)", setup),
-                        hmd.index("pico4_station_reset(h->station)", setup))
+        self.assertLess(
+            hmd.index("pico4_station_open(&h->station, NULL)", setup),
+            hmd.index("pico4_station_reset(h->station)", setup),
+        )
 
 
 class StationRateTests(unittest.TestCase):
@@ -236,15 +250,17 @@ class StationRateTests(unittest.TestCase):
         source = (ROOT / "src/monado/pico4_station.c").read_text(encoding="utf-8")
         self.assertIn("st->camera_hz = 50;", source)
         self.assertIn("{st->camera_hz == 60 ? FPS_60 : FPS_50, DEVICE_TYPE, 1}", source)
-        para = source[source.index("\nsend_camera_para("):]
-        para = para[:para.index("\n}\n")]
+        para = source[source.index("\nsend_camera_para(") :]
+        para = para[: para.index("\n}\n")]
         self.assertIn("p[13] = (uint8_t)(PICO4_STATION_PARA_SYNC_OTHER & 0xff);", para)
         header = (ROOT / "src/monado/pico4_station.h").read_text(encoding="utf-8")
         self.assertIn("#define PICO4_STATION_PARA_SYNC_OTHER 160", header)
         hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
         setup = hmd.index("setup_station(struct pico4_hmd *h)")
-        self.assertLess(hmd.index("pico4_station_set_camera_hz(h->station", setup),
-                        hmd.index("pico4_station_reset(h->station)", setup))
+        self.assertLess(
+            hmd.index("pico4_station_set_camera_hz(h->station", setup),
+            hmd.index("pico4_station_reset(h->station)", setup),
+        )
         self.assertIn('DEBUG_GET_ONCE_NUM_OPTION(pico4_camera_hz, "PICO4_CAMERA_HZ", 50)', hmd)
 
     def test_auto_exposure_takes_the_measured_rate(self):

@@ -9,7 +9,8 @@ are masked, and it is plain text: read it first.
 
 ## A change
 
-- Work on a branch and open a pull request against `main`. CI has to pass: `python -m unittest`, the shell and C
+- Work on a branch and open a pull request against `main`. CI has to pass: the host tests, `make lint` (ruff's
+  formatting and lint, ty's type check, through uv: [docs/tool.md](docs/tool.md#development)), the shell and C
   tests, the link check and the private-data scan.
 - [CLAUDE.md](CLAUDE.md) and each headset's CLAUDE.md hold the project's rules, for people and agents alike: hard
   rules, code style, how documents are written.

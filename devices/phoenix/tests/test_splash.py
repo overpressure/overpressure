@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""The splash: a sign of life in the lenses while the installed system starts."""
+
 import struct
 import unittest
 from pathlib import Path
@@ -39,8 +41,8 @@ class SplashTests(unittest.TestCase):
 
     def test_stage_one_starts_it_for_the_installed_system_only(self):
         init = (ROOT / "initramfs/init").read_text(encoding="utf-8")
-        branch = init[init.index('if [ "$(stage1_arg root "")" = installed ]'):]
-        branch = branch[:branch.index("\nfi\n")]
+        branch = init[init.index('if [ "$(stage1_arg root "")" = installed ]') :]
+        branch = branch[: branch.index("\nfi\n")]
         self.assertRegex(branch, r"(?m)^\tpico4-splash \d+ [^\n]*&$")
         self.assertEqual(init.count("pico4-splash "), 1)
         image = (ROOT / "tooling/image.py").read_text(encoding="utf-8")
@@ -56,7 +58,6 @@ class SplashTests(unittest.TestCase):
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertRegex(build, r"systemctl enable [^\n]*(\\\n[^\n]*)*pico4-splash\.service")
         self.assertIn("for f in pico4-reboot pico4-splash; do", build)
-
 
 
 if __name__ == "__main__":

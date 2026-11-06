@@ -5,19 +5,18 @@ The golden indexes are fake APKINDEX.tar.gz files whose index stream was signed 
 with a throwaway 2048-bit key by OpenSSL (``openssl dgst -sha1|-sha256 -sign``), an
 implementation independent of ours. Only the public half of that key is kept.
 """
+
 import base64
 import gzip
 import io
-import os
 import shutil
 import tarfile
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from overpressure import alpine, apksign
-
-from overpressure import REPO, stage1
+from overpressure import REPO, alpine, apksign, stage1
 
 TEST_KEY_NAME = "pico4-test@example.invalid-00000001.rsa.pub"
 TEST_KEY_PEM = """\
@@ -94,8 +93,10 @@ class PublicKeyTest(unittest.TestCase):
         keys = apksign.alpine_keys("aarch64")
         self.assertEqual(
             sorted(keys),
-            ["alpine-devel@lists.alpinelinux.org-58199dcc.rsa.pub",
-             "alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub"],
+            [
+                "alpine-devel@lists.alpinelinux.org-58199dcc.rsa.pub",
+                "alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub",
+            ],
         )
         bits = {name: apksign.parse_public_key(pem).n.bit_length() for name, pem in keys.items()}
         self.assertEqual(bits["alpine-devel@lists.alpinelinux.org-58199dcc.rsa.pub"], 2048)
@@ -190,13 +191,12 @@ class Pkcs1Test(unittest.TestCase):
 class LoadIndexTest(unittest.TestCase):
     """alpine.load_index verifies before parsing and drops a bad index from the cache."""
 
-    def _cache(self, raw: bytes) -> tuple[str, str]:
+    def _cache(self, raw: bytes) -> tuple[str, Path]:
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        path = os.path.join(tmp, "v0", "main", "aarch64", "APKINDEX.tar.gz")
-        os.makedirs(os.path.dirname(path))
-        with open(path, "wb") as f:
-            f.write(raw)
+        path = Path(tmp, "v0", "main", "aarch64", "APKINDEX.tar.gz")
+        path.parent.mkdir(parents=True)
+        path.write_bytes(raw)
         return tmp, path
 
     def test_signed_index_loads(self):
@@ -209,32 +209,34 @@ class LoadIndexTest(unittest.TestCase):
         cache, path = self._cache(INDEX_SHA1)
         with self.assertRaises(ValueError):
             alpine.load_index(cache, "v0", ["main"], "aarch64", log=lambda *_: None)
-        self.assertFalse(os.path.exists(path))
+        self.assertFalse(path.exists())
 
 
 SPEC = stage1.Spec(overlay=REPO)
-REAL_CACHE = os.path.join(str(REPO), "cache", SPEC.alpine_branch)
+REAL_CACHE = REPO / "cache" / SPEC.alpine_branch
 
 
 class RealIndexTest(unittest.TestCase):
     """Alpine's real indexes verify against the pinned keys (when the build cached them)."""
 
     def test_cached_indexes(self):
-        paths = [os.path.join(REAL_CACHE, repo, SPEC.arch, "APKINDEX.tar.gz") for repo in SPEC.alpine_repos]
-        paths = [p for p in paths if os.path.exists(p)]
+        paths = [REAL_CACHE / repo / SPEC.arch / "APKINDEX.tar.gz" for repo in SPEC.alpine_repos]
+        paths = [p for p in paths if p.exists()]
         if not paths:
             self.skipTest("no cached Alpine APKINDEX (run a stage-1 build first)")
         for path in paths:
-            with open(path, "rb") as f:
-                raw = f.read()
-            with self.subTest(path=path):
+            raw = path.read_bytes()
+            with self.subTest(path=str(path)):
                 self.assertTrue(apksign.verify_index(raw, apksign.alpine_keys(SPEC.arch)).startswith("alpine-devel@"))
 
 
 def _signature_bytes(raw: bytes) -> bytes:
     with tarfile.open(fileobj=io.BytesIO(gzip.decompress(_streams(raw)[0])), mode="r:") as tf:
         member = tf.next()
-        return tf.extractfile(member).read()
+        assert member is not None
+        f = tf.extractfile(member)
+        assert f is not None
+        return f.read()
 
 
 if __name__ == "__main__":

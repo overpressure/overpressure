@@ -11,24 +11,29 @@ A new headset needs: devices/<codename>/tooling/__init__.py with HEADSET, the co
 that build its images and talk to it (any transport: fastboot, ADB, EDL, SSH, ...), and the
 steps that string them together. docs/adding-a-headset.md walks through it.
 """
+
 from __future__ import annotations
 
 import importlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable
 
 from . import REPO
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
     from .fastboot import RamBootTarget
 
 
 @dataclass(frozen=True)
 class Info:
-    codename: str   #: devices/<codename>, also the --device name
-    name: str       #: the product's name
+    """What names and describes a headset."""
+
+    codename: str  #: devices/<codename>, also the --device name
+    name: str  #: the product's name
     soc: str = ""
     summary: str = ""
 
@@ -37,7 +42,8 @@ class Info:
 class Command:
     """A command of the command line: a module whose main(argv) takes the rest of the words.
 
-    With keep, the command word itself is passed on first (one module, several commands)."""
+    With keep, the command word itself is passed on first (one module, several commands).
+    """
 
     module: str
     help: str
@@ -51,10 +57,10 @@ class Param:
     name: str
     label: str
     default: str = ""
-    kind: str = "text"            #: text, path (a file or folder), choice or flag
-    choices: Tuple[str, ...] = ()
+    kind: str = "text"  #: text, path (a file or folder), choice or flag
+    choices: tuple[str, ...] = ()
     help: str = ""
-    option: str = ""              #: a flag's word, given when the flag is on ("1")
+    option: str = ""  #: a flag's word, given when the flag is on ("1")
 
 
 @dataclass(frozen=True)
@@ -64,20 +70,21 @@ class Step:
     argv is the command line after "overpressure --device CODENAME" (a command of the
     headset), or a program relative to the headset's folder when script is set. A word that is
     a parameter in braces takes its value (dropped when empty; a flag gives its option when on),
-    and braces inside a word are filled in the same way."""
+    and braces inside a word are filled in the same way.
+    """
 
     key: str
     title: str
-    group: str                    #: "Setup", "Image" or "Headset"
-    argv: Tuple[str, ...]
+    group: str  #: "Setup", "Image" or "Headset"
+    argv: tuple[str, ...]
     help: str = ""
-    params: Tuple[Param, ...] = ()
-    script: bool = False          #: argv[0] is a program in the headset's folder
-    linux_root: bool = False      #: needs Linux as root (on Windows: WSL)
-    writes: bool = False          #: writes to the headset: the GUI asks first
+    params: tuple[Param, ...] = ()
+    script: bool = False  #: argv[0] is a program in the headset's folder
+    linux_root: bool = False  #: needs Linux as root (on Windows: WSL)
+    writes: bool = False  #: writes to the headset: the GUI asks first
 
-    def command(self, values: Dict[str, str]) -> List[str]:
-        """The command line with @p values in place of the parameters."""
+    def command(self, values: dict[str, str]) -> list[str]:
+        """Return the command line with @p values in place of the parameters."""
         by_name = {p.name: p for p in self.params}
         words = []
         for word in self.argv:
@@ -92,25 +99,37 @@ class Step:
                     continue
                 words.append(str(value))
             else:
-                words.append(word.format(**{k: values.get(k, by_name[k].default) for k in by_name})
-                             if "{" in word else word)
+                words.append(
+                    word.format(**{k: values.get(k, by_name[k].default) for k in by_name}) if "{" in word else word
+                )
         return words
 
 
 def tools_step() -> Step:
-    """The window's step for overpressure's tool fetcher."""
-    return Step("tools", "Fetch the host tools", "Setup", ("tools",),
-                "Downloads the pinned platform-tools (adb, fastboot) and edl-ng, and on Windows the NCM "
-                "venv (pyusb, libusb-package), each checked by SHA-256, into cache/tools. Settings that "
-                "name your own copies still take precedence.")
+    """Return the window's step for overpressure's tool fetcher."""
+    return Step(
+        "tools",
+        "Fetch the host tools",
+        "Setup",
+        ("tools",),
+        "Downloads the pinned platform-tools (adb, fastboot) and edl-ng, and on Windows the NCM "
+        "venv (pyusb, libusb-package), each checked by SHA-256, into cache/tools. Settings that "
+        "name your own copies still take precedence.",
+    )
 
 
-def ram_boot_step(image: str, help: str = "") -> Step:
-    """The window's step for overpressure's RAM boot, with the headset's default image."""
-    return Step("ram-boot", "RAM boot (writes nothing)", "Headset", ("ram-boot", "{image}"),
-                help or "fastboot boot: the image runs from RAM and the next normal boot starts what the "
-                        "partitions hold. A bootloader without fastboot boot refuses it.",
-                (Param("image", "Boot image", image, "path"),))
+def ram_boot_step(image: str, help_text: str = "") -> Step:
+    """Return the window's step for overpressure's RAM boot, with the headset's default image."""
+    return Step(
+        "ram-boot",
+        "RAM boot (writes nothing)",
+        "Headset",
+        ("ram-boot", "{image}"),
+        help_text
+        or "fastboot boot: the image runs from RAM and the next normal boot starts what the "
+        "partitions hold. A bootloader without fastboot boot refuses it.",
+        (Param("image", "Boot image", image, "path"),),
+    )
 
 
 class Headset(ABC):
@@ -124,7 +143,7 @@ class Headset(ABC):
         return REPO / "devices" / self.info.codename
 
     @abstractmethod
-    def commands(self) -> Dict[str, Command]:
+    def commands(self) -> dict[str, Command]:
         """Its command line: command word -> module of its tooling package."""
 
     def steps(self) -> Sequence[Step]:
@@ -132,19 +151,22 @@ class Headset(ABC):
         return ()
 
     def dependencies(self) -> Sequence[Callable]:
-        """Its checks for python -m overpressure doctor: callables that take an
-        overpressure.doctor.Host and return overpressure.doctor.Check objects."""
+        """Return its checks for python -m overpressure doctor.
+
+        They are callables that take an overpressure.doctor.Host and return overpressure.doctor.Check
+        objects.
+        """
         return ()
 
-    def ram_boot(self) -> Optional["RamBootTarget"]:
+    def ram_boot(self) -> RamBootTarget | None:
         """How it boots an image from RAM (python -m overpressure ram-boot), or None."""
         return None
 
-    def main(self, argv: List[str]) -> int:
-        """Runs a command of its command line (argv[0] is the command word)."""
+    def main(self, argv: list[str]) -> int:
+        """Run a command of its command line (argv[0] is the command word)."""
         cmd = self.commands()[argv[0]]
         module = importlib.import_module(f"devices.{self.info.codename}.tooling.{cmd.module}")
-        entry: Callable[[List[str]], Optional[int]] = module.main
+        entry: Callable[[list[str]], int | None] = module.main
         return entry(argv if cmd.keep else argv[1:]) or 0
 
 
@@ -152,14 +174,16 @@ class Headset(ABC):
 class Registry:
     """The headsets in devices/, by codename."""
 
-    headsets: Dict[str, Headset] = field(default_factory=dict)
+    headsets: dict[str, Headset] = field(default_factory=dict)
 
     def get(self, codename: str) -> Headset:
+        """Return the headset CODENAME; KeyError names the known ones."""
         try:
             return self.headsets[codename]
         except KeyError:
             known = ", ".join(sorted(self.headsets)) or "none"
-            raise KeyError(f"no headset {codename!r} in devices/ (known: {known})") from None
+            msg = f"no headset {codename!r} in devices/ (known: {known})"
+            raise KeyError(msg) from None
 
 
 def discover() -> Registry:
@@ -171,6 +195,7 @@ def discover() -> Registry:
         headset = getattr(module, "HEADSET", None)
         if isinstance(headset, Headset):
             if headset.info.codename != codename:
-                raise ValueError(f"devices/{codename} declares codename {headset.info.codename!r}")
+                msg = f"devices/{codename} declares codename {headset.info.codename!r}"
+                raise ValueError(msg)
             registry.headsets[codename] = headset
     return registry

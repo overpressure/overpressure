@@ -1,38 +1,74 @@
 # SPDX-License-Identifier: Unlicense
+"""The userspace's host-side checks: SSH access, power warnings, check results, mounts, the IMU and Valve's session."""
+
 import copy
 import unittest
 from pathlib import Path
+from typing import Any
 
-from devices.phoenix.tooling import hardware_test as hw, userspace
+from devices.phoenix.tooling import hardware_test as hw
+from devices.phoenix.tooling import userspace
 
 # `pico4-fan state` on the headset (docs/cooling.md).
-FAN_STATE = {"profile": "late", "duty": 30, "reason": "table", "boost": False, "rpm": 5700,
-             "hottest": "cpu-1-4-usr", "hottest_mean_c": 61.2, "error": None}
+FAN_STATE: dict[str, Any] = {
+    "profile": "late",
+    "duty": 30,
+    "reason": "table",
+    "boost": False,
+    "rpm": 5700,
+    "hottest": "cpu-1-4-usr",
+    "hottest_mean_c": 61.2,
+    "error": None,
+}
 
-PASSING = {
-    "schema": 1, "status": "passed", "errors": [], "kernel": "7.2.0-pico4",
-    "systemd": {"pid1": "/usr/lib/systemd/systemd", "version": "257.7", "state": "running",
-                "failed_units": []},
+PASSING: dict[str, Any] = {
+    "schema": 1,
+    "status": "passed",
+    "errors": [],
+    "kernel": "7.2.0-pico4",
+    "systemd": {"pid1": "/usr/lib/systemd/systemd", "version": "257.7", "state": "running", "failed_units": []},
     "dev": {"fstype": "devtmpfs", "missing_nodes": [], "udev_devices": 412},
     "storage": {"root": "/dev/sda7", "installed": True, "writable_block_devices": []},
-    "seats": ["seat0"], "packages": 348,
-    "session": {"user": "steamos", "user_state": "active", "service": "active", "target": "pico4-session.target",
-                "target_state": "active", "failed_units": [], "monado_socket": "active", "monado_service": "inactive",
-                "access_denied": []},
+    "seats": ["seat0"],
+    "packages": 348,
+    "session": {
+        "user": "steamos",
+        "user_state": "active",
+        "service": "active",
+        "target": "pico4-session.target",
+        "target_state": "active",
+        "failed_units": [],
+        "monado_socket": "active",
+        "monado_service": "inactive",
+        "access_denied": [],
+    },
     "fan": {"service": "active", "state": FAN_STATE},
-    "vulkan": {"status": "passed", "result": {"status": "passed", "driver": "turnip", "width": 256,
-                                               "height": 256, "verified_pixels": 65536, "bad_pixels": 0}},
+    "vulkan": {
+        "status": "passed",
+        "result": {
+            "status": "passed",
+            "driver": "turnip",
+            "width": 256,
+            "height": 256,
+            "verified_pixels": 65536,
+            "bad_pixels": 0,
+        },
+    },
 }
 
 
 class SshAccessTests(unittest.TestCase):
     """Keys only, on USB and Wi-Fi (docs/security.md), and no key in anything the build shares."""
+
     ROOT = Path(__file__).resolve().parents[1]
 
     def test_sshd_takes_keys_only(self):
         config = (self.ROOT / "userspace/rootfs/etc/ssh/sshd_config.d/50-pico4.conf").read_text(encoding="utf-8")
-        settings = dict(line.split(None, 1) for line in config.splitlines() if line and not line.startswith("#")
-                        and not line.startswith("HostKey"))
+        settings = dict(
+            line.split(None, 1)
+            for line in config.splitlines()
+            if line and not line.startswith("#") and not line.startswith("HostKey")
+        )
         self.assertEqual(settings["PermitRootLogin"], "prohibit-password")
         self.assertEqual(settings["PermitEmptyPasswords"], "no")
         self.assertEqual(settings["PasswordAuthentication"], "no")
@@ -47,8 +83,11 @@ class SshAccessTests(unittest.TestCase):
 
     def test_no_key_in_the_image_sources(self):
         tree = self.ROOT / "userspace/rootfs"
-        names = [p for p in tree.rglob("*") if p.name in ("authorized_keys", "id_ed25519", "id_rsa")
-                 or p.name.startswith("ssh_host_")]
+        names = [
+            p
+            for p in tree.rglob("*")
+            if p.name in ("authorized_keys", "id_ed25519", "id_rsa") or p.name.startswith("ssh_host_")
+        ]
         self.assertEqual(names, [])
 
     def test_the_installed_stage_1_serves_ssh_with_keys_only(self):
@@ -61,9 +100,16 @@ class SshAccessTests(unittest.TestCase):
 class PowerWarningTests(unittest.TestCase):
     """A tethered headset that drains its battery is reported, never failed."""
 
-    def power(self, port, status, input_ma=1250, online=True, current_ma=800):
-        return {"usb_online": online, "port": port, "input_ma": input_ma, "usb_mv": 4846,
-                "battery": {"status": status, "capacity": 15, "current_ma": current_ma}}
+    def power(
+        self, port: str, status: str, input_ma: int = 1250, *, online: bool = True, current_ma: int = 800
+    ) -> dict[str, Any]:
+        return {
+            "usb_online": online,
+            "port": port,
+            "input_ma": input_ma,
+            "usb_mv": 4846,
+            "battery": {"status": status, "capacity": 15, "current_ma": current_ma},
+        }
 
     def test_charging_port_keeps_up(self):
         self.assertEqual(userspace.power_warnings(self.power("USB_CDP", "Charging")), [])
@@ -170,14 +216,18 @@ class MountPolicyTests(unittest.TestCase):
             hw.validate_mounts("/dev/zram0 / ext4 rw,noatime,discard 0 0\ntmpfs /run tmpfs rw 0 0")
 
     def test_installed_system_writes_only_its_data_partition(self):
-        mounts = ("/dev/sda7 / ext4 ro,noatime 0 0\n/dev/sda16 /data ext4 rw,noatime 0 0\n"
-                  "overlay /etc overlay rw,relatime 0 0\n/dev/sda16 /var ext4 rw,noatime 0 0\n"
-                  "/dev/sda16 /home ext4 rw,noatime 0 0\ntmpfs /run tmpfs rw 0 0")
+        mounts = (
+            "/dev/sda7 / ext4 ro,noatime 0 0\n/dev/sda16 /data ext4 rw,noatime 0 0\n"
+            "overlay /etc overlay rw,relatime 0 0\n/dev/sda16 /var ext4 rw,noatime 0 0\n"
+            "/dev/sda16 /home ext4 rw,noatime 0 0\ntmpfs /run tmpfs rw 0 0"
+        )
         hw.validate_mounts(mounts, installed=True)
         hw.validate_mounts(mounts + "\n/dev/sda16 /var/log ext4 rw,noatime 0 0", installed=True)
-        for bad in (mounts.replace("/ ext4 ro", "/ ext4 rw"),
-                    mounts + "\n/dev/sda5 /mnt ext4 rw 0 0",
-                    mounts.replace("/dev/sda16 /data ext4 rw,noatime 0 0\n", "")):
+        for bad in (
+            mounts.replace("/ ext4 ro", "/ ext4 rw"),
+            mounts + "\n/dev/sda5 /mnt ext4 rw 0 0",
+            mounts.replace("/dev/sda16 /data ext4 rw,noatime 0 0\n", ""),
+        ):
             with self.assertRaises(ValueError):
                 hw.validate_mounts(bad, installed=True)
         with self.assertRaises(ValueError):
@@ -191,8 +241,10 @@ class MountPolicyTests(unittest.TestCase):
         hw.validate_storage("BLOCK sda 0\nBLOCK sda7 1\nBLOCK sda16 0\nBLOCK sdb 1", "sda16")
         with self.assertRaises(ValueError):
             hw.validate_storage("BLOCK sda 1\nBLOCK sdb 0\nBLOCK sda16 0", "sda16")
-        for bad in ("BLOCK sda 1\nBLOCK sda7 1\nBLOCK sda16 1",  # writeback would fail
-                    "BLOCK sda 1\nBLOCK sda7 0\nBLOCK sda16 0"):  # another partition writable
+        for bad in (
+            "BLOCK sda 1\nBLOCK sda7 1\nBLOCK sda16 1",  # writeback would fail
+            "BLOCK sda 1\nBLOCK sda7 0\nBLOCK sda16 0",
+        ):  # another partition writable
             with self.assertRaises(ValueError):
                 hw.validate_storage(bad, "sda16")
         with self.assertRaises(ValueError):
@@ -204,10 +256,16 @@ class MountPolicyTests(unittest.TestCase):
                 hw.validate_mounts(value)
 
 
-IMU_PASSING = {
-    "schema": 1, "status": "pass", "failures": [], "seconds": 10, "requested_rate_hz": 500.0,
-    "streams": {"accel": {"samples": 5120, "rate_hz": 511.95, "non_increasing_timestamps": 0},
-                "gyro": {"samples": 5120, "rate_hz": 511.95, "non_increasing_timestamps": 0}},
+IMU_PASSING: dict[str, Any] = {
+    "schema": 1,
+    "status": "pass",
+    "failures": [],
+    "seconds": 10,
+    "requested_rate_hz": 500.0,
+    "streams": {
+        "accel": {"samples": 5120, "rate_hz": 511.95, "non_increasing_timestamps": 0},
+        "gyro": {"samples": 5120, "rate_hz": 511.95, "non_increasing_timestamps": 0},
+    },
 }
 
 
@@ -222,8 +280,10 @@ class ImuValidationTests(unittest.TestCase):
             ("unchecked run", {"status": "collected"}),
             ("other rate", {"requested_rate_hz": 100.0}),
             ("no gyro", {"streams": {"accel": IMU_PASSING["streams"]["accel"]}}),
-            ("time going backwards", {"streams": {**IMU_PASSING["streams"],
-                                                  "gyro": {"samples": 5000, "non_increasing_timestamps": 2}}}),
+            (
+                "time going backwards",
+                {"streams": {**IMU_PASSING["streams"], "gyro": {"samples": 5000, "non_increasing_timestamps": 2}}},
+            ),
         ]
         for name, change in cases:
             value = None if change is None else {**copy.deepcopy(IMU_PASSING), **change}
@@ -231,20 +291,48 @@ class ImuValidationTests(unittest.TestCase):
                 userspace.validate_imu(value)
 
 
-VALVE_SESSION_PASSING = {
-    "schema": 1, "status": "passed", "errors": [], "seconds": 30, "startup_seconds": 21,
-    "session": {"target": "gamescope-session.target", "target_state": "active", "steamvr": "active",
-                "gamescope": "active", "failed_units": [], "restored": "active"},
+VALVE_SESSION_PASSING: dict[str, Any] = {
+    "schema": 1,
+    "status": "passed",
+    "errors": [],
+    "seconds": 30,
+    "startup_seconds": 21,
+    "session": {
+        "target": "gamescope-session.target",
+        "target_state": "active",
+        "steamvr": "active",
+        "gamescope": "active",
+        "failed_units": [],
+        "restored": "active",
+    },
     "compositor": {"started": True, "gamescope_client": True, "asserts": 0, "present_wait_errors": 2689},
-    "frames": {"target": "msm", "commits": 2700, "commit_hz": 89.7, "late": 2, "stalls": 0, "max_interval_ms": 22.3,
-               "vblank_hz": 90.0, "gpu_jobs": 2700, "gpu_ms": {"mean": 5.9}},
-    "devices": [{"index": 0, "position": [-0.01, 1.61, 0.07], "rotation": [-2.5, -1.56, 2.42]},
-                {"index": 1, "position": [0.09, 0.96, -0.6], "rotation": [-0.27, 0.05, 0.86]},
-                {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]}],
+    "frames": {
+        "target": "msm",
+        "commits": 2700,
+        "commit_hz": 89.7,
+        "late": 2,
+        "stalls": 0,
+        "max_interval_ms": 22.3,
+        "vblank_hz": 90.0,
+        "gpu_jobs": 2700,
+        "gpu_ms": {"mean": 5.9},
+    },
+    "devices": [
+        {"index": 0, "position": [-0.01, 1.61, 0.07], "rotation": [-2.5, -1.56, 2.42]},
+        {"index": 1, "position": [0.09, 0.96, -0.6], "rotation": [-0.27, 0.05, 0.86]},
+        {"index": 2, "position": [0.48, 0.96, -0.24], "rotation": [-0.31, -0.13, -0.93]},
+    ],
     "max_temp_c": {"before": 80.1, "after_run": 92.3},
     "fan": {"before": FAN_STATE, "after_run": {**FAN_STATE, "duty": 50, "rpm": 8500, "hottest_mean_c": 90.4}},
-    "performance": {"status": "passed", "failures": [], "commit_hz": 90.0, "late_percent": 0.07, "stalls": 0,
-                    "hottest_c": 61.5, "window_seconds": 30.0},
+    "performance": {
+        "status": "passed",
+        "failures": [],
+        "commit_hz": 90.0,
+        "late_percent": 0.07,
+        "stalls": 0,
+        "hottest_c": 61.5,
+        "window_seconds": 30.0,
+    },
 }
 
 

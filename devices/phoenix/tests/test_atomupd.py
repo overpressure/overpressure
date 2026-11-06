@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""The atomupd manager: the queries Valve's branch and update tools make."""
+
 import re
 import unittest
 from pathlib import Path
@@ -8,7 +10,7 @@ MANAGER = ROOT / "userspace/rootfs/usr/bin/atomupd-manager"
 
 
 def arms(script: str) -> dict[str, str]:
-    """The script's case arms: each pattern alternative to its command."""
+    """Return the script's case arms: each pattern alternative to its command."""
     result = {}
     for patterns, body in re.findall(r"(?m)^\t([a-z| -]+)\) (.+?) ;;$", script):
         for pattern in patterns.split("|"):

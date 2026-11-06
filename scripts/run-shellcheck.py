@@ -4,6 +4,9 @@
 
 Stage 1 runs on BusyBox ash, so its scripts are checked as such (shellcheck's dash is the closest).
 """
+
+from __future__ import annotations
+
 import subprocess
 import sys
 from pathlib import Path
@@ -11,8 +14,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
-def shell(data: bytes):
-    """The shell of a script by its first line, or None for anything else."""
+def shell(data: bytes) -> str | None:
+    """Return the shell of a script by its first line, or None for anything else."""
     first = data.split(b"\n", 1)[0]
     if first.startswith(b"#!"):
         if b"bash" in first:
@@ -23,7 +26,9 @@ def shell(data: bytes):
 
 
 def main() -> int:
-    names = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z"], check=True, stdout=subprocess.PIPE).stdout
+    """Check every tracked shell script; fail when any has an error."""
+    ls_files = ["git", "-C", str(REPO), "ls-files", "-z"]
+    names = subprocess.run(ls_files, check=True, stdout=subprocess.PIPE).stdout  # noqa: S603  # git from PATH, no shell
     code = 0
     count = 0
     for name in names.decode().split("\0"):
@@ -34,7 +39,8 @@ def main() -> int:
         if not kind:
             continue
         count += 1
-        code |= subprocess.call(["shellcheck", "--severity=error", "--shell", kind, str(path)])
+        check = ["shellcheck", "--severity=error", "--shell", kind, str(path)]
+        code |= subprocess.call(check)  # noqa: S603  # shellcheck from PATH on a tracked file, no shell
     print(f"{count} scripts checked")
     return 1 if code else 0
 

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """The headset interface, the registry, the step runner, the command line and the GUI."""
+
 import contextlib
 import io
 import os
@@ -7,7 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from overpressure import REPO, __main__ as cli, runner
+from overpressure import REPO, fastboot, linux, runner
+from overpressure import __main__ as cli
 from overpressure.headset import Command, Headset, Info, Param, Registry, Step, discover
 
 #: The command line's own words: a step may name them instead of a command of the headset.
@@ -18,15 +20,31 @@ class Fake(Headset):
     info = Info("fake", "Fake headset")
 
     def commands(self):
-        return {"build": Command("image", "builds", True)}
+        return {"build": Command("image", "builds", keep=True)}
 
     def steps(self):
-        return (Step("img", "Image", "Image", ("build", "--firmware", "{firmware}", "{fast}"),
-                     params=(Param("firmware", "Firmware", "a"), Param("fast", "Fast", "0", "flag", option="--fast"))),
-                Step("us", "Userspace", "Image", ("scripts/build.sh", "{root}", "assets/fw-{version}", "{out}"),
-                     params=(Param("root", "Root", "/var/tmp/b"), Param("version", "Version", "1.2"),
-                             Param("out", "Out", "")),
-                     script=True, linux_root=True))
+        return (
+            Step(
+                "img",
+                "Image",
+                "Image",
+                ("build", "--firmware", "{firmware}", "{fast}"),
+                params=(Param("firmware", "Firmware", "a"), Param("fast", "Fast", "0", "flag", option="--fast")),
+            ),
+            Step(
+                "us",
+                "Userspace",
+                "Image",
+                ("scripts/build.sh", "{root}", "assets/fw-{version}", "{out}"),
+                params=(
+                    Param("root", "Root", "/var/tmp/b"),  # noqa: S108  # a default word, nothing is written
+                    Param("version", "Version", "1.2"),
+                    Param("out", "Out", ""),
+                ),
+                script=True,
+                linux_root=True,
+            ),
+        )
 
 
 class StepTests(unittest.TestCase):
@@ -35,7 +53,7 @@ class StepTests(unittest.TestCase):
         self.assertEqual(img.command({}), ["build", "--firmware", "a"])
         self.assertEqual(img.command({"firmware": "b", "fast": "1"}), ["build", "--firmware", "b", "--fast"])
         # Braces inside a word take the value too; an empty parameter word is left out.
-        self.assertEqual(us.command({}), ["scripts/build.sh", "/var/tmp/b", "assets/fw-1.2"])
+        self.assertEqual(us.command({}), ["scripts/build.sh", "/var/tmp/b", "assets/fw-1.2"])  # noqa: S108  # an expected word, nothing is written
 
 
 class RunnerTests(unittest.TestCase):
@@ -50,8 +68,10 @@ class RunnerTests(unittest.TestCase):
     def test_linux_asks_sudo_unless_root(self):
         h = Fake()
         _, us = h.steps()
-        self.assertEqual(runner.process(h, us, {}, platform="linux", is_root=False, backend="sudo")[:3],
-                         ["sudo", "bash", "devices/fake/scripts/build.sh"])
+        self.assertEqual(
+            runner.process(h, us, {}, platform="linux", is_root=False, backend="sudo")[:3],
+            ["sudo", "bash", "devices/fake/scripts/build.sh"],
+        )
         self.assertEqual(runner.process(h, us, {}, platform="linux", is_root=True, backend="sudo")[0], "bash")
 
     def test_the_build_container_runs_linux_root_steps_anywhere(self):
@@ -64,9 +84,8 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(runner.process(h, img, {}, python="py", backend="docker")[0], "py")  # no Linux needed
 
     def test_the_backend_follows_the_host_unless_configured(self):
-        from overpressure import linux
-        self.assertEqual(linux.backend("win32", which=lambda t: "wsl", environ={"OVERPRESSURE_LINUX": ""}), "wsl")
-        self.assertEqual(linux.backend("win32", which=lambda t: None, environ={"OVERPRESSURE_LINUX": ""}), "docker")
+        self.assertEqual(linux.backend("win32", which=lambda _: "wsl", environ={"OVERPRESSURE_LINUX": ""}), "wsl")
+        self.assertEqual(linux.backend("win32", which=lambda _: None, environ={"OVERPRESSURE_LINUX": ""}), "docker")
         self.assertEqual(linux.backend("darwin", environ={"OVERPRESSURE_LINUX": ""}), "docker")
         self.assertEqual(linux.backend("linux", environ={"OVERPRESSURE_LINUX": "docker"}), "docker")
         with self.assertRaises(ValueError):
@@ -79,8 +98,10 @@ class RunnerTests(unittest.TestCase):
     def test_commands_go_through_this_command_line(self):
         h = Fake()
         img, _ = h.steps()
-        self.assertEqual(runner.process(h, img, {}, platform="linux", python="py"),
-                         ["py", "-m", "overpressure", "--device", "fake", "build", "--firmware", "a"])
+        self.assertEqual(
+            runner.process(h, img, {}, platform="linux", python="py"),
+            ["py", "-m", "overpressure", "--device", "fake", "build", "--firmware", "a"],
+        )
 
     def test_wsl_path(self):
         self.assertEqual(runner.wsl_path(Path("C:/Users/x/repo")), "/mnt/c/Users/x/repo")
@@ -114,10 +135,13 @@ class RegistryTests(unittest.TestCase):
 
 
 class CommandLineTests(unittest.TestCase):
-    def run_cli(self, *argv):
+    def run_cli(self, *argv: str) -> tuple[int, str]:
         out = io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out), \
-                mock.patch.dict(os.environ, {"OVERPRESSURE_DEVICE": ""}):
+        with (
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(out),
+            mock.patch.dict(os.environ, {"OVERPRESSURE_DEVICE": ""}),
+        ):
             code = cli.main(list(argv))
         return code, out.getvalue()
 
@@ -141,23 +165,27 @@ class CommandLineTests(unittest.TestCase):
 
     def test_a_command_reaches_the_headset_module(self):
         h = Fake()
-        with mock.patch.object(Headset, "main", return_value=7) as main, \
-                mock.patch.object(cli, "discover", return_value=Registry({"fake": h})):
+        with (
+            mock.patch.object(Headset, "main", return_value=7) as main,
+            mock.patch.object(cli, "discover", return_value=Registry({"fake": h})),
+        ):
             code, _ = self.run_cli("build", "--firmware", "x")
         self.assertEqual(code, 7)
         main.assert_called_once_with(["build", "--firmware", "x"])
 
     def test_ram_boot_needs_a_target_and_reports_refusal_apart(self):
-        from overpressure import fastboot
         registry = Registry({"fake": Fake()})
         with mock.patch.object(cli, "discover", return_value=registry):
             code, out = self.run_cli("ram-boot")
         self.assertEqual(code, 2)
         self.assertIn("has no RAM boot", out)
         target = mock.Mock(spec=fastboot.RamBootTarget)
-        for effect, expected in ((fastboot.Refused("no fastboot boot"), 3), (RuntimeError("no answer"), 1),
-                                 (None, 0)):
-            with mock.patch.object(cli, "discover", return_value=registry),                     mock.patch.object(Fake, "ram_boot", return_value=target, create=True),                     mock.patch.object(fastboot, "ram_boot", side_effect=effect) as boot:
+        for effect, expected in ((fastboot.Refused("no fastboot boot"), 3), (RuntimeError("no answer"), 1), (None, 0)):
+            with (
+                mock.patch.object(cli, "discover", return_value=registry),
+                mock.patch.object(Fake, "ram_boot", return_value=target, create=True),
+                mock.patch.object(fastboot, "ram_boot", side_effect=effect) as boot,
+            ):
                 code, _ = self.run_cli("ram-boot", "out/x.img")
             self.assertEqual(code, expected)
             self.assertEqual(boot.call_args[0][1], Path("out/x.img"))
@@ -166,11 +194,15 @@ class CommandLineTests(unittest.TestCase):
 class GuiTests(unittest.TestCase):
     def test_window_shows_every_step_with_its_command_line(self):
         try:
-            import tkinter as tk
+            import tkinter as tk  # noqa: PLC0415  # optional: Python without Tk skips
+        except ImportError as exc:
+            self.skipTest(f"no Tk: {exc}")
+        try:
             root = tk.Tk()
-        except Exception as exc:  # no Tk or no display
+        except tk.TclError as exc:  # no display
             self.skipTest(f"no Tk display: {exc}")
-        from overpressure import gui
+        from overpressure import gui  # noqa: PLC0415  # needs Tk, which this test checks first
+
         try:
             app = gui.App(root, Registry({"fake": Fake()}), None)
             root.update()

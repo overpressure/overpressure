@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """The PICO 4 controllers as SteamVR's pico_controller (docs/session.md#controllers-in-games)."""
+
 import json
 import re
 import unittest
@@ -10,6 +11,7 @@ RECIPE = ROOT / "userspace/pkgbuilds/pico4-monado"
 
 
 def read(name: str) -> str:
+    """Return a file of the Monado recipe."""
     return (RECIPE / name).read_text(encoding="utf-8")
 
 
@@ -54,9 +56,13 @@ class ControllerTypeTests(unittest.TestCase):
     def test_dashboard_bindings_use_the_profiles_inputs(self):
         bindings = json.loads(read("pico4-vrcompositor-bindings.json"))
         self.assertEqual(bindings["controller_type"], "pico_controller")
-        self.assertEqual(self.profile["default_bindings"],
-                         [{"app_key": "openvr.component.vrcompositor", "binding_url": "pico4_vrcompositor_bindings.json"},
-                          {"app_key": "vrlink.client", "binding_url": "pico4_vrlink_bindings.json"}])
+        self.assertEqual(
+            self.profile["default_bindings"],
+            [
+                {"app_key": "openvr.component.vrcompositor", "binding_url": "pico4_vrcompositor_bindings.json"},
+                {"app_key": "vrlink.client", "binding_url": "pico4_vrlink_bindings.json"},
+            ],
+        )
         for path in re.findall(r'"/user/hand/(?:left|right)(/(?:input|output|pose)/[a-z_]+)', json.dumps(bindings)):
             self.assertIn(path, self.profile["input_source"])
 
@@ -78,8 +84,15 @@ class ControllerTypeTests(unittest.TestCase):
         for hand in ("left", "right"):
             for name in ("system", "trigger", "grip", "joystick"):
                 self.assertIn(f"/user/hand/{hand}/input/{name}", paths)
-        self.assertTrue({"/user/hand/left/input/x", "/user/hand/left/input/y",
-                         "/user/hand/right/input/a", "/user/hand/right/input/b"} <= paths)
+        self.assertTrue(
+            {
+                "/user/hand/left/input/x",
+                "/user/hand/left/input/y",
+                "/user/hand/right/input/a",
+                "/user/hand/right/input/b",
+            }
+            <= paths
+        )
         outputs = {i["output"] for s in sources for i in s["inputs"].values()}
         self.assertIn("/actions/legacy/in/left_axis0_value", outputs)
         self.assertIn("/actions/legacy/in/right_axis2_value1", outputs)
@@ -95,8 +108,11 @@ class ControllerTypeTests(unittest.TestCase):
         recipe = read("PKGBUILD")
         self.assertIn("patch -d monado -p1 < monado-steamvr-pico-controller.patch", recipe)
         self.assertIn('install -Dm644 pico4-controller-profile.json "$input/pico4_controller_profile.json"', recipe)
-        self.assertIn("ln -s /opt/steamvr/resources/input/default_pico_controller_remapping.json "
-                      '"$input/default_pico_controller_remapping.json"', recipe)
+        self.assertIn(
+            "ln -s /opt/steamvr/resources/input/default_pico_controller_remapping.json "
+            '"$input/default_pico_controller_remapping.json"',
+            recipe,
+        )
 
 
 if __name__ == "__main__":

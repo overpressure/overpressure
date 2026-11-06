@@ -13,19 +13,26 @@ The screen here is the panels' backlight, which standby switches (bl_power).
 
     battery-guard [--dry-run]
 """
+
+from __future__ import annotations
+
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 CAPACITY = "/sys/class/power_supply/battery/capacity"
 STATUS = "/sys/class/power_supply/battery/status"
 BACKLIGHT = "/sys/class/backlight/pico4-panel/bl_power"
-EMPTY = 1                   # % : shouldShutdownLocked's batteryLevel < 1
-SCREEN_OFF_LEVEL = 4        # % : MIN_BATTERY_LEVEL_SHUTDOWN
-SCREEN_OFF_DELAY = 60.0     # s : checkLowPowerByScreenState's delayed shutdown
-POLL = 5.0                  # s : as often as the session reads the battery
+EMPTY = 1  # % : shouldShutdownLocked's batteryLevel < 1
+SCREEN_OFF_LEVEL = 4  # % : MIN_BATTERY_LEVEL_SHUTDOWN
+SCREEN_OFF_DELAY = 60.0  # s : checkLowPowerByScreenState's delayed shutdown
+POLL = 5.0  # s : as often as the session reads the battery
 
 
 @dataclass
@@ -33,17 +40,18 @@ class Guard:
     """PICO OS's decision from the level, the charger's status and the screen."""
 
     screen_on: bool = True
-    off_level: Optional[int] = None     # the level when the screen went off
-    deadline: Optional[float] = None    # the delayed shutdown, on the monotonic clock
+    off_level: int | None = None  # the level when the screen went off
+    deadline: float | None = None  # the delayed shutdown, on the monotonic clock
 
-    def step(self, level: int, status: str, screen_on: bool, now: float) -> Optional[str]:
-        """Why to power off now, or None."""
+    def step(self, level: int, status: str, *, screen_on: bool, now: float) -> str | None:
+        """Say why to power off now, or return None."""
         charging = status == "Charging"
         if screen_on != self.screen_on:
             self.screen_on = screen_on
             self.off_level = None if screen_on else level
-            self.deadline = now + SCREEN_OFF_DELAY if not (screen_on or charging) and level <= SCREEN_OFF_LEVEL \
-                else None
+            self.deadline = (
+                now + SCREEN_OFF_DELAY if not (screen_on or charging) and level <= SCREEN_OFF_LEVEL else None
+            )
         if level < EMPTY:
             return f"battery at {level} %" + (", charging" if charging else "")
         if charging:
@@ -55,23 +63,24 @@ class Guard:
         return None
 
 
-def read(path: str) -> Optional[str]:
+def read(path: str) -> str | None:
+    """Read a sysfs file, None when it is missing or unreadable."""
     try:
-        with open(path, encoding="ascii", errors="replace") as f:
-            return f.read().strip()
+        return Path(path).read_text(encoding="ascii", errors="replace").strip()
     except OSError:
         return None
 
 
-def check(guard: Guard, now: float, reader=read) -> Optional[str]:
+def check(guard: Guard, now: float, reader: Callable[[str], str | None] = read) -> str | None:
     """One reading of the sysfs files; an unreadable battery decides nothing, no panel driver means screen on."""
     level, status = reader(CAPACITY), reader(STATUS)
     if status is None or level is None or not level.isdigit():
         return None
-    return guard.step(int(level), status, reader(BACKLIGHT) in (None, "0"), now)
+    return guard.step(int(level), status, screen_on=reader(BACKLIGHT) in (None, "0"), now=now)
 
 
-def main(argv) -> int:
+def main(argv: Sequence[str]) -> int:
+    """Poll the battery for good, powering off when PICO OS would."""
     dry_run = "--dry-run" in argv
     guard = Guard()
     while True:
@@ -79,7 +88,7 @@ def main(argv) -> int:
         if reason:
             print(f"battery-guard: {reason}: powering off", flush=True)
             if not dry_run:
-                subprocess.run(["systemctl", "poweroff"], check=False)
+                subprocess.run(["systemctl", "poweroff"], check=False)  # noqa: S607  # systemctl from PATH, as every unit
         time.sleep(POLL)
 
 

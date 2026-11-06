@@ -44,24 +44,37 @@ headset and calls these:
 ```python
 from overpressure.headset import Command, Headset, Info, Param, Step
 
+
 class Example(Headset):
     info = Info("example", "Example VR 1", "SoC name", "one line about the approach")
 
     def commands(self):
         # command word -> module of this package whose main(argv) runs it
-        return {"build": Command("image", "build the boot image"),
-                "dev": Command("devloop", "the development loop")}
+        return {"build": Command("image", "build the boot image"), "dev": Command("devloop", "the development loop")}
 
     def steps(self):
         # the window's steps, in order: building the images, then working on the headset
         return (
-            Step("boot-image", "Boot image", "Image", ("build", "--firmware", "{firmware}"),
-                 "The stage-1 boot image.", (Param("firmware", "Firmware", "1.0", "choice", ("1.0", "1.1")),)),
-            Step("userspace", "Userspace", "Image", ("scripts/build-userspace.sh", "{output}"),
-                 params=(Param("output", "Output folder", "out/userspace", "path"),),
-                 script=True, linux_root=True),
+            Step(
+                "boot-image",
+                "Boot image",
+                "Image",
+                ("build", "--firmware", "{firmware}"),
+                "The stage-1 boot image.",
+                (Param("firmware", "Firmware", "1.0", "choice", ("1.0", "1.1")),),
+            ),
+            Step(
+                "userspace",
+                "Userspace",
+                "Image",
+                ("scripts/build-userspace.sh", "{output}"),
+                params=(Param("output", "Output folder", "out/userspace", "path"),),
+                script=True,
+                linux_root=True,
+            ),
             Step("flash", "Flash", "Headset", ("dev", "flash"), "Writes the boot image.", writes=True),
         )
+
 
 HEADSET = Example()
 ```
@@ -102,6 +115,7 @@ sequence looks for it, and `ram_boot_step(default_image)` among its steps.
 from overpressure import REPO
 from overpressure.fastboot import Fastboot, RamBootTarget
 
+
 class ExampleRamBoot(RamBootTarget):
     up_timeout = 120
     refused_hint = "Boot stage 1 from a partition instead: python -m overpressure dev flash."
@@ -110,19 +124,19 @@ class ExampleRamBoot(RamBootTarget):
         self.settings = settings
 
     @property
-    def fastboot(self):            # fastboot with the headset's serial
+    def fastboot(self):  # fastboot with the headset's serial
         return Fastboot("fastboot", self.settings.fastboot_serial)
 
-    def image(self):               # the image to boot when none is given
+    def image(self):  # the image to boot when none is given
         return REPO / "out" / "example-stage1.img"
 
-    def enter(self):               # into fastboot, e.g. adb reboot bootloader
+    def enter(self):  # into fastboot, e.g. adb reboot bootloader
         ...
 
-    def check_unlocked(self):      # raise unless the bootloader may boot an unsigned image
+    def check_unlocked(self):  # raise unless the bootloader may boot an unsigned image
         ...
 
-    def reached(self):             # raise until the booted image answers (network, ADB, ...)
+    def reached(self):  # raise until the booted image answers (network, ADB, ...)
         ...
 ```
 

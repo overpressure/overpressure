@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """overpressure.qualcomm: the SoC ID and EDL's partition maps."""
+
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,7 +22,8 @@ class QualcommTests(unittest.TestCase):
             (backup / "lun4").mkdir()
             (backup / "lun4" / "rawprogram4.xml").write_text(
                 '<data><program label="boot" num_partition_sectors="16" SECTOR_SIZE_IN_BYTES="4096" />'
-                '<program label="misc" num_partition_sectors="1" SECTOR_SIZE_IN_BYTES="4096" /></data>')
+                '<program label="misc" num_partition_sectors="1" SECTOR_SIZE_IN_BYTES="4096" /></data>'
+            )
             self.assertEqual(qualcomm.partition_size(backup, "boot"), 65536)
             with self.assertRaises(ValueError):
                 qualcomm.partition_size(backup, "userdata")

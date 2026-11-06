@@ -74,6 +74,9 @@ status in its roadmap and README current.
 
 ```sh
 python -m unittest                                # every host test (generic and each headset's), seconds
+uv sync                                           # the dev environment: ruff, ty (pyproject.toml, uv.lock)
+make lint                                         # uv run: ruff format --check, ruff check, ty check
+make format                                       # uv run: ruff format, ruff check --fix
 python -m overpressure doctor                     # what this host lacks for the headset, with fixes
 python -m overpressure tools                      # fetch the pinned host tools into cache/tools
 python -m overpressure container build            # the build container (OVERPRESSURE_LINUX=docker)
@@ -118,7 +121,11 @@ otherwise. Each headset's CLAUDE.md lists its build and hardware commands.
 ## Conventions
 
 - **Match the code around you.** Python uses the standard library only, dataclasses and
-  type hints, and short docstrings that explain why. Shell scripts use `set -euo pipefail`.
+  type hints, and short docstrings that explain why. It is formatted by ruff (line length 120)
+  and passes every ruff rule and `ty check` (`make lint`): full annotations, docstrings with an
+  imperative first line, exception messages through a variable, keyword-only booleans; a
+  `# ty: ignore[rule]` or `# noqa: RULE` names its rule and says why. A new extensionless Python
+  program goes into both file lists in `pyproject.toml`. Shell scripts use `set -euo pipefail`.
   C sources carry SPDX headers (BSL-1.0 for Monado code).
 - **Generic or headset.** Code that only one headset uses lives in its folder; a format or a
   helper a second headset needs moves into `overpressure/` with its tests.

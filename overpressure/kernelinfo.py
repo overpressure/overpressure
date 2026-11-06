@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """Inspect a stock Android kernel: version, embedded config, appended DTBs."""
+
 from __future__ import annotations
 
 import re
@@ -10,10 +11,16 @@ from dataclasses import dataclass, field
 from . import compress
 
 FDT_MAGIC = b"\xd0\x0d\xfe\xed"
+FDT_HEADER_SIZE = 40
+FDT_BEGIN_NODE, FDT_END_NODE, FDT_PROP, FDT_NOP, FDT_END = 1, 2, 3, 4, 9
+# The arm64 Image header: the image size (le64) at 16.
+ARM64_IMAGE_SIZE_START, ARM64_IMAGE_SIZE_END = 16, 24
 
 
 @dataclass
 class KernelInfo:
+    """What a kernel image tells about itself."""
+
     compression: str
     image_size: int  # decompressed size
     version: str = ""
@@ -24,20 +31,24 @@ class KernelInfo:
     arm64_magic: bool = False
 
     def opt(self, name: str) -> str | None:
-        """Value of CONFIG_<name> ("y", "m", a string) or None if unset/unknown."""
+        """Return the value of CONFIG_<name> ("y", "m", a string) or None if unset/unknown."""
         return self.config.get(name if name.startswith("CONFIG_") else "CONFIG_" + name)
 
     def enabled(self, name: str) -> bool | None:
-        """True/False if the config is known, None if no config was embedded."""
+        """Tell whether an option is on: True/False if the config is known, None if no config was embedded."""
         if not self.config:
             return None
         return self.opt(name) in ("y", "m")
 
 
 def analyse(kernel_blob: bytes) -> KernelInfo:
+    """Return what a (possibly compressed) kernel image tells about itself."""
     image, trailing, fmt = compress.decompress(kernel_blob)
     info = KernelInfo(compression=fmt, image_size=len(image))
-    info.arm64_magic = len(image) > 0x3C and image[0x38:0x3C] == b"ARM\x64"
+    info.arm64_magic = (
+        len(image) > compress.ARM64_MAGIC_END
+        and image[compress.ARM64_MAGIC_START : compress.ARM64_MAGIC_END] == b"ARM\x64"
+    )
 
     m = re.search(rb"Linux version \d+\.\d+[^\n\x00]*", image)
     if m:
@@ -56,11 +67,12 @@ def analyse(kernel_blob: bytes) -> KernelInfo:
 
 
 def extract_ikconfig(image: bytes) -> str:
+    """Return the kernel's embedded config (CONFIG_IKCONFIG), or "" without one."""
     start = image.find(b"IKCFG_ST")
     if start < 0:
         return ""
     end = image.find(b"IKCFG_ED", start)
-    blob = image[start + 8:end if end > 0 else None]
+    blob = image[start + 8 : end if end > 0 else None]
     try:
         d = zlib.decompressobj(wbits=31)
         return d.decompress(blob).decode("utf-8", "replace")
@@ -74,18 +86,18 @@ def split_dtbs(blob: bytes) -> list[bytes]:
     pos = blob.find(FDT_MAGIC)
     while 0 <= pos < len(blob) - 8:
         (size,) = struct.unpack_from(">I", blob, pos + 4)
-        if size < 40 or pos + size > len(blob):
+        if size < FDT_HEADER_SIZE or pos + size > len(blob):
             break
-        dtbs.append(blob[pos:pos + size])
+        dtbs.append(blob[pos : pos + size])
         pos = blob.find(FDT_MAGIC, pos + size)
     return dtbs
 
 
 def _tail_after_image(image: bytes) -> bytes:
     # arm64 Image header: image_size (le64) at offset 16 covers the whole kernel.
-    if len(image) < 24:
+    if len(image) < ARM64_IMAGE_SIZE_END:
         return b""
-    (size,) = struct.unpack_from("<Q", image, 16)
+    (size,) = struct.unpack_from("<Q", image, ARM64_IMAGE_SIZE_START)
     if 0 < size < len(image):
         return image[size:]
     return b""
@@ -95,7 +107,7 @@ def dtb_summary(dtb: bytes) -> dict:
     """Return model / compatible / qcom,msm-id / qcom,board-id of a DTB root node."""
     try:
         props = _fdt_root_props(dtb)
-    except Exception:  # malformed DTBs are reported, not fatal
+    except (ValueError, struct.error):  # malformed DTBs are reported, not fatal
         return {}
     out = {}
     for key in ("model", "compatible"):
@@ -109,36 +121,39 @@ def dtb_summary(dtb: bytes) -> dict:
 
 
 def _fdt_root_props(dtb: bytes) -> dict[str, bytes]:
-    (magic, _total, off_struct, off_strings, _off_rsv, _ver, _lcv, _boot_cpu, _size_strings,
-     _size_struct) = struct.unpack_from(">10I", dtb, 0)
-    if magic != 0xD00DFEED:
-        raise ValueError("not a DTB")
+    (magic, _total, off_struct, off_strings, _off_rsv, _ver, _lcv, _boot_cpu, _size_strings, _size_struct) = (
+        struct.unpack_from(">10I", dtb, 0)
+    )
+    if magic != int.from_bytes(FDT_MAGIC, "big"):
+        msg = "not a DTB"
+        raise ValueError(msg)
     pos = off_struct
     depth = 0
     props: dict[str, bytes] = {}
     while True:
         (token,) = struct.unpack_from(">I", dtb, pos)
         pos += 4
-        if token == 1:  # BEGIN_NODE
+        if token == FDT_BEGIN_NODE:
             end = dtb.index(b"\0", pos)
             pos = (end + 4) & ~3
             depth += 1
-        elif token == 2:  # END_NODE
+        elif token == FDT_END_NODE:
             depth -= 1
             if depth == 0:
                 break
-        elif token == 3:  # PROP
+        elif token == FDT_PROP:
             length, nameoff = struct.unpack_from(">II", dtb, pos)
             pos += 8
-            value = dtb[pos:pos + length]
+            value = dtb[pos : pos + length]
             pos = (pos + length + 3) & ~3
             if depth == 1:
                 name_end = dtb.index(b"\0", off_strings + nameoff)
-                props[dtb[off_strings + nameoff:name_end].decode()] = value
-        elif token == 4:  # NOP
+                props[dtb[off_strings + nameoff : name_end].decode()] = value
+        elif token == FDT_NOP:
             continue
-        elif token == 9:  # END
+        elif token == FDT_END:
             break
         else:
-            raise ValueError(f"bad FDT token {token}")
+            msg = f"bad FDT token {token}"
+            raise ValueError(msg)
     return props

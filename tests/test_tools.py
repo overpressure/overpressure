@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Unlicense
 """overpressure.tools: pinned downloads checked by SHA-256, unpacked into cache/tools, found by name."""
+
+from __future__ import annotations
+
 import hashlib
 import io
 import tempfile
@@ -11,7 +14,8 @@ from unittest import mock
 from overpressure import tools
 
 
-def zip_bytes(files):
+def zip_bytes(files: dict[str, bytes]) -> bytes:
+    """Build a zip archive holding these files."""
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w") as zf:
         for name, data in files.items():
@@ -20,10 +24,10 @@ def zip_bytes(files):
 
 
 class Opener:
-    def __init__(self, data):
+    def __init__(self, data: bytes):
         self.data, self.urls = data, []
 
-    def __call__(self, url, timeout=None):
+    def __call__(self, url: str, timeout: float | None = None) -> io.BytesIO:  # noqa: ARG002  # urlopen's keyword
         self.urls.append(url)
         return io.BytesIO(self.data)
 
@@ -37,15 +41,17 @@ class ToolsTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def tool(self, data, host="linux-x86_64"):
+    def tool(self, data: bytes, host: str = "linux-x86_64") -> tools.Tool:
         archive = tools.Archive("https://example.invalid/t.zip", hashlib.sha256(data).hexdigest())
         return tools.Tool("thing", "1.0", {host: archive}, {"thing": "bin/thing"})
 
     def test_fetch_checks_the_hash_unpacks_and_is_found_by_name(self):
         data = zip_bytes({"bin/thing": b"#!/bin/sh\n", "README": b"x"})
         tool = self.tool(data)
-        with mock.patch.object(tools, "host_key", return_value="linux-x86_64"), \
-                mock.patch.dict(tools.ARCHIVE_TOOLS, {"thing": tool}):
+        with (
+            mock.patch.object(tools, "host_key", return_value="linux-x86_64"),
+            mock.patch.dict(tools.ARCHIVE_TOOLS, {"thing": tool}),
+        ):
             opener = Opener(data)
             folder = tools.fetch(tool, log=lambda _l: None, opener=opener)
             self.assertTrue((folder / "bin/thing").is_file())
@@ -80,11 +86,12 @@ class ToolsTests(unittest.TestCase):
         venv = self.cache / "ncm-venv-test"
         calls = []
 
-        def run(argv, check):
+        def run(argv: list[str], *, check: bool) -> None:  # noqa: ARG001  # subprocess.run's keyword
             calls.append(argv)
             python = venv / ("Scripts/python.exe" if tools.sys.platform == "win32" else "bin/python")
             python.parent.mkdir(parents=True, exist_ok=True)
             python.write_text("")
+
         with mock.patch.object(tools, "NCM_VENV", venv):
             tools.fetch_ncm_venv(log=lambda _l: None, python="py", run=run)
             self.assertIsNotNone(tools.ncm_python())

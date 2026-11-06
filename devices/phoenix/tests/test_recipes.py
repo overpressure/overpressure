@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """The package recipes under userspace/pkgbuilds: what makepkg checks before a build."""
+
 import hashlib
 import re
 import unittest
@@ -15,7 +16,9 @@ class ChecksumTests(unittest.TestCase):
         # sha256, and a stale one fails the build only once makepkg validates the sources.
         for recipe in sorted(p for p in PKGBUILDS.iterdir() if (p / "PKGBUILD").is_file()):
             pkgbuild = (recipe / "PKGBUILD").read_text(encoding="utf-8")
-            source = re.search(r"^source=\((.*?)\)", pkgbuild, re.S | re.M).group(1)
+            match = re.search(r"^source=\((.*?)\)", pkgbuild, re.DOTALL | re.MULTILINE)
+            assert match is not None
+            source = match.group(1)
             for path in sorted(recipe.iterdir()):
                 if path.name == "PKGBUILD" or path.suffix == ".patch" or not path.is_file():
                     continue
@@ -29,8 +32,9 @@ class RegistryWritesTests(unittest.TestCase):
     """The sensors process's registry writes: taken and dropped, so that its IMU comes without 37 s of retries."""
 
     def test_only_the_registry_is_taken_and_nothing_reaches_a_file(self):
-        patch = (Path(__file__).resolve().parents[1]
-                 / "userspace/pkgbuilds/pico4-sensors/hexagonrpc-registry-writes.patch").read_text(encoding="utf-8")
+        patch = (
+            Path(__file__).resolve().parents[1] / "userspace/pkgbuilds/pico4-sensors/hexagonrpc-registry-writes.patch"
+        ).read_text(encoding="utf-8")
         self.assertIn('+	return strstr(path, "/sensors/registry/") != NULL;', patch)
         self.assertIn("+		if (is_registry_path(inbufs[3].p)) {", patch)
         self.assertIn('fprintf(stderr, "Tried to open %s for writing', patch)
@@ -39,8 +43,9 @@ class RegistryWritesTests(unittest.TestCase):
             self.assertNotRegex(added, r"(?<![_\w])" + re.escape(call))
 
     def test_large_inputs_come_through_the_listener(self):
-        patch = (Path(__file__).resolve().parents[1]
-                 / "userspace/pkgbuilds/pico4-sensors/hexagonrpc-registry-writes.patch").read_text(encoding="utf-8")
+        patch = (
+            Path(__file__).resolve().parents[1] / "userspace/pkgbuilds/pico4-sensors/hexagonrpc-registry-writes.patch"
+        ).read_text(encoding="utf-8")
         self.assertIn("-		fprintf(stderr, \"Large (>256B) input buffers aren't implemented", patch)
         self.assertIn("+		ret = adsp_listener_get_in_bufs2(fd, *rctx, offset, &got, want, more);", patch)
 

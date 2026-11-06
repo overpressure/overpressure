@@ -29,18 +29,24 @@ Z_ADDRESS = 0x3BFD0
 HANDS = ("left", "right")
 #: Plausibility: the lever stays on the controller (metres).
 MAX_LENGTH_M = 0.1
+#: A lever has three coordinates.
+VECTOR = 3
+#: The command line: LIBRARY OUTPUT.json.
+ARGUMENTS = ("LIBRARY", "OUTPUT.json")
 
 
 class LeverArmError(ValueError):
-    pass
+    """The library holds no plausible lever arm."""
 
 
 def lever_arms(elf: bytes) -> dict[str, list[float]]:
     """Both hands' lever arms in metres, validated."""
     try:
         (z,) = struct.unpack("<d", read_virtual(elf, Z_ADDRESS, 8))
-        result = {hand: [v / 1000.0 for v in struct.unpack("<2d", read_virtual(elf, XY_ADDRESSES[hand], 16)) + (z,)]
-                  for hand in HANDS}
+        result = {
+            hand: [v / 1000.0 for v in (*struct.unpack("<2d", read_virtual(elf, XY_ADDRESSES[hand], 16)), z)]
+            for hand in HANDS
+        }
     except LedModelError as exc:
         raise LeverArmError(str(exc)) from exc
     validate(result)
@@ -48,33 +54,46 @@ def lever_arms(elf: bytes) -> dict[str, list[float]]:
 
 
 def validate(result: dict[str, list[float]]) -> None:
-    """A different library version puts other data at these addresses: refuse anything implausible."""
+    """Refuse anything implausible: a different library version puts other data at these addresses."""
     left, right = result.get("left") or [], result.get("right") or []
-    if len(left) != 3 or len(right) != 3 or not all(math.isfinite(v) for v in left + right):
-        raise LeverArmError("expected a finite lever for each hand")
+    if len(left) != VECTOR or len(right) != VECTOR or not all(math.isfinite(v) for v in left + right):
+        msg = "expected a finite lever for each hand"
+        raise LeverArmError(msg)
     for hand, lever in result.items():
         length = math.hypot(*lever)
         if not 0.0 < length < MAX_LENGTH_M:
-            raise LeverArmError(f"{hand}: a lever of {length:.3f} m is not on the controller")
+            msg = f"{hand}: a lever of {length:.3f} m is not on the controller"
+            raise LeverArmError(msg)
     # The hands mirror each other across the aim frame's x axis.
     if left[0] != -right[0] or left[1:] != right[1:]:
-        raise LeverArmError("the left and right levers do not mirror in x")
+        msg = "the left and right levers do not mirror in x"
+        raise LeverArmError(msg)
 
 
 def to_json(result: dict[str, list[float]], library: str) -> str:
-    return json.dumps({
-        "schema": 1,
-        "source": library,
-        "units": "m",
-        "convention": "published aim position = position + R(aim orientation) * lever; (x, y, z) in the aim frame",
-        "left": result["left"],
-        "right": result["right"],
-    }, indent=1) + "\n"
+    """Render the lever arms as the extracted JSON file."""
+    return (
+        json.dumps(
+            {
+                "schema": 1,
+                "source": library,
+                "units": "m",
+                "convention": (
+                    "published aim position = position + R(aim orientation) * lever; (x, y, z) in the aim frame"
+                ),
+                "left": result["left"],
+                "right": result["right"],
+            },
+            indent=1,
+        )
+        + "\n"
+    )
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the extractor's command line."""
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2:
+    if len(args) != len(ARGUMENTS):
         print(__doc__.strip().splitlines()[-1].strip(), file=sys.stderr)
         return 2
     library, output = Path(args[0]), Path(args[1])

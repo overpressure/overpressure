@@ -1,4 +1,8 @@
 # SPDX-License-Identifier: Unlicense
+"""The PICO 4's host workflow: settings, the flash-and-run cycle and the development loop, against fake tools."""
+
+from __future__ import annotations
+
 import contextlib
 import hashlib
 import io
@@ -6,30 +10,41 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import IO, TYPE_CHECKING
 from unittest.mock import patch
 
+from devices.phoenix.tooling import cycle, devloop, localconfig
 from overpressure.localconfig import parse
 
-from devices.phoenix.tooling import cycle, devloop, localconfig
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 
 class FakeClock:
     def __init__(self):
         self.now = 0.0
 
-    def monotonic(self):
+    def monotonic(self) -> float:
         return self.now
 
-    def sleep(self, seconds):
+    def sleep(self, seconds: float) -> None:
         self.now += seconds
 
 
 class SettingsTests(unittest.TestCase):
     def test_parse_skips_comments_and_strips_quotes(self):
-        values = parse("# headset\nPICO4_ADB_SERIAL=ABC  # the ADB serial\n\n"
-                                   "PICO4_EDL='C:/tools/edl ng/edl-ng.exe'\nPICO4_FIRMWARE=\"5.13.7-global-seko\"\n")
-        self.assertEqual(values, {"PICO4_ADB_SERIAL": "ABC", "PICO4_EDL": "C:/tools/edl ng/edl-ng.exe",
-                                  "PICO4_FIRMWARE": "5.13.7-global-seko"})
+        values = parse(
+            "# headset\nPICO4_ADB_SERIAL=ABC  # the ADB serial\n\n"
+            "PICO4_EDL='C:/tools/edl ng/edl-ng.exe'\nPICO4_FIRMWARE=\"5.13.7-global-seko\"\n"
+        )
+        self.assertEqual(
+            values,
+            {
+                "PICO4_ADB_SERIAL": "ABC",
+                "PICO4_EDL": "C:/tools/edl ng/edl-ng.exe",
+                "PICO4_FIRMWARE": "5.13.7-global-seko",
+            },
+        )
         with self.assertRaisesRegex(ValueError, "line 1"):
             parse("no assignment\n")
 
@@ -60,15 +75,38 @@ class HeadsetFixture(unittest.TestCase):
         (backup / "lun4").mkdir(parents=True)
         self.boot = b"stock boot partition"
         (backup / "lun4/boot.bin").write_bytes(self.boot)
-        (backup / "manifest.json").write_text(json.dumps({"schema": 1, "files": {
-            "lun4/boot.bin": {"size": len(self.boot), "sha256": hashlib.sha256(self.boot).hexdigest()}}}))
-        (self.root / "device.json").write_text(json.dumps({
-            "schema": 1, "serial": "ADB1", "oem_state": "true", "chip_id": 1234567,
-            "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/test:user/dev-keys"}))
+        (backup / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "files": {
+                        "lun4/boot.bin": {"size": len(self.boot), "sha256": hashlib.sha256(self.boot).hexdigest()}
+                    },
+                }
+            )
+        )
+        (self.root / "device.json").write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "serial": "ADB1",
+                    "oem_state": "true",
+                    "chip_id": 1234567,
+                    "fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/test:user/dev-keys",
+                }
+            )
+        )
         self.settings = localconfig.Settings(
-            adb_serial="ADB1", fastboot_serial="FB1", edl_serial="EDL1", identity=str(self.root / "device.json"),
-            backup=str(backup), loader=str(self.root / "firehose.elf"), engineering_abl_sha256="ab" * 32,
-            edl=str(self.root / "edl-ng"), firmware="test")
+            adb_serial="ADB1",
+            fastboot_serial="FB1",
+            edl_serial="EDL1",
+            identity=str(self.root / "device.json"),
+            backup=str(backup),
+            loader=str(self.root / "firehose.elf"),
+            engineering_abl_sha256="ab" * 32,
+            edl=str(self.root / "edl-ng"),
+            firmware="test",
+        )
         self.calls = []
         self.edl = 0
         self.readback = self.boot
@@ -85,7 +123,15 @@ class HeadsetFixture(unittest.TestCase):
     def texts(self):
         return [" ".join(c) for c in self.calls]
 
-    def fake(self, argv, timeout=60, stdin=None, check=True, log=None):
+    def fake(
+        self,
+        argv: Sequence[object],
+        _timeout: float = 60,
+        *,
+        stdin: IO[bytes] | None = None,  # noqa: ARG002  # process.run's keyword
+        check: bool = True,  # noqa: ARG002  # process.run's keyword
+        log: Path | None = None,
+    ) -> str:
         words = [str(a) for a in argv]
         self.calls.append(words)
         text = " ".join(words)
@@ -117,11 +163,17 @@ class HeadsetFixture(unittest.TestCase):
         names = []
         for words in self.calls:
             text = " ".join(words)
-            for marker, name in (("reboot edl", "adb-edl"), ("printgpt", "identify"), ("device stage", "stage"),
-                                 ("reset", "edl-reset"),
-                                 ("hwtest flash-run", "flash-run"), ("read-part boot", "readback"),
-                                 ("device restore-abl", "restore-abl"), ("getprop sys.boot_completed", "pico-os"),
-                                 (" flash boot ", "flash-boot")):
+            for marker, name in (
+                ("reboot edl", "adb-edl"),
+                ("printgpt", "identify"),
+                ("device stage", "stage"),
+                ("reset", "edl-reset"),
+                ("hwtest flash-run", "flash-run"),
+                ("read-part boot", "readback"),
+                ("device restore-abl", "restore-abl"),
+                ("getprop sys.boot_completed", "pico-os"),
+                (" flash boot ", "flash-boot"),
+            ):
                 if marker in text:
                     names.append(name)
         return names
@@ -131,7 +183,7 @@ class CycleTests(HeadsetFixture):
     def make(self):
         return cycle.Cycle(self.settings, self.folder, self.fake, self.clock, lambda: self.edl)
 
-    def run_cycle(self, c):
+    def run_cycle(self, c: cycle.Cycle) -> int:
         with patch.object(cycle, "ROOT", self.root):
             (self.root / "out").mkdir(exist_ok=True)
             (self.root / "out/pico4-stage1-test.img").write_bytes(b"image")
@@ -143,8 +195,23 @@ class CycleTests(HeadsetFixture):
 
     def test_full_cycle_order_ends_on_stock(self):
         self.assertEqual(self.run_cycle(self.make()), 0)
-        self.assertEqual(self.steps(), ["adb-edl", "identify", "stage", "edl-reset", "pico-os", "flash-run", "pico-os",
-                                        "adb-edl", "readback", "restore-abl", "edl-reset", "pico-os"])
+        self.assertEqual(
+            self.steps(),
+            [
+                "adb-edl",
+                "identify",
+                "stage",
+                "edl-reset",
+                "pico-os",
+                "flash-run",
+                "pico-os",
+                "adb-edl",
+                "readback",
+                "restore-abl",
+                "edl-reset",
+                "pico-os",
+            ],
+        )
         stage = next(w for w in self.calls if "stage" in w)
         self.assertEqual(stage[stage.index("--confirm-device") + 1], "ADB1")
         run = next(w for w in self.calls if "flash-run" in w)
@@ -165,11 +232,15 @@ class CycleTests(HeadsetFixture):
     def test_pending_boot_restore_flashes_the_pinned_stock_image(self):
         stock = self.root / "stock-boot.img"
         stock.write_bytes(self.boot)
-        self.run_result = {"status": "failed", "boot_restore_required": True,
-                           "stock_boot": {"path": str(stock), "size": len(self.boot),
-                                          "sha256": hashlib.sha256(self.boot).hexdigest()},
-                           "manual_restore_commands": [["fastboot", "-s", "FB1", "flash", "boot", str(stock)],
-                                                       ["fastboot", "-s", "FB1", "reboot"]]}
+        self.run_result = {
+            "status": "failed",
+            "boot_restore_required": True,
+            "stock_boot": {"path": str(stock), "size": len(self.boot), "sha256": hashlib.sha256(self.boot).hexdigest()},
+            "manual_restore_commands": [
+                ["fastboot", "-s", "FB1", "flash", "boot", str(stock)],
+                ["fastboot", "-s", "FB1", "reboot"],
+            ],
+        }
         self.run_cycle(self.make())
         self.assertIn(["fastboot", "-s", "FB1", "flash", "boot", str(stock)], self.calls)
         self.assertEqual(self.steps()[-1], "pico-os")
@@ -177,10 +248,12 @@ class CycleTests(HeadsetFixture):
     def test_changed_restore_image_is_never_flashed(self):
         stock = self.root / "stock-boot.img"
         stock.write_bytes(b"tampered")
-        self.run_result = {"status": "failed", "boot_restore_required": True,
-                           "stock_boot": {"path": str(stock), "size": len(self.boot),
-                                          "sha256": hashlib.sha256(self.boot).hexdigest()},
-                           "manual_restore_commands": [["fastboot", "-s", "FB1", "flash", "boot", str(stock)]]}
+        self.run_result = {
+            "status": "failed",
+            "boot_restore_required": True,
+            "stock_boot": {"path": str(stock), "size": len(self.boot), "sha256": hashlib.sha256(self.boot).hexdigest()},
+            "manual_restore_commands": [["fastboot", "-s", "FB1", "flash", "boot", str(stock)]],
+        }
         with self.assertRaisesRegex(RuntimeError, "changed"):
             self.run_cycle(self.make())
         self.assertNotIn(["fastboot", "-s", "FB1", "flash", "boot", str(stock)], self.calls)
@@ -189,14 +262,23 @@ class CycleTests(HeadsetFixture):
         c = self.make()
         fake = self.fake
 
-        def off_after_reset(argv, timeout=60, stdin=None, check=True, log=None):
+        def off_after_reset(
+            argv: Sequence[object],
+            timeout: float = 60,
+            *,
+            stdin: IO[bytes] | None = None,
+            check: bool = True,
+            log: Path | None = None,
+        ) -> str:
             text = " ".join(str(a) for a in argv)
             if "reset --mode Reset" in text:
                 self.edl = 0
             if "getprop sys.boot_completed" in text and Path(self.folder / "reset-final.log").exists():
                 self.calls.append([str(a) for a in argv])
-                raise RuntimeError("adb: no devices/emulators found")
-            return fake(argv, timeout, stdin, check, log)
+                msg = "adb: no devices/emulators found"
+                raise RuntimeError(msg)
+            return fake(argv, timeout, stdin=stdin, check=check, log=log)
+
         c.run = off_after_reset
         with self.assertRaisesRegex(RuntimeError, r"no ADB or EDL device\): hard reset needed"):
             self.run_cycle(c)
@@ -212,18 +294,26 @@ class CycleTests(HeadsetFixture):
 
 
 class DevTests(HeadsetFixture):
-    def make(self, responses=None):
+    def make(self, responses: dict[str, str | Callable[[], str]] | None = None) -> devloop.Dev:
         responses = responses or {}
 
-        def fake(argv, timeout=60, stdin=None, check=True, log=None):
+        def fake(
+            argv: Sequence[object],
+            timeout: float = 60,
+            *,
+            stdin: IO[bytes] | None = None,
+            check: bool = True,
+            log: Path | None = None,
+        ) -> str:
             text = " ".join(str(a) for a in argv)
             for marker, reply in responses.items():
                 if marker in text:
                     if stdin is not None:
                         stdin.read()
                     self.calls.append([str(a) for a in argv])
-                    return reply() if callable(reply) else reply
-            return self.fake(argv, timeout, stdin, check, log)
+                    return reply if isinstance(reply, str) else reply()
+            return self.fake(argv, timeout, stdin=stdin, check=check, log=log)
+
         return devloop.Dev(self.settings, self.root / "dev", fake, self.clock)
 
     def test_check_knows_the_stage1_of_a_kernel_test_image(self):
@@ -242,8 +332,10 @@ class DevTests(HeadsetFixture):
 
     def test_every_command_renews_the_host_contact(self):
         argv = self.make().ssh_argv("pico4-valve-session-check --seconds 30")
-        self.assertEqual(argv[-1], "cut -d. -f1 /proc/uptime > /run/pico4/host-contact 2>/dev/null; "
-                                   "pico4-valve-session-check --seconds 30")
+        self.assertEqual(
+            argv[-1],
+            "cut -d. -f1 /proc/uptime > /run/pico4/host-contact 2>/dev/null; pico4-valve-session-check --seconds 30",
+        )
 
     def test_login_requires_the_dev_image_on_this_headset(self):
         self.make({"cat /etc/pico4/test-run": "dev-loop\n1234567"}).authenticate()
@@ -255,9 +347,10 @@ class DevTests(HeadsetFixture):
     def test_flash_needs_an_unlocked_single_boot_partition_of_the_backup_size(self):
         image = self.root / "dev/dev-boot.img"
         for unlocked, partitions, message in (
-                ("false", [("boot", len(self.boot))], "locked"),
-                ("true", [("boot_a", len(self.boot)), ("boot_b", len(self.boot))], "non-slotted"),
-                ("true", [("boot", 4096)], "size")):
+            ("false", [("boot", len(self.boot))], "locked"),
+            ("true", [("boot_a", len(self.boot)), ("boot_b", len(self.boot))], "non-slotted"),
+            ("true", [("boot", 4096)], "size"),
+        ):
             self.calls.clear()
             self.unlocked, self.partitions = unlocked, partitions
             dev = self.make()
@@ -293,21 +386,35 @@ class DevTests(HeadsetFixture):
             self.make().check_boot_partition(image, "super")
 
     def test_connect_reads_back_the_partition_that_started(self):
-        dev = self.make({"cat /etc/pico4/test-run": "dev-loop\n1234567", "cat /proc/cmdline":
-                         "console=x pico4.part=recovery", "sha256sum": "e" * 64 + "  -"})
+        dev = self.make(
+            {
+                "cat /etc/pico4/test-run": "dev-loop\n1234567",
+                "cat /proc/cmdline": "console=x pico4.part=recovery",
+                "sha256sum": "e" * 64 + "  -",
+            }
+        )
         (self.root / "dev/dev-recovery.img").write_bytes(b"dev image")
-        (self.root / "dev/dev-image.json").write_text(json.dumps({"boot_sha256": "f" * 64, "recovery_sha256": "e" * 64}))
+        (self.root / "dev/dev-image.json").write_text(
+            json.dumps({"boot_sha256": "f" * 64, "recovery_sha256": "e" * 64})
+        )
         dev.connect()
         self.assertTrue(any("/dev/block/by-name/recovery | sha256sum" in t for t in self.texts()))
         self.assertFalse(any("/dev/block/by-name/boot | sha256sum" in t for t in self.texts()))
 
-    def install_setup(self, cmdline="console=x pico4.part=recovery", data="none", held=None,
-                      confirmed_boot=b"install boot"):
+    def install_setup(
+        self,
+        cmdline: str = "console=x pico4.part=recovery",
+        data: str = "none",
+        held: Sequence[str] | None = None,
+        confirmed_boot: bytes = b"install boot",
+    ) -> tuple[devloop.Dev, Path]:
         backup = Path(self.settings.backup)
         (backup / "lun0").mkdir(exist_ok=True)
-        rows = "".join(f'<program label="{n}" num_partition_sectors="{s}" SECTOR_SIZE_IN_BYTES="4096" '
-                       f'physical_partition_number="0" filename="{n}.bin"/>'
-                       for n, s in (("boot", 24576), ("super", 2097152), ("userdata", 27804115)))
+        rows = "".join(
+            f'<program label="{n}" num_partition_sectors="{s}" SECTOR_SIZE_IN_BYTES="4096" '
+            f'physical_partition_number="0" filename="{n}.bin"/>'
+            for n, s in (("boot", 24576), ("super", 2097152), ("userdata", 27804115))
+        )
         (backup / "lun0/rawprogram0.xml").write_text(f"<data>{rows}</data>")
         dev_dir = self.root / "dev"
         dev_dir.mkdir(exist_ok=True)
@@ -318,25 +425,41 @@ class DevTests(HeadsetFixture):
         system.write_bytes(b"system image")
         boot_sha = hashlib.sha256(confirmed_boot).hexdigest()
         system_sha = hashlib.sha256(b"system image").hexdigest()
-        responses = {f"by-name/{name} | sha256sum": f"{sha}  -" for name, sha in
-                     (("boot", boot_sha), ("super", system_sha)) if name in (held or ())}
-        dev = self.make({**responses, "cat /etc/pico4/test-run": "dev-loop\n1234567",
-                         "cat /proc/cmdline": cmdline + " msm_drm.dsi_display0=qcom,mdss_dsi_sharp_ls026b3sa_90_video:",
-                         "pico4-install write boot": f"written boot {boot_sha}",
-                         "pico4-install write super": f"written super {system_sha}",
-                         "pico4-install status": f"bootmode: boot-recovery\nsystem: pico4-system\ndata: {data}",
-                         "pico4-install format-data": "formatted userdata",
-                         "pico4-install bootmode normal": "bootmode normal",
-                         "cat /proc/1/comm /etc/pico4/install-id": "systemd\ndev-loop\n1234567"})
+        responses = {
+            f"by-name/{name} | sha256sum": f"{sha}  -"
+            for name, sha in (("boot", boot_sha), ("super", system_sha))
+            if name in (held or ())
+        }
+        dev = self.make(
+            {
+                **responses,
+                "cat /etc/pico4/test-run": "dev-loop\n1234567",
+                "cat /proc/cmdline": cmdline + " msm_drm.dsi_display0=qcom,mdss_dsi_sharp_ls026b3sa_90_video:",
+                "pico4-install write boot": f"written boot {boot_sha}",
+                "pico4-install write super": f"written super {system_sha}",
+                "pico4-install status": f"bootmode: boot-recovery\nsystem: pico4-system\ndata: {data}",
+                "pico4-install format-data": "formatted userdata",
+                "pico4-install bootmode normal": "bootmode normal",
+                "cat /proc/1/comm /etc/pico4/install-id": "systemd\ndev-loop\n1234567",
+            }
+        )
         return dev, system
 
     def test_install_writes_boot_and_super_formats_new_data_and_starts_it(self):
         dev, system = self.install_setup()
         dev.install(system)
         steps = [t for t in self.texts() if "pico4-install" in t or t.endswith("pico4-reboot")]
-        self.assertEqual([s.split("; ")[-1].split(" --")[0] for s in steps],
-                         ["pico4-install write boot", "pico4-install write super", "pico4-install status",
-                          "pico4-install format-data", "pico4-install bootmode normal", "pico4-reboot"])
+        self.assertEqual(
+            [s.split("; ")[-1].split(" --")[0] for s in steps],
+            [
+                "pico4-install write boot",
+                "pico4-install write super",
+                "pico4-install status",
+                "pico4-install format-data",
+                "pico4-install bootmode normal",
+                "pico4-reboot",
+            ],
+        )
         # Sizes from the backup's partition maps, not from the headset.
         self.assertIn("--size 100663296 --bytes 12 ", steps[0])
         self.assertIn(f"--size {2097152 * 4096} ", steps[1])
@@ -344,10 +467,12 @@ class DevTests(HeadsetFixture):
 
     def test_install_refuses_another_panel_before_any_write(self):
         dev, system = self.install_setup()
-        dev.ssh = lambda command, timeout=30, stdin=None, check=True: (
-            "console=x msm_drm.dsi_display0=qcom,mdss_dsi_innolux_nt57900_90_video:" if command == "cat /proc/cmdline"
-            else self.fail("wrote before reading the panel: " + command))
-        real_connect, dev.connect = dev.connect, lambda: "recovery"
+        dev.ssh = lambda command, *_, **__: (
+            "console=x msm_drm.dsi_display0=qcom,mdss_dsi_innolux_nt57900_90_video:"
+            if command == "cat /proc/cmdline"
+            else self.fail("wrote before reading the panel: " + command)
+        )
+        _real_connect, dev.connect = dev.connect, lambda: "recovery"
         with self.assertRaisesRegex(ValueError, "nt57900.*not verified"):
             dev.install(system)
 
@@ -365,10 +490,13 @@ class DevTests(HeadsetFixture):
     def test_release_check_records_every_result_and_fails_on_one(self):
         dev, _ = self.install_setup()
         dev.check = lambda: 0
-        answers = {"pico4-listeners": "sshd tcp/22", "pico4-still-gate 60": "3000 poses, 0 lost",
-                   "cat /usr/share/pico4/version": "version=1.0b1"}
+        answers = {
+            "pico4-listeners": "sshd tcp/22",
+            "pico4-still-gate 60": "3000 poses, 0 lost",
+            "cat /usr/share/pico4/version": "version=1.0b1",
+        }
 
-        def ssh(command, timeout=30, stdin=None, check=True):
+        def ssh(command: str, *_: object, **__: object) -> str:
             if command not in answers:
                 raise RuntimeError("failed: " + command)
             return answers[command]
@@ -420,29 +548,47 @@ class DevTests(HeadsetFixture):
             (backup / f"lun0/{name}.bin").write_bytes(data)
             manifest["files"][f"lun0/{name}.bin"] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         (backup / "manifest.json").write_text(json.dumps(manifest))
-        rows = (backup / "lun0/rawprogram0.xml").read_text().replace(
-            "</data>", '<program label="metadata" num_partition_sectors="4096" SECTOR_SIZE_IN_BYTES="4096" '
-                       'physical_partition_number="0" filename="metadata.bin"/>'
-                       '<program label="recovery" num_partition_sectors="2" SECTOR_SIZE_IN_BYTES="4096" '
-                       'physical_partition_number="0" filename="recovery.bin"/></data>')
+        rows = (
+            (backup / "lun0/rawprogram0.xml")
+            .read_text()
+            .replace(
+                "</data>",
+                '<program label="metadata" num_partition_sectors="4096" SECTOR_SIZE_IN_BYTES="4096" '
+                'physical_partition_number="0" filename="metadata.bin"/>'
+                '<program label="recovery" num_partition_sectors="2" SECTOR_SIZE_IN_BYTES="4096" '
+                'physical_partition_number="0" filename="recovery.bin"/></data>',
+            )
+        )
         (backup / "lun0/rawprogram0.xml").write_text(rows)
         self.partitions = [("boot", len(self.boot)), ("recovery", 8192)]
-        shas = {n: hashlib.sha256(d).hexdigest() for n, d in
-                (("super", b"stock super".ljust(8192, b"\0")), ("boot", self.boot))}
-        dev = self.make({"cat /etc/pico4/test-run": "dev-loop\n1234567",
-                         "cat /proc/cmdline": "console=x pico4.part=recovery",
-                         "pico4-install write super": f"written super {shas['super']}",
-                         "pico4-install write boot": f"written boot {shas['boot']}",
-                         "pico4-install wipe userdata": "wiped userdata",
-                         "pico4-install wipe metadata": "wiped metadata",
-                         "pico4-install bootmode normal": "bootmode normal"})
+        shas = {
+            n: hashlib.sha256(d).hexdigest()
+            for n, d in (("super", b"stock super".ljust(8192, b"\0")), ("boot", self.boot))
+        }
+        dev = self.make(
+            {
+                "cat /etc/pico4/test-run": "dev-loop\n1234567",
+                "cat /proc/cmdline": "console=x pico4.part=recovery",
+                "pico4-install write super": f"written super {shas['super']}",
+                "pico4-install write boot": f"written boot {shas['boot']}",
+                "pico4-install wipe userdata": "wiped userdata",
+                "pico4-install wipe metadata": "wiped metadata",
+                "pico4-install bootmode normal": "bootmode normal",
+            }
+        )
         (self.root / "dev/installed.json").write_text("{}")
         dev.restore()
-        steps = [t.split("; ")[-1].split(" --")[0] for t in self.texts()
-                 if "pico4-install" in t or " flash " in t]
-        self.assertEqual(steps[:5], ["pico4-install write super", "pico4-install write boot",
-                                     "pico4-install wipe userdata", "pico4-install wipe metadata",
-                                     "pico4-install bootmode normal"])
+        steps = [t.split("; ")[-1].split(" --")[0] for t in self.texts() if "pico4-install" in t or " flash " in t]
+        self.assertEqual(
+            steps[:5],
+            [
+                "pico4-install write super",
+                "pico4-install write boot",
+                "pico4-install wipe userdata",
+                "pico4-install wipe metadata",
+                "pico4-install bootmode normal",
+            ],
+        )
         self.assertTrue(steps[5].endswith(" flash recovery " + str(self.root / "dev/restore-recovery.simg")))
         self.assertIn(f"--size {4096 * 4096}", next(t for t in self.texts() if "wipe metadata" in t))
         self.assertFalse((self.root / "dev/installed.json").exists())
@@ -472,17 +618,25 @@ class DevTests(HeadsetFixture):
         # boot holds the installed system: without the recovery request it comes back.
         (self.root / "dev").mkdir(exist_ok=True)
         (self.root / "dev/installed.json").write_text("{}")
-        dev = self.make({"cat /proc/1/comm /proc/cmdline": "systemd\nconsole=x",
-                         "cat /proc/1/comm /etc/pico4/install-id": "systemd\ndev-loop\n1234567",
-                         "userspace-archive.sha256": "abc"})
+        dev = self.make(
+            {
+                "cat /proc/1/comm /proc/cmdline": "systemd\nconsole=x",
+                "cat /proc/1/comm /etc/pico4/install-id": "systemd\ndev-loop\n1234567",
+                "userspace-archive.sha256": "abc",
+            }
+        )
         dev.reboot()
         self.assertTrue(any(devloop.INSTALL_ID in t for t in self.texts()))
         self.assertFalse(any("cat /etc/pico4/test-run" in t for t in self.texts()))
         # With the request in misc, the maintenance stage 1 starts from recovery.
         self.calls.clear()
-        dev = self.make({"cat /proc/1/comm /proc/cmdline": "pico4-init\nconsole=x pico4.part=recovery",
-                         "cat /etc/pico4/test-run": "dev-loop\n1234567",
-                         "cat /proc/cmdline": "console=x pico4.part=recovery"})
+        dev = self.make(
+            {
+                "cat /proc/1/comm /proc/cmdline": "pico4-init\nconsole=x pico4.part=recovery",
+                "cat /etc/pico4/test-run": "dev-loop\n1234567",
+                "cat /proc/cmdline": "console=x pico4.part=recovery",
+            }
+        )
         dev.reboot()
         self.assertTrue(any("cat /etc/pico4/test-run" in t for t in self.texts()))
         self.assertFalse(any(devloop.INSTALL_ID in t for t in self.texts()))

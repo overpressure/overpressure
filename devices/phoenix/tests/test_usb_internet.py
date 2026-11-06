@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""usb-internet: the PC's address on the USB network, from the kernel command line."""
+
 import importlib.machinery
 import importlib.util
 import tempfile
@@ -9,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/usb-internet"
 _loader = importlib.machinery.SourceFileLoader("usb_internet", str(PATH))
 _spec = importlib.util.spec_from_loader("usb_internet", _loader)
+assert _spec is not None
 usb_internet = importlib.util.module_from_spec(_spec)
 _loader.exec_module(usb_internet)
 

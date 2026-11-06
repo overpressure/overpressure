@@ -1,18 +1,23 @@
 # SPDX-License-Identifier: Unlicense
+"""pico4-audiocal: looking up PICO OS's audio calibration in its ACDB files (synthetic data here)."""
+
 import importlib.machinery
 import importlib.util
 import struct
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "userspace/rootfs/usr/bin/pico4-audiocal"
 
 
-def load_tool():
+def load_tool() -> ModuleType:
+    """Load pico4-audiocal, a program without a suffix, as a module."""
     loader = importlib.machinery.SourceFileLoader("pico4_audiocal", str(TOOL))
     spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     return module
@@ -21,8 +26,8 @@ def load_tool():
 audiocal = load_tool()
 
 
-def table(rows):
-    """A u32 table: the row count, then the rows."""
+def table(rows: list[list[int]]) -> bytes:
+    """Pack a u32 table: the row count, then the rows."""
     words = [len(rows)] + [w for row in rows for w in row]
     return struct.pack(f"<{len(words)}I", *words)
 
@@ -39,27 +44,34 @@ class Pool:
         return off
 
 
-def database(kind: str, chunks: dict) -> bytes:
-    body = b"".join(name.encode("latin1").ljust(8, b"\0") + struct.pack("<I", len(data)) + data
-                    for name, data in chunks.items())
-    return (b"QCMSNDDB" + bytes(8) + kind.encode().ljust(8, b"\0") + struct.pack("<II", len(body), len(body))
-            + body)
+def database(kind: str, chunks: dict[str, bytes]) -> bytes:
+    """Build an ACDB file of this kind from its named chunks."""
+    body = b"".join(
+        name.encode("latin1").ljust(8, b"\0") + struct.pack("<I", len(data)) + data for name, data in chunks.items()
+    )
+    return b"QCMSNDDB" + bytes(8) + kind.encode().ljust(8, b"\0") + struct.pack("<II", len(body), len(body)) + body
 
 
-def u32(*values):
+def u32(*values: int) -> bytes:
+    """Pack little-endian u32 words."""
     return struct.pack(f"<{len(values)}I", *values)
 
 
-def write_fake_acdb(directory: Path):
-    """A global file and one device file holding both paths' devices, laid out as PICO OS's."""
+def write_fake_acdb(directory: Path) -> None:
+    """Write a global file and one device file holding both paths' devices, laid out as PICO OS's."""
     pool = Pool()
     custom = pool.add(b"TOPOLOGIES-BLOB!")
     instance = pool.add(u32(1))
     asm = pool.add(u32(0x11130, 0x1000FFFF, 0x11132, 0x10000018))
-    (directory / "Global_cal.acdb").write_bytes(database("GCDB", {
-        "GPROPLUT": table([[0x132AC, custom], [0x1327F, instance], [0x113AE, asm]]),
-        "DATAPOOL": pool.data,
-    }))
+    (directory / "Global_cal.acdb").write_bytes(
+        database(
+            "GCDB",
+            {
+                "GPROPLUT": table([[0x132AC, custom], [0x1327F, instance], [0x113AE, asm]]),
+                "DATAPOOL": pool.data,
+            },
+        )
+    )
 
     pool = Pool()
     rows = []
@@ -71,16 +83,21 @@ def write_fake_acdb(directory: Path):
     vol = pool.add(u32(5))
     ids = u32(2, 0x10C2A, 1, 0x10C2B, 0x10C35, 0, 0x10C36) + u32(1, 0x10719, 0, 0x10911)
     offsets = u32(2, p1, p2) + u32(1, p3)
-    (directory / "Device_cal.acdb").write_bytes(database("AVDB", {
-        "DPROPLUT": table(rows),
-        "AGIILUT0": table([[15, 48000, 0x11130, 0, 0], [4, 48000, 0x11132, 28, 12]]),
-        "AGIICDFT": ids,
-        "AGIICDOT": offsets,
-        "AVIILUT0": table([[15, 0x11130, 0, 0, 0]]),
-        "AVIICDFT": u32(1, 0x1031F, 0, 0x1031C),
-        "AVIICDOT": u32(1, vol),
-        "DATAPOOL": pool.data,
-    }))
+    (directory / "Device_cal.acdb").write_bytes(
+        database(
+            "AVDB",
+            {
+                "DPROPLUT": table(rows),
+                "AGIILUT0": table([[15, 48000, 0x11130, 0, 0], [4, 48000, 0x11132, 28, 12]]),
+                "AGIICDFT": ids,
+                "AGIICDOT": offsets,
+                "AVIILUT0": table([[15, 0x11130, 0, 0, 0]]),
+                "AVIICDFT": u32(1, 0x1031F, 0, 0x1031C),
+                "AVIICDOT": u32(1, vol),
+                "DATAPOOL": pool.data,
+            },
+        )
+    )
 
 
 class AudioCalLookupTests(unittest.TestCase):
@@ -96,14 +113,20 @@ class AudioCalLookupTests(unittest.TestCase):
         cal = audiocal.lookup(str(self.dir))
         self.assertEqual(cal["custom_topologies"], b"TOPOLOGIES-BLOB!")
         speaker, mic = cal["paths"]
-        self.assertEqual((speaker["adm_topology"], speaker["afe_topology"], speaker["asm_topology"]),
-                         (0x11000003, 0x112FC, 0x1000FFFF))
+        self.assertEqual(
+            (speaker["adm_topology"], speaker["afe_topology"], speaker["asm_topology"]),
+            (0x11000003, 0x112FC, 0x1000FFFF),
+        )
         self.assertEqual((mic["adm_topology"], mic["afe_topology"]), (0x10010315, 0x112FB))
 
     def test_parameters_are_packed_with_instance_headers(self):
         speaker, mic = audiocal.lookup(str(self.dir))["paths"]
-        expected = (struct.pack("<IHHII", 0x10C2A, 1, 0, 0x10C2B, 4) + b"\x01\x02\x03\x00"
-                    + struct.pack("<IHHII", 0x10C35, 0, 0, 0x10C36, 8) + u32(7, 8))
+        expected = (
+            struct.pack("<IHHII", 0x10C2A, 1, 0, 0x10C2B, 4)
+            + b"\x01\x02\x03\x00"
+            + struct.pack("<IHHII", 0x10C35, 0, 0, 0x10C36, 8)
+            + u32(7, 8)
+        )
         self.assertEqual(speaker["audproc"], expected)
         self.assertEqual(speaker["audvol"], struct.pack("<IHHII", 0x1031F, 0, 0, 0x1031C, 4) + u32(5))
         self.assertEqual(mic["audproc"], struct.pack("<IHHII", 0x10719, 0, 0, 0x10911, 4) + u32(9))
@@ -122,12 +145,14 @@ class AudioCalLookupTests(unittest.TestCase):
         off, paths = 32, []
         for _ in range(npaths):
             port, path, topology, afe, size = struct.unpack_from("<HHIII", data, off)
-            params = data[off + 16:off + 16 + size]
+            params = data[off + 16 : off + 16 + size]
             paths.append((port, path, topology, afe, params))
             off += 16 + (size + 3) // 4 * 4
         self.assertEqual(off, len(data))
         speaker, mic = cal["paths"]
-        self.assertEqual(paths[0], (0xB000, 1, 0x11000003, speaker["afe_topology"], speaker["audproc"] + speaker["audvol"]))
+        self.assertEqual(
+            paths[0], (0xB000, 1, 0x11000003, speaker["afe_topology"], speaker["audproc"] + speaker["audvol"])
+        )
         self.assertEqual(paths[1], (0xB037, 2, 0x10010315, mic["afe_topology"], mic["audproc"]))
         driver = (ROOT / "kernel/src/sound/soc/qcom/qdsp6/q6calibration-pico4.c").read_text(encoding="utf-8")
         self.assertIn('#define CAL_FIRMWARE\t"qcom/sm8250/pico4/audio-calibration.bin"', driver)

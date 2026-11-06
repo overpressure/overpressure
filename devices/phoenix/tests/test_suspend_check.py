@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Unlicense
 """The suspend check's measurement and verdict, on synthetic recordings."""
+
 import importlib.machinery
 import importlib.util
 import math
-import os
 import struct
 import tempfile
 import unittest
@@ -14,12 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 PATH = ROOT / "userspace/rootfs/usr/bin/pico4-suspend-check"
 _loader = importlib.machinery.SourceFileLoader("pico4_suspend_check", str(PATH))
 _spec = importlib.util.spec_from_loader("pico4_suspend_check", _loader)
+assert _spec is not None
 check = importlib.util.module_from_spec(_spec)
 _loader.exec_module(check)
 
 
-def recording(path, amplitude, noise=0.0005):
-    """A mono recording: the room's quiet, a tone from LEAD_SECONDS for TONE_SECONDS, the quiet again."""
+def recording(path: str, amplitude: float, noise: float = 0.0005) -> None:
+    """Write a mono recording: the room's quiet, a tone from LEAD_SECONDS for TONE_SECONDS, the quiet again."""
     rate = check.RATE
     samples = []
     for i in range(int(check.RECORD_SECONDS * rate)):
@@ -38,7 +39,7 @@ def recording(path, amplitude, noise=0.0005):
 class SuspendCheckTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.path = os.path.join(self.tmp.name, "r.wav")
+        self.path = str(Path(self.tmp.name) / "r.wav")
 
     def tearDown(self):
         self.tmp.cleanup()

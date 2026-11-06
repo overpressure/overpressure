@@ -29,24 +29,34 @@ RIGHT_NORMALS_ADDRESS = 0xB4CC20
 MIN_RADIUS_M, MAX_RADIUS_M = 0.005, 0.15
 #: The left ring is the right one mirrored in y, point by point, within this (metres).
 MIRROR_TOLERANCE_M = 0.005
+#: The normals are stored as unit vectors, within this.
+NORMAL_TOLERANCE = 1e-5
+#: A point has three coordinates.
+VECTOR = 3
+#: ELF header values: e_ident's class and data encoding, and the program header type of a loadable segment.
+ELFCLASS64, ELFDATA2LSB, PT_LOAD = 2, 1, 1
+#: The command line: LIBRARY OUTPUT.json.
+ARGUMENTS = ("LIBRARY", "OUTPUT.json")
 
 
 class LedModelError(ValueError):
-    pass
+    """The library holds no plausible LED model."""
 
 
 def read_virtual(elf: bytes, address: int, size: int) -> bytes:
     """Bytes at a virtual address of a 64-bit little-endian ELF, from its file-backed PT_LOAD segments."""
-    if elf[:4] != b"\x7fELF" or elf[4] != 2 or elf[5] != 1:
-        raise LedModelError("not a 64-bit little-endian ELF file")
-    phoff, = struct.unpack_from("<Q", elf, 0x20)
+    if elf[:4] != b"\x7fELF" or elf[4] != ELFCLASS64 or elf[5] != ELFDATA2LSB:
+        msg = "not a 64-bit little-endian ELF file"
+        raise LedModelError(msg)
+    (phoff,) = struct.unpack_from("<Q", elf, 0x20)
     phentsize, phnum = struct.unpack_from("<HH", elf, 0x36)
     for i in range(phnum):
         kind, _, offset, vaddr, _, filesz, _, _ = struct.unpack_from("<IIQQQQQQ", elf, phoff + i * phentsize)
-        if kind == 1 and vaddr <= address and address + size <= vaddr + filesz:
+        if kind == PT_LOAD and vaddr <= address and address + size <= vaddr + filesz:
             start = offset + address - vaddr
-            return elf[start:start + size]
-    raise LedModelError(f"address {address:#x} is not in a file-backed segment")
+            return elf[start : start + size]
+    msg = f"address {address:#x} is not in a file-backed segment"
+    raise LedModelError(msg)
 
 
 def models(elf: bytes) -> dict[str, list[list[float]]]:
@@ -54,7 +64,7 @@ def models(elf: bytes) -> dict[str, list[list[float]]]:
     result = {}
     for side, address in MODEL_ADDRESSES.items():
         values = struct.unpack(f"<{3 * LEDS}f", read_virtual(elf, address, 3 * LEDS * 4))
-        result[side] = [list(values[3 * i:3 * i + 3]) for i in range(LEDS)]
+        result[side] = [list(values[3 * i : 3 * i + 3]) for i in range(LEDS)]
     validate(result)
     return result
 
@@ -62,48 +72,61 @@ def models(elf: bytes) -> dict[str, list[list[float]]]:
 def normals(elf: bytes, result: dict[str, list[list[float]]]) -> dict[str, list[list[float]]]:
     """Both sides' LED normals, checked against the models of `result`."""
     values = struct.unpack(f"<{3 * LEDS}d", read_virtual(elf, RIGHT_NORMALS_ADDRESS, 3 * LEDS * 8))
-    right = [list(values[3 * i:3 * i + 3]) for i in range(LEDS)]
+    right = [list(values[3 * i : 3 * i + 3]) for i in range(LEDS)]
     out = {"right": right, "left": [[x, -y, z] for x, y, z in right]}
     for side in ("left", "right"):
-        if any(not all(math.isfinite(v) for v in n) or abs(math.hypot(*n) - 1.0) > 1e-5 for n in out[side]):
-            raise LedModelError(f"{side}: the LED normals are not unit vectors")
+        if any(not all(math.isfinite(v) for v in n) or abs(math.hypot(*n) - 1.0) > NORMAL_TOLERANCE for n in out[side]):
+            msg = f"{side}: the LED normals are not unit vectors"
+            raise LedModelError(msg)
     # The LEDs face away from the ring's centre: most normals share the sign of y with their LED.
     centre_y = sum(p[1] for p in result["right"]) / LEDS
     agree = sum(1 for n, p in zip(right, result["right"]) if n[1] * (p[1] - centre_y) > 0)
     if agree < LEDS // 2:
-        raise LedModelError("the LED normals do not belong to these models")
+        msg = "the LED normals do not belong to these models"
+        raise LedModelError(msg)
     return out
 
 
 def validate(result: dict[str, list[list[float]]]) -> None:
-    """A different library version puts other data at these addresses: refuse anything implausible."""
+    """Refuse anything implausible: a different library version puts other data at these addresses."""
     for side in ("left", "right"):
         points = result.get(side) or []
-        if len(points) != LEDS or any(len(p) != 3 or not all(math.isfinite(v) for v in p) for p in points):
-            raise LedModelError(f"{side}: expected {LEDS} finite points")
+        if len(points) != LEDS or any(len(p) != VECTOR or not all(math.isfinite(v) for v in p) for p in points):
+            msg = f"{side}: expected {LEDS} finite points"
+            raise LedModelError(msg)
         radii = [math.hypot(*p) for p in points]
         if min(radii) < MIN_RADIUS_M or max(radii) > MAX_RADIUS_M:
-            raise LedModelError(f"{side}: LEDs {min(radii):.3f}-{max(radii):.3f} m from the origin, not a controller ring")
+            msg = f"{side}: LEDs {min(radii):.3f}-{max(radii):.3f} m from the origin, not a controller ring"
+            raise LedModelError(msg)
     worst = max(math.dist((x, -y, z), r) for (x, y, z), r in zip(result["left"], result["right"]))
     if worst > MIRROR_TOLERANCE_M:
-        raise LedModelError(f"the left model is not the right one mirrored in y ({worst * 1000:.1f} mm off)")
+        msg = f"the left model is not the right one mirrored in y ({worst * 1000:.1f} mm off)"
+        raise LedModelError(msg)
 
 
 def to_json(result: dict[str, list[list[float]]], normal: dict[str, list[list[float]]], library: str) -> str:
-    return json.dumps({
-        "schema": 1,
-        "source": library,
-        "units": "m",
-        "frame": "the nominal model frame of PICO OS's controller tracking",
-        "left": result["left"],
-        "right": result["right"],
-        "normals": normal,
-    }, indent=1) + "\n"
+    """Render the models and normals as the extracted JSON file."""
+    return (
+        json.dumps(
+            {
+                "schema": 1,
+                "source": library,
+                "units": "m",
+                "frame": "the nominal model frame of PICO OS's controller tracking",
+                "left": result["left"],
+                "right": result["right"],
+                "normals": normal,
+            },
+            indent=1,
+        )
+        + "\n"
+    )
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the extractor's command line."""
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 2:
+    if len(args) != len(ARGUMENTS):
         print(__doc__.strip().splitlines()[-1].strip(), file=sys.stderr)
         return 2
     library, output = Path(args[0]), Path(args[1])

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""overpressure's command line: python -m overpressure [--device CODENAME] COMMAND [ARGS...]
+"""overpressure's command line: python -m overpressure [--device CODENAME] COMMAND [ARGS...].
 
   devices              the headsets in devices/
   gui                  the graphical tool (image creation and flashing)
@@ -17,19 +17,20 @@
 The headset is --device, else OVERPRESSURE_DEVICE (environment or .env), else the only one in
 devices/. "python -m overpressure COMMAND --help" shows a command's options.
 """
+
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable
 
-from . import localconfig, runner
+from . import doctor, fastboot, linux, localconfig, runner, tools
 from .headset import Headset, Registry, discover
 
 
-def select(registry: Registry, codename: Optional[str]) -> Optional[Headset]:
-    """The headset to work on, or None when the choice is open."""
+def select(registry: Registry, codename: str | None) -> Headset | None:
+    """Return the headset to work on, or None when the choice is open."""
     if codename is None:
         codename = os.environ.get("OVERPRESSURE_DEVICE") or None
     if codename is None:
@@ -43,7 +44,8 @@ def select(registry: Registry, codename: Optional[str]) -> Optional[Headset]:
     return None
 
 
-def usage(headset: Optional[Headset]) -> str:
+def usage(headset: Headset | None) -> str:
+    """Return the usage text, with the headset's own commands when one is chosen."""
     text = __doc__.strip()
     if headset is not None:
         lines = [f"\nCommands of the {headset.info.name} ({headset.info.codename}):"]
@@ -52,8 +54,8 @@ def usage(headset: Optional[Headset]) -> str:
     return text
 
 
-def ram_boot(headset: Headset, argv: List[str]) -> int:
-    from . import fastboot
+def ram_boot(headset: Headset, argv: list[str]) -> int:
+    """Boot an image from RAM: ram-boot [IMAGE]."""
     target = headset.ram_boot()
     if target is None:
         print(f"error: the {headset.info.name} has no RAM boot in overpressure", file=sys.stderr)
@@ -73,7 +75,82 @@ def ram_boot(headset: Headset, argv: List[str]) -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def _devices(registry: Registry, _headset: Headset | None, _args: list[str]) -> int:
+    for name, h in sorted(registry.headsets.items()):
+        print(f"{name:<12} {h.info.name}" + (f" ({h.info.soc})" if h.info.soc else ""))
+    return 0
+
+
+def _gui(registry: Registry, headset: Headset | None, _args: list[str]) -> int:
+    try:
+        from . import gui  # noqa: PLC0415  # optional: a Python without Tk has no window
+    except ImportError as exc:  # Python without Tk (as in WSL's)
+        print(f"error: no Tk for the window ({exc}); the command line does everything it does", file=sys.stderr)
+        return 2
+    return gui.main(registry, headset)
+
+
+def _container(_registry: Registry, _headset: Headset | None, args: list[str]) -> int:
+    return linux.main(args)
+
+
+def _tools(_registry: Registry, _headset: Headset | None, args: list[str]) -> int:
+    return tools.main(args)
+
+
+def _doctor(_registry: Registry, headset: Headset | None, _args: list[str]) -> int:
+    checks = doctor.run(headset)
+    print(doctor.report(checks))
+    return 1 if doctor.failed(checks) else 0
+
+
+def _steps(headset: Headset, _args: list[str]) -> int:
+    for step in headset.steps():
+        argv = runner.process(headset, step, {})
+        print(f"{step.group:<8} {step.key:<20} {step.title}\n{'':<30}{runner.display(argv)}")
+    return 0
+
+
+def _run(headset: Headset, args: list[str]) -> int:
+    steps = {s.key: s for s in headset.steps()}
+    if not args or args[0] not in steps:
+        print("usage: run STEP [NAME=VALUE...]; steps: " + ", ".join(steps), file=sys.stderr)
+        return 2
+    values = dict(item.split("=", 1) for item in args[1:] if "=" in item)
+    command = runner.process(headset, steps[args[0]], values)
+    print("$ " + runner.display(command), flush=True)
+    return runner.run(command, print)
+
+
+#: The commands of overpressure itself, with or without a headset.
+GENERIC: dict[str, Callable[[Registry, Headset | None, list[str]], int]] = {
+    "devices": _devices,
+    "gui": _gui,
+    "container": _container,
+    "tools": _tools,
+    "doctor": _doctor,
+}
+#: overpressure's commands that work on the chosen headset.
+ON_HEADSET: dict[str, Callable[[Headset, list[str]], int]] = {"steps": _steps, "ram-boot": ram_boot, "run": _run}
+
+
+def _dispatch(registry: Registry, headset: Headset | None, argv: list[str]) -> int:
+    word = argv[0]
+    if word in GENERIC:
+        return GENERIC[word](registry, headset, argv[1:])
+    if headset is None:
+        print("error: choose a headset with --device (python -m overpressure devices)", file=sys.stderr)
+        return 2
+    if word in ON_HEADSET:
+        return ON_HEADSET[word](headset, argv[1:])
+    if word not in headset.commands():
+        print(usage(headset))
+        return 2
+    return headset.main(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the command line."""
     argv = list(sys.argv[1:] if argv is None else argv)
     codename = None
     if argv[:1] == ["--device"] and len(argv) > 1:
@@ -89,57 +166,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(usage(headset))
         return 0 if argv else 2
-    word = argv[0]
-    if word == "devices":
-        for name, h in sorted(registry.headsets.items()):
-            print(f"{name:<12} {h.info.name}" + (f" ({h.info.soc})" if h.info.soc else ""))
-        return 0
-    if word == "gui":
-        try:
-            from . import gui
-        except ImportError as exc:  # Python without Tk (as in WSL's)
-            print(f"error: no Tk for the window ({exc}); the command line does everything it does",
-                  file=sys.stderr)
-            return 2
-        return gui.main(registry, headset)
-    if word == "container":
-        from . import linux
-        return linux.main(argv[1:])
-    if word == "tools":
-        from . import tools
-        return tools.main(argv[1:])
-    if word == "doctor":
-        from . import doctor
-        checks = doctor.run(headset)
-        print(doctor.report(checks))
-        return 1 if doctor.failed(checks) else 0
-    if headset is None:
-        print("error: choose a headset with --device (python -m overpressure devices)", file=sys.stderr)
-        return 2
-    if word == "steps":
-        for step in headset.steps():
-            argv_ = runner.process(headset, step, {})
-            print(f"{step.group:<8} {step.key:<20} {step.title}\n{'':<30}{runner.display(argv_)}")
-        return 0
-    if word == "ram-boot":
-        return ram_boot(headset, argv[1:])
-    if word == "run":
-        steps = {s.key: s for s in headset.steps()}
-        if len(argv) < 2 or argv[1] not in steps:
-            print("usage: run STEP [NAME=VALUE...]; steps: " + ", ".join(steps), file=sys.stderr)
-            return 2
-        values = dict(item.split("=", 1) for item in argv[2:] if "=" in item)
-        command = runner.process(headset, steps[argv[1]], values)
-        print("$ " + runner.display(command), flush=True)
-        return runner.run(command, print)
-    if word not in headset.commands():
-        print(usage(headset))
-        return 2
-    return headset.main(argv)
+    return _dispatch(registry, headset, argv)
 
 
 def gui() -> int:
-    """The overpressure-gui launcher."""
+    """Open the window: the overpressure-gui launcher."""
     return main(["gui"])
 
 

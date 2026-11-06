@@ -7,39 +7,51 @@ repeated in a terminal. One step runs at a time (builds share their caches), its
 the log below, and a step that writes to the headset asks first. Tk comes with Python, so the
 tool needs nothing beyond the standard library.
 """
+
 from __future__ import annotations
 
+import contextlib
 import queue
-import subprocess
 import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Dict, Optional
+from typing import TYPE_CHECKING
 
 from . import REPO, doctor, linux, runner
-from .headset import Headset, Registry, Step
+
+if TYPE_CHECKING:
+    import subprocess
+
+    from .headset import Headset, Param, Registry, Step
 
 GROUPS = ("Setup", "Image", "Headset")
 DOCTOR = "doctor"  # the Setup group's item: the dependency checks
-STATUS_COLOURS = {doctor.OK: "#1a7f37", doctor.MISSING: "#cf222e", doctor.WARNING: "#9a6700",
-                  doctor.OPTIONAL: "#6e7781"}
+STATUS_COLOURS = {
+    doctor.OK: "#1a7f37",
+    doctor.MISSING: "#cf222e",
+    doctor.WARNING: "#9a6700",
+    doctor.OPTIONAL: "#6e7781",
+}
 
 
 class App:
-    def __init__(self, root: tk.Tk, registry: Registry, headset: Optional[Headset]):
+    """The window: the headset's steps on the left, the chosen one's form, command line and log."""
+
+    def __init__(self, root: tk.Tk, registry: Registry, headset: Headset | None) -> None:
+        """Build the window in ROOT for HEADSET (else the first of REGISTRY's)."""
         self.root, self.registry = root, registry
         self.headset = headset or next(iter(registry.headsets.values()))
-        self.values: Dict[str, Dict[str, str]] = {}
-        self.vars: Dict[str, tk.Variable] = {}
-        self.step: Optional[Step] = None
-        self.proc: Optional[subprocess.Popen] = None
+        self.values: dict[str, dict[str, str]] = {}
+        self.vars: dict[str, tk.Variable] = {}
+        self.step: Step | None = None
+        self.proc: subprocess.Popen | None = None
         self.running = False  # one step at a time
-        self.lines: "queue.Queue[str]" = queue.Queue()
-        self.checks: Dict[str, list] = {}  # headset codename -> its last doctor checks
+        self.lines: queue.Queue[str] = queue.Queue()
+        self.checks: dict[str, list] = {}  # headset codename -> its last doctor checks
         self.checking = False
-        self.doctor_results: "queue.Queue" = queue.Queue()
+        self.doctor_results: queue.Queue = queue.Queue()
         root.title("overpressure")
         root.geometry("1100x760")
         root.minsize(800, 560)
@@ -48,7 +60,7 @@ class App:
         root.after(100, self._drain)
 
     # -- layout --------------------------------------------------------------------------
-    def _build(self):
+    def _build(self) -> None:
         top = ttk.Frame(self.root, padding=(10, 8))
         top.pack(fill="x")
         ttk.Label(top, text="Headset").pack(side="left")
@@ -81,8 +93,14 @@ class App:
         self.form = ttk.Frame(self.detail)
         self.form.pack(fill="x")
         ttk.Label(self.detail, text="Command line").pack(anchor="w", pady=(12, 2))
-        self.command = tk.Text(self.detail, height=4, wrap="char", relief="solid", borderwidth=1,
-                               font=("Consolas" if sys.platform == "win32" else "Monospace", 9))
+        self.command = tk.Text(
+            self.detail,
+            height=4,
+            wrap="char",
+            relief="solid",
+            borderwidth=1,
+            font=("Consolas" if sys.platform == "win32" else "Monospace", 9),
+        )
         self.command.pack(fill="x")
         buttons = ttk.Frame(self.detail)
         buttons.pack(anchor="w", pady=10)
@@ -94,13 +112,18 @@ class App:
 
         logframe = ttk.Frame(panes)
         panes.add(logframe, weight=2)
-        self.log = ScrolledText(logframe, height=12, state="disabled", wrap="none",
-                                font=("Consolas" if sys.platform == "win32" else "Monospace", 9))
+        self.log = ScrolledText(
+            logframe,
+            height=12,
+            state="disabled",
+            wrap="none",
+            font=("Consolas" if sys.platform == "win32" else "Monospace", 9),
+        )
         self.log.pack(fill="both", expand=True)
         self.status = ttk.Label(self.root, text="idle", padding=(10, 2), anchor="w")
         self.status.pack(fill="x")
 
-    def _build_doctor(self, parent) -> ttk.Frame:
+    def _build_doctor(self, parent: tk.Misc) -> ttk.Frame:
         frame = ttk.Frame(parent)
         ttk.Label(frame, text="Dependencies", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
         self.doctor_summary = ttk.Label(frame, wraplength=620, justify="left")
@@ -120,8 +143,14 @@ class App:
         self.doctor_table.bind("<<TreeviewSelect>>", self._on_check)
         self.doctor_table.pack(fill="both", expand=True)
         ttk.Label(frame, text="How to fix it").pack(anchor="w", pady=(8, 2))
-        self.doctor_fix = tk.Text(frame, height=3, wrap="word", relief="solid", borderwidth=1,
-                                  font=("Consolas" if sys.platform == "win32" else "Monospace", 9))
+        self.doctor_fix = tk.Text(
+            frame,
+            height=3,
+            wrap="word",
+            relief="solid",
+            borderwidth=1,
+            font=("Consolas" if sys.platform == "win32" else "Monospace", 9),
+        )
         self.doctor_fix.pack(fill="x")
         buttons = ttk.Frame(frame)
         buttons.pack(anchor="w", pady=10)
@@ -130,7 +159,7 @@ class App:
         ttk.Button(buttons, text="Copy fix", command=self._copy_fix).pack(side="left", padx=6)
         return frame
 
-    def _load_headset(self):
+    def _load_headset(self) -> None:
         codes = sorted(self.registry.headsets)
         self.device.current(codes.index(self.headset.info.codename))
         info = self.headset.info
@@ -152,12 +181,12 @@ class App:
         self._label_doctor()
 
     # -- a step --------------------------------------------------------------------------
-    def _on_device(self, _event=None):
+    def _on_device(self, _event: tk.Event | None = None) -> None:
         codename = sorted(self.registry.headsets)[self.device.current()]
         self.headset = self.registry.get(codename)
         self._load_headset()
 
-    def _on_select(self, _event=None):
+    def _on_select(self, _event: tk.Event | None = None) -> None:
         sel = self.tree.selection()
         if sel and sel[0] == DOCTOR:
             self.detail.pack_forget()
@@ -172,8 +201,8 @@ class App:
         self._show(self.steps.get(sel[0]) if sel else None)
 
     # -- the dependency checks -------------------------------------------------------------
-    def _check(self):
-        """Runs the checks off the window's thread: some ask WSL, which can take seconds."""
+    def _check(self) -> None:
+        """Run the checks off the window's thread: some ask WSL, which can take seconds."""
         if self.checking:
             return
         self.checking = True
@@ -182,25 +211,34 @@ class App:
         self.doctor_table.delete(*self.doctor_table.get_children())
         headset = self.headset
 
-        def work():
+        def work() -> None:
             try:
                 result = doctor.run(headset)
-            except Exception as exc:  # the panel says so instead of dying silently
+            except Exception as exc:  # noqa: BLE001  # the panel says so instead of dying silently
                 result = [doctor.Check("doctor", "?", doctor.WARNING, f"the checks failed: {exc}")]
             self.doctor_results.put((headset.info.codename, result))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _show_checks(self):
+    def _show_checks(self) -> None:
         checks = self.checks.get(self.headset.info.codename, [])
         self.doctor_table.delete(*self.doctor_table.get_children())
         for i, check in enumerate(checks):
-            self.doctor_table.insert("", "end", iid=str(i), text=check.name, tags=(check.status,),
-                                     values=(doctor.MARK[check.status], check.needed_for, check.detail))
+            self.doctor_table.insert(
+                "",
+                "end",
+                iid=str(i),
+                text=check.name,
+                tags=(check.status,),
+                values=(doctor.MARK[check.status], check.needed_for, check.detail),
+            )
         missing = doctor.failed(checks)
         warnings = [c for c in checks if c.status == doctor.WARNING]
-        text = (f"{len(missing)} missing: " + ", ".join(c.name for c in missing) if missing
-                else "Everything needed is there.")
+        text = (
+            f"{len(missing)} missing: " + ", ".join(c.name for c in missing)
+            if missing
+            else "Everything needed is there."
+        )
         if warnings:
             text += f" {len(warnings)} warning{'s' if len(warnings) > 1 else ''}."
         self.doctor_summary.config(text=text + " The checks only look; they install nothing.")
@@ -211,33 +249,33 @@ class App:
         else:
             self._set_fix("")
 
-    def _label_doctor(self):
+    def _label_doctor(self) -> None:
         checks = self.checks.get(self.headset.info.codename)
         missing = len(doctor.failed(checks)) if checks is not None else None
         label = "Check dependencies" + (f" ({missing} missing)" if missing else " (all there)" if checks else "")
         if self.tree.exists(DOCTOR):
             self.tree.item(DOCTOR, text=label)
 
-    def _on_check(self, _event=None):
+    def _on_check(self, _event: tk.Event | None = None) -> None:
         sel = self.doctor_table.selection()
         checks = self.checks.get(self.headset.info.codename, [])
         if sel and int(sel[0]) < len(checks):
             check = checks[int(sel[0])]
             self._set_fix(check.fix if check.status != doctor.OK else "")
 
-    def _set_fix(self, text: str):
+    def _set_fix(self, text: str) -> None:
         self.doctor_fix.config(state="normal")
         self.doctor_fix.delete("1.0", "end")
         self.doctor_fix.insert("1.0", text)
         self.doctor_fix.config(state="disabled")
 
-    def _copy_fix(self):
+    def _copy_fix(self) -> None:
         text = self.doctor_fix.get("1.0", "end").strip()
         if text:
             self.root.clipboard_clear()
             self.root.clipboard_append(text)
 
-    def _show(self, step: Optional[Step]):
+    def _show(self, step: Step | None) -> None:
         self.step = step
         for child in self.form.winfo_children():
             child.destroy()
@@ -269,8 +307,9 @@ class App:
                 widget = ttk.Entry(self.form, textvariable=var, width=60)
             widget.grid(row=row, column=1, sticky="we", pady=3)
             if param.kind == "path" and not step.linux_root:
-                ttk.Button(self.form, text="…", width=3,
-                           command=lambda v=var, p=param: self._browse(v, p)).grid(row=row, column=2, padx=4)
+                ttk.Button(self.form, text="…", width=3, command=lambda v=var, p=param: self._browse(v, p)).grid(
+                    row=row, column=2, padx=4
+                )
             if param.help:
                 ttk.Label(self.form, text=param.help, foreground="#555").grid(row=row, column=3, sticky="w", padx=6)
             var.trace_add("write", lambda *_a, n=param.name, v=var: self._set(n, v))
@@ -278,45 +317,48 @@ class App:
         self.form.columnconfigure(1, weight=1)
         self._update_command()
 
-    def _browse(self, var: tk.StringVar, param):
-        path = (filedialog.askopenfilename(initialdir=REPO) if "." in param.default.rsplit("/", 1)[-1]
-                else filedialog.askdirectory(initialdir=REPO))
+    def _browse(self, var: tk.StringVar, param: Param) -> None:
+        path = (
+            filedialog.askopenfilename(initialdir=REPO)
+            if "." in param.default.rsplit("/", 1)[-1]
+            else filedialog.askdirectory(initialdir=REPO)
+        )
         if path:
-            try:
+            with contextlib.suppress(ValueError):
                 path = str(type(REPO)(path).relative_to(REPO)).replace("\\", "/")
-            except ValueError:
-                pass
             var.set(path)
 
-    def _set(self, name: str, var: tk.Variable):
+    def _set(self, name: str, var: tk.Variable) -> None:
         if self.step is not None:
             self.values[self.step.key][name] = var.get()
             self._update_command()
 
-    def _argv(self):
-        return runner.process(self.headset, self.step, self.values.get(self.step.key, {}))
+    def _argv(self, step: Step) -> list[str]:
+        return runner.process(self.headset, step, self.values.get(step.key, {}))
 
-    def _update_command(self):
-        text = runner.display(self._argv()) if self.step is not None else ""
+    def _update_command(self) -> None:
+        text = runner.display(self._argv(self.step)) if self.step is not None else ""
         self.command.config(state="normal")
         self.command.delete("1.0", "end")
         self.command.insert("1.0", text)
         self.command.config(state="disabled")
 
-    def _copy(self):
+    def _copy(self) -> None:
         if self.step is not None:
             self.root.clipboard_clear()
-            self.root.clipboard_append(runner.display(self._argv()))
+            self.root.clipboard_append(runner.display(self._argv(self.step)))
 
     # -- running -------------------------------------------------------------------------
-    def _run(self):
+    def _run(self) -> None:
         step = self.step
         if step is None or self.running:
             return
-        argv = self._argv()
+        argv = self._argv(step)
         if step.writes and not messagebox.askokcancel(
-                "Writes to the headset", f"{step.title}\n\n{step.help}\n\n{runner.display(argv)}\n\nContinue?",
-                icon="warning"):
+            "Writes to the headset",
+            f"{step.title}\n\n{step.help}\n\n{runner.display(argv)}\n\nContinue?",
+            icon="warning",
+        ):
             return
         self._append(f"$ {runner.display(argv)}")
         self.status.config(text=f"running: {step.title}")
@@ -324,10 +366,10 @@ class App:
         self.stop_button.config(state="normal")
         self.running = True
 
-        def started(proc):
+        def started(proc: subprocess.Popen) -> None:
             self.proc = proc
 
-        def work():
+        def work() -> None:
             try:
                 code = runner.run(argv, self.lines.put, started)
             except OSError as exc:
@@ -337,11 +379,11 @@ class App:
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _stop(self):
+    def _stop(self) -> None:
         if self.proc is not None and self.proc.poll() is None:
             self.proc.terminate()
 
-    def _drain(self):
+    def _drain(self) -> None:
         try:
             while True:
                 codename, checks = self.doctor_results.get_nowait()
@@ -372,14 +414,15 @@ class App:
             pass
         self.root.after(100, self._drain)
 
-    def _append(self, line: str):
+    def _append(self, line: str) -> None:
         self.log.config(state="normal")
         self.log.insert("end", line + "\n")
         self.log.see("end")
         self.log.config(state="disabled")
 
 
-def main(registry: Registry, headset: Optional[Headset] = None) -> int:
+def main(registry: Registry, headset: Headset | None = None) -> int:
+    """Open the window; return when it is closed."""
     if not registry.headsets:
         print("error: no headsets in devices/", file=sys.stderr)
         return 2

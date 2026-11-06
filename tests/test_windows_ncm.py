@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Unlicense
+"""overpressure.windows_ncm: switching the gadget's USB configuration to its NCM interfaces on Windows."""
+
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -21,7 +23,7 @@ class NcmTests(unittest.TestCase):
         self.assertEqual(result["serial"], "POC123")
         self.assertEqual(result["status"], "initialized")
         self.dev.set_configuration.assert_called_once_with(1)
-        self.dev.ctrl_transfer.assert_called_once_with(0x21, 0x8a, 0, 2, b"", timeout=3000)
+        self.dev.ctrl_transfer.assert_called_once_with(0x21, 0x8A, 0, 2, b"", timeout=3000)
         self.dispose.assert_called_once_with(self.dev)
 
     def test_wrong_serial_receives_no_configuration_or_control(self):

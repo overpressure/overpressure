@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """Valve's kernel's host tools: the overlay sink and the one-shot recovery image."""
+
 from __future__ import annotations
 
 import gzip
@@ -10,14 +11,18 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest import mock
 
-from overpressure import avb, bootimg, cpio
 from devices.phoenix.kernel import dtbo_sink, imx471_mode, panel_sequence, recovery_image
+from overpressure import avb, bootimg, cpio
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def fdt(nodes: dict) -> bytes:
-    """A minimal flattened device tree: {node name: {property: value}} below the root."""
+    """Build a minimal flattened device tree: {node name: {property: value}} below the root."""
     strings, structure = b"", b""
 
     def name_offset(name: str) -> int:
@@ -35,20 +40,21 @@ def fdt(nodes: dict) -> bytes:
     for node, props in nodes.items():
         structure += begin(node)
         for prop, value in props.items():
-            value = value.encode() + b"\0"
-            structure += struct.pack(">III", 3, len(value), name_offset(prop)) + value + b"\0" * (-len(value) % 4)
+            raw = value.encode() + b"\0"
+            structure += struct.pack(">III", 3, len(raw), name_offset(prop)) + raw + b"\0" * (-len(raw) % 4)
         structure += struct.pack(">I", 2)
     structure += struct.pack(">II", 2, 9)
     off_struct = 40 + 16  # header, then an empty memory reservation map
     off_strings = off_struct + len(structure)
     total = off_strings + len(strings)
-    header = struct.pack(">IIIIIIIIII", 0xD00DFEED, total, off_struct, off_strings, 40, 17, 16, 0,
-                         len(strings), len(structure))
+    header = struct.pack(
+        ">IIIIIIIIII", 0xD00DFEED, total, off_struct, off_strings, 40, 17, 16, 0, len(strings), len(structure)
+    )
     return header + b"\0" * 16 + structure + strings
 
 
 def fdt_tree(tree: dict) -> bytes:
-    """A flattened device tree from {name: bytes (a property) or dict (a child node)}."""
+    """Build a flattened device tree from {name: bytes (a property) or dict (a child node)}."""
     strings, structure = b"", b""
 
     def begin(name: str) -> bytes:
@@ -72,8 +78,19 @@ def fdt_tree(tree: dict) -> bytes:
     structure = node("", tree) + struct.pack(">I", 9)
     off_struct = 40 + 16
     off_strings = off_struct + len(structure)
-    header = struct.pack(">IIIIIIIIII", 0xD00DFEED, off_strings + len(strings), off_struct, off_strings, 40, 17, 16,
-                         0, len(strings), len(structure))
+    header = struct.pack(
+        ">IIIIIIIIII",
+        0xD00DFEED,
+        off_strings + len(strings),
+        off_struct,
+        off_strings,
+        40,
+        17,
+        16,
+        0,
+        len(strings),
+        len(structure),
+    )
     return header + b"\0" * 16 + structure + strings
 
 
@@ -82,14 +99,24 @@ OFF = bytes.fromhex("05 01 00 00 32 00 01 28")
 
 
 def panel_overlay(on: bytes = ON, off: bytes = OFF) -> bytes:
+    """Build an overlay with a panel's on and off command sequences, as PICO OS's dtbo has them."""
     timing = {"qcom,mdss-dsi-on-command": on, "qcom,mdss-dsi-off-command": off, "qcom,other": b"x"}
-    return fdt_tree({"fragment@0": {"__overlay__": {"qcom,mdss_dsi_sharp_ls026b3sa_90_video": {
-        "qcom,mdss-dsi-panel-name": b"sharp\0",
-        "qcom,mdss-dsi-display-timings": {"timing@0": timing}}}}})
+    return fdt_tree(
+        {
+            "fragment@0": {
+                "__overlay__": {
+                    "qcom,mdss_dsi_sharp_ls026b3sa_90_video": {
+                        "qcom,mdss-dsi-panel-name": b"sharp\0",
+                        "qcom,mdss-dsi-display-timings": {"timing@0": timing},
+                    }
+                }
+            }
+        }
+    )
 
 
 def dtbo(overlays: list) -> bytes:
-    """An Android dtbo image holding the given overlays."""
+    """Build an Android dtbo image holding the given overlays."""
     header, entry = 32, 32
     offset = header + entry * len(overlays)
     entries, blobs = b"", b""
@@ -102,10 +129,17 @@ def dtbo(overlays: list) -> bytes:
 
 class DtboSinkTests(unittest.TestCase):
     def test_labels_of_every_overlay_resolve_into_the_sink(self):
-        image = dtbo([
-            fdt({"fragment@0": {"target": "x"}, "__fixups__": {"spmi_bus": "/fragment@0:target:0", "tlmm": "/a:b:0"}}),
-            fdt({"__fixups__": {"tlmm": "/c:d:0", "CPU4": "/e:f:0"}}),
-        ])
+        image = dtbo(
+            [
+                fdt(
+                    {
+                        "fragment@0": {"target": "x"},
+                        "__fixups__": {"spmi_bus": "/fragment@0:target:0", "tlmm": "/a:b:0"},
+                    }
+                ),
+                fdt({"__fixups__": {"tlmm": "/c:d:0", "CPU4": "/e:f:0"}}),
+            ]
+        )
         labels = set()
         for overlay in dtbo_sink.overlays(image):
             labels |= dtbo_sink.fixup_labels(overlay)
@@ -122,8 +156,9 @@ class DtboSinkTests(unittest.TestCase):
 
     def test_a_recovery_image_supplies_its_recovery_dtbo(self):
         image = dtbo([fdt({"__fixups__": {"soc": "/x:y:0"}})])
-        boot = bootimg.BootImage(header_version=2, page_size=4096, kernel=b"k", ramdisk=b"r",
-                                 recovery_dtbo=image, dtb=b"d")
+        boot = bootimg.BootImage(
+            header_version=2, page_size=4096, kernel=b"k", ramdisk=b"r", recovery_dtbo=image, dtb=b"d"
+        )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "recovery.img"
             path.write_bytes(boot.pack())
@@ -164,8 +199,12 @@ MODE = (2560, 4520, 50.0, 2328, 1748, 10)
 SETTINGS = [(0x1000, 0x11), (0x0202, 0x22), (0x0203, 0x33), (0x0204, 0x44), (0x0205, 0x55), (0x1001, 0x66)]
 
 
-def camera_module(resolutions=(MODE,), settings=SETTINGS, record=None) -> bytes:
-    """A parameter file with these resolutions, each with `settings`; `record` overrides fields."""
+def camera_module(
+    resolutions: Sequence[tuple[int, int, float, int, int, int]] = (MODE,),
+    settings: Sequence[tuple[int, int]] = SETTINGS,
+    record: dict[str, int] | None = None,
+) -> bytes:
+    """Build a camera module parameter file with these resolutions, each with `settings`; `record` overrides fields."""
     names, blob = [], bytearray()
 
     def node(name: str, payload: bytes) -> int:
@@ -180,10 +219,31 @@ def camera_module(resolutions=(MODE,), settings=SETTINGS, record=None) -> bytes:
         for reg, value in settings:
             data = node("registerData", struct.pack("<Q", value))
             delay = node("delayUs", struct.pack("<Q", 0))
-            fields = dict(slave=0, reg=reg, count=1, data=data, address=2, width=1, op=0, delays=1, delay=delay)
+            fields = {
+                "slave": 0,
+                "reg": reg,
+                "count": 1,
+                "data": data,
+                "address": 2,
+                "width": 1,
+                "op": 0,
+                "delays": 1,
+                "delay": delay,
+            }
             fields.update(record or {})
-            records += struct.pack("<10Q", fields["slave"], 0, fields["reg"], fields["count"], fields["data"],
-                                   fields["address"], fields["width"], fields["op"], fields["delays"], fields["delay"])
+            records += struct.pack(
+                "<10Q",
+                fields["slave"],
+                0,
+                fields["reg"],
+                fields["count"],
+                fields["data"],
+                fields["address"],
+                fields["width"],
+                fields["op"],
+                fields["delays"],
+                fields["delay"],
+            )
         regs = node("regSetting", records)
         entry = [0] * 38
         entry[1:5] = [1, stream, line, frame]
@@ -193,17 +253,17 @@ def camera_module(resolutions=(MODE,), settings=SETTINGS, record=None) -> bytes:
         entries += bytes(packed)
     node("resolutionData", entries)
 
-    symbols = b"".join(struct.pack("<Q32s4Q", i + 1, name.encode(), 0, 0, offset, size)
-                       for i, (name, offset, size) in enumerate(names))
+    symbols = b"".join(
+        struct.pack("<Q32s4Q", i + 1, name.encode(), 0, 0, offset, size) for i, (name, offset, size) in enumerate(names)
+    )
     table = 160
     first = table + 2 * 24
     second = first + len(symbols)
     head = bytearray(table)
-    head[:len(imx471_mode.MAGIC)] = imx471_mode.MAGIC
+    head[: len(imx471_mode.MAGIC)] = imx471_mode.MAGIC
     struct.pack_into("<I", head, 28, second + len(blob))
     struct.pack_into("<II", head, 152, table, 2)
-    return (bytes(head) + struct.pack("<6Q", 0, first, len(symbols), 1, second, len(blob))
-            + symbols + bytes(blob))
+    return bytes(head) + struct.pack("<6Q", 0, first, len(symbols), 1, second, len(blob)) + symbols + bytes(blob)
 
 
 class Imx471ModeTests(unittest.TestCase):
@@ -227,12 +287,12 @@ class Imx471ModeTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=record):
                 imx471_mode.mode(camera_module(record=record))
         with self.assertRaises(ValueError):  # a value over a byte
-            imx471_mode.mode(camera_module(settings=SETTINGS + [(0x1002, 0x100)]))
+            imx471_mode.mode(camera_module(settings=[*SETTINGS, (4098, 256)]))
         with self.assertRaises(ValueError):  # a pointer to a node of the wrong name
             imx471_mode.mode(camera_module(record={"data": 1}))
 
     def test_the_drivers_controls_must_be_there_once(self):
-        for settings in (SETTINGS[:1], SETTINGS + [(0x0202, 0x77)]):
+        for settings in (SETTINGS[:1], [*SETTINGS, (514, 119)]):
             with self.assertRaises(ValueError):
                 imx471_mode.mode(camera_module(settings=settings))
 
@@ -264,10 +324,11 @@ class Imx471ModeTests(unittest.TestCase):
         self.assertIn('"$src/drivers/media/i2c/pico4-imx471-mode.h"', script)
 
 
-def stock_partition(total=64 * 4096) -> bytes:
+def stock_partition(total: int = 64 * 4096) -> bytes:
+    """Build a partition with an AVB footer pointing at its vbmeta, as a stock image has one."""
     data = bytearray(total)
     vbmeta = b"AVB0" + b"\x11" * 252
-    data[1000:1000 + len(vbmeta)] = vbmeta
+    data[1000 : 1000 + len(vbmeta)] = vbmeta
     data[-64:] = avb.FOOTER.pack(avb.FOOTER_MAGIC, 1, 0, 1000, 1000, len(vbmeta))
     return bytes(data)
 
@@ -281,7 +342,9 @@ class InstalledStage1Tests(unittest.TestCase):
 
     def test_the_system_starts_only_with_the_kernels_devtmpfs(self):
         # Without a devtmpfs systemd's device monitor does not follow udev: the switch refuses.
-        script = (Path(__file__).resolve().parents[1] / "initramfs/usr/libexec/pico4/switch-userspace").read_text(encoding="utf-8")
+        script = (Path(__file__).resolve().parents[1] / "initramfs/usr/libexec/pico4/switch-userspace").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('= devtmpfs ] ||\n\tfail "/dev is no devtmpfs', script)
         self.assertLess(script.index("no devtmpfs"), script.index('mount --move /dev "$NEW/dev"'))
 
@@ -295,8 +358,14 @@ class RecoveryImageTests(unittest.TestCase):
         (self.tmp / "stock.img").write_bytes(stock_partition())
 
     def dev_recovery(self, cmdline: str, ramdisk: bytes = b"stage 1") -> Path:
-        boot = bootimg.BootImage(header_version=2, page_size=4096, kernel=b"stock kernel", ramdisk=ramdisk,
-                                 recovery_dtbo=b"overlays", dtb=b"stock dtb").with_cmdline(cmdline)
+        boot = bootimg.BootImage(
+            header_version=2,
+            page_size=4096,
+            kernel=b"stock kernel",
+            ramdisk=ramdisk,
+            recovery_dtbo=b"overlays",
+            dtb=b"stock dtb",
+        ).with_cmdline(cmdline)
         path = self.tmp / "dev-recovery.img"
         path.write_bytes(avb.with_stock_vbmeta(stock_partition(), boot.pack()))
         return path
@@ -333,7 +402,7 @@ class RecoveryImageTests(unittest.TestCase):
         self.assertIn("initcall_debug", image.full_cmdline.split())
         # Stage 1 stays first; the appended archive moves the real binary aside and replaces it.
         self.assertTrue(image.ramdisk.startswith(stage1))
-        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(stage1):])))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(stage1) :])))
         self.assertEqual(added["usr/libexec/pico4/pico4-reboot-real"].data, b"ELF reboot")
         self.assertIn(b"/proc/sysrq-trigger", added["usr/sbin/pico4-reboot"].data)
         self.assertEqual(added["etc/pico4/test-connect-timeout"].data, b"330\n")
@@ -349,20 +418,22 @@ class RecoveryImageTests(unittest.TestCase):
             tree.add_file("usr/sbin/pico4-reboot", b"ELF reboot", 0o755)
             tree.add_file("init", marker)
             return gzip.compress(tree.to_cpio(), mtime=0)
+
         dev = self.dev_recovery("pico4.test_run=dev-loop pico4.part=recovery", stage1(b"maintenance"))
-        install = bootimg.BootImage(header_version=2, page_size=4096, kernel=b"stock kernel",
-                                    ramdisk=stage1(b"installed"), dtb=b"stock dtb").with_cmdline(
-            "androidboot.hardware=qcom pico4.root=installed pico4.autoreboot=0")
+        install = bootimg.BootImage(
+            header_version=2, page_size=4096, kernel=b"stock kernel", ramdisk=stage1(b"installed"), dtb=b"stock dtb"
+        ).with_cmdline("androidboot.hardware=qcom pico4.root=installed pico4.autoreboot=0")
         (self.tmp / "install-boot.img").write_bytes(install.pack())
-        image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev,
-                                                   installed=self.tmp / "install-boot.img"))
+        image = bootimg.parse(
+            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, installed=self.tmp / "install-boot.img")
+        )
         words = image.full_cmdline.split()
         self.assertIn("pico4.root=installed", words)
         self.assertNotIn("pico4.test_run=dev-loop", words)
         # The recovery partition's own overlays stay.
         self.assertEqual(image.recovery_dtbo, b"overlays")
         self.assertTrue(image.ramdisk.startswith(install.ramdisk))
-        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(install.ramdisk):])))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(install.ramdisk) :])))
         wrapper = added["usr/sbin/pico4-reboot"].data
         self.assertIn(b'"$1" = recovery', wrapper)
         self.assertNotIn(b"/proc/sysrq-trigger", wrapper)
@@ -379,13 +450,15 @@ class RecoveryImageTests(unittest.TestCase):
             tree.add_file("usr/sbin/pico4-reboot", b"ELF reboot", 0o755)
             tree.add_file("init", marker)
             return gzip.compress(tree.to_cpio(), mtime=0)
+
         dev = self.dev_recovery("pico4.test_run=dev-loop pico4.part=recovery", stage1(b"maintenance"))
-        install = bootimg.BootImage(header_version=2, page_size=4096, kernel=b"stock kernel",
-                                    ramdisk=stage1(b"installed"), dtb=b"stock dtb").with_cmdline(
-            "androidboot.hardware=qcom pico4.root=installed pico4.autoreboot=0")
+        install = bootimg.BootImage(
+            header_version=2, page_size=4096, kernel=b"stock kernel", ramdisk=stage1(b"installed"), dtb=b"stock dtb"
+        ).with_cmdline("androidboot.hardware=qcom pico4.root=installed pico4.autoreboot=0")
         (self.tmp / "install-boot.img").write_bytes(install.pack())
-        data = recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev,
-                                    installed=self.tmp / "install-boot.img", boot=True)
+        data = recovery_image.build(
+            self.tmp / "out", self.tmp / "stock.img", dev, installed=self.tmp / "install-boot.img", boot=True
+        )
         image = bootimg.parse(data)
         # A plain boot image (no AVB footer), the installed system's header, words and stage 1.
         self.assertEqual(data, image.pack())
@@ -405,7 +478,7 @@ class RecoveryImageTests(unittest.TestCase):
         dev = self.dev_recovery("pico4.part=recovery")
         image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, overlay=overlay))
         self.assertTrue(image.ramdisk.startswith(b"stage 1"))
-        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1"):])))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1") :])))
         self.assertEqual(added["init"].data, b"#!/bin/sh\necho new\n")
         self.assertTrue(added["usr/bin/pico4-userspace"].mode & 0o111)
         self.assertNotIn("usr/sbin/pico4-splash", added)
@@ -413,7 +486,7 @@ class RecoveryImageTests(unittest.TestCase):
         (self.tmp / "prebuilt" / "aarch64").mkdir(parents=True)
         (self.tmp / "prebuilt" / "aarch64" / "pico4-splash").write_bytes(b"ELF splash")
         image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, overlay=overlay))
-        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1"):])))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1") :])))
         self.assertEqual(added["usr/sbin/pico4-splash"].data, b"ELF splash")
         self.assertTrue(added["usr/sbin/pico4-splash"].mode & 0o111)
         with self.assertRaises(ValueError):
@@ -425,17 +498,21 @@ class RecoveryImageTests(unittest.TestCase):
         for name in ("a650_sqe.fw", "a650_gmu.bin", "a650_zap.mdt", "a650_zap.b00", "venus.mdt"):
             (firmware / name).write_bytes(name.encode())
         dev = self.dev_recovery("pico4.part=recovery")
-        image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev,
-                                                   gpu_firmware=firmware))
+        image = bootimg.parse(
+            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, gpu_firmware=firmware)
+        )
         self.assertTrue(image.ramdisk.startswith(b"stage 1"))
-        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1"):])))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1") :])))
         files = {path: node.data for path, node in added.items() if node.is_file}
-        self.assertEqual(files, {
-            "lib/firmware/qcom/a650_sqe.fw": b"a650_sqe.fw",
-            "lib/firmware/qcom/a650_gmu.bin": b"a650_gmu.bin",
-            "lib/firmware/qcom/sm8250/pico/phoenix/a650_zap.mdt": b"a650_zap.mdt",
-            "lib/firmware/qcom/sm8250/pico/phoenix/a650_zap.b00": b"a650_zap.b00",
-        })
+        self.assertEqual(
+            files,
+            {
+                "lib/firmware/qcom/a650_sqe.fw": b"a650_sqe.fw",
+                "lib/firmware/qcom/a650_gmu.bin": b"a650_gmu.bin",
+                "lib/firmware/qcom/sm8250/pico/phoenix/a650_zap.mdt": b"a650_zap.mdt",
+                "lib/firmware/qcom/sm8250/pico/phoenix/a650_zap.b00": b"a650_zap.b00",
+            },
+        )
         (firmware / "a650_gmu.bin").unlink()
         with self.assertRaises(ValueError):
             recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, gpu_firmware=firmware)
@@ -446,24 +523,33 @@ class RecoveryImageTests(unittest.TestCase):
         for name in ("amss20.bin", "m3.bin", "bdwlanq.elf", "bdwlan.elf", "bdwlan.e01"):
             (firmware / name).write_bytes(name.encode())
         dev = self.dev_recovery("pico4.part=recovery")
-        image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev,
-                                                   wlan_firmware=self.tmp / "wlan"))
-        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1"):])))
+        image = bootimg.parse(
+            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, wlan_firmware=self.tmp / "wlan")
+        )
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1") :])))
         files = {path: node.data for path, node in added.items() if node.is_file}
-        self.assertEqual(files, {
-            "lib/firmware/ath11k/QCA6390/hw2.0/amss.bin": b"amss20.bin",
-            "lib/firmware/ath11k/QCA6390/hw2.0/m3.bin": b"m3.bin",
-            "lib/firmware/ath11k/QCA6390/hw2.0/board.bin": b"bdwlanq.elf",
-        })
+        self.assertEqual(
+            files,
+            {
+                "lib/firmware/ath11k/QCA6390/hw2.0/amss.bin": b"amss20.bin",
+                "lib/firmware/ath11k/QCA6390/hw2.0/m3.bin": b"m3.bin",
+                "lib/firmware/ath11k/QCA6390/hw2.0/board.bin": b"bdwlanq.elf",
+            },
+        )
         (firmware / "bdwlanq.elf").unlink()
         with self.assertRaises(ValueError):
             recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, wlan_firmware=self.tmp / "wlan")
 
     def test_extra_words_replace_their_keys(self):
         dev = self.dev_recovery("pico4.part=recovery panic=0")
-        words = bootimg.parse(recovery_image.build(
-            self.tmp / "out", self.tmp / "stock.img", dev,
-            cmdline_words=["panel_pico4_ls026b3sa.wake_test_sleep_in=1", "panic=30"])).full_cmdline.split()
+        words = bootimg.parse(
+            recovery_image.build(
+                self.tmp / "out",
+                self.tmp / "stock.img",
+                dev,
+                cmdline_words=["panel_pico4_ls026b3sa.wake_test_sleep_in=1", "panic=30"],
+            )
+        ).full_cmdline.split()
         self.assertIn("panel_pico4_ls026b3sa.wake_test_sleep_in=1", words)
         self.assertEqual([w for w in words if w.startswith("panic=")], ["panic=30"])
 
@@ -480,14 +566,16 @@ class RecoveryImageTests(unittest.TestCase):
         tree = cpio.Tree()
         tree.mkdir("etc")
         tree.mkdir("etc/pico4")
-        tree.add_file("etc/pico4/build-info", json.dumps({"kernel": "Linux version 4.19.81-perf+ (stock)",
-                                                               "stock": "5.13.7"}).encode())
+        tree.add_file(
+            "etc/pico4/build-info",
+            json.dumps({"kernel": "Linux version 4.19.81-perf+ (stock)", "stock": "5.13.7"}).encode(),
+        )
         kernel = gzip.compress(b"\0" * 64 + b"Linux version 7.2.0-pico4 (valve) #1 SMP\n\0", mtime=0)
         (self.tmp / "out" / "Image.gz").write_bytes(kernel)
         dev = self.dev_recovery("pico4.part=recovery", gzip.compress(tree.to_cpio(), mtime=0))
         image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev))
         expected = {"kernel": "Linux version 7.2.0-pico4 (valve) #1 SMP", "stock": "5.13.7"}
-        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(gzip.compress(tree.to_cpio(), mtime=0)):])))
+        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(gzip.compress(tree.to_cpio(), mtime=0)) :])))
         self.assertEqual(json.loads(added["etc/pico4/build-info"].data), expected)
         out = self.tmp / "test.img"
         recovery_image.main([str(self.tmp / "out"), str(self.tmp / "stock.img"), str(dev), str(out)])
