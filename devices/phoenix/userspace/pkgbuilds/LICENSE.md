@@ -12,5 +12,5 @@ PKGBUILD changes or derives from its upstream, and is under that upstream's lice
 | `pico4-sensors` | hexagonrpc | `GPL-3.0-or-later` | the patches |
 | `pico4-spa-alsa` | PipeWire | `MIT` | the patch |
 
-`pico4-monado`'s JSON files are SteamVR bindings the project wrote. The list of upstreams and their
-pinned versions is in [THIRD-PARTY.md](../../../../THIRD-PARTY.md).
+`pico4-monado`'s JSON files are SteamVR bindings the project wrote. Each PKGBUILD pins its upstream's
+version.

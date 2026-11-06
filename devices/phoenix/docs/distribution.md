@@ -16,7 +16,7 @@ legal advice.
 | Holo Core and the Frame's packages, Steam's client, SteamVR | Valve, public package repositories without signatures | names and hashes (`userspace/packages.lock`) | the userspace build, on their PC | the userspace, Valve's session |
 | Valve's kernel | Valve, its public GPL source package | hash and commit (`kernel/build-kernel.sh`), patches | the kernel build, on their PC | the kernel |
 | The Steam client's updates, games | Valve, with the owner's own Steam account | no | Steam, on the headset | Steam |
-| Open source projects | their upstreams | recipes, pins and patches ([THIRD-PARTY.md](../../../THIRD-PARTY.md)) | the userspace build | Monado, gamescope and others |
+| Open source projects | their upstreams | recipes, pins and patches (`userspace/pkgbuilds/`) | the userspace build | Monado, gamescope and others |
 | `prebuilt/aarch64/pico4-reboot`, `pico4-splash` | this project | yes, with their sources in `src/` | the repository | stage 1 builds without a cross compiler |
 
 ## What this means for an owner
