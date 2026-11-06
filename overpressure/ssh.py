@@ -3,6 +3,7 @@
 
 A headset's Linux stages make new host keys on every boot, so a run keeps its known hosts apart
 from the user's and accepts a new key on first contact; the key file authenticates the host.
+An image enrolls this PC's key and, when the owner names one, the owner's own (authorized_keys).
 """
 
 from __future__ import annotations
@@ -36,3 +37,23 @@ def argv(  # noqa: PLR0913  # the ssh setup, the target and the command; the tim
         target,
         command,
     ]
+
+
+def authorized_keys(this_pc: bytes, extra: Path | None, setting: str) -> bytes:
+    """Return the authorized_keys a headset's image enrolls: this PC's key, and those of @p extra.
+
+    @p extra is the owner's own public key file (the .env key @p setting names it), one key per
+    line; a missing file, a private key or a line that is no public key raises ValueError.
+    """
+    keys = [this_pc.strip()]
+    if extra is not None:
+        if not extra.is_file():
+            msg = f"{setting}: no file {extra}"
+            raise ValueError(msg)
+        own = [line.strip() for line in extra.read_bytes().splitlines() if line.strip()]
+        for line in own:
+            if b"PRIVATE KEY" in line or not line.startswith((b"ssh-", b"ecdsa-", b"sk-")):
+                msg = f"{setting}: {extra} is no public key file"
+                raise ValueError(msg)
+        keys += own
+    return b"\n".join(keys) + b"\n"

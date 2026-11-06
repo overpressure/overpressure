@@ -20,8 +20,14 @@ from pathlib import Path
 
 from overpressure import android
 from overpressure.android import run
-from overpressure.backup import digest, save_new, verified_backup
-from overpressure.qualcomm import backup_commands, chip_id, edl_command, validate_native_dump
+from overpressure.backup import digest, partition_names, save_new, verified_backup
+from overpressure.qualcomm import (
+    backup_commands,
+    capture_backup,
+    chip_id,
+    edl_command,
+    write_verified,
+)
 
 from . import localconfig, unlockfiles
 
@@ -146,45 +152,14 @@ def dispatch(args: argparse.Namespace) -> None:  # noqa: C901, PLR0911, PLR0912,
             for command in commands:
                 print(subprocess.list2cmdline(command))
             return
-        if args.backup.exists():
-            msg = "Use a new backup directory; existing or partial backups are never overwritten"
-            raise ValueError(msg)
-        args.backup.mkdir(parents=True)
-        with (args.backup / "edl.log").open("w", encoding="utf-8") as log:
-            for command in commands:
-                output = run(command, timeout=86400)
-                log.write(output + "\n")
-                log.flush()
-        if args.edl_backend == "edl-ng":
-            validate_native_dump(args.backup, args.edl_luns, include_userdata=args.include_userdata)
-        files = {
-            p.relative_to(args.backup).as_posix(): digest(p)
-            for p in args.backup.rglob("*")
-            if p.is_file() and p.suffix in (".bin", ".img", ".xml")
-        }
-        stems = {Path(name).stem for name in files}
-        for required in ("abl", "boot", "devinfo"):
-            if not stems.intersection({required, required + "_a", required + "_b"}):
-                msg = f"EDL did not produce a {required} backup; no manifest written"
-                raise ValueError(msg)
-        if not any(s.startswith("gpt_main") for s in stems) or not any(
-            Path(n).name.startswith("rawprogram") and n.endswith(".xml") for n in files
-        ):
-            msg = "Missing GPT/rawprogram metadata; no manifest written"
-            raise ValueError(msg)
-        if args.include_userdata and "userdata" not in stems:
-            msg = "Requested userdata backup is missing; no manifest written"
-            raise ValueError(msg)
-        save_new(
-            args.backup / "manifest.json",
-            {
-                "schema": 1,
-                "identity": identity,
-                "includes_userdata": args.include_userdata,
-                "edl_backend": args.edl_backend,
-                "luns": args.edl_luns,
-                "files": files,
-            },
+        capture_backup(
+            args.backup,
+            commands,
+            identity,
+            backend=args.edl_backend,
+            luns=args.edl_luns,
+            include_userdata=args.include_userdata,
+            runner=run,
         )
         print("Backup captured. Run verify-backup and retain an independent copy before modifying the device.")
         return
@@ -198,11 +173,7 @@ def dispatch(args: argparse.Namespace) -> None:  # noqa: C901, PLR0911, PLR0912,
         if not re.fullmatch(allowed, args.partition):
             msg = "Only explicit ABL/devinfo partition names are accepted"
             raise ValueError(msg)
-        matches = [
-            name
-            for name in manifest["files"]
-            if Path(name).stem == args.partition and Path(name).suffix in (".bin", ".img")
-        ]
+        matches = partition_names(manifest, args.partition)
         if len(matches) != 1:
             msg = "Partition must have exactly one matching verified backup image"
             raise ValueError(msg)
@@ -220,19 +191,14 @@ def dispatch(args: argparse.Namespace) -> None:  # noqa: C901, PLR0911, PLR0912,
         if not args.execute:
             print(subprocess.list2cmdline(command))
             return
-        # Keep readback outside the immutable backup set, and never overwrite it.
-        readback = args.readback.resolve()
-        if readback.exists() or args.backup.resolve() in readback.parents:
-            msg = "--readback must be a new path outside the backup directory"
-            raise ValueError(msg)
-        readback.parent.mkdir(parents=True, exist_ok=True)
-        run(command, timeout=600)
-        run(edl_command(args, "r", args.partition, str(readback)), timeout=600)
-        with image.open("rb") as source, readback.open("rb") as target:
-            for block in iter(lambda: source.read(1024 * 1024), b""):
-                if target.read(len(block)) != block:
-                    msg = "Flash readback mismatch; keep the device in EDL and recover from backup"
-                    raise ValueError(msg)
+        write_verified(
+            command,
+            lambda path: edl_command(args, "r", args.partition, path),
+            image,
+            readback=args.readback,
+            backup=args.backup,
+            runner=run,
+        )
         print("Image bytes verified by EDL readback; no reboot performed.")
         return
     if args.command == "unlock":

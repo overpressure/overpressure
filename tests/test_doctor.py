@@ -1,18 +1,22 @@
 # SPDX-License-Identifier: Unlicense
-"""overpressure.doctor: the host's checks, Linux probes, the report, the command and the panel."""
+"""overpressure.doctor: the host's and a headset's shared checks, Linux probes, the report, the command, the panel."""
 
 from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
+import tempfile
 import time
 import unittest
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 from unittest import mock
 
 from overpressure import __main__ as cli
-from overpressure import doctor
+from overpressure import doctor, localconfig, tools
 from overpressure.headset import Command, Headset, Info, Registry
 
 if TYPE_CHECKING:
@@ -36,7 +40,7 @@ class FakeHost(doctor.Host):
             script = argv[-1]
             out = "\n".join(f"{k}={v}" for k, v in self.linux_output.items() if f"{k}=" in script)
             return 0, out
-        return self.runs.get(argv[0], (127, f"{argv[0]}: not found"))
+        return self.runs.get(str(argv[0]), (127, f"{argv[0]}: not found"))
 
 
 class Probe(Headset):
@@ -156,6 +160,90 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual(app.doctor_fix.get("1.0", "end").strip(), "install thing")
         finally:
             root.destroy()
+
+
+@dataclass
+class Example(localconfig.DeviceSettings):
+    PREFIX = "EXAMPLE_"
+
+
+class DeviceChecksTests(unittest.TestCase):
+    """The checks every Qualcomm Android headset's doctor is built from."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        patcher = mock.patch.object(tools, "CACHE", self.root / "tools-cache")  # no fetched tools
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def settings(self, **values: str) -> Example:
+        s = Example(**values)
+        s.path = lambda name: self.root / getattr(s, name)
+        return s
+
+    def test_env_serials_loader_and_edl_ng(self):
+        s = self.settings(adb_serial="A1")
+        self.assertEqual(doctor.env_check(self.root).status, doctor.MISSING)
+        (self.root / ".env").write_text("EXAMPLE_ADB_SERIAL=A1\n")
+        self.assertEqual(doctor.env_check(self.root, "work").needed_for, "work")
+        serials = {c.name: c for c in doctor.serial_checks(s, "work", "edl")}
+        self.assertEqual(list(serials), ["EXAMPLE_ADB_SERIAL", "EXAMPLE_FASTBOOT_SERIAL", "EXAMPLE_EDL_SERIAL"])
+        self.assertEqual([c.status for c in serials.values()], [doctor.OK, doctor.MISSING, doctor.MISSING])
+        self.assertEqual(serials["EXAMPLE_EDL_SERIAL"].needed_for, "edl")
+        self.assertIn("edl-ng's Serial Number", serials["EXAMPLE_EDL_SERIAL"].fix)
+        loader = doctor.loader_check(s, fix="the vendor's loader")
+        self.assertEqual((loader.status, loader.fix), (doctor.MISSING, "the vendor's loader"))
+        (self.root / "assets").mkdir()
+        (self.root / "assets/firehose.elf").write_bytes(b"elf")
+        self.assertEqual(doctor.loader_check(s).status, doctor.OK)
+        self.assertEqual(doctor.edl_tool_check(FakeHost(tools=("edl-ng.exe", "edl-ng")), s).status, doctor.OK)
+        missing = doctor.edl_tool_check(FakeHost(tools=()), s)
+        self.assertEqual((missing.status, missing.fix), (doctor.MISSING, doctor.FETCH))
+
+    def test_the_backup_by_its_manifest(self):
+        folder = self.root / "backup"
+        self.assertEqual(doctor.backup_check(folder, fix="take one").fix, "take one")
+        folder.mkdir()
+        (folder / "boot.bin").write_bytes(b"boot")
+        (folder / "manifest.json").write_text(json.dumps({"files": {"boot.bin": {"size": 4, "sha256": "x"}}}))
+        self.assertEqual(doctor.backup_check(folder).status, doctor.OK)
+        (folder / "boot.bin").write_bytes(b"truncated, no: longer")
+        found = doctor.backup_check(folder)
+        self.assertEqual(
+            (found.status, found.detail), (doctor.MISSING, "1 of 1 files missing or of another size: boot.bin")
+        )
+
+    def test_platform_tools_and_the_windows_link(self):
+        s = self.settings(ncm_python="py")
+        host = FakeHost(
+            platform="win32",
+            runs={
+                str(s.tool("adb")): (0, "Android Debug Bridge version 1.0.41"),
+                str(self.root / "py"): (0, '{"status": "ready", "dependencies": {"pyusb": "1.3.1"}}'),
+            },
+        )
+        found = {c.name: c for c in doctor.tool_checks(host, s)}
+        self.assertEqual((found["adb"].status, found["fastboot"].status), (doctor.OK, doctor.MISSING))
+        self.assertIn("EXAMPLE_PLATFORM_TOOLS", found["fastboot"].fix)
+        self.assertEqual(doctor.ncm_checks(host, s)[0].detail, "pyusb 1.3.1")
+        self.assertEqual(doctor.ncm_checks(FakeHost(platform="win32"), s)[0].status, doctor.MISSING)
+        self.assertEqual(doctor.ncm_checks(FakeHost(platform="linux"), s), [])
+        with mock.patch.object(localconfig.tools, "ncm_python", return_value=None):
+            self.assertIn(
+                "EXAMPLE_NCM_PYTHON", doctor.ncm_checks(FakeHost(platform="win32"), self.settings())[0].detail
+            )
+
+    def test_an_x86_64_build_host_needs_binfmt_with_the_f_flag_and_prefers_native_llvm(self):
+        found = {
+            c.name: c for c in doctor.arm64_build_checks(FakeHost(linux={"arch": "x86_64", "binfmt": "PO"}), "build")
+        }
+        self.assertEqual(found["aarch64 binfmt (F flag)"].status, doctor.MISSING)
+        self.assertEqual(found["clang and lld"].status, doctor.WARNING)
+        host = FakeHost(linux={"arch": "x86_64", "binfmt": "POCF", "llvm": "/usr/lib/llvm-20"})
+        self.assertEqual(doctor.failed(doctor.arm64_build_checks(host, "build")), [])
+        self.assertEqual(doctor.arm64_build_checks(FakeHost(linux={"arch": "aarch64"}), "build"), [])
 
 
 if __name__ == "__main__":

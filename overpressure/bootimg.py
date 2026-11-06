@@ -5,16 +5,23 @@ Layout follows AOSP system/tools/mkbootimg/include/bootimg/bootimg.h. The aim
 is to take a *stock* image apart, swap the ramdisk (and optionally extend the
 kernel command line) and put it back together with every other field (load
 addresses, page size, OS version/patch level, DTB, ...) exactly as the stock
-bootloader expects it.
+bootloader expects it. ramdisk_tree and with_ramdisk change a built image's ramdisk files and
+command line the same way, checked by parsing the result again.
 """
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import struct
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
+from . import compress, cpio
 from .avb import FOOTER, FOOTER_MAGIC
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 BOOT_MAGIC = b"ANDROID!"
 BOOT_NAME_SIZE = 16
@@ -276,6 +283,44 @@ def _parse_v3(data: bytes, version: int) -> BootImage:
         cmdline=cmdline,
         os_version=os_version,
     )
+
+
+# -- ramdisk edits ---------------------------------------------------------------
+
+
+def ramdisk_tree(image: BootImage) -> cpio.Tree:
+    """Return the files of a boot image's ramdisk (any compression compress.decompress reads)."""
+    return cpio.Tree(nodes=dict(cpio.read_cpio(compress.decompress(image.ramdisk)[0])))
+
+
+def with_ramdisk(
+    image: BootImage,
+    tree: cpio.Tree,
+    *,
+    drop: tuple[str, ...] = (),
+    add: Sequence[str] = (),
+    failed: str = "the boot image failed validation",
+) -> bytes:
+    """Return @p image with @p tree as its ramdisk (gzip) and a changed kernel command line.
+
+    The command line loses its words that start with one of @p drop and ends with @p add. The
+    boot signature is cleared (it signed the old image). The result is parsed again: its kernel
+    and device tree must be the image's and, up to header version 2, its id the one its parts
+    give; else ValueError(@p failed).
+    """
+    words = [w for w in image.full_cmdline.split() if not w.startswith(drop)]
+    image = image.with_cmdline(" ".join([*words, *add]))
+    image.ramdisk = gzip.compress(tree.to_cpio(), mtime=0)
+    image.boot_signature = b""
+    data = image.pack()
+    check = parse(data)
+    if (
+        check.kernel != image.kernel
+        or check.dtb != image.dtb
+        or (check.header_version < HEADER_V3 and check.id != check.compute_id())
+    ):
+        raise ValueError(failed)
+    return data
 
 
 # -- misc ------------------------------------------------------------------------

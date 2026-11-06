@@ -29,10 +29,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import gzip
 import hashlib
 import json
-import re
 import subprocess
 import sys
 import time
@@ -44,17 +42,15 @@ from overpressure import (
     android,
     avb,
     bootimg,
-    compress,
-    cpio,
     ota,
     qualcomm,
-    sparse,
     ssh,
     windows_ncm,
 )
 from overpressure import (
     backup as backups,
 )
+from overpressure.fastboot import flash as flash_image
 
 from . import device, localconfig
 from . import hardware_test as hw
@@ -76,8 +72,6 @@ SYSTEM = ROOT / "out" / "userspace" / "pico4-system.img"
 INSTALLED = "installed.json"
 #: The installed system's identity file (install boot image), as test-run is the dev image's.
 INSTALL_ID = "/etc/pico4/install-id"
-#: Images above this size go to fastboot as sparse images.
-SPARSE_ABOVE = 64 << 20
 #: Partitions "dev restore-partition" writes back from the backup through fastboot.
 RESTORABLE = ("boot", "recovery", "misc")
 #: Command-line word naming the partition a dev image was written for (pico4.part=recovery).
@@ -188,20 +182,10 @@ class Dev(Headset):
         This PC's key, and the owner's own when .env names one. These are the only logins the
         system takes, on USB and on Wi-Fi (docs/security.md).
         """
-        keys = [this_pc.strip()]
-        if self.s.ssh_public_key:
-            path = self.s.path("ssh_public_key")
-            if not path.is_file():
-                msg = f"PICO4_SSH_PUBLIC_KEY: no file {path}"
-                raise ValueError(msg)
-            own = [line.strip() for line in path.read_bytes().splitlines() if line.strip()]
-            for line in own:
-                if b"PRIVATE KEY" in line or not line.startswith((b"ssh-", b"ecdsa-", b"sk-")):
-                    msg = f"PICO4_SSH_PUBLIC_KEY: {path} is no public key file"
-                    raise ValueError(msg)
-            keys += own
-        print(f"SSH: keys only; enrolled {len(keys)} key(s), this PC's is {self.work / 'id_ed25519'}")
-        return b"\n".join(keys) + b"\n"
+        own = self.s.path("ssh_public_key") if self.s.ssh_public_key else None
+        keys = ssh.authorized_keys(this_pc, own, self.s.key("ssh_public_key"))
+        print(f"SSH: keys only; enrolled {len(keys.splitlines())} key(s), this PC's is {self.work / 'id_ed25519'}")
+        return keys
 
     @staticmethod
     def install_image(source: Path, public_key: bytes) -> bytes:
@@ -211,22 +195,20 @@ class Dev(Headset):
         own), with the dev loop's SSH key and identity.
         """
         image = bootimg.parse(source.read_bytes())
-        tree = cpio.Tree(nodes=dict(cpio.read_cpio(compress.decompress(image.ramdisk)[0])))
+        tree = bootimg.ramdisk_tree(image)
         if "usr/bin/pico4-install" not in tree.nodes or b"pico4-userspace installed" not in tree.nodes["init"].data:
             msg = "rebuild the stage-1 image: the installed mode is missing"
             raise ValueError(msg)
         tree.mkdir("root/.ssh", 0o700)
         tree.add_file("root/.ssh/authorized_keys", public_key.rstrip() + b"\n", 0o600)
         tree.add_file(INSTALL_ID.lstrip("/"), RUN_ID.encode() + b"\n")
-        words = [w for w in image.full_cmdline.split() if not w.startswith(("pico4.root=", "pico4.autoreboot="))]
-        image = image.with_cmdline(" ".join([*words, "pico4.root=installed", "pico4.autoreboot=0"]))
-        image.ramdisk = gzip.compress(tree.to_cpio(), mtime=0)
-        image.boot_signature = b""
-        data = image.pack()
-        if bootimg.parse(data).kernel != image.kernel:
-            msg = "the install boot image failed validation"
-            raise RuntimeError(msg)
-        return data
+        return bootimg.with_ramdisk(
+            image,
+            tree,
+            drop=("pico4.root=", "pico4.autoreboot="),
+            add=("pico4.root=installed", "pico4.autoreboot=0"),
+            failed="the install boot image failed validation",
+        )
 
     def to_fastboot(self) -> None:
         """From PICO OS (ADB), stage 1 or stage 2 (SSH) into the bootloader."""
@@ -263,18 +245,12 @@ class Dev(Headset):
         if not android.unlocked(state):
             msg = "the bootloader is locked or its state is unknown"
             raise RuntimeError(msg)
-        inventory = self.fastboot("getvar", "all")
-        names = re.findall(
-            rf"^[ \t]*(?:\(bootloader\)[ \t]*)?partition-size:({name}(?:_[ab])?):", inventory, re.MULTILINE
-        )
-        if names != [name]:
+        size = android.single_partition_size(self.fastboot("getvar", "all"), name)
+        if size is None:
             msg = f"only a single, non-slotted {name} partition is supported"
             raise RuntimeError(msg)
         _, expected = self.stock_partition(name)
-        if (
-            int(hw.fastboot_value(inventory, f"partition-size:{name}"), 16) != expected["size"]
-            or image.stat().st_size > expected["size"]
-        ):
+        if size != expected["size"] or image.stat().st_size > expected["size"]:
             msg = f"the {name} partition or the image does not fit the backup's {name} size"
             raise RuntimeError(msg)
 
@@ -284,14 +260,8 @@ class Dev(Headset):
         self.check_boot_partition(image, name)
         # The engineering ABL's per-session authorization, as the acceptance runner sends it.
         self.fastboot("oem", device.unlock_token(self.identity()["chip_id"]), "unlock")
-        if image.stat().st_size > SPARSE_ABOVE:
-            # A whole-partition image (recovery's): sparse, as the ABL crashed on a large raw one.
-            simg = image.with_suffix(".simg")
-            simg.write_bytes(sparse.encode(image.read_bytes()))
-            self.fastboot("flash", name, simg, timeout=600)
-            simg.unlink()
-        else:
-            self.fastboot("flash", name, image, timeout=180)
+        # A whole-partition image (recovery's) goes sparse, as the ABL crashed on a large raw one.
+        flash_image(self.fastboot, name, image)
         self.fastboot("reboot", *([] if name == "boot" else [name]))
 
     def restore_partition(self, name: str, *, reboot: bool = True) -> None:
@@ -307,19 +277,13 @@ class Dev(Headset):
             msg = f"{stock} differs from the backup manifest"
             raise RuntimeError(msg)
         self.to_fastboot()
-        inventory = self.fastboot("getvar", "all")
-        names = re.findall(
-            rf"^[ \t]*(?:\(bootloader\)[ \t]*)?partition-size:({name}(?:_[ab])?):", inventory, re.MULTILINE
-        )
-        if names != [name] or int(hw.fastboot_value(inventory, f"partition-size:{name}"), 16) != expected["size"]:
+        size = android.single_partition_size(self.fastboot("getvar", "all"), name)
+        if size is None or size != expected["size"]:
             msg = f"the {name} partition does not match the backup"
             raise RuntimeError(msg)
         self.fastboot("oem", device.unlock_token(self.identity()["chip_id"]), "unlock")
         # The ABL crashed receiving the 100 MiB recovery raw; sparse, it gets the data blocks.
-        image = self.work / f"restore-{name}.simg"
-        image.write_bytes(sparse.encode(stock.read_bytes()))
-        self.fastboot("flash", name, image, timeout=600)
-        image.unlink()
+        flash_image(self.fastboot, name, stock, above=0, sparse_path=self.work / f"restore-{name}.simg")
         if reboot:
             self.fastboot("reboot")
         print(f"{name} restored from the backup")

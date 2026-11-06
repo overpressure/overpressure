@@ -53,14 +53,17 @@ status in its roadmap and README current.
   `__main__.py` (the command line), `gui.py` (the Tk window), `tools.py` (pinned host tools:
   platform-tools, edl-ng, the NCM venv), `linux.py` and `container/` (where Linux-root steps run:
   WSL, sudo or the build container), `doctor.py` (dependency checks:
-  the host's and `Headset.dependencies()`), `localconfig.py` (`.env`, one key
-  prefix per headset), `stage1.py` (the Alpine stage 1 in a stock Android boot image), `ota.py`
-  (stock images and partitions from a vendor OTA), `android.py` (adb/fastboot, fail-closed),
-  `qualcomm.py` (SoC ID, EDL, partition maps), `backup.py` (verified backups), `process.py`
-  (programs and bounded waits), `ssh.py`, and the shared formats: `bootimg.py`, `avb.py`, `sparse.py`,
+  the host's, the ones every Qualcomm Android headset shares, and `Headset.dependencies()`),
+  `localconfig.py` (`.env`, one key prefix per headset; `DeviceSettings`), `stage1.py` (the
+  Alpine stage 1 in a stock Android boot image), `ota.py` (stock images and partitions from a
+  vendor OTA, pinned files from a remote zip), `android.py` (adb/fastboot, fail-closed, boot wait,
+  partition sizes), `qualcomm.py` (SoC ID, EDL, partition maps, backups, verified writes),
+  `backup.py` (verified backups), `process.py` (programs and bounded waits), `ssh.py`,
+  `evidence.py` (runs that record every step and command), `storage.py` (the read-only storage
+  policy), and the shared formats: `bootimg.py` (also ramdisk edits), `avb.py`, `sparse.py`,
   `payload.py`, `cpio.py`, `compress.py`, `alpine.py`, `apksign.py`,
-  `kernelinfo.py`, `elfdeps.py`, `windows_ncm.py`, and `fastboot.py` (the RAM boot every headset
-  with `fastboot boot` gets: `python -m overpressure ram-boot`).
+  `kernelinfo.py`, `elfdeps.py`, `windows_ncm.py`, and `fastboot.py` (sparse-or-raw flashing, and
+  the RAM boot every headset with `fastboot boot` gets: `python -m overpressure ram-boot`).
 - `devices/<codename>/`: one headset: `tooling/` (its Python package with `HEADSET`), its
   images' sources and recipes, `scripts/`, `tests/`, `docs/`, `README.md`, `CLAUDE.md`,
   `device.mk` (its Makefile targets).

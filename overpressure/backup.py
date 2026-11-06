@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
 
 
 def digest(path: Path) -> dict:
@@ -48,3 +45,25 @@ def verified_backup(folder: Path) -> dict:
             msg = f"Backup integrity check failed: {name}"
             raise ValueError(msg)
     return manifest
+
+
+#: The suffixes of a partition's image in a backup, besides its GPT and rawprogram metadata.
+IMAGE_SUFFIXES = (".bin", ".img")
+
+
+def partition_names(manifest: dict, name: str) -> list[str]:
+    """Return the files in a backup manifest that are images of partition @p name (exact, no slot)."""
+    return [n for n in manifest["files"] if Path(n).stem == name and Path(n).suffix in IMAGE_SUFFIXES]
+
+
+def partition_image(backup: Path, name: str) -> tuple[Path, dict]:
+    """Return the one image of partition @p name in a backup and its manifest entry.
+
+    The manifest is read, not verified: whoever writes the image checks it (digest) first.
+    """
+    manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
+    names = partition_names(manifest, name)
+    if len(names) != 1:
+        msg = f"the backup must hold exactly one {name} partition image"
+        raise ValueError(msg)
+    return backup / names[0], manifest["files"][names[0]]

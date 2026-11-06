@@ -2,7 +2,9 @@
 """The PICO 4's checks for python -m overpressure doctor.
 
 They cover its settings and private files, the tools that talk to it, the Windows USB link, the
-Linux side of its builds, and the extracted assets.
+Linux side of its builds, and the extracted assets. What every Qualcomm Android headset checks
+is overpressure.doctor's; the identity, the engineering ABL, the build's tools and the assets
+are the PICO 4's.
 
 Like every doctor check they only look: version queries, `command -v`, file sizes and the
 small files' hashes. The EDL backup's images are not hashed here (gigabytes); every write checks
@@ -11,11 +13,10 @@ them against the manifest anyway.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Callable
 
-from overpressure import REPO, backup, windows_ncm
-from overpressure.doctor import MISSING, OK, WARNING, Check, Host, linux_commands, version_check
+from overpressure import REPO, backup, doctor
+from overpressure.doctor import APT, HEADSET, MISSING, OK, WARNING, Check, Host, linux_commands
 
 from . import FIRMWARE, device, localconfig
 
@@ -24,7 +25,6 @@ if TYPE_CHECKING:
 
     from .localconfig import Settings
 
-HEADSET = "working on the headset"
 EDL = "EDL (development mode, way back)"
 BUILD = "userspace and system image (Linux, as root)"
 KERNEL = "Valve's kernel (Linux, as root)"
@@ -38,38 +38,13 @@ ASSET_KINDS = {
     "audio": "extract-audio.sh",
     "stock-slam": "extract-stock-slam.sh",
 }
-APT = "in WSL/Linux as root: apt install "
-FETCH = "python -m overpressure tools"
+BACKUP_FIX = "python -m overpressure device backup (docs/device-preparation.md)"
 
 
 def settings_checks(host: Host, settings: Settings | None = None, root: Path = REPO) -> list[Check]:
     """Check .env, the serials, the identity, the EDL backup and the private files EDL needs."""
     s = settings or localconfig.load()
-    env = root / ".env"
-    checks = [
-        Check(
-            ".env",
-            HEADSET,
-            OK if env.exists() else MISSING,
-            str(env) if env.exists() else "no .env",
-            "" if env.exists() else "copy .env.example to .env and fill in the headset's serials and files",
-        )
-    ]
-    for name, what in (
-        ("adb_serial", "adb devices"),
-        ("fastboot_serial", "fastboot devices"),
-        ("edl_serial", "edl-ng's Serial Number"),
-    ):
-        value = getattr(s, name)
-        checks.append(
-            Check(
-                s.key(name),
-                HEADSET if name != "edl_serial" else EDL,
-                OK if value else MISSING,
-                "set" if value else "empty",
-                "" if value else f"set it in .env ({what})",
-            )
-        )
+    checks = [doctor.env_check(root, HEADSET), *doctor.serial_checks(s, HEADSET, EDL)]
     identity = s.path("identity")
     try:
         record = device.read_identity(identity)
@@ -85,16 +60,7 @@ def settings_checks(host: Host, settings: Settings | None = None, root: Path = R
             )
         )
     checks.append(backup_check(s.path("backup")))
-    loader = s.path("loader")
-    checks.append(
-        Check(
-            "Firehose loader",
-            EDL,
-            OK if loader.is_file() else MISSING,
-            str(loader) if loader.is_file() else f"no {loader}",
-            "" if loader.is_file() else "the headset's signed Firehose loader (docs/device-preparation.md)",
-        )
-    )
+    checks.append(doctor.loader_check(s, EDL, "the headset's signed Firehose loader (docs/device-preparation.md)"))
     abl = s.path("engineering_abl")
     if not abl.is_file():
         checks.append(Check("engineering ABL", EDL, MISSING, f"no {abl}", "docs/device-preparation.md"))
@@ -119,67 +85,25 @@ def settings_checks(host: Host, settings: Settings | None = None, root: Path = R
                 "" if s.engineering_abl_sha256 else "set PICO4_ENGINEERING_ABL_SHA256 in .env",
             )
         )
-    edl = s.edl_program()
-    found = edl.is_file() or (not edl.is_absolute() and host.which(str(edl)))
-    checks.append(
-        Check("edl-ng", EDL, OK if found else MISSING, str(edl) if found else f"no {edl}", "" if found else FETCH)
-    )
+    checks.append(doctor.edl_tool_check(host, s, EDL))
     return checks
 
 
 def backup_check(folder: Path) -> Check:
     """Check the EDL backup: its manifest, and every file in it present at its recorded size."""
-    manifest = folder / "manifest.json"
-    fix = "python -m overpressure device backup (docs/device-preparation.md)"
-    try:
-        files = json.loads(manifest.read_text(encoding="utf-8"))["files"]
-    except (OSError, ValueError, KeyError) as exc:
-        return Check("EDL backup", HEADSET, MISSING, f"{manifest}: {exc}"[:120], fix)
-    short = [
-        name
-        for name, entry in files.items()
-        if not (folder / name).is_file() or (folder / name).stat().st_size != entry.get("size")
-    ]
-    if short:
-        return Check(
-            "EDL backup",
-            HEADSET,
-            MISSING,
-            f"{len(short)} of {len(files)} files missing or of another size: " + ", ".join(short[:3]),
-            fix,
-        )
-    return Check("EDL backup", HEADSET, OK, f"{len(files)} files (sizes; every write checks their hashes)")
+    return doctor.backup_check(folder, HEADSET, BACKUP_FIX)
 
 
 def tool_checks(host: Host, settings: Settings | None = None) -> list[Check]:
     """Check adb and fastboot by their version queries."""
-    s = settings or localconfig.load()
-    fix = FETCH + " (or Android platform-tools of your own, in PICO4_PLATFORM_TOOLS)"
-    return [
-        version_check(host, "adb", [s.tool("adb"), "version"], HEADSET, fix),
-        version_check(host, "fastboot", [s.tool("fastboot"), "--version"], HEADSET, fix),
-    ]
+    return doctor.tool_checks(host, settings or localconfig.load(), HEADSET)
 
 
 def ncm_checks(host: Host, settings: Settings | None = None) -> list[Check]:
     """Windows only: the Python with pyusb and libusb-package, and UsbDk behind it."""
     if host.platform != "win32":
         return []
-    s = settings or localconfig.load()
-    needed_for = "the USB network link on Windows"
-    fix = FETCH + " (the NCM venv), and UsbDk: winget install daynix.UsbDk (admin)"
-    python = s.ncm()
-    if python is None:
-        return [Check("NCM Python", needed_for, MISSING, "no NCM venv and no PICO4_NCM_PYTHON", fix)]
-    code, out = host.run(windows_ncm.command(python), 30)
-    try:
-        state = json.loads(out.splitlines()[-1]) if code == 0 and out else {}
-    except ValueError:
-        state = {}
-    if state.get("status") == "ready":
-        versions = ", ".join(f"{k} {v}" for k, v in (state.get("dependencies") or {}).items())
-        return [Check("NCM Python and UsbDk", needed_for, OK, versions)]
-    return [Check("NCM Python and UsbDk", needed_for, MISSING, (out.splitlines() or ["no answer"])[-1][:120], fix)]
+    return doctor.ncm_checks(host, settings or localconfig.load())
 
 
 def build_checks(host: Host) -> list[Check]:
@@ -223,36 +147,7 @@ def build_checks(host: Host) -> list[Check]:
                 "Linux", BUILD, MISSING, "no Linux to build in", "WSL (wsl --install -d Ubuntu-24.04) or a Linux host"
             )
         ]
-    # The aarch64 handler by its ELF magic: qemu-aarch64 (Debian) or aarch64 (Docker Desktop).
-    state = host.linux(
-        "echo arch=$(uname -m); echo binfmt=$(for f in /proc/sys/fs/binfmt_misc/*; do "
-        "grep -qs '^magic 7f454c460201010000000000000000000200b700' $f && "
-        "sed -n 's/^flags: //p' $f; done | head -n 1); "
-        "for v in 21 20 19; do [ -x /usr/lib/llvm-$v/bin/clang ] && [ -x /usr/lib/llvm-$v/bin/ld.lld ] "
-        "&& { echo llvm=/usr/lib/llvm-$v; break; }; done; true"
-    )
-    if state.get("arch") == "x86_64":
-        flags = state.get("binfmt", "")
-        checks.append(
-            Check(
-                "aarch64 binfmt (F flag)",
-                BUILD,
-                OK if "F" in flags else MISSING,
-                f"flags {flags}" if flags else "no qemu-aarch64 handler",
-                "" if "F" in flags else APT + "qemu-user-static binfmt-support",
-            )
-        )
-        llvm = state.get("llvm", "")
-        checks.append(
-            Check(
-                "clang and lld",
-                BUILD,
-                OK if llvm else WARNING,
-                llvm or "none: packages compile under QEMU, about ten times slower",
-                "" if llvm else APT + "clang-20 lld-20",
-            )
-        )
-    return checks
+    return checks + doctor.arm64_build_checks(host, BUILD)
 
 
 def asset_checks(_host: Host, root: Path = REPO, version: str = FIRMWARE_VERSION) -> list[Check]:

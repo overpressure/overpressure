@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Unlicense
-"""overpressure.qualcomm: the SoC ID and EDL's partition maps."""
+"""overpressure.qualcomm: the SoC ID, EDL's partition maps, backups, verified writes and the EDL steps."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +28,148 @@ class QualcommTests(unittest.TestCase):
             self.assertEqual(qualcomm.partition_size(backup, "boot"), 65536)
             with self.assertRaises(ValueError):
                 qualcomm.partition_size(backup, "userdata")
+
+
+class FakeClock:
+    """Virtual time: a wait's sleeps pass at once."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class EdlTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+
+    def test_native_dump_rejects_missing_truncated_and_escaping_files(self):
+        directory = self.root / "lun4"
+        directory.mkdir()
+        xml = directory / "rawprogram4.xml"
+
+        def map_file(name: str = "abl.bin") -> None:
+            xml.write_text(
+                '<data><program filename="' + name + '" label="abl" '
+                'num_partition_sectors="1" SECTOR_SIZE_IN_BYTES="4096" '
+                'physical_partition_number="4" /></data>'
+            )
+
+        map_file()
+        with self.assertRaises(ValueError):
+            qualcomm.validate_native_dump(self.root, [4], include_userdata=True)
+        (directory / "abl.bin").write_bytes(b"x" * 4095)
+        with self.assertRaises(ValueError):
+            qualcomm.validate_native_dump(self.root, [4], include_userdata=True)
+        (directory / "abl.bin").write_bytes(b"x" * 4096)
+        qualcomm.validate_native_dump(self.root, [4], include_userdata=True)
+        map_file("../abl.bin")
+        with self.assertRaises(ValueError):
+            qualcomm.validate_native_dump(self.root, [4], include_userdata=True)
+
+    def capture(
+        self, folder: Path, names: tuple[str, ...], required: tuple[str, ...] = ("abl", "boot", "devinfo")
+    ) -> dict:
+        def runner(command: list[str], timeout: float = 60) -> str:
+            self.assertEqual(timeout, 86400)
+            for name in names:
+                (folder / name).write_bytes(b"data of " + name.encode())
+            return "ran " + " ".join(command)
+
+        return qualcomm.capture_backup(
+            folder,
+            [["edl", "rl", str(folder)]],
+            {"serial": "A"},
+            backend="bkerler",
+            luns=None,
+            include_userdata=False,
+            runner=runner,
+            required=required,
+        )
+
+    def test_a_backup_holds_the_required_partitions_and_its_metadata(self):
+        complete = ("abl_a.bin", "boot.img", "devinfo.bin", "gpt_main0.bin", "rawprogram0.xml")
+        manifest = self.capture(self.root / "good", complete)
+        self.assertEqual(sorted(manifest["files"]), sorted(complete))
+        self.assertEqual(manifest["identity"], {"serial": "A"})
+        self.assertIn("ran edl rl", (self.root / "good" / "edl.log").read_text())
+        self.assertEqual(json.loads((self.root / "good" / "manifest.json").read_text()), manifest)
+        with self.assertRaisesRegex(ValueError, "new backup directory"):
+            self.capture(self.root / "good", complete)
+        with self.assertRaisesRegex(ValueError, "devinfo"):
+            self.capture(self.root / "partial", ("abl.bin", "boot.bin", "gpt_main0.bin", "rawprogram0.xml"))
+        self.assertFalse((self.root / "partial" / "manifest.json").exists())
+        with self.assertRaisesRegex(ValueError, "GPT"):
+            self.capture(self.root / "no-gpt", ("abl.bin", "boot.bin", "devinfo.bin"))
+        other = ("vbmeta.bin", "gpt_main0.bin", "rawprogram0.xml")
+        self.assertIn("vbmeta.bin", self.capture(self.root / "other", other, required=("vbmeta",))["files"])
+
+    def test_a_write_is_read_back_outside_the_backup(self):
+        image = self.root / "abl.elf"
+        image.write_bytes(b"engineering" * 1000)
+        backup = self.root / "backup"
+        backup.mkdir()
+        commands = []
+
+        def runner(command: list[str], timeout: float = 60) -> str:
+            commands.append((command, timeout))
+            if command[0] == "read":
+                Path(command[1]).write_bytes(readback_data)
+            return "OK"
+
+        readback_data = image.read_bytes()
+        qualcomm.write_verified(
+            ["write"], lambda path: ["read", path], image, readback=self.root / "rb.bin", backup=backup, runner=runner
+        )
+        self.assertEqual(commands, [(["write"], 600), (["read", str((self.root / "rb.bin").resolve())], 600)])
+        for readback in (self.root / "rb.bin", backup / "rb.bin"):  # exists; inside the backup
+            commands.clear()
+            with self.assertRaisesRegex(ValueError, "new path outside"):
+                qualcomm.write_verified(
+                    ["write"], lambda path: ["read", path], image, readback=readback, backup=backup, runner=runner
+                )
+            self.assertEqual(commands, [])
+        readback_data = b"other"
+        with self.assertRaisesRegex(ValueError, "readback mismatch"):
+            qualcomm.write_verified(
+                ["write"],
+                lambda path: ["read", path],
+                image,
+                readback=self.root / "bad.bin",
+                backup=backup,
+                runner=runner,
+            )
+
+    def test_entering_edl_waits_for_exactly_one_device(self):
+        commands, counts = [], [0, 0, 2, 1]
+
+        def runner(command: list[str], timeout: float) -> str:
+            commands.append((command, timeout))
+            return ""
+
+        qualcomm.enter_edl("adb", "A1", runner, FakeClock(), edl_count=lambda: counts.pop(0))
+        self.assertEqual(commands, [(["adb", "-s", "A1", "reboot", "edl"], 30)])
+        commands.clear()
+        qualcomm.enter_edl("adb", "A1", runner, FakeClock(), edl_count=lambda: 1)
+        self.assertEqual(commands, [])
+        with self.assertRaisesRegex(RuntimeError, "timed out waiting for EDL: expected exactly one EDL device"):
+            qualcomm.enter_edl("adb", "A1", runner, FakeClock(), edl_count=lambda: 0)
+
+    def test_edl_ng_commands_and_the_serial_check(self):
+        self.assertEqual(
+            qualcomm.edl_ng("edl-ng", "loader.elf", "read-part", "boot", "out.bin"),
+            ["edl-ng", "--loader", "loader.elf", "--memory", "Ufs", "read-part", "boot", "out.bin"],
+        )
+        qualcomm.check_edl_serial("Connected.\nSerial Number: 0x1A2b\nok", "0x1a2B")
+        for output in ("Serial Number: 0x1A2b3", "no serial", "Serial Number: 0x9999"):
+            with self.assertRaisesRegex(RuntimeError, "not the configured headset"):
+                qualcomm.check_edl_serial(output, "0x1A2b")
 
 
 if __name__ == "__main__":

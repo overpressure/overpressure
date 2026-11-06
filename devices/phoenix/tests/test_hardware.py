@@ -7,7 +7,6 @@ import gzip
 import io
 import json
 import os
-import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -19,7 +18,7 @@ from unittest.mock import patch
 
 from devices.phoenix.tooling import devloop
 from devices.phoenix.tooling import hardware_test as hw
-from overpressure import bootimg, cpio
+from overpressure import bootimg, cpio, evidence
 
 
 def report(run_id: str) -> bytes:
@@ -46,29 +45,12 @@ class ValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 hw.validate_preflight(value)
 
-    def test_storage_checks_partitions_not_just_disks(self):
-        hw.validate_storage("BLOCK sda 1\nBLOCK sda1 1\nBLOCK loop0 0\nBLOCK ram0 0")
-        for value in ("BLOCK sda 1\nBLOCK sda1 0", "BLOCK sda 0", "BLOCK loop0 1", "", "BLOCK sda ?"):
-            with self.assertRaises(ValueError):
-                hw.validate_storage(value)
-
     def test_reports_must_identify_this_boot(self):
         hw.validate_report(report("current"), "current")
         with self.assertRaises(ValueError):
             hw.validate_report(report("old"), "current")
         with self.assertRaises(tarfile.TarError):
             hw.validate_report(b"not a report", "current")
-
-    def test_mounts_cannot_hide_writable_storage_or_disk_root(self):
-        hw.validate_mounts("rootfs / rootfs rw 0 0\n/dev/sda1 /mnt rofs ro 0 0")
-        for value in (
-            "",
-            "proc /proc proc rw 0 0",
-            "/dev/root / ext4 ro 0 0",
-            "rootfs / rootfs rw 0 0\n/dev/sda1 /mnt ext4 rw 0 0",
-        ):
-            with self.assertRaises(ValueError):
-                hw.validate_mounts(value)
 
     def test_fastboot_variables_reject_missing_and_ambiguous_values(self):
         self.assertEqual(
@@ -125,9 +107,10 @@ class HarnessTests(unittest.TestCase):
         self.source = self.image
         self.info = dict(self.INFO)
         self.clock = FakeClock()
-        clock = patch.object(hw, "time", self.clock)
-        clock.start()
-        self.addCleanup(clock.stop)
+        for module in (hw, evidence):
+            clock = patch.object(module, "time", self.clock)
+            clock.start()
+            self.addCleanup(clock.stop)
         self.args = argparse.Namespace(
             command="flash-run",
             serial="ABC",
@@ -635,16 +618,6 @@ class HarnessTests(unittest.TestCase):
             self.source.write_bytes(original.with_cmdline(option).pack())
             with self.assertRaises(ValueError):
                 hw.prepare_image(self.source, self.runner.folder, "nonce", b"ssh-ed25519 TEST")
-
-    def test_subprocess_failure_and_timeout_are_logged(self):
-        with patch.object(hw.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, b"device missing")):
-            with self.assertRaises(ValueError):
-                self.runner.command(["fake"])
-        self.assertIn("device missing", (self.runner.folder / "command-0001.log").read_text())
-        with patch.object(hw.subprocess, "run", side_effect=subprocess.TimeoutExpired("fake", 1, output=b"partial")):
-            with self.assertRaises(ValueError):
-                self.runner.command(["fake"], timeout=1)
-        self.assertIn("TIMEOUT", (self.runner.folder / "command-0002.log").read_text())
 
     def test_existing_results_are_never_overwritten(self):
         with self.assertRaises(FileExistsError):

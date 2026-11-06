@@ -9,6 +9,9 @@ fastboot, how its unlock state reads, which image it boots and how to tell that 
 The sequence never falls back to flashing. A bootloader without `fastboot boot` answers after
 the transfer (the PICO 4's engineering ABL: "unknown command"); that is Refused, a result of its
 own, and the headset stays in fastboot.
+
+flash() is the write: an image goes sparse above a size, as bootloaders crash on large raw
+downloads, and raw below.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from . import bootimg
+from . import bootimg, sparse
 from .process import Clock, Timing, until
 
 #: How bootloaders say that they do not boot from RAM.
@@ -73,6 +76,34 @@ class Fastboot:
             msg = f"{len(serials)} devices in fastboot; connect only this headset"
             raise RuntimeError(msg)
         return serials == [self.serial]
+
+
+#: Images above this size go to fastboot as sparse images: ABLs crash on large raw downloads (an
+#: engineering ABL on a 100 MiB recovery image).
+SPARSE_ABOVE = 64 << 20
+
+
+def flash(
+    fastboot: Callable[..., str],
+    partition: str,
+    image: Path,
+    *,
+    above: int = SPARSE_ABOVE,
+    sparse_path: Path | None = None,
+) -> None:
+    """Write @p image to @p partition: as a sparse image above @p above bytes, else raw.
+
+    @p fastboot runs fastboot on the headset (its words, a timeout keyword). The sparse image is
+    written to @p sparse_path (else next to the image, .simg) and removed once it is sent.
+    """
+    if image.stat().st_size > above:
+        # Sparse, the bootloader gets the data blocks in chunks it takes.
+        simg = sparse_path or image.with_suffix(".simg")
+        simg.write_bytes(sparse.encode(image.read_bytes()))
+        fastboot("flash", partition, simg, timeout=600)
+        simg.unlink()
+    else:
+        fastboot("flash", partition, image, timeout=180)
 
 
 class RamBootTarget:

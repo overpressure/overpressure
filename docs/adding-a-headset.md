@@ -28,12 +28,20 @@ headset and calls these:
 
 | Need | Module |
 | --- | --- |
+| Its settings in `.env`: serials, the EDL backup, the Firehose loader, edl-ng, the NCM Python, the owner's SSH key | `overpressure.localconfig.DeviceSettings` |
+| Its dependency checks: settings, EDL backup and tools, adb and fastboot, Windows' USB link, an arm64 build host | `overpressure.doctor` |
 | Stock firmware: a boot image or partitions from the vendor's OTA, checked against the zip | `overpressure.ota` (a catalog of builds, the members the headset needs) |
+| A file pinned by size and SHA-256 out of a vendor's remote zip (a loader, say), fetched over HTTP ranges | `overpressure.ota.PinnedMember`, `fetch_pinned` |
 | A stage 1: Alpine Linux in the stock boot image, kernel and device trees untouched | `overpressure.stage1` (a `Spec`: packages, overlay, prebuilt files) |
-| adb and fastboot, fail-closed, every command naming the serial | `overpressure.android`, `overpressure.fastboot` (also the RAM boot) |
-| Qualcomm: the SoC ID, EDL with edl-ng or bkerler/edl, partition sizes from the rawprogram maps | `overpressure.qualcomm` |
-| Backups that every write is checked against | `overpressure.backup` |
-| Waiting for states with a bound, running tools, SSH with the project's key, Windows' USB network | `overpressure.process`, `overpressure.ssh`, `overpressure.windows_ncm` |
+| A boot image's ramdisk and command line changed, the result checked | `overpressure.bootimg.ramdisk_tree`, `with_ramdisk` |
+| adb and fastboot, fail-closed, every command naming the serial; the wait for Android's boot; a partition's size from `getvar all` | `overpressure.android` |
+| Flashing through fastboot, big images sparse; the RAM boot | `overpressure.fastboot` (`flash`, `ram_boot`) |
+| Qualcomm: the SoC ID, EDL with edl-ng or bkerler/edl, into EDL from Android, the device's serial checked, partition sizes from the rawprogram maps | `overpressure.qualcomm` |
+| A full EDL backup with its manifest, an EDL write verified by readback | `overpressure.qualcomm.capture_backup`, `write_verified` |
+| Backups that every write is checked against, a partition's image in them | `overpressure.backup` |
+| A run on the headset that records every step and command, with bounded waits and HTTP fetches | `overpressure.evidence.Runner` |
+| The read-only storage policy a Linux stage enforces, checked from its block devices and mounts | `overpressure.storage` |
+| Waiting for states with a bound, running tools, SSH with the project's key and the keys an image enrolls, Windows' USB network | `overpressure.process`, `overpressure.ssh`, `overpressure.windows_ncm` |
 | Extraction scripts reading the stock firmware folder | `scripts/stock-lib.sh` |
 
 ## HEADSET
@@ -89,8 +97,13 @@ HEADSET = Example()
   `linux_root=True` runs on Linux as root (WSL, sudo or the build container, [tool.md](tool.md#linux-root-steps)), and `writes=True` makes the window
   ask before a step that writes to the headset.
 - **Settings** in `.env` get a dataclass derived from `overpressure.localconfig.Settings` with
-  the headset's own key prefix, so headsets share one `.env`
-  ([the PICO 4's](../devices/phoenix/tooling/localconfig.py)).
+  the headset's own key prefix, so headsets share one `.env`. A headset on a stock Android
+  bootloader derives from `DeviceSettings`, which has what every Qualcomm Android headset's
+  workflow names: `adb_serial`, `fastboot_serial`, `edl_serial`, `identity` (default
+  `backup/device.json`), `backup` (`backup/stock`), `loader` (`assets/firehose.elf`), `edl`,
+  `ncm_python` and `ssh_public_key`, with `edl_program()` and `ncm()` resolving the tools. The
+  headset adds only its own fields ([the PICO 4's](../devices/phoenix/tooling/localconfig.py):
+  the engineering ABL and the firmware).
 - Output goes to the repository's `out/`, downloads to `cache/` (`overpressure.REPO`).
 
 ## Dependencies
@@ -99,10 +112,13 @@ HEADSET = Example()
 callables that take an `overpressure.doctor.Host` and return `Check` objects (name, what it is
 needed for, status, what was found, the fix). `doctor.version_check` covers programs that answer
 a version query and `doctor.linux_commands` the programs its Linux-side scripts call (one
-`command -v` round in WSL or Linux); `Host.linux(script)` runs any other probe there. The
-PICO 4's are the example ([devices/phoenix/tooling/doctor.py](../devices/phoenix/tooling/doctor.py)):
-its settings and private files, adb and fastboot, the Windows USB link, the build host
-(binfmt, LLVM, the tools of its scripts) and the extracted assets.
+`command -v` round in WSL or Linux); `Host.linux(script)` runs any other probe there. A headset
+with `DeviceSettings` builds the rest from the shared checks, each taking its settings and the
+group and fix texts it shows: `env_check`, `serial_checks`, `backup_check`, `loader_check`,
+`edl_tool_check`, `tool_checks` (adb, fastboot), `ncm_checks` (the Windows USB link) and
+`arm64_build_checks` (the binfmt handler and native LLVM on an x86-64 build host). The PICO 4's
+are the example ([devices/phoenix/tooling/doctor.py](../devices/phoenix/tooling/doctor.py)):
+those, its identity and engineering ABL, the tools of its build scripts and the extracted assets.
 
 ## RAM boot
 

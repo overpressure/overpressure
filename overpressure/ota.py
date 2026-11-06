@@ -7,7 +7,8 @@ brotli-compressed ``NAME.new.dat.br`` with the ``NAME.transfer.list`` that place
 An A/B OTA holds a ``payload.bin`` (:mod:`overpressure.payload`). For URLs only what is needed is
 downloaded (HTTP Range requests: the zip's central directory and the members), and every member
 is checked against the CRC-32 the zip records. A headset keeps a catalog of its vendor's builds
-(``{"builds": {NAME: {"url": ...}}}``) and says which members it needs.
+(``{"builds": {NAME: {"url": ...}}}``) and says which members it needs. A PinnedMember is one
+file out of a remote zip, pinned by its size and SHA-256 and checked before it is written.
 """
 
 from __future__ import annotations
@@ -20,8 +21,9 @@ import struct
 import subprocess
 import zipfile
 import zlib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Callable, cast
+from typing import IO, TYPE_CHECKING, Callable, TypeVar, cast
 
 from . import payload
 
@@ -95,6 +97,46 @@ def read_member(src: payload.Source, name: str, log: Callable[[str], None] = pri
     stream_member(src, info, out, log)
     log(f"  {name}: CRC-32 {info.CRC:08x} verified against the zip directory")
     return out.getvalue()
+
+
+@dataclass(frozen=True)
+class PinnedMember:
+    """One file in a vendor's remote zip, pinned by its size and SHA-256."""
+
+    url: str
+    member: str
+    size: int
+    sha256: str
+
+
+P = TypeVar("P", bound=PinnedMember)
+
+
+def read_pinned(item: PinnedMember, log: Callable[[str], None] = print) -> bytes:
+    """Return a pinned member's data, read from its zip over HTTP ranges (CRC-32 checked, not yet the hash)."""
+    return read_member(payload.open_source(item.url, log), item.member, log)
+
+
+def fetch_pinned(
+    item: P, path: Path, log: Callable[[str], None] = print, read: Callable[[P], bytes] | None = None
+) -> Path:
+    """Put a pinned member at @p path unless it is there already; return the path.
+
+    Only its member is read from the archive (@p read, by default over HTTP ranges), a few MB of
+    an archive of gigabytes. A size or hash mismatch writes nothing.
+    """
+    if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == item.sha256:
+        log(f"{path}: already there")
+        return path
+    data = read(item) if read is not None else read_pinned(item, log)
+    found = hashlib.sha256(data).hexdigest()
+    if found != item.sha256 or len(data) != item.size:
+        msg = f"{item.member} from {item.url} is not the known file (SHA-256 {found}): nothing written"
+        raise ValueError(msg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    log(f"{path}: {item.size} bytes, SHA-256 checked")
+    return path
 
 
 def fetch_boot_image(

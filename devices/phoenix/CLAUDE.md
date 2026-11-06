@@ -52,9 +52,10 @@ README.md current.
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`, `PICO4_` keys),
   `userspace.py` and `graphics.py` (validators), `stock.py` (PICO's OTA members),
   `doctor.py` (its dependency checks), and the
-  controller data extractors. What other headsets share is in the root package `overpressure/`: the stage-1 builder,
-  OTA handling, adb/fastboot, Qualcomm EDL, verified backups, processes and waits, SSH, the RAM
-  boot, the formats, `elfdeps.py` and `windows_ncm.py`.
+  controller data extractors. What other headsets share is in the root package `overpressure/`: the settings
+  every Qualcomm Android headset has and their doctor checks, the stage-1 builder, OTA handling, adb/fastboot,
+  Qualcomm EDL (backup, verified writes), verified backups, processes and waits, SSH, recorded runs and the
+  read-only storage policy, sparse flashing and the RAM boot, the formats, `elfdeps.py` and `windows_ncm.py`.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
   the f_mass_storage kernel thread and with it the USB link. `pico4-userspace installed`
   and `switch` hand over to stage 2.

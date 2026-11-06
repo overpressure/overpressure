@@ -114,16 +114,17 @@ python -m overpressure dev check
 | [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (WSL, sudo), its display, running it |
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
 | [overpressure/gui.py](../overpressure/gui.py) | the window (Tk) |
-| [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix |
-| [overpressure/fastboot.py](../overpressure/fastboot.py) | the RAM boot: `fastboot boot` with the headset's checks, never a write |
-| [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, then the headset's (`Headset.dependencies()`) |
+| [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix; `DeviceSettings`, what every Qualcomm Android headset names |
+| [overpressure/fastboot.py](../overpressure/fastboot.py) | flashing an image sparse above a size, raw below; the RAM boot: `fastboot boot` with the headset's checks, never a write |
+| [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, then the headset's (`Headset.dependencies()`), built from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link, an arm64 build host) |
 | [overpressure/tools.py](../overpressure/tools.py) | the pinned host tools in `cache/tools` |
 | [overpressure/linux.py](../overpressure/linux.py) | where Linux-root steps run: WSL, sudo or the build container |
 | [overpressure/stage1.py](../overpressure/stage1.py) | a stage 1: an Alpine ramdisk in the stock Android boot image, from a headset's `Spec` |
-| [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), checked against the zip |
-| [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed; the SoC ID, EDL (edl-ng, bkerler/edl) and its partition maps |
-| [overpressure/backup.py](../overpressure/backup.py), [process.py](../overpressure/process.py), [ssh.py](../overpressure/ssh.py) | verified backups; programs and bounded waits; SSH with the project's key |
-| `bootimg`, `avb`, `sparse`, `payload`, `cpio`, `compress`, `alpine`, `apksign`, `kernelinfo`, `elfdeps`, `windows_ncm` | the formats and helpers Android-based headsets share |
+| [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), checked against the zip; a pinned file out of a remote zip, checked by its hash |
+| [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed, the wait for Android's boot, a partition's size from `getvar all`; the SoC ID, EDL (edl-ng, bkerler/edl), its partition maps, a full backup and a write verified by readback |
+| [overpressure/backup.py](../overpressure/backup.py), [process.py](../overpressure/process.py), [ssh.py](../overpressure/ssh.py) | verified backups and a partition's image in them; programs and bounded waits; SSH with the project's key, the keys an image enrolls |
+| [overpressure/evidence.py](../overpressure/evidence.py), [storage.py](../overpressure/storage.py) | a run that records every step and command in its results folder, bounded waits and HTTP fetches; the read-only storage policy a headset's Linux stages enforce |
+| `bootimg`, `avb`, `sparse`, `payload`, `cpio`, `compress`, `alpine`, `apksign`, `kernelinfo`, `elfdeps`, `windows_ncm` | the formats and helpers Android-based headsets share (`bootimg` also edits a boot image's ramdisk and command line) |
 | [scripts/stock-lib.sh](../scripts/stock-lib.sh) | for a headset's extraction scripts: a checked stock firmware folder, files out of its ext4 images |
 
 ## RAM boot

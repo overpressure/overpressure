@@ -22,13 +22,13 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, TypeVar
 
+from overpressure import android, qualcomm
 from overpressure import backup as backups
 from overpressure.process import run, until
 from overpressure.qualcomm import edl_devices
@@ -66,42 +66,18 @@ class Headset:
 
     def wait_pico_os(self, seconds: float = 300) -> str:
         """Wait until PICO OS has finished booting; return its build fingerprint."""
-
-        def ready() -> str:
-            lines = self.run(
-                [
-                    self.s.tool("adb"),
-                    "-s",
-                    self.s.adb_serial,
-                    "shell",
-                    "getprop sys.boot_completed; getprop ro.build.fingerprint",
-                ],
-                15,
-            ).splitlines()
-            if not lines or lines[0].strip() != "1":
-                msg = "PICO OS has not finished booting"
-                raise RuntimeError(msg)
-            return lines[1].strip() if len(lines) > 1 else ""
-
-        return self.until("PICO OS", seconds, ready)
+        return android.wait_booted(
+            self.s.tool("adb"), self.s.adb_serial, self.run, self.clock, seconds=seconds, system="PICO OS"
+        )
 
     def enter_edl(self) -> None:
         """Bring the headset from PICO OS to EDL, unless it is the one EDL device already."""
-        if self.edl_count() == 1:
-            return
-        self.run([self.s.tool("adb"), "-s", self.s.adb_serial, "reboot", "edl"], 30)
-
-        def one() -> None:
-            if self.edl_count() != 1:
-                msg = "expected exactly one EDL device"
-                raise RuntimeError(msg)
-
-        self.until("EDL", 30, one)
+        qualcomm.enter_edl(self.s.tool("adb"), self.s.adb_serial, self.run, self.clock, edl_count=self.edl_count)
 
     def edl(self, *words: str | Path, log: str, timeout: float = 600) -> str:
         """Run edl-ng with the headset's loader; its output goes to @p log.log in the evidence folder."""
         return self.run(
-            [self.s.edl_program(), "--loader", self.s.path("loader"), "--memory", "Ufs", *words],
+            qualcomm.edl_ng(self.s.edl_program(), self.s.path("loader"), *words),
             timeout,
             log=self.folder / f"{log}.log",
         )
@@ -126,9 +102,7 @@ class Headset:
 
     def check_edl_serial(self, output: str) -> None:
         """edl-ng reports the device serial when it connects: only the configured headset may be written."""
-        if not re.search(rf"Serial Number:\s*{re.escape(self.s.edl_serial)}\b", output, re.IGNORECASE):
-            msg = "the EDL device is not the configured headset (headset in EDL)"
-            raise RuntimeError(msg)
+        qualcomm.check_edl_serial(output, self.s.edl_serial)
 
     def device_args(self) -> list[str | Path]:
         """Return the device command's arguments for the ABL with this headset's backup and loader."""
@@ -181,13 +155,7 @@ class Headset:
 
     def stock_partition(self, name: str) -> tuple[Path, dict]:
         """Return a partition's image in the backup and its manifest entry."""
-        backup = self.s.path("backup")
-        manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
-        names = [n for n in manifest["files"] if Path(n).stem == name and Path(n).suffix in (".bin", ".img")]
-        if len(names) != 1:
-            msg = f"the backup must hold exactly one {name} partition image"
-            raise ValueError(msg)
-        return backup / names[0], manifest["files"][names[0]]
+        return backups.partition_image(self.s.path("backup"), name)
 
     def stock_boot(self) -> tuple[Path, dict]:
         """Return the stock boot image of the backup and its manifest entry."""

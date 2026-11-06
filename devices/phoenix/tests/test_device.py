@@ -96,30 +96,6 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(device.edl_command(args, "r", "abl", "read.bin")[5:], ["read-part", "abl", "read.bin"])
         self.assertEqual(device.edl_command(args, "w", "abl", "write.bin")[5:], ["write-part", "abl", "write.bin"])
 
-    def test_native_dump_rejects_missing_truncated_and_escaping_files(self):
-        directory = self.backup / "lun4"
-        directory.mkdir()
-        xml = directory / "rawprogram4.xml"
-
-        def map_file(name: str = "abl.bin") -> None:
-            xml.write_text(
-                '<data><program filename="' + name + '" label="abl" '
-                'num_partition_sectors="1" SECTOR_SIZE_IN_BYTES="4096" '
-                'physical_partition_number="4" /></data>'
-            )
-
-        map_file()
-        with self.assertRaises(ValueError):
-            device.validate_native_dump(self.backup, [4], include_userdata=True)
-        (directory / "abl.bin").write_bytes(b"x" * 4095)
-        with self.assertRaises(ValueError):
-            device.validate_native_dump(self.backup, [4], include_userdata=True)
-        (directory / "abl.bin").write_bytes(b"x" * 4096)
-        device.validate_native_dump(self.backup, [4], include_userdata=True)
-        map_file("../abl.bin")
-        with self.assertRaises(ValueError):
-            device.validate_native_dump(self.backup, [4], include_userdata=True)
-
     def test_backup_requires_recovery_files_and_does_not_overwrite(self):
         args = [*self.args("backup"), "--execute", "--confirm-device", "ABC"]
         with patch.object(device, "run") as run:

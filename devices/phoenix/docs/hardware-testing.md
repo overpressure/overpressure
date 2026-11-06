@@ -530,7 +530,10 @@ locked and unsupported bootloaders, a wrong SSH identity, a wrong build, writabl
 broken HTTP and failed recovery; for `flash-run` wrong or tampered backups, mismatched kernels and
 partition layouts, partial and interrupted writes, a changed restore image, readback mismatches
 and failed restores; the stage-2 checks, the order and
-failures of the NCM initialization, command timeouts and artifact preservation.
+failures of the NCM initialization and artifact preservation. What the runner is built on has its
+own tests: [tests/test_evidence.py](../../../tests/test_evidence.py) (recorded commands, their
+failures and timeouts, steps, bounded waits and fetches) and
+[tests/test_storage.py](../../../tests/test_storage.py) (the read-only storage policy).
 [tests/test_headset.py](../tests/test_headset.py) covers the cycle's order and refusals (a boot
 partition that differs from the backup, another EDL device, a changed pinned image, no EDL device)
 and the dev loop's login, install, reboot and restore; [tests/test_windows_ncm.py](../../../tests/test_windows_ncm.py)

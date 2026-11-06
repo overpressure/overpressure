@@ -5,42 +5,28 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import datetime as dt
-import gzip
 import hashlib
 import io
 import ipaddress
 import json
 import re
 import shutil
-import subprocess
 import sys
 import tarfile
 import time
 import uuid
-from http import HTTPStatus
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, Callable, TypeVar
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from typing import Any
 
-from overpressure import REPO, android, bootimg, compress, cpio, qualcomm, windows_ncm
+from overpressure import REPO, android, bootimg, evidence, qualcomm, windows_ncm
 from overpressure import backup as backups
 from overpressure.android import fastboot_value
+from overpressure.evidence import require, utc
+from overpressure.storage import data_device, validate_mounts, validate_storage
 
 from . import device, userspace
 
-if TYPE_CHECKING:
-    import os
-    from collections.abc import Sequence
-    from email.message import Message
-
 ROOT = Path(__file__).resolve().parent.parent  # devices/phoenix
-T = TypeVar("T")
-#: A row of the storage inventory: BLOCK, the device's name and its read-only flag.
-BLOCK_FIELDS = 3
-#: A row of /proc/mounts: device, mount point, type, options, dump and pass.
-MOUNT_FIELDS = 6
-MOUNT_POINT = 1
 #: The boot image header versions whose fields the stock and test images are compared by.
 MAX_HEADER_VERSION = 2
 #: What PICO OS shows to identify the headset, one line each.
@@ -54,33 +40,6 @@ IDENTITY_COMMANDS = (
 STAGE1_PROOF = ("/etc/pico4/test-run", "/sys/devices/soc0/serial_number")
 
 
-class NoRedirect(HTTPRedirectHandler):
-    """Follow no redirect: the headset's address is the only one the runner talks to."""
-
-    def redirect_request(  # noqa: PLR0913, PLR0917  # urllib's signature
-        self,
-        req: Request,  # noqa: ARG002  # urllib's signature
-        fp: IO[bytes],  # noqa: ARG002  # urllib's signature
-        code: int,  # noqa: ARG002  # urllib's signature
-        msg: str,  # noqa: ARG002  # urllib's signature
-        headers: Message,  # noqa: ARG002  # urllib's signature
-        newurl: str,  # noqa: ARG002  # urllib's signature
-    ) -> None:
-        """Refuse every redirect."""
-        return
-
-
-def utc() -> str:
-    """Return the current time in UTC, as the result records it."""
-    return dt.datetime.now(dt.timezone.utc).isoformat()
-
-
-def require(condition: object, message: str) -> None:
-    """Raise ValueError with @p message unless @p condition holds."""
-    if not condition:
-        raise ValueError(message)
-
-
 def validate_preflight(output: str) -> None:
     """Refuse a preflight output without exactly one summary of only passed checks."""
     summaries = re.findall(r"^PREFLIGHT: (\d+) passed, (\d+) failed\s*$", output, re.MULTILINE)
@@ -88,64 +47,6 @@ def validate_preflight(output: str) -> None:
         len(summaries) == 1 and int(summaries[0][0]) > 0 and int(summaries[0][1]) == 0,
         "Preflight failed or did not produce a complete result",
     )
-
-
-def validate_storage(output: str, data: str = "") -> None:
-    """Require every physical block device read-only, except the installed system's data partition.
-
-    On the installed system its data partition (@p data, e.g. sda16) is the one exception and
-    must be writable: read-only under the mounted file system, its writeback fails and the data
-    is lost. A mainline kernel counts a disk's read-only flag for its partitions too, so there the
-    data partition's disk is writable as well; its other partitions keep their own flags.
-    """
-    rows = [line.split() for line in output.splitlines()]
-    require(
-        rows and all(len(r) == BLOCK_FIELDS and r[0] == "BLOCK" and r[2] in ("0", "1") for r in rows),
-        "Storage protection failed: missing or invalid block-device inventory",
-    )
-    physical = [r for r in rows if not r[1].startswith(("loop", "ram", "zram", "nbd"))]
-    require(physical, "No physical storage detected")
-    data_disk = re.sub(r"\d+$", "", data) if data else ""
-    require(
-        all(r[2] == "1" for r in physical if r[1] not in (data, data_disk)),
-        "Storage protection failed: writable disk or partition",
-    )
-    if data:
-        require(
-            [r[2] for r in physical if r[1] == data] == ["0"], "The installed system's data partition is not writable"
-        )
-
-
-def data_device(mounts: str) -> str:
-    """Return the block device (sda16) mounted at /data, or empty."""
-    for row in mounts.splitlines():
-        fields = row.split()
-        if len(fields) > MOUNT_POINT and fields[MOUNT_POINT] == "/data" and fields[0].startswith("/dev/"):
-            return fields[0][len("/dev/") :]
-    return ""
-
-
-def validate_mounts(output: str, *, installed: bool = False) -> None:
-    """Refuse a writable device-backed mount: stage 1 runs from RAM, the installed system read-only."""
-    rows = [row.split() for row in output.splitlines()]
-    require(rows and all(len(r) == MOUNT_FIELDS for r in rows), "Invalid mount inventory")
-    roots = [r for r in rows if r[1] == "/"]
-    writable = [r for r in rows if r[0].startswith("/dev/") and "rw" in r[3].split(",")]
-    if installed:
-        # The installed system: its image read-only; writable only the data partition, the device
-        # at /data, wherever it is bound (/var, /home, SteamOS's offload binds of /srv, /var/log...).
-        require(
-            roots and all(r[0].startswith("/dev/") and "ro" in r[3].split(",") for r in roots),
-            "The installed system's root is not mounted read-only",
-        )
-        data = {r[0] for r in writable if r[1] == "/data"}
-        require(
-            len(data) == 1 and {r[0] for r in writable} == data,
-            "A device-backed filesystem other than the data partition is mounted writable",
-        )
-        return
-    require(roots and all(r[2] in ("rootfs", "tmpfs", "ramfs") for r in roots), "Root filesystem is not RAM-backed")
-    require(not writable, "A device-backed filesystem is mounted writable")
 
 
 def validate_report(data: bytes, run_id: str) -> None:
@@ -187,7 +88,7 @@ def prepare_image(  # noqa: PLR0913  # the image's inputs; its deadlines and mod
         ),
         "Hardware tests require read-only mode and QEMU selftest disabled",
     )
-    tree = cpio.Tree(nodes=dict(cpio.read_cpio(compress.decompress(image.ramdisk)[0])))
+    tree = bootimg.ramdisk_tree(image)
     require("etc/pico4/build-info" in tree.nodes, "Image is not a PICO 4 POC build")
     require(
         "usr/libexec/pico4/recovery-watch" in tree.nodes
@@ -212,15 +113,12 @@ def prepare_image(  # noqa: PLR0913  # the image's inputs; its deadlines and mod
     tree.add_file("etc/pico4/test-run", run_id.encode() + b"\n")
     tree.add_file("etc/pico4/test-connect-timeout", f"{connect_timeout}\n".encode())
     tree.add_file("etc/pico4/test-timeout", f"{test_timeout}\n".encode())
-    words = [w for w in words if not w.startswith("pico4.test_run=")]
-    image = image.with_cmdline(" ".join([*words, f"pico4.test_run={run_id}"]))
-    image.ramdisk = gzip.compress(tree.to_cpio(), mtime=0)
-    image.boot_signature = b""
-    data = image.pack()
-    check = bootimg.parse(data)
-    require(
-        check.kernel == image.kernel and check.dtb == image.dtb and check.id == check.compute_id(),
-        "Instrumented boot image failed validation",
+    data = bootimg.with_ramdisk(
+        image,
+        tree,
+        drop=("pico4.test_run=",),
+        add=(f"pico4.test_run={run_id}",),
+        failed="Instrumented boot image failed validation",
     )
     (folder / "test-boot.img").write_bytes(data)
     return {
@@ -301,22 +199,22 @@ def prepare_restore_image(backup: Path, folder: Path, serial: str, identity: dic
     return {"source": str(original.resolve()), "path": str(target.resolve()), **expected}
 
 
-class Runner:
+class Runner(evidence.Runner):
     """The bounded acceptance run on one headset: every step recorded, the headset always brought back."""
 
     def __init__(self, args: argparse.Namespace) -> None:
         """Start a run with the command line's @p args; its results go to a new folder."""
         self.args = args
-        self.folder = args.out.resolve()
+        folder = args.out.resolve()
         self.flash_mode = args.command == "flash-run"
         if self.flash_mode:
             require(
-                args.backup.resolve() not in (self.folder, *self.folder.parents),
+                args.backup.resolve() not in (folder, *folder.parents),
                 "Test results must be outside the immutable backup directory",
             )
-        self.folder.mkdir(parents=True, exist_ok=False)
+        super().__init__(folder)
         self.run_id = uuid.uuid4().hex
-        self.result: dict[str, Any] = {
+        self.result = {
             "schema": 1,
             "run_id": self.run_id,
             "started": utc(),
@@ -325,7 +223,6 @@ class Runner:
             "checks": [],
             "recovery": "not_needed",
         }
-        self.count = 0
         self.moved = False
         self.boot_attempted = False
         self.authenticated = False
@@ -334,36 +231,6 @@ class Runner:
         self.boot_dirty = False
         self.result.update(boot_restore="not_needed", boot_restore_required=False)
         self.save()
-
-    def save(self) -> None:
-        """Write the result file, replacing the last one whole."""
-        temp = self.folder / "result.json.tmp"
-        temp.write_text(json.dumps(self.result, indent=2) + "\n", encoding="utf-8")
-        temp.replace(self.folder / "result.json")
-
-    def command(self, argv: Sequence[str | os.PathLike[str]], timeout: float = 30) -> str:
-        """Run a host program, its command line and output kept as evidence; return its output."""
-        self.count += 1
-        prefix = self.folder / f"command-{self.count:04d}"
-        Path(str(prefix) + ".json").write_text(
-            json.dumps({"argv": list(map(str, argv)), "timeout": timeout, "started": utc()}, indent=2), encoding="utf-8"
-        )
-        try:
-            process = subprocess.run(  # noqa: S603  # adb, fastboot, ssh and the NCM helper by name, no shell
-                list(map(str, argv)), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False
-            )
-        except subprocess.TimeoutExpired as exc:
-            Path(str(prefix) + ".log").write_bytes((exc.stdout or b"") + b"\nTIMEOUT\n")
-            msg = f"Command timed out; see {prefix.name}.log"
-            raise ValueError(msg) from exc
-        output = process.stdout
-        Path(str(prefix) + ".log").write_bytes(output)
-        text = output.decode("utf-8", errors="replace").strip()
-        require(
-            process.returncode == 0 and not re.search(r"\bFAILED\b", text),
-            f"Command failed ({process.returncode}); see {prefix.name}.log",
-        )
-        return text
 
     def adb(self, *words: str, timeout: float = 30) -> str:
         """Run adb on the selected headset; return its output."""
@@ -399,37 +266,6 @@ class Runner:
             ],
             timeout,
         )
-
-    def step(self, name: str, operation: Callable[[], T]) -> T:
-        """Run one step of the run, recorded in the result whether it passes or fails."""
-        print(f">> {name}", flush=True)
-        record = {"name": name, "started": utc(), "status": "running"}
-        self.result["checks"].append(record)
-        self.save()
-        try:
-            value = operation()
-        except (Exception, KeyboardInterrupt) as exc:
-            record.update(status="failed", error=str(exc) or "Interrupted")
-            raise
-        else:
-            record["status"] = "passed"
-            return value
-        finally:
-            record["finished"] = utc()
-            self.save()
-
-    def wait(self, name: str, seconds: float, operation: Callable[[float], T]) -> T:
-        """Retry @p operation, given the time left for each attempt, until it succeeds or @p seconds pass."""
-        deadline = time.monotonic() + seconds
-        last = "no response"
-        while time.monotonic() < deadline:
-            try:
-                return operation(max(0.1, min(10, deadline - time.monotonic())))
-            except (ValueError, OSError) as exc:  # noqa: PERF203  # each attempt may fail until the deadline
-                last = str(exc)
-                time.sleep(min(2, max(0, deadline - time.monotonic())))
-        msg = f"Timed out waiting for {name}: {last}"
-        raise ValueError(msg)
 
     def identity(self, timeout: float = 30) -> dict[str, Any]:
         """Return the identity of the booted PICO OS: its fingerprint, OEM state and SoC ID."""
@@ -524,8 +360,10 @@ class Runner:
         self.check_fastboot_unlock()
         # This engineering ABL lists every partition but lacks getvar has-slot.
         inventory = self.fastboot("getvar", "all")
-        names = re.findall(r"^[ \t]*(?:\(bootloader\)[ \t]*)?partition-size:(boot(?:_[ab])?):", inventory, re.MULTILINE)
-        require(names == ["boot"], "Flash tests only support a non-slotted boot partition")
+        require(
+            android.partition_names(inventory, "boot") == ["boot"],
+            "Flash tests only support a non-slotted boot partition",
+        )
         size = fastboot_value(inventory, "partition-size:boot")
         require(
             re.fullmatch(r"0x[0-9a-fA-F]+", size) and int(size, 16) == self.result["stock_boot"]["size"],
@@ -628,19 +466,7 @@ class Runner:
 
     def http(self, endpoint: str, timeout: float = 15) -> bytes:
         """Fetch @p endpoint from stage 1's web server, bounded in time and size."""
-        # The USB address must bypass desktop/environment HTTP proxies.
-        url = f"http://{self.args.host}/{endpoint}"
-        deadline = time.monotonic() + timeout
-        with build_opener(ProxyHandler({}), NoRedirect()).open(url, timeout=timeout) as response:
-            require(response.status == HTTPStatus.OK and response.url == url, "Unexpected HTTP response/redirect")
-            data = bytearray()
-            while True:
-                require(time.monotonic() < deadline, "HTTP transfer exceeded its deadline")
-                block = response.read1(65536)
-                if not block:
-                    return bytes(data)
-                data.extend(block)
-                require(len(data) <= 32 * 1024 * 1024, "HTTP response exceeds test limit")
+        return evidence.http_get(f"http://{self.args.host}/{endpoint}", timeout)
 
     def diagnostics(self) -> None:
         """Fetch stage 1's status page, boot log and hardware report over HTTP, and its kernel log."""

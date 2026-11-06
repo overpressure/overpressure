@@ -41,10 +41,14 @@ tests/            host tests (unittest), test_recovery_policy.sh, test_charger.s
 docs/             documentation
 ```
 
-The generic modules the PICO 4 uses are in the root package: `stage1.py` (the stage-1 builder),
-`ota.py` (stock images and partitions from an OTA), `android.py` (adb and fastboot),
-`qualcomm.py` (the SoC ID, EDL and its partition maps), `backup.py` (verified backups),
-`process.py` (programs and bounded waits), `ssh.py`, `fastboot.py` (the RAM boot), the formats
+The generic modules the PICO 4 uses are in the root package: `localconfig.py` (`.env`, the
+settings every Qualcomm Android headset has), `doctor.py` (the shared dependency checks),
+`stage1.py` (the stage-1 builder), `ota.py` (stock images and partitions from an OTA, the unlock
+files out of PICO's archives), `android.py` (adb and fastboot), `qualcomm.py` (the SoC ID, EDL,
+its partition maps, the backup and the verified ABL writes), `backup.py` (verified backups),
+`process.py` (programs and bounded waits), `ssh.py`, `fastboot.py` (sparse flashing, the RAM
+boot), `evidence.py` (the acceptance runner's recorded steps and commands), `storage.py` (the
+read-only storage policy), the formats
 (`bootimg.py`, `cpio.py`, `compress.py`, `alpine.py`, `apksign.py`, `payload.py`, `kernelinfo.py`,
 `avb.py`, `sparse.py`), `elfdeps.py` (native ELF dependency check of the userspace root) and
 `windows_ncm.py` (Windows NCM initialization through UsbDk); `scripts/stock-lib.sh` serves the

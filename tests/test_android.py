@@ -57,6 +57,53 @@ class AndroidToolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 android.fastboot_value(output, "a")
 
+    def test_a_single_non_slotted_partition_and_its_size(self):
+        inventory = (
+            "(bootloader) partition-size:boot: 0x6000000\n(bootloader) partition-size:recovery_a: 0x6400000\n"
+            "(bootloader) partition-size:recovery_b: 0x6400000\n(bootloader) partition-size:bootloader: 0x10\nOKAY"
+        )
+        self.assertEqual(android.partition_names(inventory, "boot"), ["boot"])
+        self.assertEqual(android.partition_names(inventory, "recovery"), ["recovery_a", "recovery_b"])
+        self.assertEqual(android.single_partition_size(inventory, "boot"), 0x6000000)
+        self.assertIsNone(android.single_partition_size(inventory, "recovery"))
+        self.assertIsNone(android.single_partition_size(inventory, "misc"))
+        with self.assertRaises(ValueError):
+            android.single_partition_size("partition-size:boot: big", "boot")
+
+    def test_waiting_for_android_to_finish_booting(self):
+        answers = ["", "0\n", "1\nVendor/device/x:1/build:user/release-keys"]
+        commands = []
+
+        def runner(command: list[str], timeout: float) -> str:
+            commands.append((command, timeout))
+            return answers.pop(0)
+
+        clock = FakeClock()
+        self.assertEqual(
+            android.wait_booted("adb", "S1", runner, clock, system="Vendor OS"),
+            "Vendor/device/x:1/build:user/release-keys",
+        )
+        self.assertEqual(
+            commands[0], (["adb", "-s", "S1", "shell", "getprop sys.boot_completed; getprop ro.build.fingerprint"], 15)
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "timed out waiting for Vendor OS: Vendor OS has not finished booting"
+        ):
+            android.wait_booted("adb", "S1", lambda *_: "0", clock, seconds=10, system="Vendor OS")
+
+
+class FakeClock:
+    """Virtual time: a wait's sleeps pass at once."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
 
 if __name__ == "__main__":
     unittest.main()

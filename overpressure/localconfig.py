@@ -5,7 +5,8 @@
 workflows use, so it stays out of Git; .env.example lists the keys. Each headset declares its
 settings as a dataclass derived from Settings, with its own key prefix (PICO4_ for the PICO 4),
 so several headsets can share one .env. Environment variables of the same names take precedence
-over the file.
+over the file. A headset on a stock Android bootloader derives from DeviceSettings, which has what
+every Qualcomm Android headset's workflow names (serials, EDL backup, loader, tools).
 """
 
 from __future__ import annotations
@@ -65,6 +66,41 @@ class Settings:
         if missing:
             msg = f"set {', '.join(missing)} in .env (see .env.example)"
             raise ValueError(msg)
+
+
+@dataclass
+class DeviceSettings(Settings):
+    """The settings of a headset on a stock Android bootloader: its serials, its EDL backup, the EDL tools.
+
+    Every Qualcomm Android headset's workflow names these; a headset derives its own settings
+    from this class with its PREFIX and adds what only it needs.
+    """
+
+    adb_serial: str = ""
+    fastboot_serial: str = ""
+    edl_serial: str = ""
+    identity: str = "backup/device.json"
+    backup: str = "backup/stock"
+    loader: str = "assets/firehose.elf"
+    edl: str = ""  #: empty: the fetched edl-ng (python -m overpressure tools)
+    ncm_python: str = ""  #: empty: the fetched NCM venv on Windows
+    ssh_public_key: str = ""  #: the owner's own public key file, enrolled besides this PC's key
+
+    def edl_program(self) -> Path:
+        """Return the edl setting when set, else the fetched edl-ng, else edl-ng on PATH."""
+        if self.edl:
+            return self.path("edl")
+        return tools.program("edl-ng") or Path("edl-ng" + EXE)
+
+    def ncm(self) -> Path | None:
+        """Return the Python for the Windows NCM initialization.
+
+        The ncm_python setting when set, else the fetched NCM venv's; None when there is neither
+        (or not on Windows).
+        """
+        if self.ncm_python:
+            return self.path("ncm_python")
+        return tools.ncm_python() if sys.platform == "win32" else None
 
 
 def parse(text: str) -> dict:

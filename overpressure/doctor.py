@@ -5,26 +5,37 @@ Every check names what it is needed for (the window, building an image, the user
 working on the headset, ...), what was found, and how to fix it when it is missing. The checks
 only look: they run version queries and `command -v`, read files and settings, and install
 nothing. The generic ones cover the host (Python, Tk, OpenSSH, Linux as root); a headset adds
-its own through Headset.dependencies().
+its own through Headset.dependencies(), built from the checks here that every Qualcomm Android
+headset shares (its DeviceSettings, the EDL backup and tools, adb and fastboot, the Windows USB
+link, an arm64 build host) and its own.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
-from . import REPO, linux
+from . import REPO, linux, windows_ncm
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+    from pathlib import Path
 
     from .headset import Headset
+    from .localconfig import DeviceSettings
 
 OK, MISSING, OPTIONAL, WARNING = "ok", "missing", "optional", "warning"
 MARK = {OK: "ok", MISSING: "MISSING", OPTIONAL: "optional", WARNING: "warning"}
+#: What the checks of a headset's settings and tools are needed for, unless the headset names it.
+HEADSET = "working on the headset"
+EDL = "EDL"
+#: The fixes' common beginnings: a package on the Linux side, the pinned host tools.
+APT = "in WSL/Linux as root: apt install "
+FETCH = "python -m overpressure tools"
 
 
 @dataclass(frozen=True)
@@ -128,6 +139,156 @@ def linux_commands(host: Host, needed_for: str, commands: dict[str, str], fix: s
         path = found.get(name.replace("-", "_").replace(".", "_"), "")
         checks.append(
             Check(name, needed_for, OK if path else MISSING, path or f"not in Linux ({purpose})", "" if path else fix)
+        )
+    return checks
+
+
+def env_check(root: Path = REPO, needed_for: str = HEADSET) -> Check:
+    """Check that .env, which names the headset's serials and private files, is there."""
+    env = root / ".env"
+    return Check(
+        ".env",
+        needed_for,
+        OK if env.exists() else MISSING,
+        str(env) if env.exists() else "no .env",
+        "" if env.exists() else "copy .env.example to .env and fill in the headset's serials and files",
+    )
+
+
+def serial_checks(settings: DeviceSettings, needed_for: str = HEADSET, edl_needed_for: str = EDL) -> list[Check]:
+    """Check that the headset's adb, fastboot and EDL serials are set."""
+    checks = []
+    for name, what in (
+        ("adb_serial", "adb devices"),
+        ("fastboot_serial", "fastboot devices"),
+        ("edl_serial", "edl-ng's Serial Number"),
+    ):
+        value = getattr(settings, name)
+        checks.append(
+            Check(
+                settings.key(name),
+                needed_for if name != "edl_serial" else edl_needed_for,
+                OK if value else MISSING,
+                "set" if value else "empty",
+                "" if value else f"set it in .env ({what})",
+            )
+        )
+    return checks
+
+
+def backup_check(folder: Path, needed_for: str = HEADSET, fix: str = "python -m overpressure device backup") -> Check:
+    """Check the EDL backup: its manifest, and every file in it present at its recorded size.
+
+    The images are not hashed here (gigabytes); every write checks them against the manifest.
+    """
+    manifest = folder / "manifest.json"
+    try:
+        files = json.loads(manifest.read_text(encoding="utf-8"))["files"]
+    except (OSError, ValueError, KeyError) as exc:
+        return Check("EDL backup", needed_for, MISSING, f"{manifest}: {exc}"[:120], fix)
+    short = [
+        name
+        for name, entry in files.items()
+        if not (folder / name).is_file() or (folder / name).stat().st_size != entry.get("size")
+    ]
+    if short:
+        return Check(
+            "EDL backup",
+            needed_for,
+            MISSING,
+            f"{len(short)} of {len(files)} files missing or of another size: " + ", ".join(short[:3]),
+            fix,
+        )
+    return Check("EDL backup", needed_for, OK, f"{len(files)} files (sizes; every write checks their hashes)")
+
+
+def loader_check(
+    settings: DeviceSettings, needed_for: str = EDL, fix: str = "the headset's signed Firehose loader"
+) -> Check:
+    """Check that the Firehose loader the loader setting names is there."""
+    loader = settings.path("loader")
+    return Check(
+        "Firehose loader",
+        needed_for,
+        OK if loader.is_file() else MISSING,
+        str(loader) if loader.is_file() else f"no {loader}",
+        "" if loader.is_file() else fix,
+    )
+
+
+def edl_tool_check(host: Host, settings: DeviceSettings, needed_for: str = EDL) -> Check:
+    """Check that edl-ng is there: the edl setting's, the fetched one or one on PATH."""
+    edl = settings.edl_program()
+    found = edl.is_file() or (not edl.is_absolute() and host.which(str(edl)))
+    return Check(
+        "edl-ng", needed_for, OK if found else MISSING, str(edl) if found else f"no {edl}", "" if found else FETCH
+    )
+
+
+def tool_checks(host: Host, settings: DeviceSettings, needed_for: str = HEADSET) -> list[Check]:
+    """Check adb and fastboot by their version queries."""
+    fix = FETCH + f" (or Android platform-tools of your own, in {settings.key('platform_tools')})"
+    return [
+        version_check(host, "adb", [settings.tool("adb"), "version"], needed_for, fix),
+        version_check(host, "fastboot", [settings.tool("fastboot"), "--version"], needed_for, fix),
+    ]
+
+
+def ncm_checks(host: Host, settings: DeviceSettings) -> list[Check]:
+    """Windows only: the Python with pyusb and libusb-package, and UsbDk behind it."""
+    if host.platform != "win32":
+        return []
+    needed_for = "the USB network link on Windows"
+    fix = FETCH + " (the NCM venv), and UsbDk: winget install daynix.UsbDk (admin)"
+    python = settings.ncm()
+    if python is None:
+        return [Check("NCM Python", needed_for, MISSING, f"no NCM venv and no {settings.key('ncm_python')}", fix)]
+    code, out = host.run(windows_ncm.command(python), 30)
+    try:
+        state = json.loads(out.splitlines()[-1]) if code == 0 and out else {}
+    except ValueError:
+        state = {}
+    if state.get("status") == "ready":
+        versions = ", ".join(f"{k} {v}" for k, v in (state.get("dependencies") or {}).items())
+        return [Check("NCM Python and UsbDk", needed_for, OK, versions)]
+    return [Check("NCM Python and UsbDk", needed_for, MISSING, (out.splitlines() or ["no answer"])[-1][:120], fix)]
+
+
+def arm64_build_checks(host: Host, needed_for: str) -> list[Check]:
+    """Check what building arm64 code in Linux needs on an x86-64 host; nothing on another one.
+
+    The aarch64 binfmt handler with the F flag (a chroot runs arm64 programs through it) and a
+    native clang and lld (cross compiling instead of compiling under QEMU).
+    """
+    # The aarch64 handler by its ELF magic: qemu-aarch64 (Debian) or aarch64 (Docker Desktop).
+    state = host.linux(
+        "echo arch=$(uname -m); echo binfmt=$(for f in /proc/sys/fs/binfmt_misc/*; do "
+        "grep -qs '^magic 7f454c460201010000000000000000000200b700' $f && "
+        "sed -n 's/^flags: //p' $f; done | head -n 1); "
+        "for v in 21 20 19; do [ -x /usr/lib/llvm-$v/bin/clang ] && [ -x /usr/lib/llvm-$v/bin/ld.lld ] "
+        "&& { echo llvm=/usr/lib/llvm-$v; break; }; done; true"
+    )
+    checks = []
+    if state.get("arch") == "x86_64":
+        flags = state.get("binfmt", "")
+        checks.append(
+            Check(
+                "aarch64 binfmt (F flag)",
+                needed_for,
+                OK if "F" in flags else MISSING,
+                f"flags {flags}" if flags else "no qemu-aarch64 handler",
+                "" if "F" in flags else APT + "qemu-user-static binfmt-support",
+            )
+        )
+        llvm = state.get("llvm", "")
+        checks.append(
+            Check(
+                "clang and lld",
+                needed_for,
+                OK if llvm else WARNING,
+                llvm or "none: packages compile under QEMU, about ten times slower",
+                "" if llvm else APT + "clang-20 lld-20",
+            )
         )
     return checks
 

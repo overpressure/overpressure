@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from overpressure import bootimg, fastboot
+from overpressure import bootimg, fastboot, sparse
 
 
 class FakeClock:
@@ -153,6 +153,42 @@ class RamBootTests(unittest.TestCase):
     def test_fastboot_needs_the_serial(self):
         with self.assertRaises(ValueError):
             fastboot.Fastboot("fastboot", "", lambda *_: "")("boot", "x")
+
+
+class FlashTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.calls = []
+
+    def fastboot(self, *words: str | Path, timeout: float = 60) -> str:
+        sent = Path(words[2])
+        self.calls.append((words[:2], sent, sent.read_bytes(), timeout))
+        return "OKAY"
+
+    def test_small_images_go_raw_and_large_ones_sparse(self):
+        image = self.root / "boot.img"
+        image.write_bytes(b"A" * 8192)
+        fastboot.flash(self.fastboot, "boot", image)
+        self.assertEqual(self.calls, [(("flash", "boot"), image, b"A" * 8192, 180)])
+        self.calls.clear()
+        fastboot.flash(self.fastboot, "recovery", image, above=4096)
+        self.assertEqual(
+            self.calls, [(("flash", "recovery"), image.with_suffix(".simg"), sparse.encode(b"A" * 8192), 600)]
+        )
+        self.assertFalse(image.with_suffix(".simg").exists())  # removed once sent
+
+    def test_the_sparse_image_goes_where_it_is_asked_to(self):
+        image = self.root / "backup" / "misc.bin"
+        image.parent.mkdir()
+        image.write_bytes(b"Z" * 4096)
+        work = self.root / "work" / "restore-misc.simg"
+        work.parent.mkdir()
+        fastboot.flash(self.fastboot, "misc", image, above=0, sparse_path=work)
+        self.assertEqual(self.calls[0][1:], (work, sparse.encode(b"Z" * 4096), 600))
+        self.assertEqual(sorted(p.name for p in image.parent.iterdir()), ["misc.bin"])
+        self.assertFalse(work.exists())
 
 
 if __name__ == "__main__":

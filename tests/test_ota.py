@@ -6,6 +6,7 @@ The block images are applied as AOSP's updater writes them.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import struct
@@ -96,6 +97,48 @@ class ExtractTests(unittest.TestCase):
     def test_members_for_copies_and_block_images(self):
         members = set(ota.members_needed({"a.bin": "dir/a.bin"}, {"system.img": "system"}))
         self.assertEqual(members, {"dir/a.bin", "system.new.dat.br", "system.transfer.list"})
+
+
+class PinnedMemberTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.data = b"the loader"
+        self.item = ota.PinnedMember(
+            "https://vendor.example/ota.zip", "dir/loader.elf", len(self.data), hashlib.sha256(self.data).hexdigest()
+        )
+        self.reads = []
+
+    def read(self, item: ota.PinnedMember) -> bytes:
+        self.reads.append(item)
+        return self.data
+
+    def test_the_member_is_hash_checked_before_it_is_written(self):
+        path = self.root / "assets" / "loader.elf"
+        lines = []
+        self.assertEqual(ota.fetch_pinned(self.item, path, lines.append, self.read), path)
+        self.assertEqual((path.read_bytes(), self.reads), (self.data, [self.item]))
+        self.assertEqual(lines, [f"{path}: {len(self.data)} bytes, SHA-256 checked"])
+        ota.fetch_pinned(self.item, path, lines.append, self.read)
+        self.assertEqual((len(self.reads), lines[-1]), (1, f"{path}: already there"))
+        other = self.root / "other.elf"
+        for data in (b"another file", self.data + b"\0"):
+            self.data = data
+            with self.assertRaisesRegex(
+                ValueError, "dir/loader.elf from https://vendor.example/ota.zip is not the known"
+            ):
+                ota.fetch_pinned(self.item, other, lines.append, self.read)
+            self.assertFalse(other.exists())
+
+    def test_a_pinned_member_is_read_from_its_zip(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("dir/loader.elf", self.data)
+        zip_path = self.root / "ota.zip"
+        zip_path.write_bytes(buffer.getvalue())
+        item = ota.PinnedMember(str(zip_path), self.item.member, self.item.size, self.item.sha256)
+        self.assertEqual(ota.read_pinned(item, log=lambda _line: None), self.data)
 
 
 if __name__ == "__main__":
