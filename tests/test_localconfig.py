@@ -50,5 +50,49 @@ class DeviceSettingsTests(unittest.TestCase):
         self.assertEqual(s.ncm(), localconfig.ROOT / "tools/python")
 
 
+class UpdateTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.env = self.root / ".env"
+        self.example = self.root / ".env.example"
+        self.example.write_text("# the serials\nEXAMPLE_ADB_SERIAL=\n\n# the firmware\nEXAMPLE_FIRMWARE=1.0\n")
+
+    def test_a_missing_env_starts_from_the_example(self):
+        localconfig.update({"EXAMPLE_ADB_SERIAL": "A1"}, self.env, self.example)
+        self.assertEqual(
+            self.env.read_text(), "# the serials\nEXAMPLE_ADB_SERIAL=A1\n\n# the firmware\nEXAMPLE_FIRMWARE=1.0\n"
+        )
+        self.assertEqual(localconfig.load(Example, self.env, {}).adb_serial, "A1")
+
+    def test_other_lines_stay_duplicates_go_and_new_keys_are_added(self):
+        kept = b"OTHER=1  # kept\r\n# EXAMPLE_EDL_SERIAL=commented\r\n"
+        self.env.write_bytes(b"# mine\r\nEXAMPLE_ADB_SERIAL=old\r\n" + kept + b"EXAMPLE_ADB_SERIAL=dup\r\n")
+        localconfig.update({"EXAMPLE_ADB_SERIAL": "A2", "EXAMPLE_EDL_SERIAL": "E1"}, self.env, self.example)
+        self.assertEqual(
+            self.env.read_bytes(), b"# mine\r\nEXAMPLE_ADB_SERIAL=A2\r\n" + kept + b"EXAMPLE_EDL_SERIAL=E1\r\n"
+        )
+
+    def test_values_are_quoted_when_they_would_not_survive_bare(self):
+        values = {"EXAMPLE_BACKUP": "backup/my stock #1", "EXAMPLE_EDL": " padded", "EXAMPLE_LOADER": "'quoted'"}
+        localconfig.update(values, self.env, self.example)
+        self.assertEqual({k: v for k, v in localconfig.parse(self.env.read_text()).items() if k in values}, values)
+        with self.assertRaisesRegex(ValueError, "one line"):
+            localconfig.update({"EXAMPLE_EDL": "a\nb"}, self.env, self.example)
+        with self.assertRaisesRegex(ValueError, "both kinds"):
+            localconfig.update({"EXAMPLE_EDL": "a \"b\" 'c' "}, self.env, self.example)
+
+    def test_a_hard_link_stays_one_file(self):
+        self.env.write_text("EXAMPLE_ADB_SERIAL=\n")
+        link = self.root / "linked.env"
+        try:
+            link.hardlink_to(self.env)
+        except (AttributeError, OSError):  # Python 3.9, or a file system without hard links
+            self.skipTest("no hard links here")
+        localconfig.update({"EXAMPLE_ADB_SERIAL": "A3"}, self.env, self.example)
+        self.assertEqual(link.read_text(), "EXAMPLE_ADB_SERIAL=A3\n")
+
+
 if __name__ == "__main__":
     unittest.main()

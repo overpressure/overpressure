@@ -33,7 +33,8 @@ def main() -> int:
     count = 0
     for name in names.decode().split("\0"):
         path = REPO / name
-        if not name or not path.is_file() or path.suffix not in ("", ".sh"):
+        # .command: macOS's start script (Install.command)
+        if not name or not path.is_file() or path.suffix not in ("", ".sh", ".command"):
             continue
         kind = shell(path.read_bytes()[:200])
         if not kind:

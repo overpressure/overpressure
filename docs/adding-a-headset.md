@@ -120,6 +120,46 @@ group and fix texts it shows: `env_check`, `serial_checks`, `backup_check`, `loa
 are the example ([devices/phoenix/tooling/doctor.py](../devices/phoenix/tooling/doctor.py)):
 those, its identity and engineering ABL, the tools of its build scripts and the extracted assets.
 
+## The installer
+
+`Headset.install_plan()` returns the stages of the one-click installer (`overpressure.install.Stage`,
+each a list of `Task`s), empty by default, which leaves a headset without an installer. A task runs
+in an `overpressure.install.Context`: it runs programs with their output streamed, reports progress
+and notes, asks the owner (`Ask`: a consent, an action, a form; secret fields never leave the
+engine) and writes settings to `.env`; a `done` check skips work whose output is already there. The
+engine keeps the state, resumes after a failure and drives the window through JSON events
+([tool.md](tool.md#the-installer)). Reuse the headset's own steps' command lines instead of writing
+them again. The PICO 4's plan is the example
+([devices/phoenix/tooling/install.py](../devices/phoenix/tooling/install.py)). The engine keeps each
+headset's state and logs in `out/install/<codename>/`; one installer runs on a computer at a time, whatever
+the headset.
+
+What the window says about the headset comes from the headset; the generic window names no product, OS or
+store:
+
+- **Its name, SoC and summary** (`Info`) head Advanced mode and its entry on the window's first page,
+  *Which headset do you have?*. A headset without an installer is listed too and opens in Advanced mode
+  only.
+- **The finished page.** `Headset.after_install()` returns an `overpressure.headset.AfterInstall`: the
+  page's title, its text (what the owner does next) and its `Action`s, each a label and the key of one of
+  the headset's steps, which the button opens in Advanced mode (the engine has no modes for them). By
+  default the page says *Installed*, "Your headset is ready.", and offers nothing. The PICO 4's:
+
+```python
+from overpressure.headset import Action, AfterInstall
+
+
+def after_install(self):
+    return AfterInstall(
+        "Unplug it and put it on",
+        "Your headset is ready. Unplug the cable, put the headset on and sign in to Steam.",
+        (Action("Update", "install"), Action("Back to PICO OS", "restore"), Action("Get help", "support-bundle")),
+    )
+```
+
+- **Everything else the installer shows** (its stages, tasks, asks, notes and the headset's state after a
+  failure) comes from its plan's texts.
+
 ## RAM boot
 
 A headset whose bootloader has `fastboot boot` gets `python -m overpressure ram-boot` and its

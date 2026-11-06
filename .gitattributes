@@ -8,6 +8,8 @@ tests/** text eol=lf
 *.sh text eol=lf
 *.py text eol=lf
 *.ps1 text eol=lf
+# cmd.exe misreads labels in LF-only batch files.
+*.cmd text eol=crlf
 *.md text eol=lf
 *.json text eol=lf
 devices/*/prebuilt/** binary

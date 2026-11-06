@@ -8,12 +8,12 @@ acceptance cycle, development loop) are in [hardware-testing.md](hardware-testin
 
 The PICO 4's part of overpressure lives in `devices/phoenix/`; the repository root holds the
 generic host package `overpressure/` (image formats, the headset registry, the command line and
-the GUI, [docs/tool.md](../../../docs/tool.md)). Paths below are relative to `devices/phoenix/`;
+the window, [docs/tool.md](../../../docs/tool.md)). Paths below are relative to `devices/phoenix/`;
 commands run from the repository root.
 
 ```text
 tooling/          the PICO 4's host tooling (Python standard library): python -m overpressure COMMAND
-  __init__.py       HEADSET: its commands and the GUI's workflow steps
+  __init__.py       HEADSET: its commands and the window's workflow steps
   image.py          stage-1 boot image (build, inspect, match) on overpressure/stage1.py; firmware.json: PICO's OTA builds
   stock.py          the members of PICO's full OTA the extraction needs (overpressure/ota.py)
   device.py         identity, EDL backups, engineering ABL, unlock and restore

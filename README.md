@@ -22,16 +22,30 @@ and battery life unplugged aren't verified ([roadmap](devices/phoenix/docs/roadm
 image and no vendor file. You build your own from the public downloads of Valve and PICO
 ([what comes from where](devices/phoenix/docs/distribution.md)).
 
+## Quick start
+
+1. Download the release zip and unpack it on a drive with room for the build (the headset's README says how
+   much).
+2. Start the installer in that folder: double-click `Install.cmd` on Windows or `Install.command` on macOS (the
+   first time: right-click, *Open*), or run `sh install.sh` on Linux. The start script fetches a pinned
+   [uv](https://docs.astral.sh/uv/), which brings Python and the window's toolkit into `cache/`; nothing is
+   installed on the computer.
+3. Choose your headset on the window's first page, *Which headset do you have?*, then follow its five stages,
+   one main button each: check this computer, build SteamOS, connect your headset, prepare your headset,
+   install. It goes on where it stopped when it is started again.
+
+What each stage does on the PICO 4, and what it needs: [devices/phoenix/README.md](devices/phoenix/README.md#install).
+
 ## The tool
 
 One tool builds the images and works on the headset, as a window or on the command line
-([docs/tool.md](docs/tool.md)). It needs Python 3.9+ and nothing else; run it from the
-repository root:
+([docs/tool.md](docs/tool.md)). It needs Python 3.9+ and nothing else (the window adds Tk and
+CustomTkinter, which the start scripts bring); run it from the repository root:
 
 ```sh
 python -m overpressure doctor                 # what this computer has and lacks, with fixes
 python -m overpressure tools                  # fetch the pinned host tools (adb, fastboot, edl-ng, ...)
-python -m overpressure gui                    # the window: image creation and flashing
+python -m overpressure gui                    # the window: the installer (--advanced: every step, one click each)
 python -m overpressure devices                # the supported headsets
 python -m overpressure steps                  # the headset's steps and their command lines
 python -m overpressure dev check              # a command of the headset (here the PICO 4's)
@@ -45,10 +59,12 @@ with Docker (`OVERPRESSURE_LINUX=docker`, [docs/tool.md](docs/tool.md#linux-root
 ## Repository
 
 ```text
-overpressure/   the generic host package: image formats, headset registry, command line, GUI
+overpressure/   the generic host package: image formats, headset registry, command line, the window
 devices/        one folder per headset: its tooling, images, sources, tests and documents
 tests/          host tests of the generic package
 docs/           the tool and how to add a headset
+Install.cmd, Install.command, install.sh
+                the installer's start scripts (Windows, macOS, Linux)
 ```
 
 `make test` (or `python -m unittest`) runs every host test, the generic and each headset's, in

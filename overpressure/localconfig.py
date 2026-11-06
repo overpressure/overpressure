@@ -6,7 +6,8 @@ workflows use, so it stays out of Git; .env.example lists the keys. Each headset
 settings as a dataclass derived from Settings, with its own key prefix (PICO4_ for the PICO 4),
 so several headsets can share one .env. Environment variables of the same names take precedence
 over the file. A headset on a stock Android bootloader derives from DeviceSettings, which has what
-every Qualcomm Android headset's workflow names (serials, EDL backup, loader, tools).
+every Qualcomm Android headset's workflow names (serials, EDL backup, loader, tools). update()
+sets keys in .env and keeps the rest of it: the installer writes the serials it finds there.
 """
 
 from __future__ import annotations
@@ -121,6 +122,49 @@ def parse(text: str) -> dict:
             value = value.split(" #", 1)[0].rstrip()
         values[key.strip()] = value
     return values
+
+
+def _line(key: str, value: str) -> str:
+    """Return KEY=VALUE as parse reads it back: quoted when the value would not survive bare."""
+    if "\n" in value or "\r" in value:
+        msg = f"{key}: a value in .env is one line"
+        raise ValueError(msg)
+    if value == value.strip() and " #" not in value and value[:1] not in ("'", '"'):
+        return f"{key}={value}"
+    for quote in ('"', "'"):
+        if quote not in value:
+            return f"{key}={quote}{value}{quote}"
+    msg = f"{key}: a value in .env cannot hold both kinds of quotes"
+    raise ValueError(msg)
+
+
+def update(values: Mapping[str, str], path: Path | None = None, example: Path | None = None) -> None:
+    """Set KEY=VALUE lines in .env, keeping every other line and comment.
+
+    A key's first line takes the new value and its later lines go (no duplicates); a key that is
+    not there is added at the end. A missing .env starts as a copy of .env.example (@p example),
+    so its comments explain the keys. The file is written in place: .env may be a hard link
+    shared by several checkouts.
+    """
+    path = ROOT / ".env" if path is None else path
+    example = ROOT / ".env.example" if example is None else example
+    if path.exists():
+        raw = path.read_bytes().decode("utf-8")
+    else:
+        raw = example.read_bytes().decode("utf-8") if example.exists() else ""
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    lines, done = [], set()
+    for line in raw.splitlines():
+        key = line.partition("=")[0].strip() if "=" in line and not line.lstrip().startswith("#") else ""
+        if key in values:
+            if key not in done:
+                lines.append(_line(key, values[key]))
+                done.add(key)
+            continue
+        lines.append(line)
+    lines += [_line(key, value) for key, value in values.items() if key not in done]
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        stream.write(newline.join(lines) + newline)
 
 
 # The default is the bound of S: sound, but ty does not accept a default for a type[S] parameter.

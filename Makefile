@@ -22,8 +22,8 @@ format: ## format the Python code and apply ruff's safe fixes
 	$(UV) run ruff format .
 	$(UV) run ruff check --fix .
 
-gui: ## the window: image creation and flashing
-	$(PYTHON) -m overpressure gui
+gui: ## the window: the installer, and every step in its Advanced mode
+	$(UV) run --extra gui python -m overpressure gui
 
 # The headset's own targets (DEVICE=codename).
 -include devices/$(DEVICE)/device.mk

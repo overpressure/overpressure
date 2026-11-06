@@ -48,9 +48,14 @@ status in its roadmap and README current.
 ## Layout
 
 - `overpressure/`: the generic host package, standard-library Python (3.9+):
-  `headset.py` (the `Headset` interface: `Info`, `commands()`, `steps()`; `Step`, `Param`; the
-  registry), `runner.py` (a step's process on this host: WSL or sudo for Linux-root steps),
-  `__main__.py` (the command line), `gui.py` (the Tk window), `tools.py` (pinned host tools:
+  `headset.py` (the `Headset` interface: `Info`, `commands()`, `steps()`, `install_plan()`; `Step`,
+  `Param`; the registry), `runner.py` (a step's process on this host: WSL or sudo for Linux-root steps),
+  `__main__.py` (the command line), `install.py` (the installer's engine: stages, asks, resumable state,
+  JSON events; `python -m overpressure install`), `window/` (the window, CustomTkinter: the one
+  exception to the standard library, only for the window; `installer.py` and `advanced.py` are the
+  installer view's and Advanced mode's models without widgets, `app.py` and `advanced_view.py` draw
+  them on `kit.py`'s components, `theme.py` the design tokens: colours, spacing, type and fonts),
+  `tools.py` (pinned host tools:
   platform-tools, edl-ng, the NCM venv), `linux.py` and `container/` (where Linux-root steps run:
   WSL, sudo or the build container), `doctor.py` (dependency checks:
   the host's, the ones every Qualcomm Android headset shares, and `Headset.dependencies()`),
@@ -70,6 +75,8 @@ status in its roadmap and README current.
 - `tests/`: host tests of the generic package. `docs/`: `tool.md`, `adding-a-headset.md`, `releasing.md`.
   `scripts/`: shell helpers for the headsets' scripts (`stock-lib.sh`: a stock firmware folder), and the
   repository's checks: `check-private.py`, `check-docs.py`, `run-shellcheck.py`, `c-tests.sh`, `changelog.py`.
+- `Install.cmd`, `Install.command`, `install.sh`: the start scripts; they fetch the pinned uv, a managed
+  Python and CustomTkinter into `cache/` and open the window.
 - `LICENSE` (Unlicense) and `THIRD-PARTY.md`; a directory under another license says so in its `LICENSE.md`.
 - Private and generated, ignored, at the root: `backup/`, `assets/`, `cache/`, `out/`, `.env`.
 
@@ -83,7 +90,8 @@ make format                                       # uv run: ruff format, ruff ch
 python -m overpressure doctor                     # what this host lacks for the headset, with fixes
 python -m overpressure tools                      # fetch the pinned host tools into cache/tools
 python -m overpressure container build            # the build container (OVERPRESSURE_LINUX=docker)
-python -m overpressure gui                        # the window: image creation and flashing
+uv sync --extra gui                               # also CustomTkinter, for the window
+python -m overpressure gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]  # the window (demo: nothing runs)
 python -m overpressure devices                    # the headsets
 python -m overpressure [--device CODENAME] steps  # a headset's steps and their command lines
 python -m overpressure [--device CODENAME] COMMAND ...   # a command of the headset
@@ -116,8 +124,9 @@ otherwise. Each headset's CLAUDE.md lists its build and hardware commands.
 - **CRLF.** Python on Windows writes CRLF unless `newline="\n"`; files under
   `devices/*/userspace/`, `devices/*/initramfs/` and scripts must stay LF (PKGBUILD checksums
   depend on it).
-- **Tk.** The window needs Tk: Windows' Python has it, WSL's usually not (the command line does
-  everything there).
+- **Tk.** The window needs Tk and CustomTkinter, which the start scripts' managed Python has (uv's
+  Python 3.12 with the `gui` extra); Windows' own Python has Tk, WSL's usually not. The command line
+  does everything the window does.
 - **PowerShell.** Run project PowerShell scripts with `pwsh` (7): Windows PowerShell 5.1 aborts
   on native stderr.
 

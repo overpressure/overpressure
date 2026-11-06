@@ -2,20 +2,25 @@
 """overpressure's command line: python -m overpressure [--device CODENAME] COMMAND [ARGS...].
 
   devices              the headsets in devices/
-  gui                  the graphical tool (image creation and flashing)
+  gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
+                       the window: the installer, and every step of the headset in its Advanced mode;
+                       it opens on the page that asks which headset, unless --device names one
   steps                the headset's workflow steps and their command lines
   run STEP [NAME=VALUE...]
-                       run a step as the GUI does, with parameters
+                       run a step as the window does, with parameters
   doctor               what this host has and lacks for the headset's workflow, with fixes
   tools [NAME...]      fetch the pinned host tools: platform-tools, edl-ng, the NCM venv
   container build|run -- CMD|shell
                        the build container (OVERPRESSURE_LINUX=docker runs Linux-root steps there)
   ram-boot [IMAGE]     boot an image from RAM with fastboot boot (writes nothing), where the
                        headset's bootloader allows it
+  install [--json] [--plan] [--restart STAGE]
+                       the installer: the headset's stages in order, resumable (the window's engine)
   COMMAND [ARGS...]    a command of the headset (listed below once a headset is known)
 
 The headset is --device, else OVERPRESSURE_DEVICE (environment or .env), else the only one in
-devices/. "python -m overpressure COMMAND --help" shows a command's options.
+devices/; the window asks instead, unless --device names one. "python -m overpressure COMMAND
+--help" shows a command's options.
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from . import doctor, fastboot, linux, localconfig, runner, tools
+from . import doctor, fastboot, install, linux, localconfig, runner, tools
 from .headset import Headset, Registry, discover
 
 
@@ -81,13 +86,46 @@ def _devices(registry: Registry, _headset: Headset | None, _args: list[str]) -> 
     return 0
 
 
-def _gui(registry: Registry, headset: Headset | None, _args: list[str]) -> int:
-    try:
-        from . import gui  # noqa: PLC0415  # optional: a Python without Tk has no window
-    except ImportError as exc:  # Python without Tk (as in WSL's)
-        print(f"error: no Tk for the window ({exc}); the command line does everything it does", file=sys.stderr)
+GUI_USAGE = """usage: python -m overpressure gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
+
+  (nothing)       the installer: its stages, one main button each
+  --advanced      open Advanced mode first: every step of the headset, one click each
+  --demo          a fake installer engine, a fake step program and fixed checks: no headset, nothing runs;
+                  its installer starts as if an earlier run had done four stages (the start page)
+  --demo-fresh    the same, with nothing done before
+  --demo-headsets the demo (--demo unless --demo-fresh) with a fake second headset, which has no installer
+
+The window opens on "Which headset do you have?", also with one headset in devices/; only --device skips
+it (OVERPRESSURE_DEVICE does not). The headset chosen last is marked there and kept in out/window.json,
+not in .env; the demo keeps it in the window only. The header's Headsets link comes back to it. The window
+needs CustomTkinter (the gui extra); the command line does everything it does."""
+GUI_FLAGS = ("--advanced", "--demo", "--demo-fresh", "--demo-headsets")
+
+
+def _gui(registry: Registry, headset: Headset | None, args: list[str]) -> int:
+    if args[:1] in (["-h"], ["--help"]):
+        print(GUI_USAGE)
+        return 0
+    if any(a not in GUI_FLAGS for a in args):
+        print(GUI_USAGE, file=sys.stderr)
         return 2
-    return gui.main(registry, headset)
+    from . import window  # noqa: PLC0415  # only the window needs it
+
+    missing = window.available()
+    if missing:
+        print(f"error: the window needs CustomTkinter and Tk ({missing}): {window.HOW}.", file=sys.stderr)
+        return 1
+    fresh = "--demo-fresh" in args
+    demo = fresh or "--demo" in args or "--demo-headsets" in args
+    return window.main(registry, headset, demo=demo, fresh=fresh, advanced="--advanced" in args)
+
+
+def demo_headsets(registry: Registry) -> Registry:
+    """Return REGISTRY with gui --demo-headsets' fake second headset, which exists in that demo only."""
+    from .window.headsets import DemoHeadset  # noqa: PLC0415  # the window's package, only for the demo
+
+    fake = DemoHeadset()
+    return Registry({**registry.headsets, fake.info.codename: fake})
 
 
 def _container(_registry: Registry, _headset: Headset | None, args: list[str]) -> int:
@@ -131,7 +169,12 @@ GENERIC: dict[str, Callable[[Registry, Headset | None, list[str]], int]] = {
     "doctor": _doctor,
 }
 #: overpressure's commands that work on the chosen headset.
-ON_HEADSET: dict[str, Callable[[Headset, list[str]], int]] = {"steps": _steps, "ram-boot": ram_boot, "run": _run}
+ON_HEADSET: dict[str, Callable[[Headset, list[str]], int]] = {
+    "steps": _steps,
+    "ram-boot": ram_boot,
+    "run": _run,
+    "install": install.main,
+}
 
 
 def _dispatch(registry: Registry, headset: Headset | None, argv: list[str]) -> int:
@@ -158,8 +201,11 @@ def main(argv: list[str] | None = None) -> int:
     elif argv and argv[0].startswith("--device="):
         codename, argv = argv[0].split("=", 1)[1], argv[1:]
     registry = discover()
+    if argv[:1] == ["gui"] and "--demo-headsets" in argv:
+        registry = demo_headsets(registry)  # before the choice, so the window can ask
     try:
-        headset = select(registry, codename)
+        # The window asks which headset on its first page: only --device skips it, not .env's choice.
+        headset = None if argv[:1] == ["gui"] and codename is None else select(registry, codename)
     except KeyError as exc:
         print(f"error: {exc.args[0]}", file=sys.stderr)
         return 2

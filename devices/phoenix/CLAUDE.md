@@ -47,7 +47,7 @@ README.md current.
 
 - `tooling/`: the PICO 4's host tooling, a standard-library Python package (3.9+), reached as
   `python -m overpressure build|inspect|match|stock|device|hwtest|dev|cycle`; `__init__.py`
-  holds `HEADSET` (its commands and the GUI's steps). Modules: `image.py` (stage-1 image on `overpressure/stage1.py`),
+  holds `HEADSET` (its commands and the window's steps). Modules: `image.py` (stage-1 image on `overpressure/stage1.py`),
   `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`, `PICO4_` keys),
   `userspace.py` and `graphics.py` (validators), `stock.py` (PICO's OTA members),
@@ -84,7 +84,8 @@ README.md current.
 
 ## Commands
 
-From the repository root (the window, `python -m overpressure gui`, runs the same steps):
+From the repository root (the window's Advanced mode, `python -m overpressure gui --advanced`, runs the same
+steps):
 
 ```sh
 python -m unittest                                       # host tests, seconds, no hardware

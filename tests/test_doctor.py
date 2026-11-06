@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Unlicense
-"""overpressure.doctor: the host's and a headset's shared checks, Linux probes, the report, the command, the panel."""
+"""overpressure.doctor: the host's and a headset's shared checks, Linux probes, the report, the command."""
 
 from __future__ import annotations
 
 import contextlib
+import importlib.metadata
 import io
 import json
 import os
 import tempfile
-import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,6 +81,15 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(windows["WSL (as root)"].status, doctor.MISSING)
         self.assertIn("wsl --install", windows["WSL (as root)"].fix)
 
+    def test_the_window_needs_customtkinter_and_the_command_line_does_not(self):
+        with mock.patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError):
+            missing = doctor.window_check()
+        self.assertEqual((missing.status, missing.needed_for), (doctor.OPTIONAL, "the window"))
+        self.assertIn("uv sync --extra gui", missing.fix)
+        with mock.patch("importlib.metadata.version", return_value="6.0.0"):
+            self.assertEqual(doctor.window_check(), doctor.Check("CustomTkinter", "the window", doctor.OK, "6.0.0"))
+        self.assertIn("CustomTkinter", [c.name for c in doctor.host_checks(FakeHost())])
+
     def test_the_container_backend_checks_the_engine_and_the_image(self):
         host = FakeHost(platform="darwin", tools=("docker",), runs={"docker": (0, "28.4.0")})
         self.assertEqual(host.backend, "docker")
@@ -128,38 +137,6 @@ class DoctorTests(unittest.TestCase):
                 mock.patch.object(doctor, "run", return_value=checks),
             ):
                 self.assertEqual(cli.main(["doctor"]), expected)
-
-    def test_the_panel_lists_the_checks_and_shows_the_fix(self):
-        try:
-            import tkinter as tk  # noqa: PLC0415  # optional: Python without Tk skips
-        except ImportError as exc:
-            self.skipTest(f"no Tk: {exc}")
-        try:
-            root = tk.Tk()
-        except tk.TclError as exc:  # no display
-            self.skipTest(f"no Tk display: {exc}")
-        from overpressure import gui  # noqa: PLC0415  # needs Tk, which this test checks first
-
-        checks = [
-            doctor.Check("thing", "building", doctor.MISSING, "not there", "install thing"),
-            doctor.Check("tool", "building", doctor.OK, "1.0"),
-        ]
-        try:
-            with mock.patch.object(doctor, "run", return_value=checks):
-                app = gui.App(root, Registry({"probe": Probe()}), None)
-                app.tree.selection_set(gui.DOCTOR)
-                for _ in range(100):
-                    root.update()
-                    if app.checks:
-                        break
-                    time.sleep(0.02)  # what Tk's after(20) without a callback does
-                app._drain()  # noqa: SLF001  # what Tk's idle loop runs, at once
-                root.update()
-            self.assertEqual(app.tree.item(gui.DOCTOR, "text"), "Check dependencies (1 missing)")
-            self.assertEqual(len(app.doctor_table.get_children()), 2)
-            self.assertEqual(app.doctor_fix.get("1.0", "end").strip(), "install thing")
-        finally:
-            root.destroy()
 
 
 @dataclass

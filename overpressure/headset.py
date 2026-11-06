@@ -4,8 +4,10 @@
 Each headset lives in devices/<codename>/ with its own sources, image recipes, scripts, tests
 and documents. Its Python tooling, the package devices/<codename>/tooling, exports HEADSET, an
 instance of a Headset subclass. The command line passes each of its commands on to the module
-that implements it, and the GUI shows its steps: each step is a command line with parameters, so
-everything the GUI does can be repeated in a terminal word for word.
+that implements it, and the window shows its steps: each step is a command line with parameters, so
+everything the window does can be repeated in a terminal word for word. A headset may also give an
+installer's plan (install_plan: stages of tasks built on those commands, overpressure/install.py)
+and what the window's finished page says and offers after it (after_install).
 
 A new headset needs: devices/<codename>/tooling/__init__.py with HEADSET, the command modules
 that build its images and talk to it (any transport: fastboot, ADB, EDL, SSH, ...), and the
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .fastboot import RamBootTarget
+    from .install import Stage
 
 
 @dataclass(frozen=True)
@@ -65,7 +68,7 @@ class Param:
 
 @dataclass(frozen=True)
 class Step:
-    """One action of the workflow, as the GUI offers it.
+    """One action of the workflow, as the window offers it.
 
     argv is the command line after "overpressure --device CODENAME" (a command of the
     headset), or a program relative to the headset's folder when script is set. A word that is
@@ -81,7 +84,7 @@ class Step:
     params: tuple[Param, ...] = ()
     script: bool = False  #: argv[0] is a program in the headset's folder
     linux_root: bool = False  #: needs Linux as root (on Windows: WSL)
-    writes: bool = False  #: writes to the headset: the GUI asks first
+    writes: bool = False  #: writes to the headset: the window asks first
 
     def command(self, values: dict[str, str]) -> list[str]:
         """Return the command line with @p values in place of the parameters."""
@@ -103,6 +106,23 @@ class Step:
                     word.format(**{k: values.get(k, by_name[k].default) for k in by_name}) if "{" in word else word
                 )
         return words
+
+
+@dataclass(frozen=True)
+class Action:
+    """A choice on the installer's finished page: it opens Advanced mode at one of the headset's steps."""
+
+    label: str
+    step: str  #: the key of the step Advanced mode opens at
+
+
+@dataclass(frozen=True)
+class AfterInstall:
+    """What the installer's finished page says and offers: the generic window knows no headset's OS or store."""
+
+    title: str = "Installed"
+    text: str = "Your headset is ready."
+    actions: tuple[Action, ...] = ()
 
 
 def tools_step() -> Step:
@@ -147,7 +167,7 @@ class Headset(ABC):
         """Its command line: command word -> module of its tooling package."""
 
     def steps(self) -> Sequence[Step]:
-        """Its workflow for the GUI, in order: building its images, then working on it."""
+        """Its workflow for the window, in order: building its images, then working on it."""
         return ()
 
     def dependencies(self) -> Sequence[Callable]:
@@ -161,6 +181,14 @@ class Headset(ABC):
     def ram_boot(self) -> RamBootTarget | None:
         """How it boots an image from RAM (python -m overpressure ram-boot), or None."""
         return None
+
+    def install_plan(self) -> Sequence[Stage]:
+        """Return its installer's stages (python -m overpressure install); empty: it has no installer."""
+        return ()
+
+    def after_install(self) -> AfterInstall:
+        """Return what the window's finished page says and offers once its installer has run."""
+        return AfterInstall()
 
     def main(self, argv: list[str]) -> int:
         """Run a command of its command line (argv[0] is the command word)."""

@@ -12,12 +12,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
-from overpressure.headset import Command, Headset, Info, Param, Step, tools_step
+from overpressure.headset import Action, AfterInstall, Command, Headset, Info, Param, Step, tools_step
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from overpressure.doctor import Check, Host
+    from overpressure.install import Stage
 
 #: The firmware every default names; device.mk and .env.example repeat it (tests/test_stock.py).
 FIRMWARE = "5.13.7-global-seko"
@@ -283,6 +284,20 @@ class Phoenix(Headset):
         from .doctor import probes  # noqa: PLC0415  # doctor imports this package: a top-level import is circular
 
         return probes()
+
+    def install_plan(self) -> Sequence[Stage]:
+        """Return the installer's five stages (tooling/install.py)."""
+        from .install import Plan  # noqa: PLC0415  # install imports this package's modules: a top-level import is circular
+
+        return Plan(self).stages()
+
+    def after_install(self) -> AfterInstall:
+        """Return the finished page: sign in to Steam; update, back to PICO OS or a support bundle."""
+        return AfterInstall(
+            "Unplug it and put it on",
+            "Your headset is ready. Unplug the cable, put the headset on and sign in to Steam.",
+            (Action("Update", "install"), Action("Back to PICO OS", "restore"), Action("Get help", "support-bundle")),
+        )
 
 
 HEADSET = Phoenix()

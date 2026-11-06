@@ -123,6 +123,31 @@ Large raw downloads crash the ABL's fastboot (the 100 MiB stock recovery left th
 crash-dump mode); whole-partition images therefore go as sparse images
 ([`overpressure/sparse.py`](../../../overpressure/sparse.py)), whose zero runs are written as fill chunks.
 
+## The installer
+
+`python -m overpressure install`, and the window's installer on top of it ([README](../README.md#install)), takes a
+headset from PICO OS to the installed system in five stages, with the commands of this document and of
+[device-preparation.md](device-preparation.md) ([`tooling/install.py`](../tooling/install.py); the engine:
+[docs/tool.md](../../../docs/tool.md#the-installer)). It goes on where it stopped when started again;
+after an earlier run the window, once the PICO 4 is chosen, opens at a start page with *Continue where you left off* and *Start over
+from…* a stage (Prepare your headset and Install write to the headset, so starting over there repeats the
+backup and the writes). A stop (*Stop*, closing the window, Ctrl-C) ends any wait at once, such as the up to
+ten minutes Connect your headset waits for the headset on USB; a task that writes (`dev stage-abl`, the
+unlock, `dev flash`, `dev install`, the Wi-Fi profile) finishes its write first.
+
+| Stage | Tasks | Headset |
+| --- | --- | --- |
+| Check this computer | `tools`, `device fetch-unlock-files`, then the doctor's checks: what fails, apart from what the installer finds out itself (serials, identity, backup) and builds (the assets), stops it with the fixes | not needed |
+| Build the system | the window's build steps, each skipped while its output is there and not older than its input: assets, stage-1 image, userspace archive, system image, dev image, Valve's kernel, boot image | not needed |
+| Connect your headset | an action ask (developer mode, USB debugging, the cable, the prompt in the headset); exactly one `adb devices` entry in state `device`, written to `PICO4_ADB_SERIAL`; `device probe` unless `PICO4_IDENTITY` already holds this headset (a record of another headset stops it: records are never overwritten); the firmware (`check_firmware`) and the panel (`check_panel` on PICO OS's `/proc/cmdline` over adb). An unverified one ends the run here | PICO OS |
+| Prepare your headset | one consent (it erases the headset; the backup is the way back); `adb reboot edl`, `edl-ng printgpt` for the LUNs (LUN 0 last) and the serial (`PICO4_EDL_SERIAL`), `device backup --execute` without userdata, `device verify-backup` (an unfinished backup folder stays, the new one goes to `backup/stock-TIME`, written to `PICO4_BACKUP`); `dev stage-abl`; `adb reboot bootloader`, exactly one fastboot device (`PICO4_FASTBOOT_SERIAL`), `device unlock --execute --accept-data-loss`; `dev flash`, `dev connect` | EDL, fastboot, maintenance stage 1 |
+| Install | a form for Wi-Fi (both fields optional; the answer stays in memory and is asked again after a restart); `dev install`, `dev installed`; the Wi-Fi profile as a NetworkManager keyfile (WPA-PSK, or open without a password) through SSH's stdin: `install -D -m 600 /dev/stdin /etc/NetworkManager/system-connections/overpressure-wifi.nmconnection && nmcli connection reload`, so neither the network name nor the password is in a command line, a log or `.env`; `dev check`; then "Unplug it and put it on" | on the cable |
+
+From the unlock the installer goes straight to fastboot and `dev flash`, without PICO OS's factory reset of
+[device-preparation.md](device-preparation.md#5-factory-reset-and-stage-1-work): the install formats `userdata`
+anyway. Should PICO OS or the bootloader turn out to need it, it is an action ask with the reset's instructions
+after the unlock (`Plan(factory_reset=True)`), not a failure.
+
 ## Install and update
 
 ```sh
@@ -200,9 +225,13 @@ the ABL to stock (`python -m overpressure cycle --restore-only`) and entering de
 | Boot without the PC (cable unplugged, power button) | stage 1 switches without waiting for a PC; systemd reaches the graphical target 13.2 s after power-on (8.8 s kernel, 4.4 s userspace; measured as a one-shot boot of this image from `recovery`) with no failed units; the data is there; the USB link comes up when the cable is plugged in later |
 | Boot indication | stage 1 shows it about 4 s after the kernel started, stage 2's service takes over at about 15 s without a gap, Monado and SteamVR's compositor take the display from it (it exits within 0.5 s) |
 | Power-off | stays off without the cable; with the cable attached the headset starts again in charger mode (`androidboot.mode=charger`), and stage 1 stays there: no system, lenses dark, waiting on the power key; held 2 s it starts the installed system, as `pico4-reboot` does |
+| Installer | on the host only, with fakes: the stages, the done checks, the serials written to `.env`, the refusals before any write, the Wi-Fi password on stdin only. Not run on a headset: the chained path as a whole, the LUNs from `printgpt`, the panel check over adb on PICO OS (whether its shell may read `/proc/cmdline`), whether PICO OS needs the factory reset when the installer goes from the unlock straight to fastboot, and the Wi-Fi keyfile in the read-only system's `/etc` overlay |
 
 ## Open work
 
 1. **The way back.** `dev restore` for an installed system is implemented and tested on the
    host, not yet on the headset; it ends in PICO OS's first-time setup.
 2. **Integrity.** The system image is checked when written, not at boot (no dm-verity).
+3. **The installer on a headset.** Run the whole path once on a headset in PICO OS: the LUNs from `printgpt`, the panel
+   check over adb, the step from the unlock to `dev flash` without a factory reset, and the Wi-Fi keyfile on the
+   installed system (WPA2; a WPA3-only network may need `key-mgmt=sae`).

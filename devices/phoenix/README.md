@@ -34,46 +34,59 @@ Open: a power press after a long sleep. Plan and details:
 **Before you start.** This replaces PICO OS on your headset: unlocking and installing wipe its apps and data.
 It voids what warranty is left, and a failed step can leave the headset needing the recovery in
 [docs/device-preparation.md](docs/device-preparation.md). Everything here has run on **one** headset, and the way back
-to PICO OS from an installed system has not been run on it yet ([docs/roadmap.md](docs/roadmap.md)). The tools
+to PICO OS from an installed system has not been run on it yet ([docs/roadmap.md](docs/roadmap.md)). The installer
+chains steps that have each run on it; as one path it has not run yet ([what is open](docs/install.md#the-installer)). The tools
 refuse a headset, firmware or panel that hasn't been verified
 ([list](docs/device-preparation.md#verified-hardware)): today only PICO OS 5.13.7 of the `global-seko` build. You
 build your own image; the project publishes no image and no vendor file ([docs/distribution.md](docs/distribution.md)).
 
-**You need.** Your original PICO 4 with USB debugging on, a USB-C data cable, a PC with Python 3.9+, about 40 GB free
-and a few hours for the first build (it downloads about 15 GB). The Linux part of the build runs in WSL on Windows,
-with sudo on Linux, and in Docker or Podman on macOS (`OVERPRESSURE_LINUX=docker`, any host).
+**You need.** Your original PICO 4, a USB-C data cable, a computer with Windows, Linux or macOS, about 40 GB free and
+a few hours for the first build (it downloads about 15 GB). The Linux part of the build runs in WSL on Windows (the
+installer explains how to get it: it needs an administrator and a restart), with sudo on Linux, and in Docker or
+Podman on macOS (`OVERPRESSURE_LINUX=docker`, any host).
 
-**The path.** `python -m overpressure gui` shows these steps, in this order, each with the command it runs; the
-same commands work in a terminal. `python -m overpressure doctor` says what this computer lacks, and how to get it.
+**The installer.** Double-click `Install.cmd` (Windows) or `Install.command` (macOS), or run `sh install.sh` (Linux),
+in the repository's folder. The start script brings its own Python and the window's toolkit into `cache/`; nothing
+is installed on the computer. The window first asks which headset you have (the PICO 4), then goes through five
+stages, one main button each:
 
-| # | Step (in the window) | Command | What happens | Headset |
-| --- | --- | --- | --- | --- |
-| 1 | Host tools | `python -m overpressure tools` | adb, fastboot, edl-ng, pinned and hash-checked | |
-| 2 | Unlock files | `python -m overpressure device fetch-unlock-files` | the engineering ABL and Firehose loader, from PICO's public downloads | |
-| 3 | Settings | copy `.env.example` to `.env` | the headset's serials: `adb devices`, then as [device preparation](docs/device-preparation.md) shows | in PICO OS |
-| 4 | Prepare | [docs/device-preparation.md](docs/device-preparation.md) | identity, a verified EDL backup, engineering ABL, unlock, factory reset. Keep the backup safe: it is your way back | in PICO OS, EDL, fastboot |
-| 5 | Stage-1 boot image | `python -m overpressure build --firmware 5.13.7-global-seko` | the maintenance system | |
-| 6 | Stock firmware and assets | `devices/phoenix/scripts/extract-assets.sh ...` (Linux) | PICO's public OTA, about 11 GB | |
-| 7 | Userspace archive | `devices/phoenix/scripts/build-userspace.sh ...` (Linux) | Valve's packages and this project's | |
-| 8 | System image for super | `devices/phoenix/scripts/build-system-image.sh ...` (Linux) | | |
-| 9 | Dev image | `python -m overpressure dev image` | the boot images. **This makes your SSH key** (below) | |
-| 10 | Valve's kernel | `devices/phoenix/scripts/build-kernel-step.sh ...` (Linux) | Valve's public source package, this project's patches | |
-| 11 | Boot image | `python -m overpressure dev boot-image` | `out/kernel/valve-boot.img` | |
-| 12 | Enter development mode | `dev stage-abl`, `dev flash`, `dev connect` | the maintenance system in `recovery` | in PICO OS |
-| 13 | Install the system | `dev recovery`, `dev install` | boot, system, data; then it starts. About 5 minutes | on the cable |
-| 14 | Acceptance checks | `dev check` | | on the cable |
+| Stage | What happens | Headset |
+| --- | --- | --- |
+| 1 Check this computer | the host tools (adb, fastboot, edl-ng) and the unlock files (the engineering ABL and Firehose loader, from PICO's public downloads), pinned and hash-checked; then what else this computer lacks, with the fixes in plain words | not needed |
+| 2 Build the system | the stock firmware and assets, the maintenance system, the SteamOS-compatible system, its image, the boot images, Valve's kernel. Hours; each build is skipped when its output is there. **This makes your SSH key** (below) | not needed |
+| 3 Connect your headset | you turn on developer mode and USB debugging and plug it in; the installer finds it, writes its serials to `.env`, reads its identity and refuses a headset, firmware or panel that isn't verified, before anything is written | in PICO OS |
+| 4 Prepare your headset | one consent (it erases the headset), then a verified EDL backup to this computer, the engineering bootloader, the unlock and the maintenance system in `recovery`. **Keep the backup safe: it is your way back** | PICO OS, EDL, fastboot |
+| 5 Install | Wi-Fi if you like (network name and password go to the headset only), the system, the acceptance checks; then "Unplug it and put it on" | on the cable |
 
-**Your login.** The headset takes SSH on the cable and on Wi-Fi only with a key. Step 9 makes one for this PC,
-`out/dev/id_ed25519`; it stays on your PC. To use a key of your own, name its public file as
-`PICO4_SSH_PUBLIC_KEY` in `.env` before step 9. No account has a password ([docs/security.md](docs/security.md)).
+The installer goes on where it stopped when it is started again, and after a failure it says what state the
+headset is in and what to do. *Advanced mode* in the window's header (`python -m overpressure gui --advanced`
+opens it right after the choice) has every step on its own.
 
-**After the install.** Unplug it and put it on: set up Wi-Fi, sign in to Steam, find the controllers and set up
-your room in the headset. `python -m overpressure dev install` with a new image updates the system and keeps your
-data. **The way back:** `python -m overpressure dev restore`, then `python -m overpressure cycle --restore-only`, both
-from your backup; see [docs/install.md](docs/install.md#back-to-stock).
+**In a terminal.** `python -m overpressure install` runs the same stages as text, and asks through the keyboard
+(`--plan` shows them and what is done; [the tool](../../docs/tool.md#the-installer)). Each task runs one of these
+commands, which also work on their own:
+
+| Stage | Commands |
+| --- | --- |
+| 1 | `python -m overpressure tools`, `python -m overpressure device fetch-unlock-files`, `python -m overpressure doctor` |
+| 2 | `devices/phoenix/scripts/extract-assets.sh ...` (Linux), `python -m overpressure build --firmware 5.13.7-global-seko`, `devices/phoenix/scripts/build-userspace.sh ...` and `build-system-image.sh ...` (Linux), `python -m overpressure dev image`, `devices/phoenix/scripts/build-kernel-step.sh ...` (Linux), `python -m overpressure dev boot-image`; `python -m overpressure steps` shows each with its parameters |
+| 3 | `adb devices` (the serial goes to `PICO4_ADB_SERIAL` in `.env`), `python -m overpressure device probe` |
+| 4 | `edl-ng ... printgpt` (the LUNs, and `PICO4_EDL_SERIAL`), `python -m overpressure device backup --execute` and `device verify-backup`, `dev stage-abl`, `device unlock --execute --accept-data-loss` (`PICO4_FASTBOOT_SERIAL`), `dev flash`, `dev connect`; by hand in [docs/device-preparation.md](docs/device-preparation.md) |
+| 5 | `python -m overpressure dev install`, `dev installed`, `dev check` |
+
+**Your login.** The headset takes SSH on the cable and on Wi-Fi only with a key. The build stage makes one for this
+PC, `out/dev/id_ed25519`; it stays on your PC. To use a key of your own, name its public file as
+`PICO4_SSH_PUBLIC_KEY` in `.env` before the build. No account has a password ([docs/security.md](docs/security.md)).
+
+**After the install.** Unplug it and put it on: sign in to Steam, find the controllers and set up your room in the
+headset (and Wi-Fi, if you skipped it). `python -m overpressure dev install` with a new image updates the system and
+keeps your data. **The way back:** `python -m overpressure dev restore`, then
+`python -m overpressure cycle --restore-only`, both from your backup; see
+[docs/install.md](docs/install.md#back-to-stock).
 
 **If something goes wrong.** `python -m overpressure dev support-bundle` collects the logs for a bug report, with your
-identifiers masked ([docs/hardware-testing.md](docs/hardware-testing.md#support-bundle)).
+identifiers masked ([docs/hardware-testing.md](docs/hardware-testing.md#support-bundle)); the installer's own logs are
+in `out/install/phoenix/`.
 
 ## Documentation
 
@@ -100,7 +113,7 @@ identifiers masked ([docs/hardware-testing.md](docs/hardware-testing.md#support-
 ## This folder
 
 ```text
-tooling/     host tooling (Python standard library): python -m overpressure COMMAND, and the GUI's steps
+tooling/     host tooling (Python standard library): python -m overpressure COMMAND, and the window's steps
 kernel/      Valve's kernel: build script, patches, the PICO's drivers and device tree
 initramfs/   stage 1: the files added to the Alpine ramdisk
 userspace/   stage 2: package list, pacman.conf, adaptation layer, SteamVR configuration, PKGBUILDs
@@ -112,7 +125,7 @@ docs/        documentation
 ```
 
 `make test` (or `python -m unittest` at the repository root) runs the host tests in seconds.
-Every step above is also in the GUI (`python -m overpressure gui`, [the tool](../../docs/tool.md)).
+Every command above is also a step of the window's Advanced mode (`python -m overpressure gui --advanced`, [the tool](../../docs/tool.md#advanced-mode)).
 
 Device data and vendor files never enter the repository: backups, the bootloader images,
 GPU firmware, sensor data, Valve's packages and the built archives stay private

@@ -4,7 +4,7 @@
 The host side, pure Python (3.9+) with the standard library only, so it runs on Windows, Linux
 and macOS: the formats every Android-based headset shares (boot images, AVB footers, sparse
 images, OTA payloads, cpio, Alpine packages), the registry of headsets in devices/, and
-the command line and GUI that drive each headset's own workflow (devices/<codename>/tooling).
+the command line and the window that drive each headset's own workflow (devices/<codename>/tooling).
 """
 
 from pathlib import Path

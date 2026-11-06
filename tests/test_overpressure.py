@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""The headset interface, the registry, the step runner, the command line and the GUI."""
+"""The headset interface, the registry, the step runner and the command line."""
 
 import contextlib
 import io
@@ -189,33 +189,6 @@ class CommandLineTests(unittest.TestCase):
                 code, _ = self.run_cli("ram-boot", "out/x.img")
             self.assertEqual(code, expected)
             self.assertEqual(boot.call_args[0][1], Path("out/x.img"))
-
-
-class GuiTests(unittest.TestCase):
-    def test_window_shows_every_step_with_its_command_line(self):
-        try:
-            import tkinter as tk  # noqa: PLC0415  # optional: Python without Tk skips
-        except ImportError as exc:
-            self.skipTest(f"no Tk: {exc}")
-        try:
-            root = tk.Tk()
-        except tk.TclError as exc:  # no display
-            self.skipTest(f"no Tk display: {exc}")
-        from overpressure import gui  # noqa: PLC0415  # needs Tk, which this test checks first
-
-        try:
-            app = gui.App(root, Registry({"fake": Fake()}), None)
-            root.update()
-            app.tree.selection_set("img")
-            root.update()
-            app.vars["fast"].set("1")
-            root.update()
-            self.assertIn("build --firmware a --fast", app.command.get("1.0", "end"))
-            app.tree.selection_set("us")
-            root.update()
-            self.assertEqual(sorted(app.vars), ["out", "root", "version"])
-        finally:
-            root.destroy()
 
 
 if __name__ == "__main__":

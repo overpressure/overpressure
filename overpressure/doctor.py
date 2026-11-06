@@ -4,14 +4,15 @@
 Every check names what it is needed for (the window, building an image, the userspace build,
 working on the headset, ...), what was found, and how to fix it when it is missing. The checks
 only look: they run version queries and `command -v`, read files and settings, and install
-nothing. The generic ones cover the host (Python, Tk, OpenSSH, Linux as root); a headset adds
-its own through Headset.dependencies(), built from the checks here that every Qualcomm Android
-headset shares (its DeviceSettings, the EDL backup and tools, adb and fastboot, the Windows USB
-link, an arm64 build host) and its own.
+nothing. The generic ones cover the host (Python, Tk and CustomTkinter for the window, OpenSSH,
+Linux as root); a headset adds its own through Headset.dependencies(), built from the checks here
+that every Qualcomm Android headset shares (its DeviceSettings, the EDL backup and tools, adb and
+fastboot, the Windows USB link, an arm64 build host) and its own.
 """
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import shutil
 import subprocess
@@ -293,6 +294,22 @@ def arm64_build_checks(host: Host, needed_for: str) -> list[Check]:
     return checks
 
 
+def window_check() -> Check:
+    """Check CustomTkinter, which the window needs beside Tk (the gui extra)."""
+    try:
+        version = importlib.metadata.version("customtkinter")
+    except importlib.metadata.PackageNotFoundError:
+        return Check(
+            "CustomTkinter",
+            "the window",
+            OPTIONAL,
+            "not installed",
+            "the start scripts (Install.cmd, Install.command, install.sh) bring it; in a development environment, "
+            "uv sync --extra gui; the command line works without it",
+        )
+    return Check("CustomTkinter", "the window", OK, version)
+
+
 def host_checks(host: Host) -> list[Check]:
     """Return the checks every headset's workflow shares."""
     checks = []
@@ -321,6 +338,7 @@ def host_checks(host: Host) -> list[Check]:
                 "python3-tk); the command line works without it",
             )
         )
+    checks.append(window_check())
     for tool in ("ssh", "ssh-keygen"):
         path = host.which(tool)
         checks.append(
