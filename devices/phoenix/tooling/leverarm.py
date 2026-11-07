@@ -7,7 +7,7 @@ moves by a per-hand lever arm: `alg_get_controller_data_new` (libpico_controller
 predicted aim orientation, so the lever is in the aim frame. The lever depends on the controller
 type the tracker reports; the PICO 4's controllers are type 1, whose lever is stored as the left
 hand's (x, y) at 0x3c140, the right hand's at 0x3c170 and the shared z at 0x3bfd0, in millimetres.
-scripts/extract-sensor-data.sh reads them from the headset's own firmware; they are vendor data and
+The assets command (tooling/assets.py) reads them from the stock firmware; they are vendor data and
 stay out of the repository.
 
     python -m devices.phoenix.tooling.leverarm LIBRARY OUTPUT.json
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{library}: {exc}", file=sys.stderr)
         return 1
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(to_json(result, library.name), encoding="utf-8")
+    output.write_bytes(to_json(result, library.name).encode("utf-8"))
     return 0
 
 

@@ -3,9 +3,9 @@
 
 Its host tooling: the stage-1 boot image (the maintenance stage 1, on the stock kernel), the stock
 firmware from PICO's public OTA, EDL, fastboot and ADB, the acceptance runner, the development
-loop and the acceptance cycle; the system itself runs on Valve's kernel (kernel/). Pure Python
-(3.9+) with the standard library only; the formats it shares with other headsets come from the
-overpressure package.
+loop and the acceptance cycle; the system itself runs on Valve's kernel (kernel/). Python 3.9+
+with the standard library and overpressure's pinned packages (pyproject.toml); the formats it
+shares with other headsets come from the overpressure package.
 """
 
 from __future__ import annotations
@@ -31,9 +31,10 @@ _firmware = Param(
     FIRMWARES,
     "the PICO OS build in firmware.json whose stock kernel the image takes",
 )
-# The Linux build folders live in /var/tmp on purpose: the WSL disk, kept across reboots (unlike /tmp).
-#: The stock firmware folder of python -m overpressure stock, on the Linux side.
-STOCK_FOLDER = "/var/tmp/pico4-stock/" + FIRMWARE  # noqa: S108  # a root-owned build folder, not a temporary file
+#: The stock firmware folder of python -m overpressure stock and assets, relative to the repository:
+#: the assets step reads it on this computer, the kernel step in the build container (at /work).
+STOCK_FOLDER = "cache/pico4-stock/" + FIRMWARE
+# The Linux build folders live in /var/tmp on purpose: the build container's volume, on a Linux file system and kept.
 #: The userspace build's root, on the Linux side.
 USERSPACE_BUILD = "/var/tmp/pico4-userspace-build"  # noqa: S108  # a root-owned build folder, not a temporary file
 #: The kernel build's folder, on the Linux side.
@@ -57,6 +58,7 @@ class Phoenix(Headset):
             "inspect": Command("image", "analyse a stock boot image and its kernel configuration", keep=True),
             "match": Command("image", "find the firmware.json entry for a headset's fingerprint", keep=True),
             "stock": Command("stock", "the stock firmware's partitions from PICO's public OTA"),
+            "assets": Command("assets", "the stock firmware, then every file the userspace build takes from it"),
             "device": Command("device", "identity, EDL backups, engineering ABL, unlock and restore"),
             "hwtest": Command("hardware_test", "preflight and the bounded acceptance runner"),
             "dev": Command("devloop", "the development loop: maintenance stage 1, install, checks"),
@@ -74,12 +76,10 @@ class Phoenix(Headset):
                 "assets",
                 "Stock firmware and assets",
                 "Image",
-                ("scripts/extract-assets.sh", "{firmware}", "{stock}"),
+                ("assets", "--firmware", "{firmware}", "--stock", "{stock}"),
                 "PICO's public OTA (about 11 GB, kept in the stock folder), then every file the userspace "
-                "build takes from it into assets/*-VERSION.",
-                (_firmware, Param("stock", "Stock folder (Linux)", STOCK_FOLDER, "path")),
-                script=True,
-                linux_root=True,
+                "build takes from it into assets/*-VERSION. Python on this computer, no Linux needed.",
+                (_firmware, Param("stock", "Stock folder", STOCK_FOLDER, "path")),
             ),
             Step(
                 "stage1",
@@ -111,7 +111,7 @@ class Phoenix(Headset):
                 ),
                 "Holo Core and the Frame's packages with this headset's adaptation; incremental.",
                 (
-                    Param("build_root", "Build folder (Linux)", build, "path"),
+                    Param("build_root", "Build folder (container volume)", build, "path"),
                     Param("output", "Output folder", "out/userspace", "path"),
                     Param(
                         "version",
@@ -153,8 +153,8 @@ class Phoenix(Headset):
                 "Needs the dev image's step first: it caches the stock recovery.",
                 (
                     Param("recovery", "Stock recovery image (or its folder)", "cache/stock", "path"),
-                    Param("stock", "Stock folder (Linux)", STOCK_FOLDER, "path"),
-                    Param("work", "Build folder (Linux)", KERNEL_BUILD, "path"),
+                    Param("stock", "Stock folder", STOCK_FOLDER, "path"),
+                    Param("work", "Build folder (container volume)", KERNEL_BUILD, "path"),
                 ),
                 script=True,
                 linux_root=True,

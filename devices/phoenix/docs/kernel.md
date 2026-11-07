@@ -334,10 +334,12 @@ source package, which carries the repository: `linux-72-deckard-7.2.0+g509b71a1b
 `sm8650-7.2`, built with `gabe_defconfig`.
 
 ```sh
-# Linux/WSL: the source package, the stock recovery and vendor images (python -m overpressure stock), work and output folders
-devices/phoenix/kernel/build-kernel.sh linux-72-deckard-7.2.0+g509b71a1bdcd-1.src.tar.gz \
-    cache/stock/<firmware>.recovery.img STOCK_DIR/vendor.img /var/tmp/pico4-kernel/work /var/tmp/pico4-kernel/out
-python devices/phoenix/kernel/recovery_image.py /var/tmp/pico4-kernel/out \
+# In the build container (the window's "Valve's kernel" step does this with build-kernel-step.sh): the
+# source package, the stock recovery and vendor images (python -m overpressure stock), work and output folders
+python -m overpressure container run -- bash devices/phoenix/kernel/build-kernel.sh \
+    cache/kernel/linux-72-deckard-7.2.0+g509b71a1bdcd-1.src.tar.gz \
+    cache/stock/<firmware>.recovery.img STOCK_DIR/vendor.img /var/tmp/pico4-kernel/work out/kernel
+python devices/phoenix/kernel/recovery_image.py out/kernel \
     cache/stock/<firmware>.recovery.img out/dev/dev-recovery.img out/kernel/test-recovery.img
 ```
 

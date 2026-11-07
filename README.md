@@ -53,8 +53,8 @@ python -m overpressure dev check              # a command of the headset (here t
 
 With more than one headset, `--device CODENAME` (or `OVERPRESSURE_DEVICE` in `.env`) picks
 one. Every step in the window shows the command line it runs, so the terminal can do the same.
-The builds' Linux side runs in WSL, on Linux with sudo, or in the build container on any host
-with Docker (`OVERPRESSURE_LINUX=docker`, [docs/tool.md](docs/tool.md#linux-root-steps)).
+The builds' Linux side runs in the build container on every host, which needs Docker or Podman
+([docs/tool.md](docs/tool.md#linux-root-steps)).
 
 ## Repository
 

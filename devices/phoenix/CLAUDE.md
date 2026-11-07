@@ -30,7 +30,7 @@ Powering off with the USB cable attached starts the headset in charger mode (sta
 2 s power press; `pico4-reboot` from there starts the system); a short power press does nothing.
 Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; on the headset the
 MCU acknowledges ([docs/cooling.md](docs/cooling.md)).
-Build system, tests and the Windows/WSL environment: [docs/development.md](docs/development.md).
+Build system, the build container, tests and the Windows environment: [docs/development.md](docs/development.md).
 
 ## Backlog
 
@@ -45,17 +45,19 @@ README.md current.
 
 ## Layout
 
-- `tooling/`: the PICO 4's host tooling, a standard-library Python package (3.9+), reached as
-  `python -m overpressure build|inspect|match|stock|device|hwtest|dev|cycle`; `__init__.py`
+- `tooling/`: the PICO 4's host tooling, a Python package (3.9+, the repository's conventions), reached as
+  `python -m overpressure build|inspect|match|stock|assets|device|hwtest|dev|cycle`; `__init__.py`
   holds `HEADSET` (its commands and the window's steps). Modules: `image.py` (stage-1 image on `overpressure/stage1.py`),
   `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
   (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`, `PICO4_` keys),
-  `userspace.py` and `graphics.py` (validators), `stock.py` (PICO's OTA members),
+  `userspace.py` and `graphics.py` (validators), `stock.py` (PICO's OTA members), `assets.py` (every
+  file the userspace build takes from them, in Python on any system),
   `doctor.py` (its dependency checks), and the
   controller data extractors. What other headsets share is in the root package `overpressure/`: the settings
   every Qualcomm Android headset has and their doctor checks, the stage-1 builder, OTA handling, adb/fastboot,
   Qualcomm EDL (backup, verified writes), verified backups, processes and waits, SSH, recorded runs and the
-  read-only storage policy, sparse flashing and the RAM boot, the formats, `elfdeps.py` and `windows_ncm.py`.
+  read-only storage policy, sparse flashing and the RAM boot, the formats (with the ext4 and FAT readers and
+  `assets.py`), `elfdeps.py` and `windows_ncm.py`.
 - `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
   the f_mass_storage kernel thread and with it the USB link. `pico4-userspace installed`
   and `switch` hand over to stage 2.
@@ -71,11 +73,9 @@ README.md current.
   `swapchain/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
   them in. `stockslam/` is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a
   bionic root; `build-userspace.sh` builds it with clang for Android, without an NDK.
-- `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `windows-share-internet.ps1`, the
-  extraction scripts `extract-assets.sh` (runs the others), `extract-graphics-firmware.sh`, `extract-sensor-data.sh`, `extract-wlan.sh`,
-  `extract-audio.sh`, `extract-stock-slam.sh` (from the stock directory of `python -m
-  overpressure stock`, PICO's public OTA; overpressure's `scripts/stock-lib.sh`) and the on-headset preflight. The
-  headset's own factory data is not extracted: the image links to persist, mounted read-only at
+- `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-kernel-step.sh`,
+  `windows-share-internet.ps1` and the on-headset preflight. The assets come from `python -m overpressure
+  assets` (`tooling/assets.py`, PICO's public OTA, Python on any system). The headset's own factory data is not extracted: the image links to persist, mounted read-only at
   boot (`pico4-persist`). `tests/`: unittest suites, `test_recovery_policy.sh`,
   `test_charger.sh`, `tests/qemu/`. `device.mk`: its Makefile targets.
 - Private and generated, ignored, at the repository root: `backup/` (identity
@@ -92,16 +92,18 @@ python -m unittest                                       # host tests, seconds, 
 bash devices/phoenix/tests/test_recovery_policy.sh       # stage-1 recovery policy
 sh devices/phoenix/tests/test_charger.sh                 # stage-1 charger mode
 python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> out/
-# Linux/WSL as root (or OVERPRESSURE_LINUX=docker): the stock firmware from PICO's public OTA, then the assets
-# (docs/development.md#stock-firmware; about 11 GB of OTA members and images, on the WSL disk):
-devices/phoenix/scripts/extract-assets.sh 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
-# Linux/WSL as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
-devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
+# Any system, no Linux needed: the stock firmware from PICO's public OTA, then the assets
+# (docs/development.md#stock-firmware; about 11 GB of OTA members and images in cache/pico4-stock):
+python -m overpressure assets --firmware 5.13.7-global-seko
+# In the build container, as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
+python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
+    /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
     --wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
 # The headset stays in development mode (settings from .env). The installed system is the integration
-# test (docs/install.md): image as root, then from the maintenance stage 1:
-devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
+# test (docs/install.md): the image in the build container, then from the maintenance stage 1:
+python -m overpressure container run -- bash devices/phoenix/scripts/build-system-image.sh \
+    out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
 python -m overpressure dev recovery && python -m overpressure dev install   # boot, super, data; starts it
 python -m overpressure dev installed && python -m overpressure dev check    # reconnect after a reboot; check
 # Back to stock only when the user asks: python -m overpressure dev restore, then
@@ -166,7 +168,7 @@ passed.
   write it only as the whole-partition image `dev image` builds (stock vbmeta kept), never a
   plain boot image, or every boot ends in fastboot. Large raw fastboot downloads crash the ABL;
   `dev flash`/`dev restore-partition` send big images sparse.
-- **Entering development mode** (from PICO OS): `dev stage-abl`, `dev image`, `dev flash recovery`,
+- **Entering development mode** (from PICO OS): `dev stage-abl`, `dev image`, `dev flash`,
   `dev connect`. It runs unattended: `adb reboot edl` works from PICO OS, and EDL needs no
   buttons. `.env` holds the headset's serials and the paths of its backup, loader and
   engineering ABL (see `.env.example`).
@@ -178,7 +180,7 @@ passed.
   `dev install`, a new kernel through `dev recovery` and `dev install --boot`; `dev installed`
   reconnects after a reboot, `dev check` runs the acceptance runner's stage-2 checks, `dev ssh CMD` a
   command. The session runs only on Valve's kernel, not in the maintenance stage 1. A changed
-  stage-1 image needs `dev image`, `dev flash recovery` and a new installed boot image.
+  stage-1 image needs `dev image`, `dev flash` and a new installed boot image.
 - **Deadlines.** Device-side deadlines return the headset to fastboot; `dev reboot` starts
   stage 1 from there without a flash. The dev image's maximum runtime (an hour) counts from the
   last `python -m overpressure dev` command, which renews it; plain `ssh` does not. A kernel panic reboots after 5 s (`panic=5`, the
@@ -202,6 +204,7 @@ passed.
 
 ## Environment quirks
 
-The repository's CLAUDE.md lists the Windows/WSL ones. For the PICO 4: `adb`, `fastboot`,
-edl-ng and the NCM venv come from `python -m overpressure tools` (cache/tools) unless `.env`
-names other copies (`PICO4_PLATFORM_TOOLS`, `PICO4_EDL`, `PICO4_NCM_PYTHON`).
+The repository's CLAUDE.md lists the Windows ones. For the PICO 4: `adb`, `fastboot`
+and edl-ng come from `python -m overpressure tools` (cache/tools) unless `.env` names other
+copies (`PICO4_PLATFORM_TOOLS`, `PICO4_EDL`); the Windows NCM initialization runs on the
+project's own Python (pyusb, libusb-package) unless `PICO4_NCM_PYTHON` names another.

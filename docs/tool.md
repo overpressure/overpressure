@@ -2,8 +2,10 @@
 
 `python -m overpressure` builds a headset's images and works on the headset. It is one program
 with two faces: a window (the installer, and every step in its Advanced mode) and a command line
-with the same steps and every command of the headset. It is pure Python (3.9+, standard library
-only; the window adds Tk and CustomTkinter), so it runs on Windows, Linux and macOS, and it runs
+with the same steps and every command of the headset. It is Python (3.9+): the standard library,
+and pinned packages where they spare the owner an outside tool (brotli for the stock OTA, pyusb with
+libusb-package for EDL devices and Windows' USB network link; the window adds Tk and CustomTkinter), so it runs on Windows, Linux
+and macOS, and it runs
 from the repository root: `.env` and the private folders (`out/`, `cache/`, `assets/`, `backup/`)
 live there.
 
@@ -18,9 +20,20 @@ needed for (the window, working on the headset, EDL, the builds, the extracted s
 with what was found and, for anything missing, how to get it. The exit status is 1 while
 something needed is missing. The window shows the same as *Check dependencies* in Advanced
 mode's Setup group, with the fix of the selected line to copy. The checks only look: version
-queries, `command -v` in Linux (WSL as root on Windows), settings, file sizes and small files'
-hashes; they install and change nothing. Missing but optional (Tk and CustomTkinter for the
-window) and warnings (a slower fallback, say) do not fail it.
+queries, a probe in the build container, settings, file sizes and small files' hashes; they
+install, build, register and change nothing. Missing but optional (Tk and CustomTkinter for the
+window, pyusb and libusb-package, and brotli while the brotli command is there) and warnings (a slower fallback, say) do not fail it.
+
+For the builds ([Linux-root steps](#linux-root-steps)) the checks are the build container's, each
+with what it is needed for and its fix in one line:
+
+| Check | Fix when it is not there |
+| --- | --- |
+| Docker or Podman answers (`ENGINE info`) | install Docker or Podman and have it running; how it runs its containers (a VM, WSL, a service, rootless) is the owner's choice, and the check and its fix are the same on every host |
+| the image built | `python -m overpressure container build` (the installer builds it itself) |
+| the aarch64 handler (an x86-64 engine) | none needed: each build registers it; after a failure, `python -m overpressure container binfmt` (*optional* until then) |
+
+The image holds every Linux tool of the builds by construction, so no tool is checked one by one.
 
 ## Host tools
 
@@ -30,35 +43,69 @@ python -m overpressure tools
 
 fetches the pinned programs the headsets' workflows use into `cache/tools`, each archive checked
 by its SHA-256 ([overpressure/tools.py](../overpressure/tools.py)): Android's platform-tools
-(adb, fastboot), edl-ng, and on Windows a Python environment with pyusb and libusb-package for
-the USB network link (installed by pip with every file's hash pinned). A headset's settings that
+(adb, fastboot) and edl-ng. The Windows USB network link needs no tool of its own: the Python
+that runs overpressure has pyusb and libusb-package (pyproject.toml). A headset's settings that
 name its own copies take precedence; without them the fetched ones are used, then PATH. The
 window has the same as *Fetch the host tools* in Advanced mode's Setup group. Nothing is
 downloaded anywhere else: the tools are fetched only by this command.
 
 ## Linux-root steps
 
-Building a userspace mounts file systems and chroots into an aarch64 root, so those steps run
-on Linux as root, in one of three places (`OVERPRESSURE_LINUX` in the environment or `.env`;
-[overpressure/linux.py](../overpressure/linux.py)):
+Building a userspace mounts file systems and chroots into an aarch64 root, so those steps
+(`Step.linux_root`: the userspace archive, the system image, Valve's kernel) run on Linux as root,
+in one place on every host: overpressure's build container
+([overpressure/linux.py](../overpressure/linux.py)), with Docker or Podman, whichever is
+there; with both, the first that answers (`OVERPRESSURE_CONTAINER_ENGINE` in the environment
+chooses). The builds ask nothing else of the engine: how it runs its containers (a VM, WSL, a
+service, rootless) is the owner's choice. A step's command line is
+`python -m overpressure container run -- COMMAND`, from the repository root.
 
-| Backend | Where | Default on |
-| --- | --- | --- |
-| `wsl` | Windows' Linux, as root | Windows (with WSL) |
-| `sudo` | this Linux host | Linux |
-| `docker` | the build container: Docker or Podman, any host; it holds every tool of the builds, the kernel's too | macOS, Windows without WSL |
+```sh
+python -m overpressure container build          # the image, overpressure-builder:HASH
+python -m overpressure container run -- CMD      # CMD as root in the container (the image built first if missing)
+python -m overpressure container shell           # an interactive shell there
+python -m overpressure container binfmt          # the aarch64 handler: registered when the engine has none
+```
 
-The build container ([overpressure/container/Dockerfile](../overpressure/container/Dockerfile),
-Ubuntu 24.04 pinned by digest) holds the tools of the userspace, system image and extraction
-builds, LLVM included, so these need only Docker on the host; the kernel build needs its own cross
-toolchain. `python -m overpressure container build` builds its image (`overpressure-builder:HASH`,
-the recipe's hash), `container run -- CMD` runs a command from the repository root (built first
-if missing), `container shell` opens a shell. The engine is Docker, else Podman;
-`OVERPRESSURE_CONTAINER_ENGINE` in the environment chooses it. It runs privileged (the builds
-mount and chroot); the repository is mounted at `/work` and `/var/tmp` (build roots, stock
-folders) is the named volume `overpressure-var`. The aarch64 programs of the build root run
-through the host kernel's binfmt handler: Docker Desktop registers one; on Linux,
-`docker run --privileged --rm tonistiigi/binfmt --install arm64` does.
+- **The image.** [overpressure/container/Dockerfile](../overpressure/container/Dockerfile): Ubuntu
+  24.04 pinned by digest, its packages from `snapshot.ubuntu.com` at one fixed moment (its
+  `SNAPSHOT`), so every owner gets the same versions: every tool of the userspace, system image
+  and kernel builds, LLVM 20's clang and lld, the kernel's cross compiler and qemu-user-static.
+  Its tag is the hash of the recipe's folder, so a changed recipe is a new image.
+- **What it sees.** It runs privileged (the builds mount and chroot). The repository is mounted at
+  `/work`, and `/var/tmp` (the build roots) is the named volume `overpressure-var`, on a Linux file
+  system and kept between runs. Nothing else of the host is visible: a step's path parameters lie
+  in the repository (relative, as the steps' defaults are) or under `/var/tmp`.
+- **One build at a time.** `container run` names its container `overpressure-build`, labelled with
+  its client (host, process, parent process), its command and its checkout. A second run while it
+  runs is refused with one line, `another build is running: COMMAND; let it finish or stop it,
+  then start again`; the engine's own refusal of the name becomes the same plain line. A leftover
+  container whose client is gone (its process was killed) is removed before the next run.
+  Probes (the doctor's) run unnamed.
+- **Stopping.** The engine keeps a container running when its client ends, so stopping a build
+  removes its container first (`ENGINE rm -f overpressure-build`, only the container of the client
+  being stopped or of its child), then ends the client: the installer's stop, Advanced mode's
+  *Stop*, and Ctrl-C or SIGTERM in `container run` itself. On Windows a stopped client is killed
+  outright (TerminateProcess), which nothing in it can catch; the removal does not depend on it.
+- **Ownership.** With a rootful engine, what a run writes into `/work` (`out/`,
+  `cache/`) would be root's in the owner's checkout. `container run` passes the host's user and
+  group (`OVERPRESSURE_UID`, `OVERPRESSURE_GID`, wherever the host has them and is not root), and the
+  entrypoint gives back what root created or changed
+  under `/work` during the command (`find -uid 0 -cnewer`, links themselves), whatever its exit
+  status, only when the container's root is the host's root (a rootful engine). A rootless
+  engine's root is the host's user already, and an engine that maps ownership itself is left alone
+  by it: nothing is given back.
+- **The aarch64 handler.** The userspace build's chroot runs arm64 programs through the host
+  kernel's binfmt_misc handler for aarch64 executables with the F flag (magic
+  `7f454c460201010000000000000000000200b700`). Some engines register one, others do not; an arm64
+  engine needs none. Before a build on an x86-64 engine without an
+  enabled handler with F, the container registers the image's `qemu-aarch64-static` as
+  `overpressure-aarch64` as Ubuntu registers it (`aarch64-binfmt-P`, flags `POF`) and says so in one line; with F the kernel keeps the
+  interpreter open, so the handler serves later containers until the host restarts.
+  `container binfmt` does only that and reports the handler it found or registered.
+- **Shell tests.** `python -m overpressure container run -- make test` runs the host tests and every
+  headset's shell tests in the container (as root, on Linux), the container's own scripts' tests
+  included.
 
 ## The window
 
@@ -166,11 +213,14 @@ terminal can do all of it too.
   installer. `gui --advanced` opens here once a headset is chosen.
 - **Steps**, in three groups: *Setup* (*Check dependencies*, the host tools), *Image* (building the images)
   and *Headset* (flashing, connecting, checking, the way back). A step shows what it does, where it runs (a
-  Linux-root step: WSL, sudo or the build container) and whether it writes to the headset, its parameters
+  Linux-root step: in the build container) and whether it writes to the headset, its parameters
   (a text, a choice, a path with *Browse* where this computer's dialog can pick it, a flag; in a card) and
   the command line it will run, in a code block, which follows the parameters as they change; *Copy* puts
   it on the clipboard. A page too long for the window scrolls. Values
-  are kept per headset and step while the window is open.
+  are kept per headset and step while the window is open. A Linux-root step's paths must be what the
+  build container sees: one in the repository is passed relative to it, one under `/var/tmp` as it is,
+  and any other is refused with a plain message before the run; *Browse* is there for its paths in the
+  repository.
 - **Run** starts the selected step; its output goes to the output block below it, and the status line,
   with a dot in the state's colour, says what runs and how it ended (*done*, *failed* with its exit status, *stopped*). One step runs at a time, and its
   entry in the list says *running*. *Stop* ends the running step's program; for a step that writes to the
@@ -234,16 +284,12 @@ everything the window does.
   UTC}}}`), written whole after every change. A task done in an earlier run is skipped unless its own done check says its
   result is gone; a done check also skips a task on its first run when its output is there already
   (skipped). `--restart STAGE` forgets that stage's tasks and every later stage's.
-- **Child programs.** A task's programs run from the repository root (Linux-root steps through the
-  backend of [Linux-root steps](#linux-root-steps), as the window's steps do); their output goes line by
+- **Child programs.** A task's programs run from the repository root (Linux-root steps in the
+  build container of [Linux-root steps](#linux-root-steps), as the window's steps do); their output goes line by
   line to log events and to `out/install/<codename>/<task>.log`. What a task prints itself becomes log lines
   too, so stdout carries only events.
 - **One at a time.** An OS lock on `out/install/lock` keeps a second engine out, whatever its headset (builds
   share their caches); it ends with the process that holds it.
-- **An older state.** A state in `out/install/state.json`, from before the headsets' folders, belongs to the
-  headset whose plan has every task it records. That headset's run, or its `--plan`, moves it and those
-  tasks' logs into `out/install/<codename>/` when that folder has no state yet, under the lock; while
-  another engine holds the lock, `--plan` reads it where it is and moves nothing.
 - **Stopping.** Ctrl-C, a closed stdin or `{"stop": true}` on stdin stop the run at once wherever it
   waits: an ask, a wait of the task (`ctx.clock`, which every `until()` a task runs goes through, looks for
   the stop every 0.2 s), a program that does not write to the headset (it is ended). A program that writes
@@ -300,7 +346,7 @@ python -m overpressure [--device CODENAME] COMMAND [ARGS...]
   install [--json] [--plan] [--restart STAGE]
                        the installer: the headset's stages in order, resumable
   doctor               what this computer has and lacks for the headset, with fixes
-  tools [NAME...]      fetch the pinned host tools (platform-tools, edl-ng, the NCM venv)
+  tools [NAME...]      fetch the pinned host tools (platform-tools, edl-ng)
   container build|run -- CMD|shell
                        the build container
   COMMAND [ARGS...]    a command of the headset
@@ -322,21 +368,23 @@ python -m overpressure dev check
 | --- | --- |
 | [overpressure/headset.py](../overpressure/headset.py) | `Headset` (its `Info`, `commands()`, `steps()`, `install_plan()`, `after_install()`), `Step` and `Param`, `AfterInstall` and `Action`, the registry |
 | [overpressure/install.py](../overpressure/install.py) | the install engine: `Stage`, `Task`, `Ask`, the `Context` a task gets, the state, the lock, the events, `python -m overpressure install` |
-| [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (WSL, sudo), its display, running it |
+| [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (a Linux-root step's in the build container), its display, running and stopping it |
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
 | [overpressure/window/](../overpressure/window/__init__.py) | the window (CustomTkinter). Its models, without widgets: `installer.py` (the engine's events as stages and asks; the child engine, the demo engine), `advanced.py` (the steps, their values and command lines, one run at a time, the checks) and `headsets.py` (which headset: the headset page, its plan probes, the last choice in `out/window.json`, the demo's second headset). Its widgets: `app.py` (the header, the installer view, the panels) and `advanced_view.py`; `theme.py` holds the design tokens and the fonts' choice, `kit.py` the components built from them |
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix; `DeviceSettings`, what every Qualcomm Android headset names |
 | [overpressure/fastboot.py](../overpressure/fastboot.py) | flashing an image sparse above a size, raw below; the RAM boot: `fastboot boot` with the headset's checks, never a write |
-| [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, then the headset's (`Headset.dependencies()`), built from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link, an arm64 build host) |
+| [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, then the headset's (`Headset.dependencies()`), built from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link) and the build container's |
 | [overpressure/tools.py](../overpressure/tools.py) | the pinned host tools in `cache/tools` |
-| [overpressure/linux.py](../overpressure/linux.py) | where Linux-root steps run: WSL, sudo or the build container |
+| [overpressure/linux.py](../overpressure/linux.py), [container/](../overpressure/container) | the build container, where Linux-root steps run: its image, one named build at a time, stopping it, the aarch64 handler, ownership on Linux hosts |
 | [overpressure/stage1.py](../overpressure/stage1.py) | a stage 1: an Alpine ramdisk in the stock Android boot image, from a headset's `Spec` |
-| [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), checked against the zip; a pinned file out of a remote zip, checked by its hash |
-| [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed, the wait for Android's boot, a partition's size from `getvar all`; the SoC ID, EDL (edl-ng, bkerler/edl), its partition maps, a full backup and a write verified by readback |
+| [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), checked against the zip, the block images decompressed by the brotli package (the brotli command without it); a pinned file out of a remote zip, checked by its hash |
+| [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed, the wait for Android's boot, a partition's size from `getvar all`; the SoC ID, EDL devices counted through pyusb (PowerShell, ioreg or sysfs without it), EDL (edl-ng, bkerler/edl), its partition maps, a full backup and a write verified by readback |
 | [overpressure/backup.py](../overpressure/backup.py), [process.py](../overpressure/process.py), [ssh.py](../overpressure/ssh.py) | verified backups and a partition's image in them; programs and bounded waits; SSH with the project's key, the keys an image enrolls |
 | [overpressure/evidence.py](../overpressure/evidence.py), [storage.py](../overpressure/storage.py) | a run that records every step and command in its results folder, bounded waits and HTTP fetches; the read-only storage policy a headset's Linux stages enforce |
 | `bootimg`, `avb`, `sparse`, `payload`, `cpio`, `compress`, `alpine`, `apksign`, `kernelinfo`, `elfdeps`, `windows_ncm` | the formats and helpers Android-based headsets share (`bootimg` also edits a boot image's ramdisk and command line) |
-| [scripts/stock-lib.sh](../scripts/stock-lib.sh) | for a headset's extraction scripts: a checked stock firmware folder, files out of its ext4 images |
+| [overpressure/assets.py](../overpressure/assets.py) | a headset's assets out of its stock folder: the folder checked against its manifest, files out of its ext4 and FAT images (debugfs's and mcopy's semantics), the assets manifest |
+| [overpressure/ext4.py](../overpressure/ext4.py), [fat.py](../overpressure/fat.py) | read-only readers of stock file system images, written from the on-disk formats: ext4 (32- and 64-bit, extents, block maps, holes, links) and FAT12/16/32 with long names; `python3 -m overpressure.ext4 cat IMAGE PATH` for the Linux build scripts |
+| [scripts/stock-lib.sh](../scripts/stock-lib.sh) | for a headset's Linux build scripts: a file out of a stock ext4 image (`python3 -m overpressure.ext4 cat`) |
 
 ## RAM boot
 
@@ -361,12 +409,14 @@ do, so a step that works in the window works in a terminal and the other way rou
 
 ## Development
 
-The tool needs no package to run, but working on it uses [uv](https://docs.astral.sh/uv/) and Astral's
+The tool runs without any package: each pinned runtime package (`brotli`, `pyusb`, `libusb-package`, the
+project's dependencies in `pyproject.toml`) is imported where it is used, with a fallback. The start scripts
+and `uv sync` install them. Working on the tool uses [uv](https://docs.astral.sh/uv/) and Astral's
 [ruff](https://docs.astral.sh/ruff/) and [ty](https://docs.astral.sh/ty/). `pyproject.toml` pins them in the
 `dev` dependency group and configures them; `uv.lock` holds the exact versions.
 
 ```sh
-uv sync                        # .venv with the tool (editable), ruff, ty and pyusb for the types
+uv sync                        # .venv with the tool (editable) and its packages, ruff and ty
 uv run python -m unittest      # the host tests in that environment
 uv run ruff format .           # formatting (line length 120)
 uv run ruff check .            # lint, every rule; --fix applies the safe fixes

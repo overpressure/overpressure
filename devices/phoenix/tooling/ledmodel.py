@@ -6,8 +6,8 @@ PICO OS tracks each controller by a ring of 20 infrared LEDs. Its tracking libra
 model of each ring as 20 points (x, y, z float32, metres) and hands the left one, then
 the right one, to its pose predictor, together with each LED's unit normal (x, y, z
 float64; the left normals are the right ones with y negated), which decides from where an
-LED can be seen. scripts/extract-sensor-data.sh reads both from the
-headset's own firmware; the values are vendor data and stay out of the repository.
+LED can be seen. The assets command (tooling/assets.py) reads both from the
+stock firmware; the values are vendor data and stay out of the repository.
 
     python -m devices.phoenix.tooling.ledmodel LIBRARY OUTPUT.json
 """
@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{library}: {exc}", file=sys.stderr)
         return 1
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(to_json(result, normal, library.name), encoding="utf-8")
+    output.write_bytes(to_json(result, normal, library.name).encode("utf-8"))
     return 0
 
 

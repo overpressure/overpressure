@@ -2,19 +2,18 @@
 """Running a headset's steps: the process each one is, on this host.
 
 A command step runs this package's command line for the headset; a script step runs a program
-from the headset's folder. Steps that need Linux as root (the userspace build mounts and
-chroots) go through the Linux backend (overpressure/linux.py): WSL as root, sudo, or the build
-container, always from the repository root, so relative paths in their parameters mean the same
-everywhere.
+from the headset's folder. Steps that need Linux as root (the builds mount and chroot) run in the
+build container (overpressure/linux.py), always from the repository root, so relative paths in
+their parameters mean the same on the host and in the container.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shlex
 import subprocess
 import sys
-from pathlib import Path, PureWindowsPath
 from typing import IO, TYPE_CHECKING, Callable, cast
 
 from . import REPO, linux
@@ -23,21 +22,12 @@ if TYPE_CHECKING:
     from .headset import Headset, Step
 
 
-def wsl_path(path: Path) -> str:
-    r"""Return C:\a\b as /mnt/c/a/b, as WSL mounts Windows drives."""
-    p = PureWindowsPath(path)
-    return "/mnt/" + p.drive.rstrip(":").lower() + "/" + "/".join(p.parts[1:])
-
-
-def process(  # noqa: PLR0913  # the step, and this host's facts keyword-only for tests to pose as another
+def process(
     headset: Headset,
     step: Step,
     values: dict[str, str],
     *,
-    platform: str = sys.platform,
     python: str = sys.executable,
-    is_root: bool | None = None,
-    backend: str | None = None,
 ) -> list[str]:
     """Return the argv that runs @p step with @p values; its working directory is the repository."""
     words = step.command(values)
@@ -49,17 +39,16 @@ def process(  # noqa: PLR0913  # the step, and this host's facts keyword-only fo
         argv = [python if not step.linux_root else "python3", *cli]
     if not step.linux_root:
         return argv
-    backend = backend or linux.backend(platform)
-    if backend == "docker":
-        return [python, "-m", "overpressure", "container", "run", "--", *argv]
-    if backend == "wsl":
-        if step.script:
-            return ["wsl", "-u", "root", "--cd", str(REPO), "--", "bash", wsl_path(program), *words[1:]]
-        return ["wsl", "-u", "root", "--cd", str(REPO), "--", *argv]
-    root = (os.geteuid() == 0) if is_root is None and hasattr(os, "geteuid") else bool(is_root)
-    if not root:
-        argv = ["sudo", *argv]
-    return argv
+    return [python, *linux.RUN, "--", *argv]
+
+
+def stop(proc: subprocess.Popen, argv: list[str]) -> None:
+    """End a step's program @p proc; a build's container first, which outlives a client that is killed."""
+    if linux.is_build(argv):
+        with contextlib.suppress(OSError):
+            linux.stop_build(proc.pid)
+    with contextlib.suppress(OSError):
+        proc.terminate()
 
 
 def display(argv: list[str], platform: str = sys.platform) -> str:

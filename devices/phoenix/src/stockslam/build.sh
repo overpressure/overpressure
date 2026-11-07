@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Unlicense
 # Build pico4-slamd and the tracker root's stand-ins (docs/xr.md#head-tracking) for bionic
 # (aarch64-linux-android29) with a host clang, against PICO OS's own bionic libraries, which
-# scripts/extract-stock-slam.sh puts into ROOT. No NDK: own entry point (crt.c) and
+# python -m overpressure assets puts into ROOT. No NDK: own entry point (crt.c) and
 # declarations (bionic.h). Runs the image-processing test natively first.
 #
 #   src/stockslam/build.sh ROOT OUTPUT_DIR [LLVM_DIR]
@@ -16,7 +16,7 @@ llvm=${3:-}
 clang=${llvm:+$llvm/bin/}clang
 [[ -x "$(command -v "$clang")" ]] || { echo "no clang ($clang)" >&2; exit 2; }
 [[ -s "$root/system/lib64/bootstrap/libc.so" && -s "$root/system/lib64/libSlam.so" ]] ||
-    { echo "$root is not a tracker root (scripts/extract-stock-slam.sh)" >&2; exit 1; }
+    { echo "$root is not a tracker root (python -m overpressure assets)" >&2; exit 1; }
 mkdir -p "$out"
 
 # The image processing, natively on the build host.

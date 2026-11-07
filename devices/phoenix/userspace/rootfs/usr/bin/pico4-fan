@@ -803,7 +803,7 @@ def cmd_state(_args: argparse.Namespace) -> int:
 
 
 def cmd_batch(args: argparse.Namespace) -> int:
-    """Print the batch word for scripts/extract-sensor-data.sh; the serial number itself is never printed."""
+    """Print the batch word of a serial number; the serial number itself is never printed."""
     serial = sys.stdin.buffer.read() if args.serial == "-" else Path(args.serial).read_bytes()
     if not serial.strip(b"\0\r\n\t "):
         print("pico4-fan: no serial number", file=sys.stderr)

@@ -9,9 +9,9 @@
   run STEP [NAME=VALUE...]
                        run a step as the window does, with parameters
   doctor               what this host has and lacks for the headset's workflow, with fixes
-  tools [NAME...]      fetch the pinned host tools: platform-tools, edl-ng, the NCM venv
-  container build|run -- CMD|shell
-                       the build container (OVERPRESSURE_LINUX=docker runs Linux-root steps there)
+  tools [NAME...]      fetch the pinned host tools: platform-tools, edl-ng
+  container build|run -- CMD|shell|binfmt
+                       the build container, where every Linux-root step (the builds) runs
   ram-boot [IMAGE]     boot an image from RAM with fastboot boot (writes nothing), where the
                        headset's bootloader allows it
   install [--json] [--plan] [--restart STAGE]

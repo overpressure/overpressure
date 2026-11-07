@@ -83,7 +83,7 @@ class Step:
     help: str = ""
     params: tuple[Param, ...] = ()
     script: bool = False  #: argv[0] is a program in the headset's folder
-    linux_root: bool = False  #: needs Linux as root (on Windows: WSL)
+    linux_root: bool = False  #: runs as root in the build container (overpressure/linux.py)
     writes: bool = False  #: writes to the headset: the window asks first
 
     def command(self, values: dict[str, str]) -> list[str]:
@@ -132,9 +132,8 @@ def tools_step() -> Step:
         "Fetch the host tools",
         "Setup",
         ("tools",),
-        "Downloads the pinned platform-tools (adb, fastboot) and edl-ng, and on Windows the NCM "
-        "venv (pyusb, libusb-package), each checked by SHA-256, into cache/tools. Settings that "
-        "name your own copies still take precedence.",
+        "Downloads the pinned platform-tools (adb, fastboot) and edl-ng, each checked by SHA-256, "
+        "into cache/tools. Settings that name your own copies still take precedence.",
     )
 
 

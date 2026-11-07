@@ -14,6 +14,7 @@ from typing import IO, TYPE_CHECKING
 from unittest.mock import patch
 
 from devices.phoenix.tooling import cycle, devloop, localconfig
+from overpressure import REPO
 from overpressure.localconfig import parse
 
 if TYPE_CHECKING:
@@ -54,7 +55,7 @@ class SettingsTests(unittest.TestCase):
             env.write_text("PICO4_ADB_SERIAL=FILE\nPICO4_BACKUP=backup/stock-1\n", encoding="utf-8")
             settings = localconfig.load(env, {"PICO4_ADB_SERIAL": "ENV"})
         self.assertEqual(settings.adb_serial, "ENV")
-        self.assertEqual(settings.path("backup"), localconfig.ROOT / "backup/stock-1")
+        self.assertEqual(settings.path("backup"), REPO / "backup/stock-1")
         self.assertEqual(settings.tool("adb"), "adb")
         settings.platform_tools = "/opt/platform-tools"
         self.assertEqual(Path(settings.tool("fastboot")).name.split(".")[0], "fastboot")

@@ -5,11 +5,8 @@
 
 - platform-tools: Google's adb and fastboot (the versioned archives of dl.google.com).
 - edl-ng: the EDL client (github.com/strongtz/edl-ng, MIT), its release for this host.
-- ncm-venv (Windows): a Python environment with pyusb and libusb-package for the USB network
-  link's initialization (overpressure/windows_ncm.py), installed by pip with every file's hash
-  pinned (--require-hashes).
 
-A setting that names a tool (PICO4_PLATFORM_TOOLS, PICO4_EDL, PICO4_NCM_PYTHON for the PICO 4)
+A setting that names a tool (PICO4_PLATFORM_TOOLS, PICO4_EDL for the PICO 4)
 takes precedence; without it the fetched copy is used, and the tool's name on PATH last. Nothing
 is fetched behind the user's back: only this command (or the window's step) downloads.
 """
@@ -21,7 +18,6 @@ import io
 import platform
 import shutil
 import stat
-import subprocess
 import sys
 import urllib.request
 import zipfile
@@ -121,27 +117,6 @@ EDL_NG = Tool(
 
 ARCHIVE_TOOLS = {tool.name: tool for tool in (PLATFORM_TOOLS, EDL_NG)}
 
-#: The USB network link's Python packages for Windows, every file pinned by its hash.
-NCM_REQUIREMENTS = """\
-pyusb==1.3.1 \\
-    --hash=sha256:bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430 \\
-    --hash=sha256:3af070b607467c1c164f49d5b0caabe8ac78dbed9298d703a8dbf9df4052d17e
-libusb-package==1.0.30.0 \\
-    --hash=sha256:90808da724c8939a333d931d0c7226372ca5fefd98e2f2f3ef79fd918aa37522 \\
-    --hash=sha256:79728146e1f01e525786900b2ccd8298a8eca53cd94b37fb0885e56aa6f9d60a \\
-    --hash=sha256:2b98784bac3bedda7e95bb5039dd0eded84b02f36110e4d5d607375366c61090 \\
-    --hash=sha256:4ad25f8d254bbbdd234446d5580b24d62d59bb0e690d8090457dac347f044437 \\
-    --hash=sha256:c71b5f8c65b286425c02c7d624eee1fd7f08bfb1dfa492ddc20e27f06fee3829 \\
-    --hash=sha256:f502ad5a0527b8c0431de817662325c88a1bba2cc334173665b04ad168d7b6d3
-importlib-resources==7.1.0 ; python_version >= "3.10" \\
-    --hash=sha256:1bd7b48b4088eddb2cd16382150bb515af0bd2c70128194392725f82ad2c96a1
-importlib-resources==6.5.2 ; python_version < "3.10" \\
-    --hash=sha256:789cfdc3ed28c78b67a06acb8126751ced69a3d5f79c095a98298cd8a760ccec
-zipp==3.23.0 ; python_version < "3.10" \\
-    --hash=sha256:071652d6115ed432f5ce1d34c336c0adfd6a884660d1e9712a256d3d3bd4b14e
-"""
-NCM_VENV = CACHE / ("ncm-venv-" + hashlib.sha256(NCM_REQUIREMENTS.encode()).hexdigest()[:12])
-
 
 def _marker(tool: Tool) -> Path:
     return tool.folder / ".complete"
@@ -160,12 +135,6 @@ def program(name: str) -> Path | None:
             path = tool.folder / tool.programs[name]
             return path if path.is_file() else None
     return None
-
-
-def ncm_python() -> Path | None:
-    """Return the fetched NCM venv's Python, or None."""
-    python = NCM_VENV / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-    return python if (NCM_VENV / ".complete").is_file() and python.is_file() else None
 
 
 def download(
@@ -215,61 +184,18 @@ def fetch(tool: Tool, log: Callable[[str], None] = print, opener: Callable = url
     return tool.folder
 
 
-def fetch_ncm_venv(
-    log: Callable[[str], None] = print, python: str = sys.executable, run: Callable = subprocess.run
-) -> Path:
-    """Make the NCM venv: a venv of @p python with the pinned packages, every file's hash checked."""
-    if ncm_python() is not None:
-        log(f"ncm-venv: already in {NCM_VENV}")
-        return NCM_VENV
-    shutil.rmtree(NCM_VENV, ignore_errors=True)
-    log(f">> {python} -m venv {NCM_VENV}")
-    run([python, "-m", "venv", str(NCM_VENV)], check=True)
-    requirements = NCM_VENV / "requirements.txt"
-    requirements.write_text(NCM_REQUIREMENTS, encoding="utf-8")
-    venv_python = NCM_VENV / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-    log(">> pip install --require-hashes (pyusb, libusb-package)")
-    run(
-        [
-            str(venv_python),
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--no-input",
-            "--only-binary",
-            ":all:",
-            "--require-hashes",
-            "-r",
-            str(requirements),
-        ],
-        check=True,
-    )
-    (NCM_VENV / ".complete").write_text("ok\n", encoding="utf-8")
-    log(f"ncm-venv: {NCM_VENV}")
-    return NCM_VENV
-
-
-def wanted() -> list[str]:
-    """Return this host's tools: the NCM venv only on Windows."""
-    return ["platform-tools", "edl-ng"] + (["ncm-venv"] if sys.platform == "win32" else [])
-
-
 def main(argv: list[str] | None = None) -> int:
     """Fetch the named tools (this host's by default)."""
-    names = list(argv or []) or wanted()
-    unknown = [n for n in names if n not in (*ARCHIVE_TOOLS, "ncm-venv")]
+    names = list(argv or []) or list(ARCHIVE_TOOLS)
+    unknown = [n for n in names if n not in ARCHIVE_TOOLS]
     if unknown or "-h" in names or "--help" in names:
         print(__doc__.strip())
         return 0 if not unknown else 2
     CACHE.mkdir(parents=True, exist_ok=True)
     try:
         for name in names:
-            if name == "ncm-venv":
-                fetch_ncm_venv()
-            else:
-                fetch(ARCHIVE_TOOLS[name])
-    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            fetch(ARCHIVE_TOOLS[name])
+    except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0

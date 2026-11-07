@@ -19,7 +19,7 @@ devtmpfs, such as the stock kernel under the maintenance stage 1, the switch ref
 | --- | --- |
 | Kernel and device trees | the stock image's, byte for byte, with every other header field (load addresses, page size, OS version and patch level) |
 | Kernel command line | the stock one plus `printk.devkmsg=on`, so the init's lines in `/dev/kmsg` are not rate-limited, and `rng_core.default_quality=1000`, so the Qualcomm hardware RNG credits entropy and dropbear's first host-key generation cannot block |
-| Ramdisk | Alpine Linux 3.24.2 aarch64: the minirootfs, the packages listed in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, exploration tools and the stage-2 handoff tools GNU tar, zstd, e2fsprogs, dropbear-convert), the overlay in [initramfs/](../initramfs/) and the `pico4-reboot` helper |
+| Ramdisk | Alpine Linux 3.24.2 aarch64: the minirootfs, the packages listed in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, exploration tools and the stage-2 handoff tools e2fsprogs and dropbear-convert), the overlay in [initramfs/](../initramfs/) and the `pico4-reboot` helper |
 | PID 1 | `pico4-init`, which runs `/etc/inittab` like busybox init ([PID 1](#pid-1)) |
 
 Over the USB-C cable:
@@ -496,8 +496,9 @@ in the same kernel, so the VM is both headset and PC. A 32 MiB GPT disk provides
 partition for the read-only checks and a `stage1_export` partition that receives the probe report.
 
 ```sh
-devices/phoenix/tests/qemu/build-test-kernel.sh       # once, on Linux or WSL: cache/qemu/Image
-devices/phoenix/tests/qemu/run-selftest.sh            # newest out/*-initramfs.cpio.gz; prints PASS or FAIL
+# once, in the build container: cache/qemu/Image
+python -m overpressure container run -- bash devices/phoenix/tests/qemu/build-test-kernel.sh
+devices/phoenix/tests/qemu/run-selftest.sh            # Linux, with qemu-system-aarch64: PASS or FAIL
 ```
 
 Further arguments to `run-selftest.sh` are kernel arguments: `pico4.usbserial=none` gives

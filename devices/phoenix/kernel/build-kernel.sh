@@ -17,9 +17,9 @@
 # The PICO 4's kernel patches are in patches/, applied in name order; its own sources are in
 # src/, at their paths in the tree.
 #
-# Linux/WSL, cross compiling with aarch64-linux-gnu-gcc, debugfs (e2fsprogs) reading the vendor
-# image. Incremental: a second run rebuilds only
-# what changed.
+# Runs in the build container (python -m overpressure container run), cross compiling with
+# aarch64-linux-gnu-gcc; overpressure's ext4 reader (scripts/stock-lib.sh) reads the vendor
+# image. Incremental: a second run rebuilds only what changed.
 set -euo pipefail
 
 PACKAGE_SHA256=871f6abbc167a360368b0d2b19f1e0b2aed25d835f388873d3698b0b3a170252
@@ -31,7 +31,6 @@ CAMERA_MODULE=/lib64/camera/com.qti.sensormodule.sunny_imx471.bin
 package=$(realpath "$1") recovery=$(realpath "$2") vendor=$(realpath "$3") work=$4 out=$5
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/../../../scripts/stock-lib.sh"  # overpressure's
-command -v debugfs >/dev/null || { echo 'debugfs (e2fsprogs) is required' >&2; exit 2; }
 mkdir -p "$work" "$out"
 work=$(realpath "$work") out=$(realpath "$out")
 

@@ -100,12 +100,14 @@ class PlanTests(unittest.TestCase):
         self.spawned: list[tuple[list[str], bytes | None, bool]] = []
         self.captured: list[list[str]] = []
         self.checks: list[Check] = []
+        self.image = False
         self.plan = plan.Plan(
             HEADSET,
             root=self.root,
             work=self.root / "out" / "dev",
             computer=lambda: self.checks,
             edl_count=lambda: self.edl,
+            image_present=lambda: self.image,
         )
 
     # -- the fakes -----------------------------------------------------------------------------
@@ -183,7 +185,7 @@ class PlanTests(unittest.TestCase):
             [[t.id for t in s.tasks] for s in stages],
             [
                 ["tools", "unlock-files", "doctor"],
-                ["assets", "stage1", "userspace", "system", "dev-image", "kernel", "boot-image"],
+                ["assets", "stage1", "container", "userspace", "system", "dev-image", "kernel", "boot-image"],
                 ["find", "identity", "panel"],
                 ["consent", "backup", "stage-abl", "unlock", "flash", "maintenance"],
                 ["wifi", "install", "installed", "wifi-profile", "check", "ready"],
@@ -201,13 +203,34 @@ class PlanTests(unittest.TestCase):
         build = next(s for s in self.plan.stages() if s.id == "build")
         argv = self.plan.argv(self.ctx(), "stage1")
         self.assertEqual(argv[-4:], ["phoenix", "build", "--firmware", "5.13.7-global-seko"])
-        self.assertEqual(len(build.tasks), 7)
+        self.assertEqual(len(build.tasks), 8)
+        # The Linux side runs in the build container, whose image a task builds before the first Linux step.
+        ids = [t.id for t in build.tasks]
+        linux_root = [i for i in ids if i in self.plan.steps and self.plan.steps[i].linux_root]
+        self.assertLess(ids.index("container"), ids.index(linux_root[0]))
+        for key in linux_root:
+            self.assertEqual(self.plan.argv(self.ctx(), key)[1:6], ["-m", "overpressure", "container", "run", "--"])
+        task = build.tasks[ids.index("container")]
+        self.assertEqual((task.title, task.estimate), ("Build environment", "a few minutes the first time"))
+
+    def test_the_build_environment_is_built_unless_its_image_is_there(self):
+        ui = self.run_stages(("build",), {})
+        self.assertEqual(ui.finished()["status"], "done", ui.finished())
+        built = [argv for argv, _, _ in self.spawned if argv[1:5] == ["-m", "overpressure", "container", "build"]]
+        self.assertEqual(len(built), 1)
+        self.spawned.clear()
+        self.image = True
+        (self.root / "out" / "install" / "phoenix" / "state.json").unlink()
+        self.run_stages(("build",), {})
+        self.assertFalse([argv for argv, _, _ in self.spawned if "container" in argv and "build" in argv])
 
     def test_build_done_checks_look_at_the_outputs(self):
         ctx = self.ctx()
         out = self.root / "out"
         done = {t.id: t.done for t in self.plan.stages()[1].tasks}
         self.assertFalse(any(check(ctx) for check in done.values() if check))
+        self.image = True
+        self.assertTrue(done["container"](ctx))  # ty: ignore[call-non-callable]  # every build has one
         for kind in ("graphics-firmware", "sensor-data", "wlan", "audio", "stock-slam"):
             (self.root / "assets" / f"{kind}-5.13.7").mkdir(parents=True)
             (self.root / "assets" / f"{kind}-5.13.7" / "manifest.json").write_text("{}")
@@ -391,17 +414,22 @@ class PlanTests(unittest.TestCase):
             Check("PICO4_ADB_SERIAL", doctor.HEADSET, doctor.MISSING, "empty"),
             Check("EDL backup", doctor.HEADSET, doctor.MISSING, "none"),
             Check("assets/wlan-5.13.7", plan.checks.ASSETS, doctor.MISSING, "not extracted"),
-            Check("clang and lld", "build", doctor.WARNING, "none", "apt install clang-20"),
+            Check(
+                "build container image",
+                doctor.BUILDS,
+                doctor.MISSING,
+                "not built",
+                "python -m overpressure container build",
+            ),
+            Check("git config", "build", doctor.WARNING, "none", "git config"),
         ]
         ui = self.run_stages(("computer",), {})
         doctor_task = [e for e in ui.events if e["event"] == "task" and e["task"] == "doctor"]
         self.assertEqual(doctor_task[-1]["status"], "done")
-        self.assertIn(
-            "clang and lld: none (apt install clang-20)", [e["text"] for e in ui.events if e["event"] == "note"]
-        )
+        self.assertIn("git config: none (git config)", [e["text"] for e in ui.events if e["event"] == "note"])
         # Every check it looked at is in the details, also the ones that passed.
         logged = [e["line"] for e in ui.events if e["event"] == "log" and e.get("task") == "doctor"]
-        self.assertIn("warning: clang and lld (build): none", logged)
+        self.assertIn("warning: git config (build): none", logged)
         self.assertFalse(any("PICO4_ADB_SERIAL" in line for line in logged))
         self.checks.append(Check("ssh", doctor.HEADSET, doctor.MISSING, "not on PATH", "OpenSSH"))
         (self.root / "out" / "install" / "phoenix" / "state.json").unlink()  # a fresh start: the doctor runs again
@@ -409,10 +437,15 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(ui.finished()["task"], "doctor")
         self.assertIn("- ssh (working on the headset): not on PATH\n  How: OpenSSH", ui.finished()["error"])
 
-    def test_wsl_is_explained_on_windows(self):
-        missing = [Check("WSL (as root)", "Linux-root steps", doctor.MISSING, "wsl not found", "wsl --install")]
-        self.assertIn(plan.WSL, plan.computer_problems(missing, "win32", wsl=False))
-        self.assertNotIn(plan.WSL, plan.computer_problems(missing[:0], "linux", wsl=True))
+    def test_a_missing_or_silent_engine_is_explained_first_in_one_message(self):
+        missing = [Check(doctor.ENGINE, doctor.BUILDS, doctor.MISSING, "neither docker nor podman", "install one")]
+        text = plan.computer_problems(missing)
+        self.assertEqual(text.splitlines()[1], plan.ENGINE_MISSING)
+        self.assertIn("Docker or Podman", plan.ENGINE_MISSING)
+        self.assertIn("start the installer again", plan.ENGINE_MISSING)
+        other = [Check("ssh", doctor.HEADSET, doctor.MISSING, "not on PATH", "OpenSSH")]
+        self.assertEqual(plan.engine_problem(other), "")
+        self.assertNotIn(plan.ENGINE_MISSING, plan.computer_problems(other))
 
 
 class ParserTests(unittest.TestCase):

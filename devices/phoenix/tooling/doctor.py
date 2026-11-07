@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: Unlicense
 """The PICO 4's checks for python -m overpressure doctor.
 
-They cover its settings and private files, the tools that talk to it, the Windows USB link, the
-Linux side of its builds, and the extracted assets. What every Qualcomm Android headset checks
-is overpressure.doctor's; the identity, the engineering ABL, the build's tools and the assets
-are the PICO 4's.
+They cover its settings and private files, the tools that talk to it, the Windows USB link and
+the extracted assets. Its builds' Linux side (the userspace, the system image and the kernel) runs
+in the build container, which overpressure.doctor checks for every headset; the stock firmware and
+the assets are Python on any system. What every Qualcomm Android headset checks is
+overpressure.doctor's; the identity, the engineering ABL and the assets are the PICO 4's.
 
-Like every doctor check they only look: version queries, `command -v`, file sizes and the
-small files' hashes. The EDL backup's images are not hashed here (gigabytes); every write checks
-them against the manifest anyway.
+Like every doctor check they only look: version queries, file sizes and the small files' hashes.
+The EDL backup's images are not hashed here (gigabytes); every write checks them against the
+manifest anyway.
 """
 
 from __future__ import annotations
@@ -16,9 +17,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 
 from overpressure import REPO, backup, doctor
-from overpressure.doctor import APT, HEADSET, MISSING, OK, WARNING, Check, Host, linux_commands
+from overpressure.doctor import HEADSET, MISSING, OK, WARNING, Check, Host
 
-from . import FIRMWARE, device, localconfig
+from . import FIRMWARE, assets, device, localconfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,18 +27,10 @@ if TYPE_CHECKING:
     from .localconfig import Settings
 
 EDL = "EDL (development mode, way back)"
-BUILD = "userspace and system image (Linux, as root)"
-KERNEL = "Valve's kernel (Linux, as root)"
 ASSETS = "userspace build: extracted stock files"
 FIRMWARE_VERSION = FIRMWARE.split("-")[0]
-#: assets/<name>-VERSION and the extraction script that writes it.
-ASSET_KINDS = {
-    "graphics-firmware": "extract-graphics-firmware.sh",
-    "sensor-data": "extract-sensor-data.sh",
-    "wlan": "extract-wlan.sh",
-    "audio": "extract-audio.sh",
-    "stock-slam": "extract-stock-slam.sh",
-}
+#: assets/<name>-VERSION, which python -m overpressure assets writes.
+ASSET_KINDS = tuple(assets.KINDS)
 BACKUP_FIX = "python -m overpressure device backup (docs/device-preparation.md)"
 
 
@@ -106,54 +99,10 @@ def ncm_checks(host: Host, settings: Settings | None = None) -> list[Check]:
     return doctor.ncm_checks(host, settings or localconfig.load())
 
 
-def build_checks(host: Host) -> list[Check]:
-    """Check the Linux side of the builds: tools, the aarch64 binfmt handler, native LLVM."""
-    commands = {
-        "curl": "downloads",
-        "tar": "archives",
-        "zstd": "archives",
-        "xz": "archives",
-        "chroot": "the build root",
-        "python3": "the build's checks",
-        "brotli": "the stock OTA's images",
-        "debugfs": "the extraction",
-        "mcopy": "the extraction",
-        "mkfs.ext4": "the system image",
-        "e2fsck": "the system image",
-        "sha256sum": "checks",
-    }
-    packages = "curl tar zstd xz-utils coreutils python3 brotli e2fsprogs mtools"
-    if host.backend == "docker" and not host.container_ready():
-        return []  # the host checks name the image to build; its tools are checked once it is there
-    checks = linux_commands(host, BUILD, commands, APT + packages)
-    checks += linux_commands(
-        host,
-        KERNEL,
-        {
-            "aarch64-linux-gnu-gcc": "cross compiling",
-            "make": "the build",
-            "flex": "the build",
-            "bison": "the build",
-            "bc": "the build",
-            "git": "the source package",
-            "perl": "the build",
-            "dtc": "the device tree",
-        },
-        APT + "gcc-aarch64-linux-gnu make flex bison bc git perl libssl-dev libelf-dev dwarves device-tree-compiler",
-    )
-    if not host.linux("echo ok=1"):
-        return [
-            Check(
-                "Linux", BUILD, MISSING, "no Linux to build in", "WSL (wsl --install -d Ubuntu-24.04) or a Linux host"
-            )
-        ]
-    return checks + doctor.arm64_build_checks(host, BUILD)
-
-
 def asset_checks(_host: Host, root: Path = REPO, version: str = FIRMWARE_VERSION) -> list[Check]:
-    """Check that every extraction script's assets are there (they need no host: plain files)."""
+    """Check that every kind of assets is there (they need no host: plain files)."""
     checks = []
-    for kind, script in ASSET_KINDS.items():
+    for kind in ASSET_KINDS:
         folder = root / "assets" / f"{kind}-{version}"
         manifest = folder / "manifest.json"
         if manifest.is_file():
@@ -165,8 +114,7 @@ def asset_checks(_host: Host, root: Path = REPO, version: str = FIRMWARE_VERSION
                     ASSETS,
                     MISSING,
                     "not extracted",
-                    f"python3 -m overpressure stock ..., then devices/phoenix/scripts/{script} "
-                    f"STOCK_DIR assets/{kind}-{version} (docs/development.md#stock-firmware)",
+                    f"python -m overpressure assets {kind} (docs/development.md#stock-firmware)",
                 )
             )
     return checks
@@ -174,4 +122,4 @@ def asset_checks(_host: Host, root: Path = REPO, version: str = FIRMWARE_VERSION
 
 def probes() -> tuple[Callable[[Host], list[Check]], ...]:
     """Return the PICO 4's checks, each called with the host."""
-    return (settings_checks, tool_checks, ncm_checks, build_checks, asset_checks)
+    return (settings_checks, tool_checks, ncm_checks, asset_checks)

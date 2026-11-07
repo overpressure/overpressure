@@ -1,30 +1,32 @@
 # SPDX-License-Identifier: Unlicense
 """What this host has and lacks for a headset's workflow: python -m overpressure doctor.
 
-Every check names what it is needed for (the window, building an image, the userspace build,
-working on the headset, ...), what was found, and how to fix it when it is missing. The checks
-only look: they run version queries and `command -v`, read files and settings, and install
-nothing. The generic ones cover the host (Python, Tk and CustomTkinter for the window, OpenSSH,
-Linux as root); a headset adds its own through Headset.dependencies(), built from the checks here
-that every Qualcomm Android headset shares (its DeviceSettings, the EDL backup and tools, adb and
-fastboot, the Windows USB link, an arm64 build host) and its own.
+Every check names what it is needed for (the window, the builds, working on the headset, ...),
+what was found, and how to fix it when it is missing. The checks only look: they run version
+queries, read files and settings, and install, build or register nothing. The generic ones cover
+the host (Python, Tk and CustomTkinter for the window, OpenSSH) and the build container, where
+every Linux-root step runs (its engine installed and running, its image, the aarch64 handler; the
+image holds every Linux tool of the builds by construction); a headset adds its own through
+Headset.dependencies(), built from the checks here that every Qualcomm Android headset shares (its
+DeviceSettings, the EDL backup and tools, adb and fastboot, the Windows USB link) and its own.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
+import importlib.util
 import json
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from . import REPO, linux, windows_ncm
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
-    from pathlib import Path
 
     from .headset import Headset
     from .localconfig import DeviceSettings
@@ -34,9 +36,10 @@ MARK = {OK: "ok", MISSING: "MISSING", OPTIONAL: "optional", WARNING: "warning"}
 #: What the checks of a headset's settings and tools are needed for, unless the headset names it.
 HEADSET = "working on the headset"
 EDL = "EDL"
-#: The fixes' common beginnings: a package on the Linux side, the pinned host tools.
-APT = "in WSL/Linux as root: apt install "
+#: The fixes' common beginning: the pinned host tools.
 FETCH = "python -m overpressure tools"
+#: What the build container's checks are needed for.
+BUILDS = "the builds (build container)"
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,11 @@ def run_tool(argv: Sequence[str], timeout: float = 30) -> tuple[int, str]:
     return process.returncode, process.stdout.decode("utf-8", "replace").strip()
 
 
+def has_module(name: str) -> bool:
+    """Tell whether this Python can import the top-level module @p name, without importing it."""
+    return importlib.util.find_spec(name) is not None
+
+
 @dataclass
 class Host:
     """What the checks may ask of this host; tests pass fakes."""
@@ -79,38 +87,27 @@ class Host:
     run: Callable[[Sequence[str], float], tuple[int, str]] = run_tool
     which: Callable[[str], str | None] = shutil.which
     linux_cache: dict[str, dict[str, str]] = field(default_factory=dict)
-    backend: str = ""  #: the Linux backend (overpressure/linux.py); empty: this host's
+    has_module: Callable[[str], bool] = has_module
 
-    def __post_init__(self) -> None:
-        """Pick this host's Linux backend unless one is given."""
-        if not self.backend:
-            self.backend = linux.backend(self.platform, self.which)
+    @property
+    def engine(self) -> str:
+        """Return the container engine's program (overpressure/linux.py)."""
+        return linux.engine(self.which)
 
     def container_ready(self) -> bool:
-        """Tell whether the build container's image is built (the docker backend)."""
-        return self.run([linux.engine(self.which), "image", "inspect", linux.image()], 30)[0] == 0
+        """Tell whether the build container's image is built."""
+        return self.run([self.engine, "image", "inspect", linux.image()], 30)[0] == 0
 
     def linux(self, script: str, timeout: float = 90) -> dict[str, str]:
-        """Return the KEY=VALUE lines that @p script prints where the Linux-root steps run.
+        """Return the KEY=VALUE lines that @p script prints in the build container (a probe: unnamed).
 
-        That is WSL as root, this Linux, or the build container; {} when there is no such Linux.
-        Cached per script.
+        {} when the image is not built (the checks name it); cached per script.
         """
         if script not in self.linux_cache:
-            if self.backend == "docker":
-                if not self.container_ready():
-                    self.linux_cache[script] = {}
-                    return {}
-                argv = linux.run_argv(["bash", "-c", script], tool=linux.engine(self.which))
-            elif self.platform == "win32":
-                if self.which("wsl") is None:
-                    self.linux_cache[script] = {}
-                    return {}
-                # --exec: the script goes to bash as it is, not through WSL's default shell.
-                argv = ["wsl", "-u", "root", "--exec", "bash", "-c", script]
-            else:
-                argv = ["bash", "-c", script]
-            code, out = self.run(argv, timeout)
+            if not self.container_ready():
+                self.linux_cache[script] = {}
+                return {}
+            code, out = self.run(linux.run_argv(["bash", "-c", script], tool=self.engine), timeout)
             values = {}
             for line in out.splitlines():
                 key, sep, value = line.partition("=")
@@ -126,22 +123,6 @@ def version_check(host: Host, name: str, argv: Sequence[str], needed_for: str, f
     if code == 0:
         return Check(name, needed_for, OK, (out.splitlines() or [""])[0][:120])
     return Check(name, needed_for, MISSING, (out.splitlines() or [""])[-1][:120], fix)
-
-
-def linux_commands(host: Host, needed_for: str, commands: dict[str, str], fix: str) -> list[Check]:
-    """Programs the Linux side needs: each found with `command -v`, or the fix (an apt line)."""
-    script = "; ".join(
-        f"echo {k}=$(command -v {c} || true)"
-        for k, c in ((name.replace("-", "_").replace(".", "_"), name) for name in commands)
-    )
-    found = host.linux(script)
-    checks = []
-    for name, purpose in commands.items():
-        path = found.get(name.replace("-", "_").replace(".", "_"), "")
-        checks.append(
-            Check(name, needed_for, OK if path else MISSING, path or f"not in Linux ({purpose})", "" if path else fix)
-        )
-    return checks
 
 
 def env_check(root: Path = REPO, needed_for: str = HEADSET) -> Check:
@@ -240,10 +221,11 @@ def ncm_checks(host: Host, settings: DeviceSettings) -> list[Check]:
     if host.platform != "win32":
         return []
     needed_for = "the USB network link on Windows"
-    fix = FETCH + " (the NCM venv), and UsbDk: winget install daynix.UsbDk (admin)"
+    fix = PACKAGE_FIX + " (pyusb, libusb-package), and UsbDk: winget install daynix.UsbDk (admin)"
     python = settings.ncm()
     if python is None:
-        return [Check("NCM Python", needed_for, MISSING, f"no NCM venv and no {settings.key('ncm_python')}", fix)]
+        detail = f"this Python lacks pyusb or libusb-package, and no {settings.key('ncm_python')}"
+        return [Check("NCM Python", needed_for, MISSING, detail, fix)]
     code, out = host.run(windows_ncm.command(python), 30)
     try:
         state = json.loads(out.splitlines()[-1]) if code == 0 and out else {}
@@ -253,45 +235,6 @@ def ncm_checks(host: Host, settings: DeviceSettings) -> list[Check]:
         versions = ", ".join(f"{k} {v}" for k, v in (state.get("dependencies") or {}).items())
         return [Check("NCM Python and UsbDk", needed_for, OK, versions)]
     return [Check("NCM Python and UsbDk", needed_for, MISSING, (out.splitlines() or ["no answer"])[-1][:120], fix)]
-
-
-def arm64_build_checks(host: Host, needed_for: str) -> list[Check]:
-    """Check what building arm64 code in Linux needs on an x86-64 host; nothing on another one.
-
-    The aarch64 binfmt handler with the F flag (a chroot runs arm64 programs through it) and a
-    native clang and lld (cross compiling instead of compiling under QEMU).
-    """
-    # The aarch64 handler by its ELF magic: qemu-aarch64 (Debian) or aarch64 (Docker Desktop).
-    state = host.linux(
-        "echo arch=$(uname -m); echo binfmt=$(for f in /proc/sys/fs/binfmt_misc/*; do "
-        "grep -qs '^magic 7f454c460201010000000000000000000200b700' $f && "
-        "sed -n 's/^flags: //p' $f; done | head -n 1); "
-        "for v in 21 20 19; do [ -x /usr/lib/llvm-$v/bin/clang ] && [ -x /usr/lib/llvm-$v/bin/ld.lld ] "
-        "&& { echo llvm=/usr/lib/llvm-$v; break; }; done; true"
-    )
-    checks = []
-    if state.get("arch") == "x86_64":
-        flags = state.get("binfmt", "")
-        checks.append(
-            Check(
-                "aarch64 binfmt (F flag)",
-                needed_for,
-                OK if "F" in flags else MISSING,
-                f"flags {flags}" if flags else "no qemu-aarch64 handler",
-                "" if "F" in flags else APT + "qemu-user-static binfmt-support",
-            )
-        )
-        llvm = state.get("llvm", "")
-        checks.append(
-            Check(
-                "clang and lld",
-                needed_for,
-                OK if llvm else WARNING,
-                llvm or "none: packages compile under QEMU, about ten times slower",
-                "" if llvm else APT + "clang-20 lld-20",
-            )
-        )
-    return checks
 
 
 def window_check() -> Check:
@@ -308,6 +251,47 @@ def window_check() -> Check:
             "uv sync --extra gui; the command line works without it",
         )
     return Check("CustomTkinter", "the window", OK, version)
+
+
+#: The pinned packages (pyproject.toml) and what works without them.
+PACKAGE_FIX = (
+    "the start scripts (Install.cmd, Install.command, install.sh) bring it; in a development environment, uv sync"
+)
+
+
+def package_checks(host: Host) -> list[Check]:
+    """Check the pinned Python packages: brotli for the stock OTA, pyusb with libusb for EDL devices.
+
+    Without brotli the brotli command decompresses (missing only when neither is there); without
+    pyusb this system's own listing counts EDL devices.
+    """
+    checks = []
+    if host.has_module("brotli"):
+        checks.append(Check("brotli (Python)", "the stock firmware", OK, "the package decompresses the OTA"))
+    else:
+        command = host.which("brotli")
+        checks.append(
+            Check(
+                "brotli (Python)",
+                "the stock firmware",
+                OPTIONAL if command else MISSING,
+                f"not installed; the brotli command at {command} decompresses instead"
+                if command
+                else "not installed, and no brotli command",
+                PACKAGE_FIX,
+            )
+        )
+    usb = host.has_module("usb") and host.has_module("libusb_package")
+    checks.append(
+        Check(
+            "pyusb and libusb-package",
+            EDL,
+            OK if usb else OPTIONAL,
+            "count EDL devices" if usb else "not installed; EDL devices are counted by this system's own listing",
+            "" if usb else PACKAGE_FIX,
+        )
+    )
+    return checks
 
 
 def host_checks(host: Host) -> list[Check]:
@@ -339,6 +323,7 @@ def host_checks(host: Host) -> list[Check]:
             )
         )
     checks.append(window_check())
+    checks.extend(package_checks(host))
     for tool in ("ssh", "ssh-keygen"):
         path = host.which(tool)
         checks.append(
@@ -352,63 +337,51 @@ def host_checks(host: Host) -> list[Check]:
                 else 'OpenSSH (Windows 10/11: optional feature "OpenSSH Client"; Linux: apt install openssh-client)',
             )
         )
-    if host.backend == "docker":
-        checks.extend(container_checks(host))
-    elif host.platform == "win32":
-        values = host.linux("echo user=$(id -u); echo distro=$(. /etc/os-release && echo $PRETTY_NAME)")
-        if values.get("user") == "0":
-            checks.append(Check("WSL (as root)", "Linux-root steps", OK, values.get("distro", "")))
-        else:
-            checks.append(
-                Check(
-                    "WSL (as root)",
-                    "Linux-root steps",
-                    MISSING,
-                    "no WSL distribution answers as root" if host.which("wsl") else "wsl not found",
-                    "wsl --install -d Ubuntu-24.04 (then reboot and open it once)",
-                )
-            )
-    elif host.platform.startswith("linux"):
-        sudo = host.which("sudo")
-        checks.append(
-            Check(
-                "sudo",
-                "Linux-root steps",
-                OK if sudo else WARNING,
-                sudo or "not on PATH",
-                "" if sudo else "run the Linux-root steps as root, or install sudo",
-            )
-        )
+    checks.extend(container_checks(host))
     return checks
 
 
+#: The one fix for the builds' engine, whichever the owner picks and however it runs its containers.
+ENGINE = "Docker or Podman"
+ENGINE_FIX = "install Docker (docs.docker.com/get-docker) or Podman (podman.io) and have it running"
+BINFMT_FIX = "none needed: each build registers it; if a build fails on it: python -m overpressure container binfmt"
+#: The aarch64 handler by its ELF magic, whatever it is named, with its flags; the engine's architecture.
+BINFMT_PROBE = (
+    "echo arch=$(uname -m); for f in /proc/sys/fs/binfmt_misc/*; do grep -qsx enabled $f && "
+    "grep -qsx 'magic 7f454c460201010000000000000000000200b700' $f && "
+    "echo binfmt=${f##*/} $(sed -n 's/^flags: //p' $f) && break; done; true"
+)
+
+
 def container_checks(host: Host) -> list[Check]:
-    """Check the docker backend: the engine answers, and the build container's image is built."""
-    needed_for = "Linux-root steps (build container)"
-    tool = linux.engine(host.which)
-    code, out = host.run([tool, "version", "--format", "{{.Server.Version}}"], 30)
+    """Check the build container: Docker or Podman answers, its image is built, the aarch64 handler.
+
+    Only whether an engine answers counts: how it runs its containers (a VM, WSL, a service,
+    rootless) is the owner's choice and none of the builds' business.
+    """
+    tool = host.engine
+    if host.which(tool) is None:
+        return [Check(ENGINE, BUILDS, MISSING, "neither docker nor podman is on PATH", ENGINE_FIX)]
+    code, out = host.run([tool, "info"], 30)
     if code != 0:
-        return [
-            Check(
-                tool,
-                needed_for,
-                MISSING,
-                (out.splitlines() or ["no answer"])[-1][:120],
-                "Docker Desktop (started) or Docker/Podman on Linux; OVERPRESSURE_LINUX=wsl or sudo "
-                "uses WSL or this Linux instead",
-            )
-        ]
-    checks = [Check(tool, needed_for, OK, f"engine {out.splitlines()[-1]}")]
-    ready = host.container_ready()
-    checks.append(
-        Check(
-            "build container image",
-            needed_for,
-            OK if ready else MISSING,
-            linux.image(),
-            "" if ready else "python -m overpressure container build",
-        )
-    )
+        last = (out.splitlines() or ["no answer"])[-1][:120]
+        return [Check(ENGINE, BUILDS, MISSING, f"{Path(tool).name} does not answer: {last}", ENGINE_FIX)]
+    checks = [Check(ENGINE, BUILDS, OK, Path(tool).name)]
+    if not host.container_ready():
+        fix = "python -m overpressure container build (the installer builds it itself)"
+        checks.append(Check("build container image", BUILDS, MISSING, f"{linux.image()} not built", fix))
+        return checks
+    checks.append(Check("build container image", BUILDS, OK, linux.image()))
+    state = host.linux(BINFMT_PROBE)
+    arch, found = state.get("arch", ""), state.get("binfmt", "")
+    name, _, flags = found.partition(" ")
+    if arch and arch != "x86_64":
+        checks.append(Check("aarch64 handler", BUILDS, OK, f"the engine is {arch}: it runs arm64 programs itself"))
+    elif "F" in flags:
+        checks.append(Check("aarch64 handler", BUILDS, OK, f"{name}, flags {flags}"))
+    else:
+        detail = f"{name} without the F flag" if name else "none yet"
+        checks.append(Check("aarch64 handler", BUILDS, OPTIONAL, detail + ": the build registers its own", BINFMT_FIX))
     return checks
 
 

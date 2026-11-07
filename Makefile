@@ -1,10 +1,11 @@
-# Entry points for Linux and WSL. On Windows, run the Python commands directly
-# ("python -m overpressure ...", "python -m unittest"); docs/tool.md.
+# Entry points for a Linux or macOS shell; on Windows, run the Python commands directly
+# ("python -m overpressure ...", "python -m unittest"). The builds' Linux side runs in the build
+# container on every host (docs/tool.md#linux-root-steps).
 PYTHON ?= python3
 UV ?= uv
 DEVICE ?= phoenix
 
-.PHONY: help test lint format gui
+.PHONY: help test container-test lint format gui
 
 help: ## list the targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -12,6 +13,9 @@ help: ## list the targets
 test: ## host tests of the package and every headset: no hardware, seconds
 	$(PYTHON) -m unittest
 	@for t in devices/*/tests/test_*.sh; do echo "$$t"; bash "$$t" || exit 1; done
+
+container-test: ## the same tests in the build container, as root (any host with Docker or Podman)
+	$(PYTHON) -m overpressure container run -- make test
 
 lint: ## formatting, lint and types: ruff and ty, through uv
 	$(UV) run ruff format --check .

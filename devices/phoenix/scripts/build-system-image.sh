@@ -1,8 +1,9 @@
 #!/bin/bash
 # SPDX-License-Identifier: Unlicense
 # The installed system's read-only image for super (docs/install.md), from
-# the userspace archive scripts/build-userspace.sh writes. Linux or WSL, as root (ownership and
-# file capabilities):
+# the userspace archive scripts/build-userspace.sh writes. As root in the build container (ownership
+# and file capabilities): the window's "System image for super" step, or python -m overpressure
+# container run -- bash devices/phoenix/scripts/build-system-image.sh ...:
 #
 #   scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
 #

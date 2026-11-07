@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import os
 import queue
 import threading
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Callable, Protocol
 
-from overpressure import REPO, doctor, linux, runner
+from overpressure import REPO, doctor, runner
 from overpressure.window.installer import Item, drain
 
 if TYPE_CHECKING:
@@ -35,6 +36,8 @@ IDLE, RUNNING, STOPPING, DONE, FAILED, STOPPED = "idle", "running", "stopping", 
 REFUSED, ASK, START = "refused", "ask", "start"
 #: What wants to start, for the busy rule: a step, the installer, or another headset.
 STEP, INSTALLER, HEADSET = "step", "installer", "headset"
+#: What the build container sees of paths in Linux: /var/tmp (the volume) and /work (the repository).
+CONTAINER_TOPS = (PurePosixPath("/var/tmp"), PurePosixPath("/work"))  # noqa: S108  # the container's volume, not a temporary file
 
 
 def busy(want: str, *, installer_running: bool, step_running: bool) -> str:
@@ -133,11 +136,39 @@ class Steps:
             self.values_of(step)[name] = value
 
     def argv(self, step: Step | None = None) -> list[str]:
-        """Return the process STEP (else the selected one) is on this host, or [] without one."""
+        """Return the process STEP (else the selected one) is on this host, or [] without one.
+
+        A Linux-root step's paths inside the repository are passed relative to it, as the container sees them.
+        """
         step = step or self.step()
         if step is None or self.headset is None:
             return []
-        return runner.process(self.headset, step, self.values_of(step))
+        values = dict(self.values_of(step))
+        if step.linux_root:
+            for param in step.params:
+                found = container_path(values.get(param.name, "")) if param.kind == "path" else None
+                if found:
+                    values[param.name] = found
+        return runner.process(self.headset, step, values)
+
+    def problem(self, step: Step | None = None) -> str:
+        """Return why STEP (else the selected one) cannot run with its values, or "" when it can.
+
+        The build container sees the repository (at /work) and /var/tmp only: a Linux-root step's
+        path elsewhere is refused before the run.
+        """
+        step = step or self.step()
+        if step is None or not step.linux_root:
+            return ""
+        values = self.values_of(step)
+        for param in step.params:
+            value = values.get(param.name, "").strip()
+            if param.kind == "path" and value and container_path(value) is None:
+                return (
+                    f"{param.label}: {value} is outside the repository. The build container sees only the "
+                    f"repository and /var/tmp: choose a path inside {REPO}, or one under /var/tmp."
+                )
+        return ""
 
     def command(self) -> str:
         """Return the selected step's command line as one would type it in this host's terminal."""
@@ -148,8 +179,7 @@ class Steps:
         """Return what STEP does, and where it runs and whether it writes to the headset."""
         notes = [step.help] if step.help else []
         if step.linux_root:
-            where = {"wsl": "WSL", "sudo": "sudo", "docker": "the build container"}[linux.backend()]
-            notes.append(f"Runs on Linux as root ({where}).")
+            notes.append("Runs on Linux as root, in the build container.")
         if step.writes:
             notes.append("Writes to the headset: asks before it starts.")
         return " ".join(notes)
@@ -158,12 +188,33 @@ class Steps:
 def browse(step: Step, param: Param) -> str:
     """Return what PARAM's browse button picks: "file", "folder", or "" for none.
 
-    A path of a Linux-root step means a path in Linux, which this host's dialog cannot pick; a
-    default whose last part has a dot names a file.
+    A Linux-root step's path under /var/tmp is in the build container's volume, which this host's
+    dialog cannot pick; a default whose last part has a dot names a file.
     """
-    if param.kind != "path" or step.linux_root:
+    if param.kind != "path" or (step.linux_root and param.default.startswith("/")):
         return ""
     return "file" if "." in param.default.rsplit("/", 1)[-1] else "folder"
+
+
+def container_path(value: str, root: Path = REPO) -> str | None:
+    """Return VALUE as the build container sees it, or None when it cannot.
+
+    A path under /var/tmp (the volume) or /work (the repository) stays as it is; one in the repository
+    becomes relative to it; anything else is outside what the container sees.
+    """
+    value = value.strip()
+    posix = PurePosixPath(value.replace("\\", "/"))
+    if value.startswith("/") and any(posix == top or top in posix.parents for top in CONTAINER_TOPS):
+        return value
+    path = Path(value)
+    if not path.is_absolute() and not value.startswith("/"):
+        path = root / path
+    if not path.is_absolute():
+        return None
+    # Lexically (.. folded, links not followed): the container mounts the repository's folder as it is.
+    with contextlib.suppress(ValueError):
+        return Path(os.path.abspath(path)).relative_to(os.path.abspath(root)).as_posix()  # noqa: PTH100  # resolve() follows links
+    return None
 
 
 def relative(path: str, root: Path = REPO) -> str:
@@ -244,19 +295,20 @@ class StepProcess:
         """Start with nothing running."""
         self.items: queue.Queue[Item] = queue.Queue()
         self.proc: subprocess.Popen | None = None
+        self.argv: list[str] = []
         self.stopping = False
         self.lock = threading.Lock()
 
     def start(self, argv: list[str]) -> None:
         """Run ARGV from the repository root; an exit item follows its last line."""
         with self.lock:
-            self.proc, self.stopping = None, False
+            self.proc, self.argv, self.stopping = None, argv, False
 
         def started(proc: subprocess.Popen) -> None:
             with self.lock:
                 self.proc = proc
                 if self.stopping:  # stop came before the program had started
-                    proc.terminate()
+                    threading.Thread(target=runner.stop, args=(proc, argv), daemon=True).start()
 
         def work() -> None:
             try:
@@ -272,11 +324,12 @@ class StepProcess:
         threading.Thread(target=work, daemon=True).start()
 
     def stop(self) -> None:
-        """End the running program."""
+        """End the running program; a build's container with it (runner.stop, off the window's thread)."""
         with self.lock:
             self.stopping = True
-            if self.proc is not None and self.proc.poll() is None:
-                self.proc.terminate()
+            proc = self.proc if self.proc is not None and self.proc.poll() is None else None
+        if proc is not None:
+            threading.Thread(target=runner.stop, args=(proc, self.argv), daemon=True).start()
 
 
 class DemoProcess:
@@ -346,7 +399,7 @@ class Checks:
         self.done: queue.Queue[tuple[str, list[doctor.Check]]] = queue.Queue()
 
     def start(self, headset: Headset | None) -> bool:
-        """Check again for HEADSET on a thread (some checks ask WSL, which takes seconds); False while it runs."""
+        """Check again for HEADSET on a thread (the container engine takes seconds to answer); False while it runs."""
         codename = headset.info.codename if headset is not None else ""
         if codename in self.checking:
             return False
@@ -450,6 +503,9 @@ class Advanced:
         refusal = busy(STEP, installer_running=installer_running, step_running=self.run.running)
         if refusal:
             return REFUSED, "One thing at a time", refusal
+        problem = self.steps.problem(step)
+        if problem:
+            return REFUSED, "Path outside the repository", problem
         if step.writes:
             text = f"{step.title}: {step.help}" if step.help else step.title
             return ASK, "Write to the headset?", f"{text}\n\n{self.steps.command()}"

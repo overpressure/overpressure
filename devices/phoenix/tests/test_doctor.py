@@ -30,18 +30,14 @@ class FakeHost(doctor.Host):
     def __init__(
         self,
         platform: str = "linux",
-        linux: dict[str, str] | None = None,
         runs: dict[str, tuple[int, str]] | None = None,
         *,
         on_path: bool = True,
     ):
         super().__init__(platform=platform, run=self.fake_run, which=lambda t: f"/usr/bin/{t}" if on_path else None)
-        self.linux_output, self.runs = linux or {}, runs or {}
+        self.runs = runs or {}
 
     def fake_run(self, argv: Sequence[str], _timeout: float) -> tuple[int, str]:
-        if argv[0] in ("wsl", "bash"):
-            script = argv[-1]
-            return 0, "\n".join(f"{k}={v}" for k, v in self.linux_output.items() if f"{k}=" in script)
         key = Path(str(argv[0])).name
         return self.runs.get(key, (127, f"{key}: not found"))
 
@@ -124,43 +120,13 @@ class PicoDoctorTests(unittest.TestCase):
         self.assertIn("UsbDk", checks.ncm_checks(host, self.settings())[0].fix)
         self.assertEqual(checks.ncm_checks(FakeHost(platform="linux"), s), [])
 
-    def test_the_build_host_needs_binfmt_with_the_f_flag_and_prefers_native_llvm(self):
-        tools = {
-            name.replace(".", "_").replace("-", "_"): f"/usr/bin/{name}"
-            for name in (
-                "curl",
-                "tar",
-                "zstd",
-                "xz",
-                "chroot",
-                "python3",
-                "brotli",
-                "debugfs",
-                "mcopy",
-                "mkfs.ext4",
-                "e2fsck",
-                "sha256sum",
-                "aarch64-linux-gnu-gcc",
-                "make",
-                "flex",
-                "bison",
-                "bc",
-                "git",
-                "perl",
-                "dtc",
-            )
-        }
-        found = by_name(checks.build_checks(FakeHost(linux={**tools, "ok": "1", "arch": "x86_64", "binfmt": "PO"})))
-        self.assertEqual(found["aarch64 binfmt (F flag)"].status, doctor.MISSING)
-        self.assertEqual(found["clang and lld"].status, doctor.WARNING)
-        self.assertEqual(found["curl"].status, doctor.OK)
-        found = by_name(
-            checks.build_checks(
-                FakeHost(linux={**tools, "ok": "1", "arch": "x86_64", "binfmt": "POCF", "llvm": "/usr/lib/llvm-20"})
-            )
-        )
-        self.assertEqual(doctor.failed(found.values()), [])
-        self.assertEqual(checks.build_checks(FakeHost(linux={}))[0].name, "Linux")
+    def test_the_builds_linux_side_is_the_build_containers_alone(self):
+        # The image holds every Linux tool by construction: the PICO 4 checks none of them itself.
+        self.assertFalse(hasattr(checks, "build_checks"))
+        host = FakeHost()
+        for probe in checks.probes():
+            probe(host)
+        self.assertEqual(host.linux_cache, {})
 
     def test_assets_are_checked_by_their_manifests(self):
         self.assertEqual(len(doctor.failed(checks.asset_checks(FakeHost(), self.root))), len(checks.ASSET_KINDS))
@@ -171,7 +137,7 @@ class PicoDoctorTests(unittest.TestCase):
         self.assertEqual(doctor.failed(checks.asset_checks(FakeHost(), self.root)), [])
 
     def test_the_pico_4_registers_its_checks(self):
-        self.assertEqual(len(HEADSET.dependencies()), 5)
+        self.assertEqual(len(HEADSET.dependencies()), 4)
 
 
 if __name__ == "__main__":

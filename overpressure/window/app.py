@@ -212,7 +212,6 @@ class Window:
         self.tasks = kit.frame(page)
         self.tasks.grid_columnconfigure(0, weight=1)
         self.note = Note(kit, page, wrap=CONTENT)
-        self.note_text = self.note.text
         kit.line(content).grid(row=1, column=0, sticky="ew")
         footer = kit.frame(content, RAISED)
         footer.grid(row=2, column=0, sticky="ew")

@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, TypeVar
 
-from overpressure import android, qualcomm
+from overpressure import REPO, android, qualcomm
 from overpressure import backup as backups
 from overpressure.process import run, until
 from overpressure.qualcomm import edl_devices
@@ -38,7 +38,7 @@ from . import localconfig
 if TYPE_CHECKING:
     from overpressure.process import Timing
 
-ROOT = localconfig.ROOT
+ROOT = REPO
 T = TypeVar("T")
 
 

@@ -14,6 +14,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from overpressure import ota
 
@@ -45,6 +46,103 @@ class TransferListTests(unittest.TestCase):
             ota.apply_transfer_list("4\n4\n0\n0\nnew 2,0,2\n", io.BytesIO(bytes(B)), io.BytesIO())
         with self.assertRaises(ValueError):
             ota.apply_transfer_list("4\n4\n0\n0\nmove 2,0,1\n", io.BytesIO(), io.BytesIO())
+
+
+def ext4_blocks(blocks: int) -> bytes:
+    """Return a partition's new data: @p blocks blocks with an ext4 superblock magic in the first."""
+    data = bytearray(blocks * B)
+    data[0x438:0x43A] = b"\x53\xef"
+    data[B:] = bytes(range(256)) * ((blocks - 1) * B // 256)
+    return bytes(data)
+
+
+class RebuildImageTests(unittest.TestCase):
+    """The block image decompressed by the brotli package, or by the brotli command without it."""
+
+    def setUp(self):
+        self.brotli = ota.brotli_module()
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.dir = Path(temp.name)
+        self.data = ext4_blocks(40)
+        (self.dir / "system.transfer.list").write_bytes(b"4\n40\n0\n0\nnew 2,0,40\n")
+
+    def write(self, payload: bytes) -> None:
+        (self.dir / "system.new.dat.br").write_bytes(payload)
+
+    @unittest.skipUnless(ota.brotli_module(), "the brotli package (uv sync) is not installed")
+    def test_the_package_streams_the_image(self):
+        assert self.brotli is not None
+        self.write(self.brotli.compress(self.data))
+        ota.rebuild_image(self.dir, "system", self.dir / "system.img", lambda _line: None)
+        self.assertEqual((self.dir / "system.img").read_bytes(), self.data)
+
+    @unittest.skipUnless(ota.brotli_module(), "the brotli package (uv sync) is not installed")
+    def test_bounded_reads_give_the_whole_stream(self):
+        assert self.brotli is not None
+        big = bytes(3 * ota.CHUNK) + self.data  # zeros: a high ratio, more output than one call's limit
+        reader = ota.BrotliReader(io.BytesIO(self.brotli.compress(big)), self.brotli, chunk=7)
+        parts = []
+        while True:
+            part = reader.read(100_000)
+            if not part:
+                break
+            self.assertLessEqual(len(part), 100_000)
+            parts.append(part)
+        self.assertEqual(b"".join(parts), big)
+        self.assertEqual(ota.BrotliReader(io.BytesIO(self.brotli.compress(big)), self.brotli).read(), big)
+
+    @unittest.skipUnless(ota.brotli_module(), "the brotli package (uv sync) is not installed")
+    def test_truncated_corrupt_and_overlong_streams_are_refused(self):
+        assert self.brotli is not None
+        packed = self.brotli.compress(self.data)
+        for payload, error in (
+            (packed[: len(packed) // 2], "ends|before"),
+            (b"\xff" * 64, "corrupt|ends"),
+            (self.brotli.compress(self.data + bytes(B)), "more data"),
+        ):
+            with self.subTest(error=error):
+                self.write(payload)
+                with self.assertRaisesRegex(ValueError, error):
+                    ota.rebuild_image(self.dir, "system", self.dir / "system.img", lambda _line: None)
+                self.assertFalse((self.dir / "system.img").exists())
+
+    def test_the_command_without_the_package(self):
+        self.write(b"compressed")
+        calls = []
+
+        class Brotli:
+            def __init__(self, argv: list[str], stdout: int) -> None:
+                calls.append((argv, stdout))
+                self.stdout = io.BytesIO(outer.data)
+
+            def wait(self) -> int:
+                return 0
+
+        outer = self
+        with mock.patch.object(ota.subprocess, "Popen", Brotli):
+            ota.rebuild_image(
+                self.dir,
+                "system",
+                self.dir / "system.img",
+                lambda _line: None,
+                package=lambda: None,
+                which=lambda _name: "/usr/bin/brotli",
+            )
+        self.assertEqual((self.dir / "system.img").read_bytes(), self.data)
+        self.assertEqual(calls[0][0], ["/usr/bin/brotli", "-d", "-c", str(self.dir / "system.new.dat.br")])
+
+    def test_neither_package_nor_command_says_how_to_get_one(self):
+        self.write(b"compressed")
+        with self.assertRaisesRegex(SystemExit, "start scripts and uv sync"):
+            ota.rebuild_image(
+                self.dir,
+                "system",
+                self.dir / "system.img",
+                lambda _line: None,
+                package=lambda: None,
+                which=lambda _n: None,
+            )
 
 
 def field(number: int, value: int | bytes) -> bytes:

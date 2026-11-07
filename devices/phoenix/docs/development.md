@@ -12,10 +12,11 @@ the window, [docs/tool.md](../../../docs/tool.md)). Paths below are relative to 
 commands run from the repository root.
 
 ```text
-tooling/          the PICO 4's host tooling (Python standard library): python -m overpressure COMMAND
+tooling/          the PICO 4's host tooling (Python): python -m overpressure COMMAND
   __init__.py       HEADSET: its commands and the window's workflow steps
   image.py          stage-1 boot image (build, inspect, match) on overpressure/stage1.py; firmware.json: PICO's OTA builds
-  stock.py          the members of PICO's full OTA the extraction needs (overpressure/ota.py)
+  stock.py          the members of PICO's full OTA the assets need (overpressure/ota.py)
+  assets.py         the assets: every file the userspace build takes from them (overpressure/assets.py)
   device.py         identity, EDL backups, engineering ABL, unlock and restore
   hardware_test.py  the bounded acceptance runner (preflight, flash-run)
   cycle.py          the unattended acceptance cycle that ends on stock boot and ABL
@@ -35,8 +36,7 @@ src/              C sources: graphics/ (the Vulkan test), monado/ (Monado's PICO
                   stockslam/ (pico4-slamd), vrlink/ (Steam Link), xr/ (OpenXR test clients), swapchain/ (frame pacing),
                   reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
-scripts/          build-userspace.sh, build-system-image.sh, the extract-*.sh scripts
-                  (stock firmware, with overpressure's scripts/stock-lib.sh) and the on-headset preflight
+scripts/          build-userspace.sh, build-system-image.sh, build-kernel-step.sh and the on-headset preflight
 tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, qemu/ (test kernels and boot tests)
 docs/             documentation
 ```
@@ -44,15 +44,17 @@ docs/             documentation
 The generic modules the PICO 4 uses are in the root package: `localconfig.py` (`.env`, the
 settings every Qualcomm Android headset has), `doctor.py` (the shared dependency checks),
 `stage1.py` (the stage-1 builder), `ota.py` (stock images and partitions from an OTA, the unlock
-files out of PICO's archives), `android.py` (adb and fastboot), `qualcomm.py` (the SoC ID, EDL,
+files out of PICO's archives), `assets.py` (a checked stock folder, files out of its images, the assets
+manifest), `android.py` (adb and fastboot), `qualcomm.py` (the SoC ID, EDL,
 its partition maps, the backup and the verified ABL writes), `backup.py` (verified backups),
 `process.py` (programs and bounded waits), `ssh.py`, `fastboot.py` (sparse flashing, the RAM
 boot), `evidence.py` (the acceptance runner's recorded steps and commands), `storage.py` (the
 read-only storage policy), the formats
 (`bootimg.py`, `cpio.py`, `compress.py`, `alpine.py`, `apksign.py`, `payload.py`, `kernelinfo.py`,
-`avb.py`, `sparse.py`), `elfdeps.py` (native ELF dependency check of the userspace root) and
-`windows_ncm.py` (Windows NCM initialization through UsbDk); `scripts/stock-lib.sh` serves the
-extraction scripts.
+`avb.py`, `sparse.py`, and the read-only file system readers `ext4.py` and `fat.py`), `elfdeps.py` (native ELF dependency check of the userspace root) and
+`windows_ncm.py` (Windows NCM initialization through UsbDk), and `linux.py` with `container/`
+(the build container, where the builds' Linux side runs); `scripts/stock-lib.sh` serves the
+kernel build (a file out of the stock vendor image, through overpressure's ext4 reader).
 
 Private and generated directories stay out of Git: `backup/` (device identity and EDL
 backups), `assets/` (Firehose loader, engineering ABL, GPU firmware, sensor data), `cache/`
@@ -63,19 +65,17 @@ backups), `assets/` (Firehose loader, engineering ABL, GPU firmware, sensor data
 
 `python -m overpressure doctor` (or *Check dependencies* in the window) checks all of this on
 the computer at hand and says how to fix what is missing; `python -m overpressure tools` fetches
-adb, fastboot, edl-ng and (Windows) the NCM venv, and the build container
-(`OVERPRESSURE_LINUX=docker`) replaces the Linux list below with Docker
+adb, fastboot and edl-ng
 ([tooling/doctor.py](../tooling/doctor.py), [docs/tool.md](../../../docs/tool.md#dependencies)).
 
 | Task | Needs |
 | --- | --- |
-| Stage-1 image, host tests, headset commands | Python 3.9+ on Windows, Linux or macOS; Android platform-tools and OpenSSH for the headset |
-| Userspace archive, QEMU tests | Linux or WSL2 as root: curl, tar, zstd, python3, chroot, overlayfs |
-| on x86-64 hosts additionally | an aarch64 binfmt handler with the F flag (qemu-user-static) and LLVM: `apt install clang-20 lld-20` |
-| Windows NCM initialization | UsbDk and the NCM venv: `python -m overpressure tools ncm-venv` |
+| Stage-1 image, stock firmware and assets, host tests, headset commands | Python 3.9+ on Windows, Linux or macOS (the start scripts or `uv sync` add the pinned brotli, pyusb and libusb-package); Android platform-tools and OpenSSH for the headset |
+| Userspace archive, system image, Valve's kernel, the QEMU test kernel | the build container ([docs/tool.md](../../../docs/tool.md#linux-root-steps)): Docker or Podman on any host. Its image has every tool, LLVM 20 and qemu-user-static, and registers the aarch64 binfmt handler (F flag) on an x86-64 engine that has none |
+| Windows NCM initialization | UsbDk; pyusb and libusb-package, which the start scripts or `uv sync` add |
 
-The userspace build runs unchanged on an arm64 Linux host. There the build environment runs
-natively, without binfmt or LLVM.
+On an arm64 engine (Apple silicon, an arm64 Linux host) the build environment runs natively,
+without binfmt or LLVM.
 
 ### Native compilers instead of an arm64 build machine
 
@@ -97,7 +97,8 @@ Clean package builds on a 12-core i7-12700KF (20 threads) under WSL2:
 
 A Raspberry Pi 5 (four Cortex-A76 cores) compiles at about the speed of this host's emulation,
 so it would not shorten builds. Machines that would, if the host's native compilers are not
-enough: Apple silicon (Linux VM), Snapdragon X (WSL2), or Ampere and Graviton cloud instances.
+enough: Apple silicon, Snapdragon X, or Ampere and Graviton cloud instances, each with an arm64
+container engine.
 Keep the private data rules in mind before building on someone else's machine.
 
 `--emulated-cc` builds with the environment's own GCC under QEMU, for comparison or when no
@@ -111,33 +112,56 @@ configuration). They are the same on every PICO 4 with that firmware and
 come from PICO's public full OTA, not from the user's backup:
 
 ```sh
-# Linux or WSL as root (or the build container): the OTA's partitions (about 3.9 GB of OTA
-# members, kept under STOCK/download), then every asset from them into assets/*-5.13.7
-devices/phoenix/scripts/extract-assets.sh 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
+# Any system (Windows, Linux, macOS), no root and no Linux: the OTA's partitions (about 3.6 GB of
+# OTA members, kept under STOCK/download), then every asset from them into assets/*-5.13.7
+python -m overpressure assets --firmware 5.13.7-global-seko [--stock STOCK] [KIND...]
 ```
 
-[scripts/extract-assets.sh](../scripts/extract-assets.sh) (the window's *Stock firmware and
-assets*) runs `python3 -m overpressure stock` and then each extraction script below, each into a
-fresh folder that replaces the old one only when its script succeeded.
+`python -m overpressure assets` ([tooling/assets.py](../tooling/assets.py), the window's *Stock
+firmware and assets*) first builds the stock folder (`STOCK`, by default
+`cache/pico4-stock/FIRMWARE`) with `python -m overpressure stock`, then each kind into a fresh
+`assets/KIND-VERSION.new` that replaces the old folder only when it is complete. It is Python
+only: the stock images are read by overpressure's ext4 and FAT readers
+([overpressure/ext4.py](../../../overpressure/ext4.py), [overpressure/fat.py](../../../overpressure/fat.py),
+read-only, from the on-disk formats), and the OTA's block images are decompressed by the pinned
+brotli package. Without that package (a Python outside the start scripts and `uv sync`) the
+`brotli` command decompresses instead. No e2fsprogs, mtools or Linux is involved.
 
 `python -m overpressure stock` ([tooling/stock.py](../tooling/stock.py)) takes from the OTA zip only the
 members it needs, each checked against the zip's CRC: `system` and `vendor` as ext4 images
-rebuilt from their brotli-compressed block images and transfer lists (the `brotli` command),
-`firmware-update/NON-HLOS.bin` as `modem.bin`, `firmware-update/dspso.bin` as `dsp.bin`, and
-`recovery.img` and `boot.img`; `manifest.json` holds their sha256, which every extraction script
-checks first ([scripts/stock-lib.sh](../../../scripts/stock-lib.sh)). The firmware entry is the
-headset's (`PICO4_FIRMWARE`, `python -m overpressure match`, [stage1.md](stage1.md)). The results are
-proprietary: keep the stock directory and `assets/` private.
+rebuilt from their brotli-compressed block images and transfer lists,
+`firmware-update/NON-HLOS.bin` as `modem.bin` (FAT16), `firmware-update/dspso.bin` as `dsp.bin`
+(ext4), and `recovery.img` and `boot.img`; `manifest.json` holds their sha256, which the assets
+command checks before it reads an image ([overpressure/assets.py](../../../overpressure/assets.py)).
+The firmware entry is the headset's (`PICO4_FIRMWARE`, `python -m overpressure match`,
+[stage1.md](stage1.md)). The kernel step reads the same folder's `vendor.img` in the build
+container (the repository at `/work`), with the same ext4 reader. The results are proprietary:
+keep the stock folder and `assets/` private.
 
-| Asset | Script | From |
+| Kind (`assets/KIND-VERSION`) | Content | From |
 | --- | --- | --- |
-| GPU firmware `a650_*` | extract-graphics-firmware.sh | vendor `/firmware` |
-| SLPI image, sensor configuration, lens configuration, controller models and data | extract-sensor-data.sh | modem, vendor, system |
-| Wi-Fi chip firmware and board data | extract-wlan.sh | modem |
-| ADSP image, audio process files and DSP libraries, calibration database | extract-audio.sh | vendor, modem |
-| Compute DSP image, the tracker's bionic root, DSP modules and process shells | extract-stock-slam.sh | modem, system, vendor, dsp |
+| `graphics-firmware` | GPU firmware `a650_*`, the video codec's `venus.*` | vendor `/firmware`, modem `/image` |
+| `sensor-data` | SLPI image, sensor configuration, lens configuration, controller models and data | modem, vendor, system |
+| `wlan` | Wi-Fi chip firmware and board data | modem |
+| `audio` | ADSP image, audio process files and DSP libraries, calibration database | vendor, modem |
+| `stock-slam` | Compute DSP image, the tracker's bionic root, DSP modules and process shells | modem, system, vendor, dsp |
 
-For 5.13.7 every file these scripts take is byte-identical to the same file in an EDL backup of
+Each folder has a `manifest.json` (schema 2: the firmware, the sources by path prefix, every
+file's SHA-256), which `build-userspace.sh` reads. Files out of a directory tree keep the image's
+permissions and modification times where the host's file system has them; ownership is not
+copied (the userspace build gives every file to root). On Windows the files carry no POSIX modes,
+and the build container's bind mount shows them as 0777 or 0755; the userspace build installs
+what it copies from the assets as 0644 files and 0755 directories, the programs that must run
+as 0755 explicitly.
+
+| Measured on PICO OS 5.13.7 (Windows 11, i7-12700KF, NVMe) | Result |
+| --- | --- |
+| Assets compared with the extraction by debugfs and mtools | every file byte-identical, every manifest identical |
+| The ext4 reader on system, vendor, dsp and persist | every file, link target, mode, owner and modification time as debugfs reads them |
+| The FAT reader on `modem.bin` | every file and its time as mtools reads them |
+| Time and disk, from an empty folder | 20 min, almost all of it the 3.6 GB download (here at about 3 MB/s); rebuilding both images about 30 s, the five kinds about 10 s. 10.8 GB in the stock folder (3.6 GB of OTA members, 7.0 GB of images), 133 MB of assets |
+
+For 5.13.7 every file these assets take is byte-identical to the same file in an EDL backup of
 a headset running that firmware. The headset's own factory data is not in the image: the sensor
 registry with its calibration, the camera, IMU and lens calibration, the serial number the
 fan's table follows and the Wi-Fi MAC addresses stay in its `persist` partition, which the
@@ -149,19 +173,21 @@ sizes and hashes, [install.md](install.md)).
 ## The userspace build
 
 ```sh
-# Linux or WSL, as root (make userspace does the same with the defaults below):
-devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build out/userspace \
+# In the build container, as root (the window's "Userspace archive" step and make userspace do the
+# same with the defaults below):
+python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
+    /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
     --wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
 ```
 
 | Option | Effect |
 | --- | --- |
-| `--gpu-firmware DIR` | `a650_*` GPU firmware from `scripts/extract-graphics-firmware.sh`; without it Vulkan cannot start |
-| `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data from `scripts/extract-sensor-data.sh` |
-| `--wlan DIR` | Wi-Fi firmware and board data from `scripts/extract-wlan.sh` |
-| `--audio DIR` | ADSP firmware and the audio process's files from `scripts/extract-audio.sh` |
-| `--stock-slam DIR` | PICO OS's head tracker, the Compute DSP's firmware and the tracker's bionic root from `scripts/extract-stock-slam.sh` ([xr.md](xr.md#head-tracking)); needs the host's clang |
+| `--gpu-firmware DIR` | `a650_*` GPU firmware and Venus's, `assets/graphics-firmware-VERSION`; without it Vulkan cannot start |
+| `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data, `assets/sensor-data-VERSION` |
+| `--wlan DIR` | Wi-Fi firmware and board data, `assets/wlan-VERSION` |
+| `--audio DIR` | ADSP firmware and the audio process's files, `assets/audio-VERSION` |
+| `--stock-slam DIR` | PICO OS's head tracker, the Compute DSP's firmware and the tracker's bionic root, `assets/stock-slam-VERSION` ([xr.md](xr.md#head-tracking)); needs the host's clang |
 | `--refresh` | download current package databases and reinstall the base root |
 | `--clean` | rebuild the project packages from scratch |
 | `--emulated-cc` | compile under QEMU with the environment's GCC |
@@ -209,7 +235,8 @@ debug packages and compression take about a minute for Monado.
 | Host tests: protocols, validators, the runner, cycle and dev loop against fakes | `python -m unittest` (from the repository root: these and the generic tests) | about 8 s |
 | Stage-1 recovery policy | `bash devices/phoenix/tests/test_recovery_policy.sh` | seconds |
 | Stage-1 charger mode | `sh devices/phoenix/tests/test_charger.sh` | seconds |
-| Both of the above | `make test` | seconds |
+| Both of the above | `make test` (on Linux) | seconds |
+| All of these on any host, in the build container (as root, with the container's own script tests) | `python -m overpressure container run -- make test` (`make container-test`) | as `make test`, once the image is built |
 | On the headset: the integration test | `python -m overpressure dev install` and `dev check`, on the installed system | minutes; [hardware-testing.md](hardware-testing.md) |
 | Optional: stage 1 on a QEMU test kernel | `devices/phoenix/tests/qemu/run-selftest.sh` (`make qemu-stage1`) | about 3 min |
 
@@ -229,7 +256,8 @@ the stock kernel and the installed system on Valve's kernel in `boot`, `super` a
 ([hardware-testing.md](hardware-testing.md#development-mode), [install.md](install.md)):
 
 1. Change the code, then build: `make userspace` (or the script above), incremental.
-2. `devices/phoenix/scripts/build-system-image.sh` (as root).
+2. The system image: the window's *System image for super*, or `python -m overpressure container run --
+   bash devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img`.
 3. `python -m overpressure dev recovery` (it stays until `dev normal`), then
    `python -m overpressure dev install`, which starts the installed system.
 4. `python -m overpressure dev check`; `python -m overpressure dev installed` reconnects to the
@@ -261,10 +289,8 @@ current, VBUS and the battery's state (`power`). `dev check` prints a warning on
 port, when the battery drains while tethered, and when it charges at less than 200 mA below
 95 % (`power_warnings` in [tooling/userspace.py](../tooling/userspace.py)).
 
-## Windows host and WSL
+## Windows host
 
-- `wsl -u root -- bash -c '... $VAR ...'` expands `$VAR` before bash runs, even inside single
-  quotes. Put such commands in a script file and run `wsl -u root -- bash /mnt/c/.../script.sh`.
 - From Git Bash, set `MSYS_NO_PATHCONV=1`; otherwise `/abs/paths` in arguments and environment
   values become `C:/Program Files/Git/...`.
 - Run project PowerShell scripts with `pwsh` (7); Windows PowerShell 5.1 aborts on native stderr.
@@ -276,12 +302,14 @@ port, when the battery drains while tethered, and when it charges at less than 2
   `newline="\n"`.
 - Windows' real-time scan reads every freshly written boot image once, about a quarter of a
   second each; the host tests share one image for that reason.
-- Build on the WSL file system (`/var/tmp/...`), not under `/mnt/c`, which is much slower.
+- The build roots live in the build container's volume (`/var/tmp`, on a Linux file system); the
+  repository's bind mount from Windows is much slower, so build trees do not go under `/work`.
 
 ## Conventions
 
-- Python uses the standard library only, dataclasses and type hints, and short docstrings that
-  explain why. Shell scripts use `set -euo pipefail`. C sources carry SPDX headers (BSL-1.0 for
+- Python uses the standard library, dataclasses and type hints, and short docstrings that
+  explain why; beyond it only the packages `pyproject.toml` pins (brotli, pyusb, libusb-package and,
+  for the window, CustomTkinter), each with a fallback. Shell scripts use `set -euo pipefail`. C sources carry SPDX headers (BSL-1.0 for
   Monado code).
 - External sources are pinned by commit or hash; patches live as `.patch` files next to their
   PKGBUILD, whose `sha256sums` are regenerated after a change. The project's own sources stay in

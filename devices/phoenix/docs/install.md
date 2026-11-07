@@ -26,7 +26,7 @@ come from the image ([stage1.md](stage1.md), [xr.md](xr.md)).
 ## The installed system
 
 - **System image.** [`scripts/build-system-image.sh`](../scripts/build-system-image.sh) turns the
-  userspace archive into ext4 for `super`, as root in Linux or WSL: no journal (it is never
+  userspace archive into ext4 for `super`, as root in the build container: no journal (it is never
   written on the headset), without `orphan_file` and `metadata_csum_seed` (the stock kernel under the
   maintenance stage 1 cannot mount them), file capabilities kept
   (gamescope's `cap_sys_nice`). Its size is the
@@ -151,16 +151,17 @@ after the unlock (`Plan(factory_reset=True)`), not a failure.
 ## Install and update
 
 ```sh
-# Linux, as root: Valve's kernel, from Valve's source package linux-72-deckard and the stock
-# firmware's recovery and vendor images; then copy Image.gz, sm8250-pico4-phoenix.dtb, version and config
-# from OUTDIR into out/kernel
-devices/phoenix/kernel/build-kernel.sh SOURCE_PACKAGE STOCK_RECOVERY STOCK_VENDOR WORKDIR OUTDIR
+# In the build container: Valve's kernel, from Valve's source package linux-72-deckard and the stock
+# firmware's recovery and vendor images, into out/kernel (the window's "Valve's kernel" step)
+python -m overpressure container run -- bash devices/phoenix/scripts/build-kernel-step.sh \
+    cache/stock cache/pico4-stock/5.13.7-global-seko /var/tmp/pico4-kernel-build
 python -m overpressure dev image
 python devices/phoenix/kernel/recovery_image.py --installed out/dev/install-boot.img --boot \
     --gpu-firmware assets/graphics-firmware-5.13.7 --wlan-firmware assets/wlan-5.13.7 \
     --stage1 devices/phoenix/initramfs out/kernel cache/stock/<firmware>.recovery.img \
     out/dev/dev-recovery.img out/kernel/valve-boot.img
-devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img  # as root
+python -m overpressure container run -- bash devices/phoenix/scripts/build-system-image.sh \
+    out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
 python -m overpressure dev flash              # a new dev image: the maintenance stage 1; starts it
 python -m overpressure dev recovery           # or, with the dev image in recovery already: into it
 python -m overpressure dev install            # boot, super, userdata (if new), then the installed system

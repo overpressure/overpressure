@@ -2,9 +2,11 @@
 """overpressure.qualcomm: the SoC ID, EDL's partition maps, backups, verified writes and the EDL steps."""
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from overpressure import qualcomm
 
@@ -28,6 +30,83 @@ class QualcommTests(unittest.TestCase):
             self.assertEqual(qualcomm.partition_size(backup, "boot"), 65536)
             with self.assertRaises(ValueError):
                 qualcomm.partition_size(backup, "userdata")
+
+
+#: The shape of macOS's `ioreg -p IOUSB -l`: a node per device, its properties below it.
+IOREG = """+-o Root  <class IORegistryEntry, id 0x100000100, retain 31>
+  +-o AppleT8112USBXHCI@00000000  <class AppleT8112USBXHCI, id 0x100000331, registered, matched, active>
+  | +-o QUSB_BULK_CID:0402_SN:ABCD@00100000  <class IOUSBHostDevice, id 0x100001a2c, registered>
+  | |   {
+  | |     "sessionID" = 15190871203
+  | |     "idProduct" = 36872
+  | |     "USB Product Name" = "QUSB_BULK_CID:0402_SN:ABCD"
+  | |     "idVendor" = 1478
+  | |   }
+  | |
+  | +-o Keyboard@00200000  <class IOUSBHostDevice, id 0x100001b11, registered>
+  |     {
+  |       "idProduct" = 36872
+  |       "idVendor" = 1452
+  |     }
+"""
+
+
+class EdlCountTests(unittest.TestCase):
+    """EDL (05c6:9008) devices: pyusb everywhere, else the system's own listing."""
+
+    @staticmethod
+    def no_usb(_vendor: int, _product: int) -> None:
+        return None
+
+    def test_pyusb_first_on_every_system(self):
+        asked = []
+
+        def usb(vendor: int, product: int) -> int:
+            asked.append((vendor, product))
+            return 2
+
+        def no_command(argv: list[str], _timeout: float) -> str:
+            raise AssertionError(argv)
+
+        for platform in ("win32", "darwin", "linux"):
+            self.assertEqual(qualcomm.edl_devices(platform=platform, usb=usb, command=no_command), 2)
+        self.assertEqual(asked, [(0x05C6, 0x9008)] * 3)
+
+    def test_windows_falls_back_to_powershell(self):
+        calls = []
+
+        def command(argv: list[str], _timeout: float) -> str:
+            calls.append(argv)
+            return "1"
+
+        self.assertEqual(qualcomm.edl_devices(platform="win32", usb=self.no_usb, command=command), 1)
+        self.assertIn("USB" + chr(92) + "VID_05C6&PID_9008*", calls[0][-1])
+
+    def test_macos_falls_back_to_ioreg(self):
+        calls = []
+
+        def command(argv: list[str], _timeout: float) -> str:
+            calls.append(argv)
+            return IOREG
+
+        self.assertEqual(qualcomm.edl_devices(platform="darwin", usb=self.no_usb, command=command), 1)
+        self.assertEqual(calls, [["ioreg", "-p", "IOUSB", "-l"]])
+        self.assertEqual(qualcomm.ioreg_count("", 0x05C6, 0x9008), 0)
+
+    def test_linux_falls_back_to_sysfs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name, ids in (("1-1", ("05c6", "9008")), ("1-2", ("05c6", "901d")), ("usb1", ("1d6b", "0002"))):
+                (root / name).mkdir()
+                (root / name / "idVendor").write_text(ids[0] + "\n")
+                (root / name / "idProduct").write_text(ids[1] + "\n")
+            (root / "1-0.1").mkdir()  # an interface: no ids
+            self.assertEqual(qualcomm.edl_devices(platform="linux", usb=self.no_usb, sysfs=root), 1)
+
+    def test_pyusb_missing_counts_as_unknown(self):
+        # A module that is None in sys.modules cannot be imported: as without the packages.
+        with mock.patch.dict(sys.modules, {"usb": None, "usb.core": None, "libusb_package": None}):
+            self.assertIsNone(qualcomm.usb_count(0x05C6, 0x9008))
 
 
 class FakeClock:

@@ -2,24 +2,25 @@
 # SPDX-License-Identifier: Unlicense
 # Build the SteamOS-compatible ARM64 userspace for the PICO 4 (docs/userspace.md).
 #
-# Usage (Linux or WSL, as root):
+# Usage (as root in the build container: the window's "Userspace archive" step, or
+# python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh ...):
 #   scripts/build-userspace.sh BUILD_ROOT OUTPUT_DIR [OPTIONS]
 #
-# Each of these comes from the stock firmware (python -m overpressure stock: PICO's public OTA) through
-# an extraction script (docs/development.md#stock-firmware). The headset's own factory data is
+# Each of these comes from the stock firmware (PICO's public OTA) through python -m overpressure
+# assets, an assets/KIND-VERSION folder (docs/development.md#stock-firmware). The headset's own factory data is
 # not in the image: it links to persist, mounted read-only at boot (pico4-persist.service).
-#   --gpu-firmware DIR  a650_* GPU firmware (scripts/extract-graphics-firmware.sh,
+#   --gpu-firmware DIR  a650_* GPU firmware (python -m overpressure assets,
 #                       docs/graphics.md). Without it the userspace boots, but Vulkan cannot start.
 #   --sensor-data DIR   sensor DSP firmware and config, lens and controller data
-#                       (scripts/extract-sensor-data.sh, docs/xr.md). Without it the head IMU
+#                       (python -m overpressure assets, docs/xr.md). Without it the head IMU
 #                       stack stays inactive.
-#   --wlan DIR          Wi-Fi firmware and board data (scripts/extract-wlan.sh,
+#   --wlan DIR          Wi-Fi firmware and board data (python -m overpressure assets,
 #                       docs/userspace.md). Without it Wi-Fi stays off.
 #   --audio DIR         ADSP firmware and the audio process's files
-#                       (scripts/extract-audio.sh, docs/userspace.md). Without it there is no
+#                       (python -m overpressure assets, docs/userspace.md). Without it there is no
 #                       sound card.
 #   --stock-slam DIR    PICO OS's head tracker, its Compute DSP firmware and bionic root
-#                       (scripts/extract-stock-slam.sh, docs/xr.md). Without it head tracking
+#                       (python -m overpressure assets, docs/xr.md). Without it head tracking
 #                       falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
 #   --refresh           download the current package databases and reinstall the base
 #   --update-lock       write OUTPUT_DIR/packages.lock instead of checking userspace/packages.lock
@@ -44,8 +45,8 @@
 #      OUTPUT_DIR/pico4-userspace.manifest.json  sources, hashes, package list
 #
 # Requires curl, tar, zstd, sha256sum, python3, chroot and overlayfs; on x86-64 an
-# aarch64 binfmt handler with the F (fix-binary) flag and LLVM (apt install clang-20
-# lld-20). The build reads a snapshot of the tree taken at its start, so the tree can be
+# aarch64 binfmt handler with the F (fix-binary) flag and LLVM 20's clang and lld: the build
+# container has them all and registers the handler when the engine has none. The build reads a snapshot of the tree taken at its start, so the tree can be
 # edited meanwhile. Nothing touches the headset. The output contains Valve packages:
 # keep it private, do not redistribute.
 set -euo pipefail
@@ -93,6 +94,13 @@ B=$build_root/bootstrap
 T=$B/target    # the image root, an overlay on $B/base
 log() { printf '>> %s\n' "$*"; }
 phase() { printf '>> [%4ss] %s\n' "$SECONDS" "$*"; }
+# assets_modes DIR...: what came from an assets folder as 0644 files and 0755 directories,
+# whatever modes the checkout showed (a Windows checkout through the container's bind mount shows
+# 0777 or 0755); links stay as they are. What must run gets 0755 explicitly afterwards.
+assets_modes() {
+    find "$@" -type d -exec chmod 0755 {} +
+    find "$@" -type f -exec chmod 0644 {} +
+}
 
 mounted=()
 mnt() { mount "$@"; mounted+=("${!#}"); }
@@ -179,7 +187,7 @@ if [[ $host_arch == x86_64 && $emulated_cc == 0 ]]; then
     for v in 21 20 19; do
         if [[ -x /usr/lib/llvm-$v/bin/clang && -x /usr/lib/llvm-$v/bin/ld.lld ]]; then llvm=/usr/lib/llvm-$v; break; fi
     done
-    [[ -n $llvm ]] || log "WARNING: no host clang and lld (apt install clang-20 lld-20): compiling under QEMU, about ten times slower"
+    [[ -n $llvm ]] || log "WARNING: no host clang and lld (LLVM 20, in the build container): compiling under QEMU, about ten times slower"
 fi
 compiler="GCC under QEMU"
 ccenv=""
@@ -401,14 +409,10 @@ if [[ -n "$firmware" ]]; then
     for f in a650_zap.mdt a650_zap.b00 a650_zap.b01 a650_zap.b02; do
         ln -sfn "../../../../$f" "$T/usr/lib/firmware/qcom/sm8250/pico/phoenix/$f"
     done
-    # The video codec (Venus) for Steam Link's decoder (docs/session.md#steam-link); asset
-    # folders extracted before it was added lack it.
-    if [[ -s "$firmware/venus.mdt" ]]; then
-        install -m 0644 "$firmware"/venus.* "$T/usr/lib/firmware/"
-    else
-        echo "warning: no venus.mdt in $firmware (scripts/extract-graphics-firmware.sh): no video codec" >&2
-    fi
-    firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* $(ls venus.* 2>/dev/null) | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
+    # The video codec (Venus) for Steam Link's decoder (docs/session.md#steam-link).
+    [[ -s "$firmware/venus.mdt" ]] || { echo "missing video codec firmware $firmware/venus.mdt" >&2; exit 1; }
+    install -m 0644 "$firmware"/venus.* "$T/usr/lib/firmware/"
+    firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* venus.* | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
 # Wi-Fi: the QCA6390's firmware and the headset's board data, under ath11k's names, where the
 # kernel's firmware loader looks. PICO OS's driver picks bdwlanq.elf on this headset: ath11k's board.bin.
@@ -416,7 +420,7 @@ wlan_json="[]"
 if [[ -n "$wlan" ]]; then
     mkdir -p "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0"
     for f in amss20.bin m3.bin bdwlanq.elf; do
-        [[ -s "$wlan/firmware/qca6390/$f" ]] || { echo "missing $wlan/firmware/qca6390/$f (see scripts/extract-wlan.sh)" >&2; exit 1; }
+        [[ -s "$wlan/firmware/qca6390/$f" ]] || { echo "missing $wlan/firmware/qca6390/$f (see python -m overpressure assets)" >&2; exit 1; }
         install -m 0644 "$wlan/firmware/qca6390/$f" "$T/usr/lib/firmware/qca6390/"
     done
     ln -sfn ../../../qca6390/amss20.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin"
@@ -434,7 +438,7 @@ audio_json="[]"
 if [[ -n "$audio" ]]; then
     for f in firmware/adsp.mdt firmware/adspr.jsn \
         firmware/adspua.jsn audiopd/acdb/adsp_avs_config.acdb calibration/MTP_base_Wsa8810_Global_cal.acdb; do
-        [[ -s "$audio/$f" ]] || { echo "missing $audio/$f (see scripts/extract-audio.sh)" >&2; exit 1; }
+        [[ -s "$audio/$f" ]] || { echo "missing $audio/$f (see python -m overpressure assets)" >&2; exit 1; }
     done
     mkdir -p "$T/usr/lib/firmware" "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio"
     install -m 0644 "$audio"/firmware/adsp* "$T/usr/lib/firmware/"
@@ -443,6 +447,7 @@ if [[ -n "$audio" ]]; then
     python3 "$project/userspace/rootfs/usr/bin/pico4-audiocal" export --acdb "$audio/calibration" \
         "$T/usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin"
     chown -R 0:0 "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio" "$T/usr/lib/firmware/qcom/sm8250/pico4"
+    assets_modes "$T/usr/share/qcom/pico4-audio"
     audio_json=$(cd "$T" && find usr/lib/firmware/adsp* usr/lib/firmware/qcom/sm8250/pico4 usr/lib/pico4-audio \
         usr/share/qcom/pico4-audio -type f -print0 |
         sort -z | xargs -0 sha256sum |
@@ -453,7 +458,7 @@ fi
 sensor_json="[]"
 if [[ -n "$sensor_data" ]]; then
     [[ -s "$sensor_data/firmware/slpi.mdt" && -d "$sensor_data/sensors/config" ]] ||
-        { echo "incomplete sensor data in $sensor_data (see scripts/extract-sensor-data.sh)" >&2; exit 1; }
+        { echo "incomplete sensor data in $sensor_data (see python -m overpressure assets)" >&2; exit 1; }
     mkdir -p "$T/usr/lib/firmware"
     install -m 0644 "$sensor_data"/firmware/slpi* "$T/usr/lib/firmware/"
     qcom=$T/usr/share/qcom/pico4
@@ -468,12 +473,14 @@ if [[ -n "$sensor_data" ]]; then
     ln -sfn /mnt/vendor/persist/sensors/registry/sns_reg_version "$qcom/sensors/sns_reg_version"
     ln -sfn /mnt/vendor/persist/pvr "$qcom/calibration/pvr"
     chown -R 0:0 "$qcom"
+    assets_modes "$qcom/sensors" "$qcom/calibration"
     # The controllers' render models, where SteamVR finds the Monado driver's resources ({monado}name).
     models=$T/usr/share/steamvr-monado/resources/rendermodels
     if [[ -d "$sensor_data/rendermodels" ]]; then
         mkdir -p "$models"
         cp -r --no-preserve=ownership "$sensor_data"/rendermodels/* "$models/"
         chown -R 0:0 "$models"
+        assets_modes "$models"
     fi
     sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/share/qcom/pico4 \
         $( [[ -d usr/share/steamvr-monado/resources/rendermodels ]] && echo usr/share/steamvr-monado/resources/rendermodels ) \
@@ -488,8 +495,8 @@ stock_json="[]"
 if [[ -n "$stock_slam" ]]; then
     [[ -s "$stock_slam/firmware/cdsp.mdt" &&
        -s "$stock_slam/root/system/lib64/libSlam.so" && -s "$stock_slam/root/system/lib64/libphotoid.so" ]] ||
-        { echo "incomplete tracker data in $stock_slam (see scripts/extract-stock-slam.sh)" >&2; exit 1; }
-    [[ -n $llvm ]] || { echo "--stock-slam needs the host's clang and lld (apt install clang-20 lld-20)" >&2; exit 1; }
+        { echo "incomplete tracker data in $stock_slam (see python -m overpressure assets)" >&2; exit 1; }
+    [[ -n $llvm ]] || { echo "--stock-slam needs the host's clang and lld (LLVM 20, in the build container)" >&2; exit 1; }
     mkdir -p "$T/usr/lib/firmware"
     install -m 0644 "$stock_slam"/firmware/cdsp* "$T/usr/lib/firmware/"
     island=$T/usr/lib/pico4-stock-slam

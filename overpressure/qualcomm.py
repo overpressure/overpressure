@@ -43,11 +43,73 @@ def chip_id(value: str) -> int:
     return number
 
 
-def edl_devices() -> int:
-    """Return the number of attached Qualcomm EDL (9008) devices."""
-    if sys.platform == "win32":
+def usb_count(vendor: int, product: int) -> int | None:
+    """Return how many USB devices have @p vendor and @p product, None when pyusb or libusb is missing.
+
+    Enumeration only, through pyusb and libusb-package's libusb (pinned in pyproject.toml): the
+    device descriptors libusb lists, no device opened or claimed, nothing sent.
+    """
+    try:
+        import libusb_package  # noqa: PLC0415  # optional: the start scripts and uv sync install it
+        import usb.core  # noqa: PLC0415  # optional: the start scripts and uv sync install it
+
+        backend = libusb_package.get_libusb1_backend()
+        if backend is None:
+            return None
+        return sum(1 for _ in usb.core.find(find_all=True, idVendor=vendor, idProduct=product, backend=backend))
+    except (ImportError, OSError, ValueError, RuntimeError):  # no package, no library, or libusb's own error
+        return None
+    except Exception as exc:  # usb.core.USBError and NoBackendError: pyusb's own, imported lazily
+        if type(exc).__module__.startswith("usb."):
+            return None
+        raise
+
+
+def ioreg_count(output: str, vendor: int, product: int) -> int:
+    """Count the devices in macOS's `ioreg -p IOUSB -l` output with @p vendor and @p product."""
+    count, ids = 0, {}
+    for line in [*output.splitlines(), "+-o end"]:
+        if "+-o " in line:  # the next device's node
+            count += ids.get("idVendor") == vendor and ids.get("idProduct") == product
+            ids = {}
+            continue
+        match = re.search(r'"(idVendor|idProduct)" = (\d+)', line)
+        if match:
+            ids[match.group(1)] = int(match.group(2))
+    return count
+
+
+def sysfs_count(root: Path, vendor: int, product: int) -> int:
+    """Count the devices under Linux's /sys/bus/usb/devices with @p vendor and @p product."""
+    count = 0
+    for folder in root.glob("*"):
+        try:
+            ids = (int((folder / "idVendor").read_text(), 16), int((folder / "idProduct").read_text(), 16))
+        except (OSError, ValueError):
+            continue
+        count += ids == (vendor, product)
+    return count
+
+
+def edl_devices(
+    *,
+    platform: str = sys.platform,
+    usb: Callable[[int, int], int | None] = usb_count,
+    command: Callable[[list[str], float], str] = run,
+    sysfs: Path = Path("/sys/bus/usb/devices"),
+) -> int:
+    """Return the number of attached Qualcomm EDL (9008) devices.
+
+    Through pyusb on every system; where it is missing, this system's own listing: PowerShell's
+    Get-PnpDevice on Windows, ioreg on macOS, sysfs on Linux.
+    """
+    vendor, product = (int(i, 16) for i in EDL_USB)
+    count = usb(vendor, product)
+    if count is not None:
+        return count
+    if platform == "win32":
         pattern = "USB\\VID_{}&PID_{}*".format(*EDL_USB).upper()
-        output = run(
+        output = command(
             [
                 "powershell",
                 "-NoProfile",
@@ -57,14 +119,9 @@ def edl_devices() -> int:
             30,
         )
         return int(output.split()[-1]) if output.split() else 0
-    count = 0
-    for folder in Path("/sys/bus/usb/devices").glob("*"):
-        try:
-            ids = ((folder / "idVendor").read_text().strip(), (folder / "idProduct").read_text().strip())
-        except OSError:
-            continue
-        count += ids == EDL_USB
-    return count
+    if platform == "darwin":
+        return ioreg_count(command(["ioreg", "-p", "IOUSB", "-l"], 30), vendor, product)
+    return sysfs_count(sysfs, vendor, product)
 
 
 def edl_command(args: argparse.Namespace, *words: str, memory: str = "ufs") -> list[str]:

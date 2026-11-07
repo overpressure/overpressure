@@ -39,6 +39,7 @@ from typing import IO, TYPE_CHECKING, Callable
 
 from devices.phoenix.kernel import recovery_image
 from overpressure import (
+    REPO,
     android,
     avb,
     bootimg,
@@ -59,7 +60,7 @@ from .cycle import Headset, run
 if TYPE_CHECKING:
     from overpressure.process import Timing
 
-ROOT = localconfig.ROOT
+ROOT = REPO
 WORK = ROOT / "out" / "dev"
 HOST = "172.16.42.1"
 RUN_ID = "dev-loop"
@@ -144,7 +145,6 @@ class Dev(Headset):
             key.with_name("id_ed25519.pub").read_bytes(),
             connect_timeout=600,
             test_timeout=3600,
-            userspace=True,
         )
         (self.work / "test-boot.img").replace(self.work / "dev-boot.img")
         # The same image for recovery, marked so stage 1 can tell which partition started it.

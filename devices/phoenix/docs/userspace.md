@@ -199,10 +199,12 @@ Adaptations in the image:
 
 ## Build
 
-As root on Linux or WSL (`make userspace` runs the same with the Makefile's defaults):
+As root in the build container ([docs/tool.md](../../../docs/tool.md#linux-root-steps); the window's
+*Userspace archive* step and `make userspace` run the same with the defaults):
 
 ```sh
-bash devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build "$PWD/out/userspace" \
+python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
+    /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
     --wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
 ```
@@ -214,10 +216,10 @@ bash devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build "
 | Option | Effect |
 | --- | --- |
 | `--gpu-firmware DIR` | the six `a650_*` GPU firmware files from the stock firmware ([development.md](development.md#stock-firmware), [graphics.md](graphics.md)); without them the userspace boots, but Vulkan cannot start |
-| `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data, extracted from the stock firmware by `scripts/extract-sensor-data.sh` ([xr.md](xr.md)); without it the head IMU stack stays inactive |
-| `--wlan DIR` | Wi-Fi firmware and board data, extracted by `scripts/extract-wlan.sh`; without it Wi-Fi stays off |
-| `--audio DIR` | ADSP firmware and the audio process's files, extracted by `scripts/extract-audio.sh`; without it there is no sound card |
-| `--stock-slam DIR` | PICO OS's head tracker, its Compute DSP firmware and bionic root, extracted by `scripts/extract-stock-slam.sh` ([xr.md](xr.md)); without it head tracking falls back to 3DoF unless `PICO4_SLAM_BACKEND=basalt` |
+| `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data, extracted from the stock firmware by `python -m overpressure assets` ([xr.md](xr.md)); without it the head IMU stack stays inactive |
+| `--wlan DIR` | Wi-Fi firmware and board data, extracted by `python -m overpressure assets`; without it Wi-Fi stays off |
+| `--audio DIR` | ADSP firmware and the audio process's files, extracted by `python -m overpressure assets`; without it there is no sound card |
+| `--stock-slam DIR` | PICO OS's head tracker, its Compute DSP firmware and bionic root, extracted by `python -m overpressure assets` ([xr.md](xr.md)); without it head tracking falls back to 3DoF unless `PICO4_SLAM_BACKEND=basalt` |
 | `--refresh` | downloads current package databases and reinstalls the base root |
 | `--clean` | rebuilds the project packages from scratch |
 | `--emulated-cc` | compiles with the build environment's own GCC under QEMU instead of the host's clang |
@@ -225,8 +227,9 @@ bash devices/phoenix/scripts/build-userspace.sh /var/tmp/pico4-userspace-build "
 The script snapshots its inputs into `BUILD_ROOT` (an absolute path on a Linux file system)
 first, so the tree can be edited during a build. The build environment is the Holo Core
 preview's SHA-256-pinned base rootfs, entered with chroot; on hosts other than arm64 its
-programs run under QEMU user emulation. On x86-64 hosts the host's clang and lld
-(`apt install clang-20 lld-20`) compile natively inside the arm64 build environment, which is
+programs run under QEMU user emulation, through the aarch64 binfmt handler the build container
+registers when the engine has none. On x86-64 hosts the container's clang and lld (LLVM 20)
+compile natively inside the arm64 build environment, which is
 their sysroot (no LTO; lld links). Project packages ([userspace/pkgbuilds/](../userspace/pkgbuilds/))
 rebuild only when their recipe changes, and incrementally (`makepkg -e` in the previous build
 tree) when only the project's own sources in `src/` change. Package databases are downloaded
@@ -251,7 +254,8 @@ The archive becomes a read-only system image in `super` with its data in `userda
 ([install.md](install.md)):
 
 ```sh
-devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img  # as root
+python -m overpressure container run -- bash devices/phoenix/scripts/build-system-image.sh \
+    out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
 python -m overpressure dev recovery
 python -m overpressure dev install
 python -m overpressure dev check

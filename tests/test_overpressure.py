@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: Unlicense
 """The headset interface, the registry, the step runner and the command line."""
 
+from __future__ import annotations
+
 import contextlib
 import io
 import os
+import socket
+import subprocess
+import sys
 import unittest
 from pathlib import Path
+from typing import Callable
 from unittest import mock
 
 from overpressure import REPO, fastboot, linux, runner
@@ -57,54 +63,161 @@ class StepTests(unittest.TestCase):
 
 
 class RunnerTests(unittest.TestCase):
-    def test_windows_runs_linux_root_steps_in_wsl(self):
-        h = Fake()
-        _, us = h.steps()
-        argv = runner.process(h, us, {}, platform="win32", backend="wsl")
-        self.assertEqual(argv[:6], ["wsl", "-u", "root", "--cd", str(REPO), "--"])
-        self.assertEqual(argv[6], "bash")
-        self.assertTrue(argv[7].startswith("/mnt/") and argv[7].endswith("devices/fake/scripts/build.sh"))
-
-    def test_linux_asks_sudo_unless_root(self):
-        h = Fake()
-        _, us = h.steps()
-        self.assertEqual(
-            runner.process(h, us, {}, platform="linux", is_root=False, backend="sudo")[:3],
-            ["sudo", "bash", "devices/fake/scripts/build.sh"],
-        )
-        self.assertEqual(runner.process(h, us, {}, platform="linux", is_root=True, backend="sudo")[0], "bash")
-
-    def test_the_build_container_runs_linux_root_steps_anywhere(self):
+    def test_linux_root_steps_run_in_the_build_container_on_every_host(self):
         h = Fake()
         img, us = h.steps()
-        for platform in ("win32", "darwin", "linux"):
-            argv = runner.process(h, us, {}, platform=platform, python="py", backend="docker")
-            self.assertEqual(argv[:6], ["py", "-m", "overpressure", "container", "run", "--"])
-            self.assertEqual(argv[6:8], ["bash", "devices/fake/scripts/build.sh"])
-        self.assertEqual(runner.process(h, img, {}, python="py", backend="docker")[0], "py")  # no Linux needed
-
-    def test_the_backend_follows_the_host_unless_configured(self):
-        self.assertEqual(linux.backend("win32", which=lambda _: "wsl", environ={"OVERPRESSURE_LINUX": ""}), "wsl")
-        self.assertEqual(linux.backend("win32", which=lambda _: None, environ={"OVERPRESSURE_LINUX": ""}), "docker")
-        self.assertEqual(linux.backend("darwin", environ={"OVERPRESSURE_LINUX": ""}), "docker")
-        self.assertEqual(linux.backend("linux", environ={"OVERPRESSURE_LINUX": "docker"}), "docker")
-        with self.assertRaises(ValueError):
-            linux.backend("linux", environ={"OVERPRESSURE_LINUX": "vm"})
-        argv = linux.run_argv(["bash", "x.sh"], tool="docker")
-        self.assertIn("--privileged", argv)
-        self.assertIn(f"{linux.VOLUME}:/var/tmp", argv)
-        self.assertTrue(argv[-3].startswith("overpressure-builder:"))
+        argv = runner.process(h, us, {}, python="py")
+        self.assertEqual(argv[:6], ["py", "-m", "overpressure", "container", "run", "--"])
+        self.assertEqual(argv[6:8], ["bash", "devices/fake/scripts/build.sh"])
+        self.assertTrue(linux.is_build(argv))
+        self.assertEqual(runner.process(h, img, {}, python="py")[0], "py")  # no Linux needed
+        self.assertFalse(linux.is_build(runner.process(h, img, {}, python="py")))
 
     def test_commands_go_through_this_command_line(self):
         h = Fake()
         img, _ = h.steps()
         self.assertEqual(
-            runner.process(h, img, {}, platform="linux", python="py"),
+            runner.process(h, img, {}, python="py"),
             ["py", "-m", "overpressure", "--device", "fake", "build", "--firmware", "a"],
         )
 
-    def test_wsl_path(self):
-        self.assertEqual(runner.wsl_path(Path("C:/Users/x/repo")), "/mnt/c/Users/x/repo")
+    def test_stopping_a_build_removes_its_container_first(self):
+        proc = mock.Mock(pid=4242)
+        calls: list[str] = []
+        proc.terminate.side_effect = lambda: calls.append("terminate")
+        with mock.patch.object(linux, "stop_build", side_effect=lambda pid: calls.append(f"rm {pid}")):
+            runner.stop(proc, ["py", "-m", "overpressure", "container", "run", "--", "bash", "x.sh"])
+            self.assertEqual(calls, ["rm 4242", "terminate"])
+            calls.clear()
+            runner.stop(proc, ["py", "-m", "overpressure", "--device", "fake", "build"])
+            self.assertEqual(calls, ["terminate"])  # no container behind it
+
+
+class FakeEngine:
+    """A fake container engine: the build container's state, and every command it was given."""
+
+    def __init__(self, owner: str = "", *, running: bool = True) -> None:
+        self.owner, self.running, self.calls = owner, running, []
+
+    def __call__(self, argv: list[str]) -> tuple[int, str]:
+        self.calls.append(argv[1:])
+        if argv[1:3] == ["container", "inspect"]:
+            if not self.owner:
+                return 1, "Error: No such container: overpressure-build"
+            return 0, f"{self.owner}\tbash devices/x/build.sh\t{linux.REPO}\t{str(self.running).lower()}"
+        if argv[1:3] == ["rm", "-f"]:
+            self.owner = ""
+            return 0, "overpressure-build"
+        return 1, "unexpected"
+
+
+class ContainerTests(unittest.TestCase):
+    HOST = socket.gethostname()
+
+    def test_a_build_is_named_labelled_and_registers_the_handler(self):
+        argv = linux.run_argv(
+            ["bash", "x.sh"],
+            tool="docker",
+            name=linux.NAME,
+            labels={linux.OWNER: "h:1:2"},
+            binfmt=True,
+            ids=(1000, 1000),
+        )
+        self.assertEqual(argv[:4], ["docker", "run", "--rm", "--privileged"])
+        self.assertEqual(argv[argv.index("--name") + 1], "overpressure-build")
+        self.assertIn(f"{linux.OWNER}=h:1:2", argv)
+        for env in ("OVERPRESSURE_BINFMT=1", "OVERPRESSURE_UID=1000", "OVERPRESSURE_GID=1000"):
+            self.assertIn(env, argv)
+        self.assertIn(f"{REPO}:/work", argv)
+        self.assertIn(f"{linux.VOLUME}:/var/tmp", argv)
+        self.assertEqual(argv[-3:], [linux.image(), "bash", "x.sh"])
+        self.assertTrue(linux.image().startswith("overpressure-builder:"))
+        probe = linux.run_argv(["true"], tool="podman")
+        self.assertNotIn("--name", probe)
+        self.assertFalse(any(w.startswith(("OVERPRESSURE_BINFMT", "OVERPRESSURE_UID")) for w in probe))
+
+    def test_ownership_goes_back_to_the_hosts_user_whatever_the_engine(self):
+        with (
+            mock.patch.object(os, "getuid", create=True, return_value=1000),
+            mock.patch.object(os, "getgid", create=True, return_value=100),
+        ):
+            self.assertEqual(linux.host_ids(), (1000, 100))
+        with (
+            mock.patch.object(os, "getuid", create=True, return_value=0),
+            mock.patch.object(os, "getgid", create=True, return_value=0),
+        ):
+            self.assertIsNone(linux.host_ids())  # root needs nothing back
+        with mock.patch.object(os, "getuid", None, create=True):
+            self.assertIsNone(linux.host_ids())  # Windows: no Unix owners
+
+    def test_the_engine_is_docker_or_podman_whichever_answers(self):
+        def which(*tools: str) -> Callable[[str], str | None]:
+            return lambda tool: tool if tool in tools else None
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OVERPRESSURE_CONTAINER_ENGINE", None)
+            self.assertEqual(linux.engine(which("podman")), "podman")
+            self.assertEqual(linux.engine(which("docker")), "docker")
+            self.assertEqual(linux.engine(which()), "docker")  # the checks then say neither is there
+            with mock.patch.object(linux, "answers", side_effect=lambda tool: tool == "podman"):
+                self.assertEqual(linux.engine(which("docker", "podman")), "podman")
+            with mock.patch.object(linux, "answers", return_value=False):
+                self.assertEqual(linux.engine(which("docker", "podman")), "docker")
+            os.environ["OVERPRESSURE_CONTAINER_ENGINE"] = "podman"
+            self.assertEqual(linux.engine(which("docker")), "podman")
+
+    def test_a_second_build_is_refused_in_one_line(self):
+        engine = FakeEngine(f"{self.HOST}:{os.getpid()}:1")
+        refusal = linux.claim(engine, alive=lambda _pid: True)
+        self.assertIsNotNone(refusal)
+        self.assertTrue(str(refusal).startswith("another build is running: bash devices/x/build.sh;"))
+        self.assertNotIn("\n", str(refusal))
+        self.assertNotIn(["rm", "-f", linux.NAME], engine.calls)
+        # One started on another host (a shared engine) counts as running too.
+        self.assertIsNotNone(linux.claim(FakeEngine("elsewhere:1:1"), alive=lambda _pid: False))
+
+    def test_a_leftover_whose_client_is_gone_is_removed(self):
+        for engine in (
+            FakeEngine(f"{self.HOST}:999999:1"),
+            FakeEngine(f"{self.HOST}:5:1", running=False),
+            FakeEngine("junk"),
+        ):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertIsNone(linux.claim(engine, alive=lambda _pid: False))
+            self.assertIn(["rm", "-f", linux.NAME], engine.calls)
+        self.assertIsNone(linux.claim(FakeEngine(), alive=lambda _pid: True))  # none there
+
+    def test_stop_removes_only_the_container_of_the_client_being_stopped(self):
+        engine = FakeEngine(f"{self.HOST}:200:100")
+        self.assertFalse(linux.stop_build(300, engine))  # someone else's build
+        self.assertNotIn(["rm", "-f", linux.NAME], engine.calls)
+        self.assertTrue(linux.stop_build(100, engine))  # the client's launcher: its child started it
+        self.assertIn(["rm", "-f", linux.NAME], engine.calls)
+        self.assertTrue(linux.stop_build(200, FakeEngine(f"{self.HOST}:200:100")))
+        self.assertFalse(linux.stop_build(200, FakeEngine("elsewhere:200:100")))
+        self.assertFalse(linux.stop_build(200, FakeEngine()))
+
+    def test_the_engines_refusal_of_the_name_becomes_one_plain_line(self):
+        out = io.BytesIO()
+        linux._rewrite(  # noqa: SLF001  # the client's stderr copier
+            io.BytesIO(
+                b'docker: Error response from daemon: Conflict. The container name "/overpressure-build" is already '
+                b'in use by container "abc".\nother line\n'
+            ),
+            out,
+        )
+        self.assertEqual(
+            out.getvalue().decode().splitlines(),
+            ["error: another build is running (container overpressure-build); let it finish or stop it", "other line"],
+        )
+
+    def test_this_process_is_alive_and_a_finished_one_is_not(self):
+        self.assertTrue(linux.pid_alive(os.getpid()))
+        self.assertFalse(linux.pid_alive(0))
+        done = subprocess.run(
+            [sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True, check=True
+        )  # this Python
+        self.assertFalse(linux.pid_alive(int(done.stdout)))
 
 
 class RegistryTests(unittest.TestCase):

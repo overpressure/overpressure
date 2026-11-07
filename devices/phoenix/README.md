@@ -41,9 +41,10 @@ refuse a headset, firmware or panel that hasn't been verified
 build your own image; the project publishes no image and no vendor file ([docs/distribution.md](docs/distribution.md)).
 
 **You need.** Your original PICO 4, a USB-C data cable, a computer with Windows, Linux or macOS, about 40 GB free and
-a few hours for the first build (it downloads about 15 GB). The Linux part of the build runs in WSL on Windows (the
-installer explains how to get it: it needs an administrator and a restart), with sudo on Linux, and in Docker or
-Podman on macOS (`OVERPRESSURE_LINUX=docker`, any host).
+a few hours for the first build (it downloads about 15 GB). The stock firmware and its assets are taken out in Python
+on the computer itself; the Linux part of the build (userspace, system image, kernel) runs in a container, which needs Docker or Podman on
+any system, however it runs its containers (the installer says so when neither answers, and builds the container's
+image itself).
 
 **The installer.** Double-click `Install.cmd` (Windows) or `Install.command` (macOS), or run `sh install.sh` (Linux),
 in the repository's folder. The start script brings its own Python and the window's toolkit into `cache/`; nothing
@@ -69,7 +70,7 @@ commands, which also work on their own:
 | Stage | Commands |
 | --- | --- |
 | 1 | `python -m overpressure tools`, `python -m overpressure device fetch-unlock-files`, `python -m overpressure doctor` |
-| 2 | `devices/phoenix/scripts/extract-assets.sh ...` (Linux), `python -m overpressure build --firmware 5.13.7-global-seko`, `devices/phoenix/scripts/build-userspace.sh ...` and `build-system-image.sh ...` (Linux), `python -m overpressure dev image`, `devices/phoenix/scripts/build-kernel-step.sh ...` (Linux), `python -m overpressure dev boot-image`; `python -m overpressure steps` shows each with its parameters |
+| 2 | `python -m overpressure assets`, `python -m overpressure build --firmware 5.13.7-global-seko`, `devices/phoenix/scripts/build-userspace.sh ...` and `build-system-image.sh ...` (Linux), `python -m overpressure dev image`, `devices/phoenix/scripts/build-kernel-step.sh ...` (Linux), `python -m overpressure dev boot-image`; `python -m overpressure steps` shows each with its parameters |
 | 3 | `adb devices` (the serial goes to `PICO4_ADB_SERIAL` in `.env`), `python -m overpressure device probe` |
 | 4 | `edl-ng ... printgpt` (the LUNs, and `PICO4_EDL_SERIAL`), `python -m overpressure device backup --execute` and `device verify-backup`, `dev stage-abl`, `device unlock --execute --accept-data-loss` (`PICO4_FASTBOOT_SERIAL`), `dev flash`, `dev connect`; by hand in [docs/device-preparation.md](docs/device-preparation.md) |
 | 5 | `python -m overpressure dev install`, `dev installed`, `dev check` |
@@ -104,7 +105,7 @@ in `out/install/phoenix/`.
 | [docs/xr.md](docs/xr.md) | IMU, Monado driver, display, lenses, cameras, 6DoF, controllers |
 | [docs/session.md](docs/session.md) | Valve's VR session: SteamVR, gamescope, games, Steam Link |
 | [docs/cooling.md](docs/cooling.md) | fan control and the thermal policy |
-| [docs/development.md](docs/development.md) | layout, build system and hosts, tests, Windows and WSL |
+| [docs/development.md](docs/development.md) | layout, build system and hosts, the build container, tests, Windows |
 | [docs/stock-components.md](docs/stock-components.md) | what the images take unchanged from PICO OS, and what could replace each |
 | [docs/security.md](docs/security.md) | logins, listening services, what is protected and what isn't |
 | [docs/distribution.md](docs/distribution.md) | what the project publishes, and where every other file comes from |
@@ -113,12 +114,12 @@ in `out/install/phoenix/`.
 ## This folder
 
 ```text
-tooling/     host tooling (Python standard library): python -m overpressure COMMAND, and the window's steps
+tooling/     host tooling (Python): python -m overpressure COMMAND, the stock firmware's assets, and the window's steps
 kernel/      Valve's kernel: build script, patches, the PICO's drivers and device tree
 initramfs/   stage 1: the files added to the Alpine ramdisk
 userspace/   stage 2: package list, pacman.conf, adaptation layer, SteamVR configuration, PKGBUILDs
 src/         C sources: graphics tests, Monado's PICO 4 driver, the tracker's host, OpenXR clients, SteamVR helpers
-scripts/     userspace and system image builds, stock firmware extraction, the on-headset preflight, sharing a Windows PC's internet
+scripts/     userspace, system image and kernel builds, the on-headset preflight, sharing a Windows PC's internet
 prebuilt/    static aarch64 helpers for stage 1
 tests/       host tests and the QEMU boot tests
 docs/        documentation

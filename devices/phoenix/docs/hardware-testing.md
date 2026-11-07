@@ -70,7 +70,7 @@ settings to it.
 | `PICO4_ENGINEERING_ABL_SHA256` | required for staging | its expected SHA-256 |
 | `PICO4_EDL` | empty: the fetched edl-ng (`python -m overpressure tools`), else PATH | edl-ng executable |
 | `PICO4_FIRMWARE` | `5.13.7-global-seko` | entry of [tooling/firmware.json](../tooling/firmware.json); selects `out/pico4-stage1-<firmware>.img` |
-| `PICO4_NCM_PYTHON` | empty: the fetched NCM venv on Windows, else no NCM initialization | Python with the `windows-ncm` extra |
+| `PICO4_NCM_PYTHON` | empty: on Windows the Python that runs overpressure when it has pyusb and libusb-package, else no NCM initialization | Python with pyusb and libusb-package |
 | `PICO4_PLATFORM_TOOLS` | empty: the fetched platform-tools, else `PATH` | folder with `adb` and `fastboot` |
 | `PICO4_SSH`, `PICO4_SSH_KEYGEN` | `ssh`, `ssh-keygen` | OpenSSH executables |
 
@@ -93,7 +93,8 @@ python -m overpressure dev install          # boot, super, userdata; the install
 Then iterate:
 
 ```sh
-devices/phoenix/scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img  # as root
+python -m overpressure container run -- bash devices/phoenix/scripts/build-system-image.sh \
+    out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
 python -m overpressure dev recovery         # into the maintenance stage 1
 python -m overpressure dev install          # writes what changed; the installed system starts
 python -m overpressure dev check            # the runner's stage-2 checks
@@ -132,7 +133,7 @@ not tested. `flash-run` never unlocks the bootloader, resets user data or modifi
 python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FASTBOOT_SERIAL \
     --confirm-device ADB_SERIAL --backup backup/stock \
     --image out/pico4-stage1-5.13.7-global-seko.img \
-    --windows-ncm-python PYTHON_OF_THE_NCM_VENV   # python -m overpressure tools ncm-venv prints its folder
+    --windows-ncm-python python   # Windows: a Python with pyusb and libusb-package
 ```
 
 ### Options
@@ -212,8 +213,8 @@ The stock kernel's NCM function (PICO OS 5.13.7) rejects the packets of Windows'
 `Wrong NDP SIGN` in its kernel log, so Windows gets no DHCP, SSH or HTTP. Sending the CDC request
 `SET_CRC_MODE(0)` through UsbDk and then releasing the device to Windows 11's in-box UsbNcm driver
 makes all three work without changing the kernel. [overpressure/windows_ncm.py](../../../overpressure/windows_ncm.py)
-does this; `--windows-ncm-python` (runner) or the NCM venv (cycle, dev: `PICO4_NCM_PYTHON`, else
-the one `python -m overpressure tools` creates) enables it.
+does this; `--windows-ncm-python` (runner) or, for the cycle and the dev loop, `PICO4_NCM_PYTHON`
+(else the Python that runs overpressure, which has pyusb and libusb-package) enables it.
 
 The request works because the 4.19 kernel's `f_ncm` recomputes the NDP signature it checks on
 every CDC class request to its control interface (and resets it with the data interface);
@@ -222,11 +223,10 @@ kernel has no RNDIS, ECM or EEM function to use instead.
 
 Install [UsbDk](https://github.com/daynix/UsbDk/releases) (`winget install daynix.UsbDk`, as
 administrator; the helper loads `UsbDkHelper.dll` from `%ProgramFiles%\UsbDk Runtime Library`),
-then the NCM venv, a Python environment with the `windows-ncm` packages, every file's hash pinned:
+and run overpressure on a Python with pyusb and libusb-package (the start scripts' and `uv sync`'s have them):
 
 ```powershell
-python -m overpressure tools ncm-venv
-python -m overpressure doctor        # "NCM Python and UsbDk": the venv and the UsbDk backend
+python -m overpressure doctor        # "NCM Python and UsbDk": the packages and the UsbDk backend
 ```
 
 `--check` tests the dependencies and the UsbDk backend without opening a device;
@@ -431,7 +431,7 @@ stock boot and stock ABL. It takes the headset out of development mode, so tasks
    ([device-preparation.md](device-preparation.md)); EDL reset; PICO OS must finish booting.
 2. **Acceptance run**: `python -m overpressure hwtest flash-run` with the `.env` serials and backup,
    `out/pico4-stage1-<PICO4_FIRMWARE>.img` (built beforehand) and `--windows-ncm-python` when
-   `PICO4_NCM_PYTHON` is set; results in
+   there is an NCM Python (`PICO4_NCM_PYTHON`, else this one on Windows); results in
    `run/`, bounded to 4 hours. If `result.json` still requires a boot restore, the cycle waits up
    to 45 minutes for the fastboot serial (the device deadlines bring the headset there), checks
    the pinned `stock-boot.img` against its recorded size and SHA-256, and runs the recorded
@@ -484,9 +484,9 @@ are in [install.md](install.md#install-and-update). Settings come from [`.env`](
 | Command | Effect |
 | --- | --- |
 | `stage-abl` | engineering ABL through EDL with readback, then PICO OS, as in cycle step 1; logs in `out/dev/stage-abl-<time>/` |
-| `image` | builds `out/dev/dev-boot.img`, `dev-recovery.img` and `install-boot.img` from `out/pico4-stage1-<PICO4_FIRMWARE>.img`, which must contain the handoff: instrumented like a runner image, with the run identifier `dev-loop`, the dev key and long deadlines ([install.md](install.md#boot-images)) |
+| `image` | builds `out/dev/dev-boot.img`, `dev-recovery.img` and `install-boot.img` from `out/pico4-stage1-<PICO4_FIRMWARE>.img`: instrumented like a runner image, with the run identifier `dev-loop`, the dev key and long deadlines ([install.md](install.md#boot-images)) |
 | `flash` | goes to fastboot (from PICO OS through ADB, from stage 1 or 2 through SSH; up to 180 s), checks the bootloader and partition as `flash-run` does (unlocked, exactly one non-slotted partition of the backed-up size, an image that fits), sends the OEM authorization, writes the dev image to `recovery` and starts it |
-| `connect` | forgets the previous host key (stage 1 makes new ones every boot), runs the NCM initialization when `PICO4_NCM_PYTHON` is set (retried for up to 120 s) and logs in to stage 1 within 120 s; the endpoint must report `dev-loop` and the SoC ID of `PICO4_IDENTITY`, and the login clears the connection deadline. It then reads back the partition the running stage 1 came from: its hash must match `out/dev/dev-boot.img` or `dev-recovery.img` |
+| `connect` | forgets the previous host key (stage 1 makes new ones every boot), runs the NCM initialization when there is an NCM Python (`PICO4_NCM_PYTHON`, else this one on Windows; retried for up to 120 s) and logs in to stage 1 within 120 s; the endpoint must report `dev-loop` and the SoC ID of `PICO4_IDENTITY`, and the login clears the connection deadline. It then reads back the partition the running stage 1 came from: its hash must match `out/dev/dev-boot.img` or `dev-recovery.img` |
 | `check` | runs the runner's stage-2 checks, from the userspace check to Valve's session, on the installed system; results in `out/dev/check-<time>/`; exit 0 only if all pass |
 | `ssh COMMAND...` | runs the words as one remote command (up to 600 s) and prints the output as text; the remote exit status is not passed on |
 | `reboot` | reboots the headset: over SSH from stage 1 or 2, with `fastboot reboot` when it waits in fastboot (no write); then waits 20 s and connects to what started, the maintenance stage 1 while `misc` holds its request, else the installed system |

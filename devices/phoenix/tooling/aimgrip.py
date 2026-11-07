@@ -10,7 +10,7 @@ the tracking service's `pvr::ConfigManager::getAim2GripTrans` (libpvrtrackingser
 falls back to 14 built-in doubles. They are two blocks, left then right, of a position
 (x, y, z, metres) followed by a unit quaternion (w, x, y, z), in the aim frame. No configuration
 file of the system image sets the key, so the built-in values apply.
-scripts/extract-sensor-data.sh reads them from the headset's own firmware; they are vendor data
+The assets command (tooling/assets.py) reads them from the stock firmware; they are vendor data
 and stay out of the repository.
 
     python -m devices.phoenix.tooling.aimgrip LIBRARY OUTPUT.json
@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{library}: {exc}", file=sys.stderr)
         return 1
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(to_json(result, library.name), encoding="utf-8")
+    output.write_bytes(to_json(result, library.name).encode("utf-8"))
     return 0
 
 

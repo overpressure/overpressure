@@ -525,16 +525,6 @@ class HarnessTests(unittest.TestCase):
         self.assertNotIn("imu", state)
         self.assertFalse(any(c[0] == "ssh" and "pico4-imu" in c[-1] for c in self.calls))
 
-    def test_userspace_requires_handoff_image(self):
-        tree = cpio.Tree()
-        tree.add_file("etc/pico4/build-info", json.dumps(self.info).encode())
-        tree.add_file("usr/libexec/pico4/recovery-watch", b"#!/bin/sh\n", 0o755)
-        tree.add_file("etc/inittab", b"::respawn:/usr/libexec/pico4/svc recovery-watch\n")
-        self.source = self.root / "handoff-less.img"
-        self.source.write_bytes(bootimg.BootImage(2, 4096, b"kernel", gzip.compress(tree.to_cpio()), dtb=b"dtb").pack())
-        with self.assertRaisesRegex(ValueError, "handoff"):
-            hw.prepare_image(self.source, self.root, "run", b"key", userspace=True)
-
     def test_preflight_failure_never_reboots(self):
         self.scenario = "preflight"
         self.assertEqual(self.execute(), 1)

@@ -82,26 +82,6 @@ class ToolsTests(unittest.TestCase):
         self.assertIsNone(tools.PLATFORM_TOOLS.archive("linux-aarch64"))  # Google builds none
         self.assertIsNotNone(tools.EDL_NG.archive("linux-aarch64"))
 
-    def test_the_ncm_venv_installs_only_hash_pinned_packages(self):
-        venv = self.cache / "ncm-venv-test"
-        calls = []
-
-        def run(argv: list[str], *, check: bool) -> None:  # noqa: ARG001  # subprocess.run's keyword
-            calls.append(argv)
-            python = venv / ("Scripts/python.exe" if tools.sys.platform == "win32" else "bin/python")
-            python.parent.mkdir(parents=True, exist_ok=True)
-            python.write_text("")
-
-        with mock.patch.object(tools, "NCM_VENV", venv):
-            tools.fetch_ncm_venv(log=lambda _l: None, python="py", run=run)
-            self.assertIsNotNone(tools.ncm_python())
-        self.assertEqual(calls[0], ["py", "-m", "venv", str(venv)])
-        self.assertIn("--require-hashes", calls[1])
-        requirements = (venv / "requirements.txt").read_text()
-        for line in requirements.splitlines():
-            if "==" in line:  # every requirement carries its hashes
-                self.assertTrue(line.rstrip().endswith("\\"), line)
-
 
 if __name__ == "__main__":
     unittest.main()

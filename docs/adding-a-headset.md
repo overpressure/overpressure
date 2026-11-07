@@ -42,7 +42,10 @@ headset and calls these:
 | A run on the headset that records every step and command, with bounded waits and HTTP fetches | `overpressure.evidence.Runner` |
 | The read-only storage policy a Linux stage enforces, checked from its block devices and mounts | `overpressure.storage` |
 | Waiting for states with a bound, running tools, SSH with the project's key and the keys an image enrolls, Windows' USB network | `overpressure.process`, `overpressure.ssh`, `overpressure.windows_ncm` |
-| Extraction scripts reading the stock firmware folder | `scripts/stock-lib.sh` |
+| Its assets out of the stock folder in Python on any system: the folder checked against its manifest, files and trees out of its ext4 images (`dump`, debugfs's semantics), files out of its FAT images (`copy_matching`, mcopy's), the assets manifest | `overpressure.assets` |
+| Reading stock file system images without mounting them: ext4 (extents, block maps, links) and FAT12/16/32 with long names, read-only | `overpressure.ext4`, `overpressure.fat` |
+| Counting a vendor's USB devices (EDL) on every system, no device opened | `overpressure.qualcomm.usb_count`, `edl_devices` |
+| A Linux build script taking a file out of a stock ext4 image (overpressure's ext4 reader) | `scripts/stock-lib.sh` |
 
 ## HEADSET
 
@@ -94,7 +97,9 @@ HEADSET = Example()
   generic modules cover the Android formats.
 - **Steps** are what the window offers. A word `{name}` takes a parameter's value; braces inside
   a word are filled the same way. `script=True` runs a program from the headset's folder,
-  `linux_root=True` runs on Linux as root (WSL, sudo or the build container, [tool.md](tool.md#linux-root-steps)), and `writes=True` makes the window
+  `linux_root=True` runs as root in the build container ([tool.md](tool.md#linux-root-steps)): its paths
+  lie in the repository or under `/var/tmp`, and a tool it needs goes into the container's
+  Dockerfile. `writes=True` makes the window
   ask before a step that writes to the headset.
 - **Settings** in `.env` get a dataclass derived from `overpressure.localconfig.Settings` with
   the headset's own key prefix, so headsets share one `.env`. A headset on a stock Android
@@ -111,14 +116,14 @@ HEADSET = Example()
 `Headset.dependencies()` returns the headset's checks for `python -m overpressure doctor`:
 callables that take an `overpressure.doctor.Host` and return `Check` objects (name, what it is
 needed for, status, what was found, the fix). `doctor.version_check` covers programs that answer
-a version query and `doctor.linux_commands` the programs its Linux-side scripts call (one
-`command -v` round in WSL or Linux); `Host.linux(script)` runs any other probe there. A headset
-with `DeviceSettings` builds the rest from the shared checks, each taking its settings and the
-group and fix texts it shows: `env_check`, `serial_checks`, `backup_check`, `loader_check`,
-`edl_tool_check`, `tool_checks` (adb, fastboot), `ncm_checks` (the Windows USB link) and
-`arm64_build_checks` (the binfmt handler and native LLVM on an x86-64 build host). The PICO 4's
-are the example ([devices/phoenix/tooling/doctor.py](../devices/phoenix/tooling/doctor.py)):
-those, its identity and engineering ABL, the tools of its build scripts and the extracted assets.
+a version query; `Host.linux(script)` runs a probe in the build container (unnamed, once the image
+is built). The build container itself (engine, image, aarch64 handler) is checked for every
+headset, and its image holds every Linux tool of the builds, so a headset checks none of them. A
+headset with `DeviceSettings` builds the rest from the shared checks, each taking its settings and
+the group and fix texts it shows: `env_check`, `serial_checks`, `backup_check`, `loader_check`,
+`edl_tool_check`, `tool_checks` (adb, fastboot) and `ncm_checks` (the Windows USB link). The PICO
+4's are the example ([devices/phoenix/tooling/doctor.py](../devices/phoenix/tooling/doctor.py)):
+those, its identity and engineering ABL and the extracted assets.
 
 ## The installer
 

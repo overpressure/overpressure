@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Unlicense
 # Run a program of PICO OS's head tracker in its bionic root (docs/xr.md#head-tracking):
 # /usr/lib/pico4-stock-slam holds PICO OS's bionic linker and libraries, the tracker, its DSP
-# modules and configuration (scripts/extract-stock-slam.sh) and this project's pico4-slamd. It
+# modules and configuration (python -m overpressure assets) and this project's pico4-slamd. It
 # runs in a private mount namespace, chrooted, with /dev, /proc and /sys bound in, the factory
 # calibration where PICO OS keeps it (/mnt/vendor/persist/pvr and /mnt/vendor/pvr) and /data and
 # /tmp as tmpfs; the mounts vanish with the process. The tracker's maps and boundary, which PICO OS

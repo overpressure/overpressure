@@ -593,7 +593,7 @@ class WindowTests(unittest.TestCase):
             self.pump(shown, lambda: not shown.model.running)
             self.assertEqual((shown.model.phase(), shown.primary.cget("text")), ("stopped", "Continue"))
             self.assertFalse(shown.stop_button.winfo_ismapped())
-            self.assertIn(install.STOPPED_NOTHING, shown.note_text.cget("text"))
+            self.assertIn(install.STOPPED_NOTHING, shown.note.text.cget("text"))
         finally:
             close(shown)
 

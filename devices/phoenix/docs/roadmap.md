@@ -228,7 +228,8 @@ brought no suspend. Whether a key wake behaves alike is not known.
   ([install.md](install.md)).
 - A second headset: everything ran on one unit ([device-preparation.md](device-preparation.md#verified-hardware)).
 - macOS as the host: the host tests cover it, a headset was never installed from one; Linux hosts built images,
-  Windows also installed them.
+  Windows also installed them. The stock firmware and assets in Python (any system, no Linux) match the shell
+  extraction byte for byte on Windows and Linux; macOS and EDL device counting through pyusb on a Mac are not run.
 - The first run with only the headset, from an empty data partition.
 - Battery life unplugged: only inferred with the cable in.
 - Sessions much longer than 10 minutes ([cooling.md](cooling.md)).

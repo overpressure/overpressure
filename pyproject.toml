@@ -9,12 +9,14 @@ license = {text = "Unlicense"}
 description = "Linux and a SteamOS-compatible userspace on standalone VR headsets: image, device and test tooling"
 readme = "README.md"
 requires-python = ">=3.9"
-# The tooling itself uses the standard library only (Tk and the gui extra for the window).
-dependencies = []
+# The tooling uses the standard library, plus pinned packages where they save the owner an outside
+# tool: brotli decompresses the stock OTA's images (else the brotli command), pyusb with
+# libusb-package's libusb counts EDL devices on every system (else PowerShell, ioreg or sysfs) and on
+# Windows initializes the USB network link through UsbDk (overpressure/windows_ncm.py). Each
+# use imports lazily: plain `python -m overpressure` runs without them (Tk and the gui extra for the window).
+dependencies = ["brotli==1.2.1", "pyusb==1.3.1", "libusb-package==1.0.30.0"]
 
 [project.optional-dependencies]
-# Windows hosts: initializes a stock kernel's NCM gadget through UsbDk (overpressure/windows_ncm.py).
-windows-ncm = ["pyusb==1.3.1", "libusb-package==1.0.30.0"]
 # The window (overpressure/window/); the start scripts install it, nothing else needs it.
 gui = ["customtkinter==6.0.0"]
 
@@ -37,9 +39,6 @@ exclude = ["devices.*.tests"]
 dev = [
     "ruff==0.17.4",
     "ty==0.0.98",
-    # Only so that ty knows overpressure/windows_ncm.py's imports: the same pins as the extra.
-    "pyusb==1.3.1",
-    "libusb-package==1.0.30.0",
     # Only so that ty knows the window's imports (overpressure/window/): the same pin as the gui extra.
     "customtkinter==6.0.0",
 ]

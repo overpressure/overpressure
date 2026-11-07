@@ -3,7 +3,7 @@
 
     python -m overpressure stock [--firmware NAME] OUTPUT_DIR
 
-The extraction scripts (scripts/extract-*.sh) take the stock files they need from these images
+The assets command (tooling/assets.py) takes the stock files it needs from these images
 (docs/development.md#stock-firmware). Everything they take is the same on every PICO 4 with that
 firmware; the headset's own data (persist) is read on the headset at boot instead. OUTPUT_DIR
 receives:
@@ -16,7 +16,8 @@ receives:
   manifest.json            the firmware, the OTA's URL and the sha256 of every file
 
 The OTA members are kept under OUTPUT_DIR/download (about 3.9 GB) and fetched again only when
-missing or corrupt. Decompressing needs the brotli command (Debian/Ubuntu: apt install brotli).
+missing or corrupt. The brotli package decompresses the block images (the brotli command where
+this Python lacks it).
 """
 
 from __future__ import annotations

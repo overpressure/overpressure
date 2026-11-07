@@ -48,10 +48,6 @@ installed() {
 			cp -a "$NEW/$dir/." "$NEW/data/$dir/" || die "copying /$dir"
 		done
 		mkdir -p "$NEW/data/etc/upper" "$NEW/data/etc/work"
-		# Settings an earlier system kept under its old folder name.
-		if [ -d "$NEW/data/etc/upper/pico4-poc" ] && [ ! -e "$NEW/data/etc/upper/pico4" ]; then
-			mv "$NEW/data/etc/upper/pico4-poc" "$NEW/data/etc/upper/pico4"
-		fi
 		touch "$NEW/data/.pico4-initialized"
 	elif [ "$(cat "$NEW/data/.pico4-system-image" 2>/dev/null)" != "$image" ]; then
 		# A new system image: its package database replaces the old one.
@@ -138,7 +134,6 @@ switch() {
 	[ -e "$STATE/received" ] || die "no system mounted yet (pico4-userspace installed)"
 	grep -q " $NEW " /proc/mounts || die "$NEW is not mounted"
 	[ "$(cat /proc/1/comm)" = pico4-init ] || die "PID 1 is not pico4-init (rebuild the image)"
-	grep -q '^::restart:/usr/libexec/pico4/switch-userspace' /etc/inittab || die "image lacks the handoff entry"
 
 	host_keys
 	mkdir -p "$NEW/etc/pico4" "$NEW/root/.ssh"

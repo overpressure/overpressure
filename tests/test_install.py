@@ -424,7 +424,7 @@ class EngineTests(unittest.TestCase):
 
 
 class StateLayoutTests(unittest.TestCase):
-    """Each headset's state and logs in its own folder, one lock for the computer, the old state moved over."""
+    """Each headset's state and logs in its own folder, one lock for the computer."""
 
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -437,15 +437,6 @@ class StateLayoutTests(unittest.TestCase):
 
     def engine(self, info: Info, stages: tuple[Stage, ...], ui: Recorder | None = None) -> Engine:
         return Engine(info, stages, ui or Recorder(), root=self.out, env=self.out / ".env")
-
-    def legacy(self, *done: str) -> dict:
-        """Write a state and logs as the engine before the headsets' folders did; return the state."""
-        self.out.mkdir(parents=True, exist_ok=True)
-        state = {"schema": 1, "tasks": {i: {"status": "done", "finished": "2026-11-01T00:00:00+00:00"} for i in done}}
-        (self.out / "state.json").write_text(json.dumps(state), encoding="utf-8")
-        for task in done:
-            (self.out / f"{task}.log").write_text(f"old {task}\n", encoding="utf-8")
-        return state
 
     def test_two_headsets_keep_their_own_state_and_share_the_lock(self):
         other = Info("other", "Other headset")
@@ -464,59 +455,6 @@ class StateLayoutTests(unittest.TestCase):
             self.assertIn("Another installer", ui.finished()["error"])
         finally:
             lock.release()
-
-    def test_a_run_moves_the_old_state_and_its_logs_into_the_headsets_folder(self):
-        state = self.legacy("one")
-        (self.out / "elsewhere.log").write_text("not this plan's\n", encoding="utf-8")
-        ui = Recorder()
-        self.assertEqual(self.engine(INFO, self.stages("one", "two"), ui).run(), "done")
-        self.assertEqual(ui.statuses()[0], ("one", "done"))  # resumed: done before, not run again
-        self.assertFalse((self.out / "state.json").exists())
-        moved = json.loads((self.out / "fake" / "state.json").read_text(encoding="utf-8"))
-        self.assertEqual(moved["tasks"]["one"], state["tasks"]["one"])
-        self.assertEqual((self.out / "fake" / "one.log").read_text(encoding="utf-8"), "old one\n")
-        self.assertTrue((self.out / "elsewhere.log").exists())  # no task of this plan: it stays
-
-    def test_another_plans_old_state_stays_where_it_is(self):
-        self.legacy("one", "flash")
-        other = Info("other", "Other headset")
-        self.assertEqual(self.engine(other, self.stages("one", "two")).run(), "done")
-        self.assertTrue((self.out / "state.json").exists())  # it records "flash", which this plan has not
-        self.assertTrue((self.out / "one.log").exists())
-        self.assertEqual(self.engine(INFO, self.stages("one", "flash")).run(), "done")
-        self.assertFalse((self.out / "state.json").exists())
-
-    def test_a_headset_with_its_own_state_leaves_the_old_one_alone(self):
-        self.engine(INFO, self.stages("one")).run()
-        self.legacy("one")
-        self.engine(INFO, self.stages("one")).run()
-        self.assertTrue((self.out / "state.json").exists())
-
-    def test_the_plan_moves_it_under_the_lock_and_reads_it_in_place_while_another_engine_runs(self):
-        self.legacy("one")
-        lock = install.Lock(self.out / "lock")
-        self.assertTrue(lock.acquire())  # the owner's installer runs
-        try:
-            ui = Recorder()
-            self.engine(INFO, self.stages("one", "two"), ui).show_plan()
-            self.assertEqual(ui.statuses(), [("one", "done"), ("two", "pending")])
-            self.assertTrue((self.out / "state.json").exists())  # not moved under the running engine
-            self.assertFalse((self.out / "fake").exists())
-        finally:
-            lock.release()
-        ui = Recorder()
-        self.engine(INFO, self.stages("one", "two"), ui).show_plan()
-        self.assertEqual(ui.statuses(), [("one", "done"), ("two", "pending")])
-        self.assertFalse((self.out / "state.json").exists())
-        self.assertTrue((self.out / "fake" / "state.json").exists())
-        self.assertTrue((self.out / "fake" / "one.log").exists())
-
-    def test_a_move_cut_off_midway_is_finished_by_the_next_one(self):
-        self.legacy("one", "two")
-        (self.out / "fake").mkdir()
-        (self.out / "one.log").replace(self.out / "fake" / "one.log")  # the logs had begun to move
-        self.engine(INFO, self.stages("one", "two")).show_plan()
-        self.assertEqual(sorted(p.name for p in (self.out / "fake").iterdir()), ["one.log", "state.json", "two.log"])
 
 
 class ChildTests(unittest.TestCase):

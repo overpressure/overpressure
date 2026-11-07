@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Unlicense
 """Initialize the stock 4.19 NCM gadget for Windows, then release it to UsbNcm.
 
-Requires PyUSB, libusb-package and the separately installed UsbDk driver.
+Requires PyUSB and libusb-package (the project's dependencies) and the separately installed UsbDk driver.
 Only the headset's stage-1 gadget, by its exact USB serial, may receive configuration changes
 or NCM setup.
 The caller must bound this process: a Windows driver open/close can stall.
@@ -24,7 +24,7 @@ CDC_SUBCLASS_NCM = 0x0D
 
 
 def command(python: str | os.PathLike[str], serial: str | None = None) -> list:
-    """Return this script's command line for @p python, the Python with the windows-ncm extra.
+    """Return this script's command line for @p python, a Python with pyusb and libusb-package.
 
     It initializes the gadget with @p serial, or (without) checks the dependencies.
     """
@@ -67,10 +67,10 @@ def backend() -> tuple:
     if sys.platform != "win32":
         msg = "The UsbDk NCM helper requires Windows"
         raise ValueError(msg)
-    import libusb_package  # noqa: PLC0415  # only the NCM venv has it
-    import usb.backend.libusb1  # noqa: PLC0415  # only the NCM venv has it
-    import usb.core  # noqa: PLC0415  # only the NCM venv has it
-    import usb.util  # noqa: PLC0415  # only the NCM venv has it
+    import libusb_package  # noqa: PLC0415  # only this program needs it, on Windows
+    import usb.backend.libusb1  # noqa: PLC0415  # only this program needs it, on Windows
+    import usb.core  # noqa: PLC0415  # only this program needs it, on Windows
+    import usb.util  # noqa: PLC0415  # only this program needs it, on Windows
 
     helper = ctypes.WinDLL(
         str(Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "UsbDk Runtime Library" / "UsbDkHelper.dll")

@@ -6,6 +6,8 @@ import re
 import unittest
 from pathlib import Path
 
+from devices.phoenix.tooling import assets
+
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 UNITS = ROOTFS / "usr/lib/systemd/system"
@@ -23,8 +25,8 @@ class SteamLinkTests(unittest.TestCase):
         self.build = read(ROOT / "scripts/build-userspace.sh")
 
     def test_venus_firmware_from_the_modem_partition(self):
-        extract = read(ROOT / "scripts/extract-graphics-firmware.sh")
-        self.assertIn('mcopy -n -i "$stock/modem.bin" \'::/image/venus.*\' "$output/"', extract)
+        self.assertEqual(assets.VENUS, ("venus.*",))
+        self.assertEqual(assets.KINDS["graphics-firmware"].sources["venus."], "modem /image")
         self.assertIn('install -m 0644 "$firmware"/venus.* "$T/usr/lib/firmware/"', self.build)
 
     def test_mainline_probes_venus_once_its_firmware_is_there(self):

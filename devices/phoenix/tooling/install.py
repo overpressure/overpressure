@@ -11,8 +11,9 @@ the EDL backup's LUNs, the unlock's fastboot serial and the Wi-Fi profile.
 
 1. computer: the host tools, the unlock files, then the doctor's checks (what fails becomes one
    message with its fixes).
-2. build: stock firmware and assets, stage-1 image, userspace archive, system image, dev image,
-   Valve's kernel, boot image; each skips when its output is there.
+2. build: stock firmware and assets, stage-1 image, the build container's image (the builds'
+   Linux side runs there), userspace archive, system image, dev image, Valve's kernel, boot
+   image; each skips when its output is there.
 3. connect: developer mode and USB debugging (an action ask), exactly one adb device, its
    identity (device probe), firmware and panel; an unverified one is refused here.
 4. prepare (writes): one data-loss consent, the EDL backup (printgpt for the LUNs and the EDL
@@ -31,7 +32,7 @@ import sys
 import uuid
 from typing import TYPE_CHECKING, Callable
 
-from overpressure import doctor, qualcomm, runner, tools
+from overpressure import REPO, doctor, linux, qualcomm, runner, tools
 from overpressure.install import Ask, Context, Failed, Field, Stage, Task
 from overpressure.process import until
 
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
     from overpressure.doctor import Check
     from overpressure.headset import Headset, Step
 
-ROOT = localconfig.ROOT
+ROOT = REPO
 Settings = localconfig.Settings
 KEY = Settings.key
 #: What the installer finds out and writes itself, so the doctor's check of it does not count.
@@ -56,6 +57,7 @@ PROVIDED = {
     KEY("edl_serial"),
     "identity",
     "EDL backup",
+    "build container image",  # the build stage's first Linux task builds it
 }
 #: The connection file the installer writes on the headset (one, replaced by the next install).
 WIFI_FILE = "/etc/NetworkManager/system-connections/overpressure-wifi.nmconnection"
@@ -70,10 +72,10 @@ FASTBOOT_SECONDS = 180
 
 NOTHING_CHANGED = "Nothing was changed on your headset."
 AGAIN = "Start the installer again to go on where it stopped."
-WSL = (
-    "Windows' Linux (WSL) is missing. Installing it needs an administrator and a restart, which the "
-    "installer cannot do for you: open PowerShell as administrator, run wsl --install -d Ubuntu-24.04, "
-    "restart the computer, open Ubuntu once from the Start menu, then start the installer again."
+#: The container engine the builds need, whichever it is and however it runs.
+ENGINE_MISSING = (
+    "The system is built in a container, which needs Docker or Podman. Install one (docs.docker.com/get-docker "
+    "or podman.io), make sure it is running, then start the installer again."
 )
 PLUG_IN = Ask(
     "plug-in",
@@ -189,11 +191,17 @@ def keyfile(ssid: str, password: str, connection: str) -> bytes:
     return "\n".join(lines).encode()
 
 
-def computer_problems(found: Sequence[Check], platform: str, *, wsl: bool) -> str:
-    """Return the doctor's failed checks as one message with their fixes; WSL's explained first."""
+def engine_problem(found: Sequence[Check]) -> str:
+    """Return the plain message for a missing or silent container engine, or ""."""
+    return ENGINE_MISSING if any(c.name == doctor.ENGINE for c in found) else ""
+
+
+def computer_problems(found: Sequence[Check]) -> str:
+    """Return the doctor's failed checks as one message with their fixes; the container engine's explained first."""
     lines = ["This computer needs a few things first:"]
-    if platform == "win32" and (not wsl or any(c.name == "WSL (as root)" for c in found)):
-        lines.append(WSL)
+    engine = engine_problem(found)
+    if engine:
+        lines.append(engine)
     for check in found:
         lines.append(f"- {check.name} ({check.needed_for}): {check.detail}")
         if check.fix:
@@ -212,6 +220,7 @@ class Plan:
         work: Path = devloop.WORK,
         computer: Callable[[], list[Check]] | None = None,
         edl_count: Callable[[], int] = qualcomm.edl_devices,
+        image_present: Callable[[], bool] = linux.image_present,
         factory_reset: bool = False,
     ) -> None:
         """Install through @p headset's steps; @p factory_reset adds the owner's reset after the unlock."""
@@ -220,6 +229,7 @@ class Plan:
         self.work = work
         self.computer = computer or (lambda: doctor.run(headset))
         self.edl_count = edl_count
+        self.image_present = image_present
         self.factory_reset = factory_reset
         self.steps: dict[str, Step] = {step.key: step for step in headset.steps()}
 
@@ -244,6 +254,11 @@ class Plan:
         """Run the window's step @p key."""
         ctx.run(self.argv(ctx, key))
 
+    @staticmethod
+    def build_environment(ctx: Context) -> None:
+        """Build the build container's image, where the builds' Linux side runs."""
+        ctx.run([sys.executable, "-m", "overpressure", "container", "build"])
+
     def out(self, *parts: str) -> Path:
         """Return a path under the repository's out/."""
         return self.root.joinpath("out", *parts)
@@ -263,8 +278,7 @@ class Plan:
     @staticmethod
     def tools_there(_ctx: Context) -> bool:
         """Tell whether this host's pinned tools are fetched."""
-        fetched = all(tools.installed(tools.ARCHIVE_TOOLS[n]) for n in tools.wanted() if n in tools.ARCHIVE_TOOLS)
-        return fetched and ("ncm-venv" not in tools.wanted() or tools.ncm_python() is not None)
+        return all(tools.installed(tool) for tool in tools.ARCHIVE_TOOLS.values())
 
     @staticmethod
     def unlock_files_there(ctx: Context) -> bool:
@@ -281,8 +295,7 @@ class Plan:
                 ctx.note(f"{check.name}: {check.detail}" + (f" ({check.fix})" if check.fix else ""), "warning")
         problems = doctor.failed(found)
         if problems:
-            wsl = any(c.name == "WSL (as root)" and c.status == doctor.OK for c in found) or sys.platform != "win32"
-            raise Failed(computer_problems(problems, sys.platform, wsl=wsl), NOTHING_CHANGED + " " + AGAIN)
+            raise Failed(computer_problems(problems), NOTHING_CHANGED + " " + AGAIN)
 
     # -- 2. the build ---------------------------------------------------------------------------
     def assets_there(self, _ctx: Context) -> bool:
@@ -606,10 +619,18 @@ class Plan:
         built_where = NOTHING_CHANGED + " " + AGAIN
         build = [
             self.step_task(
-                "assets", "Stock firmware and assets", "about 40 min", where=built_where, done=self.build_done("assets")
+                "assets", "Stock firmware and assets", "about 20 min", where=built_where, done=self.build_done("assets")
             ),
             self.step_task(
                 "stage1", "Maintenance system image", "about 2 min", where=built_where, done=self.build_done("stage1")
+            ),
+            Task(
+                "container",
+                "Build environment",
+                self.build_environment,
+                "a few minutes the first time",
+                done=lambda _ctx: self.image_present(),
+                where=built_where,
             ),
             self.step_task(
                 "userspace",

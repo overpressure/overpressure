@@ -12,6 +12,7 @@ sets keys in .env and keeps the rest of it: the installer writes the serials it 
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from dataclasses import dataclass, fields
@@ -84,7 +85,7 @@ class DeviceSettings(Settings):
     backup: str = "backup/stock"
     loader: str = "assets/firehose.elf"
     edl: str = ""  #: empty: the fetched edl-ng (python -m overpressure tools)
-    ncm_python: str = ""  #: empty: the fetched NCM venv on Windows
+    ncm_python: str = ""  #: empty: this Python on Windows, which has pyusb and libusb-package
     ssh_public_key: str = ""  #: the owner's own public key file, enrolled besides this PC's key
 
     def edl_program(self) -> Path:
@@ -96,12 +97,14 @@ class DeviceSettings(Settings):
     def ncm(self) -> Path | None:
         """Return the Python for the Windows NCM initialization.
 
-        The ncm_python setting when set, else the fetched NCM venv's; None when there is neither
-        (or not on Windows).
+        The ncm_python setting when set, else this Python when it has pyusb and libusb-package
+        (pyproject.toml's dependencies); None when there is neither (or not on Windows).
         """
         if self.ncm_python:
             return self.path("ncm_python")
-        return tools.ncm_python() if sys.platform == "win32" else None
+        if sys.platform != "win32" or not all(importlib.util.find_spec(m) for m in ("usb", "libusb_package")):
+            return None
+        return Path(sys.executable)
 
 
 def parse(text: str) -> dict:

@@ -11,16 +11,10 @@ import unittest
 import zipfile
 from pathlib import Path
 
+from devices.phoenix.tooling import assets, stock
 from overpressure import ota
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = [
-    "extract-graphics-firmware.sh",
-    "extract-sensor-data.sh",
-    "extract-wlan.sh",
-    "extract-audio.sh",
-    "extract-stock-slam.sh",
-]
 
 
 def read(path: Path) -> str:
@@ -30,12 +24,10 @@ def read(path: Path) -> str:
 
 class ExtractionTests(unittest.TestCase):
     def test_no_extraction_reads_the_backup(self):
-        for name in SCRIPTS:
-            script = read(ROOT / "scripts" / name)
-            self.assertNotRegex(script, r"lun\d/|persist\.bin|superimg|backup", name)
-            self.assertIn('. "$project/../../scripts/stock-lib.sh"', script, name)
-            self.assertRegex(script, r'stock_dir "\$\{1:-\}"( [a-z]+\.(img|bin))+\n', name)
-            self.assertNotIn(b"\r", (ROOT / "scripts" / name).read_bytes(), name)
+        source = read(ROOT / "tooling/assets.py")
+        self.assertNotRegex(source, r"lun\d/|persist\.bin|superimg|backup")
+        for name, kind in assets.KINDS.items():
+            self.assertTrue(set(kind.images) <= set(stock.COPIED) | set(stock.BLOCK_IMAGES), name)
 
     def test_the_build_ships_no_persist_data(self):
         build = read(ROOT / "scripts/build-userspace.sh")
@@ -91,10 +83,13 @@ class DevImageTests(unittest.TestCase):
 
 
 class StockLibTests(unittest.TestCase):
-    def test_files_checked_before_use(self):
+    def test_the_kernel_build_dumps_through_overpressures_ext4_reader(self):
         lib = read(ROOT.parent.parent / "scripts/stock-lib.sh")
-        self.assertIn("sha256 does not match the stock manifest", lib)
-        self.assertTrue(re.search(r"stock_dir\(\) \{", lib))
+        self.assertTrue(re.search(r"dump\(\) \{", lib))
+        self.assertIn("python3 -m overpressure.ext4 cat", lib)
+        kernel = read(ROOT / "kernel/build-kernel.sh")
+        self.assertIn('. "$here/../../../scripts/stock-lib.sh"', kernel)
+        self.assertNotIn("debugfs", lib + kernel)
 
 
 if __name__ == "__main__":

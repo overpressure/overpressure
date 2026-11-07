@@ -7,6 +7,8 @@ import unittest
 from collections.abc import Sequence
 from pathlib import Path
 
+from devices.phoenix.tooling import assets
+
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 UNITS = ROOTFS / "usr/lib/systemd/system"
@@ -89,7 +91,6 @@ class RootRunnerTests(unittest.TestCase):
             LIBEXEC / "stock-slam",
             LIBEXEC / "remoteproc-boot",
             UNITS / "pico4-slamd.service",
-            ROOT / "scripts/extract-stock-slam.sh",
             ROOT / "src/stockslam/build.sh",
         ):
             self.assertNotIn(b"\r", path.read_bytes(), path.name)
@@ -97,7 +98,14 @@ class RootRunnerTests(unittest.TestCase):
 
 class ExtractionTests(unittest.TestCase):
     def test_extracts_what_the_tracker_needs(self):
-        script = read(ROOT / "scripts/extract-stock-slam.sh")
+        taken = {
+            *assets.SLAM_LIBRARIES,
+            *assets.SLAM_DSP_MODULES,
+            *assets.DSP_LISTENER_LIBRARIES,
+            *assets.SLAM_BOOTSTRAP,
+            *assets.CDSP_FIRMWARE,
+        }
+        source = read(ROOT / "tooling/assets.py")
         # libion: without it the tracker's DSP optical flow cannot allocate and 6DoF never starts.
         for name in (
             "libSlam.so",
@@ -110,26 +118,24 @@ class ExtractionTests(unittest.TestCase):
             "libpico_cv_dsp_skel.so",
             "libfastcvadsp.so",
             "libdspCV_skel.so",
-            "cdsprpcd",
             "libcdsp_default_listener.so",
-            "linker64",
-            "fastrpc_shell_3",
-            "cdsp.mdt",
-            "cdspr.jsn",
             "libExposureImageProcess.so",
             "libtianti_shm_dynamic.so",
             "libc++_shared.so",
+            "cdsp.*",
+            "cdspr.jsn",
         ):
-            self.assertIn(name, script, name)
+            self.assertIn(name, taken, name)
+        for path in ("/bin/cdsprpcd", "/system/bin/bootstrap/linker64", '"/cdsp"', "fastrpc_shell_3"):
+            self.assertIn(path, source, path)
         # From the stock firmware (PICO's public OTA), checked against its manifest first.
-        self.assertIn('stock_dir "${1:-}" system.img vendor.img modem.bin dsp.bin', script)
-        self.assertIn("sha256 does not match the stock manifest", read(ROOT.parent.parent / "scripts/stock-lib.sh"))
+        self.assertEqual(assets.KINDS["stock-slam"].images, ("system.img", "vendor.img", "modem.bin", "dsp.bin"))
         # As a fresh PICO OS install, nothing of the camera modules' ids from the backup.
-        self.assertNotIn("camera_otp", script)
-        self.assertNotIn("userdata", script)
-        # debugfs's rdump creates the directory inside its target: dump into the parent.
-        self.assertIn('dump "$stock/system.img" /system/etc/pvr/config "$root/system/etc/pvr"\n', script)
-        self.assertIn('dump "$stock/dsp.bin" /cdsp "$root/vendor/dsp"\n', script)
+        self.assertNotIn("camera_otp", source)
+        self.assertNotIn("userdata", source)
+        # The trees come in whole, as debugfs's rdump took them: into their parent folder.
+        self.assertIn('dump(system, "/system/etc/pvr/config", root / "system/etc/pvr")', source)
+        self.assertIn('dump(s.ext4("dsp.bin"), "/cdsp", root / "vendor/dsp")', source)
 
 
 class BuildTests(unittest.TestCase):
@@ -520,26 +526,25 @@ class DepthMeshTests(unittest.TestCase):
                 self.assertAlmostEqual(turned[i][j], c_r_ct[i][j])
 
     def test_extracts_libphotoid_and_its_backends(self):
-        script = read(ROOT / "scripts/extract-stock-slam.sh")
-        for name in (
-            "libphotoid.so",
-            "libSNPE.so",
-            "libhexagon_runtime.so",
-            "libcvp2.so",
-            "libcvp2_hfi.so",
-            "libcvp_common.so",
-            "vst_releaseA.json.cpt",
-            "FLNet_lite_v2",
-            "libcvpdsp_skel.so",
-            "libhexagon_nn_skel.so",
-        ):
-            self.assertIn(name, script, name)
-        # SNPE has the DSP load its skel by the system path, as on PICO OS.
-        self.assertIn(
-            "for f in libsnpe_dsp_v66_domains_v2_skel.so libsnpe_dsp_domains_v2.so; do\n"
-            '    dump "$stock/system.img" "/system/lib64/$f" "$root/system/lib64/$f"',
-            script,
+        self.assertEqual(
+            assets.DEPTH_MESH_LIBRARIES,
+            (
+                "libphotoid.so",
+                "libSNPE.so",
+                "libhexagon_runtime.so",
+                "libcvp2.so",
+                "libcvp2_hfi.so",
+                "libcvp_common.so",
+            ),
         )
+        self.assertEqual(assets.DEPTH_MESH_CONFIG, ("vst_releaseA.json.cpt", "vst_releaseB.json.cpt"))
+        self.assertIn("libcvpdsp_skel.so", assets.SLAM_DSP_MODULES)
+        self.assertIn("libhexagon_nn_skel.so", assets.SLAM_DSP_MODULES)
+        source = read(ROOT / "tooling/assets.py")
+        self.assertIn('dump(system, "/system/etc/pxr/vst", root / "system/etc/pxr")', source)
+        # SNPE has the DSP load its skel by the system path, as on PICO OS.
+        self.assertEqual(assets.SNPE_DSP, ("libsnpe_dsp_v66_domains_v2_skel.so", "libsnpe_dsp_domains_v2.so"))
+        self.assertIn('dump(system, f"/system/lib64/{name}", root / "system/lib64" / name)', source)
 
     def test_cvp_session_answered_without_the_hardware(self):
         # vst_releaseA opens a CVP session and takes its depth from FLNet on the Compute DSP.

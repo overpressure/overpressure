@@ -46,6 +46,11 @@ class DeviceSettingsTests(unittest.TestCase):
         self.assertEqual(s.edl_program(), Path("edl-ng" + localconfig.EXE))  # from PATH
         with mock.patch.object(localconfig.sys, "platform", "linux"):
             self.assertIsNone(s.ncm())  # Windows only
+        with mock.patch.object(localconfig.sys, "platform", "win32"):
+            with mock.patch.object(localconfig.importlib.util, "find_spec", return_value=object()):
+                self.assertEqual(s.ncm(), Path(localconfig.sys.executable))  # this Python has the packages
+            with mock.patch.object(localconfig.importlib.util, "find_spec", side_effect=lambda m: m != "usb" or None):
+                self.assertIsNone(s.ncm())  # without pyusb
         s.ncm_python = "tools/python"
         self.assertEqual(s.ncm(), localconfig.ROOT / "tools/python")
 

@@ -1,11 +1,9 @@
 #!/bin/bash
 # SPDX-License-Identifier: Unlicense
-# Build a mainline arm64 kernel for the QEMU smoke test (Linux / WSL only).
+# Build a mainline arm64 kernel for the QEMU smoke test, in the build container, which has its
+# tools (curl, tar, xz, make, gcc, flex, bison, bc, libssl-dev, libelf-dev, gcc-aarch64-linux-gnu):
 #
-# Needs: curl, tar, xz, make, gcc, flex, bison, bc, libssl-dev, libelf-dev and
-# an aarch64 cross compiler (Debian/Ubuntu: gcc-aarch64-linux-gnu).
-#
-# Usage: tests/qemu/build-test-kernel.sh [kernel-version]
+#   python -m overpressure container run -- bash devices/phoenix/tests/qemu/build-test-kernel.sh [kernel-version]
 # Output: cache/qemu/Image (inside the project directory)
 set -euo pipefail
 
@@ -14,8 +12,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 PROJECT=$(cd "$HERE/../../../.." && pwd)  # the repository: cache/, out/
 FRAGMENTS=("$HERE/kernel.fragment")
 IMAGE=Image
-# Build on a native Linux filesystem: compiling under /mnt/c (WSL) is very slow.
-WORK=${PICO4_BUILD_DIR:-$HOME/.cache/pico4}/linux-$VERSION
+# Build on a Linux file system (the container's /var/tmp volume): a bind mount from Windows or macOS is slow.
+WORK=${PICO4_BUILD_DIR:-/var/tmp/pico4-qemu-kernel}/linux-$VERSION
 OUT=$PROJECT/cache/qemu
 CROSS=${CROSS_COMPILE:-aarch64-linux-gnu-}
 

@@ -38,11 +38,10 @@ stock `vendor` partition of the headset's firmware. They come from PICO's public
 ([development.md](development.md#stock-firmware)):
 
 ```sh
-python3 -m overpressure stock --firmware 5.13.7-global-seko /var/tmp/pico4-stock/5.13.7-global-seko
-devices/phoenix/scripts/extract-graphics-firmware.sh /var/tmp/pico4-stock/5.13.7-global-seko assets/graphics-firmware-5.13.7
+python -m overpressure assets --firmware 5.13.7-global-seko graphics-firmware
 ```
 
-The script checks the stock directory's manifest first and writes the files' SHA-256 and the
+The command checks the stock folder's manifest first and writes the files' SHA-256 and the
 firmware build to `manifest.json`. The project distributes no vendor files; `assets/` and the
 build output stay private. The userspace build takes the same directory (`--gpu-firmware`,
 [userspace.md](userspace.md)).

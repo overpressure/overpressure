@@ -208,7 +208,7 @@ configuration service). It works like the Oculus mobile SDK's:
 - **Chromatic aberration.** Red and blue scale the green tan-angle by
   `1 + CA0 + CA1·r² + CA4·r` and `1 + CA2 + CA3·r² + CA5·r`. The six terms
   (`sdk_lens_chromaticAberration0…5`) come from the stock `SDK_Lens_ConfigFile.txt` in the system
-  partition, which `extract-sensor-data.sh` copies next to the calibration. The correction is
+  partition, which the sensor data's assets copy next to the calibration. The correction is
   off by default (`PICO4_LENS_CA=1` turns it on), as on PICO OS, whose rule files set
   `sdk_chromaticStaus = 0`. With three separate texture reads per pixel, the two-layer test scene
   drops to 83–87 commits per second; geometry alone holds 87–88.
@@ -625,7 +625,7 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   Android runtime: the tracker, the eleven libraries it needs (among them `libion.so`, without
   which its DSP optical flow cannot allocate memory and 6DoF never starts), its DSP modules,
   configuration (`/system/etc/pvr/config`), the DSP's process shells and its root listener
-  `cdsprpcd`. [scripts/extract-stock-slam.sh](../scripts/extract-stock-slam.sh) takes them from
+  `cdsprpcd`. [tooling/assets.py](../tooling/assets.py) (`python -m overpressure assets`) takes them from
   the stock firmware ([development.md](development.md#stock-firmware)), `build-userspace.sh
   --stock-slam` installs them. Two stand-ins of this
   project replace Android pieces: a `libandroid.so` with the two trace calls the tracker uses, and
@@ -1051,7 +1051,7 @@ aim × T, where T is a position and a quaternion (w, x, y, z) per hand, left blo
 tracking service takes from `sys_tracking_aim_to_grip_transform` or, without that key, from
 built-in values (a turn of about 34° about x and about 5 cm of lever arm on this firmware).
 [`tooling/aimgrip.py`](../tooling/aimgrip.py) reads the built-in values from the 5.13.7
-`libpvrtrackingservice.so`, `extract-sensor-data.sh` writes them to
+`libpvrtrackingservice.so`, the assets command writes them to
 `calibration/controllers/aim-to-grip.json`, and the driver composes the grip pose the same way,
 adding ω × lever arm to its linear velocity; without the file the grip pose is the aim pose. The
 SteamVR driver reports the aim pose as the controller's pose, the frame of the render models.
@@ -1062,7 +1062,7 @@ axes are the published aim pose: with no transform, PICO OS's LED rings, turned 
 frame and less the lever arm, lie within 1.5 mm of the surface.
 [`tooling/controllermodel.py`](../tooling/controllermodel.py) converts them into SteamVR render
 models (triangulated OBJ in metres, material, texture, and components for the aim and, from
-`aim-to-grip.json`, the grip), `extract-sensor-data.sh` writes them to `rendermodels/`, and the
+`aim-to-grip.json`, the grip), the assets command writes them to `rendermodels/`, and the
 image build copies them to `/usr/share/steamvr-monado/resources/rendermodels/`, where SteamVR
 finds `{monado}pico4_controller_left` and `_right`.
 
@@ -1080,7 +1080,7 @@ exposure, every other camera frame (4 lines at gain 26). PICO OS's controller tr
 points in metres, between 1.5 and 9.8 cm from the model's origin, the left ring the right one
 mirrored in y, and one unit normal per LED. [`tooling/ledmodel.py`](../tooling/ledmodel.py) reads
 both by their addresses in the 5.13.7 library and refuses anything that is not such a ring;
-`extract-sensor-data.sh` writes them to `calibration/controllers/led-models.json`, installed with
+the assets command writes them to `calibration/controllers/led-models.json`, installed with
 the rest of the calibration. They are vendor data and stay out of the repository.
 
 On every controller connect, as PICO OS does, the driver's station thread reads that
@@ -1136,7 +1136,7 @@ set's exposure time and takes the head pose at that time from the HMD's own trac
 is the LED-model frame turned like the 3DoF axis mapping, offset by PICO OS's lever arm of
 about 2 cm, which its client adds in that frame after prediction.
 [`tooling/leverarm.py`](../tooling/leverarm.py) reads it from the 5.13.7
-`libpico_controller_tracking.client.so` and `extract-sensor-data.sh` writes it to
+`libpico_controller_tracking.client.so` and the assets command writes it to
 `calibration/controllers/lever-arm.json`; without it, or without the LED models, the tracker stays
 off. `PICO4_CTRACK=0` turns the tracker off; `PICO4_CTRACK_TRACE=FILE` writes one CSV row per hand
 after every update: the last frame set's acquisition and tracking result and the published pose.
@@ -1167,11 +1167,11 @@ sets while the IMU runs.
 ## Build
 
 Extract the inputs from the stock firmware ([development.md](development.md#stock-firmware)),
-as root on Linux/WSL. This needs `debugfs` and `mcopy`; the script first verifies the stock
-directory against its manifest and never touches the headset:
+in Python on any system; the command first verifies the stock folder against its manifest and
+never touches the headset:
 
 ```sh
-bash devices/phoenix/scripts/extract-sensor-data.sh /var/tmp/pico4-stock/5.13.7-global-seko assets/sensor-data-5.13.7
+python -m overpressure assets sensor-data
 ```
 
 | Output | Content (source partition) |
@@ -1202,7 +1202,7 @@ PICO OS's head tracker comes the same way, from the stock system, vendor, modem 
 partitions:
 
 ```sh
-bash devices/phoenix/scripts/extract-stock-slam.sh /var/tmp/pico4-stock/5.13.7-global-seko assets/stock-slam-5.13.7
+python -m overpressure assets stock-slam
 ```
 
 | Output | Content (source partition) |

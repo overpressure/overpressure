@@ -47,25 +47,28 @@ status in its roadmap and README current.
 
 ## Layout
 
-- `overpressure/`: the generic host package, standard-library Python (3.9+):
+- `overpressure/`: the generic host package, Python (3.9+) on the standard library and three pinned
+  packages (see Conventions):
   `headset.py` (the `Headset` interface: `Info`, `commands()`, `steps()`, `install_plan()`; `Step`,
-  `Param`; the registry), `runner.py` (a step's process on this host: WSL or sudo for Linux-root steps),
+  `Param`; the registry), `runner.py` (a step's process on this host: the build container for Linux-root steps),
   `__main__.py` (the command line), `install.py` (the installer's engine: stages, asks, resumable state,
-  JSON events; `python -m overpressure install`), `window/` (the window, CustomTkinter: the one
-  exception to the standard library, only for the window; `installer.py` and `advanced.py` are the
+  JSON events; `python -m overpressure install`), `window/` (the window, CustomTkinter, which
+  only the window imports; `installer.py` and `advanced.py` are the
   installer view's and Advanced mode's models without widgets, `app.py` and `advanced_view.py` draw
   them on `kit.py`'s components, `theme.py` the design tokens: colours, spacing, type and fonts),
   `tools.py` (pinned host tools:
-  platform-tools, edl-ng, the NCM venv), `linux.py` and `container/` (where Linux-root steps run:
-  WSL, sudo or the build container), `doctor.py` (dependency checks:
+  platform-tools, edl-ng), `linux.py` and `container/` (the build container, where every
+  Linux-root step runs: one named build at a time, its stop, the aarch64 handler), `doctor.py` (dependency checks:
   the host's, the ones every Qualcomm Android headset shares, and `Headset.dependencies()`),
   `localconfig.py` (`.env`, one key prefix per headset; `DeviceSettings`), `stage1.py` (the
   Alpine stage 1 in a stock Android boot image), `ota.py` (stock images and partitions from a
-  vendor OTA, pinned files from a remote zip), `android.py` (adb/fastboot, fail-closed, boot wait,
+  vendor OTA, pinned files from a remote zip), `assets.py` (a headset's assets out of its stock folder:
+  the checked folder, files out of its images, the assets manifest), `android.py` (adb/fastboot, fail-closed, boot wait,
   partition sizes), `qualcomm.py` (SoC ID, EDL, partition maps, backups, verified writes),
   `backup.py` (verified backups), `process.py` (programs and bounded waits), `ssh.py`,
   `evidence.py` (runs that record every step and command), `storage.py` (the read-only storage
-  policy), and the shared formats: `bootimg.py` (also ramdisk edits), `avb.py`, `sparse.py`,
+  policy), and the shared formats: `bootimg.py` (also ramdisk edits), `ext4.py` and `fat.py` (read-only
+  file system readers for stock images), `avb.py`, `sparse.py`,
   `payload.py`, `cpio.py`, `compress.py`, `alpine.py`, `apksign.py`,
   `kernelinfo.py`, `elfdeps.py`, `windows_ncm.py`, and `fastboot.py` (sparse-or-raw flashing, and
   the RAM boot every headset with `fastboot boot` gets: `python -m overpressure ram-boot`).
@@ -73,7 +76,7 @@ status in its roadmap and README current.
   images' sources and recipes, `scripts/`, `tests/`, `docs/`, `README.md`, `CLAUDE.md`,
   `device.mk` (its Makefile targets).
 - `tests/`: host tests of the generic package. `docs/`: `tool.md`, `adding-a-headset.md`, `releasing.md`.
-  `scripts/`: shell helpers for the headsets' scripts (`stock-lib.sh`: a stock firmware folder), and the
+  `scripts/`: shell helpers for the headsets' scripts (`stock-lib.sh`: files out of a stock ext4 image), and the
   repository's checks: `check-private.py`, `check-docs.py`, `run-shellcheck.py`, `c-tests.sh`, `changelog.py`.
 - `Install.cmd`, `Install.command`, `install.sh`: the start scripts; they fetch the pinned uv, a managed
   Python and CustomTkinter into `cache/` and open the window.
@@ -89,13 +92,14 @@ make lint                                         # uv run: ruff format --check,
 make format                                       # uv run: ruff format, ruff check --fix
 python -m overpressure doctor                     # what this host lacks for the headset, with fixes
 python -m overpressure tools                      # fetch the pinned host tools into cache/tools
-python -m overpressure container build            # the build container (OVERPRESSURE_LINUX=docker)
+python -m overpressure container build            # the build container, where the builds' Linux side runs
 uv sync --extra gui                               # also CustomTkinter, for the window
 python -m overpressure gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]  # the window (demo: nothing runs)
 python -m overpressure devices                    # the headsets
 python -m overpressure [--device CODENAME] steps  # a headset's steps and their command lines
 python -m overpressure [--device CODENAME] COMMAND ...   # a command of the headset
-make test                                         # Linux/WSL: also each headset's shell tests
+make test                                         # Linux: also each headset's shell tests
+python -m overpressure container run -- make test  # the same on any host, in the build container
 ```
 
 With one headset the `--device` choice is implicit; `OVERPRESSURE_DEVICE` in `.env` picks one
@@ -111,11 +115,11 @@ otherwise. Each headset's CLAUDE.md lists its build and hardware commands.
   the user before the first flash or low-level (EDL, bootloader) action in a new conversation.
 - **Never run two builds at once**: they share their build roots and caches.
 
-## Environment quirks (Windows host + WSL)
+## Environment quirks (Windows host)
 
-- **Variable expansion.** `wsl -u root -- bash -c '... $VAR ...'` expands `$VAR` before bash
-  runs, even inside single quotes. Write the commands to a script file and run
-  `wsl -u root -- bash /mnt/c/.../script.sh`.
+- **Builds.** The builds' Linux side runs only in the build container (Docker or Podman must be
+  running): `python -m overpressure container run -- ...` from the repository root, which it sees
+  at `/work`; build roots live in its `/var/tmp` volume. One build at a time: a second is refused.
 - **MSYS paths.** From Git Bash, export `MSYS_NO_PATHCONV=1`. Otherwise `/abs/paths` in
   arguments and environment values become `C:/Program Files/Git/...`.
 - **Backslashes.** Commands sent through the Bash tool collapse `\\` to `\`, also inside quoted
@@ -125,15 +129,19 @@ otherwise. Each headset's CLAUDE.md lists its build and hardware commands.
   `devices/*/userspace/`, `devices/*/initramfs/` and scripts must stay LF (PKGBUILD checksums
   depend on it).
 - **Tk.** The window needs Tk and CustomTkinter, which the start scripts' managed Python has (uv's
-  Python 3.12 with the `gui` extra); Windows' own Python has Tk, WSL's usually not. The command line
+  Python 3.12 with the `gui` extra); Windows' own Python has Tk, a Linux system Python often not. The command line
   does everything the window does.
 - **PowerShell.** Run project PowerShell scripts with `pwsh` (7): Windows PowerShell 5.1 aborts
   on native stderr.
 
 ## Conventions
 
-- **Match the code around you.** Python uses the standard library only, dataclasses and
-  type hints, and short docstrings that explain why. It is formatted by ruff (line length 120)
+- **Match the code around you.** Python uses the standard library, dataclasses and
+  type hints, and short docstrings that explain why. Beyond the standard library it takes only the
+  packages `pyproject.toml` pins where they save the owner an outside tool: `brotli` (the stock OTA's
+  images; else the brotli command) and `pyusb` with `libusb-package` (counting EDL devices; else the
+  system's own listing), and CustomTkinter for the window. Each is imported where it is used, with a
+  fallback or a one-line fix, so plain `python -m overpressure` runs without them. It is formatted by ruff (line length 120)
   and passes every ruff rule and `ty check` (`make lint`): full annotations, docstrings with an
   imperative first line, exception messages through a variable, keyword-only booleans; a
   `# ty: ignore[rule]` or `# noqa: RULE` names its rule and says why. A new extensionless Python

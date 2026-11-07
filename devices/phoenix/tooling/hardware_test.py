@@ -65,7 +65,7 @@ def validate_report(data: bytes, run_id: str) -> None:
                 require(run_id.encode() in payload, "HTTP report is from a different boot")
 
 
-def prepare_image(  # noqa: PLR0913  # the image's inputs; its deadlines and mode keyword-only
+def prepare_image(  # noqa: PLR0913  # the image's inputs; its deadlines keyword-only
     source: Path,
     folder: Path,
     run_id: str,
@@ -73,7 +73,6 @@ def prepare_image(  # noqa: PLR0913  # the image's inputs; its deadlines and mod
     *,
     connect_timeout: int = 210,
     test_timeout: int = 900,
-    userspace: bool = False,
 ) -> dict:
     """Write the test boot image: the stage-1 image with this run's key, ID and device deadlines."""
     original = source.read_bytes()
@@ -96,13 +95,6 @@ def prepare_image(  # noqa: PLR0913  # the image's inputs; its deadlines and mod
         and b"svc recovery-watch" in tree.nodes["etc/inittab"].data,
         "Rebuild stage 1 image: independent recovery watchdog is missing",
     )
-    if userspace:
-        require(
-            "usr/bin/pico4-userspace" in tree.nodes
-            and "usr/libexec/pico4/pico4-init" in tree.nodes
-            and b"::restart:/usr/libexec/pico4/switch-userspace" in tree.nodes["etc/inittab"].data,
-            "Rebuild stage 1 image: the userspace handoff is missing",
-        )
     info = json.loads(tree.nodes["etc/pico4/build-info"].data)
     require(0 < connect_timeout < test_timeout, "Invalid device recovery deadlines")
     # Preflight runs the exact source userspace, excluding device nodes.
@@ -805,7 +797,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901  # every option ch
             p.add_argument("--ssh-keygen", default="ssh-keygen")
             p.add_argument(
                 "--windows-ncm-python",
-                help="Python with the windows-ncm extra (pyproject.toml); enable UsbDk NCM initialization",
+                help="Python with pyusb and libusb-package (pyproject.toml); enable UsbDk NCM initialization",
             )
             p.add_argument("--host", default="172.16.42.1", help="headset USB IPv4 address")
             for flag, default in (("boot", 180), ("report", 180), ("recovery", 420)):

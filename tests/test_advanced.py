@@ -8,9 +8,8 @@ import sys
 import time
 import unittest
 from typing import TYPE_CHECKING, Callable, NoReturn
-from unittest import mock
 
-from overpressure import REPO, doctor, linux, runner, window
+from overpressure import REPO, doctor, runner, window
 from overpressure.headset import Command, Headset, Info, Param, Registry, Step
 from overpressure.install import Stage, Task
 from overpressure.window import advanced, app, installer
@@ -151,17 +150,59 @@ class StepsTests(unittest.TestCase):
         steps = advanced.Steps(Registry({"fake": Fake()}))
         _, us, fl = Fake().steps()
         self.assertEqual(steps.help(fl), "Writes the image. Writes to the headset: asks before it starts.")
-        with mock.patch.object(linux, "backend", return_value="wsl"):
-            self.assertEqual(steps.help(us), "Runs on Linux as root (WSL).")
+        self.assertEqual(steps.help(us), "Runs on Linux as root, in the build container.")
 
     def test_browse_picks_files_and_folders_on_this_host_only(self):
         _, us, fl = Fake().steps()
         self.assertEqual([advanced.browse(fl, p) for p in fl.params], ["file", "folder"])
-        self.assertEqual(advanced.browse(us, us.params[0]), "")  # a path in Linux
+        self.assertEqual(advanced.browse(us, us.params[0]), "")  # in the container's /var/tmp volume
+        inside = Param("out", "Out", "out/userspace", "path")
+        self.assertEqual(advanced.browse(us, inside), "folder")  # in the repository: the container sees it
         self.assertEqual(advanced.browse(us, us.params[1]), "")  # not a path
         self.assertEqual(advanced.relative(str(REPO / "out" / "x.img")), "out/x.img")
         outside = str(REPO.parent / "elsewhere.img")
         self.assertEqual(advanced.relative(outside), outside)
+
+
+class ContainerPathTests(unittest.TestCase):
+    STEP = Step(
+        "b",
+        "Build",
+        "Image",
+        ("scripts/build.sh", "{root}", "{out}"),
+        params=(Param("root", "Build folder", "/var/tmp/b", "path"), Param("out", "Output", "out/b", "path")),  # noqa: S108  # a default word, nothing is written
+        script=True,
+        linux_root=True,
+    )
+
+    def test_the_container_sees_the_repository_and_var_tmp_only(self):
+        self.assertEqual(advanced.container_path("/var/tmp/pico4-build"), "/var/tmp/pico4-build")  # noqa: S108  # a path word
+        self.assertEqual(advanced.container_path("/work/out"), "/work/out")
+        self.assertEqual(advanced.container_path("out/userspace"), "out/userspace")
+        self.assertEqual(advanced.container_path(str(REPO / "out" / "x")), "out/x")
+        self.assertIsNone(advanced.container_path(str(REPO.parent / "elsewhere")))
+        self.assertIsNone(advanced.container_path("../elsewhere"))
+        self.assertIsNone(advanced.container_path("/etc/passwd"))
+        self.assertIsNone(advanced.container_path("/var/tmpfoo"))  # noqa: S108  # a path word
+
+    def test_a_path_outside_is_refused_before_the_run_and_one_inside_made_relative(self):
+        class One(Fake):
+            def steps(self) -> tuple[Step, ...]:
+                return (ContainerPathTests.STEP,)
+
+        model = advanced.Advanced(Registry({"fake": One()}), process=FakeProcess(), checks=lambda _h: [])
+        model.steps.select("b")
+        self.assertEqual(model.press(installer_running=False)[0], advanced.START)
+        model.steps.set_value("out", str(REPO / "out" / "elsewhere"))
+        self.assertIn("out/elsewhere", model.steps.argv())  # relative, as the container sees it
+        self.assertEqual(model.press(installer_running=False)[0], advanced.START)
+        model.steps.set_value("out", str(REPO.parent / "outside"))
+        kind, title, text = model.press(installer_running=False)
+        self.assertEqual((kind, title), (advanced.REFUSED, "Path outside the repository"))
+        self.assertIn("The build container sees only the repository and /var/tmp", text)
+        model.steps.set_value("out", "out/b")
+        model.steps.set_value("root", "/srv/build")
+        self.assertEqual(model.press(installer_running=False)[0], advanced.REFUSED)
 
 
 class RunTests(unittest.TestCase):

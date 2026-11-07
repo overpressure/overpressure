@@ -9,9 +9,7 @@ skipped unless its own done check says it must run again, and a done check may a
 on its first run (its output is there already). Each headset has its own folder: the state is
 out/install/<codename>/state.json, the output of each task's child programs
 out/install/<codename>/<task>.log. One engine runs at a time on this computer, whatever the
-headset (out/install/lock: builds share their caches). A state from before the folders
-(out/install/state.json) moves into the folder of the headset whose plan it belongs to, under the
-lock; while another engine holds it, it is read where it is.
+headset (out/install/lock: builds share their caches).
 
 The engine talks in events (docs/tool.md, "The installer"): with --json one JSON object per
 line on stdout, answers to its asks one per line on stdin, for the window; without it
@@ -641,7 +639,7 @@ class Engine:
         self.secrets: set[str] = set()
         self.stopping = False
         self.state: dict = {"schema": SCHEMA, "tasks": {}}
-        self._child: tuple[subprocess.Popen, bool] | None = None
+        self._child: tuple[subprocess.Popen, bool, list[str]] | None = None  #: the child, whether it writes, its argv
         self._logs: dict[str, IO[str]] = {}
 
     # -- the plan and the state ---------------------------------------------------------------
@@ -668,39 +666,9 @@ class Engine:
         """Return the state file."""
         return self.folder / STATE
 
-    def legacy_state(self) -> Path | None:
-        """Return the state file from before the headsets' folders when it is this plan's and not moved yet.
-
-        It names no headset; it is this one's when every task it records is one of this plan's (a
-        headset that has a state of its own already leaves it alone).
-        """
-        old = self.root / STATE
-        if self.state_path.exists() or not old.is_file():
-            return None
-        state = _read_state(old)
-        if state is None:
-            return None
-        ids = {task.id for stage in self.stages for task in stage.tasks}
-        return old if set(state["tasks"]) <= ids else None
-
-    def migrate(self) -> None:
-        """Move a legacy state and its tasks' logs into this headset's folder; only with the lock held.
-
-        The logs go first and the state last, so a move cut off midway is finished by the next one.
-        """
-        old = self.legacy_state()
-        if old is None:
-            return
-        self.folder.mkdir(parents=True, exist_ok=True)
-        for task in (task for stage in self.stages for task in stage.tasks):
-            log, moved = self.root / f"{task.id}.log", self.folder / f"{task.id}.log"
-            if log.is_file() and not moved.exists():
-                log.replace(moved)
-        old.replace(self.state_path)
-
-    def load_state(self, path: Path | None = None) -> None:
-        """Read the state file (or @p path); a missing or unreadable one is a fresh start."""
-        self.state = _read_state(path or self.state_path) or {"schema": SCHEMA, "tasks": {}}
+    def load_state(self) -> None:
+        """Read the state file; a missing or unreadable one is a fresh start."""
+        self.state = _read_state(self.state_path) or {"schema": SCHEMA, "tasks": {}}
 
     def save_state(self) -> None:
         """Write the state file whole."""
@@ -787,12 +755,14 @@ class Engine:
 
     # -- stopping and child programs -------------------------------------------------------
     def request_stop(self) -> None:
-        """Stop at the next wait; a running child that does not write to the headset is ended, one that writes not."""
+        """Stop at the next wait; a running child that does not write to the headset is ended, one that writes not.
+
+        A build's container is removed with its child (runner.stop): it would outlive a killed client.
+        """
         self.stopping = True
         child = self._child
         if child is not None and not child[1]:
-            with contextlib.suppress(OSError):
-                child[0].terminate()
+            runner.stop(child[0], child[2])
 
     def _spawn(self, argv: list[str], stdin: bytes | None, writes: bool, line: Callable[[str], None]) -> int:  # noqa: FBT001  # the Spawn signature, positional for the fakes
         env = dict(os.environ, PYTHONUNBUFFERED="1")
@@ -810,10 +780,9 @@ class Engine:
             creationflags=flags,
             start_new_session=writes and sys.platform != "win32",
         )
-        self._child = (proc, writes)
+        self._child = (proc, writes, argv)
         if self.stopping and not writes:  # the stop came while it started
-            with contextlib.suppress(OSError):
-                proc.terminate()
+            runner.stop(proc, argv)
         if stdin is not None:
             threading.Thread(target=_feed, args=(proc, stdin), daemon=True).start()
         with proc:  # closes its pipes and waits for it
@@ -916,7 +885,6 @@ class Engine:
                 FAILED, None, "Another installer is running on this computer.", "Let it finish, or close it first."
             )
         try:
-            self.migrate()
             self.load_state()
             if restart:
                 self.forget(restart)
@@ -934,22 +902,10 @@ class Engine:
             lock.release()
 
     def show_plan(self) -> None:
-        """Emit the plan and every task's recorded status (--plan): nothing runs.
-
-        A legacy state moves only while no other engine holds the lock; else it is read where it is.
-        """
+        """Emit the plan and every task's recorded status (--plan): nothing runs."""
         self.ui.start(lambda: None)
         self.emit(self.plan_event())
-        old = self.legacy_state()
-        if old is not None:
-            lock = Lock(self.root / "lock")
-            if lock.acquire():
-                try:
-                    self.migrate()
-                finally:
-                    lock.release()
-        old = self.legacy_state()  # still there: another engine runs, and it reads and writes it there
-        self.load_state(old)
+        self.load_state()
         for stage in self.stages:
             for task in stage.tasks:
                 self.emit({"event": "task", "stage": stage.id, "task": task.id, "status": self.status(task.id)})

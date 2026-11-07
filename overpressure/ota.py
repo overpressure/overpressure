@@ -6,13 +6,16 @@ small images (``boot.img``, ``recovery.img``, firmware files) and, per big parti
 brotli-compressed ``NAME.new.dat.br`` with the ``NAME.transfer.list`` that places its blocks.
 An A/B OTA holds a ``payload.bin`` (:mod:`overpressure.payload`). For URLs only what is needed is
 downloaded (HTTP Range requests: the zip's central directory and the members), and every member
-is checked against the CRC-32 the zip records. A headset keeps a catalog of its vendor's builds
-(``{"builds": {NAME: {"url": ...}}}``) and says which members it needs. A PinnedMember is one
+is checked against the CRC-32 the zip records; the brotli package (pinned, see pyproject.toml)
+decompresses the block images, the brotli command where a Python lacks it. A headset keeps a
+catalog of its vendor's builds (``{"builds": {NAME: {"url": ...}}}``) and says which members it
+needs. A PinnedMember is one
 file out of a remote zip, pinned by its size and SHA-256 and checked before it is written.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -23,13 +26,13 @@ import zipfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Callable, TypeVar, cast
+from typing import IO, TYPE_CHECKING, Any, Callable, TypeVar, cast
 
 from . import payload
 
 if TYPE_CHECKING:
     import os
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Generator, Iterable, Mapping
 
 CHUNK = 8 * 1024 * 1024
 BLOCK = 4096
@@ -260,32 +263,130 @@ def download_member(src: payload.Source, info: zipfile.ZipInfo, path: Path, log:
     tmp.replace(path)
 
 
-def rebuild_image(download: Path, name: str, out_path: Path, log: Callable[[str], None] = print) -> None:
-    """Rebuild an ext4 image from NAME.new.dat.br and NAME.transfer.list, through the brotli command."""
-    brotli = shutil.which("brotli")
-    if brotli is None:
-        msg = "the brotli command is required (Debian/Ubuntu: apt install brotli)"
+class BrotliReader(io.RawIOBase):
+    """A brotli stream, decompressed as it is read: a few MB in memory whatever the image's size."""
+
+    def __init__(self, source: IO[bytes], module: Any, chunk: int = 1 << 16) -> None:  # noqa: ANN401  # the brotli module has no types
+        """Decompress @p source with @p module (the brotli package), reading @p chunk bytes at a time."""
+        super().__init__()
+        self._source = source
+        self._decompressor = module.Decompressor()
+        self._error = module.error
+        self._chunk = chunk
+        self._pending = b""
+        self._offset = 0
+        self._eof = False
+        # brotli 1.2 bounds each call's output; an older one returns all of it.
+        self._limited = hasattr(self._decompressor, "can_accept_more_data")
+
+    def readable(self) -> bool:
+        """Tell io that this stream can be read."""
+        return True
+
+    def _fill(self) -> None:
+        try:
+            if self._limited and not self._decompressor.can_accept_more_data():
+                self._pending = self._decompressor.process(b"", output_buffer_limit=CHUNK)
+            else:
+                data = self._source.read(self._chunk)
+                if not data:
+                    if not self._decompressor.is_finished():
+                        msg = "the brotli stream ends early"
+                        raise ValueError(msg)
+                    self._eof, self._pending, self._offset = True, b"", 0
+                    return
+                if self._limited:
+                    self._pending = self._decompressor.process(data, output_buffer_limit=CHUNK)
+                else:
+                    self._pending = self._decompressor.process(data)
+        except self._error as exc:
+            msg = f"corrupt brotli data: {exc}"
+            raise ValueError(msg) from exc
+        self._offset = 0
+
+    def read(self, size: int = -1) -> bytes:
+        """Return up to @p size decompressed bytes (all that is left for -1); b"" at the end."""
+        while self._offset >= len(self._pending) and not self._eof:
+            self._fill()
+        if size < 0:
+            rest = [self._pending[self._offset :]]
+            self._offset = len(self._pending)
+            while not self._eof:
+                self._fill()
+                rest.append(self._pending)
+                self._offset = len(self._pending)
+            return b"".join(rest)
+        data = self._pending[self._offset : self._offset + size]
+        self._offset += len(data)
+        return data
+
+
+def brotli_module() -> Any | None:  # noqa: ANN401  # the brotli module has no types
+    """Return the brotli package, None when this Python lacks it (plain python without uv)."""
+    try:
+        import brotli  # noqa: PLC0415  # optional: the start scripts and uv sync install it
+    except ImportError:
+        return None
+    return brotli
+
+
+@contextlib.contextmanager
+def decompressed(
+    path: Path, package: Callable[[], Any] = brotli_module, which: Callable[[str], str | None] = shutil.which
+) -> Generator[IO[bytes], None, None]:
+    """Yield @p path's brotli stream decompressed: by the brotli package, else by the brotli command.
+
+    @p package finds the package (None: this Python lacks it); the command is the fallback then.
+    """
+    module = package()
+    if module is not None:
+        with path.open("rb") as source:
+            yield cast("IO[bytes]", BrotliReader(source, module))
+        return
+    command = which("brotli")
+    if command is None:
+        msg = (
+            "decompressing the OTA needs the brotli package (the start scripts and uv sync install it) "
+            "or the brotli command"
+        )
         raise SystemExit(msg)
-    transfer = (download / f"{name}.transfer.list").read_text(encoding="ascii")
-    tmp = out_path.with_name(out_path.name + ".part")
-    log(f">> {out_path.name} from {name}.new.dat.br")
     proc = subprocess.Popen(  # noqa: S603  # the brotli found on PATH, on a file of the OTA
-        [brotli, "-d", "-c", str(download / f"{name}.new.dat.br")], stdout=subprocess.PIPE
+        [command, "-d", "-c", str(path)], stdout=subprocess.PIPE
     )
     stdout = cast("IO[bytes]", proc.stdout)  # stdout=PIPE
     try:
-        with tmp.open("wb") as out:
-            size = apply_transfer_list(transfer, stdout, out)
-        rest = stdout.read(1)
+        yield stdout
+        stdout.read()
     finally:
         stdout.close()
         code = proc.wait()
     if code != 0:
-        msg = f"brotli failed on {name}.new.dat.br ({code})"
+        msg = f"brotli failed on {path.name} ({code})"
         raise SystemExit(msg)
-    if rest:
-        msg = f"{name}.new.dat.br holds more data than its transfer list places"
-        raise ValueError(msg)
+
+
+def rebuild_image(  # noqa: PLR0913  # the image; the decompressor's choice keyword-only for tests
+    download: Path,
+    name: str,
+    out_path: Path,
+    log: Callable[[str], None] = print,
+    *,
+    package: Callable[[], Any] = brotli_module,
+    which: Callable[[str], str | None] = shutil.which,
+) -> None:
+    """Rebuild an ext4 image from NAME.new.dat.br and NAME.transfer.list.
+
+    The brotli package decompresses it as a stream; without the package, the brotli command does.
+    """
+    transfer = (download / f"{name}.transfer.list").read_text(encoding="ascii")
+    tmp = out_path.with_name(out_path.name + ".part")
+    log(f">> {out_path.name} from {name}.new.dat.br")
+    with decompressed(download / f"{name}.new.dat.br", package, which) as stream:
+        with tmp.open("wb") as out:
+            size = apply_transfer_list(transfer, stream, out)
+        if stream.read(1):
+            msg = f"{name}.new.dat.br holds more data than its transfer list places"
+            raise ValueError(msg)
     with tmp.open("rb") as f:
         f.seek(0x438)  # ext4 superblock magic
         if f.read(2) != b"\x53\xef":
@@ -342,11 +443,14 @@ def extract(  # noqa: PLR0913  # the build, its OTA, the output and what to take
     if (output / "manifest.json").exists():
         old = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
         previous = old["files"] if old.get("firmware") == label and old.get("source") == location else {}
+    files = {name: sha256(output / name) for name in copied}
     for out_name, base in block_images.items():
         path = output / out_name
-        if not path.exists() or previous.get(out_name) != sha256(path):
+        digest = sha256(path) if path.exists() else ""
+        if previous.get(out_name) != digest or not digest:
             rebuild_image(download, base, path, log)
-    files = {name: sha256(output / name) for name in (*copied, *block_images)}
+            digest = sha256(path)
+        files[out_name] = digest
     manifest = {"schema": 1, "firmware": label, "source": location, "files": files}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     log(f">> {output}: {', '.join(files)}")

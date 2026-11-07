@@ -135,10 +135,6 @@ class PowerWarningTests(unittest.TestCase):
     def test_untethered_or_unknown_is_quiet(self):
         self.assertEqual(userspace.power_warnings(self.power("USB", "Discharging", online=False)), [])
         self.assertEqual(userspace.power_warnings(None), [])
-        # A check without the section (older images) still validates.
-        value = copy.deepcopy(PASSING)
-        value.pop("power", None)
-        userspace.validate_check(value)
 
 
 class CheckValidationTests(unittest.TestCase):

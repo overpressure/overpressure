@@ -21,9 +21,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-#: The repository's root, for cycle.py and devloop.py.
-ROOT = _base.ROOT
-
 
 @dataclass
 class Settings(_base.DeviceSettings):
