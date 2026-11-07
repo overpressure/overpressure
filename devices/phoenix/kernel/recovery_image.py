@@ -1,34 +1,34 @@
 # SPDX-License-Identifier: Unlicense
 """Boot images with Valve's kernel.
 
-The installed system's (--installed --boot), and a recovery image for a one-shot test boot. It
+The installed system's (--direct --boot), and a recovery image for a one-shot test boot. It
 takes the dev loop's recovery image (out/dev/dev-recovery.img: stage 1's ramdisk, its command
 line, the stock recovery_dtbo) and replaces the kernel and the device tree with the ones
-build-kernel.sh made. The result is a whole recovery partition with the stock vbmeta behind it,
-as "dev image" builds it, because recovery is a chained AVB partition.
+build-kernel.sh made. The recovery image is a whole recovery partition with the stock vbmeta
+behind it, as "dev image" builds it, because recovery is a chained AVB partition.
 
-Started by a reboot with reason "recovery", the ABL boots it once; any reboot after that (a
-panic, a deadline, a hard reset) starts the installed system from boot again.
+Started by a reboot with reason "recovery", the ABL boots a recovery image once; any reboot after
+that (a panic, a deadline, a hard reset) starts the installed system from boot again.
 
     python recovery_image.py [--debug] [--trace FUNCTION] [--gpu-firmware DIR] [--wlan-firmware DIR]
-        [--cmdline WORD]... [--installed INSTALL_BOOT [--boot]] [--stage1 DIR]
+        [--cmdline WORD]... [--stage1 DIR] [--direct [--boot]]
         KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT
 
---gpu-firmware adds PICO's GPU firmware to stage 1, which msm needs while it binds the display.
---wlan-firmware adds the QCA6390's, which ath11k loads while its PCIe device probes.
+--direct has no stage 1: no ramdisk, and the kernel mounts the system image in super read-only as
+its root and starts its preinit (docs/install.md). In recovery, a failed start reboots plainly
+(pico4.failover=reboot), since a reboot into recovery would start this image again. With --boot
+it is the boot partition's image of the installed system instead: no AVB footer, the dtbo
+partition's overlay, and preinit's reboot into recovery after a failed start reaches the dev
+image.
 
---installed starts the installed system instead of the maintenance stage 1: stage 1 and its
-command line come from the installed system's boot image (out/dev/install-boot.img), and its
-reboot into recovery after a failed start becomes a plain reboot, since recovery would start
-this image again. With --boot it is the boot partition's image of the installed system
-instead: no AVB footer, the dtbo partition's overlay, and stage 1's reboot into recovery after a
-failed start reaches the dev image.
+Without --direct, the image starts the maintenance stage 1 on Valve's kernel. --gpu-firmware
+adds PICO's GPU firmware to it, --wlan-firmware the QCA6390's, which ath11k loads while its PCIe
+device probes. --stage1 puts the files of a stage-1 overlay (devices/phoenix/initramfs) over the
+base image's, so that the test image carries this tree's stage 1 without a new dev image.
 
---stage1 puts the files of a stage-1 overlay (devices/phoenix/initramfs) over the base image's,
-so that the test image carries this tree's stage 1 without a new dev image.
-
-Stage 1's build information names the new kernel, and OUT.json beside the image records it, so
-that `dev check` recognises the test image's stage 1 as a known build.
+OUT.json beside the image records its hash and its build information: stage 1's with the new
+kernel's version, or with --direct the kernel's version alone, so that `dev check` recognises
+the running build.
 
 --debug logs every driver probe, so the RAM console (read by the installed system or the
 maintenance stage 1 after the reboot) ends with the probe a stalled boot waits for, the panic
@@ -78,6 +78,25 @@ EXTRA = (
     "pico4.kernel=valve",
     "pico4.udc_timeout=300",
 )
+#: --direct: the kernel's own words of EXTRA (stage 1 reads the pico4. ones) and the root: the system
+#: image in super, read-only, waited for at most 20 s (then a panic, and panic=5 reboots), its
+#: preinit as the first process. pico4.root=installed and pico4.autoreboot=0 tell the system's units
+#: that this is the installed system, not a test run with deadlines.
+DIRECT = (
+    "clk_ignore_unused",
+    "pd_ignore_unused",
+    "regulator_ignore_unused",
+    "panic=5",
+    "root=PARTLABEL=super",
+    "rootfstype=ext4",
+    "rootwait=20",
+    "ro",
+    "init=/usr/libexec/pico4/preinit",
+    "pico4.root=installed",
+    "pico4.autoreboot=0",
+)
+#: --direct in recovery: preinit's reboot after a failed start is a plain one, into boot.
+DIRECT_ONESHOT = ("pico4.failover=reboot",)
 #: --debug: each probe before it starts (dd.c's dynamic debug) and with its result, all levels
 #: on the console, and on a panic every task's stack (a probe asleep in a killable or idle wait,
 #: which the hung-task detector skips) and the backtraces of all CPUs, and the DRM drivers' and
@@ -104,12 +123,6 @@ REBOOT_PANIC = """if [ "$1" = bootloader ]; then
 	echo "pico4-reboot bootloader: panicking instead (kernel test image)" > /dev/kmsg
 	sync
 	echo c > /proc/sysrq-trigger
-fi
-"""
-#: --installed: recovery holds this image, so a reboot into recovery would start it again.
-REBOOT_PLAIN = f"""if [ "$1" = recovery ]; then
-	echo "pico4-reboot recovery: a plain reboot instead (kernel test image)" > /dev/kmsg
-	exec /{REBOOT_REAL}
 fi
 """
 CONNECT_TIMEOUT = "etc/pico4/test-connect-timeout"
@@ -146,19 +159,17 @@ def tree_with_dirs(paths: Iterable[str]) -> cpio.Tree:
     return tree
 
 
-def stage1_archive(ramdisk: bytes, *, debug: bool, installed: bool) -> cpio.Tree:
-    """Archive the --debug and --installed changes to stage 1."""
+def stage1_archive(ramdisk: bytes) -> cpio.Tree:
+    """Archive the --debug changes to stage 1."""
     nodes = dict(cpio.read_cpio(compress.decompress(ramdisk)[0]))
-    if REBOOT not in nodes or (debug and CONNECT_TIMEOUT not in nodes):
+    if REBOOT not in nodes or CONNECT_TIMEOUT not in nodes:
         msg = "stage 1's ramdisk has no pico4-reboot or test runner timeout"
         raise ValueError(msg)
-    tree = tree_with_dirs((REBOOT, REBOOT_REAL) + ((CONNECT_TIMEOUT,) if debug else ()))
+    tree = tree_with_dirs((REBOOT, REBOOT_REAL, CONNECT_TIMEOUT))
     tree.add_file(REBOOT_REAL, nodes[REBOOT].data, 0o755)
-    wrapper = REBOOT_HEADER + (REBOOT_PANIC if debug else "") + (REBOOT_PLAIN if installed else "")
-    tree.add_file(REBOOT, f'{wrapper}exec /{REBOOT_REAL} "$@"\n'.encode(), 0o755)
-    if debug:
-        udc = int({k: v for k, _, v in (e.partition("=") for e in EXTRA)}["pico4.udc_timeout"])
-        tree.add_file(CONNECT_TIMEOUT, f"{udc + 30}\n".encode())
+    tree.add_file(REBOOT, f'{REBOOT_HEADER}{REBOOT_PANIC}exec /{REBOOT_REAL} "$@"\n'.encode(), 0o755)
+    udc = int({k: v for k, _, v in (e.partition("=") for e in EXTRA)}["pico4.udc_timeout"])
+    tree.add_file(CONNECT_TIMEOUT, f"{udc + 30}\n".encode())
     return tree
 
 
@@ -192,11 +203,6 @@ def files_archive(files: dict[str, Path]) -> cpio.Tree:
     return tree
 
 
-#: --stage1 also carries the prebuilt boot splash beside the overlay (prebuilt/aarch64), as the
-#: stage-1 image does; pico4-reboot stays the base image's (--debug and --installed wrap it).
-PREBUILT = ("pico4-splash",)
-
-
 def overlay_archive(directory: Path) -> cpio.Tree:
     """--stage1: a stage-1 overlay's files, which replace the base ramdisk's."""
     tree = cpio.Tree()
@@ -204,12 +210,6 @@ def overlay_archive(directory: Path) -> cpio.Tree:
     if "init" not in tree.nodes:
         msg = f"{directory} is no stage-1 overlay (no init)"
         raise ValueError(msg)
-    for name in PREBUILT:
-        program = directory.parent / "prebuilt" / "aarch64" / name
-        if program.is_file():
-            if not tree.exists("usr/sbin"):
-                tree.mkdir("usr/sbin")
-            tree.add_file(f"usr/sbin/{name}", program.read_bytes(), 0o755)
     return tree
 
 
@@ -233,19 +233,13 @@ def build_info_archive(info: dict[str, Any]) -> cpio.Tree:
     return tree
 
 
-def stage1_image(dev_recovery: Path, installed: Path | None) -> tuple[bootimg.BootImage, bootimg.BootImage]:
-    """Return the recovery partition's image and the one stage 1 and its words come from."""
+def dev_recovery_image(dev_recovery: Path) -> bootimg.BootImage:
+    """Return the dev loop's recovery image: its header, stage 1 and the stock recovery_dtbo."""
     base = bootimg.parse(dev_recovery.read_bytes())
     if "pico4.part=recovery" not in base.full_cmdline.split():
         msg = f"{dev_recovery} is not the dev loop's recovery image"
         raise ValueError(msg)
-    stage1 = base
-    if installed:
-        stage1 = bootimg.parse(installed.read_bytes())
-        if "pico4.root=installed" not in stage1.full_cmdline.split():
-            msg = f"{installed} is not the installed system's boot image"
-            raise ValueError(msg)
-    return base, stage1
+    return base
 
 
 def appended(ramdisk: bytes, *trees: cpio.Tree) -> bytes:
@@ -261,6 +255,15 @@ def trace_words(function: str) -> tuple[str, ...]:
     return ("ftrace=function_graph", f"ftrace_graph_filter={function}", "ftrace_dump_on_oops", "trace_buf_size=64K")
 
 
+def keyed_words(*groups: Iterable[str]) -> tuple[str, ...]:
+    """Merge command line words; a later word replaces an earlier one with its key."""
+    keyed: dict[str, str] = {}
+    for word in (w for group in groups for w in group):
+        keyed.pop(word.split("=")[0], None)
+        keyed[word.split("=")[0]] = word
+    return tuple(keyed.values())
+
+
 def build(  # noqa: PLR0913  # one keyword per command-line option
     kernel_out: Path,
     stock_recovery: Path,
@@ -270,35 +273,37 @@ def build(  # noqa: PLR0913  # one keyword per command-line option
     trace: str | None = None,
     gpu_firmware: Path | None = None,
     cmdline_words: Iterable[str] = (),
-    installed: Path | None = None,
     overlay: Path | None = None,
     wlan_firmware: Path | None = None,
+    direct: bool = False,
     boot: bool = False,
 ) -> bytes:
     """Build the image: a whole recovery partition, or with BOOT the boot partition's image.
 
-    The header and the recovery_dtbo stay the recovery partition's; stage 1 and its words can be
-    the installed system's. --boot: the boot partition's image, all of it the installed system's
-    (the ABL applies the dtbo partition's overlay on a normal boot), without AVB.
+    The header comes from the dev loop's recovery image. Without DIRECT the image keeps its stage
+    1 and recovery_dtbo. DIRECT: no ramdisk, the kernel starts the installed system from super.
+    BOOT (only with DIRECT): the boot partition's image, without the recovery_dtbo (the ABL
+    applies the dtbo partition's overlay on a normal boot) and without AVB.
     """
-    base, stage1 = stage1_image(dev_recovery, installed)
-    if boot:
-        if not installed:
-            msg = "--boot needs --installed (the installed system's boot image)"
-            raise ValueError(msg)
-        base = stage1
+    base = dev_recovery_image(dev_recovery)
+    if boot and not direct:
+        msg = "--boot needs --direct (the installed system's boot image)"
+        raise ValueError(msg)
+    if direct and (overlay or gpu_firmware or wlan_firmware):
+        msg = "--direct has no stage 1 for --stage1, --gpu-firmware or --wlan-firmware"
+        raise ValueError(msg)
     kernel = (kernel_out / "Image.gz").read_bytes()
     dtb = (kernel_out / DTB).read_bytes()
-    # A later word replaces an earlier one with its key: the given words win over the defaults.
-    keyed = {}
-    for word in EXTRA + (DEBUG if debug else ()) + (trace_words(trace) if trace else ()) + tuple(cmdline_words):
-        keyed.pop(word.split("=")[0], None)
-        keyed[word.split("=")[0]] = word
-    extra = tuple(keyed.values())
+    debug_words = (DEBUG if debug else ()) + (trace_words(trace) if trace else ())
+    if direct:
+        extra = keyed_words(DIRECT, () if boot else DIRECT_ONESHOT, debug_words, cmdline_words)
+        drop = ("pico4.",)
+    else:
+        extra = keyed_words(EXTRA, debug_words, cmdline_words)
+        drop = ()
+    keys = {e.split("=")[0] for e in extra}
     words = [
-        w
-        for w in stage1.full_cmdline.split()
-        if w.split("=")[0] not in {e.split("=")[0] for e in extra} and not w.startswith(STOCK_ONLY)
+        w for w in base.full_cmdline.split() if w.split("=")[0] not in keys and not w.startswith(STOCK_ONLY + drop)
     ]
     cmdline = " ".join(words + list(extra))
     if len(cmdline) > MAX_CMDLINE:
@@ -306,30 +311,39 @@ def build(  # noqa: PLR0913  # one keyword per command-line option
         raise ValueError(msg)
     image = base.with_cmdline(cmdline)
     image.kernel, image.dtb = kernel, dtb
-    info = build_info(stage1.ramdisk, kernel)
-    # In boot, stage 1's reboot into recovery after a failed start reaches the dev image, as it
-    # should: only the one-shot recovery image needs the plain reboot instead.
-    plain_reboot = bool(installed) and not boot
-    archives = (
-        ([overlay_archive(overlay)] if overlay else [])
-        + ([firmware_archive(gpu_firmware)] if gpu_firmware else [])
-        + ([wlan_firmware_archive(wlan_firmware)] if wlan_firmware else [])
-        + ([stage1_archive(stage1.ramdisk, debug=debug, installed=plain_reboot)] if debug or plain_reboot else [])
-        + ([build_info_archive(info)] if info else [])
-    )
-    ramdisk = appended(stage1.ramdisk, *archives)
+    if boot:
+        image.recovery_dtbo = b""
+    if direct:
+        ramdisk = b""
+    else:
+        info = build_info(base.ramdisk, kernel)
+        archives = (
+            ([overlay_archive(overlay)] if overlay else [])
+            + ([firmware_archive(gpu_firmware)] if gpu_firmware else [])
+            + ([wlan_firmware_archive(wlan_firmware)] if wlan_firmware else [])
+            + ([stage1_archive(base.ramdisk)] if debug else [])
+            + ([build_info_archive(info)] if info else [])
+        )
+        ramdisk = appended(base.ramdisk, *archives)
     image.ramdisk = ramdisk
     image.boot_signature = b""
     data = image.pack()
     check = bootimg.parse(data)
-    if (check.kernel, check.dtb, check.ramdisk, check.recovery_dtbo) != (kernel, dtb, ramdisk, base.recovery_dtbo):
+    if (check.kernel, check.dtb, check.ramdisk, check.recovery_dtbo) != (kernel, dtb, ramdisk, image.recovery_dtbo):
         msg = "the test image failed validation"
         raise RuntimeError(msg)
     return data if boot else avb.with_stock_vbmeta(stock_recovery.read_bytes(), data)
 
 
+def image_build_info(dev_recovery: Path, kernel: bytes, *, direct: bool) -> dict[str, Any] | None:
+    """OUT.json's build information: stage 1's with the new kernel, or with --direct the kernel's."""
+    if direct:
+        return {"kernel": kernelinfo.analyse(kernel).version, "boot": "direct"}
+    return build_info(dev_recovery_image(dev_recovery).ramdisk, kernel)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """Write OUT and OUT.json, which records its hash and stage 1's build information."""
+    """Write OUT and OUT.json, which records its hash and build information."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--debug", action="store_true", help="log every driver probe")
     ap.add_argument("--trace", metavar="FUNCTION", help="print FUNCTION's call graph on a panic")
@@ -347,19 +361,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="add a kernel command line word, replacing one with its key (repeatable)",
     )
     ap.add_argument(
-        "--installed",
-        metavar="INSTALL_BOOT",
-        type=Path,
-        help="start the installed system with INSTALL_BOOT's stage 1 (out/dev/install-boot.img)",
-    )
-    ap.add_argument(
         "--stage1",
         metavar="DIR",
         type=Path,
         help="put the stage-1 overlay DIR (devices/phoenix/initramfs) over the base's files",
     )
+    ap.add_argument("--direct", action="store_true", help="no stage 1: the kernel starts the installed system")
     ap.add_argument(
-        "--boot", action="store_true", help="the boot partition's image of the installed system (with --installed)"
+        "--boot", action="store_true", help="the boot partition's image of the installed system (with --direct)"
     )
     ap.add_argument("paths", nargs="+", type=Path, metavar="KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT")
     args = ap.parse_args(argv)
@@ -376,15 +385,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         trace=args.trace,
         gpu_firmware=args.gpu_firmware,
         cmdline_words=args.cmdline,
-        installed=args.installed,
         overlay=args.stage1,
         wlan_firmware=args.wlan_firmware,
+        direct=args.direct,
         boot=args.boot,
     )
     out.write_bytes(data)
     digest = hashlib.sha256(data).hexdigest()
-    stage1 = stage1_image(dev_recovery, args.installed)[1]
-    info = build_info(stage1.ramdisk, (kernel_out / "Image.gz").read_bytes())
+    info = image_build_info(dev_recovery, (kernel_out / "Image.gz").read_bytes(), direct=args.direct)
     key = "boot_sha256" if args.boot else "recovery_sha256"
     Path(f"{out}.json").write_bytes((json.dumps({key: digest, "build_info": info}, indent=2) + "\n").encode("utf-8"))
     print(f"{out} {digest}")

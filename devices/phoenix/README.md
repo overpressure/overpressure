@@ -2,9 +2,10 @@
 
 Linux and a SteamOS-compatible userspace ([overpressure](../../README.md)) on the original PICO 4 (2022, codename *phoenix*,
 Snapdragon XR2), on Valve's kernel from the Steam Frame with the PICO's own drivers and device tree.
-The stock Android kernel is no longer pursued; the way back to PICO OS stays. A small
-Alpine stage 1 boots from the boot partition and starts a SteamOS-compatible stage 2 installed on the
-headset (system in `super`, data in `userdata`, PICO OS's own layout). Stage 2 runs Valve's VR session from the Steam Frame, gamescope and
+The stock Android kernel is no longer pursued; the way back to PICO OS stays. Valve's kernel boots from
+the boot partition straight into a SteamOS-compatible stage 2 installed on the headset (system in `super`,
+data in `userdata`, PICO OS's own layout); a small Alpine stage 1 in `recovery` is the maintenance system
+that installs and rescues it. Stage 2 runs Valve's VR session from the Steam Frame, gamescope and
 SteamVR, with a Monado driver for the PICO 4's hardware: the SteamVR environment shows in the
 lenses with 6DoF head and controller tracking.
 
@@ -26,7 +27,8 @@ them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL bac
 | 5 XR hardware | head IMU, Monado inside SteamVR, lens correction and IPD, four tracking cameras, 6DoF with PICO OS's tracker on the CDSP, controllers (inputs, vibration, positions), the colour room view |
 | 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path; the Steam client in the headset, games from its library through Proton and FEX, Android apps through Lepton, Steam Link from a PC |
 
-Open: a power press after a long sleep. Plan and details:
+Open: the direct boot's last checks on the headset (the power key in charger mode, a boot without the
+PC), the kernel's RDS listener on tcp/16385, and a power press after a long sleep. Plan and details:
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Install
@@ -77,7 +79,7 @@ commands, which also work on their own:
 
 **Your login.** The headset takes SSH on the cable and on Wi-Fi only with a key. The build stage makes one for this
 PC, `out/dev/id_ed25519`; it stays on your PC. To use a key of your own, name its public file as
-`PICO4_SSH_PUBLIC_KEY` in `.env` before the build. No account has a password ([docs/security.md](docs/security.md)).
+`PICO4_SSH_PUBLIC_KEY` in `.env` before the install, which writes the keys to the headset's data partition. No account has a password ([docs/security.md](docs/security.md)).
 
 **After the install.** Unplug it and put it on: sign in to Steam, find the controllers and set up your room in the
 headset (and Wi-Fi, if you skipped it). `python -m overpressure dev install` with a new image updates the system and
@@ -96,11 +98,11 @@ in `out/install/phoenix/`.
 | [docs/roadmap.md](docs/roadmap.md) | the plan, the status of each step, open work |
 | [docs/research.md](docs/research.md) | background: the PICO 4 and the Steam Frame, related projects |
 | [docs/device-preparation.md](docs/device-preparation.md) | identity, EDL backups, engineering ABL, unlock, restore |
-| [docs/stage1.md](docs/stage1.md) | the boot image: contents, boot sequence, options, troubleshooting |
+| [docs/stage1.md](docs/stage1.md) | the maintenance system's boot image: contents, boot sequence, options, troubleshooting |
 | [docs/hardware-testing.md](docs/hardware-testing.md) | acceptance runner, acceptance cycle, development loop |
 | [docs/kernel.md](docs/kernel.md) | Valve's kernel on the PICO 4: its files, its patches, what is verified on it and how it works |
 | [docs/graphics.md](docs/graphics.md) | the graphics stack and both panels |
-| [docs/userspace.md](docs/userspace.md) | the SteamOS-compatible userspace and the handoff |
+| [docs/userspace.md](docs/userspace.md) | the SteamOS-compatible userspace and how it starts |
 | [docs/install.md](docs/install.md) | the installed system: layout, boot modes, install and update, the way back |
 | [docs/xr.md](docs/xr.md) | IMU, Monado driver, display, lenses, cameras, 6DoF, controllers |
 | [docs/session.md](docs/session.md) | Valve's VR session: SteamVR, gamescope, games, Steam Link |
@@ -120,7 +122,7 @@ initramfs/   stage 1: the files added to the Alpine ramdisk
 userspace/   stage 2: package list, pacman.conf, adaptation layer, SteamVR configuration, PKGBUILDs
 src/         C sources: graphics tests, Monado's PICO 4 driver, the tracker's host, OpenXR clients, SteamVR helpers
 scripts/     userspace, system image and kernel builds, the on-headset preflight, sharing a Windows PC's internet
-prebuilt/    static aarch64 helpers for stage 1
+prebuilt/    static aarch64 helpers for stage 1 and the system image
 tests/       host tests and the QEMU boot tests
 docs/        documentation
 ```

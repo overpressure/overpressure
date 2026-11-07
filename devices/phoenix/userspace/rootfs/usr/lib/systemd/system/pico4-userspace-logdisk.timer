@@ -1,5 +1,5 @@
 [Unit]
-Description=Refresh the PICO 4 stage-2 log drive
+Description=Refresh the PICO 4 log drive
 # Also during a stuck boot: timers do not wait for multi-user.target.
 DefaultDependencies=no
 

@@ -61,7 +61,7 @@ settings to it.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `PICO4_ADB_SERIAL` | required | serial in `adb devices` |
-| `PICO4_FASTBOOT_SERIAL` | required | serial in `fastboot devices`, also stage 1 gadget's USB serial |
+| `PICO4_FASTBOOT_SERIAL` | required | serial in `fastboot devices`, also the USB gadget's serial in stage 1 and the installed system |
 | `PICO4_EDL_SERIAL` | required for EDL writes | `Serial Number` in edl-ng's output; no ABL is written to another device |
 | `PICO4_IDENTITY` | `backup/device.json` | identity record (`python -m overpressure device probe`); its SoC ID derives the OEM authorization and is checked at login |
 | `PICO4_BACKUP` | `backup/stock` | verified EDL backup with the stock `boot` and `abl` |
@@ -102,8 +102,8 @@ python -m overpressure dev installed        # after a later reboot: connect agai
 ```
 
 The session runs only on Valve's kernel, so `dev check` runs on the installed system. A changed
-stage-1 image needs `dev image`, `dev flash` and, for the installed boot, a new boot image
-through `dev install --boot PATH`.
+stage-1 image needs `dev image` and `dev flash`; the installed system's boot image holds no
+stage 1. A new kernel goes through `dev boot-image`, `dev recovery` and `dev install --boot PATH`.
 When a device deadline has returned the headset to fastboot, `dev reboot` starts what `misc` and
 `boot` select, without a write. `hwtest flash-run` and `cycle` leave the stock boot image in `boot`
 and so end development mode; with the system installed they cannot start PICO OS, whose system is
@@ -210,7 +210,9 @@ global known-hosts updates are involved.
 ### Windows NCM initialization
 
 The stock kernel's NCM function (PICO OS 5.13.7) rejects the packets of Windows' NCM driver with
-`Wrong NDP SIGN` in its kernel log, so Windows gets no DHCP, SSH or HTTP. Sending the CDC request
+`Wrong NDP SIGN` in its kernel log, so Windows gets no DHCP, SSH or HTTP. This concerns stage 1 on
+the stock kernel: the maintenance stage 1 and the runner's images. Valve's kernel's NCM function,
+under the installed system, takes Windows 11's in-box driver as it is. Sending the CDC request
 `SET_CRC_MODE(0)` through UsbDk and then releasing the device to Windows 11's in-box UsbNcm driver
 makes all three work without changing the kernel. [overpressure/windows_ncm.py](../../../overpressure/windows_ncm.py)
 does this; `--windows-ncm-python` (runner) or, for the cycle and the dev loop, `PICO4_NCM_PYTHON`
@@ -241,10 +243,10 @@ python -m overpressure doctor        # "NCM Python and UsbDk": the packages and 
 - The runner retries it within the SSH readiness deadline (`--boot-timeout`) until it succeeds
   once; SSH gets the rest of that deadline. `result.json` records it under `windows_ncm`. Every
   call is bounded by its caller, because a Windows driver open or close can stall.
-- It runs once per stage-1 boot and never after the switch to stage 2: the handoff keeps the USB
-  link (interface, MAC, address), and running the initialization again in stage 2 stalls UsbDk
-  and leaves the host's NCM and storage drivers in an error state. The exception is `dev installed`,
-  which repeats it at most once a minute while SSH times out.
+- It runs once per stage-1 boot on the stock kernel (`dev connect`, `dev recovery`, the runner) and
+  never on the installed system: running it on a working link stalls UsbDk and leaves the host's
+  NCM and storage drivers in an error state. `dev installed` does not send it; `dev reboot` sends it
+  once when nothing has answered for 60 s, since the maintenance stage 1 may have started.
 - The Windows adapter stays on DHCP. The helper changes no IP, DNS, route or firewall settings;
   driver installation and any earlier manual IP configuration have to be settled beforehand.
   UsbDk briefly disconnects the composite gadget, including its log drive; leave that drive alone
@@ -303,7 +305,7 @@ In this order:
 
 | Check | Runs when | Must hold |
 | --- | --- | --- |
-| Userspace check | always | `pico4-userspace-check --wait 240` passes: systemd 257 as PID 1, state `running`, no failed units; `/dev` the kernel's devtmpfs with every node; the image read-only and `userdata` the only writable partition; the USB link unchanged; logind's `seat0`; the `steamos` user's session, `pico4-session.service` and Valve's session target active; the session user can open its devices; `pico4-fan.service` active and writing its state ([cooling.md](cooling.md#checks)); with GPU firmware in the archive, Turnip's Vulkan readback. The shell and storage assertions (phase 8) then hold on the installed system too. |
+| Userspace check | always | `pico4-userspace-check --wait 240` passes: systemd 257 as PID 1, state `running`, no failed units; `/dev` the kernel's devtmpfs with every node; the image read-only and `userdata` the only writable partition; the USB link up as `pico4-usb-gadget` recorded it; logind's `seat0`; the `steamos` user's session, `pico4-session.service` and Valve's session target active; the session user can open its devices; `pico4-fan.service` active and writing its state ([cooling.md](cooling.md#checks)); with GPU firmware in the archive, Turnip's Vulkan readback. The shell and storage assertions (phase 8) then hold on the installed system too. |
 | Head IMU | the manifest has sensor data | `pico4-imu stream --rate 500 --seconds 10 --check --orientation`: accelerometer and gyroscope samples with increasing timestamps at the requested 500 Hz |
 | Valve's session | the archive has `deckard-steamvr-rel` | after the cool-down, `pico4-valve-session-check --seconds 30`: `gamescope-session.target`, SteamVR and gamescope active and the configured session restored afterwards; SteamVR's compositor runs as a gamescope client without asserts and presents, measured from msm's events, at ≥ 95 % of 90 Hz with at most 1 % late, no stalls, 99 % of its jobs at least 1 ms before their vblank; SteamVR reports the headset and both controllers with finite poses, the controllers with positions |
 
@@ -484,12 +486,13 @@ are in [install.md](install.md#install-and-update). Settings come from [`.env`](
 | Command | Effect |
 | --- | --- |
 | `stage-abl` | engineering ABL through EDL with readback, then PICO OS, as in cycle step 1; logs in `out/dev/stage-abl-<time>/` |
-| `image` | builds `out/dev/dev-boot.img`, `dev-recovery.img` and `install-boot.img` from `out/pico4-stage1-<PICO4_FIRMWARE>.img`: instrumented like a runner image, with the run identifier `dev-loop`, the dev key and long deadlines ([install.md](install.md#boot-images)) |
+| `image` | builds `out/dev/dev-boot.img` and `dev-recovery.img` from `out/pico4-stage1-<PICO4_FIRMWARE>.img`: instrumented like a runner image, with the run identifier `dev-loop`, the dev key and long deadlines ([install.md](install.md#boot-images)) |
+| `boot-image` | builds `out/kernel/valve-boot.img`, the installed system's boot image, from Valve's kernel and the header of `dev-recovery.img` (`recovery_image.py --direct --boot`, [install.md](install.md#install-and-update)) |
 | `flash` | goes to fastboot (from PICO OS through ADB, from stage 1 or 2 through SSH; up to 180 s), checks the bootloader and partition as `flash-run` does (unlocked, exactly one non-slotted partition of the backed-up size, an image that fits), sends the OEM authorization, writes the dev image to `recovery` and starts it |
 | `connect` | forgets the previous host key (stage 1 makes new ones every boot), runs the NCM initialization when there is an NCM Python (`PICO4_NCM_PYTHON`, else this one on Windows; retried for up to 120 s) and logs in to stage 1 within 120 s; the endpoint must report `dev-loop` and the SoC ID of `PICO4_IDENTITY`, and the login clears the connection deadline. It then reads back the partition the running stage 1 came from: its hash must match `out/dev/dev-boot.img` or `dev-recovery.img` |
 | `check` | runs the runner's stage-2 checks, from the userspace check to Valve's session, on the installed system; results in `out/dev/check-<time>/`; exit 0 only if all pass |
 | `ssh COMMAND...` | runs the words as one remote command (up to 600 s) and prints the output as text; the remote exit status is not passed on |
-| `reboot` | reboots the headset: over SSH from stage 1 or 2, with `fastboot reboot` when it waits in fastboot (no write); then waits 20 s and connects to what started, the maintenance stage 1 while `misc` holds its request, else the installed system |
+| `reboot` | reboots the headset: over SSH from stage 1 or 2, with `fastboot reboot` when it waits in fastboot (no write); then waits 20 s and connects to what started, the maintenance stage 1 while `misc` holds its request, else the installed system; it sends the NCM initialization once when nothing has answered for 60 s |
 | `restore` | leaves development mode. With the system installed, as in [install.md](install.md#back-to-stock). Otherwise it checks the backup's stock boot image against its manifest and the partitions as `flash` does, writes it to `boot` through fastboot and waits up to 300 s for PICO OS. The ABL stays engineering |
 
 - `flash` and `restore` need the engineering ABL. Unlike `flash-run`
@@ -513,7 +516,7 @@ are in [install.md](install.md#install-and-update). Settings come from [`.env`](
 | --- | --- |
 | `id_ed25519`, `id_ed25519.pub` | the dev key, created once; the dev image trusts it, so a new key needs `image` and `flash` again |
 | `known_hosts` | stage 1's host key, replaced at each `connect` |
-| `dev-boot.img`, `dev-recovery.img`, `install-boot.img`, `dev-image.json` | the dev image, its whole-partition form for `recovery`, and the install boot image's base; their hashes, build metadata and device deadlines |
+| `dev-boot.img`, `dev-recovery.img`, `dev-image.json` | the dev image and its whole-partition form for `recovery`; their hashes, build metadata and device deadlines |
 | `installed.json` | written by `install`: PICO OS's system is gone until `restore` |
 | `rootfs.tar` | the image's userspace, a by-product of the instrumentation |
 | `state.json` | the archive the installed system was built from (hash, features, boot time); written when `install`, `normal`, `installed` or `reboot` reach the system, removed by `recovery`, `reboot` and `restore` |

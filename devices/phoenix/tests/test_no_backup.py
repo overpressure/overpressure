@@ -77,7 +77,7 @@ class DevImageTests(unittest.TestCase):
                 ota.fetch_boot_image(str(zip_path), log=lambda *_: None, partition="recovery"), b"ANDROID!recovery"
             )
         devloop = read(ROOT / "tooling/devloop.py")
-        image = devloop[devloop.index("    def image(self)") : devloop.index("    def install_image(")]
+        image = devloop[devloop.index("    def image(self)") : devloop.index("    def enrolled_keys(")]
         self.assertIn('ota.fetch_boot_image(self.stock_location(), str(ROOT / "cache"), print, "recovery")', image)
         self.assertNotIn("stock_partition", image)
 

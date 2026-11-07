@@ -316,12 +316,11 @@ class Plan:
             "userspace": lambda _ctx: archive.is_file(),
             "system": lambda _ctx: self.newer(system, archive),
             "dev-image": lambda ctx: (
-                self.newer(dev / "dev-image.json", self.stage1(ctx))
-                and all((dev / name).is_file() for name in ("dev-recovery.img", "install-boot.img"))
+                self.newer(dev / "dev-image.json", self.stage1(ctx)) and (dev / "dev-recovery.img").is_file()
             ),
             "kernel": lambda _ctx: kernel.is_file() and self.out("kernel", "sm8250-pico4-phoenix.dtb").is_file(),
             "boot-image": lambda _ctx: self.newer(
-                self.out("kernel", "valve-boot.img"), kernel, dev / "install-boot.img"
+                self.out("kernel", "valve-boot.img"), kernel, dev / "dev-recovery.img"
             ),
         }
         return outputs[key]

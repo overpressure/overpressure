@@ -16,6 +16,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from overpressure import linux
 
@@ -136,6 +137,24 @@ class RecipeTests(unittest.TestCase):
         self.assertRegex(dockerfile, r"ARG SNAPSHOT=\d{8}T\d{6}Z")
         for package in ("clang-20", "lld-20", "qemu-user-static", "e2fsprogs", "device-tree-compiler"):
             self.assertIn(package, dockerfile)
+
+
+class LinkedFolderTests(unittest.TestCase):
+    def test_a_worktrees_linked_private_folders_are_bound_where_they_are_linked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, other = Path(tmp, "worktree"), Path(tmp, "checkout")
+            for folder in (root / "cache", other / "out", other / "assets"):
+                folder.mkdir(parents=True)
+            links = {str(root / "out"): str(other / "out"), str(root / "assets"): str(other / "assets")}
+            real = os.path.realpath
+
+            def realpath(path: os.PathLike[str] | str) -> str:
+                return links.get(str(path), real(path))
+
+            with mock.patch.object(linux.os.path, "realpath", realpath):
+                mounts = linux.linked_mounts(root)
+        # The worktree's own cache stays inside the repository's mount; a link to nothing is left.
+        self.assertEqual(mounts, ["-v", f"{other / 'assets'}:/work/assets", "-v", f"{other / 'out'}:/work/out"])
 
 
 if __name__ == "__main__":

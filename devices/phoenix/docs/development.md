@@ -24,10 +24,10 @@ tooling/          the PICO 4's host tooling (Python): python -m overpressure COM
   localconfig.py    the headset's settings from .env (PICO4_ keys)
   userspace.py, graphics.py   validators of the on-device checks
   ledmodel.py, aimgrip.py, leverarm.py, controllermodel.py   controller data from PICO OS's libraries
-initramfs/        stage 1: files added to the Alpine ramdisk (pico4-init, services, handoff)
+initramfs/        stage 1: files added to the Alpine ramdisk (pico4-init, services, pico4-install)
 userspace/        stage 2: the SteamOS-compatible userspace
   packages.txt, pacman.conf   package list and repositories
-  rootfs/           the PICO 4 adaptation layer (units, udev rules, PAM, session, device tools, checks)
+  rootfs/           the PICO 4 adaptation layer (preinit, units, udev rules, PAM, session, device tools, checks)
   session/          the session user's SteamVR configuration
   pkgbuilds/        the project's packages: pico4-sensors, pico4-basalt, pico4-monado, pico4-gamescope,
                     pico4-vrlink, pico4-swapchain-usage, pico4-gtk2 and others
@@ -35,7 +35,7 @@ kernel/           Valve's kernel: build-kernel.sh, patches/, the PICO's drivers,
 src/              C sources: graphics/ (the Vulkan test), monado/ (Monado's PICO 4 driver),
                   stockslam/ (pico4-slamd), vrlink/ (Steam Link), xr/ (OpenXR test clients), swapchain/ (frame pacing),
                   reboot/ (pico4-reboot), splash/ (pico4-splash)
-prebuilt/         the static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
+prebuilt/         the static aarch64 pico4-reboot (stage 1 and the system) and pico4-splash (the system), so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-system-image.sh, build-kernel-step.sh and the on-headset preflight
 tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, qemu/ (test kernels and boot tests)
 docs/             documentation
@@ -72,7 +72,7 @@ adb, fastboot and edl-ng
 | --- | --- |
 | Stage-1 image, stock firmware and assets, host tests, headset commands | Python 3.9+ on Windows, Linux or macOS (the start scripts or `uv sync` add the pinned brotli, pyusb and libusb-package); Android platform-tools and OpenSSH for the headset |
 | Userspace archive, system image, Valve's kernel, the QEMU test kernel | the build container ([docs/tool.md](../../../docs/tool.md#linux-root-steps)): Docker or Podman on any host. Its image has every tool, LLVM 20 and qemu-user-static, and registers the aarch64 binfmt handler (F flag) on an x86-64 engine that has none |
-| Windows NCM initialization | UsbDk; pyusb and libusb-package, which the start scripts or `uv sync` add |
+| Windows NCM initialization (stage 1 on the stock kernel) | UsbDk; pyusb and libusb-package, which the start scripts or `uv sync` add |
 
 On an arm64 engine (Apple silicon, an arm64 Linux host) the build environment runs natively,
 without binfmt or LLVM.
@@ -264,9 +264,9 @@ the stock kernel and the installed system on Valve's kernel in `boot`, `super` a
    system after a reboot.
 
 A changed stage-1 image is built with `python -m overpressure build` and written with
-`python -m overpressure dev image` and `python -m overpressure dev flash`; the installed boot image takes it through
-`recovery_image.py` and `dev install --boot PATH`
-([install.md](install.md#install-and-update)). A task ends with the headset still in development
+`python -m overpressure dev image` and `python -m overpressure dev flash`; the installed system's boot image
+holds no stage 1. A new kernel goes through `python -m overpressure dev boot-image`, `dev recovery` and
+`dev install --boot PATH` ([install.md](install.md#install-and-update)). A task ends with the headset still in development
 mode. Returning it to stock is a separate step, for when PICO OS is needed
 ([hardware-testing.md](hardware-testing.md#back-to-stock)).
 

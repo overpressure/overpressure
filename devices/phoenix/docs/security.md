@@ -15,18 +15,21 @@ network, holding the owner's Steam login and Wi-Fi password.
 
 | Where | Who | How |
 | --- | --- | --- |
-| Installed system, USB link and Wi-Fi | root | SSH with an enrolled key (`sshd_config.d/50-pico4.conf`); no password, no empty password |
+| Installed system, USB link and Wi-Fi, also in charger mode | root | SSH with an enrolled key (`sshd_config.d/50-pico4.conf`); no password, no empty password |
 | Installed system | `steamos` | no remote login; the session logs in by itself |
-| Stage 1 of the installed system, for its seconds before the switch and in charger mode | root | dropbear on the USB link with an enrolled key; no telnet, web server or serial shell |
 | Maintenance stage 1 in `recovery` | root | dropbear on the USB link with a key or the empty password, telnet, a web page and a serial shell, all without a password |
 
 Neither root nor `steamos` has a password in the image (`*` in `/etc/shadow`), so `su` gives nothing either.
 
-**The keys.** `python -m overpressure dev image` makes this PC's own key once, `out/dev/id_ed25519`, and
-enrolls it in the boot images; `PICO4_SSH_PUBLIC_KEY` in `.env` adds the owner's own public key.
-Stage 1 copies them to `/root/.ssh/authorized_keys` at every boot. They are never in the system image or
-in anything the project publishes, and no two headsets share one. A lost key means a new `dev image` and
-`dev install --boot` from the maintenance stage 1, which needs the cable and no key.
+**The keys.** `python -m overpressure dev image` makes this PC's own key once, `out/dev/id_ed25519`;
+`PICO4_SSH_PUBLIC_KEY` in `.env` adds the owner's own public key. `dev install` writes both, with the
+install ID, from the maintenance stage 1 onto the data partition (`pico4-install keys`):
+`/root/.ssh/authorized_keys` (`/root` is on the data partition) and `/etc/pico4/install-id` in the `/etc`
+overlay's upper layer. They are never in the system image, a boot image or anything the project
+publishes, and no two headsets share one. A lost key means `dev recovery`, then `dev install`, which
+skips the partitions that already hold their image and writes the keys again; the maintenance stage 1
+needs the cable and no key. The host keys are made on the system's first boot (`sshdgenkeys.service`)
+and stay in the `/etc` overlay.
 
 **Why the maintenance stage 1 stays open.** It runs only when asked for (`dev recovery`, or a failed
 boot), only on the USB cable, and it is the rescue when a key is lost. Whoever has the cable and the
@@ -41,9 +44,9 @@ Read from the configuration; `pico4-listeners` reports what really listens beyon
 | --- | --- | --- | --- | --- |
 | Maintenance stage 1 | tcp 22 | dropbear | USB cable | the development loop, installs, rescue |
 | Maintenance stage 1 | tcp 23, tcp 80 | telnetd, httpd | USB cable | rescue, status page |
-| Maintenance and installed stage 1 | udp 67 | udhcpd | USB cable | the PC's address on the link |
-| Installed stage 1 | tcp 22 | dropbear, keys only | USB cable | `dev` commands, charger mode |
-| Installed system | tcp 22 | sshd, keys only | USB cable, Wi-Fi | `dev` commands, the owner's access |
+| Maintenance stage 1 | udp 67 | udhcpd | USB cable | the PC's address on the link |
+| Installed system | tcp 22 | sshd, keys only | USB cable, Wi-Fi | `dev` commands, the owner's access, also in charger mode |
+| Installed system | udp 67 | systemd-networkd's DHCP server | USB cable | the PC's address on the link |
 | Installed system | udp 68, udp 546 | NetworkManager, systemd-networkd | the link's network | DHCP clients |
 | Installed system | tcp and udp 5355, udp 5353 | systemd-resolved | the link's network | name resolution |
 | Installed system | Steam's ports | steam, steamwebhelper, vrlink, vrserver | Wi-Fi | Steam's local discovery, Remote Play and Steam Link, as on any Steam machine |
@@ -69,3 +72,4 @@ kernel source by hash and commit.
 
 - The list above against a running system: `pico4-listeners` has not run on the headset yet.
 - That a login without a key is refused, tested from another machine on USB and Wi-Fi.
+- The keys `pico4-install keys` writes to the data partition, read by the installed system on the headset.

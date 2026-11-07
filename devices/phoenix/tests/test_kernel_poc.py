@@ -333,20 +333,41 @@ def stock_partition(total: int = 64 * 4096) -> bytes:
     return bytes(data)
 
 
-class InstalledStage1Tests(unittest.TestCase):
+class PreinitTests(unittest.TestCase):
+    PREINIT = Path(__file__).resolve().parents[1] / "userspace/rootfs/usr/libexec/pico4/preinit"
+
+    def setUp(self):
+        self.script = self.PREINIT.read_text(encoding="utf-8")
+
+    def test_the_boot_image_starts_it(self):
+        self.assertIn(f"init=/{self.PREINIT.relative_to(self.PREINIT.parents[3]).as_posix()}", recovery_image.DIRECT)
+
     def test_etc_overlay_takes_a_new_system_image(self):
         # A mainline kernel's overlay index ties the upper /etc to the image it was made with.
-        stage1 = (Path(__file__).resolve().parents[1] / "initramfs/usr/bin/pico4-userspace").read_text(encoding="utf-8")
-        mount = next(line for line in stage1.splitlines() if "lowerdir=$NEW/etc" in line)
+        mount = next(line for line in self.script.splitlines() if "lowerdir=/etc" in line)
         self.assertIn(",index=off", mount)
 
-    def test_the_system_starts_only_with_the_kernels_devtmpfs(self):
-        # Without a devtmpfs systemd's device monitor does not follow udev: the switch refuses.
-        script = (Path(__file__).resolve().parents[1] / "initramfs/usr/libexec/pico4/switch-userspace").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn('= devtmpfs ] ||\n\tfail "/dev is no devtmpfs', script)
-        self.assertLess(script.index("no devtmpfs"), script.index('mount --move /dev "$NEW/dev"'))
+    def test_storage_is_read_only_before_the_data_is_mounted(self):
+        sweep = self.script.index("/usr/libexec/pico4/devnode sweep")
+        self.assertLess(sweep, self.script.index('blockdev --setrw "$data"'))
+        self.assertLess(sweep, self.script.index('mount -t ext4 -o noatime "$data" /data'))
+
+    def test_systemd_comes_last_and_a_failure_reboots(self):
+        lines = [line for line in self.script.splitlines() if line and not line.startswith("#")]
+        self.assertEqual(lines[-2], "exec /usr/lib/systemd/systemd ${unit:+--unit=$unit}")
+        self.assertEqual(lines[-1], 'fail "systemd did not start"')
+        self.assertIn("shopt -s execfail", self.script)
+        self.assertIn("exec /usr/bin/pico4-reboot recovery", self.script)
+        # A one-shot test image in recovery reboots plainly, or it would start itself again.
+        self.assertIn("pico4.failover=reboot", recovery_image.DIRECT_ONESHOT)
+        self.assertIn('"$(stage1_arg failover recovery)" = reboot', self.script)
+
+    def test_charger_mode_starts_its_own_target_and_stays_dark(self):
+        self.assertIn("unit=pico4-charger.target", self.script)
+        units = self.PREINIT.parents[2] / "lib/systemd/system"
+        self.assertTrue((units / "pico4-charger.target").is_file())
+        splash = (units / "pico4-splash.service").read_text(encoding="utf-8")
+        self.assertIn("ConditionKernelCommandLine=!androidboot.mode=charger", splash)
 
 
 class RecoveryImageTests(unittest.TestCase):
@@ -410,85 +431,58 @@ class RecoveryImageTests(unittest.TestCase):
         self.assertNotIn("initcall_debug", plain.full_cmdline.split())
         self.assertEqual(plain.ramdisk, stage1)
 
-    def test_installed_takes_the_installed_stage1_and_reboots_plain_for_recovery(self):
-        def stage1(marker: bytes) -> bytes:
-            tree = cpio.Tree()
-            for directory in ("usr", "usr/sbin"):
-                tree.mkdir(directory)
-            tree.add_file("usr/sbin/pico4-reboot", b"ELF reboot", 0o755)
-            tree.add_file("init", marker)
-            return gzip.compress(tree.to_cpio(), mtime=0)
+    def test_direct_has_no_stage1_and_starts_the_system_image(self):
+        dev = self.dev_recovery("androidboot.hardware=qcom loop.max_part=7 pico4.test_run=dev-loop pico4.part=recovery")
+        data = recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, direct=True)
+        # In recovery: the whole partition with the stock vbmeta, its own overlays, no ramdisk.
+        self.assertEqual(len(data), len(stock_partition()))
+        image = bootimg.parse(data)
+        self.assertEqual((image.kernel, image.dtb, image.ramdisk), (b"new kernel", b"new dtb", b""))
+        self.assertEqual(image.recovery_dtbo, b"overlays")
+        words = image.full_cmdline.split()
+        for word in recovery_image.DIRECT + recovery_image.DIRECT_ONESHOT:
+            self.assertIn(word, words)
+        # The kernel's own words of the base stay; stage 1's and Android's go.
+        self.assertIn("loop.max_part=7", words)
+        self.assertFalse([w for w in words if w.startswith(("pico4.test_run", "pico4.part", "pico4.modules"))])
+        self.assertNotIn("androidboot.hardware=qcom", words)
+        with self.assertRaises(ValueError):
+            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, direct=True, overlay=self.tmp)
 
-        dev = self.dev_recovery("pico4.test_run=dev-loop pico4.part=recovery", stage1(b"maintenance"))
-        install = bootimg.BootImage(
-            header_version=2, page_size=4096, kernel=b"stock kernel", ramdisk=stage1(b"installed"), dtb=b"stock dtb"
-        ).with_cmdline("androidboot.hardware=qcom pico4.root=installed pico4.autoreboot=0")
-        (self.tmp / "install-boot.img").write_bytes(install.pack())
-        image = bootimg.parse(
-            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, installed=self.tmp / "install-boot.img")
+    def test_boot_is_the_installed_systems_own_image(self):
+        dev = self.dev_recovery("pico4.test_run=dev-loop pico4.part=recovery")
+        data = recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, direct=True, boot=True)
+        image = bootimg.parse(data)
+        # A plain boot image (no AVB footer, no recovery overlays), no stage 1.
+        self.assertEqual(data, image.pack())
+        self.assertEqual(
+            (image.kernel, image.dtb, image.recovery_dtbo, image.ramdisk), (b"new kernel", b"new dtb", b"", b"")
         )
         words = image.full_cmdline.split()
         self.assertIn("pico4.root=installed", words)
-        self.assertNotIn("pico4.test_run=dev-loop", words)
-        # The recovery partition's own overlays stay.
-        self.assertEqual(image.recovery_dtbo, b"overlays")
-        self.assertTrue(image.ramdisk.startswith(install.ramdisk))
-        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(install.ramdisk) :])))
-        wrapper = added["usr/sbin/pico4-reboot"].data
-        self.assertIn(b'"$1" = recovery', wrapper)
-        self.assertNotIn(b"/proc/sysrq-trigger", wrapper)
-        self.assertEqual(added["usr/libexec/pico4/pico4-reboot-real"].data, b"ELF reboot")
-        # The maintenance stage 1 is no installed system's boot image.
-        with self.assertRaises(ValueError):
-            recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, installed=dev)
-
-    def test_boot_is_the_installed_systems_own_image(self):
-        def stage1(marker: bytes) -> bytes:
-            tree = cpio.Tree()
-            for directory in ("usr", "usr/sbin"):
-                tree.mkdir(directory)
-            tree.add_file("usr/sbin/pico4-reboot", b"ELF reboot", 0o755)
-            tree.add_file("init", marker)
-            return gzip.compress(tree.to_cpio(), mtime=0)
-
-        dev = self.dev_recovery("pico4.test_run=dev-loop pico4.part=recovery", stage1(b"maintenance"))
-        install = bootimg.BootImage(
-            header_version=2, page_size=4096, kernel=b"stock kernel", ramdisk=stage1(b"installed"), dtb=b"stock dtb"
-        ).with_cmdline("androidboot.hardware=qcom pico4.root=installed pico4.autoreboot=0")
-        (self.tmp / "install-boot.img").write_bytes(install.pack())
-        data = recovery_image.build(
-            self.tmp / "out", self.tmp / "stock.img", dev, installed=self.tmp / "install-boot.img", boot=True
-        )
-        image = bootimg.parse(data)
-        # A plain boot image (no AVB footer), the installed system's header, words and stage 1.
-        self.assertEqual(data, image.pack())
-        self.assertEqual((image.kernel, image.dtb, image.recovery_dtbo), (b"new kernel", b"new dtb", b""))
-        self.assertIn("pico4.root=installed", image.full_cmdline.split())
-        self.assertIn("pico4.kernel=valve", image.full_cmdline.split())
-        # stage 1's reboot into recovery after a failed start stays: recovery holds the dev image.
-        self.assertEqual(image.ramdisk, install.ramdisk)
+        # preinit's reboot into recovery after a failed start stays: recovery holds the dev image.
+        self.assertNotIn("pico4.failover=reboot", words)
         with self.assertRaises(ValueError):
             recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, boot=True)
+
+    def test_direct_records_the_kernel_as_its_build(self):
+        dev = self.dev_recovery("pico4.part=recovery")
+        with mock.patch.object(recovery_image.kernelinfo, "analyse") as analyse:
+            analyse.return_value.version = "Linux version 7.2.0-pico4 (x) # SMP"
+            info = recovery_image.image_build_info(dev, b"new kernel", direct=True)
+        self.assertEqual(info, {"kernel": "Linux version 7.2.0-pico4 (x) # SMP", "boot": "direct"})
 
     def test_stage1_overlay_replaces_the_bases_files(self):
         overlay = self.tmp / "initramfs"
         (overlay / "usr" / "bin").mkdir(parents=True)
         (overlay / "init").write_bytes(b"#!/bin/sh\r\necho new\r\n")
-        (overlay / "usr" / "bin" / "pico4-userspace").write_bytes(b"#!/bin/sh\n")
+        (overlay / "usr" / "bin" / "pico4-install").write_bytes(b"#!/bin/sh\n")
         dev = self.dev_recovery("pico4.part=recovery")
         image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, overlay=overlay))
         self.assertTrue(image.ramdisk.startswith(b"stage 1"))
         added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1") :])))
         self.assertEqual(added["init"].data, b"#!/bin/sh\necho new\n")
-        self.assertTrue(added["usr/bin/pico4-userspace"].mode & 0o111)
-        self.assertNotIn("usr/sbin/pico4-splash", added)
-        # The prebuilt splash beside the overlay comes along.
-        (self.tmp / "prebuilt" / "aarch64").mkdir(parents=True)
-        (self.tmp / "prebuilt" / "aarch64" / "pico4-splash").write_bytes(b"ELF splash")
-        image = bootimg.parse(recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, overlay=overlay))
-        added = dict(cpio.read_cpio(gzip.decompress(image.ramdisk[len(b"stage 1") :])))
-        self.assertEqual(added["usr/sbin/pico4-splash"].data, b"ELF splash")
-        self.assertTrue(added["usr/sbin/pico4-splash"].mode & 0o111)
+        self.assertTrue(added["usr/bin/pico4-install"].mode & 0o111)
         with self.assertRaises(ValueError):
             recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev, overlay=overlay / "usr")
 

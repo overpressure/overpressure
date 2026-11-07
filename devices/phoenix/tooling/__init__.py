@@ -142,7 +142,7 @@ class Phoenix(Headset):
                 "Dev image (maintenance stage 1)",
                 "Image",
                 ("dev", "image"),
-                "out/dev/dev-boot.img, the whole-partition recovery image and install-boot.img from the stage-1 image.",
+                "out/dev/dev-boot.img and the whole-partition recovery image from the stage-1 image.",
             ),
             Step(
                 "kernel",
@@ -164,7 +164,8 @@ class Phoenix(Headset):
                 "Boot image",
                 "Image",
                 ("dev", "boot-image"),
-                "out/kernel/valve-boot.img: Valve's kernel with stage 1, the keys enrolled by the dev image.",
+                "out/kernel/valve-boot.img: Valve's kernel, its device tree and the command line that starts "
+                "the system image.",
             ),
             Step(
                 "unlock-files",

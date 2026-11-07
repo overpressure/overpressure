@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Unlicense
 """Route the headset's internet through the PC on the USB link (docs/userspace.md#internet-over-usb).
 
-The PC end of the link (pico4.host_ip=, 172.16.42.2 by default, as stage 1 sets it up) becomes
-the default gateway and DNS server of the USB interface, in a drop-in for the network file stage 1
-hands over (50-pico4-usb.network). With the PC sharing its internet at that address (Windows'
+The PC end of the link (pico4.host_ip=, 172.16.42.2 by default, the one DHCP lease of the link)
+becomes the default gateway and DNS server of the USB interface, in a drop-in for the link's
+network file (50-pico4-usb.network). With the PC sharing its internet at that address (Windows'
 internet connection sharing), the headset is online; without it the route leads nowhere. Its
 metric is above NetworkManager's Wi-Fi and Ethernet routes, so those win when they exist.
 
@@ -28,7 +28,7 @@ DROPIN = Path("/run/systemd/network/50-pico4-usb.network.d/60-pico4-internet.con
 
 
 def host_ip(cmdline: str) -> str:
-    """Return the PC's address on the USB link from the kernel command line (stage 1's setting)."""
+    """Return the PC's address on the USB link from the kernel command line (pico4.host_ip=)."""
     value = DEFAULT_HOST_IP
     for arg in cmdline.split():
         if arg.startswith("pico4.host_ip="):

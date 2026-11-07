@@ -9,6 +9,9 @@
 #       at most that; the stream's SHA-256 must match, and the written bytes are read back.
 #   pico4-install format-data --size BYTES
 #       a new ext4 file system "pico4-data" on userdata (BYTES as the backup has it)
+#   pico4-install keys --size BYTES --id ID < AUTHORIZED_KEYS
+#       the installed system's SSH keys and install ID on its data partition (pico4-data):
+#       /root/.ssh/authorized_keys and /etc/pico4/install-id (in the /etc overlay's upper layer)
 #   pico4-install wipe userdata|metadata --size BYTES
 #       zero the first 64 MiB, the way back to PICO OS: both are "formattable" in its fstab,
 #       so it makes new file systems (and encryption keys) on its next boot
@@ -96,6 +99,42 @@ format_data() {
 	echo "formatted userdata"
 }
 
+keys() {
+	local size="" id="" dev mnt=$STATE/data count rc=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--size) size=$2; shift ;;
+		--id) id=$2; shift ;;
+		*) die "unknown option $1" ;;
+		esac
+		shift
+	done
+	[ -n "$size" ] && [ -n "$id" ] || die "keys needs --size and --id"
+	case "$id" in *[!A-Za-z0-9._-]*) die "the install ID may hold letters, digits, dots, dashes" ;; esac
+	dev=$(partition userdata "$size")
+	[ "$(ext_label "$dev")" = pico4-data ] || die "userdata holds no pico4-data file system"
+	mkdir -p "$STATE" "$mnt"
+	head -c 65536 > "$STATE/authorized_keys"
+	count=$(grep -c -E '^(ssh-|ecdsa-|sk-)' "$STATE/authorized_keys")
+	[ "$count" -gt 0 ] || die "no SSH public key on standard input"
+	writable "$dev"
+	mount -t ext4 -o noatime "$dev" "$mnt" || { readonly_again "$dev"; die "mounting userdata failed"; }
+	{
+		mkdir -p "$mnt/root/.ssh" "$mnt/etc/upper/pico4" &&
+			chmod 700 "$mnt/root/.ssh" &&
+			cp "$STATE/authorized_keys" "$mnt/root/.ssh/authorized_keys" &&
+			chmod 600 "$mnt/root/.ssh/authorized_keys" &&
+			echo "$id" > "$mnt/etc/upper/pico4/install-id" &&
+			chown -R 0:0 "$mnt/root/.ssh" "$mnt/etc/upper/pico4"
+	} || rc=1
+	umount "$mnt" || rc=1
+	sync
+	readonly_again "$dev"
+	[ $rc = 0 ] || die "writing the keys to userdata failed"
+	log "install: $count SSH key(s) and install ID $id on userdata"
+	echo "keys $count"
+}
+
 wipe() {
 	local name=$1 size="" dev mib=64
 	case "$name" in userdata | metadata) ;; *) die "wipe refuses $name (userdata or metadata only)" ;; esac
@@ -152,6 +191,7 @@ status() {
 case "${1:-}" in
 write) shift; write "$@" ;;
 format-data) shift; format_data "$@" ;;
+keys) shift; keys "$@" ;;
 wipe) shift; wipe "$@" ;;
 bootmode) bootmode "$2" ;;
 status) status ;;

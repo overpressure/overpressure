@@ -5,8 +5,9 @@
 # With the USB cable attached, a powered-off headset starts again: the PMIC powers up on USB and
 # the bootloader boots with androidboot.mode=charger. PICO OS then runs AOSP's charger instead of
 # the system: holding the power key for 2 s starts the system, and 10 s without USB power turn
-# the headset off. Stage 1 does the same here instead of switching to the installed system; the
-# lenses stay dark, and the USB link and SSH come up as in every stage 1. Sourced with CHARGER_LIB=1, it only defines its functions (tests/test_charger.sh).
+# the headset off. The installed system does the same here (pico4-charger.target, which preinit
+# starts instead of the default target): the lenses stay dark, the USB link and SSH come up.
+# Sourced with CHARGER_LIB=1, it only defines its functions (tests/test_charger.sh).
 . "${CHARGER_LIBDIR:-/usr/libexec/pico4}/lib.sh"
 
 POWER_ON_HOLD=2

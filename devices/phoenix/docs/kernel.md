@@ -29,21 +29,22 @@ The kernel's files are in [kernel/](../kernel/):
 | File | Purpose |
 | --- | --- |
 | [sm8250-pico4-phoenix.dts](../kernel/sm8250-pico4-phoenix.dts) | the PICO 4's device tree on mainline's `sm8250.dtsi`: the stock tree's supplies for UFS, USB and the panels, its memory carve-outs, its unused GPIOs reserved, reboot modes, a RAM console, both DSI links with the panels, the GPU with its DDR vote, the GD32 MCU's UART, the three DSPs, the head IMU's supplies and clock, the keys |
-| [pico4.config](../kernel/pico4.config) | merged over Valve's `gabe_defconfig`: the SM8250 drivers (with the display and GPU clock controllers, QFPROM, REFGEN), the panel driver, stage 1's USB gadget functions, the PON reboot modes, pstore, QRTR over GLINK |
+| [pico4.config](../kernel/pico4.config) | merged over Valve's `gabe_defconfig`: the SM8250 drivers (with the display and GPU clock controllers, QFPROM, REFGEN), the panel driver, the USB gadget functions (NCM, mass storage, ACM), the PON reboot modes, pstore, QRTR over GLINK |
 | [patches/](../kernel/patches/) | fixes to Valve's tree that the PICO 4 needs (below) |
 | [src/](../kernel/src/) | the PICO 4's own kernel sources, at their paths in the tree: the panel driver, the battery driver, the `pico4-ov7251` and `pico4-imx471` sensor drivers, the q6 calibration driver |
 | [build-kernel.sh](../kernel/build-kernel.sh) | Valve's 7.2 source package (pinned by hash and commit), the patches and the own sources to `Image.gz` and the device tree |
 | [dtbo_sink.py](../kernel/dtbo_sink.py) | the include that absorbs the ABL's board overlay (below) |
 | [panel_sequence.py](../kernel/panel_sequence.py) | the include with the panels' command sequences, from the stock board overlay (below) |
 | [imx471_mode.py](../kernel/imx471_mode.py) | the header with the RGB camera's register table, from the camera module in the stock vendor image (below) |
-| [recovery_image.py](../kernel/recovery_image.py) | a test image: the maintenance stage 1 on Valve's kernel as a whole recovery partition; `--installed` starts the installed system instead, with `--boot` as the boot partition's image, `--stage1` carries this tree's stage-1 files; stage 1's build information names the new kernel and `OUT.json` records it, so that `dev check` accepts the image's stage 1; `--gpu-firmware` for the GPU, `--wlan-firmware` for the QCA6390; `--cmdline` for extra kernel words (such as the panel driver's parameters); `--debug` and `--trace` for failed boots (below) |
+| [recovery_image.py](../kernel/recovery_image.py) | boot images with Valve's kernel, on the dev image's recovery image: a test image of the maintenance stage 1 on Valve's kernel as a whole recovery partition (`--stage1` carries this tree's stage-1 files, `--gpu-firmware` the GPU's firmware, `--wlan-firmware` the QCA6390's); with `--direct` no ramdisk, and the kernel starts the installed system from `super` ([install.md](install.md#how-it-starts)): in `recovery` a one-shot test image whose failed start reboots plainly (`pico4.failover=reboot`), with `--boot` the boot partition's image (`dev boot-image`); `OUT.json` records the hash and the build information, stage 1's with the new kernel or with `--direct` `{"kernel": VERSION, "boot": "direct"}`, and `dev check` takes the record whose kernel release runs; `--cmdline` for extra kernel words (such as the panel driver's parameters); `--debug` and `--trace` for failed boots (below) |
 
 ## Results
 
 | Boot and SoC | Result on the headset |
 | --- | --- |
-| Boot | Valve's 7.2 kernel boots stage 1; SSH over USB NCM answers 13 s after the reboot |
+| Boot | Valve's 7.2 kernel boots stage 1; SSH over USB NCM answers 13 s after the reboot. Without a ramdisk, `root=PARTLABEL=super` mounts the system image (`sda7`) read-only 1.43 s after the kernel starts, and the image's init runs |
 | Storage | UFS with all six LUNs and their partitions; stage 1 switches every block device read-only |
+| USB NCM | Windows 11's in-box driver works without the NCM initialization the stock kernel needs; no `Wrong NDP SIGN` |
 | SoC | 8 CPUs, 7.4 GB RAM; CPU frequencies through `cpufreq-hw` (three policies, up to 2.84 GHz); TSENS thermal zones; RPMh regulators at the stock voltages; SPMI, PMIC RTC, watchdog, `socinfo` |
 | Reboots | `pico4-reboot bootloader` reaches fastboot; the firmware refuses the warm reset a panic asks for (`reboot=panic_warm`, from the stock command line; `SYSTEM_RESET2` answers -2). The tree's PS_HOLD reset, as on the stock kernel, then restarts the headset, about 40 s from a forced panic to SSH, with the RAM console kept. PSCI's ordinary reset (patch 0031) stands behind it and has not been needed |
 
@@ -64,7 +65,7 @@ The kernel's files are in [kernel/](../kernel/):
 
 | Installed system | Result on the headset |
 | --- | --- |
-| Boot | the installed system (`super`, `userdata`) on Valve's kernel from `boot` (`dev install`, the image from `recovery_image.py --installed --boot`), the maintenance stage 1 on the stock kernel in `recovery`: `graphical.target` 13.2 s after power-on (8.8 s kernel, 4.4 s userspace); the data partition and its disk writable, every other block device read-only; the `/etc` overlay without the inodes index, so that an update's new image is taken |
+| Boot | the installed system (`super`, `userdata`) on Valve's kernel from `boot` (`dev install`, the image from `recovery_image.py --direct --boot`), the maintenance stage 1 on the stock kernel in `recovery`; the display and the GPU bind without a ramdisk; `graphical.target` 16.9 to 18.1 s after the kernel starts ([install.md](install.md#verified-results)) |
 | RGB camera | `pico4-imx471` on CCI 0, four lanes of CSIPHY 1 at 2064.8 Mbit/s, CSID 4 and the third IFE-lite: 150 frames, 0 errors, 50.01 fps beside the tracking cameras. CAMSS never sets the camera NoC's clock, which stays at 19.2 MHz: the tree assigns 300 MHz, since the sensor's lines come at 1.7 GB/s and overflow the IFE-lite otherwise. The sensor powers up with its stream: a missing one fails only that stream |
 | Colour room view on the depth mesh | scanned-out image with the headset lying still: both eyes in colour, the compositor on its RGB NV12 shader, 251 meshes in 10 s with 14,841 vertices, 64–72 ms after their pair. The scanout is black above the RGB camera's field of view; worn none of that shows, also looking up |
 | Still headset, 60 s | tracker 0 poses lost, 0.61 mm and 0.05° from its start with the room view off, 0.54 mm and 0.05° with the colour room view and the mesh on; `pico4-slamd` 56 % of one core; hottest zone 61 °C |
@@ -160,7 +161,8 @@ How the installed system runs on Valve's kernel:
 
 | Part | How |
 | --- | --- |
-| Data partition | a partition counts its disk's read-only flag too: stage 1 makes the disk writable, its other partitions keep their own flag, and stage 2's block policy leaves that disk alone |
+| Root | the kernel mounts the system image in `super` itself (`root=PARTLABEL=super`, read-only, `rootwait=20`) and starts its preinit; no ramdisk. Without `super` it panics after 20 s, and `panic=5` reboots |
+| Data partition | a partition counts its disk's read-only flag too: preinit makes the disk writable, its other partitions keep their own flag, and the system's block policy leaves that disk alone; the `/etc` overlay goes without the inodes index, so that an update's new image is taken |
 | DSPs | `/sys/class/remoteproc` (crash recovery restarts only that DSP), the kernel's name service and PD mapper |
 | Sensor service | `/dev/fastrpc-sdsp`, socinfo from debugfs (above) |
 | Fan | `cpuN-thermal`, `cpuN-top/bottom-thermal`, `gpu-top/bottom-thermal`: the stock zones' TSENS channels |
@@ -169,10 +171,10 @@ How the installed system runs on Valve's kernel:
 | System V IPC | the kernel's own |
 | OpenGL | zink, as on the Frame, whose Mesa has no other OpenGL driver |
 | GPU clock floor, kernel thread priorities | msm's devfreq governor; `pico4-kthread-priorities` with the Frame's values, among them Valve's real-time priority for the GPU's workqueues |
-| Device nodes | devtmpfs creates them, and stage 1 hands its devtmpfs over as it is: systemd's device monitor follows udev only when `/dev` is a devtmpfs or udev already runs, and without it no device starts a unit; udev's `devnode` helper stays for the block policy (every disk read-only) |
+| Device nodes | devtmpfs creates them, and the kernel mounts it on `/dev` before preinit starts: systemd's device monitor follows udev only when `/dev` is a devtmpfs or udev already runs, and without it no device starts a unit; udev's `devnode` helper stays for the block policy (every disk read-only) |
 | systemd | pinned at 257.x: the Frame's own systemd is 257.7 |
 | Monado's own service | `pico4-monado`, a development runtime with Vulkan's display in direct mode ([session.md](session.md#monado-as-a-service)) |
-| Wi-Fi | ath11k on PCIe 0 (the QCA6390's power sequencer on the stock supplies), PICO's firmware and board data (`bdwlanq.elf`) under ath11k's names, the address from persist's `wlan_mac.bin` (`pico4-wlan-address`), iwd told to keep ath11k's interface (`/etc/iwd/main.conf`); the Frame's NetworkManager, which knows the band `no6` that the Steam client's Wi-Fi connections ask for. The chip's own address changes at each boot and the Steam client names it in the profiles it saves, so `wlan-address` takes that line out before NetworkManager starts |
+| Wi-Fi | ath11k on PCIe 0 (the QCA6390's power sequencer on the stock supplies), PICO's firmware and board data (`bdwlanq.elf`) under ath11k's names; its probe while the kernel starts finds no firmware, so `pico4-wlan-probe` binds the chip again once the system image is mounted; the address from persist's `wlan_mac.bin` (`pico4-wlan-address`), iwd told to keep ath11k's interface (`/etc/iwd/main.conf`); the Frame's NetworkManager, which knows the band `no6` that the Steam client's Wi-Fi connections ask for. The chip's own address changes at each boot and the Steam client names it in the profiles it saves, so `wlan-address` takes that line out before NetworkManager starts |
 | Bluetooth | `hci_qca` on QUP0's UART 6; firmware and NV data from PICO OS's `bluetooth` partition, mounted read-only (`pico4-bt-firmware`), the address from persist's `pico_bt_mac` (`pico4-bt-address`, the management interface's Set Public Address), the Frame's BlueZ. `hci_qca` is built in and sets the controller up before the partition is mounted; `pico4-bt-firmware` probes it again once the firmware is there, since the kernel offers a controller to bluetoothd only after a setup that succeeded |
 | Android games (Lepton) | the Frame's way: rootless podman (Arch's 5.6.2: the Frame's 5.5.2 links gpgme 11), the Frame's passt, `lepton-compat`, Valve's Android Mesa, the Android and Linux Vulkan layers and adb (with protobuf 25 beside it); the session user gets subordinate IDs 100000-165535. binderfs mounts in the session user's namespace, podman runs rootless with crun, overlay storage and the full ID map |
 | Audio | `pico4-adsp` boots the ADSP through remoteproc; `pico4-audiopd` starts PICO OS's audio process on upstream FastRPC (`INIT_CREATE_STATIC`, the stock remote heap given to the DSP's VMs); `pico4-lpass-macros` probes the VA macro again once that process runs (the AFE refuses its hardware vote before, and the driver has no bind file); the SM8250 machine driver's card "PICO4" with its own UCM profile (`conf.d/sm8250`) |
@@ -231,8 +233,8 @@ the PLL itself when it enables the display, and the panels work on every boot.
 
 Only the DRM master makes the kernel probe a connector's modes; anyone else gets the list a
 probe left. Without one, a compositor that starts first sees no real mode ("1024x768") and finds
-no headset display (the kernel has no fbdev client that would probe). The boot splash in stage 1 is
-the first master and probes; it shows its picture on msm's primary plane, across both panels. The
+no headset display (the kernel has no fbdev client that would probe). The boot splash that preinit
+starts is the first master and probes; it shows its picture on msm's primary plane, across both panels. The
 splash runs only when the installed system starts, so `pico4-panel-probe` probes on every boot:
 writing `detect` to the connector's sysfs status
 fills its modes (4320x2160) without a master.
@@ -373,7 +375,10 @@ builds it), never to `boot`. With an empty bootloader message the ABL starts `bo
 installed system; a reboot with reason `recovery` starts the test kernel
 once. Whatever happens then, a panic (`panic=5`), a stage-1 deadline or a hard reset, the next
 boot is the installed system again. Afterwards `dev image`'s recovery image goes back to
-`recovery`.
+`recovery`. A test image of stage 1 on Valve's kernel is the default; `recovery_image.py --direct
+KERNEL_OUT STOCK_RECOVERY OUT` makes one without a ramdisk that starts the installed system from
+`super` with the test kernel, and its preinit reboots plainly after a failed start
+(`pico4.failover=reboot`), since a reboot into `recovery` would start the test image again.
 
 The ABL passes only the boot image header's first command line field (512 bytes with its
 terminator) and drops the extra one. `recovery_image.py` therefore leaves out the base image's

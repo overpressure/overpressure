@@ -116,7 +116,7 @@ interrupt threads refuse `taskset`; `pico4-kthread-priorities` below sets its va
 (`steamvr-web-debug-portforward`, `steam-web-debug-portforward`). It masks these user units
 globally: `steamvr-v4l2cam` (the headset-view loopback camera), `steamvr-proxmicmute` and
 `steamos-scheduler` (the sched_ext scheduler `scx_lavd` needs an option Valve's kernel configuration
-leaves out; stage 1 already sets `schedutil`).
+leaves out).
 [`pico4-micmute`](../userspace/rootfs/usr/lib/systemd/user/pico4-micmute.service), wanted by
 `steamvr.service`, takes `steamvr-proxmicmute`'s place: it mutes PipeWire's default microphone while the
 headset's wear sensor reports it off the head (`$XDG_RUNTIME_DIR/pico4-worn`, written by the

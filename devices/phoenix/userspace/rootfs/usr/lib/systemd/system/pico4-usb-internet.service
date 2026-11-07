@@ -1,10 +1,10 @@
 # The PC on the USB link as the last-resort gateway and DNS server (docs/userspace.md): a drop-in
-# for stage 1's network file, written before systemd-networkd reads it.
+# for the USB link's network file (50-pico4-usb.network), written before systemd-networkd reads it.
 [Unit]
 Description=Internet through the PC on the USB link
 DefaultDependencies=no
 Before=systemd-networkd.service
-ConditionPathExists=/etc/systemd/network/50-pico4-usb.network
+ConditionPathExists=/usr/lib/systemd/network/50-pico4-usb.network
 
 [Service]
 Type=oneshot

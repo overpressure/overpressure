@@ -25,9 +25,13 @@ section lists what comes next. Each step has its own document:
 
 Installed system: the system image read-only in `super`, data in `userdata`, the maintenance
 stage 1 in `recovery`, following PICO OS's layout; installed, starts without the PC, persistent
-across reboots and updates; the way back is open ([docs/install.md](docs/install.md)).
-Powering off with the USB cable attached starts the headset in charger mode (stage 1 waits for a
-2 s power press; `pico4-reboot` from there starts the system); a short power press does nothing.
+across reboots and updates; the way back is open ([docs/install.md](docs/install.md)). `boot`
+holds Valve's kernel without a ramdisk: the kernel mounts the system image in `super` read-only and
+starts its `preinit`, which mounts the data and executes systemd; a failure reboots into `recovery`.
+The direct boot runs on the headset (graphical target in 17 to 18 s); the power key in charger mode
+and a boot without the PC are open.
+Powering off with the USB cable attached starts the headset in charger mode (`pico4-charger.target`
+waits for a 2 s power press, then reboots into the system); a short power press does nothing.
 Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; on the headset the
 MCU acknowledges ([docs/cooling.md](docs/cooling.md)).
 Build system, the build container, tests and the Windows environment: [docs/development.md](docs/development.md).
@@ -58,15 +62,15 @@ README.md current.
   Qualcomm EDL (backup, verified writes), verified backups, processes and waits, SSH, recorded runs and the
   read-only storage policy, sparse flashing and the RAM boot, the formats (with the ext4 and FAT readers and
   `assets.py`), `elfdeps.py` and `windows_ncm.py`.
-- `initramfs/`: stage 1. `pico4-init` is PID 1, not busybox init: busybox's `kill(-1)` killed
-  the f_mass_storage kernel thread and with it the USB link. `pico4-userspace installed`
-  and `switch` hand over to stage 2.
+- `initramfs/`: stage 1, the maintenance environment in `recovery` and the base of test images;
+  `pico4-install` is the installer's only writer. `pico4-init` is PID 1, not busybox init: busybox's
+  `kill(-1)` killed the f_mass_storage kernel thread and with it the USB link.
 - `kernel/`: Valve's kernel: `build-kernel.sh`, `pico4.config`, `patches/`, the PICO's drivers in
   `src/`, the device tree `sm8250-pico4-phoenix.dts` (with `dtbo_sink.py` and `panel_sequence.py`),
-  `recovery_image.py` for its boot images.
+  `recovery_image.py` for its boot images (`--direct --boot`: the installed system's, from `dev boot-image`).
 - `userspace/`: stage 2. `packages.txt` and `pacman.conf` (the Holo preview first; Frame
   packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
-  layer), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,
+  layer, with `preinit`, the first process, and the system's own USB gadget, `usb-gadget`), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,
   pico4-gamescope, pico4-spa-alsa, pico4-vrlink, pico4-gtk2 for the Steam client, pico4-mangohud, and others;
   `pico4-swapchain-usage`).
 - `src/`: the project's C sources (`graphics/`, `monado/` driver, `xr/` OpenXR clients, `vrlink/`,
@@ -90,7 +94,7 @@ steps):
 ```sh
 python -m unittest                                       # host tests, seconds, no hardware
 bash devices/phoenix/tests/test_recovery_policy.sh       # stage-1 recovery policy
-sh devices/phoenix/tests/test_charger.sh                 # stage-1 charger mode
+sh devices/phoenix/tests/test_charger.sh                 # charger mode's decisions
 python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> out/
 # Any system, no Linux needed: the stock firmware from PICO's public OTA, then the assets
 # (docs/development.md#stock-firmware; about 11 GB of OTA members and images in cache/pico4-stock):
@@ -118,8 +122,9 @@ python -m overpressure cycle --restore-only              # verified stock boot a
 
 ## Hard rules
 
-- **Access.** SSH takes keys only, on USB and Wi-Fi, and no account has a password; keys are per PC, enrolled by
-  `dev image` in boot images, never in the system image ([docs/security.md](docs/security.md)).
+- **Access.** SSH takes keys only, on USB and Wi-Fi, and no account has a password; keys are per PC, written
+  by `dev install` to the data partition (`pico4-install keys`), never into the system image or a boot image
+  ([docs/security.md](docs/security.md)).
 - **Verified hardware.** The tools refuse firmware, headsets and panels the whole path hasn't run on
   (`tooling/device.py`); extend that list only after a run.
 - **Private data.** Never commit or redistribute device data or vendor files: `backup/`,
@@ -158,7 +163,7 @@ passed.
 
 - **Development mode.** The headset stays in development mode between tasks and
   conversations: the engineering ABL in `abl`, the dev image as the maintenance stage 1 in
-  `recovery`, and the installed system (install boot image in `boot`, system in `super`, data
+  `recovery`, and the installed system (Valve's kernel in `boot`, system in `super`, data
   in `userdata`). `dev recovery` keeps every boot in the maintenance stage 1 until `dev normal`
   (misc's bootloader message). Tasks do not restore stock boot, stock ABL or PICO OS, and do not
   run the cycle to prove the restoration. `hwtest flash-run` and `cycle` leave stock boot in
@@ -177,10 +182,11 @@ passed.
   boot also needs the per-session `fastboot oem <token> unlock` authorization, which the tools
   derive from the identity.
 - **Iterate on the installed system.** A new system image goes through `dev recovery` and
-  `dev install`, a new kernel through `dev recovery` and `dev install --boot`; `dev installed`
-  reconnects after a reboot, `dev check` runs the acceptance runner's stage-2 checks, `dev ssh CMD` a
-  command. The session runs only on Valve's kernel, not in the maintenance stage 1. A changed
-  stage-1 image needs `dev image`, `dev flash` and a new installed boot image.
+  `dev install`, a new kernel through `dev boot-image`, `dev recovery` and `dev install --boot`;
+  `dev installed` reconnects after a reboot, `dev check` runs the acceptance runner's stage-2 checks,
+  `dev ssh CMD` a command. The session runs only on Valve's kernel, not in the maintenance stage 1. A
+  changed stage-1 image needs `dev image` and `dev flash`; the installed system's boot image holds no
+  stage 1.
 - **Deadlines.** Device-side deadlines return the headset to fastboot; `dev reboot` starts
   stage 1 from there without a flash. The dev image's maximum runtime (an hour) counts from the
   last `python -m overpressure dev` command, which renews it; plain `ssh` does not. A kernel panic reboots after 5 s (`panic=5`, the
@@ -197,9 +203,11 @@ passed.
   retrying anything.
 - **Venus.** A firmware exception can end the driver's recovery in an interrupt storm that starves storage or
   in a panic; both reboot the headset by themselves. Run decoder experiments that may crash it with the user near.
-- **Windows NCM.** The Windows NCM link needs `overpressure/windows_ncm.py` (repository root) (UsbDk) after each stage-1
-  boot (`dev connect`, `dev installed` and the runner do it). Re-initializing a working link in
-  stage 2 disturbs it; `dev installed` repeats it at most once a minute while SSH times out.
+- **Windows NCM.** Stage 1 on the stock kernel needs `overpressure/windows_ncm.py` (repository root)
+  (UsbDk) after each boot (`dev connect`, `dev recovery` and the runner do it). Valve's kernel takes
+  Windows 11's NCM driver as it is: the installed system needs no initialization, and running it on
+  a working link disturbs it. `dev installed` never sends it; `dev reboot` sends it once when nothing
+  has answered for 60 s (the maintenance stage 1 started).
 - Binary files from the device: use `ssh` directly; `dev ssh` decodes output as text.
 
 ## Environment quirks

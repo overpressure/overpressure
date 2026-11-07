@@ -317,19 +317,19 @@ class DevTests(HeadsetFixture):
 
         return devloop.Dev(self.settings, self.root / "dev", fake, self.clock)
 
-    def test_check_knows_the_stage1_of_a_kernel_test_image(self):
-        stock = {"kernel": "Linux version 4.19.81-perf+", "stock": "5.13.7"}
-        valve = {"kernel": "Linux version 7.2.0-pico4", "stock": "5.13.7"}
+    def test_check_knows_the_boot_image_whose_kernel_runs(self):
+        valve = {"kernel": "Linux version 7.2.0-pico4 (overpressure@pico4) # SMP PREEMPT", "boot": "direct"}
+        stage1 = {"kernel": "Linux version 7.2.0-pico4 (overpressure@pico4) # SMP PREEMPT", "stock": "5.13.7"}
         (self.root / "kernel").mkdir()
-        (self.root / "kernel" / "test-recovery.img.json").write_text(json.dumps({"build_info": valve}))
-        running = {"info": stock}
-        dev = self.make({"cat /etc/pico4/build-info": lambda: json.dumps(running["info"])})
-        self.assertEqual(dev.known_build_info(stock), stock)
-        running["info"] = valve
-        self.assertEqual(dev.known_build_info(stock), valve)
-        # An unknown stage 1 keeps the dev image's, which the check then refuses.
-        running["info"] = {"kernel": "Linux version 9"}
-        self.assertEqual(dev.known_build_info(stock), stock)
+        (self.root / "kernel" / "a-test-recovery.img.json").write_text(json.dumps({"build_info": stage1}))
+        (self.root / "kernel" / "valve-boot.img.json").write_text(json.dumps({"build_info": valve}))
+        running = {"release": "7.2.0-pico4"}
+        dev = self.make({"uname -r": lambda: running["release"] + "\n"})
+        # A stage-1 test image's record is not the installed system's boot.
+        self.assertEqual(dev.boot_build_info(), valve)
+        # An unknown kernel has only its release, which the check compares.
+        running["release"] = "9.0"
+        self.assertEqual(dev.boot_build_info(), {"kernel": "Linux version 9.0 "})
 
     def test_every_command_renews_the_host_contact(self):
         argv = self.make().ssh_argv("pico4-valve-session-check --seconds 30")
@@ -419,6 +419,7 @@ class DevTests(HeadsetFixture):
         (backup / "lun0/rawprogram0.xml").write_text(f"<data>{rows}</data>")
         dev_dir = self.root / "dev"
         dev_dir.mkdir(exist_ok=True)
+        (dev_dir / "id_ed25519.pub").write_bytes(b"ssh-ed25519 PC\n")
         kernel_dir = self.root / "kernel"
         kernel_dir.mkdir(exist_ok=True)
         (kernel_dir / "valve-boot.img").write_bytes(b"install boot")
@@ -440,6 +441,7 @@ class DevTests(HeadsetFixture):
                 "pico4-install write super": f"written super {system_sha}",
                 "pico4-install status": f"bootmode: boot-recovery\nsystem: pico4-system\ndata: {data}",
                 "pico4-install format-data": "formatted userdata",
+                "pico4-install keys": "keys 1",
                 "pico4-install bootmode normal": "bootmode normal",
                 "cat /proc/1/comm /etc/pico4/install-id": "systemd\ndev-loop\n1234567",
             }
@@ -457,6 +459,7 @@ class DevTests(HeadsetFixture):
                 "pico4-install write super",
                 "pico4-install status",
                 "pico4-install format-data",
+                "pico4-install keys",
                 "pico4-install bootmode normal",
                 "pico4-reboot",
             ],
@@ -465,6 +468,16 @@ class DevTests(HeadsetFixture):
         self.assertIn("--size 100663296 --bytes 12 ", steps[0])
         self.assertIn(f"--size {2097152 * 4096} ", steps[1])
         self.assertIn(f"--size {27804115 * 4096}", steps[3])
+        # The keys and the install ID go to the data partition, never into an image.
+        self.assertIn(f"pico4-install keys --size {27804115 * 4096} --id dev-loop", steps[4])
+
+    def test_install_refuses_keys_the_headset_did_not_confirm(self):
+        dev, system = self.install_setup()
+        real = dev.ssh
+        dev.ssh = lambda command, *a, **k: "keys 0" if "pico4-install keys" in command else real(command, *a, **k)
+        with self.assertRaisesRegex(RuntimeError, "did not confirm the keys"):
+            dev.install(system)
+        self.assertFalse(any("bootmode normal" in t for t in self.texts()))
 
     def test_install_refuses_another_panel_before_any_write(self):
         dev, system = self.install_setup()
@@ -479,14 +492,14 @@ class DevTests(HeadsetFixture):
 
     def test_enrolled_keys_are_this_pcs_and_the_owners(self):
         dev, _ = self.install_setup()
-        self.assertEqual(dev.enrolled_keys(b"ssh-ed25519 PC\n"), b"ssh-ed25519 PC\n")
+        self.assertEqual(dev.enrolled_keys(), b"ssh-ed25519 PC\n")
         own = self.root / "own.pub"
         own.write_bytes(b"ssh-ed25519 OWN me\n\n")
         dev.s.ssh_public_key = str(own)
-        self.assertEqual(dev.enrolled_keys(b"ssh-ed25519 PC\n"), b"ssh-ed25519 PC\nssh-ed25519 OWN me\n")
+        self.assertEqual(dev.enrolled_keys(), b"ssh-ed25519 PC\nssh-ed25519 OWN me\n")
         own.write_bytes(b"-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n")
         with self.assertRaisesRegex(ValueError, "no public key"):
-            dev.enrolled_keys(b"ssh-ed25519 PC\n")
+            dev.enrolled_keys()
 
     def test_release_check_records_every_result_and_fails_on_one(self):
         dev, _ = self.install_setup()
@@ -514,7 +527,7 @@ class DevTests(HeadsetFixture):
             self.assertEqual(dev.release_check(), 1)
 
     def test_install_takes_another_boot_image(self):
-        # Such as the installed system's boot image with Valve's kernel (recovery_image.py --boot).
+        # Such as a boot image of another kernel build (recovery_image.py --direct --boot).
         dev, system = self.install_setup(confirmed_boot=b"valve boot image")
         other = self.root / "install-boot-valve.img"
         other.write_bytes(b"valve boot image")

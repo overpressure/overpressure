@@ -345,6 +345,34 @@ def host_checks(host: Host) -> list[Check]:
 ENGINE = "Docker or Podman"
 ENGINE_FIX = "install Docker (docs.docker.com/get-docker) or Podman (podman.io) and have it running"
 BINFMT_FIX = "none needed: each build registers it; if a build fails on it: python -m overpressure container binfmt"
+#: The memory the userspace build wants in the container: its C++ units take about 1.5 GiB a job.
+ENGINE_MEMORY = 8 << 30
+MEMORY_FIX = (
+    "give the engine 8 GiB or more (Docker Desktop: Settings, Resources, Memory limit; "
+    "Podman: podman machine set --memory)"
+)
+
+
+def engine_memory(info: str) -> int | None:
+    """Return the engine's memory in bytes from its info output, or None when it names none.
+
+    Docker prints "Total Memory: 15.63GiB", Podman "memTotal: 16777404416".
+    """
+    for line in info.splitlines():
+        key, _, value = line.strip().partition(":")
+        value = value.strip()
+        if key == "memTotal" and value.isdigit():
+            return int(value)
+        if key == "Total Memory":
+            for unit, shift in (("GiB", 30), ("MiB", 20)):
+                if value.endswith(unit):
+                    try:
+                        return int(float(value[: -len(unit)]) * (1 << shift))
+                    except ValueError:
+                        return None
+    return None
+
+
 #: The aarch64 handler by its ELF magic, whatever it is named, with its flags; the engine's architecture.
 BINFMT_PROBE = (
     "echo arch=$(uname -m); for f in /proc/sys/fs/binfmt_misc/*; do grep -qsx enabled $f && "
@@ -367,6 +395,17 @@ def container_checks(host: Host) -> list[Check]:
         last = (out.splitlines() or ["no answer"])[-1][:120]
         return [Check(ENGINE, BUILDS, MISSING, f"{Path(tool).name} does not answer: {last}", ENGINE_FIX)]
     checks = [Check(ENGINE, BUILDS, OK, Path(tool).name)]
+    memory = engine_memory(out)
+    if memory is not None and memory < ENGINE_MEMORY:
+        checks.append(
+            Check(
+                "build container memory",
+                BUILDS,
+                WARNING,
+                f"{memory / 2**30:.1f} GiB: the userspace build runs fewer jobs and takes much longer",
+                MEMORY_FIX,
+            )
+        )
     if not host.container_ready():
         fix = "python -m overpressure container build (the installer builds it itself)"
         checks.append(Check("build container image", BUILDS, MISSING, f"{linux.image()} not built", fix))

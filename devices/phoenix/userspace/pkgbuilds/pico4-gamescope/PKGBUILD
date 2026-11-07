@@ -71,7 +71,8 @@ build() {
     -Dpipewire=enabled -Drt_cap=enabled -Ddrm_backend=enabled -Dsdl2_backend=enabled \
     -Davif_screenshots=enabled -Dinput_emulation=enabled -Denable_openvr_support=true \
     -Denable_tests=false -Dbenchmark=disabled
-  meson compile -C build
+  # build-userspace.sh bounds the jobs by memory (meson takes no MAKEFLAGS).
+  meson compile -C build -j "${PICO4_BUILD_JOBS:-0}"
 }
 
 package() {

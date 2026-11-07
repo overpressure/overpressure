@@ -17,7 +17,7 @@ legal advice.
 | Valve's kernel | Valve, its public GPL source package | hash and commit (`kernel/build-kernel.sh`), patches | the kernel build, on their PC | the kernel |
 | The Steam client's updates, games | Valve, with the owner's own Steam account | no | Steam, on the headset | Steam |
 | Open source projects | their upstreams | recipes, pins and patches (`userspace/pkgbuilds/`) | the userspace build | Monado, gamescope and others |
-| `prebuilt/aarch64/pico4-reboot`, `pico4-splash` | this project | yes, with their sources in `src/` | the repository | stage 1 builds without a cross compiler |
+| `prebuilt/aarch64/pico4-reboot`, `pico4-splash` | this project | yes, with their sources in `src/` | the repository | stage 1 and the userspace build without a cross compiler for them |
 
 ## What this means for an owner
 

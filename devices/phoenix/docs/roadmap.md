@@ -6,7 +6,9 @@ PICO's own drivers and device tree ([kernel.md](kernel.md)). The stock Android
 kernel is no longer a target for the system; the way back to PICO OS stays. The plan has six steps,
 from a recoverable development device to Valve's VR session; [research.md](research.md) holds the
 background. All six steps work on the tested headset,
-an original PICO 4. Open work: a power press after a long sleep.
+an original PICO 4. Open work: the rest of the direct boot's checks on the headset (the power key in charger
+mode, a boot without the PC, `dev check` with the controllers), the kernel's RDS listener, and a
+power press after a long sleep.
 
 ## Status
 
@@ -71,7 +73,7 @@ until recovery has been tested.
   next reboot. Unlocking wipes user data.
 - `adb reboot edl` enters EDL from PICO OS without buttons, so cycles run unattended.
 - The tested engineering ABL (a signed Neo3 build) has no `fastboot boot`, so Linux starts from
-  a flashed partition: the maintenance stage 1 in `recovery`, the installed boot image in `boot`.
+  a flashed partition: the maintenance stage 1 in `recovery`, the installed system's boot image in `boot`.
   Flashing needs the engineering ABL and its per-session OEM authorization command.
 - After a cycle, full EDL readbacks of `boot` (96 MiB) and `abl` (1 MiB) match the backup. The
   bootloader stays unlocked; PICO OS boots with SELinux enforcing.
@@ -90,15 +92,16 @@ serial or USB debugging. The first measurable success is a Linux shell, not a VR
   with the ramdisk replaced by Alpine Linux 3.24 (aarch64) and the project's init, whose PID 1
   is `pico4-init`. `python -m overpressure build --firmware <build>` builds it from the boot image of
   the matching official OTA ([tooling/image.py](../tooling/image.py),
-  [tooling/firmware.json](../tooling/firmware.json)). The installed boot image carries Valve's kernel
-  and tree instead ([install.md](install.md)).
+  [tooling/firmware.json](../tooling/firmware.json)). The installed system's boot image carries Valve's
+  kernel and tree and no ramdisk ([install.md](install.md)).
 - USB-C carries the debugging: an NCM network link (headset 172.16.42.1; DHCP gives the PC an
   address without gateway or DNS), SSH, telnet, a web page with logs and a hardware report,
   and a read-only log drive. There is no serial console: the stock kernel has no ACM function.
 - Every physical block device is read-only; the root file system is in RAM.
 - The stock kernel rejects Windows' NCM packets (`Wrong NDP SIGN`) until the host sends CDC
   `SET_CRC_MODE(0)`. [overpressure/windows_ncm.py](../../../overpressure/windows_ncm.py) sends it through UsbDk
-  after each stage-1 boot and hands the device back to Windows' UsbNcm driver.
+  after each stage-1 boot and hands the device back to Windows' UsbNcm driver. Valve's kernel, under
+  the installed system, needs no such request.
 - A watchdog returns the headset to fastboot after 5 minutes without usable USB traffic or a
   login; test runs add a connection deadline and a maximum runtime. A kernel panic reboots
   instead of leaving the headset in Qualcomm's crash-dump mode.
@@ -142,9 +145,10 @@ projects, and run the Frame's system services, input and graphics stack on the P
   builds come from its public hotfix repository, named explicitly in
   [packages.txt](../userspace/packages.txt): systemd 257.7 (pinned with `IgnorePkg`),
   `steamos-customizations-deckard`, `steamos-manager`, gamescope, Valve's Mesa and SteamVR.
-- **Handoff.** Stage 1 mounts the installed system from `super` (`pico4-userspace installed`,
-  [install.md](install.md)) and hands PID 1 to its systemd (`pico4-userspace switch`). The USB link,
-  the SSH host key, read-only storage and the recovery deadlines carry over into stage 2.
+- **Start.** Valve's kernel mounts the system image from `super` read-only and starts its `preinit`
+  without a ramdisk; preinit applies the read-only storage policy, mounts the data partition and
+  executes systemd ([install.md](install.md#how-it-starts)). The system sets up its own USB link
+  (the gadget and address of the maintenance stage 1) and keeps its SSH host keys in the data.
 - **Result.** systemd reaches `running` with no failed units and Turnip renders and verifies the
   Vulkan test inside the userspace.
 
@@ -218,7 +222,13 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
 
 ## Open work
 
-**Open.** A short power press after more than an hour asleep. After an RTC wake from 3 h
+**Open.** The direct boot's remaining checks on the headset: the power key held 2 s in charger
+mode, a boot without the PC, `dev check` with both controllers connected
+([install.md](install.md#open-work)). Verified: preinit to the graphical target (16.9 to 18.1 s,
+stage 1 in `boot` 23.3 s), charger mode up to the key, the Wi-Fi re-probe, the keys on the data
+partition. Valve's kernel listens on tcp/16385 (RDS over TCP); its option goes off in `pico4.config`.
+
+A short power press after more than an hour asleep. After an RTC wake from 3 h
 asleep, with the cable in, Steam suspended again within about 4 s, while 80 idle minutes in SteamVR's standby
 brought no suspend. Whether a key wake behaves alike is not known.
 

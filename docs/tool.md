@@ -31,6 +31,7 @@ with what it is needed for and its fix in one line:
 | --- | --- |
 | Docker or Podman answers (`ENGINE info`) | install Docker or Podman and have it running; how it runs its containers (a VM, WSL, a service, rootless) is the owner's choice, and the check and its fix are the same on every host |
 | the image built | `python -m overpressure container build` (the installer builds it itself) |
+| the engine's memory, from its `info` (8 GiB or more) | give the engine more (Docker Desktop: Settings, Resources, Memory limit; Podman: `podman machine set --memory`); below it a *warning*: the userspace build runs one job per 1.5 GiB and takes much longer |
 | the aarch64 handler (an x86-64 engine) | none needed: each build registers it; after a failure, `python -m overpressure container binfmt` (*optional* until then) |
 
 The image holds every Linux tool of the builds by construction, so no tool is checked one by one.
@@ -95,6 +96,13 @@ python -m overpressure container binfmt          # the aarch64 handler: register
   status, only when the container's root is the host's root (a rootful engine). A rootless
   engine's root is the host's user already, and an engine that maps ownership itself is left alone
   by it: nothing is given back.
+- **Linked folders.** A git worktree may link its private folders (`assets/`, `backup/`,
+  `cache/`, `out/`) to another checkout's, as a symlink or a Windows junction. The bind mount of
+  the repository cannot follow such a link, so `container run` binds each linked folder at its
+  place under `/work`.
+- **Parallel jobs.** The userspace build compiles one job per CPU, but at most one per 1.5 GiB of
+  the container's memory (`MAKEFLAGS`, `CMAKE_BUILD_PARALLEL_LEVEL`, `PICO4_BUILD_JOBS` for meson):
+  more jobs than memory swap it to a crawl.
 - **The aarch64 handler.** The userspace build's chroot runs arm64 programs through the host
   kernel's binfmt_misc handler for aarch64 executables with the F flag (magic
   `7f454c460201010000000000000000000200b700`). Some engines register one, others do not; an arm64

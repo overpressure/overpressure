@@ -12,9 +12,6 @@ exec >>"$P4_RUN/svc-$name.log" 2>&1
 
 idle() { exec sleep 2147483647; }
 
-# The installed system's stage 1 serves only SSH with the enrolled keys (docs/security.md).
-installed_mode() { [ "$(stage1_arg root "")" = installed ]; }
-
 case "$name" in
 udhcpd)
 	# DHCP for the PC on the USB link: hands out exactly one address and
@@ -35,25 +32,19 @@ udhcpd)
 	exec udhcpd -f "$P4_RUN/udhcpd.conf"
 	;;
 telnetd)
-	installed_mode && idle
 	exec telnetd -F -l "$P4_LIB/login-shell"
 	;;
 dropbear)
 	mkdir -p /etc/dropbear
 	# -R: generate host keys on first connection. -W: a 4 MiB receive window: with the default
 	# 24 KiB, uploads over the USB link (the system image) stopped at about 4.4 MB/s.
-	# Installed, -s: keys only. In maintenance, -B: the empty root password, on the USB cable.
-	if installed_mode; then
-		exec dropbear -F -E -R -s -p 22 -W 4194304
-	fi
+	# -B: the empty root password, on the USB cable (docs/security.md).
 	exec dropbear -F -E -R -B -p 22 -W 4194304
 	;;
 httpd)
-	installed_mode && idle
 	exec httpd -f -p 80 -h /srv/www
 	;;
 serial)
-	installed_mode && idle
 	# Shell on the USB serial function (CDC-ACM), when the kernel has one.
 	# getty asks for a login name first (any name works, there is no
 	# password): until the PC's terminal has switched off echo, whatever it

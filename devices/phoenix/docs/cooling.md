@@ -232,7 +232,7 @@ Hibernate and PowerOff as its fallbacks where those are not possible.
 [`battery-guard`](../userspace/rootfs/usr/libexec/pico4/battery-guard) reads the driver's `capacity`
 and `status` every 5 s and takes PICO OS's decision. Below 1 % it powers off whatever `status` says:
 on a port too weak for the load, `status` says `Charging` while the battery drains
-([userspace.md](userspace.md#how-the-handoff-works)). Powered off with the cable in, the headset
+([userspace.md](userspace.md#adaptations-in-the-image)). Powered off with the cable in, the headset
 starts in charger mode and charges there.
 
 The guard does not run while the headset sleeps: the driver takes no interrupts, so the level is

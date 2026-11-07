@@ -169,6 +169,23 @@ class DoctorTests(unittest.TestCase):
             self.assertEqual((checks[0].name, checks[0].status, checks[0].detail), (doctor.ENGINE, doctor.OK, tool))
             self.assertIn([tool, "info"], host.calls)
 
+    def test_an_engine_with_little_memory_is_a_warning_with_its_fix(self):
+        # Docker Desktop's default VM (4 GiB) swapped the userspace build to a crawl.
+        for info, memory in (
+            ("Server:\n Total Memory: 3.877GiB\n", 3.877),
+            ("host:\n  memTotal: 4163051520\n", 4163051520 / 2**30),
+        ):
+            host = FakeHost(engine=(0, info), linux={"arch": "x86_64", "binfmt": "x F"})
+            checks = {c.name: c for c in doctor.container_checks(host)}
+            low = checks["build container memory"]
+            self.assertEqual(low.status, doctor.WARNING)
+            self.assertIn(f"{memory:.1f} GiB", low.detail)
+            self.assertIn("Memory limit", low.fix)
+            self.assertEqual(checks[doctor.ENGINE].status, doctor.OK)
+        enough = FakeHost(engine=(0, " Total Memory: 15.63GiB\n"), linux={"arch": "x86_64", "binfmt": "x F"})
+        self.assertNotIn("build container memory", [c.name for c in doctor.container_checks(enough)])
+        self.assertIsNone(doctor.engine_memory("28.4.0"))
+
     def test_version_checks(self):
         host = FakeHost(runs={"adb": (0, "Android Debug Bridge version 1.0.41\nmore")})
         self.assertEqual(

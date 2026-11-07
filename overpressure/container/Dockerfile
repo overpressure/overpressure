@@ -6,10 +6,11 @@
 # compile natively inside that root.
 # Ubuntu 24.04 (multi-arch manifest digest). On amd64 its packages come from the archive's
 # snapshot of one moment (snapshot.ubuntu.com, which serves the amd64 archive only), so every
-# build gets the same versions; arm64 takes ports.ubuntu.com as it is.
+# build gets the same versions; arm64 takes ports.ubuntu.com as it is. The snapshot must not be
+# older than the base image: its packages (zlib1g) pin the -dev packages' versions.
 FROM ubuntu:24.04@sha256:24737cef17f4e22b1977df7d9a05e77c4e28b7da5b8911f8d8ccda136bf3573c
 ARG DEBIAN_FRONTEND=noninteractive
-ARG SNAPSHOT=20261020T000000Z
+ARG SNAPSHOT=20261106T000000Z
 # The snapshot is served over HTTPS and the base image has no CA certificates yet: the first
 # update and ca-certificates go without checking the server (apt checks the signed indexes and
 # every package's hash all the same), everything after it with. A snapshot's indexes are past

@@ -6,11 +6,12 @@
 #   devnode sweep   apply the storage policy to every block device present
 #
 # Block devices are made read-only as soon as they appear, exactly like the
-# stage-1 initramfs does (pico4.rw=1 on the kernel command line disables
-# this), and get Android-style /dev/block/by-name/<PARTNAME> links. The one
-# exception is the installed system's data partition (userdata holding the
-# pico4-data file system), which stage 1 made writable and mounted: set
-# read-only under the mounted file system, its writeback fails and data is lost.
+# maintenance stage 1 does (pico4.rw=1 on the kernel command line disables
+# this), and get Android-style /dev/block/by-name/<PARTNAME> links. preinit runs
+# the sweep before it mounts anything. The one exception is the installed system's
+# data partition (userdata holding the pico4-data file system), which preinit makes
+# writable and mounts: set read-only under the mounted file system, its writeback
+# fails and data is lost.
 set -u
 
 block_policy() {
@@ -35,8 +36,8 @@ installed_data() {
 		[ "$(ext_label "/dev/$1" 2>/dev/null)" = pico4-data ]
 }
 
-# installed_data_disk NAME: true for the disk of the installed system's data partition when stage 1
-# left it writable: the kernel counts a disk's read-only flag for its partitions too.
+# installed_data_disk NAME: true for the disk of the installed system's data partition while it is
+# writable: the kernel counts a disk's read-only flag for its partitions too.
 installed_data_disk() {
 	local part
 	[ "$(stage1_arg root '')" = installed ] && [ "$(cat "/sys/class/block/$1/ro" 2>/dev/null)" = 0 ] || return 1

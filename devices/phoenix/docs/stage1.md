@@ -1,17 +1,18 @@
 # Stage 1: the bootable Linux image
 
-Stage 1 is a standard Android boot image for the original PICO 4 (A8110, *phoenix*). The dev and
-maintenance images keep the stock PICO kernel (`4.19.81-perf+`) and device trees byte for byte, and
-this document describes them; the installed system's boot image carries Valve's kernel and tree
-instead ([install.md](install.md)). In both the ramdisk is replaced by
-Alpine Linux 3.24 (aarch64) and the project's init from [initramfs/](../initramfs/). Over the
-USB-C cable it offers a network link with SSH, telnet and a status web page, and a read-only USB
-drive with the boot logs. Every disk and partition of the headset is read-only while it runs,
-except what the installed system's tools write on purpose ([install.md](install.md)).
-Stage 1 runs on the tested headset (original PICO 4, PICO OS 5.13.7), returns to fastboot by
-itself when no PC uses it, and on Valve's kernel hands PID 1 over to the installed system, the
-SteamOS-compatible userspace of stage 2 ([userspace.md](userspace.md)). On a kernel without
-devtmpfs, such as the stock kernel under the maintenance stage 1, the switch refuses.
+Stage 1 is a standard Android boot image for the original PICO 4 (A8110, *phoenix*): the
+maintenance environment in `recovery`, where the installed system is written and rescued, and the
+base of the test images. The dev and maintenance images keep the stock PICO kernel
+(`4.19.81-perf+`) and device trees byte for byte, and this document describes them; a one-shot test
+image carries Valve's kernel and tree instead ([kernel.md](kernel.md#a-one-shot-test-boot)). In
+both the ramdisk is replaced by Alpine Linux 3.24 (aarch64) and the project's init from
+[initramfs/](../initramfs/). Over the USB-C cable it offers a network link with SSH, telnet and a
+status web page, and a read-only USB drive with the boot logs. Every disk and partition of the
+headset is read-only while it runs, except what the installer writes on purpose
+([install.md](install.md)). Stage 1 runs on the tested headset (original PICO 4, PICO OS 5.13.7)
+and returns to fastboot by itself when no PC uses it. The installed system, the SteamOS-compatible
+userspace of stage 2 ([userspace.md](userspace.md)), starts without it: its boot image has no
+ramdisk ([install.md](install.md#how-it-starts)).
 
 ## The image
 
@@ -19,7 +20,7 @@ devtmpfs, such as the stock kernel under the maintenance stage 1, the switch ref
 | --- | --- |
 | Kernel and device trees | the stock image's, byte for byte, with every other header field (load addresses, page size, OS version and patch level) |
 | Kernel command line | the stock one plus `printk.devkmsg=on`, so the init's lines in `/dev/kmsg` are not rate-limited, and `rng_core.default_quality=1000`, so the Qualcomm hardware RNG credits entropy and dropbear's first host-key generation cannot block |
-| Ramdisk | Alpine Linux 3.24.2 aarch64: the minirootfs, the packages listed in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, exploration tools and the stage-2 handoff tools e2fsprogs and dropbear-convert), the overlay in [initramfs/](../initramfs/) and the `pico4-reboot` helper |
+| Ramdisk | Alpine Linux 3.24.2 aarch64: the minirootfs, the packages listed in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, exploration tools and e2fsprogs, which formats the installed system's data partition), the overlay in [initramfs/](../initramfs/) and the `pico4-reboot` helper |
 | PID 1 | `pico4-init`, which runs `/etc/inittab` like busybox init ([PID 1](#pid-1)) |
 
 Over the USB-C cable:
@@ -114,7 +115,7 @@ helpers and kernel arguments, and adds its own files (hostname, build record). T
      signature stops the build and drops the index from the cache;
    * kernel modules from the stock ramdisk's `lib/modules` (current firmware has none);
    * the [initramfs/](../initramfs/) overlay;
-   * `pico4-reboot` and `pico4-splash` from [prebuilt/aarch64/](../prebuilt/aarch64/);
+   * `pico4-reboot` from [prebuilt/aarch64/](../prebuilt/aarch64/);
    * static device nodes (`console`, `null`, `zero`, `kmsg`, `tty`, `ptmx`, `random`,
      `urandom`): the kernel opens `/dev/console` before `/init` runs, and there is no devtmpfs;
    * a root account without password, the host name `pico4` and the build record
@@ -151,7 +152,8 @@ an image can only be booted from RAM.
 `pico4-reboot` ([source](../src/reboot/pico4-reboot.c)) is a freestanding aarch64 program
 without libc, about 1.5 KB. BusyBox's `reboot` cannot pass a command string to the kernel, and
 that string is how the Qualcomm restart driver chooses the next boot target (fastboot,
-recovery). Any aarch64 cross compiler rebuilds it, from `devices/phoenix/`:
+recovery). The userspace build puts the same file into the system image. Any aarch64 cross
+compiler rebuilds it, from `devices/phoenix/`:
 
 ```sh
 aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector \
@@ -160,8 +162,9 @@ aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector 
 ```
 
 `pico4-splash` ([source](../src/splash/pico4-splash.c)), the installed system's boot indication
-in the lenses ([install.md](install.md)), is freestanding the same way (about 9 KB), so stage 1
-and stage 2 run the same file. From `devices/phoenix/`:
+in the lenses ([install.md](install.md)), is freestanding the same way (about 9 KB), so preinit
+runs it before the data partition is mounted; it is in the system image, not in stage 1. From
+`devices/phoenix/`:
 
 ```sh
 aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector \
@@ -217,7 +220,7 @@ About 20–40 s after the boot the headset answers on the USB link:
 
 | How | Command |
 | --- | --- |
-| SSH (Windows has a client built in) | `ssh root@172.16.42.1`, empty password in the maintenance stage 1, the enrolled key in the installed system's |
+| SSH (Windows has a client built in) | `ssh root@172.16.42.1`, empty password |
 | Telnet (Windows: the optional client, or PuTTY) | `telnet 172.16.42.1` |
 | Browser: status, logs, report, probe and reboot buttons | <http://172.16.42.1/> |
 | Copy files (SFTP server included) | `scp root@172.16.42.1:/run/pico4/report.tar.gz .` |
@@ -294,9 +297,8 @@ Every step is logged to the kernel log (lines start with `pico4:`), to
 
 ### PID 1
 
-[pico4-init](../initramfs/usr/libexec/pico4/pico4-init) runs the `::respawn:`,
-`::shutdown:` and `::restart:` entries of [/etc/inittab](../initramfs/etc/inittab) like busybox
-init, but its stop signals reach only user processes (those with an executable), never kernel
+[pico4-init](../initramfs/usr/libexec/pico4/pico4-init) runs the `::respawn:` and
+`::shutdown:` entries of [/etc/inittab](../initramfs/etc/inittab) like busybox init, but its stop signals reach only user processes (those with an executable), never kernel
 threads. busybox init stops everything with `kill(-1)`, which also reaches the kernel thread of
 the USB mass-storage function that serves the log drive; that thread exits on SIGTERM or
 SIGKILL, the PC then resets the composite device, and the NCM link is lost. Each service runs in
@@ -305,7 +307,6 @@ service's prerequisites and rate-limits restarts.
 
 | Signal to PID 1 | Effect |
 | --- | --- |
-| SIGQUIT | stop, then run the `::restart:` entry: `switch-userspace` hands PID 1 to stage 2's systemd, or restarts stage-1 init when no userspace is prepared |
 | SIGTERM | stop, reboot |
 | SIGUSR1, SIGUSR2 | stop, then halt or power off |
 
@@ -371,7 +372,6 @@ Options for the test harnesses:
 | Option | Used by |
 | --- | --- |
 | `pico4.selftest=1` | the QEMU self-test ([QEMU self-test](#qemu-self-test)); with `pico4.selftest_hostdelay=N` the PC side stays silent for N s, with `pico4.selftest_poweroff=0` the VM stays on afterwards. The hardware runner refuses images with `selftest` |
-| `pico4.root=installed` (with `pico4.autoreboot=0`) | the install boot image: mount the installed system from `super` and `userdata` and switch to it; on failure, reboot into recovery ([install.md](install.md)) |
 | `pico4.part=recovery` | the dev image written to `recovery` (the maintenance stage 1), so the dev loop can tell which partition started it |
 | `pico4.test_run=ID` | set by the hardware runner in its per-run image |
 
@@ -388,9 +388,7 @@ anything is logged.
 | `pico4-probe` | hardware inventory into `/run/pico4/report/` and `report.tar.gz`, also on the web page and the log drive |
 | `pico4-mount-ro PART [DIR]` | mount a stock partition read-only, by default on `/mnt/PART`: ext4 with `noload` (no journal replay), f2fs with `norecovery`, vfat. The dynamic partitions inside `super` are not handled |
 | `pico4-reboot [bootloader\|recovery\|poweroff]` | reboot into a mode; without argument, a normal reboot. `-r STRING` passes any other reboot reason; unknown words are refused. Aliases: `fastboot-mode`, `android` |
-| `pico4-userspace installed` | the installed system: `super` read-only as the new root, `userdata` at `/data` with `/etc`, `/var`, `/home` and `/root` on it ([install.md](install.md)) |
-| `pico4-userspace switch\|status` | stage-2 handoff: hand PID 1 to the installed system's systemd ([userspace.md](userspace.md)); what was mounted and prepared |
-| `pico4-install write\|format-data\|wipe\|bootmode\|status` | the installer of the maintenance stage 1: the only writer of `boot`, `super`, `userdata`, `metadata` and `misc`'s bootloader message, each against the backup's size and read back ([install.md](install.md)) |
+| `pico4-install write\|format-data\|keys\|wipe\|bootmode\|status` | the installer of the maintenance stage 1: the only writer of `boot`, `super`, `userdata` (its file system, and the SSH keys and install ID on it), `metadata` and `misc`'s bootloader message, each against the backup's size and read back where it writes raw ([install.md](install.md#install-and-update)) |
 | `drm_info`, `modetest`, `evtest`, `i2cdetect`, `gpioinfo`, `tinymix`, `lsusb`, `lspci`, `lsblk`, `dtc`, `dmsetup`, `strace`, `htop` | exploration tools |
 
 `pico4-probe` reads procfs, sysfs and device-tree data only. It skips debugfs GPIO and clock
@@ -415,8 +413,8 @@ of `pico4-info`, the login banner, starts with `#`; and `pico4-reboot` refuses u
   The stock kernel's NCM function rejects the packets of Windows' driver until the host sends one
   CDC request through UsbDk. The hardware runner (`--windows-ncm-python`) and
   `python -m overpressure dev connect` send it after every stage-1 boot; the setup and its limits
-  are in [hardware-testing.md](hardware-testing.md#windows-ncm-initialization). Leave the adapter
-  on DHCP.
+  are in [hardware-testing.md](hardware-testing.md#windows-ncm-initialization). Valve's kernel,
+  under the installed system, does not need it. Leave the adapter on DHCP.
 * **No network, but a PICO4LOGS drive appeared.** `boot.log` on it shows what the USB setup did.
   The drive is rebuilt after the probe; eject and replug it to see the newer files.
 * **Nothing appears on the PC.** After 5 minutes the watchdog reboots into fastboot. The next
@@ -446,8 +444,7 @@ of `pico4-info`, the login banner, starts with `#`; and `pico4-reboot` refuses u
 * `pico4-mount-ro` mounts stock partitions read-only with journal replay disabled, e.g. `modem`
   for firmware files.
 * The maintenance stage 1's shell has no password: its only network is the USB cable to one PC, and
-  nothing is forwarded. The installed system's stage 1 serves only SSH with the enrolled keys
-  ([security.md](security.md)).
+  nothing is forwarded ([security.md](security.md)).
 
 ## The stock kernel as found
 

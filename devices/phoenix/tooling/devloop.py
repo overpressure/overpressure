@@ -33,6 +33,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable
@@ -71,7 +72,8 @@ BOOT_PARTITIONS = ("boot", "recovery")
 SYSTEM = ROOT / "out" / "userspace" / "pico4-system.img"
 #: Written by "dev install": PICO OS's system and data are gone, "dev restore" brings them back.
 INSTALLED = "installed.json"
-#: The installed system's identity file (install boot image), as test-run is the dev image's.
+#: The installed system's identity file (on the data partition, pico4-install keys), as test-run is
+#: the dev image's.
 INSTALL_ID = "/etc/pico4/install-id"
 #: Partitions "dev restore-partition" writes back from the backup through fastboot.
 RESTORABLE = ("boot", "recovery", "misc")
@@ -79,7 +81,8 @@ RESTORABLE = ("boot", "recovery", "misc")
 PART_MARK = "pico4.part="
 #: What the installed system shows: PID 1's name, its install ID and the SoC serial.
 INSTALLED_PROOF = ("/proc/1/comm", INSTALL_ID, "/sys/devices/soc0/serial_number")
-#: Initializing a working Windows NCM link again disturbs it: at most this often (seconds).
+#: Seconds without an answer after a reboot before the Windows NCM initialization (the maintenance
+#: stage 1 needs it; it disturbs a working link).
 NCM_RETRY_SECONDS = 60
 
 
@@ -129,7 +132,7 @@ class Dev(Headset):
         return builds[self.s.firmware]["url"]
 
     def image(self) -> None:
-        """Build the dev image for recovery and the install boot image in out/dev."""
+        """Build the dev image for recovery (and boot) in out/dev."""
         source = ROOT / "out" / f"pico4-stage1-{self.s.firmware}.img"
         if not source.exists():
             msg = f"missing {source}: run python -m overpressure build --firmware {self.s.firmware}"
@@ -168,47 +171,37 @@ class Dev(Headset):
         recovery = avb.with_stock_vbmeta(stock, recovery)
         (self.work / "dev-recovery.img").write_bytes(recovery)
         info["recovery_sha256"] = hashlib.sha256(recovery).hexdigest()
-        install = self.install_image(source, self.enrolled_keys(key.with_name("id_ed25519.pub").read_bytes()))
-        (self.work / "install-boot.img").write_bytes(install)
-        info["install_sha256"] = hashlib.sha256(install).hexdigest()
         (self.work / "dev-image.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
         print(f"out/dev/dev-boot.img {info['boot_sha256']}")
         print(f"out/dev/dev-recovery.img {info['recovery_sha256']}")
-        print(f"out/dev/install-boot.img {info['install_sha256']}")
 
-    def enrolled_keys(self, this_pc: bytes) -> bytes:
+    def enrolled_keys(self) -> bytes:
         """Return the installed system's authorized_keys.
 
         This PC's key, and the owner's own when .env names one. These are the only logins the
         system takes, on USB and on Wi-Fi (docs/security.md).
         """
+        this_pc = (self.work / "id_ed25519.pub").read_bytes()
         own = self.s.path("ssh_public_key") if self.s.ssh_public_key else None
         keys = ssh.authorized_keys(this_pc, own, self.s.key("ssh_public_key"))
         print(f"SSH: keys only; enrolled {len(keys.splitlines())} key(s), this PC's is {self.work / 'id_ed25519'}")
         return keys
 
-    @staticmethod
-    def install_image(source: Path, public_key: bytes) -> bytes:
-        """Return the installed system's boot image.
+    def write_keys(self) -> None:
+        """Write the enrolled keys and the install ID to the data partition (pico4-install keys).
 
-        Stage 1 in installed mode, without deadlines (it mounts the system and switches on its
-        own), with the dev loop's SSH key and identity.
+        The installed system reads them there: /root and /etc's changes live on the data
+        partition. They are never in the system image or a boot image (docs/security.md).
         """
-        image = bootimg.parse(source.read_bytes())
-        tree = bootimg.ramdisk_tree(image)
-        if "usr/bin/pico4-install" not in tree.nodes or b"pico4-userspace installed" not in tree.nodes["init"].data:
-            msg = "rebuild the stage-1 image: the installed mode is missing"
-            raise ValueError(msg)
-        tree.mkdir("root/.ssh", 0o700)
-        tree.add_file("root/.ssh/authorized_keys", public_key.rstrip() + b"\n", 0o600)
-        tree.add_file(INSTALL_ID.lstrip("/"), RUN_ID.encode() + b"\n")
-        return bootimg.with_ramdisk(
-            image,
-            tree,
-            drop=("pico4.root=", "pico4.autoreboot="),
-            add=("pico4.root=installed", "pico4.autoreboot=0"),
-            failed="the install boot image failed validation",
-        )
+        size = qualcomm.partition_size(self.s.path("backup"), "userdata")
+        keys = self.enrolled_keys()
+        with tempfile.TemporaryFile() as stream:
+            stream.write(keys)
+            stream.seek(0)
+            output = self.ssh(f"pico4-install keys --size {size} --id {RUN_ID}", 60, stdin=stream)
+        if output.splitlines()[-1:] != [f"keys {len(keys.splitlines())}"]:
+            msg = "the headset did not confirm the keys"
+            raise RuntimeError(msg)
 
     def to_fastboot(self) -> None:
         """From PICO OS (ADB), stage 1 or stage 2 (SSH) into the bootloader."""
@@ -358,11 +351,12 @@ class Dev(Headset):
         """Install from the maintenance stage 1, then start the installed system.
 
         The boot image with Valve's kernel goes to boot, the system image to super, and userdata is
-        formatted if it holds no data yet (or when asked). @p boot replaces the boot image.
+        formatted if it holds no data yet (or when asked); the enrolled keys and the install ID go
+        onto it. @p boot replaces the boot image.
         """
         boot = boot or self.work.parent / "kernel/valve-boot.img"
         for path, hint in (
-            (boot, "kernel/recovery_image.py --installed out/dev/install-boot.img --boot"),
+            (boot, "python -m overpressure dev boot-image"),
             (system, "scripts/build-system-image.sh"),
         ):
             if not path.exists():
@@ -392,6 +386,7 @@ class Dev(Headset):
             if self.ssh(f"pico4-install format-data --size {size}", 900).splitlines()[-1:] != ["formatted userdata"]:
                 msg = "formatting userdata failed"
                 raise RuntimeError(msg)
+        self.write_keys()
         self.normal()
 
     def normal(self) -> None:
@@ -423,29 +418,17 @@ class Dev(Headset):
             raise RuntimeError(msg)
 
     def wait_installed(self) -> None:
-        """Wait for the installed system's systemd, reached over the USB link (it renews stage 1's)."""
+        """Wait for the installed system's systemd, reached over the USB link.
 
-        def ncm() -> None:
-            python = self.s.ncm()
-            if python:
-                self.run(windows_ncm.command(python, self.s.fastboot_serial), 30)
-
-        self.until("NCM gadget", 180, ncm)
-        initialized = [self.clock.monotonic()]
+        Valve's kernel takes Windows' NCM driver as it is: no NCM initialization, which would
+        disturb the working link (only the maintenance stage 1's stock kernel needs it).
+        """
 
         def installed() -> None:
-            # Stage 1 of the installed boot answers for a few seconds with its own host key; the
-            # installed system keeps another one. Neither may be pinned against the other.
+            # The maintenance stage 1 makes new host keys on every boot; the installed system keeps
+            # its own. Neither may be pinned against the other.
             (self.work / "known_hosts").unlink(missing_ok=True)
-            try:
-                lines = self.ssh(f"cat {' '.join(INSTALLED_PROOF)}", 10).splitlines()
-            except RuntimeError:
-                # A link initialized before a reboot finished is gone; initializing a working one
-                # again disturbs it, so at most once a minute.
-                if self.clock.monotonic() - initialized[0] > NCM_RETRY_SECONDS:
-                    ncm()
-                    initialized[0] = self.clock.monotonic()
-                raise
+            lines = self.ssh(f"cat {' '.join(INSTALLED_PROOF)}", 10).splitlines()
             if (
                 len(lines) != len(INSTALLED_PROOF)
                 or lines[1] != RUN_ID
@@ -454,7 +437,7 @@ class Dev(Headset):
                 msg = "the SSH endpoint is not this headset's installed system"
                 raise RuntimeError(msg)
             if lines[0] != "systemd":
-                msg = "stage 1 is still running"
+                msg = "systemd is not running yet"
                 raise RuntimeError(msg)
 
         self.until("installed system", 240, installed)
@@ -470,31 +453,28 @@ class Dev(Headset):
             (self.work / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
         print(f"installed system running (from archive {archive[:12]})")
 
-    def known_build_info(self, dev_image: dict) -> dict:
-        """Return the build information of the running stage 1.
+    def boot_build_info(self) -> dict:
+        """Return the build information of the running boot image: the record whose kernel runs.
 
-        The dev image's, or that of an image from recovery_image.py, the installed boot image or a
-        test image (out/kernel/*.img.json).
+        The installed system's boot image, or a one-shot test image (out/kernel/*.img.json, which
+        recovery_image.py writes). Without a matching record, the running kernel's release alone.
         """
-        try:
-            running = json.loads(self.ssh("cat /etc/pico4/build-info", 10))
-        except (RuntimeError, ValueError):
-            return dev_image
-        if running != dev_image:
-            for record in sorted((self.work.parent / "kernel").glob("*.img.json")):
-                info = json.loads(record.read_text(encoding="utf-8")).get("build_info")
-                if info == running:
-                    print(f"stage 1 of the kernel test image {record.name[:-5]}")
-                    return info
-        return dev_image
+        release = self.ssh("uname -r", 10).strip()
+        for record in sorted((self.work.parent / "kernel").glob("*.img.json")):
+            info = json.loads(record.read_text(encoding="utf-8")).get("build_info") or {}
+            if info.get("boot") == "direct" and info.get("kernel", "").startswith(f"Linux version {release} "):
+                return info
+        return {"kernel": f"Linux version {release} "}
 
     def boot_image(self) -> Path:
-        """Build the installed system's boot image from what the steps before made (docs/install.md)."""
-        version = self.s.firmware.split("-")[0]
+        """Build the installed system's boot image from what the steps before made (docs/install.md).
+
+        Valve's kernel, its device tree and the command line that starts the system image in super:
+        no stage 1, no keys and no firmware (the system image holds them).
+        """
         kernel, out = self.work.parent / "kernel", self.work.parent / "kernel" / "valve-boot.img"
         needed = {
             kernel / "Image.gz": "the Valve's kernel step",
-            self.work / "install-boot.img": "the dev image step",
             self.work / "dev-recovery.img": "the dev image step",
         }
         for path, hint in needed.items():
@@ -506,21 +486,7 @@ class Dev(Headset):
             msg = f"no stock recovery at {stock}: run the dev image step first"
             raise ValueError(msg)
         code = recovery_image.main(
-            [
-                "--installed",
-                str(self.work / "install-boot.img"),
-                "--boot",
-                "--gpu-firmware",
-                str(ROOT / "assets" / f"graphics-firmware-{version}"),
-                "--wlan-firmware",
-                str(ROOT / "assets" / f"wlan-{version}"),
-                "--stage1",
-                str(ROOT / "devices/phoenix/initramfs"),
-                str(kernel),
-                str(stock),
-                str(self.work / "dev-recovery.img"),
-                str(out),
-            ]
+            ["--direct", "--boot", str(kernel), str(stock), str(self.work / "dev-recovery.img"), str(out)]
         )
         if code:
             msg = "the boot image failed"
@@ -573,9 +539,8 @@ class Dev(Headset):
     def check(self) -> int:
         """Run the acceptance runner's stage-2 checks on the installed system; 0 when they pass."""
         state = json.loads((self.work / "state.json").read_text(encoding="utf-8"))
-        image = json.loads((self.work / "dev-image.json").read_text(encoding="utf-8"))
         folder = self.work / ("check-" + dt.datetime.now(dt.timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S"))
-        checks = DevChecks(self, folder, self.known_build_info(image["build_info"]), self.identity())
+        checks = DevChecks(self, folder, self.boot_build_info(), self.identity())
         try:
             checks.step("stage-2 checks", lambda: checks.userspace_checks(dict(state)))
             checks.result["status"] = "passed"
@@ -607,21 +572,30 @@ class Dev(Headset):
         """Return what started after a reboot of an installed headset.
 
         "maintenance" (stage 1 from recovery) or "installed" (the installed system's systemd), by
-        PID 1 and the kernel command line.
+        PID 1 and the kernel command line. The installed system answers without the Windows NCM
+        initialization, which would disturb its link; the maintenance stage 1's stock kernel needs
+        it, so it is sent once when nothing answered for a while.
         """
         ncm = self.s.ncm()
-        if ncm:
-            self.until("NCM gadget", 120, lambda: self.run(windows_ncm.command(ncm, self.s.fastboot_serial), 30))
+        started = self.clock.monotonic()
+        initialized = [False]
 
         def which() -> str:
-            # Each stage 1 makes new host keys, and the installed system keeps its own.
+            # The maintenance stage 1 makes new host keys on every boot; the installed system keeps
+            # its own.
             (self.work / "known_hosts").unlink(missing_ok=True)
-            comm, _, cmdline = self.ssh("cat /proc/1/comm /proc/cmdline", 10).partition("\n")
+            try:
+                comm, _, cmdline = self.ssh("cat /proc/1/comm /proc/cmdline", 10).partition("\n")
+            except RuntimeError:
+                if ncm and not initialized[0] and self.clock.monotonic() - started > NCM_RETRY_SECONDS:
+                    initialized[0] = True
+                    self.run(windows_ncm.command(ncm, self.s.fastboot_serial), 30)
+                raise
             if comm.strip() == "systemd":
                 return "installed"
             if f"{PART_MARK}recovery" in cmdline.split():
                 return "maintenance"
-            msg = "the installed boot's stage 1 is still running"
+            msg = "neither the installed system nor the maintenance stage 1 is running"
             raise RuntimeError(msg)
 
         return self.until("stage 1 or the installed system", 240, which)

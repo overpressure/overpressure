@@ -1,12 +1,12 @@
 #!/bin/sh
 # SPDX-License-Identifier: Unlicense
-# Stage 1's charger mode (initramfs/usr/libexec/pico4/charger): the power key's input
+# The installed system's charger mode (userspace/rootfs/usr/libexec/pico4/charger): the power key's input
 # events and the power-off without USB power.
 set -eu
 cd "$(dirname "$0")/.."
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-CHARGER_LIB=1 CHARGER_LIBDIR=initramfs/usr/libexec/pico4 . initramfs/usr/libexec/pico4/charger
+CHARGER_LIB=1 CHARGER_LIBDIR=initramfs/usr/libexec/pico4 . userspace/rootfs/usr/libexec/pico4/charger
 log() { :; } # no /dev/kmsg on the host
 
 # struct input_event on aarch64: 16 bytes of time, type, code (16 bit each), value (32 bit).

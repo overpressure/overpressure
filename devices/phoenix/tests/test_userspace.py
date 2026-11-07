@@ -29,6 +29,7 @@ PASSING: dict[str, Any] = {
     "dev": {"fstype": "devtmpfs", "missing_nodes": [], "udev_devices": 412},
     "storage": {"root": "/dev/sda7", "installed": True, "writable_block_devices": []},
     "seats": ["seat0"],
+    "usb_link": {"status": "up", "now": "usb0 02:00:00:00:00:01 up 172.16.42.1/24"},
     "packages": 348,
     "session": {
         "user": "steamos",
@@ -89,11 +90,15 @@ class SshAccessTests(unittest.TestCase):
         ]
         self.assertEqual(names, [])
 
-    def test_the_installed_stage_1_serves_ssh_with_keys_only(self):
-        svc = (self.ROOT / "initramfs/usr/libexec/pico4/svc").read_text(encoding="utf-8")
-        for service in ("telnetd", "httpd", "serial"):
-            self.assertIn(f"{service})\n\tinstalled_mode && idle\n", svc)
-        self.assertIn("if installed_mode; then\n\t\texec dropbear -F -E -R -s -p 22", svc)
+    def test_the_keys_reach_the_system_only_on_its_data_partition(self):
+        # The boot image has no ramdisk to carry them; the maintenance stage 1 writes them onto the
+        # data partition, where /root lives (docs/security.md).
+        install = (self.ROOT / "initramfs/usr/bin/pico4-install").read_text(encoding="utf-8")
+        keys = install[install.index("keys() {") : install.index("wipe() {")]
+        self.assertIn('[ "$(ext_label "$dev")" = pico4-data ]', keys)
+        self.assertIn('"$mnt/root/.ssh/authorized_keys"', keys)
+        self.assertIn("readonly_again", keys)
+        self.assertNotIn("dropbear-convert", (self.ROOT / "tooling/image.py").read_text(encoding="utf-8"))
 
 
 class PowerWarningTests(unittest.TestCase):

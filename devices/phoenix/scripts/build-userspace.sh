@@ -101,6 +101,16 @@ assets_modes() {
     find "$@" -type d -exec chmod 0755 {} +
     find "$@" -type f -exec chmod 0644 {} +
 }
+# build_jobs: parallel compile jobs, one per CPU but at most one per 1.5 GiB of memory: a C++ unit
+# of Basalt or Monado takes about that much, and more jobs than memory swap the build to a crawl.
+# make takes MAKEFLAGS, CMake's ninja builds CMAKE_BUILD_PARALLEL_LEVEL, meson's PICO4_BUILD_JOBS.
+build_jobs() {
+    local cpus by_memory
+    cpus=$(nproc)
+    by_memory=$(awk '/^MemTotal:/ {print int($2 / 1572864)}' /proc/meminfo)
+    ((by_memory >= 1)) || by_memory=1
+    echo $((cpus < by_memory ? cpus : by_memory))
+}
 
 mounted=()
 mnt() { mount "$@"; mounted+=("${!#}"); }
@@ -173,7 +183,7 @@ in_b pacman "-S$sync" --noconfirm --needed base-devel git meson ninja cmake eige
     glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage \
     shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon libnl pcsclite \
     hwdata libavif libcap libdecor libei libinput libxmu libxres libxtst libxxf86vm luajit pipewire pixman \
-    sdl2 seatd xcb-util-errors xcb-util-wm xorg-xwayland
+    sdl2 seatd xcb-util-errors xcb-util-wm xorg-xwayland libbsd
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
 builder=$(in_b id -u builder):$(in_b id -g builder)
 # Emulated compilers: ccache (in the builder's home, kept between builds) saves repeats.
@@ -237,12 +247,13 @@ build_package() {
         else
             rm -rf "$dir"
         fi
-        phase "building $name $pkgver-$pkgrel ($mode, $compiler)"
+        jobs=$(build_jobs)
+        phase "building $name $pkgver-$pkgrel ($mode, $compiler, $jobs jobs)"
         mkdir -p "$dir"
         rm -f "$dir/.recipe"
         cp "$project/userspace/pkgbuilds/$name"/* "$@" "$dir/"
         chown -R "$builder" "$dir"
-        in_b su builder -c "cd /build/$name && MAKEFLAGS=-j\$(nproc) $ccenv makepkg --noconfirm --nocheck -f $extra"
+        in_b su builder -c "cd /build/$name && MAKEFLAGS=-j$jobs CMAKE_BUILD_PARALLEL_LEVEL=$jobs PICO4_BUILD_JOBS=$jobs $ccenv makepkg --noconfirm --nocheck -f $extra"
         echo "$recipe $sources" > "$dir/.recipe"
     fi
     cp "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst "$B/var/cache/pico4-repo/"
@@ -554,12 +565,14 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-monado.socket pico4-session.service pico4-fan.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-audio.target \
     pico4-splash.service pico4-powerkey.service pico4-battery-guard.service pico4-persist.service pico4-zram-swap.service \
-    pico4-venus-probe.service steam-video-codec-setup.service     pico4-bt-firmware.service pico4-bt-address.service bluetooth.service pico4-wlan-address.service     pico4-panel-probe.service pico4-clock.service
-# Units that would wait for console input, erase stage-1 evidence from pstore,
-# or manage boot partitions stage 1 never touches.
+    pico4-venus-probe.service steam-video-codec-setup.service pico4-bt-firmware.service pico4-bt-address.service \
+    bluetooth.service pico4-wlan-probe.service pico4-wlan-address.service pico4-panel-probe.service pico4-clock.service \
+    pico4-usb-gadget.service
+# Units that would wait for console input, erase the previous boot's evidence from pstore,
+# or manage boot partitions the system never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration
 # (steamos-bootconf), which do not exist here, and then fails. The Frame's
-# USB gadget units would take the controller from stage 1's NCM link. The kernel
+# USB gadget units would take the controller from pico4-usb-gadget's link. The kernel
 # console's getty (the generator adds it for console=ttyMSM0): no one logs in on the UART.
 in_t systemctl mask systemd-firstboot.service systemd-pstore.service \
     systemd-boot-update.service systemd-repart.service steamos-dump-info.service \

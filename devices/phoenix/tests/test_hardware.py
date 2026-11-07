@@ -160,6 +160,7 @@ class HarnessTests(unittest.TestCase):
             "dev": {"fstype": "devtmpfs", "missing_nodes": [], "udev_devices": 300},
             "storage": {"root": "/dev/sda7", "installed": True, "writable_block_devices": []},
             "seats": ["seat0"],
+            "usb_link": {"status": "up", "now": "usb0 02:00:00:00:00:01 up 172.16.42.1/24"},
             "session": {
                 "user": "steamos",
                 "user_state": "active",

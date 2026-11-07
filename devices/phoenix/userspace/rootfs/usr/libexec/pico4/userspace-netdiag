@@ -1,12 +1,11 @@
 #!/bin/bash
 # SPDX-License-Identifier: Unlicense
-# Compact samples of the USB link after the handoff, written through log()
-# (kernel log, boot.log and pstore pmsg). pmsg survives the warm reboot to
-# fastboot, so the next stage-1 boot exports them on its log drive even when
-# stage 2's network was unusable.
+# Compact samples of the USB link after boot, written through log() (kernel log,
+# boot.log and pstore pmsg). pmsg survives a warm reboot, so the maintenance stage 1
+# exports them on its log drive even when the system's network was unusable.
 . /usr/libexec/pico4/lib.sh
 IFACE="" MAC="" IP=""
-. /etc/pico4/usb-link.env 2>/dev/null
+. /run/pico4/usb-link.env 2>/dev/null
 n=/sys/class/net/$IFACE
 # pmsg is small (a few KiB): three samples.
 for t in 20 60 150; do

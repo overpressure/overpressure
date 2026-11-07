@@ -77,8 +77,8 @@ class KeyTests(unittest.TestCase):
         self.assertLessEqual(tool.POLL_S, tool.SETTLE_S)
 
     def test_charger_mode_knows_the_same_keys(self):
-        # Stage 1's charger waits for the power key on whichever kernel boot holds.
-        charger = (ROOT / "initramfs/usr/libexec/pico4/charger").read_text(encoding="utf-8")
+        # Charger mode waits for the same power key as the system's power-key service.
+        charger = (ROOT / "userspace/rootfs/usr/libexec/pico4/charger").read_text(encoding="utf-8")
         self.assertIn(f'[ "$name" = {tool.KEY_DEVICE} ]', charger)
 
     def test_event_layout(self):

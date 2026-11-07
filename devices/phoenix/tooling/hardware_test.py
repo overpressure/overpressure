@@ -429,9 +429,16 @@ class Runner(evidence.Runner):
         self.ssh("touch /run/pico4/test-authenticated", timeout)
 
     def assertions(self, suffix: str = "") -> None:
-        """Check the running build, the root shell, read-only storage and, after a flash, the readback."""
-        info = json.loads(self.ssh("cat /etc/pico4/build-info"))
-        require(info == self.result["build_info"], "Running build metadata differs from supplied image")
+        """Check the running build, the root shell, read-only storage and, after a flash, the readback.
+
+        Stage 1 carries its build information; the installed system has no stage 1, and its boot
+        image's record names the kernel.
+        """
+        installed = getattr(self, "installed", False)
+        info = self.result["build_info"]
+        if not installed:
+            running = json.loads(self.ssh("cat /etc/pico4/build-info"))
+            require(running == info, "Running build metadata differs from supplied image")
         require(self.ssh("uname -m") == "aarch64", "Linux is not running ARM64")
         release = self.ssh("uname -r")
         require(info.get("kernel", "").startswith(f"Linux version {release} "), "Unexpected running kernel")
@@ -444,7 +451,6 @@ class Runner(evidence.Runner):
         (self.folder / f"storage{suffix}.txt").write_text(storage + "\n", encoding="utf-8")
         mounts = self.ssh("cat /proc/mounts")
         (self.folder / f"mounts{suffix}.txt").write_text(mounts + "\n", encoding="utf-8")
-        installed = getattr(self, "installed", False)
         validate_mounts(mounts, installed=installed)
         validate_storage(storage, data_device(mounts) if installed else "")
         if self.flash_mode:

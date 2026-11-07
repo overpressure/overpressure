@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Unlicense
 # PICO 4 Linux - /init (PID 1)
 #
-# Runs from the boot image's ramdisk, on the stock PICO kernel (4.19, Qualcomm
-# downstream: the maintenance stage 1) or on Valve's (the installed system). It
-# never writes to the headset's flash: every block device is switched to
-# read-only as soon as it shows up.
+# Runs from the boot image's ramdisk: the maintenance stage 1 in recovery, on the
+# stock PICO kernel (4.19, Qualcomm downstream), or a test image on Valve's. It
+# never writes to the headset's flash by itself: every block device is switched
+# to read-only as soon as it shows up.
 #
 #   1. pseudo filesystems, /dev from devtmpfs or mdev (the stock kernel has no devtmpfs)
 #   2. logging to kmsg/pstore, status LED, CPU power management
@@ -78,25 +78,6 @@ if [ "$(stage1_arg probe 1)" = 1 ]; then
 fi
 if [ "$(stage1_arg selftest 0)" = 1 ]; then
 	"$P4_LIB/selftest" &
-fi
-
-# The installed system (pico4.root=installed, the boot image pico4-install wrote): mount it
-# from super and userdata and switch to it, with or without a PC on the cable. When that fails,
-# the maintenance stage 1 in recovery starts instead.
-if [ "$(stage1_arg root "")" = installed ] && [ "$(cmdline_arg androidboot.mode)" = charger ]; then
-	# Powered on by the USB cable: charge, as PICO OS does, until the power key starts the system.
-	"$P4_LIB/charger" &
-elif [ "$(stage1_arg root "")" = installed ]; then
-	# A sign of life in the lenses until stage 2 starts its own (pico4-splash.service).
-	pico4-splash 300 </dev/null >/dev/null 2>/dev/kmsg &
-	(
-		wait_for "$P4_RUN/usb.done" 120
-		pico4-userspace installed && pico4-userspace switch || {
-			log "installed system unavailable: rebooting into recovery"
-			sync
-			pico4-reboot recovery
-		}
-	) &
 fi
 
 log "handing over to pico4-init"

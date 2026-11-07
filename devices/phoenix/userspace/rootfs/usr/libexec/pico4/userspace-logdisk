@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: Unlicense
-# Stage-2 version of the stage-1 log drive (initramfs .../logdisk): rewrite the
-# read-only USB mass-storage medium with this boot's journal, unit and network
+# The installed system's log drive (the maintenance stage 1 has its own, initramfs .../logdisk):
+# rewrite the read-only USB mass-storage medium with this boot's journal, unit and network
 # state. It reaches the PC even when the USB network does not.
 . /usr/libexec/pico4/lib.sh
 set -u
@@ -13,8 +13,8 @@ export MTOOLS_SKIP_CHECK=1
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp" "$IMG.new"' EXIT
 {
-	echo "PICO 4 SteamOS-compatible userspace (stage 2) - log drive, refreshed every 2 minutes"
-	echo "boot.log: stage 1 + handoff; journal.txt: this boot; state.txt: units and network"
+	echo "PICO 4 SteamOS-compatible userspace - log drive, refreshed every 2 minutes"
+	echo "boot.log: preinit; journal.txt: this boot; state.txt: units and network"
 } | sed 's/$/\r/' > "$tmp/README.txt"
 cp "$P4_LOG" "$tmp/boot.log" 2>/dev/null
 journalctl -b --no-pager -o short-monotonic > "$tmp/journal.txt" 2>&1
@@ -27,7 +27,7 @@ dmesg > "$tmp/dmesg.txt" 2>&1
 	echo "== addresses"; ip addr
 	echo "== routes"; ip route
 	echo "== networkctl"; networkctl list --no-pager
-	echo "== usb-link.env"; cat /etc/pico4/usb-link.env
+	echo "== usb-link.env"; cat /run/pico4/usb-link.env
 	echo "== sshd"; systemctl status sshd --no-pager -l
 	echo "== udc"; cat "$LUN/../../../UDC" /sys/class/udc/*/state 2>&1
 } > "$tmp/state.txt" 2>&1

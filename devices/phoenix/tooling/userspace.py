@@ -64,8 +64,8 @@ def _validate_system(value: dict) -> None:
         msg = "Storage policy violated: physical block devices must stay read-only"
         raise ValueError(msg)
     link = (value.get("usb_link") or {}).get("status", "absent")
-    if link not in ("unchanged", "absent"):
-        msg = f"USB link to the PC changed during the handoff: {link}"
+    if link != "up":
+        msg = f"USB link to the PC is not up: {link}"
         raise ValueError(msg)
     if "seat0" not in (value.get("seats") or []):
         msg = "logind has no seat0"

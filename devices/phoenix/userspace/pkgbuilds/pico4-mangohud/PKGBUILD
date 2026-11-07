@@ -28,7 +28,8 @@ build() {
     --wrap-mode=nodownload \
     -Dmangoapp=true -Dmangohudctl=true -Dtests=disabled -Dmangoplot=disabled -Dinclude_doc=false \
     -Dwith_nvml=disabled -Dwith_xnvctrl=disabled -Duse_system_spdlog=disabled
-  meson compile -C build
+  # build-userspace.sh bounds the jobs by memory (meson takes no MAKEFLAGS).
+  meson compile -C build -j "${PICO4_BUILD_JOBS:-0}"
 }
 
 package() {

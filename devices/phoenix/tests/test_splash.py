@@ -39,14 +39,16 @@ class SplashTests(unittest.TestCase):
         self.assertIn("find_primary();", source)
         self.assertIn("DRM_PLANE_TYPE_PRIMARY", source)
 
-    def test_stage_one_starts_it_for_the_installed_system_only(self):
-        init = (ROOT / "initramfs/init").read_text(encoding="utf-8")
-        branch = init[init.index('if [ "$(stage1_arg root "")" = installed ]') :]
-        branch = branch[: branch.index("\nfi\n")]
-        self.assertRegex(branch, r"(?m)^\tpico4-splash \d+ [^\n]*&$")
-        self.assertEqual(init.count("pico4-splash "), 1)
+    def test_preinit_starts_it_outside_charger_mode(self):
+        preinit = (ROOTFS / "usr/libexec/pico4/preinit").read_text(encoding="utf-8")
+        branch = preinit[preinit.index("= charger ]; then") : preinit.index("# Every disk and partition")]
+        self.assertRegex(branch, r"(?m)^else$")
+        self.assertRegex(branch.split("else", 1)[1], r"(?m)^\t/usr/bin/pico4-splash \d+ [^\n]*&$")
+        self.assertEqual(preinit.count("pico4-splash "), 1)
+        # Stage 1 no longer shows it: it is the maintenance environment.
+        self.assertNotIn("pico4-splash", (ROOT / "initramfs/init").read_text(encoding="utf-8"))
         image = (ROOT / "tooling/image.py").read_text(encoding="utf-8")
-        self.assertIn('("pico4-reboot", "pico4-splash")', image)
+        self.assertNotIn("pico4-splash", image)
 
     def test_stage_two_unit(self):
         unit = (ROOTFS / "usr/lib/systemd/system/pico4-splash.service").read_text(encoding="utf-8")

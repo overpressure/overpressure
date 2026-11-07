@@ -156,6 +156,7 @@ def run_argv(  # noqa: PLR0913  # the command, and how its container runs keywor
         *options,
         "-v",
         f"{REPO}:/work",
+        *linked_mounts(),
         "-w",
         "/work",
         "-v",
@@ -163,6 +164,25 @@ def run_argv(  # noqa: PLR0913  # the command, and how its container runs keywor
         image(),
         *command,
     ]
+
+
+#: The private folders at the repository root; a git worktree may link them to another checkout's.
+PRIVATE = ("assets", "backup", "cache", "out")
+
+
+def linked_mounts(root: Path = REPO) -> list[str]:
+    """Return mounts for the private folders that are links (a worktree's junctions or symlinks).
+
+    The engine binds the repository as it is, and a link to a folder outside it leads nowhere in
+    the container: each such folder is bound at its place under /work.
+    """
+    mounts = []
+    for name in PRIVATE:
+        path = root / name
+        target = Path(os.path.realpath(path))
+        if target != path.absolute() and target.is_dir():
+            mounts += ["-v", f"{target}:/work/{name}"]
+    return mounts
 
 
 def _query(argv: list[str], timeout: float = QUERY_SECONDS) -> tuple[int, str]:

@@ -1,5 +1,5 @@
 [Unit]
-Description=PICO 4 USB link samples after the handoff (into pstore)
+Description=PICO 4 USB link samples after boot (into pstore)
 DefaultDependencies=no
 After=systemd-journald.service
 

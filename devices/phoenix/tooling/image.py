@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Unlicense
-"""Build the PICO 4 Linux proof-of-concept boot image.
+"""Build the PICO 4's stage-1 image: the maintenance environment, and the base of its test images.
 
     python -m overpressure inspect --firmware 5.13.7-global-seko  # analyse a stock boot.img
     python -m overpressure build   --firmware 5.13.7-global-seko  # -> out/pico4-stage1-5.13.7-global-seko.img
     python -m overpressure build   --stock-boot my-boot.img        # from your own dump/OTA
 
 overpressure's stage 1 (overpressure/stage1.py) with the PICO 4's spec: its packages, its
-overlay (initramfs/), the prebuilt pico4-reboot and pico4-splash, its kernel arguments, and its
+overlay (initramfs/), the prebuilt pico4-reboot, its kernel arguments, and its
 own files in the root (hostname, build record). The stock kernel, device tree, load addresses
 and OS version/patch level stay byte for byte. Pure Python 3.9+, no dependencies.
 """
@@ -60,9 +60,7 @@ PACKAGES = [
     "pciutils",
     "lsblk",
     "device-mapper",
-    # pico4-userspace: mount the installed system and switch to it, keep the SSH host key
-    "e2fsprogs",
-    "dropbear-convert",
+    "e2fsprogs",  # pico4-install format-data: the installed system's data partition
 ]
 
 # Appended to the stock command line:
@@ -116,7 +114,7 @@ INTERESTING_CONFIG = [
 SPEC = stage1.Spec(
     overlay=OVERLAY,
     packages=PACKAGES,
-    files={f"usr/sbin/{name}": PREBUILT / name for name in ("pico4-reboot", "pico4-splash")},
+    files={"usr/sbin/pico4-reboot": PREBUILT / "pico4-reboot"},
 )
 
 
