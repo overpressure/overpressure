@@ -567,7 +567,7 @@ in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.servi
     pico4-splash.service pico4-powerkey.service pico4-battery-guard.service pico4-persist.service pico4-zram-swap.service \
     pico4-venus-probe.service steam-video-codec-setup.service pico4-bt-firmware.service pico4-bt-address.service \
     bluetooth.service pico4-wlan-probe.service pico4-wlan-address.service pico4-panel-probe.service pico4-clock.service \
-    pico4-usb-gadget.service
+    pico4-usb-gadget.service pico4-boot-ok.service
 # Units that would wait for console input, erase the previous boot's evidence from pstore,
 # or manage boot partitions the system never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration

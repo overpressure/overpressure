@@ -793,7 +793,8 @@ def cmd_wait(
         if clock() >= deadline:
             print(json.dumps({"status": "fail", "seconds": round(clock() - start, 1), "error": error}))
             return 1
-        sleep(1.0)
+        # The service lists the IMU within moments of being ready: the session waits for it.
+        sleep(0.2)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -28,7 +28,7 @@ them from the backup ([docs/install.md](docs/install.md)). Keep your own EDL bac
 | 6 Valve's VR session | gamescope and SteamVR 2.17.10 on both panels, 90 fps on the Steam Frame's compositor path; the Steam client in the headset, games from its library through Proton and FEX, Android apps through Lepton, Steam Link from a PC |
 
 Open: the direct boot's last checks on the headset (the power key in charger mode, a boot without the
-PC), the kernel's RDS listener on tcp/16385, and a power press after a long sleep. Plan and details:
+PC), and a power press after a long sleep. Plan and details:
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Install

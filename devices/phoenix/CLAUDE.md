@@ -28,7 +28,7 @@ stage 1 in `recovery`, following PICO OS's layout; installed, starts without the
 across reboots and updates; the way back is open ([docs/install.md](docs/install.md)). `boot`
 holds Valve's kernel without a ramdisk: the kernel mounts the system image in `super` read-only and
 starts its `preinit`, which mounts the data and executes systemd; a failure reboots into `recovery`.
-The direct boot runs on the headset (graphical target in 17 to 18 s); the power key in charger mode
+The direct boot runs on the headset (graphical target in 10 to 11 s); the power key in charger mode
 and a boot without the PC are open.
 Powering off with the USB cable attached starts the headset in charger mode (`pico4-charger.target`
 waits for a 2 s power press, then reboots into the system); a short power press does nothing.

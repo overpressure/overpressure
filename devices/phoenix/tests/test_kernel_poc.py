@@ -362,6 +362,29 @@ class PreinitTests(unittest.TestCase):
         self.assertIn("pico4.failover=reboot", recovery_image.DIRECT_ONESHOT)
         self.assertIn('"$(stage1_arg failover recovery)" = reboot', self.script)
 
+    def test_unfinished_boots_are_counted_and_the_third_goes_to_recovery(self):
+        # Counted on the data partition once it is mounted, before systemd, outside charger mode;
+        # the count's own behaviour is tests/test_boot_attempts.sh's.
+        count = self.script.index("/usr/libexec/pico4/boot-attempts start")
+        self.assertLess(self.script.index('mount -t ext4 -o noatime "$data" /data'), count)
+        self.assertLess(count, self.script.index("exec /usr/lib/systemd/systemd"))
+        block = self.script[self.script.rindex("\n", 0, self.script.rindex("if", 0, count)) : count]
+        self.assertIn('[ -z "$unit" ]', block)
+        self.assertIn('[ $rc = 3 ] && fail "$attempts"', self.script)
+        rootfs = self.PREINIT.parents[3]
+        ok = (rootfs / "usr/lib/systemd/system/pico4-boot-ok.service").read_text(encoding="utf-8")
+        self.assertIn("After=graphical.target", ok)
+        self.assertIn("WantedBy=graphical.target", ok)
+        self.assertIn("ExecStart=/usr/libexec/pico4/boot-attempts finished", ok)
+        build = (rootfs.parents[1] / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+        enable = build[build.index("in_t systemctl enable sshd.service") :]
+        self.assertIn("pico4-boot-ok.service", enable[: enable.index("\n# ")])
+
+    def test_systemd_arms_the_hardware_watchdog(self):
+        conf = self.PREINIT.parents[2] / "lib/systemd/system.conf.d/50-pico4.conf"
+        # qcom_wdt takes at most 30 s; systemd pings at half of it.
+        self.assertIn("RuntimeWatchdogSec=30s", conf.read_text(encoding="utf-8").splitlines())
+
     def test_charger_mode_starts_its_own_target_and_stays_dark(self):
         self.assertIn("unit=pico4-charger.target", self.script)
         units = self.PREINIT.parents[2] / "lib/systemd/system"

@@ -31,6 +31,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -79,11 +80,62 @@ INSTALL_ID = "/etc/pico4/install-id"
 RESTORABLE = ("boot", "recovery", "misc")
 #: Command-line word naming the partition a dev image was written for (pico4.part=recovery).
 PART_MARK = "pico4.part="
+#: This boot's random ID: a reboot is over once another one answers.
+BOOT_ID = "/proc/sys/kernel/random/boot_id"
 #: What the installed system shows: PID 1's name, its install ID and the SoC serial.
 INSTALLED_PROOF = ("/proc/1/comm", INSTALL_ID, "/sys/devices/soc0/serial_number")
+#: The start of an image that tells whether a partition may hold it (write_partition).
+PREFIX_BYTES = 1 << 20
 #: Seconds without an answer after a reboot before the Windows NCM initialization (the maintenance
 #: stage 1 needs it; it disturbs a working link).
 NCM_RETRY_SECONDS = 60
+#: The battery as the maintenance stage 1's stock kernel shows it.
+BATTERY = "/sys/class/power_supply/battery"
+#: Below this charge an install or a restore starts only on a charging battery: a headset that
+#: switches off halfway is recoverable (it starts the maintenance stage 1 again), the write is lost.
+MIN_WRITE_PERCENT = 20
+
+
+#: A release boots to the graphical target within this (docs/release-checklist.md; 10 to 11 s measured).
+MAX_BOOT_SECONDS = 13.0
+_SPAN = re.compile(r"(?:(\d+)min )?(\d+(?:\.\d+)?)(ms|s)\b")
+
+
+def _span_seconds(text: str) -> float:
+    """Return systemd-analyze's span ("1min 2.5s", "823ms", "9.026s") in seconds."""
+    match = _SPAN.fullmatch(text.strip())
+    if not match:
+        msg = f"not a systemd time span: {text!r}"
+        raise ValueError(msg)
+    minutes, value, unit = match.groups()
+    return int(minutes or 0) * 60 + float(value) / (1000 if unit == "ms" else 1)
+
+
+def graphical_seconds(analyze: str) -> float:
+    """Return the seconds from the kernel's start to the graphical target, from systemd-analyze time."""
+    kernel = re.search(r"in (.+?) \(kernel\)", analyze)
+    graphical = re.search(r"graphical\.target reached after (.+?) in userspace", analyze)
+    if not kernel or not graphical:
+        msg = "systemd-analyze names no kernel time or no graphical target (still starting?)"
+        raise RuntimeError(msg)
+    return _span_seconds(kernel.group(1)) + _span_seconds(graphical.group(1))
+
+
+def battery_refusal(reading: str) -> str:
+    """Return why partition writes may not start on @p reading (capacity, status), or "" if they may.
+
+    A reading that is not a percentage refuses nothing: the caller warns instead.
+    """
+    words = reading.split()
+    if not words or not words[0].isdigit():
+        return ""
+    percent, status = int(words[0]), (words[1] if len(words) > 1 else "")
+    if percent >= MIN_WRITE_PERCENT or status in ("Charging", "Full"):
+        return ""
+    return (
+        f"the battery is at {percent} % ({status or 'status unknown'}): charge the headset to {MIN_WRITE_PERCENT} % "
+        "first, or connect it to a port that charges it"
+    )
 
 
 class Dev(Headset):
@@ -317,12 +369,21 @@ class Dev(Headset):
         image = self.work / f"dev-{name}.img"
         if (self.work / "dev-image.json").exists() and image.exists():
             expected = json.loads((self.work / "dev-image.json").read_text(encoding="utf-8")).get(f"{name}_sha256")
-            output = self.ssh(f"head -c {image.stat().st_size} /dev/block/by-name/{name} | sha256sum", 60).split()
+            output = self.ssh(f"pico4-install hash {name} {image.stat().st_size}", 60).split()
             if output[:1] != [expected]:
                 msg = f"{name} does not hold out/dev/dev-{name}.img (readback differs)"
                 raise RuntimeError(msg)
         print(f"stage 1 authenticated, started from {name}, which holds the dev image")
         return name
+
+    def check_battery(self) -> None:
+        """Refuse partition writes on an almost empty battery that does not charge (battery_refusal)."""
+        reading = self.ssh(f"cat {BATTERY}/capacity {BATTERY}/status 2>/dev/null", 10, check=False)
+        refusal = battery_refusal(reading)
+        if refusal:
+            raise RuntimeError(refusal)
+        if not reading.split()[:1] or not reading.split()[0].isdigit():
+            print("warning: the battery's charge is unknown; keep the headset connected", flush=True)
 
     def write_partition(self, name: str, image: Path, timeout: int) -> None:
         """Stream an image to boot or super through the maintenance stage 1 (pico4-install).
@@ -331,15 +392,27 @@ class Dev(Headset):
         """
         size = qualcomm.partition_size(self.s.path("backup"), name)
         digest = backups.digest(image)
-        # An update rewrites only what changed: the partition may hold the image already.
-        held = self.ssh(f"head -c {digest['size']} /dev/block/by-name/{name} | sha256sum", timeout).split()
-        if held[:1] == [digest["sha256"]]:
-            print(f"{name} holds {image.name} already", flush=True)
-            return
-        print(f"writing {image.name} ({digest['size'] >> 20} MiB) to {name}", flush=True)
-        with image.open("rb") as stream:
+        # An update rewrites only what changed: the partition may hold the image already. Its first
+        # MiB tells a different image at once (the file system's superblock is in it); only a
+        # match is worth hashing the whole image on the headset.
+        with image.open("rb") as head:
+            prefix = head.read(PREFIX_BYTES)
+        quick = self.ssh(f"pico4-install hash {name} {len(prefix)}", 30).split()
+        if quick[:1] == [hashlib.sha256(prefix).hexdigest()]:
+            held = self.ssh(f"pico4-install hash {name} {digest['size']}", timeout).split()
+            if held[:1] == [digest["sha256"]]:
+                print(f"{name} holds {image.name} already", flush=True)
+                return
+        # The system image goes compressed when its build made a copy of exactly this image.
+        compressed = image.with_name(image.name + ".zst")
+        record = image.with_name(image.name + ".zst.sha256")
+        zstd = compressed.is_file() and record.is_file() and record.read_text().split()[:1] == [digest["sha256"]]
+        source = compressed if zstd else image
+        print(f"writing {source.name} ({source.stat().st_size >> 20} MiB) to {name}", flush=True)
+        with source.open("rb") as stream:
             output = self.ssh(
-                f"pico4-install write {name} --size {size} --bytes {digest['size']} --sha256 {digest['sha256']}",
+                f"pico4-install write {name} --size {size} --bytes {digest['size']} --sha256 {digest['sha256']}"
+                + (" --zstd" if zstd else ""),
                 timeout,
                 stdin=stream,
             )
@@ -366,6 +439,7 @@ class Dev(Headset):
             msg = "install runs from the maintenance stage 1 in recovery (python -m overpressure dev recovery)"
             raise RuntimeError(msg)
         device.check_panel(self.ssh("cat /proc/cmdline", 10))
+        self.check_battery()
         # From here on PICO OS's system is gone until "dev restore" writes it back.
         (self.work / INSTALLED).write_text(
             json.dumps(
@@ -396,7 +470,8 @@ class Dev(Headset):
             raise RuntimeError(msg)
         (self.work / "state.json").unlink(missing_ok=True)
         self.ssh("pico4-reboot", 15, check=False)
-        self.clock.sleep(20)
+        # Only the installed system's systemd passes wait_installed: no fixed wait for the reboot.
+        self.clock.sleep(3)
         self.wait_installed()
 
     def installed(self) -> None:
@@ -412,16 +487,17 @@ class Dev(Headset):
         (self.work / "state.json").unlink(missing_ok=True)
         self.to_fastboot()
         self.fastboot("reboot", "recovery")
-        self.clock.sleep(20)
+        # From fastboot nothing else answers: connect retries until stage 1 does.
         if self.connect() != "recovery":
             msg = "the maintenance stage 1 did not start from recovery"
             raise RuntimeError(msg)
 
-    def wait_installed(self) -> None:
+    def wait_installed(self, previous_boot: str = "") -> None:
         """Wait for the installed system's systemd, reached over the USB link.
 
         Valve's kernel takes Windows' NCM driver as it is: no NCM initialization, which would
-        disturb the working link (only the maintenance stage 1's stock kernel needs it).
+        disturb the working link (only the maintenance stage 1's stock kernel needs it). With
+        @p previous_boot, the boot of that ID does not count: it is the one going down.
         """
 
         def installed() -> None:
@@ -438,6 +514,9 @@ class Dev(Headset):
                 raise RuntimeError(msg)
             if lines[0] != "systemd":
                 msg = "systemd is not running yet"
+                raise RuntimeError(msg)
+            if previous_boot and self.boot_id() == previous_boot:
+                msg = "the boot before the reboot still answers"
                 raise RuntimeError(msg)
 
         self.until("installed system", 240, installed)
@@ -503,7 +582,16 @@ class Dev(Headset):
         checks = {"listeners": "pico4-listeners", "still gate": "pico4-still-gate 60"}
         if attended:
             checks["suspend with sound"] = "pico4-suspend-check"
-        results = {"acceptance": "passed" if self.check() == 0 else "failed"}
+        results: dict = {"acceptance": "passed" if self.check() == 0 else "failed"}
+        # The boot this runs on: the checklist starts from a fresh one.
+        try:
+            seconds = graphical_seconds(self.ssh("systemd-analyze time", 30))
+            results["boot time"] = {
+                "status": "passed" if seconds <= MAX_BOOT_SECONDS else "failed",
+                "output": f"graphical target {seconds:.1f} s after the kernel's start (at most {MAX_BOOT_SECONDS:g} s)",
+            }
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            results["boot time"] = {"status": "failed", "output": str(exc)[-2000:]}
         for name, command in checks.items():
             try:
                 results[name] = {"status": "passed", "output": self.ssh(command, 600)}
@@ -558,17 +646,31 @@ class Dev(Headset):
         """
         (self.work / "state.json").unlink(missing_ok=True)
         fastboot = self.s.tool("fastboot")
+        previous = ""
         if self.s.fastboot_serial and self.s.fastboot_serial in self.run([fastboot, "devices"], 30, check=False):
             self.fastboot("reboot")
         else:
+            try:
+                previous = self.boot_id()
+            except RuntimeError:
+                previous = ""
             self.ssh("systemctl reboot 2>/dev/null || pico4-reboot", 15, check=False)
-        self.clock.sleep(20)
-        if (self.work / INSTALLED).exists() and self.started() == "installed":
-            self.wait_installed()
+        # The boot that answers next must be another one; no fixed wait for the reboot.
+        self.clock.sleep(3)
+        if (self.work / INSTALLED).exists() and self.started(previous) == "installed":
+            self.wait_installed(previous)
             return
         self.connect()
 
-    def started(self) -> str:
+    def boot_id(self) -> str:
+        """Return the running boot's random ID."""
+        lines = [line for line in self.ssh(f"cat {BOOT_ID}", 10).splitlines() if line.strip()]
+        if not lines:
+            msg = "no boot ID"
+            raise RuntimeError(msg)
+        return lines[-1].strip()
+
+    def started(self, previous_boot: str = "") -> str:
         """Return what started after a reboot of an installed headset.
 
         "maintenance" (stage 1 from recovery) or "installed" (the installed system's systemd), by
@@ -591,6 +693,9 @@ class Dev(Headset):
                     initialized[0] = True
                     self.run(windows_ncm.command(ncm, self.s.fastboot_serial), 30)
                 raise
+            if previous_boot and self.boot_id() == previous_boot:
+                msg = "the boot before the reboot still answers"
+                raise RuntimeError(msg)
             if comm.strip() == "systemd":
                 return "installed"
             if f"{PART_MARK}recovery" in cmdline.split():
@@ -634,6 +739,7 @@ class Dev(Headset):
             images[name] = path
         if self.connect() != "recovery":
             self.recovery()
+        self.check_battery()
         self.write_partition("super", images["super"], 3600)
         self.write_partition("boot", images["boot"], 300)
         backup = self.s.path("backup")

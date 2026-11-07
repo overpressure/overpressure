@@ -263,7 +263,9 @@ class StoragePolicyRuleTest(unittest.TestCase):
         self.assertIn('PROGRAM="/usr/libexec/pico4/devnode add"', rules)
         helper = (ROOTFS / "usr/libexec/pico4/devnode").read_text(encoding="utf-8")
         self.assertNotIn("mknod", helper)
-        self.assertIn('blockdev --setro "/dev/$name"', helper)
+        # Every device that needs it in one blockdev call: the sweep runs before the file systems.
+        self.assertIn('blockdev --setro "${to_ro[@]}"', helper)
+        self.assertNotIn("$(sed ", helper)
 
 
 class ConsoleQuietTest(unittest.TestCase):

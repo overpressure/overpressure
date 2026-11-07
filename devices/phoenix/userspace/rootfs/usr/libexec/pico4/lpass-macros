@@ -27,15 +27,18 @@ calibration() {
 	done
 }
 
-# A refused vote takes the AFE's 3 s timeout: about two minutes in all.
+# A refused vote takes the AFE's 3 s timeout: about two minutes in all. The card is looked for
+# every 0.25 s (it follows the macro's probe within moments), the macro probed every 2 s.
 for _ in $(seq 1 40); do
-	if [ -e "$CARD" ]; then
-		log "lpass-macros: sound card up"
-		calibration
-		exit 0
-	fi
 	[ -e "/sys/bus/platform/devices/$DEV/driver" ] || echo "$DEV" > /sys/bus/platform/drivers_probe 2> /dev/null || true
-	sleep 2
+	for _ in 1 2 3 4 5 6 7 8; do
+		if [ -e "$CARD" ]; then
+			log "lpass-macros: sound card up"
+			calibration
+			exit 0
+		fi
+		sleep 0.25
+	done
 done
 log "lpass-macros: no sound card"
 exit 1

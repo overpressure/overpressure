@@ -46,6 +46,8 @@ PACKAGES = [
     "dropbear-scp",
     "openssh-sftp-server",  # ssh/scp/sftp (Windows has an ssh client)
     "mtools",  # builds the read-only FAT "log drive" exposed over USB
+    "zstd",  # pico4-install write --zstd: the system image arrives compressed
+    "openssl",  # pico4-install: SHA-256 with the CPU's instructions (BusyBox's is 42 MB/s)
     "kmod",
     "dtc",
     "evtest",
@@ -68,7 +70,12 @@ PACKAGES = [
 #                                 also end up in pstore)
 #  rng_core.default_quality=1000  let the Qualcomm hardware RNG credit entropy, so
 #                                 dropbear's first host-key generation cannot block
-CMDLINE_APPEND = ["printk.devkmsg=on", "rng_core.default_quality=1000"]
+#  console=none                   no serial console: the device tree names the UART (stdout-path),
+#                                 and at its 115200 baud the kernel's log took 5.9 s to replay
+#                                 there when it registered, and every message after it waited for
+#                                 it (/init came at 14 s); a console= of no device overrides it.
+#                                 dmesg and pstore's RAM console keep every message.
+CMDLINE_APPEND = ["printk.devkmsg=on", "rng_core.default_quality=1000", "console=none"]
 
 INTERESTING_CONFIG = [
     "DEVTMPFS",

@@ -61,7 +61,16 @@ DTB = "sm8250-pico4-phoenix.dtb"
 MAX_CMDLINE = 511
 #: The base image's words for Android and the downstream kernel; stage 1 reads none of them, and
 #: the ABL appends what it does read (androidboot.mode, androidboot.serialno).
-STOCK_ONLY = ("androidboot.", "lpm_levels.", "video=", "msm_rtb.", "service_locator.", "swiotlb=", "buildvariant=")
+STOCK_ONLY = (
+    "androidboot.",
+    "lpm_levels.",
+    "video=",
+    "msm_rtb.",
+    "service_locator.",
+    "swiotlb=",
+    "buildvariant=",
+    "console=",
+)
 #: Words for the new kernel: keep what the bootloader left on (clocks, power domains and
 #: regulators no driver claims yet, such as the display's), reboot shortly after a panic, no stock
 #: modules, which this kernel cannot load, stage 1 waits up to 5 minutes for the USB controller,

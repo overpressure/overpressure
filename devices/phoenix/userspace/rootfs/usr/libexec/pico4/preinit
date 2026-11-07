@@ -67,6 +67,17 @@ if [ "$(cat "/sys/class/block/${data##*/}/ro")" != 0 ]; then
 fi
 mount -t ext4 -o noatime "$data" /data || fail "mounting the data partition failed"
 
+# Boots that started systemd but never reached the graphical target (a panic, a hang the watchdog
+# ended) are counted; pico4-boot-ok.service clears the count there. After two, this boot goes to
+# the maintenance stage 1 instead. Charger mode neither counts nor clears.
+if [ -z "$unit" ]; then
+	attempts=$(/usr/libexec/pico4/boot-attempts start)
+	rc=$?
+	[ $rc = 3 ] && fail "$attempts"
+	[ $rc = 0 ] || log "preinit: counting the boot failed ($rc)"
+	[ -z "$attempts" ] || log "preinit: $attempts"
+fi
+
 image=$(cat /usr/share/pico4/system-image 2>/dev/null)
 if [ ! -e /data/.pico4-initialized ]; then
 	log "preinit: first boot of the installed system: data from the image"

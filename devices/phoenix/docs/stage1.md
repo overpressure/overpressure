@@ -19,8 +19,8 @@ ramdisk ([install.md](install.md#how-it-starts)).
 | Part | Content |
 | --- | --- |
 | Kernel and device trees | the stock image's, byte for byte, with every other header field (load addresses, page size, OS version and patch level) |
-| Kernel command line | the stock one plus `printk.devkmsg=on`, so the init's lines in `/dev/kmsg` are not rate-limited, and `rng_core.default_quality=1000`, so the Qualcomm hardware RNG credits entropy and dropbear's first host-key generation cannot block |
-| Ramdisk | Alpine Linux 3.24.2 aarch64: the minirootfs, the packages listed in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, exploration tools and e2fsprogs, which formats the installed system's data partition), the overlay in [initramfs/](../initramfs/) and the `pico4-reboot` helper |
+| Kernel command line | the stock one plus `printk.devkmsg=on`, so the init's lines in `/dev/kmsg` are not rate-limited, `rng_core.default_quality=1000`, so the Qualcomm hardware RNG credits entropy and dropbear's first host-key generation cannot block, and `console=none`: the device tree names the UART as the console (`stdout-path`), and at 115200 baud the kernel's log took 5.9 s to replay there when it registered, with every later message waiting for it (`/init` at 14 s, without it at 1.0 s). `dmesg` and pstore's RAM console keep every message |
+| Ramdisk | Alpine Linux 3.24.2 aarch64: the minirootfs, the packages listed in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, exploration tools, e2fsprogs, which formats the installed system's data partition, zstd for the compressed system image and OpenSSL, whose SHA-256 uses the CPU's instructions), the overlay in [initramfs/](../initramfs/) and the `pico4-reboot` helper |
 | PID 1 | `pico4-init`, which runs `/etc/inittab` like busybox init ([PID 1](#pid-1)) |
 
 Over the USB-C cable:
@@ -230,7 +230,11 @@ About 20–40 s after the boot the headset answers on the USB link:
 dropbear runs with `-R` (host keys are generated at the first connection, so they are new on
 every boot), `-B` (the empty root password is accepted) and `-W 4194304`, a 4 MiB receive
 window: with dropbear's 24 KiB default, uploads over the USB link, such as the system image, are
-limited to about 4.4 MB/s; with the 4 MiB window 801 MiB arrive in 39 s (21.6 MB/s). Images that the hardware runner or the development loop prepare also carry an
+limited to about 4.4 MB/s; with the 4 MiB window it carries 26 to 28 MB/s with any cipher, the USB link's limit.
+On this kernel BusyBox's SHA-256 does 42 MB/s, OpenSSL's 1.77 GB/s; `pico4-install` hashes with
+OpenSSL and reads partitions with `dd` in 4 MiB blocks (about 190 MB/s with the hash; `head -c`
+reads a block device in small pieces), and it writes without a hash beside the stream (`tee` held
+the write to 25 MB/s): the readback checks it. Images that the hardware runner or the development loop prepare also carry an
 `authorized_keys` entry for the runner's per-run key or the loop's key
 ([hardware-testing.md](hardware-testing.md)).
 

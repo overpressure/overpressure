@@ -20,7 +20,7 @@ on it and how it works.
 | DSPs | downstream `adsprpc` FastRPC, downstream subsystem restart | upstream `fastrpc`, remoteproc (`QCOM_Q6V5_PAS`), PDR helpers |
 | Wi-Fi | `cnss2` with the vendor `qca_cld3` module | ath12k (the Frame's chip); ath11k, which the XR2's QCA6390 needs, is not enabled |
 | Security | SELinux, `ANDROID_PARANOID_NETWORK` | AppArmor, Yama, LoadPin, SafeSetID |
-| Scheduler | `HZ=100`, WALT, `RT_GROUP_SCHED` | `HZ=1000`, no `RT_GROUP_SCHED`; Valve's configuration leaves `SCHED_CLASS_EXT` out |
+| Scheduler | `HZ=100`, WALT, `RT_GROUP_SCHED` | `HZ=1000`, no `RT_GROUP_SCHED`; `SCHED_CLASS_EXT`, which needs BTF type information (`pahole` in the build container) |
 
 ## Files
 
@@ -29,7 +29,7 @@ The kernel's files are in [kernel/](../kernel/):
 | File | Purpose |
 | --- | --- |
 | [sm8250-pico4-phoenix.dts](../kernel/sm8250-pico4-phoenix.dts) | the PICO 4's device tree on mainline's `sm8250.dtsi`: the stock tree's supplies for UFS, USB and the panels, its memory carve-outs, its unused GPIOs reserved, reboot modes, a RAM console, both DSI links with the panels, the GPU with its DDR vote, the GD32 MCU's UART, the three DSPs, the head IMU's supplies and clock, the keys |
-| [pico4.config](../kernel/pico4.config) | merged over Valve's `gabe_defconfig`: the SM8250 drivers (with the display and GPU clock controllers, QFPROM, REFGEN), the panel driver, the USB gadget functions (NCM, mass storage, ACM), the PON reboot modes, pstore, QRTR over GLINK |
+| [pico4.config](../kernel/pico4.config) | merged over Valve's `gabe_defconfig`: the SM8250 drivers (with the display and GPU clock controllers, QFPROM, REFGEN), the panel driver, the USB gadget functions (NCM, mass storage, ACM), the PON reboot modes, pstore, QRTR over GLINK, the watchdog's panic at its bark; without Valve's RDS |
 | [patches/](../kernel/patches/) | fixes to Valve's tree that the PICO 4 needs (below) |
 | [src/](../kernel/src/) | the PICO 4's own kernel sources, at their paths in the tree: the panel driver, the battery driver, the `pico4-ov7251` and `pico4-imx471` sensor drivers, the q6 calibration driver |
 | [build-kernel.sh](../kernel/build-kernel.sh) | Valve's 7.2 source package (pinned by hash and commit), the patches and the own sources to `Image.gz` and the device tree |
@@ -65,7 +65,7 @@ The kernel's files are in [kernel/](../kernel/):
 
 | Installed system | Result on the headset |
 | --- | --- |
-| Boot | the installed system (`super`, `userdata`) on Valve's kernel from `boot` (`dev install`, the image from `recovery_image.py --direct --boot`), the maintenance stage 1 on the stock kernel in `recovery`; the display and the GPU bind without a ramdisk; `graphical.target` 16.9 to 18.1 s after the kernel starts ([install.md](install.md#verified-results)) |
+| Boot | the installed system (`super`, `userdata`) on Valve's kernel from `boot` (`dev install`, the image from `recovery_image.py --direct --boot`), the maintenance stage 1 on the stock kernel in `recovery`; the display and the GPU bind without a ramdisk; `graphical.target` 9.7 to 11.0 s after the kernel starts ([install.md](install.md#verified-results)) |
 | RGB camera | `pico4-imx471` on CCI 0, four lanes of CSIPHY 1 at 2064.8 Mbit/s, CSID 4 and the third IFE-lite: 150 frames, 0 errors, 50.01 fps beside the tracking cameras. CAMSS never sets the camera NoC's clock, which stays at 19.2 MHz: the tree assigns 300 MHz, since the sensor's lines come at 1.7 GB/s and overflow the IFE-lite otherwise. The sensor powers up with its stream: a missing one fails only that stream |
 | Colour room view on the depth mesh | scanned-out image with the headset lying still: both eyes in colour, the compositor on its RGB NV12 shader, 251 meshes in 10 s with 14,841 vertices, 64–72 ms after their pair. The scanout is black above the RGB camera's field of view; worn none of that shows, also looking up |
 | Still headset, 60 s | tracker 0 poses lost, 0.61 mm and 0.05° from its start with the room view off, 0.54 mm and 0.05° with the colour room view and the mesh on; `pico4-slamd` 56 % of one core; hottest zone 61 °C |
@@ -361,8 +361,9 @@ carries (`qcom,msm-id`, `qcom,board-id`).
 
 ## Kernel size
 
-Valve's configuration builds a large kernel: 24.7 MB `Image.gz`, 141 MiB in memory with its BSS
-(the stock kernel: 35 MB), mostly a 16 MiB log buffer with its index tables. The ABL checks the
+Valve's configuration builds a large kernel: 28.9 MB `Image.gz`, 153 MiB in memory with its BSS
+(the stock kernel: 35 MB), mostly a 16 MiB log buffer with its index tables and the BTF type
+information (about 12 MB). The ABL checks the
 decompressed kernel against a region of its own (from UEFI's `KernelBaseAddr` and `KernelSize`).
 On the headset it loads the kernel at 0xA0080000 and the device tree and the ramdisk directly
 below 0xB0000000, which leaves about 245 MB for the kernel; Valve's configuration fits

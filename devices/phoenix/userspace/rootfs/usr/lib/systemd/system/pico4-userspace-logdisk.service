@@ -1,5 +1,5 @@
 [Unit]
-Description=PICO 4 stage-2 log drive (journal and state on the USB mass-storage function)
+Description=PICO 4 log drive (journal and state on the USB mass-storage function)
 # No ordering after multi-user.target: it must also report a boot that hangs.
 DefaultDependencies=no
 After=systemd-journald.service
@@ -7,3 +7,7 @@ After=systemd-journald.service
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/pico4/userspace-logdisk
+# Every 2 minutes, during sessions too: only time the CPUs and the storage have spare.
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle

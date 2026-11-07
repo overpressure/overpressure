@@ -6,7 +6,8 @@
 #   pico4-install write boot|super --size BYTES --bytes N --sha256 HEX [--zstd] < IMAGE
 #       write an image to the start of boot (the installed boot image) or super (the system
 #       image). The partition must be BYTES large (the PC passes the backup's size), the image
-#       at most that; the stream's SHA-256 must match, and the written bytes are read back.
+#       at most that; the written bytes are read back and must have the SHA-256 HEX.
+#       --zstd: the stream is zstd-compressed; N and HEX are the image's, decompressed.
 #   pico4-install format-data --size BYTES
 #       a new ext4 file system "pico4-data" on userdata (BYTES as the backup has it)
 #   pico4-install keys --size BYTES --id ID < AUTHORIZED_KEYS
@@ -19,6 +20,8 @@
 #       the bootloader message in misc: "boot-recovery" keeps every boot in this maintenance
 #       stage 1, as the ABL's "fastboot reboot recovery" sets it; "normal" clears it (all zero,
 #       as the backup's misc), so the next boot starts boot's image
+#   pico4-install hash NAME BYTES
+#       the SHA-256 of the partition's first BYTES (read-only: whether it holds an image)
 #   pico4-install status
 #
 # Each partition is made writable for its write only and read-only again afterwards.
@@ -41,8 +44,29 @@ partition() {
 writable() { blockdev --setrw "$1" || die "could not make $1 writable"; }
 readonly_again() { blockdev --setro "$1" || log "install: could not set $1 read-only"; }
 
+# sha256: the SHA-256 of standard input in hex: OpenSSL's, which uses the CPU's SHA-2 instructions,
+# else BusyBox's (42 MB/s here: slower than the USB link brings a compressed image).
+sha256() {
+	if command -v openssl >/dev/null 2>&1; then
+		openssl dgst -sha256 -r | cut -d' ' -f1
+	else
+		sha256sum | cut -d' ' -f1
+	fi
+}
+
+# read_part DEVICE BYTES: the device's first BYTES, read in 4 MiB blocks (head -c reads a block
+# device in small pieces: half the speed with the hash).
+read_part() {
+	dd if="$1" bs=4M iflag=count_bytes count="$2" 2>/dev/null
+}
+
+# stream ZSTD: standard input as the image, decompressed when ZSTD is 1.
+stream() {
+	if [ "$1" = 1 ]; then zstd -dcq; else cat; fi
+}
+
 write() {
-	local name=$1 size="" bytes="" sha="" dev got back
+	local name=$1 size="" bytes="" sha="" zstd=0 dev back
 	shift
 	case "$name" in boot | super) ;; *) die "write refuses $name (boot or super only)" ;; esac
 	while [ $# -gt 0 ]; do
@@ -50,33 +74,29 @@ write() {
 		--size) size=$2; shift ;;
 		--bytes) bytes=$2; shift ;;
 		--sha256) sha=$2; shift ;;
+		--zstd) zstd=1 ;;
 		*) die "unknown option $1" ;;
 		esac
 		shift
 	done
 	[ -n "$size" ] && [ -n "$bytes" ] && [ ${#sha} = 64 ] || die "write needs --size, --bytes and --sha256"
 	[ "$bytes" -gt 0 ] && [ "$bytes" -le "$size" ] || die "the image ($bytes bytes) does not fit $name"
+	[ "$zstd" = 0 ] || command -v zstd >/dev/null || die "zstd missing from this image (rebuild stage 1)"
 	dev=$(partition "$name" "$size")
 	mkdir -p "$STATE"
-	rm -f "$STATE/fifo" "$STATE/sha256"
-	mkfifo "$STATE/fifo"
-	sha256sum < "$STATE/fifo" | cut -d' ' -f1 > "$STATE/sha256" &
-	local hasher=$!
 	writable "$dev"
 	log "install: writing $bytes bytes to $name ($dev)"
-	head -c "$bytes" | tee "$STATE/fifo" |
-		dd of="$dev" bs=4M conv=fsync 2> "$STATE/dd.log"
+	# Straight into dd in 4 MiB blocks: a hash of the stream beside it (tee) held the write to
+	# 25 MB/s, below the USB link. The readback below checks what was written, and with it the
+	# stream: a stream that differs from the image cannot read back with the image's hash.
+	stream "$zstd" | dd of="$dev" bs=4M iflag=count_bytes,fullblock count="$bytes" conv=fsync 2> "$STATE/dd.log"
 	local rc=$?
-	wait "$hasher"
 	sync
 	readonly_again "$dev"
-	got=$(cat "$STATE/sha256")
-	rm -f "$STATE/fifo"
 	[ $rc = 0 ] || die "writing $name failed ($(tail -n 2 "$STATE/dd.log" | tr '\n' ' '))"
-	[ "$got" = "$sha" ] || die "the stream's sha256 $got does not match $sha ($name now holds it)"
 	echo 3 > /proc/sys/vm/drop_caches
-	back=$(head -c "$bytes" "$dev" | sha256sum | cut -d' ' -f1)
-	[ "$back" = "$sha" ] || die "readback of $name differs: $back"
+	back=$(read_part "$dev" "$bytes" | sha256)
+	[ "$back" = "$sha" ] || die "readback of $name differs: $back is not the image's $sha ($name now holds it)"
 	log "install: $name holds $sha"
 	echo "written $name $sha"
 }
@@ -164,7 +184,7 @@ bootmode() {
 	normal) head -c $BCB_BYTES /dev/zero > "$STATE/bcb" ;;
 	*) die "bootmode recovery|normal" ;;
 	esac
-	want=$(sha256sum < "$STATE/bcb" | cut -d' ' -f1)
+	want=$(sha256 < "$STATE/bcb")
 	writable "$dev"
 	dd if="$STATE/bcb" of="$dev" bs=$BCB_BYTES count=1 conv=fsync,notrunc 2>/dev/null
 	local rc=$?
@@ -172,10 +192,18 @@ bootmode() {
 	readonly_again "$dev"
 	[ $rc = 0 ] || die "writing misc failed"
 	echo 3 > /proc/sys/vm/drop_caches
-	got=$(head -c $BCB_BYTES "$dev" | sha256sum | cut -d' ' -f1)
+	got=$(head -c $BCB_BYTES "$dev" | sha256)
 	[ "$got" = "$want" ] || die "readback of misc differs"
 	log "install: boot mode $1"
 	echo "bootmode $1"
+}
+
+hash() {
+	local name=$1 bytes=$2 dev
+	case "$bytes" in '' | *[!0-9]*) die "hash needs a partition and a byte count" ;; esac
+	dev=$(readlink -f "/dev/block/by-name/$name" 2>/dev/null)
+	[ -b "$dev" ] || die "no partition $name"
+	read_part "$dev" "$bytes" | sha256
 }
 
 status() {
@@ -192,8 +220,9 @@ case "${1:-}" in
 write) shift; write "$@" ;;
 format-data) shift; format_data "$@" ;;
 keys) shift; keys "$@" ;;
+hash) hash "$2" "$3" ;;
 wipe) shift; wipe "$@" ;;
 bootmode) bootmode "$2" ;;
 status) status ;;
-*) sed -n '3,24s/^# \{0,1\}//p' "$0"; exit 2 ;;
+*) sed -n '3,27s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

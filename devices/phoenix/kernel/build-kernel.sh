@@ -97,9 +97,17 @@ if ! cmp -s "$work/config.wanted" "$work/config.applied" 2>/dev/null; then
 	"${make[@]}" olddefconfig >/dev/null
 	cp "$work/config.wanted" "$work/config.applied"
 fi
-# Every option of the fragment must have survived olddefconfig (a missing dependency drops it).
+# Every option of the fragment must have survived olddefconfig (a missing dependency drops it),
+# and every one it turns off must be off (another option may select it).
 while IFS= read -r line; do
-	case $line in CONFIG_*=*) grep -qxF "$line" "$config" || { echo "not applied: $line" >&2; exit 1; } ;; esac
+	case $line in
+	CONFIG_*=*) grep -qxF "$line" "$config" || { echo "not applied: $line" >&2; exit 1; } ;;
+	"# CONFIG_"*" is not set")
+		name=${line#"# "}
+		name=${name%" is not set"}
+		! grep -q "^$name=" "$config" || { echo "not turned off: $name" >&2; exit 1; }
+		;;
+	esac
 done < "$here/pico4.config"
 
 "${make[@]}" Image.gz "qcom/$DTB.dtb"

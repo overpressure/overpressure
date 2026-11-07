@@ -31,7 +31,9 @@ come from the image ([stage1.md](stage1.md), [xr.md](xr.md)).
   maintenance stage 1 cannot mount them), file capabilities kept
   (gamescope's `cap_sys_nice`). Its size is the
   content plus 10 % and 128 MiB. It names the archive it came from in
-  `/usr/share/pico4/system-image`.
+  `/usr/share/pico4/system-image`. Beside it the script writes `pico4-system.img.zst` (zstd, level
+  3, about 38 % of the image) and the image's SHA-256 in `pico4-system.img.zst.sha256`: `dev install`
+  sends the compressed copy when that hash is the image's.
 - **Data.** [`preinit`](../userspace/rootfs/usr/libexec/pico4/preinit), the system's first
   process ([how it starts](#how-it-starts)), mounts `userdata` at `/data` and lays the changing
   parts onto the read-only image: `/etc` as an overlay (lower: the image, upper:
@@ -66,10 +68,13 @@ the image:
    every CPU's cpufreq governor to `schedutil`, as PICO OS runs (Valve's kernel starts with
    `performance`; `pico4.cpugov=keep` leaves it).
 2. `devnode sweep` switches every disk and partition read-only and makes the
-   `/dev/block/by-name` links, before anything is mounted writable.
+   `/dev/block/by-name` links, before anything is mounted writable. It reads sysfs with shell
+   builtins and switches all devices in one `blockdev` call: 0.03 s for about 120 devices
+   (`pico4-storage-ro.service` runs it again before `local-fs-pre.target`).
 3. It makes `userdata` (the `pico4-data` file system) writable, and on this kernel its disk too,
    since a mainline kernel counts a disk's read-only flag for its partitions; the disk's other
-   partitions keep their own flags. It mounts the data at `/data`.
+   partitions keep their own flags. It mounts the data at `/data`. Outside charger mode it counts
+   the boot ([boot attempts](#boot-attempts)).
 4. On the first boot it copies `/var`, `/root` and `/home` from the image (`cp -a -n`); after a
    new system image it takes the package database from the image.
 5. It mounts the `/etc` overlay and binds `/var`, `/home` and `/root`, and writes
@@ -79,8 +84,40 @@ the image:
 
 Any failure on the way reboots into `recovery` (`pico4-reboot recovery`), where the maintenance
 stage 1 waits. If `super` cannot be mounted at all, the kernel waits 20 s, panics, and `panic=5`
-reboots it, again from `boot`; the way out is fastboot and `dev recovery`. `super` is written only
-by `pico4-install`, which checks the stream and reads it back.
+reboots it, again from `boot`; the way out is fastboot and `dev recovery`, or EDL by hand (both
+volume buttons held while connecting USB to the powered-off headset,
+[device preparation](device-preparation.md)). `super` is written only by `pico4-install`, which
+checks the stream and reads it back.
+
+### Boot attempts
+
+A boot that started systemd can still fail later: a kernel panic reboots after 5 s (`panic=5`),
+and the kernel's detectors panic on soft lockups and hung tasks (120 s). systemd arms the SoC's
+watchdog (`qcom_wdt`, `RuntimeWatchdogSec=30s` in `system.conf.d/50-pico4.conf`) and pings it
+while PID 1 runs. Its bite alone does not reset the headset on this firmware (it locks one CPU
+up), so the bark, 1 s before it, panics (the pretimeout governor `panic` in `pico4.config`):
+
+| A stopped PID 1 (ptrace, no pings) | After |
+| --- | --- |
+| the bark: `Kernel panic - not syncing: watchdog pretimeout event` | 28.3 s |
+| `panic=5`'s reset | 33 s |
+| the installed system answers SSH again; the graphical target reached, the count cleared | 55 s |
+
+A system that only crawls (every CPU busy at real-time priority) does not stop the pings: the
+kernel's fair server leaves normal tasks 5 % of each CPU, and the hung-task panic restarted it
+after about 7 minutes.
+
+[`boot-attempts`](../userspace/rootfs/usr/libexec/pico4/boot-attempts) counts such boots in
+`/data/.pico4-boot-attempts`:
+
+| When | What happens |
+| --- | --- |
+| preinit, before systemd (not in charger mode) | the count goes up by one |
+| the graphical target is reached (`pico4-boot-ok.service`) | the count is cleared |
+| preinit finds 2 unfinished boots | it clears the count and reboots into `recovery`: the maintenance stage 1 starts, and a boot from there has two tries again |
+
+A failed unit does not hold the graphical target back. A system that runs but never reaches it
+answers over SSH, and its next boot counts on.
 
 Under systemd:
 
@@ -224,11 +261,17 @@ python -m overpressure dev installed          # after a later reboot: connect to
 
 | Command | Writes | Checks |
 | --- | --- | --- |
-| `pico4-install write boot\|super --size --bytes --sha256` | the image to the start of the partition | the partition's size equals the backup's, the image fits, the stream's SHA-256, a readback of the written bytes |
+| `pico4-install write boot\|super --size --bytes --sha256 [--zstd]` | the image to the start of the partition, straight into `dd` in 4 MiB blocks; `--zstd` decompresses the stream first | the partition's size equals the backup's, the image fits, a readback of the written bytes with the image's SHA-256 |
+| `pico4-install hash NAME BYTES` | nothing | the SHA-256 of the partition's first BYTES (`dev install` checks with it whether a partition holds its image already) |
 | `pico4-install format-data --size` | ext4 `pico4-data` on `userdata` | the backup's size; the label afterwards |
 | `pico4-install keys --size --id` (standard input: `authorized_keys`) | on the data partition: `/root/.ssh/authorized_keys` and `/etc/pico4/install-id` in the `/etc` overlay's upper layer | the backup's size, the `pico4-data` label, at least one public key |
 | `pico4-install wipe userdata\|metadata --size` | zeros over the first 64 MiB | the backup's size; a readback |
 | `pico4-install bootmode recovery\|normal` | the 2 KiB bootloader message in `misc` | a readback |
+
+Before the first write `dev install` and `dev restore` read the battery: below 20 % they start
+only while it charges (`Charging` or `Full`). A battery they cannot read gets a warning. A headset
+that switches off halfway starts the maintenance stage 1 again (`misc` still requests it), but the
+write is lost.
 
 Each partition is made writable for its write only. `dev install` skips a partition that
 already holds its image (by a readback hash), formats `userdata` only when it holds no
@@ -272,13 +315,14 @@ the ABL to stock (`python -m overpressure cycle --restore-only`) and entering de
 | `misc` and `recovery` written back from the backup | identical to the backup by readback; `boot` starts again |
 | System image from the 1,701 MiB archive | 4,707 MiB ext4; capabilities of gamescope, newuidmap and newgidmap kept |
 | Install | `boot` (24 MiB) and `super` (4,706 MiB) written and read back, `userdata` formatted: 104 GiB for data; the keys and the install ID written to it (`pico4-install keys`), and `dev installed` logs in with them |
+| Install time | `dev install` of a new system image: 2 min 22 s from the maintenance stage 1 to the running system; `super` from the 1,808 MiB compressed image written and read back in 101 s (the USB link carries 26 to 28 MB/s with any SSH cipher); `boot`, unchanged, skipped after its first MiB's hash |
 | Direct boot | the ABL boots a boot image without a ramdisk; `root=PARTLABEL=super` mounts the system image (`sda7`) read-only 1.43 s after the kernel starts, and the image's init runs; the display and the GPU bind |
 | Windows NCM on Valve's kernel | after a reboot the installed system answers SSH without the NCM initialization; no `Wrong NDP SIGN` |
-| Start without stage 1 | preinit runs at 1.4 s and executes systemd at 3.6 s; the USB link is up at 4.3 s, `wlan0` (re-probed) at 9.7 s; systemd `running`, no failed units; `/` read-only from `sda7` (writing to it refused), `/data` writable, `/etc` an overlay; the governor `schedutil` |
-| Boot time | the graphical target 16.9 s and 18.1 s after the kernel starts (the first boot of a new image 18.6 s); stage 1 in `boot` with the same system image: 23.3 s, twice. The audio DSP's chain (`pico4-lpass-macros`, 7 s) ends it |
+| Start without stage 1 | preinit runs at 1.4 s and executes systemd at 1.9 s (its storage sweep takes 0.03 s); the USB link is up at about 4 s, `wlan0` (re-probed) at about 9 s; systemd `running`, no failed units; `/` read-only from `sda7` (writing to it refused), `/data` writable, `/etc` an overlay; the governor `schedutil` |
+| Boot time | the graphical target 9.7 s and 11.0 s after the kernel starts, the session (`pico4-session.service`) started at 5.3 to 5.7 s; stage 1 in `boot` with an earlier system image: 23.3 s, twice. The audio DSP's chain (`pico4-lpass-macros`, 5 to 6 s) ends it |
 | Charger mode | a power-off with the cable in starts `pico4-charger.target` (10.7 s): the charger service, `sshd` and the USB link run, the boot indication and the session do not; a plain reboot from it starts the system |
 | Persistence | files in `/home`, `/var`, `/etc` and `/root` survive a reboot and a system update (a new image in `super`, its package database taken over) |
-| `dev check` on the installed system | the userspace check fails on the kernel's RDS listener on tcp/16385 and, in this image, on OpenSSH 10's spelling `prohibit-password` (the check takes both now); the rest of it passes (USB link up, storage, systemd). Head IMU passes. Valve's session: 90.03 commits/s, 0.0 % late, 0 stalls, 8.2 ms GPU a frame, hottest zone 70.2 °C after 30 s; SteamVR saw the headset, not the controllers, which were not connected |
+| `dev check` on the installed system | the userspace check passes (USB link up, storage, systemd, no unexpected listener). Head IMU passes. Valve's session: 90.03 commits/s, 0.0 % late, 0 stalls, hottest zone 67.1 °C after 30 s; SteamVR saw the headset, not the controllers, which were not connected |
 | Development loop | `dev recovery`, `dev reboot` (stays in maintenance), `dev normal` (installed system again); from fastboot without the recovery request, `dev reboot` connects to the installed system that `boot` starts |
 | Boot indication | Monado and SteamVR's compositor take the display from `pico4-splash.service` (it exits within 0.5 s) |
 | Power-off | stays off without the cable; with the cable attached the headset starts again with `androidboot.mode=charger` |

@@ -391,7 +391,7 @@ class DevTests(HeadsetFixture):
             {
                 "cat /etc/pico4/test-run": "dev-loop\n1234567",
                 "cat /proc/cmdline": "console=x pico4.part=recovery",
-                "sha256sum": "e" * 64 + "  -",
+                "pico4-install hash": "e" * 64,
             }
         )
         (self.root / "dev/dev-recovery.img").write_bytes(b"dev image")
@@ -399,8 +399,8 @@ class DevTests(HeadsetFixture):
             json.dumps({"boot_sha256": "f" * 64, "recovery_sha256": "e" * 64})
         )
         dev.connect()
-        self.assertTrue(any("/dev/block/by-name/recovery | sha256sum" in t for t in self.texts()))
-        self.assertFalse(any("/dev/block/by-name/boot | sha256sum" in t for t in self.texts()))
+        self.assertTrue(any("pico4-install hash recovery " in t for t in self.texts()))
+        self.assertFalse(any("pico4-install hash boot " in t for t in self.texts()))
 
     def install_setup(
         self,
@@ -408,6 +408,7 @@ class DevTests(HeadsetFixture):
         data: str = "none",
         held: Sequence[str] | None = None,
         confirmed_boot: bytes = b"install boot",
+        battery: str = "80\nDischarging\n",
     ) -> tuple[devloop.Dev, Path]:
         backup = Path(self.settings.backup)
         (backup / "lun0").mkdir(exist_ok=True)
@@ -428,13 +429,14 @@ class DevTests(HeadsetFixture):
         boot_sha = hashlib.sha256(confirmed_boot).hexdigest()
         system_sha = hashlib.sha256(b"system image").hexdigest()
         responses = {
-            f"by-name/{name} | sha256sum": f"{sha}  -"
+            f"pico4-install hash {name} ": sha
             for name, sha in (("boot", boot_sha), ("super", system_sha))
             if name in (held or ())
         }
         dev = self.make(
             {
                 **responses,
+                f"cat {devloop.BATTERY}/capacity": battery,
                 "cat /etc/pico4/test-run": "dev-loop\n1234567",
                 "cat /proc/cmdline": cmdline + " msm_drm.dsi_display0=qcom,mdss_dsi_sharp_ls026b3sa_90_video:",
                 "pico4-install write boot": f"written boot {boot_sha}",
@@ -451,7 +453,12 @@ class DevTests(HeadsetFixture):
     def test_install_writes_boot_and_super_formats_new_data_and_starts_it(self):
         dev, system = self.install_setup()
         dev.install(system)
-        steps = [t for t in self.texts() if "pico4-install" in t or t.endswith("pico4-reboot")]
+        # The writes and the reboot; pico4-install hash only reads.
+        steps = [
+            t
+            for t in self.texts()
+            if ("pico4-install" in t and "pico4-install hash" not in t) or t.endswith("pico4-reboot")
+        ]
         self.assertEqual(
             [s.split("; ")[-1].split(" --")[0] for s in steps],
             [
@@ -508,6 +515,8 @@ class DevTests(HeadsetFixture):
             "pico4-listeners": "sshd tcp/22",
             "pico4-still-gate 60": "3000 poses, 0 lost",
             "cat /usr/share/pico4/version": "version=1.0b1",
+            "systemd-analyze time": "Startup finished in 1.942s (kernel) + 9.027s (userspace) = 10.970s\n"
+            "graphical.target reached after 9.026s in userspace.\n",
         }
 
         def ssh(command: str, *_: object, **__: object) -> str:
@@ -522,9 +531,33 @@ class DevTests(HeadsetFixture):
         self.assertEqual(record["acceptance"], "passed")
         self.assertEqual(record["still gate"]["output"], "3000 poses, 0 lost")
         self.assertEqual(record["version"], "version=1.0b1")
+        self.assertEqual(record["boot time"]["status"], "passed")
+        self.assertIn("graphical target 11.0 s", record["boot time"]["output"])
         del answers["pico4-listeners"]
         with patch("time.sleep"):
             self.assertEqual(dev.release_check(), 1)
+
+    def test_release_check_fails_a_slow_boot(self):
+        dev, _ = self.install_setup()
+        dev.check = lambda: 0
+        slow = "Startup finished in 2.1s (kernel) + 1min 2.5s (userspace) = 1min 4.6s\n"
+        dev.ssh = lambda command, *_, **__: (
+            slow + "graphical.target reached after 1min 2.4s in userspace.\n"
+            if command == "systemd-analyze time"
+            else ""
+        )
+        with patch("time.sleep"):
+            self.assertEqual(dev.release_check(), 1)
+        record = json.loads(max((dev.work.parent / "release").glob("*/result.json")).read_text(encoding="utf-8"))
+        self.assertEqual(record["boot time"]["status"], "failed")
+        self.assertIn("64.5 s", record["boot time"]["output"])
+        self.assertAlmostEqual(
+            devloop.graphical_seconds("in 823ms (kernel) + x\ngraphical.target reached after 9.5s in userspace."),
+            10.323,
+        )
+        # Still starting: no graphical target yet.
+        with self.assertRaisesRegex(RuntimeError, "no graphical target"):
+            devloop.graphical_seconds("Startup finished in 1.9s (kernel) + 3s (userspace)")
 
     def test_install_takes_another_boot_image(self):
         # Such as a boot image of another kernel build (recovery_image.py --direct --boot).
@@ -541,6 +574,60 @@ class DevTests(HeadsetFixture):
         dev.install(system)
         self.assertTrue(any("pico4-install write boot" in t for t in self.texts()))
         self.assertFalse(any("pico4-install write super" in t for t in self.texts()))
+
+    def test_write_partition_hashes_the_partition_only_when_its_start_matches(self):
+        dev, _ = self.install_setup()
+        image = self.root / "big.img"
+        data = b"A" * (devloop.PREFIX_BYTES + 10)
+        image.write_bytes(data)
+        sha = hashlib.sha256(data).hexdigest()
+        answers = {
+            f"pico4-install hash super {devloop.PREFIX_BYTES}": "0" * 64,
+            "pico4-install write super": f"written super {sha}",
+        }
+        seen: list[str] = []
+
+        def ssh(command: str, *_: object, **__: object) -> str:
+            seen.append(command)
+            return next(reply for marker, reply in answers.items() if marker in command)
+
+        dev.ssh = ssh
+        dev.write_partition("super", image, 60)
+        # Another image's first MiB differs: the whole partition is never hashed for it.
+        self.assertFalse(any(f"pico4-install hash super {len(data)}" in c for c in seen))
+        self.assertFalse(seen[-1].endswith(" --zstd"))
+        # The compressed copy goes when its record names this very image, else the image itself.
+        (self.root / "big.img.zst").write_bytes(b"compressed")
+        (self.root / "big.img.zst.sha256").write_text(sha + "\n")
+        seen.clear()
+        dev.write_partition("super", image, 60)
+        self.assertTrue(seen[-1].endswith(f"--bytes {len(data)} --sha256 {sha} --zstd"))
+        (self.root / "big.img.zst.sha256").write_text("f" * 64 + "\n")
+        seen.clear()
+        dev.write_partition("super", image, 60)
+        self.assertFalse(seen[-1].endswith(" --zstd"))
+
+    def test_writes_wait_for_a_battery_that_lasts(self):
+        for reading, refused in (
+            ("80\nDischarging\n", False),
+            ("20\nDischarging\n", False),
+            ("19\nDischarging\n", True),
+            ("5\nNot charging\n", True),
+            ("5\nCharging\n", False),
+            ("5\n", True),
+            ("", False),  # not readable: a warning, not a refusal
+            ("cat: no such file\n", False),
+        ):
+            with self.subTest(reading=reading):
+                self.assertEqual(bool(devloop.battery_refusal(reading)), refused)
+        self.assertIn("at 19 % (Discharging)", devloop.battery_refusal("19\nDischarging"))
+
+    def test_install_refuses_an_empty_battery_before_any_write(self):
+        dev, system = self.install_setup(battery="7\nDischarging\n")
+        with self.assertRaisesRegex(RuntimeError, "battery is at 7 %"):
+            dev.install(system)
+        self.assertFalse(any("pico4-install write" in t for t in self.texts()))
+        self.assertFalse((dev.work / devloop.INSTALLED).exists())
 
     def test_install_keeps_existing_data(self):
         dev, system = self.install_setup(data="pico4-data")
@@ -592,7 +679,11 @@ class DevTests(HeadsetFixture):
         )
         (self.root / "dev/installed.json").write_text("{}")
         dev.restore()
-        steps = [t.split("; ")[-1].split(" --")[0] for t in self.texts() if "pico4-install" in t or " flash " in t]
+        steps = [
+            t.split("; ")[-1].split(" --")[0]
+            for t in self.texts()
+            if ("pico4-install" in t and "pico4-install hash" not in t) or " flash " in t
+        ]
         self.assertEqual(
             steps[:5],
             [
@@ -608,7 +699,7 @@ class DevTests(HeadsetFixture):
         self.assertFalse((self.root / "dev/installed.json").exists())
 
     def test_connect_verifies_the_flashed_dev_image(self):
-        dev = self.make({"cat /etc/pico4/test-run": "dev-loop\n1234567", "sha256sum": "f" * 64 + "  -"})
+        dev = self.make({"cat /etc/pico4/test-run": "dev-loop\n1234567", "pico4-install hash": "f" * 64})
         (self.root / "dev/dev-boot.img").write_bytes(b"dev image")
         (self.root / "dev/dev-image.json").write_text(json.dumps({"boot_sha256": "f" * 64}))
         dev.connect()
@@ -654,6 +745,25 @@ class DevTests(HeadsetFixture):
         dev.reboot()
         self.assertTrue(any("cat /etc/pico4/test-run" in t for t in self.texts()))
         self.assertFalse(any(devloop.INSTALL_ID in t for t in self.texts()))
+
+    def test_reboot_waits_for_another_boot_not_a_fixed_time(self):
+        (self.root / "dev").mkdir(exist_ok=True)
+        (self.root / "dev/installed.json").write_text("{}")
+        self.fastboot_listed = False
+        # Before the reboot, then twice the old boot still answering, then the new one.
+        boots = iter(["old", "old", "old"])
+        dev = self.make(
+            {
+                devloop.BOOT_ID: lambda: next(boots, "new") + "\n",
+                "cat /proc/1/comm /proc/cmdline": "systemd\nconsole=x",
+                "cat /proc/1/comm /etc/pico4/install-id": "systemd\ndev-loop\n1234567",
+                "userspace-archive.sha256": "abc",
+            }
+        )
+        dev.reboot()
+        self.assertEqual(sum(devloop.BOOT_ID in t for t in self.texts()), 5)
+        # 3 s, then a retry for each of the two answers of the old boot (every 3 s).
+        self.assertEqual(self.clock.now, 9)
 
     def test_restore_flashes_the_verified_backup_boot_image(self):
         dev = self.make()

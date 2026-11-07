@@ -503,3 +503,23 @@ class CodecInterruptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WatchdogAndListenerConfigTests(unittest.TestCase):
+    def test_the_watchdogs_bark_panics(self):
+        # The bite alone locks a CPU up on this firmware; the bark's panic and panic=5 reset it.
+        for line in (
+            "CONFIG_WATCHDOG_PRETIMEOUT_GOV=y",
+            "CONFIG_WATCHDOG_PRETIMEOUT_GOV_PANIC=y",
+            "CONFIG_WATCHDOG_PRETIMEOUT_DEFAULT_GOV_PANIC=y",
+        ):
+            self.assertIn(line, config().splitlines())
+
+    def test_rds_is_off(self):
+        # Valve's configuration builds RDS in; its TCP transport listened on tcp/16385.
+        self.assertIn("# CONFIG_RDS is not set", config().splitlines())
+
+    def test_the_build_checks_what_the_fragment_turns_off(self):
+        build = text(KERNEL / "build-kernel.sh")
+        self.assertIn('"# CONFIG_"*" is not set")', build)
+        self.assertIn("not turned off: $name", build)

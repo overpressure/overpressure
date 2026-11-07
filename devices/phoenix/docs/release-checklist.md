@@ -12,6 +12,7 @@ person's. Attach the results to the release.
 | `python -m unittest`, `make test`, CI | all pass | minutes |
 | Acceptance (`dev check`) | userspace, IMU and Valve session checks pass, with no failed unit | 2 min |
 | Access | sshd keys only, no account has a password, no unexpected listener (part of acceptance) | seconds |
+| Boot time | `systemd-analyze time`: the graphical target at most 13 s after the kernel's start | seconds |
 | Still headset | `pico4-still-gate 60` on the table: no worse than the previous release, tracked throughout | 1 min, after a session has been up for 2 |
 | Suspend and sound (`--attended`, plays tones) | `pico4-suspend-check`: PipeWire lives through the suspend, sound comes back | 2 min |
 
@@ -22,6 +23,9 @@ person's. Attach the results to the release.
 | A login without a key | refused from another machine, on USB and on Wi-Fi, for root and `steamos` | 2 min |
 | Boot without the PC | power button, no cable: session starts, tracked | 1 min |
 | Charger mode | power off with the cable in: lenses dark; held 2 s, it starts the system | 1 min |
+| Unfinished boots | `systemctl set-default multi-user.target`, two reboots: the third boot starts the maintenance stage 1; `dev normal`, `systemctl set-default graphical.target`, a reboot: the system starts | 3 min |
+| A hang | PID 1 stopped with ptrace (no watchdog pings): the headset restarts within 40 s, and the system starts again | 2 min |
+| The buttons' way out | from the powered-off headset, both volume buttons while connecting USB: EDL answers | 1 min |
 | Replug during a suspend | from a fresh boot, status `Attached`, 4 minutes asleep: replug, it wakes with USB and sound | 6 min |
 | Suspend with the microphone capturing | PipeWire survives, Steam's interface still sounds | 1 min |
 | Wake loop | 40 screen-off and screen-on cycles: no lens fault, none in the kernel log | 10 min |
@@ -49,6 +53,7 @@ person's. Attach the results to the release.
 | Check | Passes when |
 | --- | --- |
 | Clean install | from PICO OS on a wiped data partition, following only the README |
+| Update | the release's image over the previous release's installed system: its data, Wi-Fi, room and Steam sign-in kept, the package database the new image's |
 | The way back | `dev restore`, `cycle --restore-only`: PICO OS boots, tracks and plays |
 | `scripts/check-private.py --history` | no finding |
 | Package lock | a clean build passes the lock; the image reports the release's version and a commit without `-dirty` |

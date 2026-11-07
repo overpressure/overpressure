@@ -7,8 +7,7 @@ kernel is no longer a target for the system; the way back to PICO OS stays. The 
 from a recoverable development device to Valve's VR session; [research.md](research.md) holds the
 background. All six steps work on the tested headset,
 an original PICO 4. Open work: the rest of the direct boot's checks on the headset (the power key in charger
-mode, a boot without the PC, `dev check` with the controllers), the kernel's RDS listener, and a
-power press after a long sleep.
+mode, a boot without the PC, `dev check` with the controllers), and a power press after a long sleep.
 
 ## Status
 
@@ -224,9 +223,10 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
 
 **Open.** The direct boot's remaining checks on the headset: the power key held 2 s in charger
 mode, a boot without the PC, `dev check` with both controllers connected
-([install.md](install.md#open-work)). Verified: preinit to the graphical target (16.9 to 18.1 s,
+([install.md](install.md#open-work)). Verified: preinit to the graphical target (9.7 to 11.0 s,
 stage 1 in `boot` 23.3 s), charger mode up to the key, the Wi-Fi re-probe, the keys on the data
-partition. Valve's kernel listens on tcp/16385 (RDS over TCP); its option goes off in `pico4.config`.
+partition. A stopped PID 1 restarts the headset after 33 s (the watchdog's bark panics), and the
+third boot in a row that never reached the graphical target starts the maintenance stage 1.
 
 A short power press after more than an hour asleep. After an RTC wake from 3 h
 asleep, with the cable in, Steam suspended again within about 4 s, while 80 idle minutes in SteamVR's standby

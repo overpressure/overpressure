@@ -51,6 +51,11 @@ Read from the configuration; `pico4-listeners` reports what really listens beyon
 | Installed system | tcp and udp 5355, udp 5353 | systemd-resolved | the link's network | name resolution |
 | Installed system | Steam's ports | steam, steamwebhelper, vrlink, vrserver | Wi-Fi | Steam's local discovery, Remote Play and Steam Link, as on any Steam machine |
 
+On the installed system `pico4-listeners` shows these and nothing else: sshd on tcp 22, systemd-resolved,
+systemd-networkd's DHCP server on `usb0`, and Steam's discovery on 27036 and its mDNS. Valve's kernel
+configuration builds RDS in, whose TCP transport listened on tcp 16385 in the kernel itself; `pico4.config`
+turns RDS off.
+
 There are no firewall rules: nothing listens that one would have to hide. The headset forwards nothing.
 The USB link serves one PC and gives it no route.
 
@@ -70,6 +75,4 @@ kernel source by hash and commit.
 
 ## Not verified
 
-- The list above against a running system: `pico4-listeners` has not run on the headset yet.
 - That a login without a key is refused, tested from another machine on USB and Wi-Fi.
-- The keys `pico4-install keys` writes to the data partition, read by the installed system on the headset.

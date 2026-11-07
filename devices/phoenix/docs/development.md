@@ -37,7 +37,7 @@ src/              C sources: graphics/ (the Vulkan test), monado/ (Monado's PICO
                   reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         the static aarch64 pico4-reboot (stage 1 and the system) and pico4-splash (the system), so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-system-image.sh, build-kernel-step.sh and the on-headset preflight
-tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, qemu/ (test kernels and boot tests)
+tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, test_boot_attempts.sh, qemu/ (test kernels and boot tests)
 docs/             documentation
 ```
 
@@ -235,6 +235,7 @@ debug packages and compression take about a minute for Monado.
 | Host tests: protocols, validators, the runner, cycle and dev loop against fakes | `python -m unittest` (from the repository root: these and the generic tests) | about 8 s |
 | Stage-1 recovery policy | `bash devices/phoenix/tests/test_recovery_policy.sh` | seconds |
 | Stage-1 charger mode | `sh devices/phoenix/tests/test_charger.sh` | seconds |
+| Count of unfinished boots | `bash devices/phoenix/tests/test_boot_attempts.sh` | seconds |
 | Both of the above | `make test` (on Linux) | seconds |
 | All of these on any host, in the build container (as root, with the container's own script tests) | `python -m overpressure container run -- make test` (`make container-test`) | as `make test`, once the image is built |
 | On the headset: the integration test | `python -m overpressure dev install` and `dev check`, on the installed system | minutes; [hardware-testing.md](hardware-testing.md) |

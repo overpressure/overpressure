@@ -123,7 +123,9 @@ What the system keeps:
   (`recovery-watch`, `recovery-policy.sh`) and survives isolation; with `pico4.autoreboot=0` and
   no test run it sets no deadline on the installed system. Emergency and rescue mode log the failed
   units and reboot to fastboot after 30 s (`pico4.emergency_delay`) instead of waiting for a
-  console. A crashed PID 1 reboots (`CrashAction=reboot`); stop timeouts are 15 s.
+  console. A crashed PID 1 reboots (`CrashAction=reboot`); stop timeouts are 15 s. systemd arms
+  the SoC's watchdog (30 s; its bark panics, so a stopped PID 1 restarts the headset after 33 s), and preinit sends the third boot in a row that never reached the
+  graphical target to the maintenance stage 1 ([boot attempts](install.md#boot-attempts)).
 - **Kernel panics**: the kernel reboots 5 s after a panic (`panic=5`). The firmware refuses the
   warm reset the command line asks for, and the tree's PS_HOLD reset restarts the headset, about
   40 s from a forced panic to SSH.
@@ -132,7 +134,8 @@ What the system keeps:
   the journal in `/run` (at most 64 MiB) and forwards warnings to the kernel log.
   `pico4-userspace-netdiag` writes USB link samples 20, 60 and 150 s after it starts to pstore
   (pmsg), which the maintenance stage 1 exports. A timer rewrites the USB log drive with the
-  journal, kernel log, unit and network state 45 s after boot and every 2 minutes after that.
+  journal, kernel log, unit and network state 45 s after boot and every 2 minutes after that, at
+  idle CPU and I/O priority, so that it takes no time from a session.
 - **Access**: sshd takes the keys `dev install` wrote to the data partition, on the USB link and on
   Wi-Fi; its host keys come from the first boot and stay in the `/etc` overlay
   ([security.md](security.md)).
