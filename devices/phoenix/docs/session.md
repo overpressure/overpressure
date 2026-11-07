@@ -246,7 +246,9 @@ session:
   updates, and both call `atomupd-manager`: the image's
   [`atomupd-manager`](../userspace/rootfs/usr/bin/atomupd-manager) answers as an up-to-date
   system on the stable branch (`rel` to the client, "No update available") and refuses to switch
-  branches or update. The client's request to set the updater's proxy over D-Bus still fails
+  branches or update. The client reaches `steamos-update` through
+  `/usr/bin/steamos-polkit-helpers/steamos-update`, a wrapper the updater client would bring; the
+  image has its own, which calls it directly (it needs no root here). The client's request to set the updater's proxy over D-Bus still fails
   once per start. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
   packaged for arm64; the client disables it.
 

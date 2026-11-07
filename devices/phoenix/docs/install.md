@@ -103,7 +103,9 @@ up), so the bark, 1 s before it, panics (the pretimeout governor `panic` in `pic
 | `panic=5`'s reset | 33 s |
 | the installed system answers SSH again; the graphical target reached, the count cleared | 55 s |
 
-A system that only crawls (every CPU busy at real-time priority) does not stop the pings: the
+A suspend does not count against the watchdog: 90 s asleep with it armed (`pico4-suspend-check
+--seconds 90`) woke into the same boot. A system that only crawls (every CPU busy at real-time
+priority) does not stop the pings: the
 kernel's fair server leaves normal tasks 5 % of each CPU, and the hung-task panic restarted it
 after about 7 minutes.
 

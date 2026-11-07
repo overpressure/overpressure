@@ -44,6 +44,13 @@ class AtomupdManagerTests(unittest.TestCase):
         self.assertNotIn("atomupd-daemon", packages)
         self.assertNotIn("steamos-atomupd-client", packages)
 
+    def test_the_clients_update_check_finds_steamos_update(self):
+        # The client runs /usr/bin/steamos-polkit-helpers/steamos-update check; SteamOS's updater
+        # client brings that wrapper, so without this one the check ends in 127.
+        wrapper = ROOT / "userspace/rootfs/usr/bin/steamos-polkit-helpers/steamos-update"
+        lines = [line for line in wrapper.read_text(encoding="utf-8").splitlines() if not line.startswith("#")]
+        self.assertEqual(lines, ['exec /usr/bin/steamos-update "$@"'])
+
 
 if __name__ == "__main__":
     unittest.main()
