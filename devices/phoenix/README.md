@@ -39,7 +39,8 @@ It voids what warranty is left, and a failed step can leave the headset needing 
 to PICO OS from an installed system has not been run on it yet ([docs/roadmap.md](docs/roadmap.md)). The installer
 chains steps that have each run on it; as one path it has not run yet ([what is open](docs/install.md#the-installer)). The tools
 refuse a headset, firmware or panel that hasn't been verified
-([list](docs/device-preparation.md#verified-hardware)): today only PICO OS 5.13.7 of the `global-seko` build. You
+([list](docs/device-preparation.md#verified-hardware)): today only PICO OS 5.13.7 of the `global-seko` build. A headset that has updated past it can't go back
+through PICO's own updater ([other builds](docs/device-preparation.md#other-pico-os-builds)). You
 build your own image; the project publishes no image and no vendor file ([docs/distribution.md](docs/distribution.md)).
 
 **You need.** Your original PICO 4, a USB-C data cable, a computer with Windows, Linux or macOS, about 40 GB free and

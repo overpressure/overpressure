@@ -75,6 +75,33 @@ writing; `dev stage-abl` and the cycle do switch modes. The command log on stder
 identifiers. Identity files, logs and backups stay private; `backup/` and `assets/` are ignored
 by Git.
 
+## Other PICO OS builds
+
+`tooling/firmware.json` lists PICO's public full packages for the PICO 4. Only the first row has run:
+
+| Build | `ro.oem.state` | Date | Here |
+| --- | --- | --- | --- |
+| 5.13.7 `global-seko` (b9665) | true | 2025-10-30 | verified |
+| 5.13.7 `global-sek`, `cn-seko`, `cn-sek` (b9666, b9650, b9651) | empty, true, empty | 2025-10-30 | refused: not run |
+| 5.13.8 `global-seko`, `global-sek` (b10102, b10113) | true, empty | 2026-09-02 and 03 | refused: not run |
+| 5.13.3 `global-seko`, `global-sek` (b9480, b9479) | true, empty | 2025-07-03 | refused: not run |
+
+What the packages themselves say (read from PICO's servers, their `updater-script` and firmware):
+
+- **No way back through PICO's updater.** Every package refuses a headset whose build is newer
+  (`E3003: Can't install this package ... over newer build`) and one of the other `ro.oem.state`
+  (`E3009`). A headset already on 5.13.8 cannot get 5.13.7 from PICO, nor move between `seko` and
+  `sek`.
+- **5.13.8's boot chain is a rebuild.** Every firmware image changes at the same size. XBL, TZ,
+  the hypervisor and devcfg keep their versions (`BOOT.XF.3.2-00354-SM8250-1`, `TZ.XF.5.8-00274`)
+  and certificate chains and differ only in their segment hashes and signatures; the ABL is rebuilt
+  and signed by a new attestation certificate (Pico's root and attestation CA are the same). None
+  carries an anti-rollback version in its signing header or certificates. Whether the engineering
+  ABL and the unlock run on 5.13.8 has not been tried.
+- **What else differs per build.** The RGB camera's register table is generated from the build's
+  camera module, which `kernel/imx471_mode.py` checks by hash; the overlay labels and panel sequences
+  come from the build's stock recovery.
+
 ## Entering and leaving EDL
 
 * From PICO OS with USB debugging authorized: `adb reboot edl`. No buttons are needed.
