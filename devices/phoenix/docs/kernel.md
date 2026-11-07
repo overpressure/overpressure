@@ -345,6 +345,15 @@ python devices/phoenix/kernel/recovery_image.py out/kernel \
     cache/stock/<firmware>.recovery.img out/dev/dev-recovery.img out/kernel/test-recovery.img
 ```
 
+The same inputs give the same kernel: an incremental build and a clean one in another work folder
+write the same `Image.gz`. The version string names the inputs, not the build: `#` and the first 12
+hex digits of a SHA-256 over the patches, the own sources, the tree with its generated parts and the
+configuration fragment, and the pinned commit's date (`#96c54d774412 SMP PREEMPT Fri Oct 23 16:59:23
+UTC 2026` for one set), instead of a local build counter and the build's time. `pahole` encodes the
+BTF type information in one thread (its threads order the type names differently every time), and
+the work folder is mapped away in the debug information (`-ffile-prefix-map`), which the build ID
+hashes.
+
 ## The ABL's board overlay
 
 Booting, the ABL lays a board overlay over the kernel's tree: from the `dtbo` partition, or for

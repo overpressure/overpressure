@@ -523,3 +523,27 @@ class WatchdogAndListenerConfigTests(unittest.TestCase):
         build = text(KERNEL / "build-kernel.sh")
         self.assertIn('"# CONFIG_"*" is not set")', build)
         self.assertIn("not turned off: $name", build)
+
+
+class ReproducibleKernelTests(unittest.TestCase):
+    def test_the_version_string_names_the_inputs_not_the_build(self):
+        build = text(KERNEL / "build-kernel.sh")
+        # Not a local build counter and the build's time: a hash of the inputs and the commit's date.
+        self.assertIn('KBUILD_BUILD_VERSION="$build_id"', build)
+        self.assertIn('KBUILD_BUILD_TIMESTAMP="$stamp"', build)
+        self.assertIn("show -s --date='format-local:%a %b %e %H:%M:%S UTC %Y' --format=%cd \"$COMMIT\"", build)
+        for part in (
+            "patches.wanted",
+            "pico4.config",
+            "$DTB.dts",
+            "pico4-imx471-mode.h",
+            "dtbo-sink.dtsi",
+            "panel.dtsi",
+        ):
+            self.assertIn(part, build[build.index("build_id=$(") : build.index("stamp=$(")])
+
+    def test_btf_and_debug_information_do_not_depend_on_the_build(self):
+        build = text(KERNEL / "build-kernel.sh")
+        # pahole's threads order the BTF differently each time; the work folder is in the debug data.
+        self.assertIn("\tJOBS=1\n", build)
+        self.assertIn('KCFLAGS="-ffile-prefix-map=$work/=" KAFLAGS="-ffile-prefix-map=$work/="', build)

@@ -97,7 +97,13 @@ build_id=$({
 stamp=$(TZ=UTC git -C "$src" show -s --date='format-local:%a %b %e %H:%M:%S UTC %Y' --format=%cd "$COMMIT")
 make=(make -C "$src" O="$work/build" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)"
 	KBUILD_BUILD_USER=overpressure KBUILD_BUILD_HOST=pico4 LOCALVERSION=
-	KBUILD_BUILD_VERSION="$build_id" KBUILD_BUILD_TIMESTAMP="$stamp")
+	KBUILD_BUILD_VERSION="$build_id" KBUILD_BUILD_TIMESTAMP="$stamp"
+	# pahole 1.25 encodes BTF in parallel with make's -j (scripts/Makefile.btf's JOBS), and the
+	# threads order the type names differently every time; one thread gives the same BTF.
+	JOBS=1
+	# The debug information names the work folder, and the build ID hashes it: without the prefix
+	# the same inputs in another folder give another kernel.
+	KCFLAGS="-ffile-prefix-map=$work/=" KAFLAGS="-ffile-prefix-map=$work/=")
 config=$work/build/.config
 mkdir -p "$work/build"
 # The configuration starts from Valve's each time, so a changed fragment never stacks.
