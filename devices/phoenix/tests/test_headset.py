@@ -537,6 +537,24 @@ class DevTests(HeadsetFixture):
         with patch("time.sleep"):
             self.assertEqual(dev.release_check(), 1)
 
+    def test_release_check_fails_a_still_gate_that_lost_the_headset(self):
+        dev, _ = self.install_setup()
+        dev.check = lambda: 0
+        answers = {
+            "pico4-listeners": "sshd tcp/22",
+            "pico4-still-gate 60": "54577 poses, 54577 lost, furthest 0.00 mm, 1.149 deg, longest gap 1.0 ms",
+            "cat /usr/share/pico4/version": "version=1.0b1",
+            "systemd-analyze time": "Startup finished in 1.9s (kernel) + 9s (userspace) = 10.9s\n"
+            "graphical.target reached after 9s in userspace.\n",
+        }
+        dev.ssh = lambda command, *_, **__: answers[command]
+        self.assertEqual(dev.release_check(), 1)
+        record = json.loads(max((dev.work.parent / "release").glob("*/result.json")).read_text(encoding="utf-8"))
+        self.assertEqual(record["still gate"]["status"], "failed")
+        self.assertIn("lost the headset", record["still gate"]["output"])
+        self.assertFalse(devloop.still_gate_lost("3000 poses, 0 lost, furthest 0.40 mm"))
+        self.assertTrue(devloop.still_gate_lost("no pose"))
+
     def test_release_check_fails_a_slow_boot(self):
         dev, _ = self.install_setup()
         dev.check = lambda: 0

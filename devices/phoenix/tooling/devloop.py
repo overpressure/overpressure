@@ -121,6 +121,12 @@ def graphical_seconds(analyze: str) -> float:
     return _span_seconds(kernel.group(1)) + _span_seconds(graphical.group(1))
 
 
+def still_gate_lost(output: str) -> bool:
+    """Tell whether pico4-still-gate's line shows a lost pose (or names no poses at all)."""
+    found = re.search(r"(\d+) poses, (\d+) lost", output)
+    return found is None or int(found.group(2)) > 0
+
+
 def battery_refusal(reading: str) -> str:
     """Return why partition writes may not start on @p reading (capacity, status), or "" if they may.
 
@@ -597,6 +603,11 @@ class Dev(Headset):
                 results[name] = {"status": "passed", "output": self.ssh(command, 600)}
             except (RuntimeError, subprocess.TimeoutExpired) as exc:  # noqa: PERF203  # each check fails on its own
                 results[name] = {"status": "failed", "output": str(exc)[-2000:]}
+        # pico4-still-gate only measures; the checklist wants the headset tracked throughout.
+        gate = results["still gate"]
+        if gate["status"] == "passed" and still_gate_lost(gate["output"]):
+            gate["status"] = "failed"
+            gate["output"] += "\nthe tracker lost the headset (the checklist wants it tracked throughout)"
         results["version"] = self.ssh("cat /usr/share/pico4/version", 10, check=False)
         (folder / "result.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
         failed = [k for k, v in results.items() if v == "failed" or (isinstance(v, dict) and v["status"] == "failed")]
