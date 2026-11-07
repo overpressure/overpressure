@@ -238,6 +238,7 @@ debug packages and compression take about a minute for Monado.
 | Count of unfinished boots | `bash devices/phoenix/tests/test_boot_attempts.sh` | seconds |
 | Both of the above | `make test` (on Linux) | seconds |
 | All of these on any host, in the build container (as root, with the container's own script tests) | `python -m overpressure container run -- make test` (`make container-test`) | as `make test`, once the image is built |
+| Shellcheck over every tracked shell script, down to its warnings (the build container has it; CI runs it too) | `python -m overpressure container run -- python3 scripts/run-shellcheck.py` | seconds |
 | On the headset: the integration test | `python -m overpressure dev install` and `dev check`, on the installed system | minutes; [hardware-testing.md](hardware-testing.md) |
 | Optional: stage 1 on a QEMU test kernel | `devices/phoenix/tests/qemu/run-selftest.sh` (`make qemu-stage1`) | about 3 min |
 

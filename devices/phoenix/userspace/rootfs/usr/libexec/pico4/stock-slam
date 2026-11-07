@@ -20,6 +20,7 @@ set -euo pipefail
 root=/usr/lib/pico4-stock-slam
 calibration=/usr/share/qcom/pico4/calibration/pvr
 state=/var/lib/pico4-stock-slam
+# shellcheck disable=SC2174 # only the leaf folders are private; $state itself stays as it is
 mkdir -p -m 0700 "$state/maps" "$state/boundary" "$state/stationservice"
 # A leftover localmode would switch relocalisation off; stsdata (see-through type) is not ours.
 rm -f "$state/boundary/localmode" "$state/boundary/stsdata.txt"

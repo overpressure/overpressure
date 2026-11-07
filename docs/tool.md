@@ -100,6 +100,11 @@ python -m overpressure container binfmt          # the aarch64 handler: register
   `cache/`, `out/`) to another checkout's, as a symlink or a Windows junction. The bind mount of
   the repository cannot follow such a link, so `container run` binds each linked folder at its
   place under `/work`.
+- **A worktree's git.** A worktree's `.git` is a file naming its folder in the main checkout's
+  `.git` by a host path, which leads nowhere in the container. `container run` binds the common
+  `.git` at `/git` and names the worktree's folder in `OVERPRESSURE_GIT_DIR`; the scripts that ask
+  git (the image's commit in `build-userspace.sh`, `run-shellcheck.py`) pass it as `--git-dir`.
+  `GIT_DIR` itself would also reach the git of the builds' package recipes.
 - **Parallel jobs.** The userspace build compiles one job per CPU, but at most one per 1.5 GiB of
   the container's memory (`MAKEFLAGS`, `CMAKE_BUILD_PARALLEL_LEVEL`, `PICO4_BUILD_JOBS` for meson):
   more jobs than memory swap it to a crawl.

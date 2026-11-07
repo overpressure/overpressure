@@ -34,9 +34,10 @@ RUN set -eu; \
     $apt install -y --no-install-recommends \
       bash ca-certificates coreutils curl diffutils findutils tar zstd xz-utils python3 e2fsprogs util-linux \
       clang-20 lld-20 qemu-user-static \
-      make gcc libc6-dev $cross flex bison bc git perl cpio libssl-dev libelf-dev dwarves device-tree-compiler; \
+      make gcc libc6-dev $cross flex bison bc git perl cpio libssl-dev libelf-dev dwarves device-tree-compiler \
+      shellcheck; \
     rm -rf /var/lib/apt/lists/*; \
-    git config --system --add safe.directory /work  # the checkout is the host user's, git here runs as root
+    git config --system --add safe.directory '*'  # the checkout (/work, a worktree's /git) is the host user's, git here runs as root
 COPY entrypoint.sh /usr/local/bin/overpressure-entrypoint
 COPY binfmt.sh /usr/local/bin/overpressure-binfmt
 COPY hand-back.sh /usr/local/bin/overpressure-hand-back

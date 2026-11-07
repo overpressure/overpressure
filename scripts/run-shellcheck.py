@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Unlicense
-"""Shellcheck over every tracked shell script, at its errors' level: warnings are not a verdict here.
+"""Shellcheck over every tracked shell script, down to its warnings (its style notes are not a verdict).
 
 Stage 1 runs on BusyBox ash, so its scripts are checked as such (shellcheck's dash is the closest).
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,8 +27,11 @@ def shell(data: bytes) -> str | None:
 
 
 def main() -> int:
-    """Check every tracked shell script; fail when any has an error."""
-    ls_files = ["git", "-C", str(REPO), "ls-files", "-z"]
+    """Check every tracked shell script; fail when any has a warning or an error."""
+    # In the build container a worktree's repository is at OVERPRESSURE_GIT_DIR (overpressure/linux.py).
+    git_dir = os.environ.get("OVERPRESSURE_GIT_DIR")
+    where = ["--git-dir", git_dir, "--work-tree", str(REPO)] if git_dir else ["-C", str(REPO)]
+    ls_files = ["git", *where, "ls-files", "-z"]
     names = subprocess.run(ls_files, check=True, stdout=subprocess.PIPE).stdout  # noqa: S603  # git from PATH, no shell
     code = 0
     count = 0
@@ -40,7 +44,7 @@ def main() -> int:
         if not kind:
             continue
         count += 1
-        check = ["shellcheck", "--severity=error", "--shell", kind, str(path)]
+        check = ["shellcheck", "--severity=warning", "--shell", kind, str(path)]
         code |= subprocess.call(check)  # noqa: S603  # shellcheck from PATH on a tracked file, no shell
     print(f"{count} scripts checked")
     return 1 if code else 0

@@ -159,3 +159,33 @@ class LinkedFolderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorktreeGitTests(unittest.TestCase):
+    def test_a_worktrees_repository_is_bound_for_the_scripts_that_ask_git(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            main, root = Path(tmp, "checkout"), Path(tmp, "worktree")
+            folder = main / ".git" / "worktrees" / "feature"
+            folder.mkdir(parents=True)
+            (folder / "commondir").write_text("../..\n", encoding="utf-8")
+            root.mkdir()
+            (root / ".git").write_text(f"gitdir: {folder.as_posix()}\n", encoding="utf-8")
+            mounts, env = linux.worktree_git(root)
+            common = os.path.realpath(main / ".git")
+        self.assertEqual(mounts, ["-v", f"{common}:/git"])
+        # GIT_DIR itself would reach the git of the builds' package recipes too.
+        self.assertEqual(env, {"OVERPRESSURE_GIT_DIR": "/git/worktrees/feature"})
+
+    def test_a_plain_checkout_needs_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / ".git").mkdir()
+            self.assertEqual(linux.worktree_git(Path(tmp)), ([], {}))
+            self.assertEqual(linux.worktree_git(Path(tmp, "nothing")), ([], {}))
+
+    def test_the_container_run_carries_them(self):
+        with mock.patch.object(
+            linux, "worktree_git", return_value=(["-v", "C:/r/.git:/git"], {"OVERPRESSURE_GIT_DIR": "/git/worktrees/w"})
+        ):
+            argv = linux.run_argv(["true"], tool="docker")
+        self.assertIn("OVERPRESSURE_GIT_DIR=/git/worktrees/w", argv)
+        self.assertEqual(argv[argv.index("C:/r/.git:/git") - 1], "-v")

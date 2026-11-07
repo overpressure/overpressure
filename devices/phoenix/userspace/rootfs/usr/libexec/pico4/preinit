@@ -107,5 +107,6 @@ device_serial | md5sum | cut -c1-32 > /etc/machine-id
 
 log "preinit: data $(df -k /data | awk 'NR==2 {print int($3/1048576)}') of" \
 	"$(df -k /data | awk 'NR==2 {print int($2/1048576)}') GiB used; executing systemd${unit:+ into $unit}"
+# shellcheck disable=SC2093 # execfail: a failed exec returns, and fail reboots
 exec /usr/lib/systemd/systemd ${unit:+--unit=$unit}
 fail "systemd did not start"

@@ -23,6 +23,7 @@ mkdir "$work/bin"
 printf '#!/bin/sh\necho "$*" > %s/reboot\nexit 0\n' "$work" > "$work/bin/pico4-reboot"
 chmod +x "$work/bin/pico4-reboot"
 PATH="$work/bin:$PATH"
+# shellcheck disable=SC2034 # the sourced charger's watch_power reads it
 UNPLUGGED_OFF=2
 echo 1 > "$work/online"
 watch_power "$work/online" &

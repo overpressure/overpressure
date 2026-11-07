@@ -100,6 +100,7 @@ python -m overpressure [--device CODENAME] steps  # a headset's steps and their 
 python -m overpressure [--device CODENAME] COMMAND ...   # a command of the headset
 make test                                         # Linux: also each headset's shell tests
 python -m overpressure container run -- make test  # the same on any host, in the build container
+python -m overpressure container run -- python3 scripts/run-shellcheck.py  # shellcheck, warnings included
 ```
 
 With one headset the `--device` choice is implicit; `OVERPRESSURE_DEVICE` in `.env` picks one

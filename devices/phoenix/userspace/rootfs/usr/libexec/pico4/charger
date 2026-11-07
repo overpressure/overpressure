@@ -68,6 +68,7 @@ watch_key() {
 }
 
 # USB power: off after UNPLUGGED_OFF seconds without it.
+# shellcheck disable=SC2120 # the host test passes another file
 watch_power() {
 	local online="${1:-/sys/class/power_supply/usb/online}" without=0
 	while :; do

@@ -493,8 +493,9 @@ if [[ -n "$sensor_data" ]]; then
         chown -R 0:0 "$models"
         assets_modes "$models"
     fi
-    sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/share/qcom/pico4 \
-        $( [[ -d usr/share/steamvr-monado/resources/rendermodels ]] && echo usr/share/steamvr-monado/resources/rendermodels ) \
+    rendermodels=()
+    [[ ! -d $models ]] || rendermodels=(usr/share/steamvr-monado/resources/rendermodels)
+    sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/share/qcom/pico4 "${rendermodels[@]}" \
         -type f -print0 | sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
@@ -656,7 +657,10 @@ python3 "$source_dir/scripts/check-package-lock.py" "$build_root/package-hashes.
     ${update_lock:+--write "$output/packages.lock"}
 # What the image says it is: the release's version and the Git commit it was built from.
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/pyproject.toml")
-commit=$(git -c safe.directory='*' -C "$repo" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)
+# A worktree's repository is at OVERPRESSURE_GIT_DIR in the build container (overpressure/linux.py).
+git_where=(-C "$repo")
+[ -z "${OVERPRESSURE_GIT_DIR:-}" ] || git_where=(--git-dir="$OVERPRESSURE_GIT_DIR" --work-tree="$repo")
+commit=$(git -c safe.directory='*' "${git_where[@]}" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)
 install -d -m 0755 "$T/usr/share/pico4"
 printf 'version=%s\ncommit=%s\n' "$version" "$commit" > "$T/usr/share/pico4/version"
 unmount_below "$T" inner

@@ -32,8 +32,10 @@ stop_all() {
 	entries shutdown > /tmp/pico4-init.shutdown
 	while read -r cmd; do sh -c "$cmd" </dev/null; done < /tmp/pico4-init.shutdown
 	log "pico4-init: stopping user processes (kernel threads untouched)"
+	# shellcheck disable=SC2046 # one PID per word
 	kill -TERM $(user_pids) 2>/dev/null
 	sleep 1
+	# shellcheck disable=SC2046 # one PID per word
 	kill -KILL $(user_pids) 2>/dev/null
 	sync
 }

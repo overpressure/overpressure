@@ -145,6 +145,8 @@ def run_argv(  # noqa: PLR0913  # the command, and how its container runs keywor
         env["OVERPRESSURE_BINFMT"] = "1"
     if ids is not None:
         env["OVERPRESSURE_UID"], env["OVERPRESSURE_GID"] = map(str, ids)
+    git_mounts, git_env = worktree_git()
+    env.update(git_env)
     for key, value in env.items():
         options += ["-e", f"{key}={value}"]
     return [
@@ -157,6 +159,7 @@ def run_argv(  # noqa: PLR0913  # the command, and how its container runs keywor
         "-v",
         f"{REPO}:/work",
         *linked_mounts(),
+        *git_mounts,
         "-w",
         "/work",
         "-v",
@@ -183,6 +186,38 @@ def linked_mounts(root: Path = REPO) -> list[str]:
         if target != path.absolute() and target.is_dir():
             mounts += ["-v", f"{target}:/work/{name}"]
     return mounts
+
+
+#: Where a worktree's repository (its common git folder) is bound in the container.
+GIT_MOUNT = "/git"
+
+
+def worktree_git(root: Path = REPO) -> tuple[list[str], dict[str, str]]:
+    """Return the mount and the environment that let git in the container read a worktree.
+
+    A worktree's .git is a file naming its folder in the main checkout's .git by a host path,
+    which leads nowhere in the container. The common folder is bound at GIT_MOUNT, and
+    OVERPRESSURE_GIT_DIR names the worktree's folder in it for the scripts that ask git (the
+    image's commit, the shell scripts to check); GIT_DIR itself would also reach the git of the
+    builds' package recipes. A plain checkout needs neither.
+    """
+    dot = root / ".git"
+    if not dot.is_file():
+        return [], {}
+    text = dot.read_text(encoding="utf-8").strip()
+    if not text.startswith("gitdir:"):
+        return [], {}
+    gitdir = Path(text.split(":", 1)[1].strip())
+    gitdir = gitdir if gitdir.is_absolute() else root / gitdir
+    common_file = gitdir / "commondir"
+    common = gitdir / common_file.read_text(encoding="utf-8").strip() if common_file.is_file() else gitdir
+    common, gitdir = Path(os.path.realpath(common)), Path(os.path.realpath(gitdir))
+    try:
+        inside = gitdir.relative_to(common).as_posix()
+    except ValueError:
+        return [], {}
+    folder = GIT_MOUNT if inside == "." else f"{GIT_MOUNT}/{inside}"
+    return ["-v", f"{common}:{GIT_MOUNT}"], {"OVERPRESSURE_GIT_DIR": folder}
 
 
 def _query(argv: list[str], timeout: float = QUERY_SECONDS) -> tuple[int, str]:
