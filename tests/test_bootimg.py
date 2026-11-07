@@ -32,7 +32,10 @@ class RamdiskTests(unittest.TestCase):
         self.assertEqual((result.kernel, result.dtb), (source.kernel, source.dtb))
         self.assertEqual(result.id, result.compute_id())
         self.assertEqual(bootimg.ramdisk_tree(result).nodes["etc/run-id"].data, b"new\n")
-        self.assertEqual(result.ramdisk, gzip.compress(tree.to_cpio(), mtime=0))  # reproducible
+        self.assertEqual(gzip.decompress(result.ramdisk), tree.to_cpio())
+        # Reproducible on any host: mtime 0 and the OS byte pinned to Unix (gzip.compress writes the host's).
+        self.assertEqual(result.ramdisk[4:8], bytes(4))
+        self.assertEqual(result.ramdisk[9], 3)
         self.assertEqual(bootimg.with_ramdisk(source, tree, drop=("x.run=", "x.mode="), add=("x.run=new",)), data)
         unchanged = bootimg.parse(bootimg.with_ramdisk(source, bootimg.ramdisk_tree(source)))
         self.assertEqual(unchanged.full_cmdline, source.full_cmdline)

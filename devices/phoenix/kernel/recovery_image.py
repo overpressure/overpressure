@@ -40,7 +40,6 @@ call without a return is where a stalled function hangs.
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
 import json
 import re
@@ -253,7 +252,8 @@ def dev_recovery_image(dev_recovery: Path) -> bootimg.BootImage:
 
 def appended(ramdisk: bytes, *trees: cpio.Tree) -> bytes:
     """Append each archive to the ramdisk; the kernel unpacks them in order."""
-    return ramdisk + b"".join(gzip.compress(tree.to_cpio(), mtime=0) for tree in trees)
+    # compress.gzip_compress: the same bytes on every host and Python (a pinned OS byte).
+    return ramdisk + b"".join(compress.gzip_compress(tree.to_cpio()) for tree in trees)
 
 
 def trace_words(function: str) -> tuple[str, ...]:

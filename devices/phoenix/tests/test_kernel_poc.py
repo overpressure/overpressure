@@ -414,6 +414,16 @@ class RecoveryImageTests(unittest.TestCase):
         path.write_bytes(avb.with_stock_vbmeta(stock_partition(), boot.pack()))
         return path
 
+    def test_appended_archives_are_the_same_on_every_host(self):
+        # gzip.compress writes the host's OS byte (Windows 0x0a, or 0xff); the images pin Unix.
+        tree = cpio.Tree()
+        tree.add_file("etc/pico4/x", b"x\n")
+        data = recovery_image.appended(b"base", tree)
+        self.assertEqual(data[:4], b"base")
+        self.assertEqual(data[4 + 4 : 4 + 8], bytes(4))  # mtime 0
+        self.assertEqual(data[4 + 9], 3)
+        self.assertEqual(dict(cpio.read_cpio(gzip.decompress(data[4:])))["etc/pico4/x"].data, b"x\n")
+
     def test_kernel_and_tree_replaced_stage1_kept(self):
         dev = self.dev_recovery("androidboot.hardware=qcom panic=0 pico4.test_run=dev-loop pico4.part=recovery")
         data = recovery_image.build(self.tmp / "out", self.tmp / "stock.img", dev)

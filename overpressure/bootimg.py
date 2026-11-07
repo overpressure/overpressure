@@ -11,7 +11,6 @@ command line the same way, checked by parsing the result again.
 
 from __future__ import annotations
 
-import gzip
 import hashlib
 import struct
 from dataclasses import dataclass, replace
@@ -310,7 +309,8 @@ def with_ramdisk(
     """
     words = [w for w in image.full_cmdline.split() if not w.startswith(drop)]
     image = image.with_cmdline(" ".join([*words, *add]))
-    image.ramdisk = gzip.compress(tree.to_cpio(), mtime=0)
+    # compress.gzip_compress pins the gzip header's OS byte: gzip.compress writes the host's.
+    image.ramdisk = compress.gzip_compress(tree.to_cpio())
     image.boot_signature = b""
     data = image.pack()
     check = parse(data)
