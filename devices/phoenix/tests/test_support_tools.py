@@ -183,6 +183,21 @@ class SupportBundleTests(unittest.TestCase):
         for forbidden in ("config.vdf", "loginusers", "system-connections", ".ssh", "shadow"):
             self.assertNotIn(forbidden, text)
 
+    def test_the_soc_serial_is_masked_in_hex_too(self):
+        # FastRPC's test signature is named after it: testsig-0x<serial in hex>.so.
+        serials = {"/sys/devices/soc0/serial_number": "3735928559"}
+        with (
+            patch.object(support, "read", lambda path: serials.get(str(path), "")),
+            patch.object(support, "run", lambda *_: ""),
+        ):
+            names = support.identifiers("console=x", steam=self.folder)
+        self.assertIn("deadbeef", names)
+        mask = support.masker(names)
+        self.assertEqual(
+            mask("for testsig-0xDEADBEEF.so and testsig-0xdeadbeef.so"),
+            "for testsig-0x<name>.so and testsig-0x<name>.so",
+        )
+
     def test_account_and_network_names_are_found(self):
         with tempfile.TemporaryDirectory() as folder:
             steam = Path(folder)

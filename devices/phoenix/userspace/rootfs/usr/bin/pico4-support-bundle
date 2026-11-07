@@ -76,7 +76,8 @@ def mask_ip(match: re.Match[str]) -> str:
 def masker(names: Iterable[str]) -> Callable[[str], str]:
     """Build the function that masks the identifiers: the patterns, and these literal @p names."""
     literal = sorted({name for name in names if name and len(name) >= MIN_NAME_LENGTH}, key=len, reverse=True)
-    pattern = re.compile("|".join(re.escape(name) for name in literal)) if literal else None
+    # Case-insensitive: a serial in hex comes in either case.
+    pattern = re.compile("|".join(re.escape(name) for name in literal), re.IGNORECASE) if literal else None
 
     def mask(text: str) -> str:
         if pattern:
@@ -119,7 +120,11 @@ def identifiers(cmdline_text: str, steam: Path = STEAM) -> list[str]:
     Serials, the machine's id, Steam's account names (loginusers.vdf is read for this only, never
     archived) and the known networks.
     """
-    names = [read("/sys/devices/soc0/serial_number"), read("/etc/machine-id"), read("/etc/hostname")]
+    soc = read("/sys/devices/soc0/serial_number")
+    names = [soc, read("/etc/machine-id"), read("/etc/hostname")]
+    # FastRPC names its test signature after the SoC serial in hex (testsig-0x....so in the journal).
+    if soc.isdigit():
+        names.append(f"{int(soc):x}")
     names += re.findall(r"androidboot\.serialno=(\S+)", cmdline_text)
     names += re.findall(r"androidboot\.(?:wifimacaddr|btmacaddr)=(\S+)", cmdline_text)
     names += re.findall(r'"(?:AccountName|PersonaName)"\s+"([^"]+)"', read(steam / "config/loginusers.vdf"))

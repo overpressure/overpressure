@@ -547,6 +547,7 @@ covers the NCM helper. They do not replace a run on the headset; the QEMU test c
 `python -m overpressure dev support-bundle` (or `pico4-support-bundle` on the headset) collects what a bug report
 needs into one archive in `out/support`: the version, the journals of this boot and the last, the kernel log,
 pstore, failed units, coredumps' list, Steam's and SteamVR's logs, packages, power, temperatures and network state.
-It works with the session down. Serials, MAC and IP addresses, Steam IDs, account and network names are masked;
+It works with the session down. Serials (the SoC's also in hex, as FastRPC names its test signature), MAC and IP
+addresses, Steam IDs, account and network names are masked;
 Steam's config and login data and the network connections are not read into it. It is plain text, and the command
 lists its files: read it before sending it.
