@@ -85,8 +85,19 @@ python3 "$here/panel_sequence.py" "$recovery" "$work/$DTB-panel.dtsi"
 update "$work/$DTB-panel.dtsi" "$dts/$DTB-panel.dtsi"
 grep -q "$DTB.dtb" "$dts/Makefile" || echo "dtb-\$(CONFIG_ARCH_QCOM) += $DTB.dtb" >> "$dts/Makefile"
 
+# The version string (uname -v) names the inputs, not the build: instead of a local build counter
+# and the build's time, a hash of everything this script puts into the tree (the patches, the own
+# sources, the tree with its generated parts, the configuration fragment) and the pinned commit's
+# date. The same inputs give the same kernel on any host.
+build_id=$({
+	cat "$work/patches.wanted" "$here/pico4.config" "$here/$DTB.dts" "$work/pico4-imx471-mode.h" \
+		"$work/$DTB-dtbo-sink.dtsi" "$work/$DTB-panel.dtsi"
+	(cd "$here/src" && find . -type f ! -name LICENSE.md | LC_ALL=C sort | xargs -r sha256sum)
+} | sha256sum | cut -c1-12)
+stamp=$(TZ=UTC git -C "$src" show -s --date='format-local:%a %b %e %H:%M:%S UTC %Y' --format=%cd "$COMMIT")
 make=(make -C "$src" O="$work/build" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)"
-	KBUILD_BUILD_USER=overpressure KBUILD_BUILD_HOST=pico4 LOCALVERSION=)
+	KBUILD_BUILD_USER=overpressure KBUILD_BUILD_HOST=pico4 LOCALVERSION=
+	KBUILD_BUILD_VERSION="$build_id" KBUILD_BUILD_TIMESTAMP="$stamp")
 config=$work/build/.config
 mkdir -p "$work/build"
 # The configuration starts from Valve's each time, so a changed fragment never stacks.

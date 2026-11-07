@@ -21,6 +21,10 @@ network, holding the owner's Steam login and Wi-Fi password.
 
 Neither root nor `steamos` has a password in the image (`*` in `/etc/shadow`), so `su` gives nothing either.
 
+On the installed system sshd offers only `publickey`: from the PC, a password login and a key that
+was not enrolled are refused for root and `steamos`, on the USB link and on Wi-Fi
+(`Permission denied (publickey)`).
+
 **The keys.** `python -m overpressure dev image` makes this PC's own key once, `out/dev/id_ed25519`;
 `PICO4_SSH_PUBLIC_KEY` in `.env` adds the owner's own public key. `dev install` writes both, with the
 install ID, from the maintenance stage 1 onto the data partition (`pico4-install keys`):
@@ -72,7 +76,3 @@ makes a new file system. That is no secure erase.
 The system image is checked when it is written, not at boot (no dm-verity). Valve's repositories publish no
 signatures; the build pins their packages by hash ([userspace.md](userspace.md#package-lock)) and Valve's
 kernel source by hash and commit.
-
-## Not verified
-
-- That a login without a key is refused, tested from another machine on USB and Wi-Fi.
