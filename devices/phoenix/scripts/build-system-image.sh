@@ -27,17 +27,32 @@ tar --zstd -x --numeric-owner --xattrs --xattrs-include=security.capability --no
 [ -x "$tree/usr/lib/systemd/systemd" ] || { echo "the archive has no systemd" >&2; exit 1; }
 
 sha=$(sha256sum "$archive" | cut -d' ' -f1)
+# The same archive gives the same image: the archive's time (its /usr, the build's SOURCE_DATE_EPOCH)
+# for every time the file system records, and its hash for the UUID and the directory hash seed.
+epoch=$(stat -c %Y "$tree/usr")
+uuid() { sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12}).*/\1-\2-\3-\4-\5/' <<< "$1"; }
 install -d -m 0755 "$tree/data" "$tree/usr/share/pico4"
 echo "$sha" > "$tree/usr/share/pico4/userspace-archive.sha256"
 echo "$sha" > "$tree/usr/share/pico4/system-image"
+touch -h -d "@$epoch" "$tree" "$tree/data" "$tree/usr/share/pico4" "$tree/usr/share/pico4/userspace-archive.sha256" \
+	"$tree/usr/share/pico4/system-image"
 
 # The content plus a margin, rounded to MiB: free space on a read-only file system is unused.
 used_mib=$(( $(du -sk "$tree" | cut -f1) / 1024 ))
 size_mib=$(( used_mib * 110 / 100 + 128 ))
 [ "$size_mib" -le "$SUPER_MIB" ] || { echo "the system ($size_mib MiB) does not fit super" >&2; exit 1; }
 rm -f "$image"
-mkfs.ext4 -q -F -L pico4-system -m 0 -O ^has_journal,^orphan_file,^metadata_csum_seed \
-	-E lazy_itable_init=0,root_owner=0:0 -d "$tree" "$image" "${size_mib}M"
+E2FSPROGS_FAKE_TIME=$epoch mkfs.ext4 -q -F -L pico4-system -m 0 -O ^has_journal,^orphan_file,^metadata_csum_seed \
+	-U "$(uuid "$sha")" -E lazy_itable_init=0,root_owner=0:0,hash_seed="$(uuid "${sha:32}")" -d "$tree" "$image" "${size_mib}M"
+# mke2fs takes each file's change and access times from the tree, where the extraction set them to now.
+if find "$tree" -mindepth 1 -name '*"*' -print -quit | grep -q .; then
+	echo "a path in the archive holds a double quote, which debugfs cannot name" >&2
+	exit 1
+fi
+find "$tree" -mindepth 1 -printf '%P\n' |
+	awk -v t="@$epoch" '{ printf "sif \"/%s\" ctime %s\nsif \"/%s\" atime %s\n", $0, t, $0, t }' > "$work/times"
+errors=$(E2FSPROGS_FAKE_TIME=$epoch debugfs -w -f "$work/times" "$image" 2>&1 >/dev/null | grep -v '^debugfs [0-9]' || true)
+[ -z "$errors" ] || { echo "debugfs: $errors" | head -n 5 >&2; exit 1; }
 e2fsck -fn "$image" > /dev/null
 image_sha=$(sha256sum "$image" | cut -d' ' -f1)
 # The install streams the image compressed over the USB link (dev install): about half the bytes.

@@ -148,6 +148,19 @@ cp "$source_dir/prebuilt/aarch64/pico4-reboot" "$source_dir/prebuilt/aarch64/pic
 find "$project.new" -name __pycache__ -prune -exec rm -rf {} +
 rm -rf "$project"
 mv "$project.new" "$project"
+# What the image says it is, from the tree the snapshot was taken of: the release's version and the
+# Git commit. The commit's time is every time the build records (SOURCE_DATE_EPOCH: package build
+# dates and file times, install dates, caches, the archive), so that two clean builds of a commit give
+# the same archive (docs/userspace.md#reproducible-builds).
+version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/pyproject.toml")
+# A worktree's repository is at OVERPRESSURE_GIT_DIR in the build container (overpressure/linux.py).
+git_where=(-C "$repo")
+[ -z "${OVERPRESSURE_GIT_DIR:-}" ] || git_where=(--git-dir="$OVERPRESSURE_GIT_DIR" --work-tree="$repo")
+commit=$(git -c safe.directory='*' "${git_where[@]}" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)
+if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
+    SOURCE_DATE_EPOCH=$(git -c safe.directory='*' "${git_where[@]}" log -1 --format=%ct 2>/dev/null || date +%s)
+fi
+export SOURCE_DATE_EPOCH
 
 # -- 1. build environment ----------------------------------------------------------------
 mkdir -p "$repo/cache/holo"
@@ -170,7 +183,8 @@ cp -L /etc/resolv.conf "$B/etc/resolv.conf"
 mkdir -p "$B"/{proc,sys,dev,run,tmp} "$B/etc/pico4" "$B/var/cache/pico4-repo" "$B/var/cache/pico4-pkgs" "$B/build"
 cp "$project/userspace/pacman.conf" "$B/etc/pico4/pacman.conf"
 mount_api "$B"
-in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root "$@"; }
+in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root \
+    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$@"; }
 
 # Package databases are downloaded by the first build and with --refresh only, so that
 # repeated builds install the same versions.
@@ -253,7 +267,7 @@ build_package() {
         rm -f "$dir/.recipe"
         cp "$project/userspace/pkgbuilds/$name"/* "$@" "$dir/"
         chown -R "$builder" "$dir"
-        in_b su builder -c "cd /build/$name && MAKEFLAGS=-j$jobs CMAKE_BUILD_PARALLEL_LEVEL=$jobs PICO4_BUILD_JOBS=$jobs $ccenv makepkg --noconfirm --nocheck -f $extra"
+        in_b su builder -c "cd /build/$name && MAKEFLAGS=-j$jobs CMAKE_BUILD_PARALLEL_LEVEL=$jobs PICO4_BUILD_JOBS=$jobs SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH $ccenv makepkg --noconfirm --nocheck -f $extra"
         echo "$recipe $sources" > "$dir/.recipe"
     fi
     cp "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst "$B/var/cache/pico4-repo/"
@@ -327,7 +341,8 @@ rm -rf "$T" "$build_root/overlay"
 mkdir -p "$T" "$build_root/overlay/upper" "$build_root/overlay/work"
 mnt -t overlay overlay -o "lowerdir=$base,upperdir=$build_root/overlay/upper,workdir=$build_root/overlay/work" "$T"
 mount_api "$T"
-in_t() { chroot "$T" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root "$@"; }
+in_t() { chroot "$T" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root \
+    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$@"; }
 cp "$B/var/cache/pico4-repo/pico4.db.tar.gz" "$T/var/lib/pacman/sync/pico4.db"
 # This build's project packages where they differ from the base root's.
 changed=()
@@ -639,6 +654,9 @@ mkdir -p "$T/etc/systemd/system-generators"
 ln -sfn /dev/null "$T/etc/systemd/system-generators/systemd-gpt-auto-generator"
 in_t systemctl set-default graphical.target
 in_t ldconfig
+# ldconfig's aux-cache holds the libraries' inode numbers and change times; it only speeds up the
+# next ldconfig run.
+rm -f "$T/var/cache/ldconfig/aux-cache"
 
 # -- manifest and archive --------------------------------------------------------------
 phase "writing archive and manifest"
@@ -650,31 +668,33 @@ while read -r name version; do
         [[ ! -f "$f" ]] || sha256sum "$f" | sed 's|  .*/|  ./|'
     done
 done < "$build_root/packages.txt" | sort -u -k2 > "$build_root/package-hashes.txt"
+# The project repository's database is the build's own (repo-add records the time it ran), and the
+# headset's pacman.conf has no [pico4]: the image keeps only the upstream databases.
+rm -f "$T/var/lib/pacman/sync/pico4.db"
 (cd "$T/var/lib/pacman/sync" && sha256sum ./*.db) > "$build_root/db-hashes.txt"
 # Every upstream package is the tested one, or the build stops: Valve's repositories publish no
 # signatures, and the Frame's hotfix repository moves on (docs/userspace.md#package-lock).
 python3 "$source_dir/scripts/check-package-lock.py" "$build_root/package-hashes.txt" "$project/userspace/packages.lock" \
     ${update_lock:+--write "$output/packages.lock"}
-# What the image says it is: the release's version and the Git commit it was built from.
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/pyproject.toml")
-# A worktree's repository is at OVERPRESSURE_GIT_DIR in the build container (overpressure/linux.py).
-git_where=(-C "$repo")
-[ -z "${OVERPRESSURE_GIT_DIR:-}" ] || git_where=(--git-dir="$OVERPRESSURE_GIT_DIR" --work-tree="$repo")
-commit=$(git -c safe.directory='*' "${git_where[@]}" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)
 install -d -m 0755 "$T/usr/share/pico4"
 printf 'version=%s\ncommit=%s\n' "$version" "$commit" > "$T/usr/share/pico4/version"
 unmount_below "$T" inner
 rm -rf "$T/var/cache/pacman/pkg"/* "$T/var/log/pacman.log"
+# pacman records when it installed each package and has no SOURCE_DATE_EPOCH.
+sed -i "/^%INSTALLDATE%\$/{n;s/.*/$SOURCE_DATE_EPOCH/}" "$T"/var/lib/pacman/local/*/desc
 archive=$output/pico4-userspace.tar.zst
-tar --numeric-owner --xattrs --xattrs-include=security.capability --sort=name -C "$T" -cf - . |
+# No time after SOURCE_DATE_EPOCH, and no access or change times.
+tar --numeric-owner --xattrs --xattrs-include=security.capability --sort=name \
+    --mtime="@$SOURCE_DATE_EPOCH" --clamp-mtime --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
+    -C "$T" -cf - . |
     zstd -q -T0 -12 -o "$archive.part" -f
 mv "$archive.part" "$archive"
 installed_bytes=$(du -sb --apparent-size "$T" | cut -f1)
 cleanup
 python3 - "$archive" "$build_root" "$holo_url" "$holo_sha256" "$installed_bytes" "$firmware_json" "$sensor_json" \
-    "$wlan_json" "$audio_json" "$stock_json" > "$output/pico4-userspace.manifest.json" <<'EOF'
+    "$wlan_json" "$audio_json" "$stock_json" "$version" "$commit" > "$output/pico4-userspace.manifest.json" <<'EOF'
 import hashlib, json, os, sys, datetime
-archive, root, holo_url, holo_sha, installed, firmware, sensors, wlan, audio, stock = sys.argv[1:11]
+archive, root, holo_url, holo_sha, installed, firmware, sensors, wlan, audio, stock, version, commit = sys.argv[1:13]
 def lines(name):
     with open(os.path.join(root, name)) as f:
         return [l.split() for l in f if l.strip()]
@@ -684,7 +704,10 @@ with open(archive, "rb") as f:
         h.update(block)
 print(json.dumps({
     "schema": 1,
-    "built": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    "version": version,
+    "commit": commit,
+    "source_date": datetime.datetime.fromtimestamp(int(os.environ["SOURCE_DATE_EPOCH"]),
+                                                   datetime.timezone.utc).isoformat(timespec="seconds"),
     "archive": {"file": os.path.basename(archive), "sha256": h.hexdigest(),
                 "bytes": os.path.getsize(archive), "installed_bytes": int(installed)},
     "bootstrap": {"url": holo_url, "sha256": holo_sha},
