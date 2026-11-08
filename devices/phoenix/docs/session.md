@@ -183,6 +183,26 @@ session:
   on the data partition of the installed system) and sets the sentinel. `select_steam.sh` and
   `RUNSTEAM.sh` then run `steamrtarm64/steam -deckard -gamepadui -steamdeck -steamos3
   -vrgamepadui` from that folder; its UI is a SteamVR overlay through gamescope.
+- **First-run setup.** The client's out-of-box experience (OOBE) runs whenever its settings
+  `oobe_completed` and `oobe_stage_2_completed` are unset: `CompletedOOBEStage1` and
+  `CompletedOOBE` in `~/.steam/registry.vdf`, on the data partition. It does not depend on the
+  hardware, so an empty data partition starts it, as on the Frame. Stage 1 runs before the login:
+  - The welcome page is the Frame's variant (`s.team/frame`); its continue button waits for both
+    controllers, 30 s or a laser-mouse move.
+  - Then language, time zone, network and the update, which asks `steamos-update`.
+  - Stage 2 runs after the login: Steam Controller pairing, the controller firmware updater,
+    controller pairing, underscan and the audio pages.
+  - While it runs the client sets SteamVR's `/steam/oobe`, which locks the dashboard (no
+    exit, no room setup).
+  - Signing in marks stage 1 done.
+  - On the first page or the language page, 150 s without input turn on the screen reader.
+
+  The Frame's guided tour does not start here. It follows the OOBE on the Frame and covers
+  controller pairing, the welcome and health page, the playspace, the laser mouse, the system
+  button and pairing with a PC. In VR the client starts it only on device type 5001 (Steam Frame),
+  and here it reports 541 from the device tree. It still sets its `ON_FRAME` flag, from
+  `-deckard`. Replayed from the quick access menu's help, the tour shows the generic SteamOS pages.
+  The tour's done-mark is the account's `Deck_GuidedTourVersionSeen` in `localconfig.vdf`.
 - **Update.** The bundle is older than the current client of its beta branch
   (`linux_arm64_beta_…`), so the first start downloads about 650 MB, installs it and restarts
   (exit status 42). The update is a one-time cost per client release.
