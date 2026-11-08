@@ -537,6 +537,42 @@ class DevTests(HeadsetFixture):
         with patch("time.sleep"):
             self.assertEqual(dev.release_check(), 1)
 
+    def test_the_suspend_check_runs_detached_through_the_link_loss(self):
+        dev, _ = self.install_setup()
+        dev.check = lambda: 0
+        sent: list[str] = []
+        reads = [RuntimeError("ssh.exe failed (255)"), "", '{"status": "passed", "suspended": true}']
+
+        def ssh(command: str, *_: object, **__: object) -> str:
+            sent.append(command)
+            if command.startswith("cat /run/pico4-suspend-check.json"):
+                answer = reads.pop(0)
+                if isinstance(answer, Exception):
+                    raise answer
+                return answer
+            return {
+                "pico4-listeners": "sshd tcp/22",
+                "pico4-still-gate 60": "3000 poses, 0 lost",
+                "cat /usr/share/pico4/version": "version=1.0b1",
+                "systemd-analyze time": "graphical.target reached after 9s in userspace.\n"
+                "Startup finished in 1.9s (kernel) + 9s (userspace) = 10.9s\n",
+            }.get(command, "")
+
+        dev.ssh = ssh
+        self.assertEqual(dev.release_check(attended=True), 0)
+        start = next(c for c in sent if "pico4-suspend-check" in c and "systemd-run" in c)
+        self.assertIn("rm -f /run/pico4-suspend-check.json;", start)
+        self.assertIn("--no-block pico4-suspend-check", start)
+        record = json.loads(max((dev.work.parent / "release").glob("*/result.json")).read_text(encoding="utf-8"))
+        self.assertEqual(record["suspend with sound"]["status"], "passed")
+        # A failed check, and none within the deadline, fail the release check.
+        reads[:] = ['{"status": "failed", "failures": ["no tone after"]}']
+        self.assertEqual(dev.release_check(attended=True), 1)
+        reads[:] = [""] * 100
+        self.assertEqual(dev.release_check(attended=True), 1)
+        record = json.loads(max((dev.work.parent / "release").glob("*/result.json")).read_text(encoding="utf-8"))
+        self.assertIn("within 240 s", record["suspend with sound"]["output"])
+
     def test_release_check_fails_a_still_gate_that_lost_the_headset(self):
         dev, _ = self.install_setup()
         dev.check = lambda: 0

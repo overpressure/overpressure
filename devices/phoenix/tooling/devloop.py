@@ -98,6 +98,10 @@ MIN_WRITE_PERCENT = 20
 
 #: A release boots to the graphical target within this (docs/release-checklist.md; 10 to 11 s measured).
 MAX_BOOT_SECONDS = 13.0
+#: pico4-suspend-check's result on the headset; SSH over USB drops at the wake, so the check runs detached.
+SUSPEND_RESULT = "/run/pico4-suspend-check.json"
+#: The check takes about a minute (two tones, a 20 s suspend); the link comes back within seconds.
+SUSPEND_DEADLINE_SECONDS = 240
 _SPAN = re.compile(r"(?:(\d+)min )?(\d+(?:\.\d+)?)(ms|s)\b")
 
 
@@ -586,8 +590,6 @@ class Dev(Headset):
         folder = self.work.parent / "release" / dt.datetime.now(dt.timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
         folder.mkdir(parents=True, exist_ok=True)
         checks = {"listeners": "pico4-listeners", "still gate": "pico4-still-gate 60"}
-        if attended:
-            checks["suspend with sound"] = "pico4-suspend-check"
         results: dict = {"acceptance": "passed" if self.check() == 0 else "failed"}
         # The boot this runs on: the checklist starts from a fresh one.
         try:
@@ -603,6 +605,11 @@ class Dev(Headset):
                 results[name] = {"status": "passed", "output": self.ssh(command, 600)}
             except (RuntimeError, subprocess.TimeoutExpired) as exc:  # noqa: PERF203  # each check fails on its own
                 results[name] = {"status": "failed", "output": str(exc)[-2000:]}
+        if attended:
+            try:
+                results["suspend with sound"] = self.suspend_check()
+            except (RuntimeError, subprocess.TimeoutExpired, ValueError) as exc:
+                results["suspend with sound"] = {"status": "failed", "output": str(exc)[-2000:]}
         # pico4-still-gate only measures; the checklist wants the headset tracked throughout.
         gate = results["still gate"]
         if gate["status"] == "passed" and still_gate_lost(gate["output"]):
@@ -614,6 +621,26 @@ class Dev(Headset):
         print(f"{folder / 'result.json'}: " + (f"FAILED {', '.join(failed)}" if failed else "automated checks passed"))
         print("The worn checks stay yours: docs/release-checklist.md")
         return 1 if failed else 0
+
+    def suspend_check(self) -> dict:
+        """Run pico4-suspend-check detached and wait for its result file (docs/hardware-testing.md).
+
+        SSH over USB drops at the wake, which would end a check run in the SSH session itself.
+        """
+        unit = f"pico4-suspend-check-{int(self.clock.monotonic())}"
+        self.ssh(f"rm -f {SUSPEND_RESULT}; systemd-run --unit={unit} --collect --no-block pico4-suspend-check", 30)
+        end = self.clock.monotonic() + SUSPEND_DEADLINE_SECONDS
+        while self.clock.monotonic() < end:
+            self.clock.sleep(5)
+            try:
+                out = self.ssh(f"cat {SUSPEND_RESULT} 2>/dev/null || true", 15).strip()
+            except (RuntimeError, subprocess.TimeoutExpired):
+                continue  # the link is down while it sleeps
+            if out:
+                result = json.loads(out)
+                return {"status": "passed" if result.get("status") == "passed" else "failed", "output": out}
+        msg = f"no {SUSPEND_RESULT} within {SUSPEND_DEADLINE_SECONDS} s: look at the headset"
+        raise RuntimeError(msg)
 
     def support_bundle(self, output: Path | None = None) -> Path:
         """Run pico4-support-bundle on the headset and fetch its archive.
