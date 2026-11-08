@@ -9,9 +9,9 @@ are masked, and it is plain text: read it first.
 
 ## A change
 
-- Work on a branch and open a pull request against `main`. CI has to pass: the host tests, `make lint` (ruff's
-  formatting and lint, ty's type check, through uv: [docs/tool.md](docs/tool.md#development)), the shell and C
-  tests, the link check and the private-data scan.
+- Work on a branch and open a pull request against `main`. CI has to pass: the host tests on Python 3.9 and 3.13
+  (Linux, and on GitHub also Windows and macOS), `make lint` (ruff's formatting and lint, ty's type check, through
+  uv: [docs/tool.md](docs/tool.md#development)), the shell and C tests, the link check and the private-data scan.
 - [CLAUDE.md](CLAUDE.md) and each headset's CLAUDE.md hold the project's rules, for people and agents alike: hard
   rules, code style, how documents are written.
 - Use conventional commits (`feat:`, `fix:`, `docs:`); the changelog is generated from them.

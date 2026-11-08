@@ -12,7 +12,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.9.26"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run python -m unittest
+        env:
+          PYTHONIOENCODING: utf-8
+
+  # The same on Windows and macOS, where GitHub has runners; the project's own Gitea has Linux ones only.
+  host-tests-windows-macos:
+    if: github.server_url == 'https://github.com'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
         python: ["3.9", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
