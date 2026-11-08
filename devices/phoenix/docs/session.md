@@ -320,7 +320,11 @@ What a new owner meets, from an empty data partition:
   ([Steam Link](#steam-link)).
 
 The pages' decisions and texts are in [pico4_onboarding.h](../src/xr/pico4_onboarding.h), tested on
-the host; `pico4-onboarding --render DIR` draws every page without SteamVR.
+the host; `pico4-onboarding --render DIR` draws every page without SteamVR. Worn, after an install with
+both controllers off: the panel came up and listened for the left controller hands-free; the right one
+connected when switched on, and its laser paired the left one from the panel; the introduction ran to
+its end and left its mark, and the Introduction tab replayed it. A run from an empty data partition,
+before Steam's first-run setup, is open.
 
 ### Monado as a service
 

@@ -168,7 +168,9 @@ SteamVR as `driver_monado`. The factory calibration it uses comes from the heads
   nRF52832 on SPI) provides their 50 Hz frame sync and their exposure: 1,500 frames per camera at
   49.997 fps, none with an error, every timestamp from the hardware.
 - **Controllers.** Inputs and IMU arrive through the sensor DSP, positions from a reimplementation of
-  PICO OS's controller tracking on the cameras' LED exposures. Worn, both follow the hands.
+  PICO OS's controller tracking on the cameras' LED exposures. Worn, both follow the hands. A
+  controller that lost its pairing pairs again in the running session, as PICO OS's station service
+  does it, and then tracks and vibrates; the other one keeps its pairing.
 - **6DoF.** PICO OS's own tracker (`libSlam.so`, its front end on the Compute DSP) runs in a bionic
   root beside the driver, on all four cameras at 25 Hz and the IMU at 1 kHz. Still for 60 s: 0 poses
   lost, under a millimetre, about half of one core. Worn it tracks walking and fast turns, and rooms
@@ -214,6 +216,9 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
   loaded per stream. Battery level and charging state reach UPower and SteamVR
   ([userspace.md](userspace.md)).
 - **Session.** Valve's session is the only session; it starts at boot.
+- **Onboarding.** `pico4-onboarding` pairs controllers hands-free when none is there and shows the
+  PICO 4's introduction once after Steam's first-run setup; worn, both and the replay from the
+  dashboard work ([session.md](session.md#onboarding)).
 - **Acceptance.** `dev check` runs 30 s of Valve's session on the installed system, with the headset
   and both controllers in SteamVR.
 
@@ -241,10 +246,6 @@ brought no suspend. Whether a key wake behaves alike is not known.
   Windows also installed them. The stock firmware and assets in Python (any system, no Linux) match the shell
   extraction byte for byte on Windows and Linux; macOS and EDL device counting through pyusb on a Mac are not run.
 - The first run with only the headset, from an empty data partition.
-- Pairing a controller (`pico4-station pair`, the driver's pairing socket, [xr.md](xr.md#pairing)):
-  implemented after PICO OS's station service and tested on the host, not run on the headset.
-- The onboarding ([session.md](session.md#onboarding)): built and its decisions tested on the host,
-  not run in the headset.
 - Battery life unplugged: only inferred with the cable in.
 - Sessions much longer than 10 minutes ([cooling.md](cooling.md)).
 - MangoHud's `mangoapp`, the client's performance overlay: switching it on from the client's menu.

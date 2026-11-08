@@ -364,6 +364,10 @@ waits. A pairing answers `pairing HAND` when the station listens and `paired HAN
 `timeout HAND` once it has stopped listening; a client that hangs up stops it. The onboarding
 ([session.md](session.md#onboarding)) pairs through it.
 
+Verified in the running session: a left controller that had lost its pairing connected about 10 s
+into a pairing (trigger and PICO button held), then tracked and vibrated; the right controller,
+switched on while the station listened for the left one, reconnected with its pairing.
+
 ## Tracking cameras
 
 The four OV7251s (640×480 mono, global shutter, RAW10) run on V4L2 through CAMSS
