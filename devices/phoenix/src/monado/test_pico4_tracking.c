@@ -936,6 +936,7 @@ test_station_control(void)
 	fd = control_client(c, path, "status", log, sizeof(log));
 	control_answer(fd, got, sizeof(got));
 	EXPECT(strcmp(got, "left connected TESTSERIAL0000001\nright disconnected") == 0);
+	EXPECT(log[0] == '\0'); // asked every few seconds: not logged
 	close(fd);
 	s.count = 0;
 	fd = control_client(c, path, "pair both", log, sizeof(log));

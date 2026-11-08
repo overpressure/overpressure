@@ -1091,6 +1091,11 @@ pico4_station_control_step(struct pico4_station_control *c, int64_t now_ms, char
 	}
 	size_t r = answer(c, line, log, size);
 	hang_up(c);
+	// A status changes nothing: clients ask every few seconds (the onboarding), the log keeps pairings only.
+	if (req.kind == PICO4_STATION_REQUEST_STATUS) {
+		log[0] = '\0';
+		return 0;
+	}
 	return r;
 }
 

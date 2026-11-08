@@ -396,7 +396,7 @@ pico4_station_control_close(struct pico4_station_control *c);
  * PICO4_STATION_PAIRING_ACK_MS): take a connection and its request, answer it, follow a pairing
  * to its end. Call it every 100 ms or so; @p now_ms is CLOCK_MONOTONIC in ms. Writes what
  * happened (the line sent, or `cancelled HAND`) into @p log and returns its length, 0 when
- * nothing happened.
+ * nothing happened or only a status was answered.
  */
 size_t
 pico4_station_control_step(struct pico4_station_control *c, int64_t now_ms, char *log, size_t size);
