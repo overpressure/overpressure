@@ -1,4 +1,4 @@
-# The storage policy of the Linux POC: every physical disk and partition is switched read-only
+# The PICO 4 Linux's storage policy: every physical disk and partition is switched read-only
 # when it appears and gets a /dev/block/by-name link. These rules run first, so that no other rule
 # sees a writable disk.
 

@@ -82,7 +82,7 @@ class HarnessTests(unittest.TestCase):
         # One source image for every test: Windows' real-time scan of a freshly written
         # boot image costs about a quarter of a second on its first read.
         cls.shared = tempfile.TemporaryDirectory()
-        cls.image = Path(cls.shared.name) / "poc.img"
+        cls.image = Path(cls.shared.name) / "stage1.img"
         tree = cpio.Tree()
         tree.add_file("etc/pico4/build-info", json.dumps(cls.INFO).encode())
         tree.add_file("init", b"#!/bin/sh\n", 0o755)
@@ -647,7 +647,7 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(self.execute(), 1)
         self.assertTrue(self.runner.result["boot_restore_required"])
         self.assertEqual(self.runner.result["recovery"], "failed")
-        # Only the initial POC boot may reboot; a failed restoration stays in fastboot.
+        # Only the initial stage-1 boot may reboot; a failed restoration stays in fastboot.
         self.assertEqual(sum(cmd[0] == "fastboot" and cmd[-1] == "reboot" for cmd in self.calls), 1)
         self.assertTrue(self.runner.result["manual_restore_commands"])
 

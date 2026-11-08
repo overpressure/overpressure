@@ -88,7 +88,7 @@ def prepare_image(  # noqa: PLR0913  # the image's inputs; its deadlines keyword
         "Hardware tests require read-only mode and QEMU selftest disabled",
     )
     tree = bootimg.ramdisk_tree(image)
-    require("etc/pico4/build-info" in tree.nodes, "Image is not a PICO 4 POC build")
+    require("etc/pico4/build-info" in tree.nodes, "Image is not a PICO 4 stage-1 build")
     require(
         "usr/libexec/pico4/recovery-watch" in tree.nodes
         and "etc/inittab" in tree.nodes
@@ -183,7 +183,7 @@ def prepare_restore_image(backup: Path, folder: Path, serial: str, identity: dic
         "tags_addr",
         "dtb_addr",
     ):
-        require(getattr(stock, field) == getattr(test, field), f"POC differs from backed-up stock {field}")
+        require(getattr(stock, field) == getattr(test, field), f"The image differs from the backed-up stock {field}")
     target = folder / "stock-boot.img"
     with original.open("rb") as source, target.open("xb") as output:
         shutil.copyfileobj(source, output)

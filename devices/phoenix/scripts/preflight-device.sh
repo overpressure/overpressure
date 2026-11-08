@@ -5,7 +5,7 @@
 #
 # It runs stage 1's Alpine userspace binaries on the real PICO kernel (through
 # the musl loader, so nothing has to be installed) and records the facts the
-# POC relies on. No root, no unlock needed; it only touches
+# project relies on. No root, no unlock needed; it only touches
 # /data/local/tmp/pico4 and removes the unpacked files again.
 
 D=${PICO4_PREFLIGHT_DIR:-/data/local/tmp/pico4}
@@ -45,7 +45,7 @@ done
 echo "kernel=$(uname -r) $(uname -m)"
 
 echo
-echo "== POC userspace on this kernel"
+echo "== the Linux userspace on this kernel"
 t "musl loader + busybox" alp "$R/bin/busybox" true
 t "busybox sh, arithmetic" alp "$R/bin/busybox" sh -c 'echo $((6*7))'
 t "busybox fractional sleep" alp "$R/bin/busybox" sleep 0.2

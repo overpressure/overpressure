@@ -201,7 +201,7 @@ python -m overpressure hwtest flash-run --serial ADB_SERIAL --fastboot-serial FA
     ADB serial with boot completed and the baseline fingerprint, OEM state and SoC ID; reaching
     fastboot alone does not count.
 
-`test-boot.img` tests the supplied POC with authentication and identification instrumentation;
+`test-boot.img` tests the supplied stage-1 image with authentication and identification instrumentation;
 it is not a claim that the unmodified source image booted byte for byte. The run's private key is
 deleted when the runner finishes. Host keys are accepted on the first connection into the run's
 own `known_hosts` and pinned from then on; no password prompts, personal SSH configuration or
@@ -235,7 +235,7 @@ python -m overpressure doctor        # "NCM Python and UsbDk": the packages and 
 `--serial FASTBOOT_SERIAL` initializes a running stage 1, also by hand.
 
 - The runner runs `--check` before the first reboot.
-- After Linux enumerates, the helper requires exactly one POC gadget (USB ID `1d6b:0104`) with the
+- After Linux enumerates, the helper requires exactly one stage-1 gadget (USB ID `1d6b:0104`) with the
   fastboot serial (`--fastboot-serial`, else `--serial`), exactly one configuration and exactly
   one CDC NCM control interface. It selects that configuration, sends the request and always
   releases the USB handle. A missing, ambiguous or mismatched gadget receives no request and
@@ -281,7 +281,7 @@ authorization: `fastboot oem <token> unlock`, with the token derived from the So
 (`python -m overpressure device token`). That command is not `flashing unlock` and resets nothing.
 
 `result.json` records `boot_restore_required: true` and `manual_restore_commands` before the
-write, so a failed, timed-out or interrupted write is restored too. A running POC is asked to
+write, so a failed, timed-out or interrupted write is restored too. A running stage 1 is asked to
 reboot to the bootloader; a headset that comes up in Android with the original identity instead
 (a partial write can leave a bootable stock image) is sent there through ADB. The pinned image is
 checked again and flashed (`boot_restore: flash_acknowledged`); after a normal reboot the
@@ -352,7 +352,7 @@ fastboot when a deadline passes.
 These deadlines apply even when the image turns off the interactive auto-reboot
 (`pico4.autoreboot`, [stage1.md](stage1.md)). A switch that fails before systemd runs also
 returns to fastboot. A kernel panic reboots the headset instead of leaving it in Qualcomm
-crash-dump mode (stage 1 turns download mode off unless `pico4.ramdump=1`), so a flashed POC
+crash-dump mode (stage 1 turns download mode off unless `pico4.ramdump=1`), so a flashed stage 1
 starts again and its deadlines apply.
 
 ### Failure and timeout behavior
