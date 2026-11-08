@@ -51,10 +51,18 @@ only with the image. If Valve removes a locked package, a build from a clean mac
 what Valve then publishes ([docs/releasing.md](../../../docs/releasing.md#moving-to-new-upstream-versions)).
 
 **What updates by itself.** On the headset the system image is read-only and Valve's updater is not installed
-([session.md](session.md)), so nothing of the image moves. The Steam client is the exception: it unpacks from the
-image's bundle on the first start, then updates itself in the data partition with every client release. Holding it
-at a tested version is open: the client's update is what signs in today, and whether an older client keeps working
-against Steam's servers is not known. The image reports its version and commit in `/usr/share/pico4/version`.
+([session.md](session.md)), so nothing of the image moves; no timer installs packages (the only package-related timer,
+`archlinux-keyring-wkd-sync`, refreshes pacman's keys). What moves lives in the data partition:
+
+| What | Where | How it updates |
+| --- | --- | --- |
+| Steam client | `~/.local/share/Steam` (`package/`, `linuxarm64/`, `steamrtarm64/`, `steamui`) | unpacked from the image's `deckard-steam-rel` on the first start, then the client's own updater: at each start and in a background loop, from the Frame's ARM64 client beta that `package/beta` names; it is past the image's bundle within days |
+| Games, Proton (ARM64), Steam Linux Runtime 4.0 (Arm64), Lepton | `~/.local/share/Steam/steamapps` | Steam, each app set to keep itself updated |
+| SteamVR, Mesa, PipeWire, systemd, the kernel and every other package | the system image (`/opt/steamvr` is the runtime `openvrpaths.vrpath` names; no SteamVR app in `steamapps`) | only with a new image |
+
+Holding the client at a tested version is open: the client's update is what signs in today, and whether an older
+client keeps working against Steam's servers is not known. The image reports its version and commit in
+`/usr/share/pico4/version`.
 
 ### systemd stays at 257.x
 

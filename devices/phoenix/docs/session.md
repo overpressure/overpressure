@@ -286,8 +286,12 @@ session:
   system on the stable branch (`rel` to the client, "No update available") and refuses to switch
   branches or update. The client reaches `steamos-update` through
   `/usr/bin/steamos-polkit-helpers/steamos-update`, a wrapper the updater client would bring; the
-  image has its own, which calls it directly (it needs no root here). The client's request to set the updater's proxy over D-Bus still fails
-  once per start. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
+  image has its own, which calls it directly (it needs no root here). The client's OS and BIOS checks answer
+  "up to date" (`steamos-update` exit 7; `jupiter-biosupdate check` exit 0, the Frame package's own answer). Once per
+  start the client's request to set the updater's proxy over D-Bus still fails, and its mandatory-update check
+  (`jupiter-initial-firmware-update check`) and dock firmware check (`steamos-polkit-helpers/jupiter-dock-updater
+  --check`) end in 127: neither the Frame's repository nor the Holo preview ships them, and which exit code the
+  client reads as "nothing to update" is not known. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
   packaged for arm64; the client disables it.
 
 ### Monado as a service
