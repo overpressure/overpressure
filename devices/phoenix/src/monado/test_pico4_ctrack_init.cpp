@@ -246,7 +246,10 @@ test_p3p()
 		EXPECT(init_p3p(s.ctx, 0, small, s.truth.q).ok);
 		s.ctx.other.body_window_empty = false;
 		EXPECT(!init_p3p(s.ctx, 0, small, s.truth.q).ok);
-		s.ctx.other = OtherHand();
+		// Back to a fresh OtherHand's values, field by field: a moved temporary would carry its
+		// unset quaternions, which GCC's -Wmaybe-uninitialized rejects.
+		s.ctx.other.locked = false;
+		s.ctx.other.body_window_empty = true;
 		// Small-blob gate after 1501 failed acquisitions: refused, unless the other hand is
 		// locked with a Body.
 		s.ctx.init_failures = 1501;
@@ -255,7 +258,8 @@ test_p3p()
 		s.ctx.other.locked = true;
 		s.ctx.other.active = true;
 		EXPECT(init_p3p(s.ctx, 0, small, s.truth.q).ok);
-		s.ctx.other = OtherHand();
+		s.ctx.other.locked = false;
+		s.ctx.other.active = false;
 		s.ctx.init_failures = 0;
 		s.ctx.last_good_p = Vec3::Zero();
 	}
