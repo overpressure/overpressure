@@ -149,9 +149,9 @@ class BuildTests(unittest.TestCase):
             build, r"mkdir -p \"\$island\"/\{dev,proc,sys,data,tmp,mnt/vendor/persist/pvr,mnt/vendor/pvr\}"
         )
         self.assertIn('"stock_slam": json.loads(stock)', build)
-        # The manifest's script gets the list as its last argument.
-        self.assertIn('"$wlan_json" "$audio_json" "$stock_json" >', build)
-        self.assertIn("audio, stock = sys.argv[1:11]", build)
+        # The manifest's script gets the list after the other assets, before the version and commit.
+        self.assertIn('"$wlan_json" "$audio_json" "$stock_json" "$version" "$commit" >', build)
+        self.assertIn("audio, stock, version, commit = sys.argv[1:13]", build)
 
     def test_monado_recipe_ships_the_feed_header(self):
         recipe = read(ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD")
