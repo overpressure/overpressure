@@ -102,6 +102,14 @@ MAX_BOOT_SECONDS = 13.0
 SUSPEND_RESULT = "/run/pico4-suspend-check.json"
 #: The check takes about a minute (two tones, a 20 s suspend); the link comes back within seconds.
 SUSPEND_DEADLINE_SECONDS = 240
+#: The still gate runs on a session that has been up this long (docs/release-checklist.md): the
+#: acceptance check restarts SteamVR, and a tracker just started still settles.
+SETTLED_SECONDS = 120
+#: Seconds since SteamVR became active, on the headset.
+SESSION_AGE = (
+    "echo $(( $(cut -d. -f1 /proc/uptime) - $(systemctl --user -M steamos@.host show steamvr "
+    "-p ActiveEnterTimestampMonotonic --value) / 1000000 ))"
+)
 _SPAN = re.compile(r"(?:(\d+)min )?(\d+(?:\.\d+)?)(ms|s)\b")
 
 
@@ -600,6 +608,7 @@ class Dev(Headset):
             }
         except (RuntimeError, subprocess.TimeoutExpired) as exc:
             results["boot time"] = {"status": "failed", "output": str(exc)[-2000:]}
+        self.wait_settled()
         for name, command in checks.items():
             try:
                 results[name] = {"status": "passed", "output": self.ssh(command, 600)}
@@ -621,6 +630,16 @@ class Dev(Headset):
         print(f"{folder / 'result.json'}: " + (f"FAILED {', '.join(failed)}" if failed else "automated checks passed"))
         print("The worn checks stay yours: docs/release-checklist.md")
         return 1 if failed else 0
+
+    def wait_settled(self) -> None:
+        """Wait until the session has been up SETTLED_SECONDS (at once when its age can't be read)."""
+        try:
+            age = int(self.ssh(SESSION_AGE, 30).strip())
+        except (RuntimeError, subprocess.TimeoutExpired, ValueError):
+            return
+        if 0 <= age < SETTLED_SECONDS:
+            print(f">> the session is {age} s old: waiting {SETTLED_SECONDS - age} s for it to settle")
+            self.clock.sleep(SETTLED_SECONDS - age)
 
     def suspend_check(self) -> dict:
         """Run pico4-suspend-check detached and wait for its result file (docs/hardware-testing.md).

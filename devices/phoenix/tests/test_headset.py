@@ -579,6 +579,7 @@ class DevTests(HeadsetFixture):
         answers = {
             "pico4-listeners": "sshd tcp/22",
             "pico4-still-gate 60": "54577 poses, 54577 lost, furthest 0.00 mm, 1.149 deg, longest gap 1.0 ms",
+            devloop.SESSION_AGE: "600",
             "cat /usr/share/pico4/version": "version=1.0b1",
             "systemd-analyze time": "Startup finished in 1.9s (kernel) + 9s (userspace) = 10.9s\n"
             "graphical.target reached after 9s in userspace.\n",
@@ -590,6 +591,25 @@ class DevTests(HeadsetFixture):
         self.assertIn("lost the headset", record["still gate"]["output"])
         self.assertFalse(devloop.still_gate_lost("3000 poses, 0 lost, furthest 0.40 mm"))
         self.assertTrue(devloop.still_gate_lost("no pose"))
+
+    def test_the_still_gate_waits_for_a_settled_session(self):
+        dev, _ = self.install_setup()
+        dev.check = lambda: 0
+        order: list[str] = []
+        start = dev.clock.monotonic()
+
+        def ssh(command: str, *_: object, **__: object) -> str:
+            order.append(command)
+            return "45" if command == devloop.SESSION_AGE else ""
+
+        dev.ssh = ssh
+        dev.release_check()
+        self.assertGreaterEqual(dev.clock.monotonic() - start, 75)  # the fake clock's waits add up
+        self.assertLess(order.index(devloop.SESSION_AGE), order.index("pico4-still-gate 60"))
+        start = dev.clock.monotonic()
+        dev.ssh = lambda command, *_, **__: "600" if command == devloop.SESSION_AGE else ""
+        dev.release_check()
+        self.assertLess(dev.clock.monotonic() - start, 75)
 
     def test_release_check_fails_a_slow_boot(self):
         dev, _ = self.install_setup()
