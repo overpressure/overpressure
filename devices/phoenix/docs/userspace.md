@@ -218,10 +218,29 @@ configuration). [overpressure/elfdeps.py](../../../overpressure/elfdeps.py) chec
 libraries of the Frame and project packages find their libraries, including symbol versions.
 
 The outputs are `pico4-userspace.tar.zst` and `pico4-userspace.manifest.json`, which records the
-bootstrap rootfs, the SHA-256 of every repository database, package file, GPU firmware and
-sensor-data file, and the installed package versions; the hardware runner selects its checks
-from it. The build does not touch the headset; keep its output private. Build hosts, the steps
-in detail and timings are in [development.md](development.md).
+version, the Git commit and its date, the bootstrap rootfs, the SHA-256 of every upstream repository
+database, package file, GPU firmware and sensor-data file, and the installed package versions; the
+hardware runner selects its checks from it. The build does not touch the headset; keep its output
+private. Build hosts, the steps in detail and timings are in [development.md](development.md).
+
+### Reproducible builds
+
+Two clean builds of a commit (a new `BUILD_ROOT`, the same assets and package lock) give the same
+archive, and the same archive gives the same system image. The build takes every time it records
+from the commit's date, as `SOURCE_DATE_EPOCH` (set it to override):
+
+| What would differ | How the build fixes it |
+| --- | --- |
+| project packages' build dates and file times | makepkg takes `SOURCE_DATE_EPOCH`; with the same compiler the packages are identical |
+| fontconfig caches, the Java keystore of `ca-certificates` | the chroots and pacman's hooks get `SOURCE_DATE_EPOCH`, which fc-cache and p11-kit's `trust` take |
+| pacman's install dates | written as `SOURCE_DATE_EPOCH` into `/var/lib/pacman/local/*/desc` |
+| the project repository's database (`repo-add` records when it ran) | not in the image: the headset's `pacman.conf` has no `[pico4]` |
+| ldconfig's `aux-cache` (inode numbers, change times) | removed; it only speeds up the next ldconfig run |
+| file times of what the build wrote, access and change times | the archive clamps every time to `SOURCE_DATE_EPOCH` and keeps no access or change times |
+| the ext4 image's UUID, hash seed, time stamps and inode times | [build-system-image.sh](../scripts/build-system-image.sh) derives the UUID and hash seed from the archive's SHA-256 and takes every time from the archive's `/usr` |
+
+A build that reuses project packages from an earlier commit (no `--clean`, an old `BUILD_ROOT`) keeps
+those packages' build dates, so its archive differs from a clean build's in them.
 
 ## Run
 

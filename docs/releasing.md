@@ -19,7 +19,9 @@ python scripts/changelog.py --since v1.0-beta --version 1.0
 
 1. Everything is on `main`, CI is green, and no issue the release depends on is open.
 2. Set the version in `pyproject.toml`.
-3. Build from a clean checkout, the whole path of the headset's README, with the package lock on.
+3. Build from a clean checkout, the whole path of the headset's README, with the package lock on, in a new
+   build root: a second such build gives the same archive and system image
+   ([devices/phoenix/docs/userspace.md](../devices/phoenix/docs/userspace.md#reproducible-builds)).
 4. Run the headset's checklist ([devices/phoenix/docs/release-checklist.md](../devices/phoenix/docs/release-checklist.md))
    on that image, and keep the results.
 5. `python scripts/check-private.py --history` finds nothing.
