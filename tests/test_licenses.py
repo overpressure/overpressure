@@ -115,5 +115,26 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(wrong, [])
 
 
+#: What THIRD-PARTY.md pins, read from where the build pins it: (file, pattern of the pin).
+PINS = (
+    ("devices/phoenix/kernel/build-kernel.sh", r"^COMMIT=([0-9a-f]{12})"),
+    ("devices/phoenix/userspace/pkgbuilds/pico4-basalt/PKGBUILD", r"commit=([0-9a-f]{12})"),
+    ("devices/phoenix/userspace/pkgbuilds/pico4-gamescope/PKGBUILD", r"commit=([0-9a-f]{12})"),
+    ("devices/phoenix/userspace/pkgbuilds/pico4-monado/PKGBUILD", r"^_commit=([0-9a-f]{12})"),
+    ("devices/phoenix/userspace/pkgbuilds/pico4-sensors/PKGBUILD", r"^_hexagonrpc=([0-9a-f]{12})"),
+    ("devices/phoenix/userspace/pkgbuilds/pico4-spa-alsa/PKGBUILD", r"^pkgver=(\S+)"),
+)
+
+
+class ThirdPartyTests(unittest.TestCase):
+    def test_the_list_names_what_the_build_pins(self):
+        listed = (REPO / "THIRD-PARTY.md").read_text(encoding="utf-8")
+        for path, pattern in PINS:
+            match = re.search(pattern, (REPO / path).read_text(encoding="utf-8"), re.MULTILINE)
+            self.assertIsNotNone(match, path)
+            assert match is not None
+            self.assertIn(match.group(1), listed, path)
+
+
 if __name__ == "__main__":
     unittest.main()
