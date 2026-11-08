@@ -308,6 +308,7 @@ frames only from an allowlist:
 | `07` | controller, `01` on / `00` off | controllers' IMU stream to the DSP | – | yes |
 | `22` | exactly `01 00` (reads; a first byte of 0 would set the tracker work mode) | work mode | – | yes |
 | `29`, `30` | none | crash info, whitelist (read-only queries of the stock wake-up) | – | yes |
+| `02`, `08`, `03` | exactly one byte, `01` left or `02` right (the trackers' higher bits and USB pairing's `03` with a radio address are refused) | enter pairing, stop pairing, unpair ([pairing](#pairing)) | – | yes |
 | `01` to `02`/`03` | play (`01`, or all zero to stop), amplitude, u16 duration in ms | controller vibration, as PICO OS's OpenXR haptics | yes | – |
 | `02` to `02`/`03` | exactly one byte, the chunk index 1–12 | the controller's calibration record (read-only, as PICO OS on every connect) | yes | yes |
 | `03` to `02`/`03` | none | the controller's info (read-only; PICO OS sends it, these controllers do not answer) | – | yes |
@@ -333,6 +334,26 @@ as PICO OS's station service reads it:
   in the nominal LED model's frame), chunk 12 `imu_IR` (seven floats; the record counts as
   prepared when its fourth is 1 and the first IMU float is not 0). The controllers answer every
   request, also after PICO OS's 100 ms wait, so a reader skips late replies for another chunk.
+
+### Pairing
+
+The pairing lives in the station and the controllers, not in PICO OS's data: controllers paired
+under PICO OS connect on the installed system as they are. A replacement controller, one paired to
+another headset, or one unpaired from its own buttons (Home and Trigger held for 4 s; the station
+reports `A5 05`, hand in byte 2) needs pairing again. `pico4-station pair left|right` does it as PICO
+OS's station service (`EnterPairing`, `StopPairing`, `UnbondController` in
+`libstationopticsservice.so`), with the session stopped (the station has one owner):
+
+1. `02` with the controller's mask (`01` left, `02` right). The station answers `BB 01 02`, byte 4
+   `01` when it listens for that controller.
+2. The owner holds the controller's Trigger and Home for 6 s (PICO OS's instruction). The station
+   reports the controller with `A5 02`, status 1, like any connect.
+3. `08` with the same mask ends the pairing, also after the controller connected or the time ran out
+   (60 s by default), so that the station does not stay open to other controllers.
+
+`pico4-station unpair left|right` sends `03` with the mask (`BB 01 03`, byte 4 `01`: done); the
+controller then connects only after a new pairing. The driver reads a newly paired controller's
+calibration from the controller on its connect, as for any other; it uses no file per controller.
 
 ## Tracking cameras
 

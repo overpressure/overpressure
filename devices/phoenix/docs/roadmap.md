@@ -241,6 +241,8 @@ brought no suspend. Whether a key wake behaves alike is not known.
   Windows also installed them. The stock firmware and assets in Python (any system, no Linux) match the shell
   extraction byte for byte on Windows and Linux; macOS and EDL device counting through pyusb on a Mac are not run.
 - The first run with only the headset, from an empty data partition.
+- Pairing a controller (`pico4-station pair`, [xr.md](xr.md#pairing)): implemented after PICO OS's
+  station service and tested on the host, not run on the headset; the session offers no pairing yet.
 - Battery life unplugged: only inferred with the cable in.
 - Sessions much longer than 10 minutes ([cooling.md](cooling.md)).
 - MangoHud's `mangoapp`, the client's performance overlay: switching it on from the client's menu.

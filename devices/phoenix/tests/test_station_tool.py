@@ -163,6 +163,108 @@ class StationToolTests(unittest.TestCase):
             fake.controller_calibration("left")
 
 
+def station_frame(kind: int, body: bytes) -> bytes:
+    """Build one of the station's own frames: A5, kind, body from byte 2, CRC."""
+    buf = bytearray(40)
+    buf[0], buf[1] = 0xA5, kind
+    buf[2 : 2 + len(body)] = body
+    buf[39] = station.crc8(bytes(buf[:39]))
+    return bytes(buf)
+
+
+def connect(hand: int, status: int = 1) -> bytes:
+    """Build the station's report that a controller connected: hand, software, status, serial, address."""
+    body = bytearray(34)
+    body[0] = hand
+    body[1:7] = b"3.26.0"
+    body[7] = 0x20 | status
+    body[11:28] = b"TESTSERIAL0000002"
+    body[28:34] = bytes([6, 5, 4, 3, 2, 1])
+    return station_frame(station.STATION_CONNECT, bytes(body))
+
+
+class PairingTests(unittest.TestCase):
+    """Pairing as the stock EnterPairing, StopPairing and UnbondController: AA 01 02/08/03 with one mask byte."""
+
+    def test_pairing_frames_as_the_stock_service(self):
+        golden = {
+            (station.CMD_ENTER_PAIRING, 1): ("aa010201", 0x32),
+            (station.CMD_ENTER_PAIRING, 2): ("aa010202", 0x10),
+            (station.CMD_UNBOND, 1): ("aa010301", 0x47),
+            (station.CMD_STOP_PAIRING, 2): ("aa010802", 0x79),
+        }
+        for (command, mask), (head, crc) in golden.items():
+            buf = station.frame(command, bytes([mask]))
+            self.assertEqual(buf[:4].hex(), head)
+            self.assertEqual(buf[4:39], bytes(35))
+            self.assertEqual(buf[39], crc)
+
+    def test_only_one_controller_mask_is_allowed(self):
+        refused = [
+            (station.CMD_ENTER_PAIRING, b""),
+            (station.CMD_ENTER_PAIRING, b"\x00"),
+            (station.CMD_ENTER_PAIRING, b"\x03"),  # both at once: not what PICO OS sends
+            (station.CMD_ENTER_PAIRING, b"\x04"),  # the trackers' bits
+            (station.CMD_ENTER_PAIRING, b"\x01\x00"),
+            (station.CMD_UNBOND, bytes([1, 6, 5, 4, 3, 2, 1])),  # USB pairing: 03 with a radio address
+            (station.CMD_STOP_PAIRING, b"\x10"),
+            (0x09, bytes([1, 0, 0, 0])),  # the controllers' pair mode
+            (0x0A, b""),  # the station updater's command
+        ]
+        for command, payload in refused:
+            with self.assertRaises(ValueError, msg=(command, payload)):
+                station.frame(command, payload)
+
+    def fake(self, entered: int, after: list[bytes]) -> FakeStation:
+        fake = FakeStation(
+            {
+                (station.CMD_ENTER_PAIRING, 1): [reply(1, station.CMD_ENTER_PAIRING, bytes([0, entered]))],
+                (station.CMD_STOP_PAIRING, 1): [reply(1, station.CMD_STOP_PAIRING, bytes([0, 1]))],
+            }
+        )
+        real_send = fake.send
+
+        def send(data: bytes) -> None:
+            real_send(data)
+            if data[2] == station.CMD_ENTER_PAIRING:
+                fake.pending.extend(after)  # what the station reports while it listens
+
+        fake.send = send
+        return fake
+
+    def test_pair_waits_for_that_controller_then_stops(self):
+        other = connect(2)
+        invalid = connect(1, status=2)
+        fake = self.fake(1, [other, invalid, connect(1)])
+        out = fake.pair("left", 5.0)
+        self.assertTrue(out["entered"])
+        self.assertEqual(out["connected"]["serial"], "TESTSERIAL0000002")
+        self.assertEqual(out["connected"]["address"], "06:05:04:03:02:01")
+        self.assertTrue(out["stopped"])
+        commands = [f[:4].hex() for f in fake.sent if f[2] != station.CMD_ACK]
+        self.assertEqual(commands, ["aa010201", "aa010801"])
+
+    def test_pair_stops_after_the_time_without_a_controller(self):
+        fake = self.fake(1, [connect(2)])
+        out = fake.pair("left", 0.05)
+        self.assertIsNone(out["connected"])
+        self.assertTrue(out["stopped"])
+
+    def test_a_refused_pairing_waits_for_nothing(self):
+        fake = self.fake(0, [connect(1)])
+        out = fake.pair("left", 5.0)
+        self.assertFalse(out["entered"])
+        self.assertIsNone(out["connected"])
+        self.assertNotIn("stopped", out)
+
+    def test_unpair_reads_the_station_answer(self):
+        done = reply(1, station.CMD_UNBOND, bytes([0, 1]))
+        fake = FakeStation({(station.CMD_UNBOND, 2): [done]})
+        self.assertTrue(fake.unpair("right"))
+        self.assertEqual(fake.sent[0][:4].hex(), "aa010302")
+        self.assertIsNone(FakeStation({}).unpair("left"))
+
+
 class PlainSpidevTests(unittest.TestCase):
     """A mainline kernel: full-duplex transfers instead of the vendor spidev's reads and writes."""
 
