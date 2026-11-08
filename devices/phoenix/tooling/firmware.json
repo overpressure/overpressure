@@ -3,7 +3,7 @@
     "Official PICO 4 (A8110, codename phoenix) full OTA packages on PICO's CDN.",
     "Pick the build that matches the headset: adb shell getprop ro.build.fingerprint,",
     "ro.pvr.internal.version (build number _bNNNN_) and ro.oem.state",
-    "(true = SEKO/OEM build, false = SEK/non-OEM build). The same OTA serves",
+    "(true = SEKO/OEM build, empty = SEK/non-OEM build). The same OTA serves",
     "PICO 4, PICO 4 Pro and PICO 4 Enterprise. Only boot.img (~16 MB) is downloaded."
   ],
   "builds": {

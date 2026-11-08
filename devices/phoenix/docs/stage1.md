@@ -33,13 +33,13 @@ Over the USB-C cable:
 
 ## Prerequisites
 
-* An original PICO 4, PICO 4 Pro or PICO 4 Enterprise (A8110, *phoenix*) with an unlocked
-  bootloader and the engineering ABL staged, as described in
+* An original PICO 4 (A8110, *phoenix*; the Pro and Enterprise share its packages but are not
+  verified) with an unlocked bootloader and the engineering ABL staged, as described in
   [device-preparation.md](device-preparation.md). That workflow independently implements the
   approach documented by [more-picohaxx-tool](https://github.com/chaixshot/more-picohaxx-tool),
-  without bundling that repository or its binaries. Unlocking wipes user data. Unlock
-  preparation is limited to the upstream reported range through PICO OS 5.13.8, which is not a
-  hardware compatibility guarantee.
+  without bundling that repository or its binaries. Unlocking wipes user data. The tools take
+  only the PICO OS builds the whole path has run on
+  ([device-preparation.md](device-preparation.md#verified-hardware)).
 * Android platform-tools (`adb`, `fastboot`) and an SSH client on the PC.
 * Python 3.9+ (standard library only) on Windows, Linux or macOS. [development.md](development.md)
   lists what the other builds and the QEMU tests need.
@@ -74,7 +74,7 @@ Pick the firmware entry that matches the headset (with PICO OS running):
 
 ```sh
 adb shell getprop ro.build.fingerprint   # e.g. Pico/Phoenix_ovs/PICOA8110:10/5.13.8/smartcm.1788408867:user/dev-keys
-adb shell getprop ro.oem.state           # true = "seko" build, false = "sek" build
+adb shell getprop ro.oem.state           # true = "seko" build, empty = "sek" build
 python -m overpressure match --fingerprint "Pico/Phoenix_ovs/..." --oem-state false
 ```
 

@@ -58,12 +58,14 @@ The tools run only on what the whole path has run on, and refuse the rest before
 | | Verified | Checked by |
 | --- | --- | --- |
 | Headset | original PICO 4, A8110, *phoenix* | the fingerprint, in `device probe` and every later command |
-| PICO OS | 5.13.7, `ro.oem.state` true (the `global-seko` build) | the same; newer PICO OS also closes the unlock (through 5.13.8 by its upstream's report) |
+| PICO OS | 5.13.7, `ro.oem.state` true (the `global-seko` build) | the same |
 | Panel | Sharp LS026B3SA | `dev install`, from the kernel command line in the maintenance stage 1: the stock tree also knows an Innolux NT57900, which our driver and tree do not |
 
-Neo 3, PICO 4 Pro, Enterprise and Ultra have other fingerprints and are refused. All this ran on one headset, so a
-second unit can still differ in what these checks don't see, such as the RGB camera's module (PICO OS knows two
-makers' with nearly the same settings).
+Neo 3 and Ultra have other fingerprints and are refused. The PICO 4 Pro and Enterprise are not told apart: they take
+the same packages, which require the device `PICOA8110`, and report the same fingerprint, but they have LPDDR5 memory
+(the PICO 4 LPDDR4X), which the firehose loader the tools fetch and the kernel's memory bus table are not made for. All
+this ran on one headset, so a second unit can still differ in what these checks don't see, such as the RGB camera's
+module (PICO OS knows two makers' with nearly the same settings).
 
 Keep only the intended Qualcomm device connected during EDL operations. ADB and fastboot select
 a device by serial, but the EDL adapter cannot verify that the connected device matches the
@@ -77,7 +79,9 @@ by Git.
 
 ## Other PICO OS builds
 
-`tooling/firmware.json` lists PICO's public full packages for the PICO 4. Only the first row has run:
+`tooling/firmware.json` lists PICO's public full packages for the PICO 4, all of them still on PICO's servers; 5.13.8
+is the newest build for the PICO 4. `seko` and `sek` are secure-boot user builds, `seko` with `ro.oem.state` true. Only
+the first row has run:
 
 | Build | `ro.oem.state` | Date | Here |
 | --- | --- | --- | --- |
@@ -97,7 +101,13 @@ What the packages themselves say (read from PICO's servers, their `updater-scrip
   and certificate chains and differ only in their segment hashes and signatures; the ABL is rebuilt
   and signed by a new attestation certificate (Pico's root and attestation CA are the same). None
   carries an anti-rollback version in its signing header or certificates. Whether the engineering
-  ABL and the unlock run on 5.13.8 has not been tried.
+  ABL and the unlock run on 5.13.8 has not been tried here; the unlock's upstream reports it working through 5.13.8.
+  The engineering ABL chains to the same Pico root CA as the ABL and XBL of every 5.13.7 and 5.13.8 build.
+- **Rollback indexes.** In all eight packages `vbmeta` has rollback index 0 and `vbmeta_system` 1617580800, so 5.13.8
+  raised none of them (those of `boot` and `recovery` were not read).
+- **Who can install today.** A headset on 5.13.7 `global-seko`. One of the same variant on an older build (5.13.3
+  `global-seko`) can get there with PICO's offline update of the 5.13.7 package, which installs a package not older
+  than the running build; not tried here. A headset on 5.13.8, or on a `sek` build, cannot.
 - **What else differs per build.** The RGB camera's register table is generated from the build's
   camera module, which `kernel/imx471_mode.py` checks by hash; the overlay labels and panel sequences
   come from the build's stock recovery.
