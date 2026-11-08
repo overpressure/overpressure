@@ -342,7 +342,7 @@ under PICO OS connect on the installed system as they are. A replacement control
 another headset, or one unpaired from its own buttons (Home and Trigger held for 4 s; the station
 reports `A5 05`, hand in byte 2) needs pairing again. `pico4-station pair left|right` does it as PICO
 OS's station service (`EnterPairing`, `StopPairing`, `UnbondController` in
-`libstationopticsservice.so`), with the session stopped (the station has one owner):
+`libstationopticsservice.so`):
 
 1. `02` with the controller's mask (`01` left, `02` right). The station answers `BB 01 02`, byte 4
    `01` when it listens for that controller.
@@ -354,6 +354,15 @@ OS's station service (`EnterPairing`, `StopPairing`, `UnbondController` in
 `pico4-station unpair left|right` sends `03` with the mask (`BB 01 03`, byte 4 `01`: done); the
 controller then connects only after a new pairing. The driver reads a newly paired controller's
 calibration from the controller on its connect, as for any other; it uses no file per controller.
+
+The station has one owner. With the session stopped `pico4-station` sends the commands itself; while
+a session runs its driver owns the station, and `pico4-station pair`, `unpair` and `status` go to the
+driver's pairing socket, `$XDG_RUNTIME_DIR/pico4-station` (the session user's and root's only). The
+driver's station thread serves it between its reads (`pico4_station.h`): one request per connection
+(`pair left|right [SECONDS]`, `unpair left|right`, `status`), the same three commands with the same
+waits. A pairing answers `pairing HAND` when the station listens and `paired HAND SERIAL` or
+`timeout HAND` once it has stopped listening; a client that hangs up stops it. The onboarding
+([session.md](session.md#onboarding)) pairs through it.
 
 ## Tracking cameras
 

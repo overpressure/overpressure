@@ -192,13 +192,29 @@ class LensPanelTests(unittest.TestCase):
         panel = self.read("src/xr/pico4-lens-panel.cpp")
         self.assertIn('execlp("pico4-lens", "pico4-lens", "set", value', panel)
         self.assertIn("y = PICO4_PANEL_H - e.data.mouse.y", panel)
-        # With an image through these two, the compositor crashes at every stop (docs/session.md).
-        self.assertIn("overlay->SetOverlayTexture(handle, &texture)", panel)
-        self.assertNotIn("overlay->SetOverlayRaw(", panel)
-        self.assertNotIn("overlay->SetOverlayFromFile(", panel)
+        # The overlays' images go through the shared header as textures: with an image through
+        # SetOverlayRaw or SetOverlayFromFile, the compositor crashes at every stop (docs/session.md).
+        shared = self.read("src/xr/pico4_overlay.hpp")
+        self.assertIn("overlay->SetOverlayTexture(handle, &texture)", shared)
+        for path in ("src/xr/pico4-lens-panel.cpp", "src/xr/pico4-onboarding.cpp", "src/xr/pico4_overlay.hpp"):
+            source = self.read(path)
+            self.assertNotIn("SetOverlayRaw(", source)
+            self.assertNotIn("SetOverlayFromFile(", source)
+        self.assertIn('#include "pico4_overlay.hpp"', panel)
         conf = self.read("userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/53-pico4-lens-panel.conf")
         self.assertIn("Wants=pico4-lens-panel.service", conf)
         self.assertIn("pico4-lens-panel pico4-lens-panel.cpp", self.read("userspace/pkgbuilds/pico4-monado/PKGBUILD"))
+
+    def test_the_onboarding_runs_with_steamvr(self):
+        recipe = self.read("userspace/pkgbuilds/pico4-monado/PKGBUILD")
+        self.assertIn("-o pico4-onboarding pico4-onboarding.cpp", recipe)
+        self.assertIn("./test_pico4_onboarding", recipe)
+        self.assertIn("install -Dm755 pico4-lens-panel pico4-onboarding", recipe)
+        conf = self.read("userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/54-pico4-onboarding.conf")
+        self.assertIn("Wants=pico4-onboarding.service", conf)
+        unit = self.read("userspace/rootfs/usr/lib/systemd/user/pico4-onboarding.service")
+        self.assertIn("PartOf=steamvr.service", unit)
+        self.assertIn("ExecStart=/usr/bin/pico4-onboarding", unit)
 
     def test_steamvrs_display_covers_the_motors_range(self):
         patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-lenses-standby.patch")

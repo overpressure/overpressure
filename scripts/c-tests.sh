@@ -24,6 +24,7 @@ test_c test_pico4_tracking -std=c11 -D_GNU_SOURCE test_pico4_tracking.c pico4_st
 
 cd ../xr
 test_c test_pico4_lens_panel -std=gnu11 test_pico4_lens_panel.c -lm
+test_c test_pico4_onboarding -std=gnu11 test_pico4_onboarding.c
 
 # The controller tracker.
 cd ../monado

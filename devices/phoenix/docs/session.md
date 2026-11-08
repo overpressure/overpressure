@@ -294,6 +294,34 @@ session:
   client reads as "nothing to update" is not known. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
   packaged for arm64; the client disables it.
 
+### Onboarding
+
+What a new owner meets, from an empty data partition:
+
+| Part | Covers | Here |
+| --- | --- | --- |
+| Steam's OOBE ([first-run setup](#the-steam-client)) | welcome, language, time zone, network, update, sign-in; stage 2: Steam Controller pairing and firmware, underscan, audio | runs as on the Frame; its welcome page waits for the laser or 30 s |
+| The Frame's guided tour | controller pairing, welcome and health, playspace, laser mouse, system button, PC pairing | does not run (device type 541) |
+| SteamVR | the playspace setup for a new room's universe ([xr.md](xr.md#room-setup)) | asked for when a game starts in a new room, or from the dashboard's Space Setup |
+| [`pico4-onboarding`](../src/xr/pico4-onboarding.cpp) | the PICO 4's controllers, health and safety, the laser and the PICO button, where the playspace setup is | a SteamVR overlay, [`pico4-onboarding.service`](../userspace/rootfs/usr/lib/systemd/user/pico4-onboarding.service), with SteamVR |
+
+`pico4-onboarding` is a panel 1.5 m in front of the wearer, level, where they look when it comes up:
+
+- **Controllers.** With no controller connected 20 s after the start, nothing could point at a page,
+  Steam's OOBE included: the panel comes up and the station listens for one controller after the
+  other, 60 s each, through the driver's pairing socket ([xr.md](xr.md#pairing)), while the panel
+  says what to press (the controller's trigger and PICO button together for about 6 s, PICO OS's
+  instruction). With one controller connected, its laser pairs the other from the panel's Pair button.
+- **Once after Steam's OOBE** (`CompletedOOBE` in `~/.steam/registry.vdf`): the controllers, then
+  health and safety, the laser and the PICO button (press: the menu; hold: recenter), and the
+  playspace. Skip or Done leaves its mark, `~/.local/share/pico4/onboarding-done`, on the data
+  partition; the dashboard's Introduction tab shows it again.
+- **Not covered**: the Frame tour's PC pairing; Steam Link is in the menu
+  ([Steam Link](#steam-link)).
+
+The pages' decisions and texts are in [pico4_onboarding.h](../src/xr/pico4_onboarding.h), tested on
+the host; `pico4-onboarding --render DIR` draws every page without SteamVR.
+
 ### Monado as a service
 
 A development runtime, not part of the session: the driver's OpenXR test clients

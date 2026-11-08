@@ -6,7 +6,8 @@
  * was verified on hardware, and the allowlist), the vibration frames (golden
  * frames from the documented layout), the factory calibration
  * parser, the Kannala-Brandt refit, the controller packet parser, the
- * camera metadata line and the room view's shared frames.
+ * camera metadata line, the room view's shared frames, and the pairing
+ * frames and control socket (with a fake station).
  */
 
 #include "pico4_blemcu.h"
@@ -16,13 +17,16 @@
 #include "pico4_station.h"
 #include "pico4_tcam.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -185,14 +189,15 @@ test_station_vibrate(void)
 	EXPECT(frame_is(f, calib_left, sizeof(calib_left), 0x62));
 	EXPECT(pico4_station_calibration_query(f, PICO4_STATION_HAND_RIGHT, 12));
 	EXPECT(frame_is(f, calib_right, sizeof(calib_right), 0xC4));
-	// Refused: chunk 0 or beyond 12, another target, and command 02 to the station.
+	// Refused: chunk 0 or beyond 12, another target, and command 02 to the station with a chunk index
+	// (to the station, 02 is pairing and takes a controller's mask, 1 or 2, only).
 	memset(f, 0x5A, sizeof(f));
 	EXPECT(!pico4_station_calibration_query(f, PICO4_STATION_HAND_LEFT, 0));
 	EXPECT(!pico4_station_calibration_query(f, PICO4_STATION_HAND_LEFT, 13));
 	EXPECT(!pico4_station_calibration_query(f, PICO4_STATION_HAND_RIGHT, 257));
 	EXPECT(!pico4_station_calibration_query(f, (enum pico4_station_hand)3, 1));
 	EXPECT(f[0] == 0x5A && f[39] == 0x5A);
-	const uint8_t chunk[1] = {1};
+	const uint8_t chunk[1] = {3};
 	EXPECT(!pico4_station_frame(f, PICO4_STATION_CMD_CALIBRATION, chunk, sizeof(chunk)));
 
 	// OpenXR mapping: XR_MIN_HAPTIC_DURATION is 500 ms, at least 10 ms, level = amplitude × 255.
@@ -771,12 +776,203 @@ test_roomview(void)
 	rmdir(dir);
 }
 
+static void
+test_station_pairing_frames(void)
+{
+	// The bytes pico4-station sends (its golden frames): AA 01 cmd mask, zeros, CRC.
+	uint8_t f[PICO4_STATION_FRAME];
+	EXPECT(pico4_station_pairing_frame(f, PICO4_STATION_PAIR, PICO4_STATION_HAND_LEFT));
+	EXPECT(f[0] == 0xAA && f[1] == 0x01 && f[2] == 0x02 && f[3] == 0x01 && f[39] == 0x32);
+	for (int i = 4; i < 39; i++) {
+		EXPECT(f[i] == 0);
+	}
+	EXPECT(pico4_station_pairing_frame(f, PICO4_STATION_PAIR, PICO4_STATION_HAND_RIGHT) && f[39] == 0x10);
+	EXPECT(pico4_station_pairing_frame(f, PICO4_STATION_UNPAIR, PICO4_STATION_HAND_LEFT) && f[2] == 0x03 &&
+	       f[39] == 0x47);
+	EXPECT(pico4_station_pairing_frame(f, PICO4_STATION_PAIR_STOP, PICO4_STATION_HAND_RIGHT) && f[2] == 0x08 &&
+	       f[39] == 0x79);
+	// One controller's mask only: no tracker bits, both hands or nothing; no other command.
+	EXPECT(!pico4_station_pairing_frame(f, PICO4_STATION_PAIR, (enum pico4_station_hand)3));
+	EXPECT(!pico4_station_pairing_frame(f, PICO4_STATION_PAIR, (enum pico4_station_hand)4));
+	EXPECT(!pico4_station_pairing_frame(f, PICO4_STATION_PAIR, (enum pico4_station_hand)0));
+	EXPECT(!pico4_station_pairing_frame(f, (enum pico4_station_pairing)0x09, PICO4_STATION_HAND_LEFT));
+	const uint8_t address[7] = {0x01, 1, 2, 3, 4, 5, 6}, mask[1] = {0x10};
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_UNPAIR, address, sizeof(address)));
+	EXPECT(!pico4_station_frame(f, PICO4_STATION_PAIR, mask, sizeof(mask)));
+}
+
+static void
+test_station_requests(void)
+{
+	struct pico4_station_request r;
+	EXPECT(pico4_station_parse_request("pair left", 9, &r) && r.kind == PICO4_STATION_REQUEST_PAIR &&
+	       r.hand == PICO4_STATION_HAND_LEFT && r.seconds == PICO4_STATION_PAIR_DEFAULT_S);
+	EXPECT(pico4_station_parse_request("pair right 90\n", 14, &r) && r.hand == PICO4_STATION_HAND_RIGHT &&
+	       r.seconds == 90);
+	EXPECT(pico4_station_parse_request("unpair right", 12, &r) && r.kind == PICO4_STATION_REQUEST_UNPAIR);
+	EXPECT(pico4_station_parse_request("status", 6, &r) && r.kind == PICO4_STATION_REQUEST_STATUS);
+	const char *bad[] = {"", "pair", "pair both", "pair left 0", "pair left 601", "pair left -5", "pair left 5s",
+	                     "unpair left 5", "status left", "pair left 5 6", "reset", "pair\tleft", "pairing left"};
+	for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+		EXPECT(!pico4_station_parse_request(bad[i], strlen(bad[i]), &r));
+	}
+}
+
+//! A station for the control socket: answers pairing commands, a controller that connects on demand.
+struct fake_station
+{
+	int answer; //!< What pairing commands return.
+	int ops[8], hands[8], count;
+	struct pico4_station_controller controllers[2];
+};
+
+static int
+fake_pairing(void *ctx, enum pico4_station_pairing op, enum pico4_station_hand hand)
+{
+	struct fake_station *s = ctx;
+	if (s->count < 8) {
+		s->ops[s->count] = op;
+		s->hands[s->count++] = hand;
+	}
+	return s->answer;
+}
+
+static void
+fake_get_controller(void *ctx, enum pico4_station_hand hand, struct pico4_station_controller *out)
+{
+	*out = ((struct fake_station *)ctx)->controllers[hand - 1];
+}
+
+//! Connect to the socket, send @p request and let the control take it.
+static int
+control_client(struct pico4_station_control *c, const char *path, const char *request, char *log, size_t size)
+{
+	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	struct sockaddr_un addr = {.sun_family = AF_UNIX};
+	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
+	EXPECT(fd >= 0 && connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) == 0);
+	EXPECT(send(fd, request, strlen(request), 0) == (ssize_t)strlen(request));
+	log[0] = '\0';
+	pico4_station_control_step(c, 1000, log, size);
+	return fd;
+}
+
+//! The next answer on @p fd, "" when the control hung up.
+static void
+control_answer(int fd, char *out, size_t size)
+{
+	ssize_t n = recv(fd, out, size - 1, MSG_DONTWAIT);
+	out[n > 0 ? n : 0] = '\0';
+}
+
+static void
+test_station_control(void)
+{
+	char dir[] = "/tmp/pico4-station-test.XXXXXX", path[64], log[128], got[128];
+	EXPECT(mkdtemp(dir) != NULL);
+	snprintf(path, sizeof(path), "%s/pico4-station", dir);
+	struct fake_station s = {.answer = 0};
+	struct pico4_station_ops ops = {fake_pairing, fake_get_controller, &s};
+	struct pico4_station_control *c = NULL;
+	EXPECT(pico4_station_control_open(&c, path, ops) == 0);
+	struct stat sb;
+	EXPECT(stat(path, &sb) == 0 && (sb.st_mode & 0777) == 0600);
+	EXPECT(pico4_station_control_step(c, 0, log, sizeof(log)) == 0); // nobody there
+
+	// Pairing: entered, then the controller connects (a new connection), then pairing stops.
+	s.controllers[0].connects = 3;
+	int fd = control_client(c, path, "pair left 30", log, sizeof(log));
+	control_answer(fd, got, sizeof(got));
+	EXPECT(strcmp(got, "pairing left") == 0 && strcmp(log, "pairing left") == 0);
+	EXPECT(pico4_station_control_step(c, 2000, log, sizeof(log)) == 0); // still waiting
+	s.controllers[0].connected = true;
+	s.controllers[0].connects = 4;
+	snprintf(s.controllers[0].serial, sizeof(s.controllers[0].serial), "TESTSERIAL0000001");
+	EXPECT(pico4_station_control_step(c, 3000, log, sizeof(log)) > 0);
+	control_answer(fd, got, sizeof(got));
+	EXPECT(strcmp(got, "paired left TESTSERIAL0000001") == 0);
+	EXPECT(s.count == 2 && s.ops[0] == PICO4_STATION_PAIR && s.ops[1] == PICO4_STATION_PAIR_STOP &&
+	       s.hands[1] == PICO4_STATION_HAND_LEFT);
+	control_answer(fd, got, sizeof(got));
+	EXPECT(got[0] == '\0'); // hung up
+	close(fd);
+
+	// A controller connected before pairing does not count; the time runs out and pairing stops.
+	s.count = 0;
+	fd = control_client(c, path, "pair left 2", log, sizeof(log));
+	control_answer(fd, got, sizeof(got));
+	EXPECT(pico4_station_control_step(c, 2500, log, sizeof(log)) == 0);
+	EXPECT(pico4_station_control_step(c, 3000, log, sizeof(log)) > 0);
+	control_answer(fd, got, sizeof(got));
+	EXPECT(strcmp(got, "timeout left") == 0 && s.count == 2 && s.ops[1] == PICO4_STATION_PAIR_STOP);
+	close(fd);
+
+	// A client that hangs up stops the pairing; nothing is sent to it.
+	s.count = 0;
+	fd = control_client(c, path, "pair right", log, sizeof(log));
+	close(fd);
+	EXPECT(pico4_station_control_step(c, 1100, log, sizeof(log)) > 0);
+	EXPECT(strcmp(log, "cancelled right") == 0 && s.count == 2 && s.ops[1] == PICO4_STATION_PAIR_STOP);
+
+	// Refused and unanswered commands; a refused pairing has no stop.
+	s.count = 0;
+	s.answer = -EIO;
+	fd = control_client(c, path, "pair right", log, sizeof(log));
+	control_answer(fd, got, sizeof(got));
+	EXPECT(strcmp(got, "refused right") == 0 && s.count == 1);
+	close(fd);
+	s.answer = -ETIMEDOUT;
+	fd = control_client(c, path, "unpair left", log, sizeof(log));
+	control_answer(fd, got, sizeof(got));
+	EXPECT(strcmp(got, "noreply left") == 0);
+	close(fd);
+	s.answer = 0;
+	fd = control_client(c, path, "unpair left", log, sizeof(log));
+	control_answer(fd, got, sizeof(got));
+	EXPECT(strcmp(got, "unpaired left") == 0 && s.ops[s.count - 1] == PICO4_STATION_UNPAIR);
+	close(fd);
+
+	// Status, and requests it does not know.
+	fd = control_client(c, path, "status", log, sizeof(log));
+	control_answer(fd, got, sizeof(got));
+	EXPECT(strcmp(got, "left connected TESTSERIAL0000001\nright disconnected") == 0);
+	close(fd);
+	s.count = 0;
+	fd = control_client(c, path, "pair both", log, sizeof(log));
+	control_answer(fd, got, sizeof(got));
+	EXPECT(strcmp(got, "error request") == 0 && s.count == 0);
+	close(fd);
+
+	// A connection that sends nothing is dropped after its time.
+	fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	struct sockaddr_un addr = {.sun_family = AF_UNIX};
+	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
+	EXPECT(connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) == 0);
+	EXPECT(pico4_station_control_step(c, 0, log, sizeof(log)) == 0);
+	EXPECT(pico4_station_control_step(c, PICO4_STATION_REQUEST_MS, log, sizeof(log)) == 0);
+	control_answer(fd, got, sizeof(got));
+	EXPECT(got[0] == '\0');
+	close(fd);
+
+	// Closing removes the socket and stops a pairing in progress.
+	s.count = 0;
+	fd = control_client(c, path, "pair left", log, sizeof(log));
+	pico4_station_control_close(c);
+	EXPECT(s.count == 2 && s.ops[1] == PICO4_STATION_PAIR_STOP);
+	EXPECT(access(path, F_OK) != 0);
+	close(fd);
+	rmdir(dir);
+}
+
 int
 main(void)
 {
 	test_station();
 	test_station_vibrate();
 	test_station_connection();
+	test_station_pairing_frames();
+	test_station_requests();
+	test_station_control();
 	test_calibration();
 	test_blemcu();
 	test_blemcu_order();

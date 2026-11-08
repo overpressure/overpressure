@@ -16,7 +16,8 @@
  * This module builds only the frames in pico4_station_frame()'s allowlist
  * (acknowledge, camera frame rate, camera init/stream/exposure), the
  * vibration frame to a controller (pico4_station_vibrate()), the read-only
- * calibration query (pico4_station_calibration_query()) and the supply's switch; it
+ * calibration query (pico4_station_calibration_query()), the controller pairing
+ * commands with one controller's mask (pico4_station_pairing_frame()) and the supply's switch; it
  * has no way to send firmware, bootloader or flash commands and never touches
  * the boot pin.
  *
@@ -129,6 +130,27 @@ pico4_station_haptic_map(float amplitude, int64_t duration_ns, unsigned *out_lev
  */
 bool
 pico4_station_calibration_query(uint8_t out[PICO4_STATION_FRAME], enum pico4_station_hand hand, unsigned index);
+
+/*!
+ * Controller pairing, as PICO OS's station service sends it (StationService::EnterPairing,
+ * StopPairing and UnbondController, libstationopticsservice.so): to the station, one byte, the
+ * controller's mask (1 left, 2 right, the hand's number). The station answers BB 01 with the
+ * command and byte 4 1 for done. The trackers' mask bits (4 and up) and the USB pairing (03 with a
+ * radio address) are never built.
+ */
+enum pico4_station_pairing
+{
+	PICO4_STATION_PAIR = 0x02,      //!< Enter pairing: the controller pairs while its Trigger and Home are held 6 s.
+	PICO4_STATION_UNPAIR = 0x03,    //!< Forget the controller; it connects again only after pairing.
+	PICO4_STATION_PAIR_STOP = 0x08, //!< Stop pairing.
+};
+
+//! How long a pairing command waits for the station's answer (the stock service: at least 300 ms).
+#define PICO4_STATION_PAIRING_ACK_MS 500
+
+//! Build a pairing command for one controller into @p out; false, building nothing, for another hand.
+bool
+pico4_station_pairing_frame(uint8_t out[PICO4_STATION_FRAME], enum pico4_station_pairing op, enum pico4_station_hand hand);
 
 //! A controller's connection as the station reports it.
 struct pico4_station_controller
@@ -296,6 +318,88 @@ int
 pico4_station_get_calibration(struct pico4_station *st,
                               enum pico4_station_hand hand,
                               uint8_t out[PICO4_STATION_CALIBRATION_CHUNKS][PICO4_STATION_CALIBRATION_CHUNK]);
+
+/*!
+ * Send a pairing command for one controller and wait up to PICO4_STATION_PAIRING_ACK_MS for the
+ * station's answer. Returns 0 when it is done, -EIO when the station refused, -ETIMEDOUT without
+ * an answer, or another negative errno.
+ */
+int
+pico4_station_pairing(struct pico4_station *st, enum pico4_station_pairing op, enum pico4_station_hand hand);
+
+/*!
+ * Pairing while a runtime owns the station (the station's lock keeps pico4-station out): a
+ * SOCK_SEQPACKET socket, $XDG_RUNTIME_DIR/pico4-station by default, which only the session's user
+ * and root reach. One request per connection, as text:
+ *
+ * - `pair left|right [SECONDS]`: enter pairing for 1-600 s (60 unless given); answers
+ *   `pairing HAND`, then, once pairing has stopped, `paired HAND SERIAL` or `timeout HAND`. A
+ *   client that hangs up meanwhile stops the pairing.
+ * - `unpair left|right`: answers `unpaired HAND`.
+ * - `status`: answers `left connected SERIAL` or `left disconnected`, a newline, the same for right.
+ *
+ * A command the station refused answers `refused HAND`, one it did not answer `noreply HAND`, a
+ * request that is none of these `error request`. A stop pairing that failed adds
+ * ` (pairing not stopped)`.
+ */
+#define PICO4_STATION_CONTROL_NAME "pico4-station"
+#define PICO4_STATION_PAIR_DEFAULT_S 60
+#define PICO4_STATION_PAIR_MAX_S 600
+//! How long an accepted connection may take to send its request.
+#define PICO4_STATION_REQUEST_MS 2000
+
+enum pico4_station_request_kind
+{
+	PICO4_STATION_REQUEST_PAIR,
+	PICO4_STATION_REQUEST_UNPAIR,
+	PICO4_STATION_REQUEST_STATUS,
+};
+
+struct pico4_station_request
+{
+	enum pico4_station_request_kind kind;
+	enum pico4_station_hand hand; //!< Pair and unpair.
+	unsigned seconds;             //!< Pair.
+};
+
+//! Parse one request (@p size bytes, no terminator needed); false for anything else.
+bool
+pico4_station_parse_request(const char *text, size_t size, struct pico4_station_request *out);
+
+//! What the control socket needs from a station; the tests put fakes in.
+struct pico4_station_ops
+{
+	int (*pairing)(void *ctx, enum pico4_station_pairing op, enum pico4_station_hand hand);
+	void (*get_controller)(void *ctx, enum pico4_station_hand hand, struct pico4_station_controller *out);
+	void *ctx;
+};
+
+//! The ops of a station opened with pico4_station_open().
+struct pico4_station_ops
+pico4_station_ops(struct pico4_station *st);
+
+struct pico4_station_control;
+
+/*!
+ * Listen on @p path (NULL: $XDG_RUNTIME_DIR/pico4-station, else /run/user/UID/pico4-station),
+ * replacing a socket a runtime before left there. Returns 0 or a negative errno.
+ */
+int
+pico4_station_control_open(struct pico4_station_control **out, const char *path, struct pico4_station_ops ops);
+
+//! Stop listening and remove the socket; a pairing still running is stopped.
+void
+pico4_station_control_close(struct pico4_station_control *c);
+
+/*!
+ * Serve the socket without waiting for clients (only a station command waits, up to
+ * PICO4_STATION_PAIRING_ACK_MS): take a connection and its request, answer it, follow a pairing
+ * to its end. Call it every 100 ms or so; @p now_ms is CLOCK_MONOTONIC in ms. Writes what
+ * happened (the line sent, or `cancelled HAND`) into @p log and returns its length, 0 when
+ * nothing happened.
+ */
+size_t
+pico4_station_control_step(struct pico4_station_control *c, int64_t now_ms, char *log, size_t size);
 
 #ifdef __cplusplus
 }

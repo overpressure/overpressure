@@ -16,10 +16,14 @@
 #include <fcntl.h>
 #include <linux/spi/spidev.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -74,6 +78,8 @@ struct pico4_station
 	//! The last reply to a camera command: op, status.
 	int camera_op, camera_status;
 	int slow_adv_status; //!< 0 no reply yet, 1 confirmed, -1 refused.
+	//! The last answer to a pairing command: the command (-1 none yet) and byte 4.
+	int pair_cmd, pair_status;
 	//! The cameras' module ids from the OTP replies (a zero byte keeps the value before).
 	uint8_t otp[4];
 	//! CameraSetPara's event index of the last command (0-9).
@@ -111,6 +117,10 @@ allowed(uint8_t cmd, const uint8_t *p, size_t n)
 	case PICO4_STATION_CMD_ACK: return n == 2;
 	case PICO4_STATION_CMD_CAMERA_FPS: return n == 3 && (p[0] == 1 || p[0] == 2) && p[2] == 1;
 	case PICO4_STATION_CMD_SLOW_ADV: return n == 2 && p[0] == 0 && p[1] == 0; // the controllers; never the trackers
+	case PICO4_STATION_PAIR:
+	case PICO4_STATION_UNPAIR:
+	case PICO4_STATION_PAIR_STOP: // one controller's mask; never a tracker's bits or a radio address
+		return n == 1 && (p[0] == PICO4_STATION_HAND_LEFT || p[0] == PICO4_STATION_HAND_RIGHT);
 	case PICO4_STATION_CMD_CAMERA:
 		if (n == 4 && p[0] == CAMERA_INIT) {
 			return p[2] <= 2 && p[3] <= 1;
@@ -208,6 +218,16 @@ pico4_station_calibration_query(uint8_t out[PICO4_STATION_FRAME], enum pico4_sta
 	}
 	build(out, target, PICO4_STATION_CMD_CALIBRATION, p, 1);
 	return true;
+}
+
+bool
+pico4_station_pairing_frame(uint8_t out[PICO4_STATION_FRAME], enum pico4_station_pairing op, enum pico4_station_hand hand)
+{
+	if (op != PICO4_STATION_PAIR && op != PICO4_STATION_UNPAIR && op != PICO4_STATION_PAIR_STOP) {
+		return false;
+	}
+	const uint8_t mask[1] = {(uint8_t)hand};
+	return pico4_station_frame(out, (uint8_t)op, mask, sizeof(mask));
 }
 
 //! Bytes [from, to) as a string up to the first NUL, printable ASCII only.
@@ -378,6 +398,11 @@ read_one(struct pico4_station *st, int timeout_ms)
 	}
 	if (f[0] == HEADER_REPLY && f[1] == TARGET_STATION && f[2] == PICO4_STATION_CMD_SLOW_ADV) {
 		st->slow_adv_status = f[4] == 1 ? 1 : -1;
+	}
+	if (f[0] == HEADER_REPLY && f[1] == TARGET_STATION &&
+	    (f[2] == PICO4_STATION_PAIR || f[2] == PICO4_STATION_UNPAIR || f[2] == PICO4_STATION_PAIR_STOP)) {
+		st->pair_cmd = f[2];
+		st->pair_status = f[4];
 	}
 	if (f[0] == HEADER_REPLY && (f[1] == TARGET_LEFT || f[1] == TARGET_RIGHT) &&
 	    f[2] == PICO4_STATION_CMD_CALIBRATION) {
@@ -777,4 +802,309 @@ pico4_station_get_calibration(struct pico4_station *st,
 	}
 	pthread_mutex_unlock(&st->lock);
 	return r;
+}
+
+int
+pico4_station_pairing(struct pico4_station *st, enum pico4_station_pairing op, enum pico4_station_hand hand)
+{
+	uint8_t f[PICO4_STATION_FRAME];
+	if (!pico4_station_pairing_frame(f, op, hand)) {
+		return -EINVAL;
+	}
+	pthread_mutex_lock(&st->lock);
+	st->pair_cmd = -1;
+	int r = send_frame(st, f);
+	for (int64_t end = now_ms() + PICO4_STATION_PAIRING_ACK_MS; r == 0 && st->pair_cmd != (int)op && now_ms() < end;) {
+		int n = read_one(st, 50);
+		r = n < 0 ? n : 0;
+	}
+	if (r == 0) {
+		r = st->pair_cmd != (int)op ? -ETIMEDOUT : st->pair_status == 1 ? 0 : -EIO;
+	}
+	pthread_mutex_unlock(&st->lock);
+	return r;
+}
+
+static int
+station_ops_pairing(void *ctx, enum pico4_station_pairing op, enum pico4_station_hand hand)
+{
+	return pico4_station_pairing((struct pico4_station *)ctx, op, hand);
+}
+
+static void
+station_ops_get_controller(void *ctx, enum pico4_station_hand hand, struct pico4_station_controller *out)
+{
+	pico4_station_get_controller((struct pico4_station *)ctx, hand, out);
+}
+
+struct pico4_station_ops
+pico4_station_ops(struct pico4_station *st)
+{
+	struct pico4_station_ops ops = {station_ops_pairing, station_ops_get_controller, st};
+	return ops;
+}
+
+//! The next word of the text (spaces separate words) into @p word; false at its end or for a long word.
+static bool
+next_word(const char **text, const char *end, char *word, size_t size)
+{
+	const char *p = *text;
+	while (p < end && *p == ' ') {
+		p++;
+	}
+	size_t n = 0;
+	while (p < end && *p != ' ') {
+		if (n + 1 >= size) {
+			return false;
+		}
+		word[n++] = *p++;
+	}
+	word[n] = '\0';
+	*text = p;
+	return n > 0;
+}
+
+bool
+pico4_station_parse_request(const char *text, size_t size, struct pico4_station_request *out)
+{
+	const char *p = text, *end = text + size;
+	while (end > p && (end[-1] == '\n' || end[-1] == '\0')) {
+		end--;
+	}
+	for (const char *q = p; q < end; q++) {
+		if (*q < 0x20 || *q > 0x7e) {
+			return false;
+		}
+	}
+	char verb[8], hand[8], seconds[8], extra[2];
+	memset(out, 0, sizeof(*out));
+	if (!next_word(&p, end, verb, sizeof(verb))) {
+		return false;
+	}
+	if (strcmp(verb, "status") == 0) {
+		out->kind = PICO4_STATION_REQUEST_STATUS;
+		return !next_word(&p, end, extra, sizeof(extra)) && p == end;
+	}
+	if (strcmp(verb, "pair") == 0) {
+		out->kind = PICO4_STATION_REQUEST_PAIR;
+	} else if (strcmp(verb, "unpair") == 0) {
+		out->kind = PICO4_STATION_REQUEST_UNPAIR;
+	} else {
+		return false;
+	}
+	if (!next_word(&p, end, hand, sizeof(hand))) {
+		return false;
+	}
+	if (strcmp(hand, "left") == 0) {
+		out->hand = PICO4_STATION_HAND_LEFT;
+	} else if (strcmp(hand, "right") == 0) {
+		out->hand = PICO4_STATION_HAND_RIGHT;
+	} else {
+		return false;
+	}
+	if (out->kind == PICO4_STATION_REQUEST_PAIR) {
+		out->seconds = PICO4_STATION_PAIR_DEFAULT_S;
+		if (next_word(&p, end, seconds, sizeof(seconds))) {
+			char *rest;
+			unsigned long s = strtoul(seconds, &rest, 10);
+			if (*rest != '\0' || seconds[0] < '0' || seconds[0] > '9' || s < 1 || s > PICO4_STATION_PAIR_MAX_S) {
+				return false;
+			}
+			out->seconds = (unsigned)s;
+		}
+	}
+	return !next_word(&p, end, extra, sizeof(extra)) && p == end;
+}
+
+struct pico4_station_control
+{
+	int listen_fd, client_fd;
+	struct pico4_station_ops ops;
+	struct sockaddr_un addr;
+	int64_t accepted_ms;
+	//! A pairing in progress: the hand, its connects when it started, when it ends.
+	bool pairing;
+	enum pico4_station_hand hand;
+	uint32_t connects;
+	int64_t deadline_ms;
+};
+
+static const char *
+hand_name(enum pico4_station_hand hand)
+{
+	return hand == PICO4_STATION_HAND_LEFT ? "left" : "right";
+}
+
+int
+pico4_station_control_open(struct pico4_station_control **out, const char *path, struct pico4_station_ops ops)
+{
+	struct pico4_station_control *c = calloc(1, sizeof(*c));
+	if (c == NULL) {
+		return -ENOMEM;
+	}
+	c->addr.sun_family = AF_UNIX;
+	const char *dir = getenv("XDG_RUNTIME_DIR");
+	int n;
+	if (path != NULL) {
+		n = snprintf(c->addr.sun_path, sizeof(c->addr.sun_path), "%s", path);
+	} else if (dir != NULL && dir[0] == '/') {
+		n = snprintf(c->addr.sun_path, sizeof(c->addr.sun_path), "%s/%s", dir, PICO4_STATION_CONTROL_NAME);
+	} else {
+		n = snprintf(c->addr.sun_path, sizeof(c->addr.sun_path), "/run/user/%u/%s", (unsigned)getuid(),
+		             PICO4_STATION_CONTROL_NAME);
+	}
+	if (n < 0 || (size_t)n >= sizeof(c->addr.sun_path)) {
+		free(c);
+		return -ENAMETOOLONG;
+	}
+	c->ops = ops;
+	c->client_fd = -1;
+	c->listen_fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+	if (c->listen_fd < 0) {
+		int r = -errno;
+		free(c);
+		return r;
+	}
+	// A runtime that ended without closing (killed) leaves its socket behind.
+	unlink(c->addr.sun_path);
+	if (bind(c->listen_fd, (const struct sockaddr *)&c->addr, sizeof(c->addr)) < 0 ||
+	    chmod(c->addr.sun_path, 0600) < 0 || listen(c->listen_fd, 2) < 0) {
+		int r = -errno;
+		close(c->listen_fd);
+		unlink(c->addr.sun_path);
+		free(c);
+		return r;
+	}
+	*out = c;
+	return 0;
+}
+
+static void
+hang_up(struct pico4_station_control *c)
+{
+	if (c->client_fd >= 0) {
+		close(c->client_fd);
+	}
+	c->client_fd = -1;
+	c->pairing = false;
+}
+
+//! Send @p line to the client and copy it into the log.
+static size_t
+answer(struct pico4_station_control *c, const char *line, char *log, size_t size)
+{
+	(void)send(c->client_fd, line, strlen(line), MSG_NOSIGNAL | MSG_DONTWAIT);
+	return (size_t)snprintf(log, size, "%s", line);
+}
+
+static const char *
+result_word(int r, const char *done)
+{
+	return r == 0 ? done : r == -EIO ? "refused" : r == -ETIMEDOUT ? "noreply" : "error";
+}
+
+//! A pairing in progress: has the controller connected, has the time run out, has the client gone?
+static size_t
+follow_pairing(struct pico4_station_control *c, int64_t now_ms, char *log, size_t size)
+{
+	char probe[1];
+	ssize_t n = recv(c->client_fd, probe, sizeof(probe), MSG_DONTWAIT);
+	// A pairing takes no second request: anything but "nothing yet" ends it.
+	bool gone = n >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK);
+	struct pico4_station_controller info;
+	c->ops.get_controller(c->ops.ctx, c->hand, &info);
+	char line[96];
+	if (info.connected && info.connects != c->connects) {
+		snprintf(line, sizeof(line), "paired %s %s", hand_name(c->hand), info.serial);
+	} else if (now_ms >= c->deadline_ms) {
+		snprintf(line, sizeof(line), "timeout %s", hand_name(c->hand));
+	} else if (gone) {
+		snprintf(line, sizeof(line), "cancelled %s", hand_name(c->hand));
+	} else {
+		return 0;
+	}
+	// Also after a connect: the station must not stay open to other controllers.
+	if (c->ops.pairing(c->ops.ctx, PICO4_STATION_PAIR_STOP, c->hand) != 0) {
+		size_t used = strlen(line);
+		snprintf(line + used, sizeof(line) - used, " (pairing not stopped)");
+	}
+	size_t r = gone ? (size_t)snprintf(log, size, "%s", line) : answer(c, line, log, size);
+	hang_up(c);
+	return r;
+}
+
+size_t
+pico4_station_control_step(struct pico4_station_control *c, int64_t now_ms, char *log, size_t size)
+{
+	if (c == NULL) {
+		return 0;
+	}
+	if (c->client_fd < 0) {
+		c->client_fd = accept4(c->listen_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+		if (c->client_fd < 0) {
+			return 0;
+		}
+		c->accepted_ms = now_ms;
+	}
+	if (c->pairing) {
+		return follow_pairing(c, now_ms, log, size);
+	}
+	char text[64];
+	ssize_t n = recv(c->client_fd, text, sizeof(text), MSG_DONTWAIT);
+	if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && now_ms - c->accepted_ms < PICO4_STATION_REQUEST_MS) {
+		return 0;
+	}
+	if (n <= 0) {
+		hang_up(c);
+		return 0;
+	}
+	struct pico4_station_request req;
+	if (!pico4_station_parse_request(text, (size_t)n, &req)) {
+		size_t r = answer(c, "error request", log, size);
+		hang_up(c);
+		return r;
+	}
+	char line[96];
+	if (req.kind == PICO4_STATION_REQUEST_STATUS) {
+		struct pico4_station_controller left, right;
+		c->ops.get_controller(c->ops.ctx, PICO4_STATION_HAND_LEFT, &left);
+		c->ops.get_controller(c->ops.ctx, PICO4_STATION_HAND_RIGHT, &right);
+		snprintf(line, sizeof(line), "left %s%s%s\nright %s%s%s", left.connected ? "connected" : "disconnected",
+		         left.connected ? " " : "", left.connected ? left.serial : "",
+		         right.connected ? "connected" : "disconnected", right.connected ? " " : "",
+		         right.connected ? right.serial : "");
+	} else if (req.kind == PICO4_STATION_REQUEST_UNPAIR) {
+		int r = c->ops.pairing(c->ops.ctx, PICO4_STATION_UNPAIR, req.hand);
+		snprintf(line, sizeof(line), "%s %s", result_word(r, "unpaired"), hand_name(req.hand));
+	} else {
+		struct pico4_station_controller info;
+		c->ops.get_controller(c->ops.ctx, req.hand, &info);
+		int r = c->ops.pairing(c->ops.ctx, PICO4_STATION_PAIR, req.hand);
+		snprintf(line, sizeof(line), "%s %s", result_word(r, "pairing"), hand_name(req.hand));
+		if (r == 0) {
+			c->pairing = true;
+			c->hand = req.hand;
+			c->connects = info.connects;
+			c->deadline_ms = now_ms + (int64_t)req.seconds * 1000;
+			return answer(c, line, log, size);
+		}
+	}
+	size_t r = answer(c, line, log, size);
+	hang_up(c);
+	return r;
+}
+
+void
+pico4_station_control_close(struct pico4_station_control *c)
+{
+	if (c == NULL) {
+		return;
+	}
+	if (c->pairing) {
+		c->ops.pairing(c->ops.ctx, PICO4_STATION_PAIR_STOP, c->hand);
+	}
+	hang_up(c);
+	close(c->listen_fd);
+	unlink(c->addr.sun_path);
+	free(c);
 }

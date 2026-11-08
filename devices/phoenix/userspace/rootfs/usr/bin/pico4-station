@@ -15,6 +15,9 @@ commands (enter pairing, stop pairing, unbond, each with one controller's mask a
 the controller motor, the two read-only controller queries PICO OS sends on every connect (info,
 calibration) and the station-power switch; it has no way to send firmware, bootloader or flash
 commands, and it never touches the boot pin.
+
+While a session runs, its driver owns the station: pair, unpair and status then go to the driver's
+pairing socket (pico4_station.h), which sends the same pairing commands.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import ctypes
 import fcntl
 import json
 import os
+import socket
 import struct
 import sys
 import time
@@ -78,6 +82,11 @@ HAND_MASK = {"left": 0x01, "right": 0x02}
 STATION_CONNECT, STATION_UNBOND = 0x02, 0x05
 PAIRING_ACK_S = 0.5  # the stock service waits the caller's time, at least 20 ms (its test tool: 100 ms)
 UNBOND_ACK_S = 0.5  # at least 300 ms in the stock service
+#: The driver's pairing socket in the session user's runtime directory (pico4_station.h).
+CONTROL_NAME = "pico4-station"
+SESSION_USER = "steamos"
+#: Seconds past a pairing's own time the driver gets to answer, and an unpair's or a status's wait.
+CONTROL_SLACK_S, CONTROL_ANSWER_S = 5.0, 3.0
 COMMANDS = (
     CMD_VERSION,
     CMD_CAMERA,
@@ -222,6 +231,10 @@ def valid_reply(buf: bytes) -> bool:
     return len(buf) == FRAME and buf[0] in HEADERS_RECV and crc8(buf[:39]) == buf[39]
 
 
+class StationBusyError(OSError):
+    """A running session's driver owns the station."""
+
+
 class Station:
     """The station on its spidev, owned by this process under the driver's lock."""
 
@@ -234,7 +247,7 @@ class Station:
         except BlockingIOError:
             os.close(self.fd)
             msg = f"{device} is in use (a running Monado or SteamVR session owns the station)"
-            raise OSError(msg) from None
+            raise StationBusyError(msg) from None
         self.seq = 0
         self.log: list[dict] = []
         self.announced = False
@@ -427,6 +440,57 @@ def connect_frame(buf: bytes, hand: str) -> bool:
     )
 
 
+def control_path() -> str:
+    """Return the driver's pairing socket: PICO4_STATION_SOCKET, else in the session user's runtime directory."""
+    chosen = os.environ.get("PICO4_STATION_SOCKET")
+    if chosen:
+        return chosen
+    if os.getuid() == 0:
+        import pwd  # noqa: PLC0415  # Linux only; the host tests import this tool on Windows too
+
+        return f"/run/user/{pwd.getpwnam(SESSION_USER).pw_uid}/{CONTROL_NAME}"
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return f"{runtime}/{CONTROL_NAME}"
+
+
+def control_request(request: str, seconds: float, path: str | None = None) -> list[str]:
+    """Send one request to the driver's pairing socket and return its answers until it hangs up."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    try:
+        sock.settimeout(seconds)
+        sock.connect(path or control_path())
+        sock.send(request.encode())
+        answers: list[str] = []
+        while True:
+            data = sock.recv(256)
+            if not data:
+                return answers
+            answers.append(data.decode(errors="replace"))
+    finally:
+        sock.close()
+
+
+def control_command(args: argparse.Namespace) -> tuple[str, float]:
+    """Return the driver's request for a pair, unpair or status command and how long to wait for it."""
+    if args.command == "pair":
+        return f"pair {args.hand} {round(args.seconds)}", args.seconds + CONTROL_SLACK_S
+    if args.command == "unpair":
+        return f"unpair {args.hand}", CONTROL_ANSWER_S
+    return "status", CONTROL_ANSWER_S
+
+
+def through_driver(args: argparse.Namespace, path: str | None = None) -> int:
+    """Run pair, unpair or status through the running session's driver and print its answers as JSON."""
+    request, seconds = control_command(args)
+    try:
+        answers = control_request(request, seconds, path)
+    except OSError as e:
+        print(f"pico4-station: the driver's pairing socket: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps({"command": args.command, "through": "driver", "answers": answers}, indent=1))
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     """Build the command line: one subcommand per station or controller action."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -469,9 +533,12 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--raw", help="also write the 12 chunks (32 bytes each) to this file")
     p = sub.add_parser("pair", help="pair a controller: hold its Trigger and Home for 6 s meanwhile")
     p.add_argument("hand", choices=("left", "right"))
-    p.add_argument("--seconds", type=float, default=60.0, help="how long the station waits for it")
+    p.add_argument(
+        "--seconds", type=float, default=60.0, help="how long the station waits for it (1-600 through the driver)"
+    )
     p = sub.add_parser("unpair", help="forget a controller; it connects again only after pair")
     p.add_argument("hand", choices=("left", "right"))
+    sub.add_parser("status", help="which controllers are connected (through the running session's driver)")
     return parser
 
 
@@ -500,8 +567,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915 
     """Run one subcommand on the station and print what came back as JSON."""
     args = _parser().parse_args(argv)
 
+    if args.command == "status":
+        return through_driver(args)
     try:
         st = Station()
+    except StationBusyError as e:
+        if args.command in ("pair", "unpair"):
+            return through_driver(args)
+        print(f"pico4-station: {e}", file=sys.stderr)
+        return 1
     except OSError as e:
         print(f"pico4-station: {e}", file=sys.stderr)
         return 1

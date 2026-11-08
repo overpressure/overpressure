@@ -148,6 +148,8 @@ struct pico4_hmd
 	//! Controller radio, NULL if unavailable; its own thread acknowledges frames.
 	struct pico4_station *station;
 	struct os_thread_helper station_oth;
+	//! Pairing while the session runs (pico4-station, the onboarding): served by the station thread.
+	struct pico4_station_control *station_control;
 	struct pico4_controller *controllers[2];
 	uint64_t blemcu_packets;
 	uint64_t blemcu_future; //!< Controller IMU samples stamped after their arrival, dropped.
@@ -759,6 +761,11 @@ station_thread(void *ptr)
 			os_nanosleep(U_TIME_1MS_IN_NS * 100);
 		}
 		handle_connections(h);
+		char line[128];
+		if (pico4_station_control_step(h->station_control, (int64_t)(os_monotonic_get_ns() / U_TIME_1MS_IN_NS), line,
+		                               sizeof(line)) > 0) {
+			P4_INFO(h, "Controller pairing: %s", line);
+		}
 		os_thread_helper_lock(&h->station_oth);
 	}
 	os_thread_helper_unlock(&h->station_oth);
@@ -814,6 +821,13 @@ setup_station(struct pico4_hmd *h)
 		pico4_station_set_camera_hz(h->station, (unsigned)debug_get_num_option_pico4_camera_hz());
 		r = pico4_station_reset(h->station);
 	}
+	if (r == 0) {
+		int c = pico4_station_control_open(&h->station_control, NULL, pico4_station_ops(h->station));
+		if (c < 0) {
+			P4_WARN(h, "Controller pairing socket: %s; pairing needs the session stopped", strerror(-c));
+			h->station_control = NULL;
+		}
+	}
 	if (r == 0 && (os_thread_helper_init(&h->station_oth) != 0 ||
 	               os_thread_helper_start(&h->station_oth, station_thread, h) != 0)) {
 		r = -ENOMEM;
@@ -821,6 +835,8 @@ setup_station(struct pico4_hmd *h)
 	if (r < 0) {
 		P4_ERROR(h, "Controller radio %s: no controllers, no camera sync",
 		         r == -EBUSY ? "in use by another runtime (SteamVR's driver_monado?)" : strerror(-r));
+		pico4_station_control_close(h->station_control);
+		h->station_control = NULL;
 		pico4_station_close(h->station);
 		h->station = NULL;
 	}
@@ -872,6 +888,8 @@ pico4_hmd_destroy(struct xrt_device *xdev)
 	if (h->station_oth.initialized) {
 		os_thread_helper_destroy(&h->station_oth);
 	}
+	// A pairing still running stops before the station sleeps.
+	pico4_station_control_close(h->station_control);
 	// The controllers let go of the station (haptics) before it closes.
 	for (int i = 0; i < 2; i++) {
 		if (h->controllers[i] != NULL) {

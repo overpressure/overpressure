@@ -14,10 +14,11 @@
 # (pico4-openxr-display) through the OpenXR loader; pico4-cam checks the
 # tracking cameras on their own; pico4-ctrack-replay runs the controller LED
 # tracker over pico4-cam's recordings; pico4-roomview hands the forward cameras to
-# SteamVR's room view (docs/xr.md#passthrough).
+# SteamVR's room view (docs/xr.md#passthrough); pico4-lens-panel and pico4-onboarding are SteamVR
+# overlays (the lens distance, the first run's introduction).
 pkgname=pico4-monado
 pkgver=25.1.0
-pkgrel=14
+pkgrel=15
 arch=(aarch64)
 url="https://monado.freedesktop.org"
 license=(BSL-1.0)
@@ -39,6 +40,7 @@ source=("monado::git+https://gitlab.freedesktop.org/monado/monado.git#commit=$_c
         pico4_cam.h pico4_cam.c pico4_station.h pico4_station.c pico4_tcam.h pico4_tcam.c
         pico4_passthrough.h pico4_passthrough.c pico4_roomview.h pico4-roomview.c
         pico4_lens_panel.h pico4-lens-panel.cpp test_pico4_lens_panel.c
+        pico4_overlay.hpp pico4_onboarding.h pico4-onboarding.cpp test_pico4_onboarding.c
         pico4_slam.h pico4_slam.c pico4_slam_feed.h pico4_blemcu.h pico4_blemcu.c pico4_controller.h pico4_controller.c
         pico4_fusion.h pico4_fusion.c test_pico4_tracking.c test_pico4_fusion.c
         pico4-openxr-pose.c pico4-openxr-display.c pico4-cam.c
@@ -58,6 +60,7 @@ sha256sums=(SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
             SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP SKIP
+            SKIP SKIP SKIP SKIP
             SKIP
             SKIP
             SKIP
@@ -123,6 +126,8 @@ build() {
   ./test_pico4_fusion
   ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_lens_panel test_pico4_lens_panel.c -lm
   ./test_pico4_lens_panel
+  ${CC:-cc} -std=gnu11 -O1 -Wall -Wextra -Werror -o test_pico4_onboarding test_pico4_onboarding.c
+  ./test_pico4_onboarding
   # The controller tracker (C++17, Eigen), compiled once for its tests and the replay tool.
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -c pico4_tcam.c pico4_blemcu.c
   local ctrack=(model solve init blob imu engine runner calib) objs=(pico4_tcam.o) m t
@@ -164,6 +169,8 @@ build() {
   ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o pico4-roomview pico4-roomview.c -lvulkan -ldl -lm
   ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \
     -o pico4-lens-panel pico4-lens-panel.cpp -lcairo -lvulkan -ldl -lm
+  ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -isystem monado/src/external/openvr_includes \
+    -o pico4-onboarding pico4-onboarding.cpp -lcairo -lvulkan -ldl -lm
   ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -isystem /usr/include/eigen3 -o pico4-ctrack-replay \
     pico4-ctrack-replay.cpp "${objs[@]}" pico4_blemcu.o -lpthread -lm
 }
@@ -188,7 +195,7 @@ package() {
   # remapping of other controllers' bindings is SteamVR's own file.
   install -Dm644 pico4-controller-profile.json "$input/pico4_controller_profile.json"
   ln -s /opt/steamvr/resources/input/default_pico_controller_remapping.json "$input/default_pico_controller_remapping.json"
-  install -Dm755 pico4-lens-panel -t "$pkgdir/usr/bin"
+  install -Dm755 pico4-lens-panel pico4-onboarding -t "$pkgdir/usr/bin"
   install -Dm755 pico4-openxr-pose pico4-openxr-display pico4-cam pico4-ctrack-replay pico4-roomview -t "$pkgdir/usr/bin"
   # The loader's system-wide active runtime.
   install -dm755 "$pkgdir/etc/openxr/1"

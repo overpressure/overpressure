@@ -265,6 +265,75 @@ class PairingTests(unittest.TestCase):
         self.assertIsNone(FakeStation({}).unpair("left"))
 
 
+class DriverSocketTests(unittest.TestCase):
+    """While a session runs, pair, unpair and status go to the driver's pairing socket (pico4_station.h)."""
+
+    class Sock:
+        """A SOCK_SEQPACKET client that answers from a script."""
+
+        def __init__(self, answers: list[bytes]):
+            self.answers, self.sent, self.connected, self.timeout = answers, [], None, None
+
+        def settimeout(self, seconds: float) -> None:
+            self.timeout = seconds
+
+        def connect(self, path: str) -> None:
+            self.connected = path
+
+        def send(self, data: bytes) -> int:
+            self.sent.append(data)
+            return len(data)
+
+        def recv(self, size: int) -> bytes:  # noqa: ARG002  # socket.recv's signature
+            return self.answers.pop(0) if self.answers else b""
+
+        def close(self) -> None:
+            pass
+
+    def fake_socket(self, answers: list[bytes]):
+        sock = self.Sock(answers)
+        module = types.SimpleNamespace(AF_UNIX=1, SOCK_SEQPACKET=5, socket=lambda *_args: sock)
+        return sock, mock.patch.object(station, "socket", module)
+
+    def test_requests_and_waits(self):
+        parser = station._parser()  # noqa: SLF001  # the tool's own command line
+        cases = {
+            ("pair", "left"): ("pair left 60", 65.0),
+            ("pair", "right", "--seconds", "90"): ("pair right 90", 95.0),
+            ("unpair", "left"): ("unpair left", station.CONTROL_ANSWER_S),
+            ("status",): ("status", station.CONTROL_ANSWER_S),
+        }
+        for argv, expected in cases.items():
+            self.assertEqual(station.control_command(parser.parse_args(list(argv))), expected)
+
+    def test_answers_until_the_driver_hangs_up(self):
+        sock, patch = self.fake_socket([b"pairing left", b"paired left TESTSERIAL0000001"])
+        with patch:
+            answers = station.control_request("pair left 60", 65.0, "/run/user/1000/pico4-station")
+        self.assertEqual(answers, ["pairing left", "paired left TESTSERIAL0000001"])
+        self.assertEqual(sock.sent, [b"pair left 60"])
+        self.assertEqual((sock.connected, sock.timeout), ("/run/user/1000/pico4-station", 65.0))
+
+    def test_a_busy_station_goes_through_the_driver(self):
+        busy = station.StationBusyError("in use")
+        with (
+            mock.patch.object(station, "Station", side_effect=busy),
+            mock.patch.object(station, "control_request", return_value=["unpaired right"]) as request,
+            mock.patch("builtins.print") as printed,
+        ):
+            self.assertEqual(station.main(["unpair", "right"]), 0)
+            request.assert_called_once_with("unpair right", station.CONTROL_ANSWER_S, None)
+            self.assertIn('"through": "driver"', printed.call_args[0][0])
+            # Status never opens the station; other commands do not go through the driver.
+            self.assertEqual(station.main(["status"]), 0)
+            self.assertEqual(station.Station.call_count, 1)
+            self.assertEqual(station.main(["version"]), 1)
+
+    def test_the_socket_path(self):
+        with mock.patch.dict(station.os.environ, {"PICO4_STATION_SOCKET": "/run/test/pico4-station"}):
+            self.assertEqual(station.control_path(), "/run/test/pico4-station")
+
+
 class PlainSpidevTests(unittest.TestCase):
     """A mainline kernel: full-duplex transfers instead of the vendor spidev's reads and writes."""
 
