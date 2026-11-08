@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -131,6 +133,29 @@ class LintScopeTests(unittest.TestCase):
         text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
         self.assertEqual(self.listed(text, "tool.ruff"), programs)
         self.assertEqual(self.listed(text, "tool.ty.src"), programs)
+
+    def test_python_files_are_executable_exactly_when_they_have_a_shebang(self):
+        # ruff's EXE001/EXE002 on Linux; Windows checkouts can't see the bit, so Git's index decides here.
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("no git")
+        out = subprocess.run(  # noqa: S603  # git from PATH with fixed arguments
+            [git, "ls-files", "-s", "-z"], cwd=REPO, capture_output=True, check=True
+        ).stdout
+        wrong = []
+        for entry in out.split(b"\0"):
+            if not entry:
+                continue
+            meta, path = entry.split(b"\t", 1)
+            name = path.decode()
+            file = REPO / name
+            if not (name.endswith(".py") or self.python_program(file)) or not file.is_file():
+                continue
+            with file.open("rb") as handle:
+                shebang = handle.readline(128).startswith(b"#!")
+            if shebang != meta.startswith(b"100755"):
+                wrong.append(name)
+        self.assertEqual(wrong, [])
 
 
 if __name__ == "__main__":
