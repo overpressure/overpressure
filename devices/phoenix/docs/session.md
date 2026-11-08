@@ -199,10 +199,22 @@ session:
 
   The Frame's guided tour does not start here. It follows the OOBE on the Frame and covers
   controller pairing, the welcome and health page, the playspace, the laser mouse, the system
-  button and pairing with a PC. In VR the client starts it only on device type 5001 (Steam Frame),
-  and here it reports 541 from the device tree. It still sets its `ON_FRAME` flag, from
-  `-deckard`. Replayed from the quick access menu's help, the tour shows the generic SteamOS pages.
-  The tour's done-mark is the account's `Deck_GuidedTourVersionSeen` in `localconfig.vdf`.
+  button and pairing with a PC. In VR the client starts it only on device type 5001 (Steam Frame).
+  It still sets its `ON_FRAME` flag, from `-deckard`. Replayed from the quick access menu's help,
+  the tour shows the generic SteamOS pages. The tour's done-mark is the account's
+  `Deck_GuidedTourVersionSeen` in `localconfig.vdf`.
+- **Device type.** `steamclient.so` sets the device type once per start from the device tree's
+  first `compatible` entry and its `model`:
+  - 5001 (Steam Frame) when the entry contains `qcom` and the model contains `SM8650`. The
+    Frame's trees in Valve's kernel say `qcom,sm8650-dv1` and `SM8650 MP rev1 4slam 2et`.
+  - `valve`, `lenovo` and `OEM` entries pick the Steam Deck (544), the Legion Go S (545) and
+    the Steam Machine (546) by their models.
+  - Anything else on SteamOS is 541 (generic SteamOS): the PICO 4's `pico,phoenix` and
+    `PICO 4 (phoenix)` give 541.
+
+  The client sends the type to Steam's servers (the `valve-device-type` header and its device
+  info). The guided tour, the Frame's controller pairing settings, the library's Frame
+  compatibility labels and filters and the hardware names in its texts follow it.
 - **Update.** The bundle is older than the current client of its beta branch
   (`linux_arm64_beta_…`), so the first start downloads about 650 MB, installs it and restarts
   (exit status 42). The update is a one-time cost per client release.
@@ -220,6 +232,12 @@ session:
   any update. A client that fails at once therefore alternates between the bundle, an update
   and five failures. SteamVR's health check does the same after three failed SteamVR launches
   in a row (the count lives in `$XDG_RUNTIME_DIR`, so a reboot clears it).
+- **Launch timeout.** SteamVR's dashboard shows a spinner until the client's VR interface sets
+  its overlay's ready flag. After 120 s it replaces the spinner with "There was an issue
+  launching Steam" and a single button, "Restart Steam Frame", which restarts the headset
+  (`VRHTML.SystemRestartMachine`). SteamVR names the Frame there on any hardware, and it is its
+  only text that does. The client's own texts name the hardware by its device type, and on 541
+  they use their wording for unknown hardware.
 - **Games.** For Windows games the client downloads Proton 11 (ARM64), which runs the game
   inside Steam Linux Runtime 4 for arm64. Its container (pressure-vessel) is set up by
   its own bubblewrap in the kernel's user namespaces. Beat Saber starts this way: the game runs under Proton, its OpenXR
