@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""PICO OS's shutdown at a low battery (docs/cooling.md#hardware-limits)."""
+"""PICO OS's shutdown at a low or hot battery (docs/cooling.md#hardware-limits)."""
 
 from __future__ import annotations
 
@@ -30,6 +30,33 @@ class ValuesTests(unittest.TestCase):
     def test_the_stock_values(self):
         # ExtBatteryServiceImpl: batteryLevel < 1, MIN_BATTERY_LEVEL_SHUTDOWN, postDelayed 60000.
         self.assertEqual((tool.EMPTY, tool.SCREEN_OFF_LEVEL, tool.SCREEN_OFF_DELAY), (1, 4, 60.0))
+        # checkBatteryStatus's notice and shutdownIfOverTempLocked's limit, in tenths of °C.
+        self.assertEqual((tool.HOT_NOTICE, tool.HOT_SHUTDOWN), (580, 590))
+
+
+class HotTests(unittest.TestCase):
+    def test_powers_off_above_59_degrees(self):
+        guard = tool.Guard()
+        for temp in (250, 580, 589, 590):
+            self.assertIsNone(guard.step(80, DISCHARGING, screen_on=True, now=0.0, temp=temp))
+        self.assertEqual(guard.step(80, DISCHARGING, screen_on=True, now=0.0, temp=591), "battery at 59.1 °C")
+
+    def test_also_while_charging(self):
+        reason = tool.Guard().step(80, CHARGING, screen_on=True, now=0.0, temp=600)
+        self.assertEqual(reason, "battery at 60.0 °C, charging")
+
+    def test_no_temperature_decides_nothing(self):
+        self.assertIsNone(tool.Guard().step(80, DISCHARGING, screen_on=True, now=0.0, temp=None))
+
+    def test_the_notice_once_from_58_degrees(self):
+        guard = tool.Guard()
+        self.assertIsNone(guard.notice(579))
+        self.assertIn("58.0 °C", guard.notice(580) or "")
+        self.assertIsNone(guard.notice(585))
+        self.assertIsNone(guard.notice(None))
+        # Cooled below it and back: a new notice.
+        self.assertIsNone(guard.notice(570))
+        self.assertIn("58.2 °C", guard.notice(582) or "")
 
 
 class ScreenOnTests(unittest.TestCase):
@@ -100,6 +127,7 @@ class CheckTests(unittest.TestCase):
             tool.CAPACITY: values.get("capacity"),
             tool.STATUS: values.get("status"),
             tool.BACKLIGHT: values.get("backlight"),
+            tool.TEMP: values.get("temp"),
         }
         return files.get
 
@@ -120,6 +148,21 @@ class CheckTests(unittest.TestCase):
         guard = tool.Guard()
         self.assertIsNone(tool.check(guard, 0.0, self.reader(capacity="3", status=DISCHARGING)))
         self.assertTrue(guard.screen_on)
+
+    def test_the_temperature(self):
+        said: list[str] = []
+        guard = tool.Guard()
+        reader = self.reader(capacity="80", status=CHARGING, backlight="0", temp="583")
+        self.assertIsNone(tool.check(guard, 0.0, reader, say=said.append))
+        self.assertEqual(said, ["battery-guard: battery at 58.3 °C: PICO OS powers off above 59.0 °C"])
+        reader = self.reader(capacity="80", status=CHARGING, backlight="0", temp="592")
+        self.assertEqual(tool.check(guard, 5.0, reader, say=said.append), "battery at 59.2 °C, charging")
+        self.assertEqual(len(said), 1)
+
+    def test_a_missing_or_odd_temperature_is_none(self):
+        for text in (None, "", "x"):
+            self.assertIsNone(tool.temperature(text))
+        self.assertEqual(tool.temperature("-35"), -35)
 
     def test_an_unreadable_battery_decides_nothing(self):
         for values in ({}, {"status": DISCHARGING}, {"capacity": "0"}, {"capacity": "", "status": DISCHARGING}):

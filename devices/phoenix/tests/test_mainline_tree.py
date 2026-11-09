@@ -40,8 +40,30 @@ class BatteryTests(unittest.TestCase):
         compatible = search(r'\.compatible = "([^"]+)"', text(self.DRIVER)).group(1)
         node = search(r"battery@4000 \{(.*?)\};", tree(), re.DOTALL).group(1)
         self.assertIn(f'compatible = "{compatible}";', node)
-        # The fuel gauge's SOC block, the charger and the USB input, in the driver's order.
-        self.assertIn("reg = <0x4000>, <0x1000>, <0x1300>;", node)
+        # The fuel gauge's SOC block, the charger, the USB input and the gauge's memory interface, in
+        # the driver's order.
+        self.assertIn("reg = <0x4000>, <0x1000>, <0x1300>, <0x4300>;", node)
+
+    def test_the_temperature_window_is_the_stock_one(self):
+        # PICO's battery profiles in stock board overlay 7: <cold hot> ADC codes, lower is hotter.
+        node = search(r"battery@4000 \{(.*?)\};", tree(), re.DOTALL).group(1)
+        self.assertIn("qcom,jeita-hard-thresholds = <0x58cd 0x1c22>;", node)
+        self.assertIn("qcom,jeita-soft-thresholds = <0x4ccc 0x20b8>;", node)
+        source = text(self.DRIVER)
+        self.assertIn('pico4_write_jeita(b, "qcom,jeita-hard-thresholds", CHGR_JEITA_HARD);', source)
+        self.assertIn('pico4_write_jeita(b, "qcom,jeita-soft-thresholds", CHGR_JEITA_SOFT);', source)
+        # smb5-reg.h: CHGR_JEITA_THRESHOLD_BASE_REG(i) at 0x94 + 4 i, soft 0 and hard 1.
+        self.assertRegex(source, r"#define CHGR_JEITA_SOFT\s+0x94\n")
+        self.assertRegex(source, r"#define CHGR_JEITA_HARD\s+0x98\n")
+
+    def test_the_temperature_as_the_stock_gauge_reads_it(self):
+        # Word 328 through the direct window: partition 300-405 at 0x4800 + 0x20, two bytes a word.
+        source = text(self.DRIVER)
+        self.assertRegex(source, r"#define BATT_TEMP_WORD\s+328\n")
+        self.assertRegex(source, r"#define FG_DMA4_WINDOW\s+0x4820\n")
+        self.assertRegex(source, r"#define FG_DMA4_FIRST_WORD\s+300\n")
+        self.assertIn("sign_extend32(raw, 9) * 100 / 40", source)
+        self.assertIn("POWER_SUPPLY_PROP_TEMP,", source)
 
     def test_patch_builds_the_drivers_object(self):
         patch = text(KERNEL / "patches/0008-power-supply-build-the-pico4-pm8150b-battery-driver.patch")

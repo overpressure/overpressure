@@ -210,12 +210,12 @@ taken from images and sources; none of these limits has been triggered on the he
 | PMIC overheat | `pm8150*_tz` 95, 115, 145 °C | `pm8150` and `pm8150b` zones 95, 115, `critical` 145 °C (mainline) | read |
 | Overheating notice | hottest mean 95.1 °C for 2 minutes (`libpxrfanservice.so`) | journal warning at the same point | host tests |
 | Fan stopped or MCU silent | no reaction | `pico4-fan`: power-off at the same point; throttling before it | host tests |
-| Battery overheat | above 59.0 °C shutdown, from 58.0 °C notice (`BatteryService.shutdownIfOverTempLocked`, `ExtBatteryServiceImpl.checkBatteryStatus`; `persist.pxr.shutdown_overtemp`, default 1) | none: the driver does not read the battery's temperature | open |
+| Battery overheat | above 59.0 °C shutdown, from 58.0 °C notice (`BatteryService.shutdownIfOverTempLocked`, `ExtBatteryServiceImpl.checkBatteryStatus`; `persist.pxr.shutdown_overtemp`, default 1) | `pico4-battery-guard`: power-off above 59.0 °C, also while charging, and a journal notice from 58.0 °C, on the driver's `temp` (the stock gauge driver's reading, every 30 s) | host tests; the temperature read on the headset |
 | Empty battery | below 1 % shutdown, also while charging (`ExtBatteryServiceImpl.shouldShutdownLocked`; `persist.pxr.shutdown_lowpower`, default 1) | `pico4-battery-guard`: power-off below 1 %, also while charging | host tests |
 | Low battery, screen off | not charging, at 4 % or less: 60 s after the screen went off, or once the level fell since (`MIN_BATTERY_LEVEL_SHUTDOWN`, `checkLowPowerByScreenState`) | `pico4-battery-guard`, with the backlight's `bl_power` as the screen; not while the headset sleeps | host tests |
-| Float voltage | 4.40 V from 0 to 45 °C, 4.20 V from 45.1 to 50 °C (`qcom,max-voltage-uv`, `qcom,jeita-fv-ranges`) | not configured: the charger runs as the boot loader and the PMIC leave it | open |
-| Charge current | 2.65 A from 0 to 10 °C, 3.71 A to 20 °C, 5.3 A to 50 °C (`qcom,jeita-fcc-ranges`, `qcom,fastchg-current-ma`) | not configured | open |
-| Charging temperature window | software JEITA over those ranges, 0 to 50 °C (`qcom,sw-jeita-enable`); ADC codes hard `0x58cd`/`0x1c22`, soft `0x4ccc`/`0x20b8`, hysteresis `0x48d4`/`0x23c0`; notices at 45, 50 and 0 °C | not configured | open |
+| Float voltage | 4.40 V from 0 to 45 °C, 4.20 V from 45.1 to 50 °C (`qcom,max-voltage-uv`, `qcom,jeita-fv-ranges`) | the boot loader's 4.35 V (`0x1070` at 0x4b), in the soft zones less the charger's own compensation (`0x1091` at 0x0a, step not known): above PICO OS's 4.20 V between 45 and 50 °C | read on the headset |
+| Charge current | 2.65 A from 0 to 10 °C, 3.71 A to 20 °C, 5.3 A to 50 °C (`qcom,jeita-fcc-ranges`, `qcom,fastchg-current-ma`) | the boot loader's 2.0 A (`0x1061` at 0x28), 1.5 A in the soft zones (`0x1092`, `0x1093` at 0x14, 25 mA steps): below PICO OS's in every range | read on the headset |
+| Charging temperature window | software JEITA over those ranges, 0 to 50 °C (`qcom,sw-jeita-enable`); ADC codes hard `0x58cd`/`0x1c22`, soft `0x4ccc`/`0x20b8`, hysteresis `0x48d4`/`0x23c0`; notices at 45, 50 and 0 °C | the charger's hardware JEITA with the stock hard and soft codes, written by the driver at boot and read back (the boot loader leaves hard `0x581c`/`0x1811` and soft `0x45e2`/`0x20c4`, a hot cut-off about 5 °C higher); its soft-zone compensation on as the boot loader leaves it (`0x1090` at 0xdb); no hysteresis switch, no notices; the battery's health shows the zone | read back on the headset |
 | Charger's own temperature | 80.0 °C (`qcom,charger-temp-max`, `qcom,smb-temp-max`) | not configured | open |
 | Charging end | ends at 200 mA, recharges at 98 % (`qcom,chg-term-current-ma`, `qcom,auto-recharge-soc`) | not configured | open |
 | Battery current and voltage limiter | zones at 4.5 and 5.1 A, 2.9, 2.8 and 2.6 V (`pm8150b-ibat-*`, `pm8150b-vbat-*`), 3.0, 2.75 and 2.5 V (`pm8150l-vph-*`); `limits-dcvs` nodes | no nodes in the tree | read |
@@ -229,8 +229,9 @@ power key is only the key. UPower reads the battery when something activates it 
 enabled): its configuration has `PercentageAction=2` and `CriticalPowerAction=HybridSleep`, with
 Hibernate and PowerOff as its fallbacks where those are not possible.
 
-[`battery-guard`](../userspace/rootfs/usr/libexec/pico4/battery-guard) reads the driver's `capacity`
-and `status` every 5 s and takes PICO OS's decision. Below 1 % it powers off whatever `status` says:
+[`battery-guard`](../userspace/rootfs/usr/libexec/pico4/battery-guard) reads the driver's `capacity`,
+`status` and `temp` every 5 s and takes PICO OS's decision; the driver renews `temp` every 30 s, and
+without a reading the temperature decides nothing. Below 1 % it powers off whatever `status` says:
 on a port too weak for the load, `status` says `Charging` while the battery drains
 ([userspace.md](userspace.md#adaptations-in-the-image)). Powered off with the cable in, the headset
 starts in charger mode and charges there.
@@ -260,10 +261,11 @@ PICO OS is read from the images, not checked with `getprop`.
 
 ### Open work
 
-- The charger's registers on the headset: float voltage `0x1070`, charge current `0x1061` and JEITA
-  enable `0x1090` (offsets as in the kernel's `qcom_smbx.c`), and `vbat_sns` at a full battery. Until
-  then nothing shows that charging stays within 4.40 V and the temperature window.
-- The battery's temperature in the driver, for the shutdown above 59.0 °C.
+- The float voltage between 45 and 50 °C: PICO OS charges to 4.20 V there, the boot loader's
+  4.35 V less the charger's compensation is more.
+- `vbat_sns` at a full battery, against the 4.35 V float voltage.
+- No limit has been triggered: the shutdown above 59.0 °C and the charger's zones are checked by
+  host tests and register readback, not with a hot battery.
 - A wake for a low battery during sleep.
 
 ## Build

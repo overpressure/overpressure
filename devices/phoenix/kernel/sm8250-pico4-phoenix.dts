@@ -1601,14 +1601,19 @@
 };
 
 /*
- * The battery: PM8150B's fuel gauge (its battery-SOC block) and charger with its USB input. They run
- * as PICO's boot loader set them up; the driver reports the level and the charger's state.
+ * The battery: PM8150B's fuel gauge (its battery-SOC block and memory interface) and charger with its
+ * USB input. They run as PICO's boot loader set them up, except the charger's temperature window,
+ * which the driver sets to the stock thresholds; it reports the level, the battery's temperature and
+ * the charger's state.
  */
 &spmi_bus {
 	pmic@2 {
 		battery@4000 {
 			compatible = "pico,phoenix-pm8150b-battery";
-			reg = <0x4000>, <0x1000>, <0x1300>;
+			reg = <0x4000>, <0x1000>, <0x1300>, <0x4300>;
+			/* PICO's battery profiles (stock board overlay 7): <cold hot> ADC codes. */
+			qcom,jeita-hard-thresholds = <0x58cd 0x1c22>;
+			qcom,jeita-soft-thresholds = <0x4ccc 0x20b8>;
 		};
 	};
 };
