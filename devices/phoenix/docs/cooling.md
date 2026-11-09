@@ -216,8 +216,8 @@ taken from images and sources; none of these limits has been triggered on the he
 | Float voltage | 4.40 V from 0 to 45 °C, 4.20 V from 45.1 to 50 °C (`qcom,max-voltage-uv`, `qcom,jeita-fv-ranges`) | the stock driver's vote, the lowest of a ceiling, the temperature's range and the soft zone's voltage, set by the driver every 30 s from the battery's temperature: 4.35 V, the boot loader's (`pico,float-voltage-max-uv`, below the profile's 4.40 V), and 4.20 V from 46.1 °C (45.1 °C and the stock 1 °C hysteresis, back at 44.0 °C) and in the charger's warm zone | host tests on a fake PMIC; on the headset 4.35 V at 24 °C, and `vbat_sns` 4.29 to 4.36 V at 100 % while charging, the session's load running |
 | Charge current | 2.65 A from 0 to 10 °C, 3.71 A to 20 °C, 5.3 A to 50 °C (`qcom,jeita-fcc-ranges`, `qcom,fastchg-current-ma`) | the boot loader's 2.0 A (`0x1061` at 0x28) at every temperature: below PICO OS's in every range | read on the headset |
 | Charging temperature window | software JEITA over those ranges, 0 to 50 °C (`qcom,sw-jeita-enable`); ADC codes hard `0x58cd`/`0x1c22`, soft `0x4ccc`/`0x20b8`, hysteresis `0x48d4`/`0x23c0`; notices at 45, 50 and 0 °C | the stock hard and soft codes, written by the driver at boot and read back (the boot loader leaves hard `0x581c`/`0x1811` and soft `0x45e2`/`0x20c4`, a hot cut-off about 5 °C higher); the charger's own soft-zone compensation off, as the stock driver turns it off (`0x1090` 0xdb to 0xd0); in a soft zone the stock driver's handling: charge inhibit on, the window widened to the hysteresis codes, the zone's voltage; outside 0 to 50 °C the charger stops; no notices; the battery's health shows the zone | host tests on a fake PMIC; read back on the headset |
-| Charger's own temperature | 80.0 °C (`qcom,charger-temp-max`, `qcom,smb-temp-max`) | not configured | open |
-| Charging end | ends at 200 mA, recharges at 98 % (`qcom,chg-term-current-ma`, `qcom,auto-recharge-soc`) | not configured | open |
+| Charger's own temperature | 80.0 °C (`qcom,charger-temp-max`, `qcom,smb-temp-max`): on PM8150B the stock driver only reports these, writing no register; `smb-temp-max` goes to the SMB1390 charge pump, disabled in the stock tree. The charger's die regulation is the hardware's own | the same: the hardware's own regulation, nothing written | read |
+| Charging end | ends by the ADC's charge current at 200 mA, judged on a count of samples (`qcom,chg-term-src` 1, `qcom,chg-term-current-ma` −200); recharges by the state of charge below 98 % on one sample (`qcom,auto-recharge-soc`); the fast charge's safety timer at 768 minutes; after a termination at 100 % a workaround suspends the input while the gauge's charge counter overshoots (`CHG_TERMINATION_WA`) | the driver writes the stock termination, recharge and timer at boot and reads them back (the boot loader leaves −100 mA, a recharge by voltage and 384 minutes); the termination workaround does not run | host tests on a fake PMIC; read back on the headset |
 | Battery current and voltage limiter | zones at 4.5 and 5.1 A, 2.9, 2.8 and 2.6 V (`pm8150b-ibat-*`, `pm8150b-vbat-*`), 3.0, 2.75 and 2.5 V (`pm8150l-vph-*`); `limits-dcvs` nodes | no nodes in the tree | read |
 | Speaker protection | off: `persist.vendor.audio.speaker.prot.enable=false` | off | read |
 | Speaker volume cap | none | none | read |
@@ -261,8 +261,10 @@ PICO OS is read from the images, not checked with `getprop`.
 
 ### Open work
 
-- No limit has been triggered: the shutdown above 59.0 °C and the charger's zones are checked by
-  host tests and register readback, not with a hot battery.
+- No limit has been triggered: the shutdown above 59.0 °C, the charger's zones and the charge's end
+  are checked by host tests and register readback, not with a hot or a full battery.
+- The stock driver's termination workaround (input suspended while the gauge's charge counter
+  overshoots after a termination at 100 %) does not run.
 - A wake for a low battery during sleep.
 
 ## Build

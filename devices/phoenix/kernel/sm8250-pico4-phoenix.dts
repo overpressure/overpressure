@@ -1624,6 +1624,13 @@
 			qcom,jeita-soft-fv-uv = <4400000 4200000>;
 			/* The ceiling: the boot loader's float voltage, below the profile's 4.40 V. */
 			pico,float-voltage-max-uv = <4350000>;
+			/*
+			 * The end of a charge (the stock charger node): termination by the ADC at
+			 * 200 mA (negative while charging), recharge below 98 %.
+			 */
+			qcom,chg-term-src = <1>;
+			qcom,chg-term-current-ma = <(-200)>;
+			qcom,auto-recharge-soc = <98>;
 		};
 	};
 };

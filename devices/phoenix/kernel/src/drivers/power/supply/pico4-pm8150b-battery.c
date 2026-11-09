@@ -7,7 +7,8 @@
  * boot loader configures them), except for what the stock kernel does about the battery's
  * temperature: the charger's temperature window, which the boot loader leaves wider, and the float
  * voltage by temperature (the stock charger driver's software JEITA and its soft-zone handling),
- * all from the device tree. The charge current stays the boot loader's, below the stock one.
+ * all from the device tree, and the end of a charge (termination current, recharge, safety timer).
+ * The charge current stays the boot loader's, below the stock one.
  */
 #include <linux/bitfield.h>
 #include <linux/bitops.h>
@@ -67,6 +68,27 @@ enum chgr_state {
 #define FV_STEP_UV			10000
 #define CHGR_JEITA_EN_CFG		0x90
 #define JEITA_EN_COMPENSATION		GENMASK(3, 0)
+
+/*
+ * Charger block: the end of a charge as the stock driver sets it. Termination by the ADC's charge
+ * current, its upper threshold signed and most significant byte first, 32767 for 10 A, judged on a
+ * count of samples; recharge by the gauge's state of charge (0-255), on one sample; the fast
+ * charge's safety timer.
+ */
+#define CHGR_RECHG			GENMASK(2, 1)
+#define RECHG_BY_VBAT			BIT(2)
+#define RECHG_BY_SOC			GENMASK(2, 1)
+#define CHGR_ADC_ITERM_UP_THD		0x67
+#define ITERM_FULL_RAW			32767
+#define ITERM_FULL_MA			10000
+#define CHGR_NO_SAMPLE_TERM_RCHG_CFG	0x6b
+#define RCHG_SAMPLES			GENMASK(3, 2)
+#define CHGR_ADC_TERM_CFG		0x6c
+#define TERM_BY_SAMPLE_COUNT		BIT(0)
+#define CHGR_RCHG_SOC_THRESHOLD		0x7d
+#define CHGR_FAST_CHARGE_SAFETY_TIMER	0xa2
+#define SAFETY_TIMER_768_MIN		0x02
+#define ITERM_SRC_ADC			1
 
 /* The stock software JEITA: up to eight temperature ranges, 1 °C hysteresis between them. */
 #define JEITA_RANGES			8
@@ -296,6 +318,59 @@ static void pico4_jeita_init(struct pico4_battery *b)
 	    pico4_write_checked(b, b->chgr_base + CHGR_JEITA_EN_CFG, JEITA_EN_COMPENSATION, 0))
 		return;
 	b->jeita = true;
+}
+
+/*
+ * The end of a charge as the stock driver sets it up (smb5_init_hw): termination by the ADC's
+ * charge current (qcom,chg-term-src 1, qcom,chg-term-current-ma, negative while charging) judged
+ * on a count of samples, the fast charge's 768-minute safety timer, and recharge by the state of
+ * charge (qcom,auto-recharge-soc) on one sample. The boot loader leaves -100 mA, 384 minutes and a
+ * recharge by voltage. Without the properties its settings stay.
+ */
+static void pico4_charge_end_init(struct pico4_battery *b)
+{
+	struct device_node *np = b->dev->of_node;
+	u32 src, term_u32, soc;
+	u8 want[2], got[2];
+	s32 term_ma, raw;
+	int ret;
+
+	if (!of_property_read_u32(np, "qcom,chg-term-src", &src) && src == ITERM_SRC_ADC &&
+	    !of_property_read_u32(np, "qcom,chg-term-current-ma", &term_u32)) {
+		term_ma = (s32)term_u32;
+		if (term_ma < -ITERM_FULL_MA || term_ma > ITERM_FULL_MA) {
+			dev_err(b->dev, "termination current %d mA out of range\n", term_ma);
+		} else if (!pico4_write_checked(b, b->chgr_base + CHGR_ADC_TERM_CFG, TERM_BY_SAMPLE_COUNT,
+					       TERM_BY_SAMPLE_COUNT)) {
+			/* The stock conversion, truncated towards zero. */
+			raw = (s32)((s64)term_ma * ITERM_FULL_RAW / ITERM_FULL_MA);
+			want[0] = (u16)raw >> 8;
+			want[1] = (u16)raw & 0xff;
+			ret = regmap_bulk_write(b->map, b->chgr_base + CHGR_ADC_ITERM_UP_THD, want, sizeof(want));
+			if (!ret)
+				ret = regmap_bulk_read(b->map, b->chgr_base + CHGR_ADC_ITERM_UP_THD, got, sizeof(got));
+			if (!ret && memcmp(want, got, sizeof(want)))
+				ret = -EIO;
+			if (ret)
+				dev_err(b->dev, "termination current: %d\n", ret);
+			else
+				dev_info(b->dev, "charge ends at %d mA\n", term_ma);
+		}
+	}
+	if (pico4_write_checked(b, b->chgr_base + CHGR_FAST_CHARGE_SAFETY_TIMER, 0xff, SAFETY_TIMER_768_MIN))
+		dev_err(b->dev, "the fast charge's safety timer stays the boot loader's\n");
+	if (of_property_read_u32(np, "qcom,auto-recharge-soc", &soc))
+		return;
+	if (soc > 100) {
+		dev_err(b->dev, "recharge at %u %% out of range\n", soc);
+		return;
+	}
+	/* The stock order: the mode, its threshold, then one sample. */
+	if (!pico4_write_checked(b, b->chgr_base + CHGR_CFG2, CHGR_RECHG, RECHG_BY_SOC) &&
+	    !pico4_write_checked(b, b->chgr_base + CHGR_RCHG_SOC_THRESHOLD, 0xff,
+				 DIV_ROUND_CLOSEST(soc * 255, 100)) &&
+	    !pico4_write_checked(b, b->chgr_base + CHGR_NO_SAMPLE_TERM_RCHG_CFG, RCHG_SAMPLES, 0))
+		dev_info(b->dev, "recharge below %u %%\n", soc);
 }
 
 /*
@@ -596,6 +671,7 @@ static int pico4_battery_probe(struct platform_device *pdev)
 	 * logged; the battery is still reported.
 	 */
 	pico4_jeita_init(b);
+	pico4_charge_end_init(b);
 	if (pico4_memif_init(b))
 		dev_err(dev, "the gauge's memory window: no battery temperature\n");
 

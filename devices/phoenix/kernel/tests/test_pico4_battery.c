@@ -2,8 +2,9 @@
 /*
  * The PICO's battery driver on a fake PM8150B: the stock temperature window, the battery's
  * temperature through the gauge's direct window, and the float voltage by temperature with the
- * stock software JEITA's ranges and soft zones. These act only on a hot or cold battery, which a
- * test on the headset does not reach. The device tree's values are the tree's (stock overlay 7).
+ * stock software JEITA's ranges and soft zones, and the end of a charge. These act only on a hot or
+ * cold or full battery, which a test on the headset does not reach on demand. The device tree's
+ * values are the tree's (stock overlay 7).
  */
 #include "../src/drivers/power/supply/pico4-pm8150b-battery.c"
 
@@ -63,6 +64,9 @@ static struct prop props[] = {
 	  { 0, 100, 4400000, 101, 200, 4400000, 201, 450, 4400000, 451, 500, 4200000 }, 12 },
 	{ "qcom,jeita-soft-fv-uv", { 4400000, 4200000 }, 2 },
 	{ "pico,float-voltage-max-uv", { 4350000 }, 1 },
+	{ "qcom,chg-term-src", { 1 }, 1 },
+	{ "qcom,chg-term-current-ma", { 0xffffff38 }, 1 },
+	{ "qcom,auto-recharge-soc", { 98 }, 1 },
 };
 static const char *missing;	/* a property the test leaves out */
 
@@ -135,7 +139,15 @@ static void boot_loader(void)
 	memset(&pmic, 0, sizeof(pmic));
 	pmic.stuck = UINT_MAX;
 	pmic.regs[0x1051] = 0x2c;
+	pmic.regs[0x1067] = 0xfe;	/* termination at -100 mA */
+	pmic.regs[0x1068] = 0xb9;
+	pmic.regs[0x1069] = 0x00;
+	pmic.regs[0x106a] = 0xa3;
+	pmic.regs[0x106b] = 0x0a;
+	pmic.regs[0x106c] = 0x0a;
 	pmic.regs[0x1070] = 0x4b;
+	pmic.regs[0x107d] = 0xf2;
+	pmic.regs[0x10a2] = 0x01;
 	pmic.regs[0x1090] = 0xdb;
 	memcpy(&pmic.regs[0x1094], window, sizeof(window));
 	pmic.regs[0x4340] = 0x04;
@@ -327,6 +339,45 @@ static void test_without_every_property_the_boot_loader_keeps_it(void)
 	assert(pmic.regs[0x1098] == 0x1c && pmic.regs[0x1099] == 0x22);
 }
 
+static void test_the_charge_ends_as_stock(void)
+{
+	boot_loader();
+	probe();
+	/* -200 mA: -655 (truncated from -655.3), most significant byte first; the low threshold stays. */
+	assert(pmic.regs[0x1067] == 0xfd && pmic.regs[0x1068] == 0x71);
+	assert(pmic.regs[0x1069] == 0x00 && pmic.regs[0x106a] == 0xa3);
+	assert(pmic.regs[0x106c] == 0x0b);		/* by a count of samples */
+	assert(pmic.regs[0x10a2] == SAFETY_TIMER_768_MIN);
+	/* Recharge by the state of charge below 98 % (250 of 255) on one sample; inhibit stays off. */
+	assert((pmic.regs[0x1051] & CHGR_RECHG) == RECHG_BY_SOC && !(pmic.regs[0x1051] & CHARGER_INHIBIT));
+	assert(pmic.regs[0x107d] == 250);
+	assert(pmic.regs[0x106b] == 0x02);
+}
+
+static void test_without_the_properties_the_charge_ends_as_the_boot_loader_left_it(void)
+{
+	static const char *const props_left_out[] = { "qcom,chg-term-src", "qcom,chg-term-current-ma",
+						       "qcom,auto-recharge-soc" };
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(props_left_out); i++) {
+		boot_loader();
+		missing = props_left_out[i];
+		probe();
+		if (i < 2)
+			assert(pmic.regs[0x1067] == 0xfe && pmic.regs[0x1068] == 0xb9 && pmic.regs[0x106c] == 0x0a);
+		else
+			assert((pmic.regs[0x1051] & CHGR_RECHG) == RECHG_BY_VBAT && pmic.regs[0x107d] == 0xf2);
+	}
+	/* A termination current the ADC cannot take is refused, the rest still set. */
+	boot_loader();
+	find("qcom,chg-term-current-ma")->values[0] = (u32)-20000;
+	probe();
+	find("qcom,chg-term-current-ma")->values[0] = 0xffffff38;
+	assert(pmic.regs[0x1067] == 0xfe && pmic.regs[0x106c] == 0x0a);
+	assert(pmic.regs[0x107d] == 250 && pmic.regs[0x10a2] == SAFETY_TIMER_768_MIN);
+}
+
 int main(void)
 {
 	test_probe_writes_the_stock_window_and_turns_compensation_off();
@@ -337,6 +388,8 @@ int main(void)
 	test_the_cool_zone_keeps_the_ceiling();
 	test_a_write_that_does_not_take_is_tried_again();
 	test_without_every_property_the_boot_loader_keeps_it();
+	test_the_charge_ends_as_stock();
+	test_without_the_properties_the_charge_ends_as_the_boot_loader_left_it();
 	printf("test_pico4_battery: passed\n");
 	return 0;
 }

@@ -20,6 +20,7 @@ typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 typedef int32_t s32;
+typedef int64_t s64;
 
 #define BIT(n)			(1U << (n))
 #define GENMASK(h, l)		(((~0U) << (l)) & (~0U >> (31 - (h))))
