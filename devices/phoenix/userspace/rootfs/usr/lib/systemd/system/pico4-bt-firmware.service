@@ -1,11 +1,11 @@
-# PICO OS's bluetooth partition read-only at /mnt/vendor/bt_firmware: the QCA6390's Bluetooth
-# firmware, which the image links to (docs/userspace.md). Before local-fs.target, as persist.
+# The Bluetooth controller set up again with the image's firmware, which the kernel's first setup ran
+# too early for (docs/userspace.md). Before bluetoothd, as the address.
 [Unit]
-Description=PICO 4 Bluetooth firmware partition (read-only)
+Description=PICO 4 Bluetooth controller with its firmware
 DefaultDependencies=no
-After=pico4-storage-ro.service
-Before=local-fs.target
-ConditionPathExists=/dev/block/by-name/bluetooth
+After=local-fs.target
+Before=bluetooth.service pico4-bt-address.service
+ConditionPathExists=/usr/lib/firmware/qca/htbtfw20.tlv
 
 [Service]
 Type=oneshot
@@ -13,4 +13,4 @@ RemainAfterExit=yes
 ExecStart=/usr/libexec/pico4/bt-firmware
 
 [Install]
-WantedBy=local-fs.target
+WantedBy=multi-user.target

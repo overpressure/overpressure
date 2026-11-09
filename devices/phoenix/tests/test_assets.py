@@ -31,6 +31,14 @@ def modem() -> bytes:
     return img.build()
 
 
+def bluetooth() -> bytes:
+    """Return a bluetooth partition with the QCA6390's files and another chip's."""
+    img = FatImage(16)
+    for name in ("htbtfw20.tlv", "htnv20.bin", "hpbtfw10.tlv"):
+        img.file(f"/image/{name}", name.encode())
+    return img.build()
+
+
 def vendor() -> bytes:
     """Return a vendor partition with what the kinds take, and a DSP library none takes."""
     img = Ext4Image(inodes_per_group=64)
@@ -90,7 +98,13 @@ def files(folder: Path) -> list[str]:
 class AssetsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.images = {"modem.bin": modem(), "vendor.img": vendor(), "system.img": system(), "dsp.bin": dsp()}
+        cls.images = {
+            "modem.bin": modem(),
+            "bluetooth.bin": bluetooth(),
+            "vendor.img": vendor(),
+            "system.img": system(),
+            "dsp.bin": dsp(),
+        }
 
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -121,8 +135,16 @@ class AssetsTests(unittest.TestCase):
         out = self.extract("wlan")
         self.assertEqual(
             files(out),
-            ["firmware/qca6390/amss20.bin", "firmware/qca6390/bdwlanq.elf", "firmware/qca6390/m3.bin", "manifest.json"],
+            [
+                "firmware/qca/htbtfw20.tlv",
+                "firmware/qca/htnv20.bin",
+                "firmware/qca6390/amss20.bin",
+                "firmware/qca6390/bdwlanq.elf",
+                "firmware/qca6390/m3.bin",
+                "manifest.json",
+            ],
         )
+        self.assertEqual((out / "firmware/qca/htnv20.bin").read_bytes(), b"htnv20.bin")
 
     def test_audio_takes_only_the_audio_process_libraries(self):
         out = self.extract("audio")
@@ -279,7 +301,7 @@ class WiringTests(unittest.TestCase):
         source = (ROOT / "tooling/assets.py").read_text(encoding="utf-8")
         self.assertNotRegex(source, r"lun\d/|persist\.bin|superimg|backup")
         for kind in assets.KINDS.values():
-            self.assertTrue(set(kind.images) <= {"system.img", "vendor.img", "modem.bin", "dsp.bin"})
+            self.assertTrue(set(kind.images) <= {"system.img", "vendor.img", "modem.bin", "dsp.bin", "bluetooth.bin"})
         self.assertFalse(list((ROOT / "scripts").glob("extract-*.sh")))
 
 

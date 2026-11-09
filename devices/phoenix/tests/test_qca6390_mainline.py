@@ -129,17 +129,21 @@ class WifiTests(unittest.TestCase):
 
 
 class BluetoothTests(unittest.TestCase):
-    def test_firmware_comes_from_the_bluetooth_partition(self):
-        script = text(ROOTFS / "usr/libexec/pico4/bt-firmware")
-        self.assertIn("blockdev --setro", script)
-        self.assertIn("mount -t vfat -o ro,", script)
-        self.assertLess(script.index("blockdev --setro"), script.index("mount -t vfat"))
-        # hci_qca set the controller up before the mount: it probes again with the firmware.
-        self.assertLess(script.index("mount -t vfat"), script.index('echo "$name" > "$driver/unbind"'))
-        self.assertLess(script.index('"$driver/unbind"'), script.index('echo "$name" > "$driver/bind"'))
+    def test_firmware_is_in_the_image_and_the_controller_probes_again(self):
+        # The image carries the files from PICO's public package; the headset's partition is not read.
         build = text(ROOT / "scripts/build-userspace.sh")
-        self.assertIn('ln -sfn "/mnt/vendor/bt_firmware/image/$f" "$T/usr/lib/firmware/qca/$f"', build)
+        self.assertIn('install -m 0644 "$wlan/firmware/qca/$f" "$T/usr/lib/firmware/qca/"', build)
         self.assertIn("for f in htbtfw20.tlv htnv20.bin; do", build)
+        self.assertNotIn("bt_firmware", build)
+        script = text(ROOTFS / "usr/libexec/pico4/bt-firmware")
+        self.assertNotIn("mount -", script)
+        self.assertNotIn("by-name/bluetooth", script)
+        # hci_qca set the controller up before the root was mounted: it probes again, once the files are there.
+        self.assertLess(script.index("/usr/lib/firmware/qca/"), script.index('echo "$name" > "$driver/unbind"'))
+        self.assertLess(script.index('"$driver/unbind"'), script.index('echo "$name" > "$driver/bind"'))
+        unit = text(UNITS / "pico4-bt-firmware.service")
+        self.assertIn("Before=bluetooth.service pico4-bt-address.service", unit)
+        self.assertIn("ConditionPathExists=/usr/lib/firmware/qca/htbtfw20.tlv", unit)
 
     def test_address_is_set_before_bluetoothd(self):
         unit = text(UNITS / "pico4-bt-address.service")

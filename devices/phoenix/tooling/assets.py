@@ -17,7 +17,9 @@ manifest.json with its sources and every file's SHA-256, which scripts/build-use
                      calibration/controllers/led-models.json, aim-to-grip.json, lever-arm.json,
                      read from PICO OS's tracking libraries (system); rendermodels/: SteamVR's
                      models of both controllers (system /system/pre_resource)
-  wlan               firmware/qca6390/amss20.bin, m3.bin, bdwlanq.elf (modem /image/qca6390)
+  wlan               the QCA6390: firmware/qca6390/amss20.bin, m3.bin, bdwlanq.elf, its Wi-Fi
+                     (modem /image/qca6390); firmware/qca/htbtfw20.tlv, htnv20.bin, its Bluetooth
+                     (bluetooth /image)
   audio              firmware/adsp*: the audio DSP and its protection-domain maps (modem);
                      audiopd/: its AVS configuration and the DSP libraries the audio process uses
                      (vendor); calibration/*.acdb: the speaker and handset calibration (vendor)
@@ -64,6 +66,8 @@ AIM_GRIP_LIBRARY = "/system/lib64/libpvrtrackingservice.so"
 LEVER_ARM_LIBRARY = "/system/lib64/libpico_controller_tracking.client.so"
 CONTROLLER_MODELS = "/system/pre_resource/data/misc/user/controller/Neo3Phx"
 WLAN_FIRMWARE = ("amss20.bin", "m3.bin", "bdwlanq.elf")
+#: The QCA6390's Bluetooth firmware and NV data, under the names hci_qca asks for.
+BT_FIRMWARE = ("htbtfw20.tlv", "htnv20.bin")
 #: PICO OS's audio HAL loads its calibration from the WSA8810 MTP database: the global file and
 #: the files of the speaker and handset devices are what the system's two paths use.
 AUDIO_CALIBRATION = tuple(f"MTP_base_Wsa8810_{f}_cal.acdb" for f in ("Global", "Speaker", "Handset"))
@@ -180,13 +184,19 @@ def sensor_data(s: StockFolder, out: Path, log: Log) -> None:
 
 
 def wlan(s: StockFolder, out: Path, log: Log) -> None:
-    """Extract the Wi-Fi (QCA6390, ath11k) firmware and board data; the MAC addresses stay in persist."""
+    """Extract the QCA6390's Wi-Fi (ath11k) and Bluetooth (hci_qca) firmware; the MAC addresses stay in persist."""
     target = out / "firmware/qca6390"
     target.mkdir(parents=True)
     log(">> modem: chip firmware and board data")
     copy_matching(s.fat("modem.bin"), "/image/qca6390", WLAN_FIRMWARE, target)
     for name in WLAN_FIRMWARE:
         _require(target / name, f"qca6390/{name} in the modem partition")
+    bluetooth = out / "firmware/qca"
+    bluetooth.mkdir(parents=True)
+    log(">> bluetooth: Bluetooth firmware and NV data")
+    copy_matching(s.fat("bluetooth.bin"), "/image", BT_FIRMWARE, bluetooth)
+    for name in BT_FIRMWARE:
+        _require(bluetooth / name, f"{name} in the bluetooth partition")
 
 
 def audio(s: StockFolder, out: Path, log: Log) -> None:
@@ -287,7 +297,11 @@ KINDS = {
         },
         sensor_data,
     ),
-    "wlan": Kind(("modem.bin",), {"firmware/qca6390/": "modem /image/qca6390"}, wlan),
+    "wlan": Kind(
+        ("modem.bin", "bluetooth.bin"),
+        {"firmware/qca6390/": "modem /image/qca6390", "firmware/qca/": "bluetooth /image"},
+        wlan,
+    ),
     "audio": Kind(
         ("vendor.img", "modem.bin"),
         {

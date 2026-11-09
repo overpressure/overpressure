@@ -12,6 +12,7 @@ receives:
                            brotli-compressed block images and their transfer lists
   modem.bin                firmware-update/NON-HLOS.bin (FAT): the DSP and Wi-Fi firmware
   dsp.bin                  firmware-update/dspso.bin (ext4): the DSPs' process shells
+  bluetooth.bin            firmware-update/BTFM.bin (FAT): the Bluetooth firmware and NV data
   recovery.img, boot.img   the stock recovery and boot images
   manifest.json            the firmware, the OTA's URL and the sha256 of every file
 
@@ -36,6 +37,7 @@ CATALOG = Path(__file__).with_name("firmware.json")
 COPIED = {
     "modem.bin": "firmware-update/NON-HLOS.bin",
     "dsp.bin": "firmware-update/dspso.bin",
+    "bluetooth.bin": "firmware-update/BTFM.bin",
     "recovery.img": "recovery.img",
     "boot.img": "boot.img",
 }

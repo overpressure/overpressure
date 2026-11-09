@@ -344,8 +344,9 @@ quick after that.
 ## Wi-Fi
 
 The kernel's ath11k drives the QCA6390 with PICO OS's firmware and the headset's board data, and
-NetworkManager uses the Frame's iwd backend. ath11k's first probe, while the kernel starts, finds no
-firmware; [`pico4-wlan-probe`](../userspace/rootfs/usr/libexec/pico4/wlan-probe) probes the chip again
+NetworkManager uses the Frame's iwd backend. The image carries the chip's Wi-Fi and Bluetooth
+firmware from PICO's public package (the modem and bluetooth partitions); only the addresses are this
+headset's, from `persist`. ath11k's first probe, while the kernel starts, finds no firmware; [`pico4-wlan-probe`](../userspace/rootfs/usr/libexec/pico4/wlan-probe) probes the chip again
 once the system image is mounted ([install.md](install.md#how-it-starts)).
 [`pico4-wlan-address`](../userspace/rootfs/usr/libexec/pico4/wlan-address)
 sets `wlan0`'s address from `persist` before NetworkManager starts. It joins WPA2 and WPA3 networks and

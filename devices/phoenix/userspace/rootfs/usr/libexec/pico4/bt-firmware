@@ -1,20 +1,15 @@
 #!/bin/sh
 # SPDX-License-Identifier: Unlicense
-# PICO OS's bluetooth partition, read-only at /mnt/vendor/bt_firmware (PICO OS: /vendor/bt_firmware):
-# the QCA6390's Bluetooth firmware and NV data, which the image links to instead of shipping them
-# (hci_qca loads qca/htbtfw20.tlv and qca/htnv20.bin when the controller opens). The block device
-# stays read-only (the storage policy, pico4-storage-ro.service).
+# The QCA6390's Bluetooth controller, set up again with its firmware: the image carries PICO OS's
+# firmware and NV data (qca/htbtfw20.tlv, qca/htnv20.bin from PICO's public package), but hci_qca is
+# built in and sets the controller up about 30 ms after the kernel starts, before the root file
+# system is mounted. That setup fails without the files, and the kernel offers a controller to the
+# management interface (btmgmt, bluetoothd) only after a setup that succeeded. Probing it again
+# downloads the firmware now.
 set -eu
-dir=/mnt/vendor/bt_firmware
-mountpoint -q "$dir" && exit 0
-dev=$(readlink -f /dev/block/by-name/bluetooth 2>/dev/null || true)
-[ -n "$dev" ] && [ -b "$dev" ] || { echo "bt-firmware: no partition named bluetooth" >&2; exit 1; }
-blockdev --setro "$dev"
-mount -t vfat -o ro,nodev,nosuid,noexec "$dev" "$dir"
-echo "bt-firmware: $dev read-only at $dir"
-# hci_qca is built in and set the controller up before this mount: without the firmware the setup
-# failed, and the kernel offers a controller to the management interface (btmgmt, bluetoothd)
-# only after a setup that succeeded. Probing it again downloads the firmware now.
+for f in htbtfw20.tlv htnv20.bin; do
+	[ -s "/usr/lib/firmware/qca/$f" ] || { echo "bt-firmware: no qca/$f in the image" >&2; exit 1; }
+done
 for hci in /sys/class/bluetooth/hci*; do
 	[ -e "$hci/device/driver" ] || continue
 	driver=$(readlink -f "$hci/device/driver")

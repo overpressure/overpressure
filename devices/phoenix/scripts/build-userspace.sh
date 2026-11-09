@@ -452,8 +452,14 @@ if [[ -n "$wlan" ]]; then
     ln -sfn ../../../qca6390/amss20.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin"
     ln -sfn ../../../qca6390/m3.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/m3.bin"
     ln -sfn ../../../qca6390/bdwlanq.elf "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/board.bin"
-    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/ath11k"
-    wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 -type f -print0 |
+    # The same chip's Bluetooth firmware and NV data, under the names hci_qca asks for.
+    mkdir -p "$T/usr/lib/firmware/qca"
+    for f in htbtfw20.tlv htnv20.bin; do
+        [[ -s "$wlan/firmware/qca/$f" ]] || { echo "missing $wlan/firmware/qca/$f (see python -m overpressure assets)" >&2; exit 1; }
+        install -m 0644 "$wlan/firmware/qca/$f" "$T/usr/lib/firmware/qca/"
+    done
+    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/ath11k" "$T/usr/lib/firmware/qca"
+    wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 usr/lib/firmware/qca -type f -print0 |
         sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi
@@ -569,12 +575,6 @@ rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
 in_t systemd-tmpfiles --create steamos-offload.conf
 # PICO OS's mount point of its persist partition (pico4-persist.service, read-only).
 mkdir -p "$T/mnt/vendor/persist"
-# The QCA6390's Bluetooth firmware stays on PICO OS's bluetooth partition (pico4-bt-firmware.service,
-# read-only), where hci_qca's names link.
-mkdir -p "$T/mnt/vendor/bt_firmware" "$T/usr/lib/firmware/qca"
-for f in htbtfw20.tlv htnv20.bin; do
-    ln -sfn "/mnt/vendor/bt_firmware/image/$f" "$T/usr/lib/firmware/qca/$f"
-done
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service \

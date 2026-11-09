@@ -77,7 +77,7 @@ Qualcomm's Sensor Core:
 
 1. **Name service and service locator.** The kernel has both (`QRTR`, its own PD mapper).
 2. **Firmware boot.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4/remoteproc-boot) starts
-   `slpi.mdt`/`.bNN` from the headset's own modem partition (installed to `/usr/lib/firmware`) through
+   `slpi.mdt`/`.bNN` from the modem partition of PICO's public package (installed to `/usr/lib/firmware`) through
    remoteproc, whose recovery restarts only that DSP after a crash.
 3. **Registry server.** `hexagonrpcd` (linux-msm/hexagonrpc,
    [`pico4-sensors`](../userspace/pkgbuilds/pico4-sensors/PKGBUILD)) attaches to the sensors process
@@ -673,7 +673,7 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   (where the tracker reads it and its gyro bias table) and `/data` and `/tmp` as tmpfs.
 - **The CDSP.** [`pico4-cdsp.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-cdsp.service)
   boots it through `remoteproc-boot cdsp`, as the SLPI; its firmware (`cdsp.mdt`, `cdspr.jsn`) comes
-  from the modem partition. `pico4-cdsprpcd.service` runs `cdsprpcd` in the root: without it the
+  from the modem partition of PICO's public package. `pico4-cdsprpcd.service` runs `cdsprpcd` in the root: without it the
   DSP's loader stalls on the tracker's first module. The tracker then opens a signed user PD on
   the CDSP (`fastrpc_shell_3`) and loads its modules there itself, through the stock
   `libcdsprpc.so` and the bridge below.
