@@ -335,6 +335,28 @@ class WorkflowTests(unittest.TestCase):
         with patch.object(device, "run", side_effect=["ABC fastboot", ValueError("failure")]) as run:
             self.assertEqual(self.call(args), 1)
             self.assertEqual(run.call_count, 2)
+
+        # Unlocked before (a new install after the way back): the bootloader refuses the unlock as
+        # done, as the PICO 4's does; the check after the reboot still decides.
+        def unlocked_before(command: list[str], timeout: float = 60) -> str:  # noqa: ARG001  # device.run's signature
+            if command[-2:] in (["flashing", "unlock"], ["flashing", "unlock_critical"]):
+                msg = "Command failed (1): FAILED (remote: '\\tDevice already : unlocked!')"
+                raise ValueError(msg)
+            return fake(command)
+
+        commands.clear()
+        with patch.object(device, "run", side_effect=unlocked_before):
+            self.assertEqual(self.call(args), 0)
+        self.assertEqual(commands[-1][-2:], ["oem", "device-info"])
+        # Any other refusal still stops it.
+        with patch.object(
+            device,
+            "run",
+            side_effect=lambda c, **_: (
+                "ABC fastboot" if c[-1] == "devices" else (_ for _ in ()).throw(ValueError("FAILED (remote: 'locked')"))
+            ),
+        ):
+            self.assertEqual(self.call(args), 1)
         with patch.object(
             device,
             "run",

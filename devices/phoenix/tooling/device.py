@@ -281,13 +281,27 @@ def dispatch(args: argparse.Namespace) -> None:  # noqa: C901, PLR0911, PLR0912,
             raise ValueError(msg)
         serial = select_device(args.fastboot, args.serial or identity["serial"])
         for command in commands:
-            run([args.fastboot, "-s", serial, *command], timeout=120)
+            unlock_step(args.fastboot, serial, command)
         # fastboot itself waits for reconnection; subprocess timeout bounds that wait.
         check_unlock(args.fastboot, serial, critical=True)
         print(
             "Normal and critical unlock confirmed after bootloader reboot. "
             "See docs/device-preparation.md for reset, RAM testing and stock ABL restoration."
         )
+
+
+def unlock_step(fastboot: str, serial: str, command: list[str]) -> None:
+    """Run one fastboot command of the unlock; a flashing command refused as done already counts.
+
+    A headset unlocked before (back from PICO OS for a new install) refuses the unlock with "Device
+    already : unlocked!". The check after the bootloader's reboot still decides.
+    """
+    try:
+        run([fastboot, "-s", serial, *command], timeout=120)
+    except ValueError as exc:
+        if command[0] != "flashing" or not re.search(r"already\s*:?\s*unlocked", str(exc), re.IGNORECASE):
+            raise
+        print(f"{' '.join(command)}: the headset is unlocked already", file=sys.stderr)
 
 
 def parser() -> argparse.ArgumentParser:
