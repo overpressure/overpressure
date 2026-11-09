@@ -57,13 +57,17 @@ The tools run only on what the whole path has run on, and refuse the rest before
 
 | | Verified | Checked by |
 | --- | --- | --- |
-| Headset | original PICO 4, A8110, *phoenix* | the fingerprint, in `device probe` and every later command |
+| Headset | original PICO 4, A8110, *phoenix*, with LPDDR4X | the fingerprint, PICO OS's model (`pxr.vendorhw.product.model` `PICO 4`) and memory (`ro.vendor.ddr_type` `DDR4`), in `device probe` and every later command |
 | PICO OS | 5.13.7, `ro.oem.state` true (the `global-seko` build) | the same |
 | Panel | Sharp LS026B3SA | `dev install`, from the kernel command line in the maintenance stage 1: the stock tree also knows an Innolux NT57900, which our driver and tree do not |
 
-Neo 3 and Ultra have other fingerprints and are refused. The PICO 4 Pro and Enterprise are not told apart: they take
-the same packages, which require the device `PICOA8110`, and report the same fingerprint, but they have LPDDR5 memory
-(the PICO 4 LPDDR4X), which the firehose loader the tools fetch and the kernel's memory bus table are not made for. All
+Neo 3 and Ultra have other fingerprints and are refused. The PICO 4 Pro and Enterprise take the same packages
+(device `PICOA8110`) and report the same fingerprint, but they have LPDDR5 memory (the PICO 4 LPDDR4X), which the
+firehose loader the tools fetch and the kernel's memory bus table are not made for. PICO OS tells them apart itself,
+and the tools read what it found: `pxr.vendorhw.product.model`, which PICO OS's `pxr.vendorhw.check.sh` sets from the
+serial number to `PICO 4`, `PICO 4 Pro` or `PICO 4 Enterprise`, and `ro.vendor.ddr_type`, which its
+`init.customize.config.sh` sets from the bootloader's memory report to `DDR4` or `DDR5`. Anything but `PICO 4` and
+`DDR4`, or no answer, is refused; an identity saved before the probe read these keeps working. All
 this ran on one headset, so a second unit can still differ in what these checks don't see, such as the RGB camera's
 module (PICO OS knows two makers' with nearly the same settings).
 

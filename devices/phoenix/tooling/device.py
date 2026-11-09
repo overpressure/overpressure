@@ -59,6 +59,12 @@ def unlock_token(number: int) -> str:
 VERIFIED_FIRMWARES = {("5.13.7", "true")}
 #: Panels the kernel's driver and tree know, as the bootloader names them to the stock kernel.
 VERIFIED_PANELS = ("sharp_ls026b3sa",)
+#: The PICO 4 among the headsets PICO OS's one package serves, as PICO OS tells them apart: the model from
+#: the serial number (vendor pxr.vendorhw.check.sh: "PICO 4", "PICO 4 Pro", "PICO 4 Enterprise") and the
+#: memory from the bootloader's report (vendor init.customize.config.sh: "DDR4" or "DDR5"). The Pro and
+#: Enterprise share the PICO 4's fingerprint; their LPDDR5 needs another Firehose loader and memory setup.
+MODEL_PROPERTIES = {"model": "pxr.vendorhw.product.model", "ddr_type": "ro.vendor.ddr_type"}
+VERIFIED_MODEL = {"model": "PICO 4", "ddr_type": "DDR4"}
 
 
 def check_firmware(version: str, oem_state: str) -> None:
@@ -70,6 +76,23 @@ def check_firmware(version: str, oem_state: str) -> None:
             "nothing was changed (docs/device-preparation.md)"
         )
         raise ValueError(msg)
+
+
+def check_model(identity: dict) -> None:
+    """Refuse a PICO 4 Pro or Enterprise, which PICO OS's fingerprint does not tell from the PICO 4.
+
+    An identity saved before the probe read these has neither field and stays as it was; a probe now always
+    records both, and an empty value (PICO OS did not say) is refused like a wrong one.
+    """
+    for key, verified in VERIFIED_MODEL.items():
+        if key in identity and identity[key] != verified:
+            said = identity[key] or "nothing"
+            msg = (
+                f"PICO OS reports {MODEL_PROPERTIES[key]} as {said}, not the original PICO 4's {verified}: the "
+                "PICO 4 Pro and Enterprise are not verified (their LPDDR5 memory needs another loader and setup); "
+                "nothing was changed (docs/device-preparation.md)"
+            )
+            raise ValueError(msg)
 
 
 def check_panel(cmdline: str) -> str:
@@ -103,6 +126,7 @@ def read_identity(path: Path) -> dict:
         raise ValueError(msg)
     version = fp.split("/")[3]
     check_firmware(version, identity.get("oem_state", ""))
+    check_model(identity)
     chip_id(str(identity["chip_id"]))
     return identity
 
@@ -131,6 +155,7 @@ def dispatch(args: argparse.Namespace) -> None:  # noqa: C901, PLR0911, PLR0912,
             "fingerprint": run([*base, "getprop", "ro.build.fingerprint"]),
             "oem_state": run([*base, "getprop", "ro.oem.state"]),
             "chip_id": chip_id(run([*base, "cat", "/sys/devices/soc0/serial_number"])),
+            **{key: run([*base, "getprop", prop]) for key, prop in MODEL_PROPERTIES.items()},
         }
         save_new(args.output, identity)
         print(f"Saved {args.output}; use 'python -m overpressure match' with fingerprint and oem_state")

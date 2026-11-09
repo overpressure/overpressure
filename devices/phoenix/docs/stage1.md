@@ -33,8 +33,8 @@ Over the USB-C cable:
 
 ## Prerequisites
 
-* An original PICO 4 (A8110, *phoenix*; the Pro and Enterprise share its packages but are not
-  verified) with an unlocked bootloader and the engineering ABL staged, as described in
+* An original PICO 4 (A8110, *phoenix*; the Pro and Enterprise share its packages but are refused,
+  [device-preparation.md](device-preparation.md#verified-hardware)) with an unlocked bootloader and the engineering ABL staged, as described in
   [device-preparation.md](device-preparation.md). That workflow independently implements the
   approach documented by [more-picohaxx-tool](https://github.com/chaixshot/more-picohaxx-tool),
   without bundling that repository or its binaries. Unlocking wipes user data. The tools take

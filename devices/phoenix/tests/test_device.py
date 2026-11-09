@@ -179,6 +179,48 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "original PICO 4"):
                 device.read_identity(self.identity)
 
+    def test_the_pico_4_pro_and_enterprise_are_refused(self):
+        # They share the PICO 4's fingerprint; PICO OS tells them apart by model and memory.
+        for model, ddr in (
+            ("PICO 4 Pro", "DDR5"),
+            ("PICO 4 Enterprise", "DDR5"),
+            ("PICO 4 Pro", "DDR4"),
+            ("PICO 4", "DDR5"),
+        ):
+            self.record.update(model=model, ddr_type=ddr)
+            self.identity.write_text(json.dumps(self.record))
+            with self.assertRaisesRegex(ValueError, "Pro and Enterprise are not verified"):
+                device.read_identity(self.identity)
+        # A probe that got no answer is refused too; the PICO 4 itself passes.
+        self.record.update(model="", ddr_type="DDR4")
+        self.identity.write_text(json.dumps(self.record))
+        with self.assertRaisesRegex(ValueError, "as nothing"):
+            device.read_identity(self.identity)
+        self.record.update(model="PICO 4", ddr_type="DDR4")
+        self.identity.write_text(json.dumps(self.record))
+        self.assertEqual(device.read_identity(self.identity)["model"], "PICO 4")
+        # An identity saved before the probe read them stays valid.
+        del self.record["model"], self.record["ddr_type"]
+        self.identity.write_text(json.dumps(self.record))
+        device.read_identity(self.identity)
+
+    def test_the_probe_records_model_and_memory(self):
+        answers = {
+            "ro.build.fingerprint": "Pico/Phoenix_ovs/PICOA8110:10/5.13.7/x:user/dev-keys",
+            "ro.oem.state": "true",
+            "pxr.vendorhw.product.model": "PICO 4",
+            "ro.vendor.ddr_type": "DDR4",
+        }
+
+        def run(argv: list[str], *_: object, **__: object) -> str:
+            return answers.get(argv[-1], "0x1234")
+
+        output = self.identity.with_name("probed.json")
+        with patch.object(device, "run", side_effect=run), patch.object(device, "select_device", return_value="ABC"):
+            self.call(["probe", "--adb", "adb", "--output", str(output)])
+        record = json.loads(output.read_text())
+        self.assertEqual((record["model"], record["ddr_type"]), ("PICO 4", "DDR4"))
+
     def test_the_panel_decides(self):
         sharp = "console=x msm_drm.dsi_display0=qcom,mdss_dsi_sharp_ls026b3sa_90_video: pico4.part=recovery"
         self.assertEqual(device.check_panel(sharp), "sharp_ls026b3sa")

@@ -94,6 +94,7 @@ class PlanTests(unittest.TestCase):
         environ.start()
         self.addCleanup(environ.stop)
         self.version = "5.13.7"
+        self.model = "PICO 4"
         self.cmdline = SHARP
         self.edl = 0
         self.fastboot = False
@@ -122,6 +123,8 @@ class PlanTests(unittest.TestCase):
                 "fingerprint": FINGERPRINT.format(self.version),
                 "oem_state": "true",
                 "chip_id": 1234567,
+                "model": self.model,
+                "ddr_type": "DDR4",
             }
             output.write_text(json.dumps(record), encoding="utf-8")
         line("ok")
@@ -286,6 +289,15 @@ class PlanTests(unittest.TestCase):
         self.assertIn("Nothing was changed", finished["where"])
         self.assertEqual(self.commands(), ["device probe"])
         self.assertFalse(any("reboot" in " ".join(c) for c in self.captured))
+        self.assertNotIn("consent", [e.get("id") for e in ui.events if e["event"] == "ask"])
+
+    def test_a_pico_4_pro_is_refused_before_any_write(self):
+        self.model = "PICO 4 Pro"
+        ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
+        finished = ui.finished()
+        self.assertEqual((finished["status"], finished["task"]), ("failed", "identity"))
+        self.assertIn("PICO 4 Pro", finished["error"])
+        self.assertEqual(self.commands(), ["device probe"])
         self.assertNotIn("consent", [e.get("id") for e in ui.events if e["event"] == "ask"])
 
     def test_an_unverified_panel_is_refused_before_any_write(self):
