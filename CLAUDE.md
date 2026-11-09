@@ -13,12 +13,12 @@ rules (what must never be written, what crashes its kernel) and its hardware wor
 
 ## Backlog
 
-The backlog lives in the issue tracker, project "Overpressure", key `the backlog`, for the
-headsets and the generic tooling alike. Every new bug, gap (something unverified or unmeasured) or missing feature
-found during work gets an issue there, in the active release, when it is found; search the
-project first so that nothing is filed twice.
+The backlog lives in the repository's GitHub issues, for the headsets and the generic tooling
+alike. Every new bug, gap (something unverified or unmeasured) or missing feature found during
+work gets an issue there, in the active milestone, when it is found; search the issues first so
+that nothing is filed twice.
 
-- **Kind.** `story` for features and gaps, `bug` for defects, `task` for technical work.
+- **Kind.** A label: `story` for features and gaps, `bug` for defects, `task` for technical work.
 - **Description.** A user story ("As a ... I want ... so that ..."), a "Now:" line with the
   measured state, and short, exact acceptance criteria.
 - **Labels.** The area (graphics, tracking, controllers, cooling, steam, tooling, ...) and,

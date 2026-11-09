@@ -38,8 +38,7 @@ Build system, the build container, tests and the Windows environment: [docs/deve
 
 ## Backlog
 
-Project "Overpressure" (key `the backlog`) in the issue tracker; the rules are in the repository's
-CLAUDE.md.
+The repository's GitHub issues; the rules are in the repository's CLAUDE.md.
 
 ## Documentation
 

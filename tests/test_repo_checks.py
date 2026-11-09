@@ -62,6 +62,16 @@ class PrivateDataTests(unittest.TestCase):
         (line,) = private.findings("docs/a.md", b"serial HEADSET-ONE", [b"HEADSET-ONE"])
         self.assertNotIn("HEADSET-ONE", line)
 
+    def test_the_private_words_come_from_env(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env = Path(folder) / ".env"
+            env.write_text(
+                "PICO4_ADB_SERIAL='SERIAL-ONE'\nOVERPRESSURE_PRIVATE_WORDS=host.example, Someone ,ab\n",
+                encoding="utf-8",
+            )
+            # Too short a word would match by chance and is left out.
+            self.assertEqual(private.local_secrets(Path(folder)), [b"SERIAL-ONE", b"host.example", b"Someone"])
+
     def test_a_vendor_register_table_and_a_binary_are_found(self):
         table = b"{ 0x3c7e, 0x02 }, " * private.REGISTER_TABLE
         self.assertIn("register pairs", private.findings("devices/phoenix/kernel/src/a.c", table)[0])

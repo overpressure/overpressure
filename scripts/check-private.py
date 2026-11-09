@@ -7,9 +7,10 @@
     python scripts/check-private.py --repo DIR  another clone
 
 It looks for what never belongs in the repository: MAC addresses, Steam IDs, private network addresses,
-personal paths, private keys, the private remote's name, register tables of a vendor's parts and
-binary files. With a local .env and identity file it also searches for this headset's own serials and
-IDs; those values are never printed. Fake values in tests are listed below.
+personal paths, private keys, register tables of a vendor's parts and binary files. With a local .env
+and identity file it also searches for this headset's own serials and IDs, and for the words .env's
+OVERPRESSURE_PRIVATE_WORDS lists (comma-separated: private host names, names); those values are never
+printed. Fake values in tests are listed below.
 """
 
 from __future__ import annotations
@@ -36,13 +37,14 @@ PATTERNS = {
         rb"(?:[A-Za-z]:[\\/]+|/mnt/[a-z]/)[Uu]sers[\\/]+(?!x\b|name\b|USER\b|YOU\b)[A-Za-z0-9_.-]+"
     ),
     "private key": re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----(?!\\n)"),
-    "private remote": re.compile(rb"git\.example\.net"),
 }
 #: A table of many {register, value} pairs is a vendor part's settings, not code (kernel/panel_sequence.py).
 REGISTER_PAIR = re.compile(rb"\{\s*0x[0-9a-fA-F]{4},\s*0x[0-9a-fA-F]{2}\s*\}")
 REGISTER_TABLE = 16
 #: Shorter .env values would match by chance.
 MIN_SECRET = 4
+#: The .env key whose comma-separated words never belong in the repository (private host names, names).
+PRIVATE_WORDS = "OVERPRESSURE_PRIVATE_WORDS"
 
 #: What may appear: the USB link, Windows' shared internet, the documentation's addresses, and fakes.
 ALLOWED = {
@@ -69,8 +71,6 @@ def findings(path: str, data: bytes, secrets: Iterable[bytes] = ()) -> list[str]
     for name, pattern in PATTERNS.items():
         if name in TEST_ONLY and TEST_PATHS.match(path):
             continue
-        if path.endswith("check-private.py") and name == "private remote":
-            continue
         for match in pattern.finditer(data):
             allowed = ALLOWED.get(name)
             if allowed and allowed.match(match.group(0)):
@@ -82,14 +82,17 @@ def findings(path: str, data: bytes, secrets: Iterable[bytes] = ()) -> list[str]
 
 
 def local_secrets(root: Path = REPO) -> list[bytes]:
-    """Return this headset's own identifiers, when this PC has them."""
+    """Return this headset's own identifiers and the private words, when this PC has them."""
     values = []
     env = root / ".env"
     if env.exists():
         for line in env.read_text(encoding="utf-8", errors="replace").splitlines():
             key, _, value = line.partition("=")
-            if key.strip().endswith("_SERIAL") and len(value.strip()) >= MIN_SECRET:
-                values.append(value.strip().strip("'\"").encode())
+            key, value = key.strip(), value.strip().strip("'\"")
+            if key.endswith("_SERIAL") and len(value) >= MIN_SECRET:
+                values.append(value.encode())
+            elif key == PRIVATE_WORDS:
+                values += [word.strip().encode() for word in value.split(",") if len(word.strip()) >= MIN_SECRET]
     identity = root / "backup" / "device.json"
     if identity.exists():
         record = json.loads(identity.read_text(encoding="utf-8"))
