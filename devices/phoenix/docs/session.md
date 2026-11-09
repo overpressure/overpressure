@@ -296,8 +296,9 @@ session:
   "up to date" (`steamos-update` exit 7; `jupiter-biosupdate check` exit 0, the Frame package's own answer). Once per
   start the client's request to set the updater's proxy over D-Bus still fails, and its mandatory-update check
   (`jupiter-initial-firmware-update check`) and dock firmware check (`steamos-polkit-helpers/jupiter-dock-updater
-  --check`) end in 127: neither the Frame's repository nor the Holo preview ships them, and which exit code the
-  client reads as "nothing to update" is not known. `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
+  --check`) end in 127. Both are the Steam Deck's (its first firmware, its dock), and no package of the Frame's
+  repository, the Holo preview or Arch ships them, so the Frame's own package set ends there the same way; the image
+  leaves them as Valve's packages have them. The proxy request goes to `atomupd-daemon`, which is left out (above). `steam-runtime-launcher-service` (Steam Runtime's game launcher service) is not
   packaged for arm64; the client disables it.
 
 ### Onboarding

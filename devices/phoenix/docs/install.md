@@ -272,8 +272,10 @@ python -m overpressure dev installed          # after a later reboot: connect to
 
 Before the first write `dev install` and `dev restore` read the battery: below 20 % they start
 only while it charges (`Charging` or `Full`). A battery they cannot read gets a warning. A headset
-that switches off halfway starts the maintenance stage 1 again (`misc` still requests it), but the
-write is lost.
+that switches off halfway, or whose cable is pulled, starts the maintenance stage 1 again (`misc` still
+requests it until the install ends), but the write is lost. For an update that is the whole way out: `dev install`
+again (or the installer's Update) writes `boot` and `super` anew, and `userdata`, which an update does not write,
+keeps its data. This follows from the order and `misc`; a cable has not been pulled in an update on the headset.
 
 Each partition is made writable for its write only. `dev install` skips a partition that
 already holds its image (by a readback hash), formats `userdata` only when it holds no
