@@ -114,6 +114,42 @@ def check_panel(cmdline: str) -> str:
     return found.group(1)
 
 
+#: What PICO OS's adb shell may read about the panel, one command: SELinux keeps it from the kernel's
+#: command line, not from the display service's log at boot (Dpps: "panel_name <panel>_90hz_video_mode_dsi_panel")
+#: or SurfaceFlinger's display name (the panel's name with spaces, cut to 13 characters, "sharp ls026b3").
+PANEL_PROBE = (
+    "cat /proc/cmdline 2>&1; logcat -d -s Dpps 2>&1 | grep -m1 panel_name; dumpsys SurfaceFlinger --display-id 2>&1"
+)
+
+
+def check_panel_in_pico_os(output: str) -> str:
+    """Return the verified panel from PANEL_PROBE's output on PICO OS, or refuse.
+
+    The kernel's command line where the shell may read it (check_panel), else the display service's full
+    name while the log still holds the boot, else SurfaceFlinger's short one, which tells the PICO 4's two
+    panels apart. The maintenance stage 1 checks the command line again before the system is written.
+    """
+    if "msm_drm.dsi_display0=" in output:
+        return check_panel(output)
+    found = re.search(r"\bpanel_name ([a-z0-9_]+?)_\d+hz_(?:video|cmd)_mode_dsi_panel\b", output)
+    if found:
+        name = found.group(1)
+    else:
+        shown = re.search(r'\(HWC display 0\).*?displayName="([^"]*)"', output)
+        if not shown or not shown.group(1):
+            msg = "PICO OS names no display panel: refusing to install (docs/device-preparation.md)"
+            raise ValueError(msg)
+        short = {panel.replace("_", " ")[:13]: panel for panel in VERIFIED_PANELS}
+        name = short.get(shown.group(1), shown.group(1).replace(" ", "_"))
+    if name not in VERIFIED_PANELS:
+        msg = (
+            f"Panel {name} is not verified, only {', '.join(VERIFIED_PANELS)}: "
+            "refusing to install (docs/device-preparation.md)"
+        )
+        raise ValueError(msg)
+    return name
+
+
 def read_identity(path: Path) -> dict:
     """Read the saved identity; refuse another headset or an unverified firmware."""
     identity = json.loads(path.read_text(encoding="utf-8"))

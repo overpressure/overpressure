@@ -392,12 +392,12 @@ class Plan:
         ctx.log(f"identity: {record['fingerprint'].split('/')[3]}, verified")
 
     def panel(self, ctx: Context) -> None:
-        """Refuse a display panel Valve's kernel does not drive, from PICO OS's kernel command line."""
+        """Refuse a display panel Valve's kernel does not drive, from what PICO OS tells its adb shell."""
         settings = ctx.settings(Settings)
-        argv = [settings.tool("adb"), "-s", settings.adb_serial, "shell", "cat /proc/cmdline"]
-        cmdline = ctx.output(argv, 30, check=False)
+        argv = [settings.tool("adb"), "-s", settings.adb_serial, "shell", device.PANEL_PROBE]
+        output = ctx.output(argv, 60, check=False)
         try:
-            name = device.check_panel(cmdline)
+            name = device.check_panel_in_pico_os(output)
         except ValueError as exc:
             raise Failed(str(exc), NOTHING_CHANGED + " PICO OS keeps running as it is.") from exc
         ctx.log(f"panel {name}, verified")

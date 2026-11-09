@@ -311,6 +311,13 @@ class PlanTests(unittest.TestCase):
         ui = self.run_stages(("connect",), self.yes("plug-in"))
         self.assertEqual(ui.finished()["task"], "panel")  # a panel that cannot be read is refused too
 
+    def test_the_panel_from_surfaceflinger_where_the_command_line_is_closed(self):
+        # PICO OS's adb shell may not read /proc/cmdline; SurfaceFlinger names the panel.
+        self.cmdline = 'cat: /proc/cmdline: Permission denied\nDisplay 1 (HWC display 0): displayName="sharp ls026b3"'
+        ui = self.run_stages(("connect",), self.yes("plug-in"))
+        self.assertEqual(ui.finished()["status"], "done")
+        self.assertTrue(any("panel sharp_ls026b3sa, verified" in e.get("line", "") for e in ui.events))
+
     def test_another_headsets_identity_is_not_overwritten(self):
         self.identity.parent.mkdir(parents=True)
         self.identity.write_text(json.dumps({"schema": 1, "serial": "SOMEONE"}))

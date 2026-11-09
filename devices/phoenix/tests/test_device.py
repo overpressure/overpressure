@@ -229,6 +229,32 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "names no panel"):
             device.check_panel("console=x")
 
+    def test_the_panel_in_pico_os(self):
+        # PANEL_PROBE's output on PICO OS 5.13.7, where the shell may not read the command line.
+        denied = "cat: /proc/cmdline: Permission denied\n"
+        log = (
+            "11-09 11:07:36.430   927  1623 I Dpps    : DppsFactoryImpSDM::GetLtmXmlParser():842 "
+            "panel_name {}_90hz_video_mode_dsi_panel\n"
+        )
+        shown = 'Display 1234 (HWC display 0): port=129 pnpId=QCM displayName="{}"\n'
+        sharp = denied + log.format("sharp_ls026b3sa") + shown.format("sharp ls026b3")
+        self.assertEqual(device.check_panel_in_pico_os(sharp), "sharp_ls026b3sa")
+        # The log has rotated past the boot: SurfaceFlinger's short name.
+        self.assertEqual(device.check_panel_in_pico_os(denied + shown.format("sharp ls026b3")), "sharp_ls026b3sa")
+        # The other panel, by either source.
+        with self.assertRaisesRegex(ValueError, "nt57900_innolux is not verified"):
+            device.check_panel_in_pico_os(denied + log.format("nt57900_innolux"))
+        with self.assertRaisesRegex(ValueError, "innolux_nt57 is not verified"):
+            device.check_panel_in_pico_os(denied + shown.format("innolux nt57"))
+        # Nothing readable: refused.
+        for output in (denied, denied + shown.format("")):
+            with self.assertRaisesRegex(ValueError, "names no display panel"):
+                device.check_panel_in_pico_os(output)
+        # A readable command line decides, as before.
+        cmdline = "msm_drm.dsi_display0=qcom,mdss_dsi_innolux_nt57900_90_video:\n" + shown.format("sharp ls026b3")
+        with self.assertRaisesRegex(ValueError, "nt57900 is not verified"):
+            device.check_panel_in_pico_os(cmdline)
+
     def test_the_unlock_files_are_checked_before_they_are_written(self):
         root = self.root
 
