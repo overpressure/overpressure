@@ -753,6 +753,10 @@ class DevTests(HeadsetFixture):
         )
         (self.root / "dev/installed.json").write_text("{}")
         dev.restore()
+        # From wherever the headset was, a fresh maintenance boot before the first write.
+        reboot = self.calls.index(["fastboot", "-s", "FB1", "reboot", "recovery"])
+        first_write = next(i for i, c in enumerate(self.calls) if "pico4-install write super" in " ".join(c))
+        self.assertLess(reboot, first_write)
         steps = [
             t.split("; ")[-1].split(" --")[0]
             for t in self.texts()

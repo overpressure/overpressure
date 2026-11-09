@@ -794,8 +794,9 @@ class Dev(Headset):
                 msg = f"{path} differs from the backup manifest"
                 raise RuntimeError(msg)
             images[name] = path
-        if self.connect() != "recovery":
-            self.recovery()
+        # A fresh maintenance boot from wherever the headset is: the installed system, the
+        # maintenance stage 1 or fastboot (connect alone waits for a stage 1 that may not run).
+        self.recovery()
         self.check_battery()
         self.write_partition("super", images["super"], 3600)
         self.write_partition("boot", images["boot"], 300)
