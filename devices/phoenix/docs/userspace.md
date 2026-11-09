@@ -404,8 +404,11 @@ Mainline offered it as S24_LE, whose samples are in the low 24 bits.
 
 The speakers' amplifiers and the WSA macro run with the registers the stock kernel has during
 playback (patch 0024): the compander sets the amplifier's gain over its COMP port, with its boost,
-over-current and path settings. The profile's verb sets the boost level and the microphone's gain,
-because a saved mixer state overrides its boot sequence. The DSP's stream and port get the stock
+over-current and path settings. The profile's verb sets PICO OS's levels (`WSA_RXn Digital Volume` 84,
+0 dB; `TX_DEC0 Volume` 84; `ADC1 Volume` 12), the boost level and the routes each time the card opens:
+ALSA's saved state, restored at boot after the card's boot sequence, would otherwise keep what it holds
+(the speakers once stayed at 16 dB below PICO OS's level that way). Around a playback the WSA macro's
+driver moves the digital volume by 2 steps (its gain offset) and keeps it there. The DSP's stream and port get the stock
 kernel's topologies (patch 0025), and the speakers' SoundWire bus its synchronization period and port
 offsets (patch 0026).
 
@@ -415,15 +418,18 @@ clashes in 13 s of playback. `COMP` off leaves that port's enable set in the act
 and white noise on the right channel, with no kernel error. Off again, with the PCM closed and the
 path powered down, recovers both.
 
-Compared on the same headset with the stock kernel's build, the same sounds on the microphone at
-the same settings, with patch 0024:
+Compared on the same headset with the stock kernel's build, the same sounds through the speakers on
+the microphone at the same settings:
 
 | Sound | Stock kernel | This kernel |
 | --- | --- | --- |
-| 1 kHz fading 15 dB/s, volume 0.6, per 250 ms | −41 −43 −47 −51 −55 −59 −65 −71 −81 dBFS | −48 −50 −54 −58 −63 −67 −72 −80 −85 dBFS |
+| 1 kHz from full scale fading 15 dB/s, volume 0.6, per 250 ms from its peak | −41 −43 −47 −51 −55 dBFS | −41.4 −45.1 −48.9 −52.6 −56.4 dBFS |
 | Steam's volume sound, volume 0.52 | repeats alike within 1 dB, into the room's noise | the same shape, repeats alike |
 
-The microphone reads about 7 dB lower here, its noise floor with it (−62 and −68 dBFS).
+So the speakers and the microphone together are as loud as on the stock kernel with PICO's levels.
+Speech at a normal distance records at about −34 to −40 dBFS. PICO OS processes recordings no
+further for apps (its `audio_effects.xml` adds echo cancellation and noise suppression to voice calls
+only, no gain).
 
 ### Capture through a suspend
 

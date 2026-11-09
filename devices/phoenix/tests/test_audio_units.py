@@ -143,6 +143,8 @@ class MainlineAudioTests(unittest.TestCase):
             "cset \"name='ADC1 Volume' 12\"",
         ):
             self.assertIn(line, card)
+            # ALSA's saved state is restored after the BootSequence: the verb sets the levels again.
+            self.assertIn(line, verb)
 
 
 if __name__ == "__main__":
