@@ -35,6 +35,7 @@ person's. Attach the results to the release.
 
 | Check | Passes when | Time |
 | --- | --- | --- |
+| First-run setup | from a wiped data partition: the setup comes up alone in the room view (no dashboard); the language, the time zone and a Wi-Fi network with a password take effect; Done turns the room view off and Steam starts in the chosen language | 5 min |
 | First picture | both lenses right, no corruption, ring of dots at boot | 1 min |
 | Room view and IPD | colour room view lines up; the IPD wheel moves the lenses | 2 min |
 | Room setup, floor height | floor at the real floor; boundary kept across a restart | 3 min |
