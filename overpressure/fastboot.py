@@ -25,6 +25,13 @@ from typing import Callable
 from . import bootimg, sparse
 from .process import Clock, Timing, until
 
+#: A wait for fastboot that ran out. A headset showing its fastboot screen is sometimes not seen by the computer
+#: after the reboot into it (the USB link does not come up); unplugging and plugging the cable in brings it.
+NOT_IN_FASTBOOT = (
+    "not in fastboot yet. If the headset shows its fastboot screen, this computer may not have seen it: "
+    "unplug the USB cable, wait a few seconds, plug it in again and start the step again"
+)
+
 #: How bootloaders say that they do not boot from RAM.
 REFUSED = re.compile(
     r"unknown command|not allowed|not supported|unsupported|command not found|"
@@ -157,8 +164,7 @@ def ram_boot(
 
         def present() -> None:
             if not fb.present():
-                msg = "not in fastboot yet"
-                raise RuntimeError(msg)
+                raise RuntimeError(NOT_IN_FASTBOOT)
 
         until("fastboot", 60, present, clock)
     log(">> unlock state")

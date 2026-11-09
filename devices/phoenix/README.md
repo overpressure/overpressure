@@ -93,6 +93,10 @@ keeps your data. **The way back:** `python -m overpressure dev restore`, then
 identifiers masked ([docs/hardware-testing.md](docs/hardware-testing.md#support-bundle)); the installer's own logs are
 in `out/install/phoenix/`.
 
+- **The headset shows its fastboot screen, but the step says it is "not in fastboot yet".** The computer sometimes
+  doesn't see the headset after it restarted into fastboot. Unplug the USB cable, wait a few seconds, plug it in
+  again and start the step again.
+
 ## Documentation
 
 | Document | Contents |

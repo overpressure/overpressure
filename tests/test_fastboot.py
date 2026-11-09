@@ -103,6 +103,15 @@ class RamBootTests(unittest.TestCase):
         self.boot(target)
         self.assertTrue(target.entered)
 
+    def test_a_headset_the_computer_does_not_see_in_fastboot_gets_the_replug_advice(self):
+        # The headset restarted into fastboot, but the USB link did not come up on this computer.
+        target = FakeTarget(self.image, in_fastboot=False)
+        target.enter = lambda: None
+        with self.assertRaises(RuntimeError) as raised:
+            self.boot(target)
+        self.assertIn("timed out waiting for fastboot", str(raised.exception))
+        self.assertIn("unplug the USB cable", str(raised.exception))
+
     def test_a_bootloader_without_fastboot_boot_is_refused_not_failed(self):
         target = FakeTarget(self.image, boot_error="fastboot boot failed: FAILED (remote: 'unknown command')")
         with self.assertRaises(fastboot.Refused) as raised:

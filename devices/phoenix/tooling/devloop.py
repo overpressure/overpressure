@@ -53,6 +53,7 @@ from overpressure import (
 from overpressure import (
     backup as backups,
 )
+from overpressure.fastboot import NOT_IN_FASTBOOT
 from overpressure.fastboot import flash as flash_image
 
 from . import device, localconfig
@@ -287,8 +288,7 @@ class Dev(Headset):
 
         def ready() -> None:
             if self.s.fastboot_serial not in self.run([fastboot, "devices"], 30, check=False):
-                msg = "not in fastboot yet"
-                raise RuntimeError(msg)
+                raise RuntimeError(NOT_IN_FASTBOOT)
 
         self.until("fastboot", 180, ready)
 

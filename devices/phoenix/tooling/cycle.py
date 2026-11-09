@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Callable, TypeVar
 
 from overpressure import REPO, android, qualcomm
 from overpressure import backup as backups
+from overpressure.fastboot import NOT_IN_FASTBOOT
 from overpressure.process import run, until
 from overpressure.qualcomm import edl_devices
 
@@ -222,8 +223,7 @@ class Cycle(Headset):
 
         def in_fastboot() -> None:
             if self.s.fastboot_serial not in self.run([self.s.tool("fastboot"), "devices"], 30, check=False):
-                msg = "not in fastboot yet"
-                raise RuntimeError(msg)
+                raise RuntimeError(NOT_IN_FASTBOOT)
 
         self.until("fastboot", 45 * 60, in_fastboot)
         saved = result["stock_boot"]
