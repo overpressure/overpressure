@@ -309,6 +309,19 @@ setup follows on the headset; ADB stays off until developer mode is enabled agai
 the ABL to stock (`python -m overpressure cycle --restore-only`) and entering development mode again
 (`dev stage-abl`) wait for that.
 
+### An interrupted restore
+
+A restore that stops part way (the cable pulled, the battery empty, the host gone) leaves the headset where
+its order put it, and each place has a way out. This follows from the order above and the boot rules; a
+cable has not been pulled in a restore on the headset.
+
+| Stopped while | Where the headset is then | Way out |
+| --- | --- | --- |
+| `super` or `boot` is written | every boot starts the maintenance stage 1 (`misc` keeps the request until the restore clears it) | `dev restore` again: it starts from the maintenance stage 1 and writes everything again |
+| `userdata` and `metadata` are wiped, or `misc` is cleared | the maintenance stage 1, or, once `misc` is clear, PICO OS on the stock `super` and `boot`, making its data partition anew | `dev restore` again from the maintenance stage 1; from PICO OS only recovery is left: `adb reboot bootloader`, then `dev restore-partition recovery` |
+| stock `recovery` is written through fastboot | every boot ends in fastboot: the ABL checks recovery's chain on every boot | `dev restore-partition recovery` |
+| any of these, and nothing answers | — | EDL, which the chip's ROM always answers ([device-preparation.md](device-preparation.md#entering-and-leaving-edl)), and the backup written back from there |
+
 ## Verified results
 
 | Check | Result |
@@ -333,7 +346,8 @@ the ABL to stock (`python -m overpressure cycle --restore-only`) and entering de
 ## Open work
 
 1. **The way back.** `dev restore` for an installed system ran on the headset and ends in PICO OS's
-   first-time setup; a restore interrupted part way is not tested.
+   first-time setup. A restore interrupted part way has its ways out ([above](#an-interrupted-restore)), not tried
+   with a pulled cable.
 2. **Integrity.** The system image is checked when written, not at boot (no dm-verity).
 3. **The direct boot on the headset.** Still to run: the power key held 2 s in charger mode, the
    lenses dark there (by eye), a boot without the PC, and `dev check` with both controllers
