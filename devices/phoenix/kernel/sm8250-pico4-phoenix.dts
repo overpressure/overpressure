@@ -1611,9 +1611,19 @@
 		battery@4000 {
 			compatible = "pico,phoenix-pm8150b-battery";
 			reg = <0x4000>, <0x1000>, <0x1300>, <0x4300>;
-			/* PICO's battery profiles (stock board overlay 7): <cold hot> ADC codes. */
+			/*
+			 * PICO's battery profiles (stock board overlay 7): the windows as <cold hot>
+			 * ADC codes, the float voltage's ranges as <low high µV> in 0.1 °C, the soft
+			 * zones' <cold hot> voltages.
+			 */
 			qcom,jeita-hard-thresholds = <0x58cd 0x1c22>;
 			qcom,jeita-soft-thresholds = <0x4ccc 0x20b8>;
+			qcom,jeita-soft-hys-thresholds = <0x48d4 0x23c0>;
+			qcom,jeita-fv-ranges = <0 100 4400000>, <101 200 4400000>,
+					       <201 450 4400000>, <451 500 4200000>;
+			qcom,jeita-soft-fv-uv = <4400000 4200000>;
+			/* The ceiling: the boot loader's float voltage, below the profile's 4.40 V. */
+			pico,float-voltage-max-uv = <4350000>;
 		};
 	};
 };

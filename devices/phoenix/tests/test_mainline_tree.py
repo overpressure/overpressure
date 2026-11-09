@@ -49,9 +49,26 @@ class BatteryTests(unittest.TestCase):
         node = search(r"battery@4000 \{(.*?)\};", tree(), re.DOTALL).group(1)
         self.assertIn("qcom,jeita-hard-thresholds = <0x58cd 0x1c22>;", node)
         self.assertIn("qcom,jeita-soft-thresholds = <0x4ccc 0x20b8>;", node)
+        self.assertIn("qcom,jeita-soft-hys-thresholds = <0x48d4 0x23c0>;", node)
+        # The float voltage's ranges in 0.1 °C and the soft zones' voltages, from the same profiles.
+        ranges = search(r"qcom,jeita-fv-ranges = ([^;]*);", node).group(1)
+        self.assertEqual(
+            re.findall(r"<(\d+) (\d+) (\d+)>", ranges),
+            [("0", "100", "4400000"), ("101", "200", "4400000"), ("201", "450", "4400000"), ("451", "500", "4200000")],
+        )
+        self.assertIn("qcom,jeita-soft-fv-uv = <4400000 4200000>;", node)
+        # The ceiling is the boot loader's float voltage (0x1070 at 0x4b), below the profile's 4.40 V.
+        self.assertIn("pico,float-voltage-max-uv = <4350000>;", node)
         source = text(self.DRIVER)
-        self.assertIn('pico4_write_jeita(b, "qcom,jeita-hard-thresholds", CHGR_JEITA_HARD);', source)
-        self.assertIn('pico4_write_jeita(b, "qcom,jeita-soft-thresholds", CHGR_JEITA_SOFT);', source)
+        for prop in (
+            "qcom,jeita-hard-thresholds",
+            "qcom,jeita-soft-thresholds",
+            "qcom,jeita-soft-hys-thresholds",
+            "qcom,jeita-fv-ranges",
+            "qcom,jeita-soft-fv-uv",
+            "pico,float-voltage-max-uv",
+        ):
+            self.assertIn(f'"{prop}"', source)
         # smb5-reg.h: CHGR_JEITA_THRESHOLD_BASE_REG(i) at 0x94 + 4 i, soft 0 and hard 1.
         self.assertRegex(source, r"#define CHGR_JEITA_SOFT\s+0x94\n")
         self.assertRegex(source, r"#define CHGR_JEITA_HARD\s+0x98\n")

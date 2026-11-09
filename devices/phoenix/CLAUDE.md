@@ -66,7 +66,8 @@ README.md current.
   `kill(-1)` killed the f_mass_storage kernel thread and with it the USB link.
 - `kernel/`: Valve's kernel: `build-kernel.sh`, `pico4.config`, `patches/`, the PICO's drivers in
   `src/`, the device tree `sm8250-pico4-phoenix.dts` (with `dtbo_sink.py` and `panel_sequence.py`),
-  `recovery_image.py` for its boot images (`--direct --boot`: the installed system's, from `dev boot-image`).
+  `recovery_image.py` for its boot images (`--direct --boot`: the installed system's, from `dev boot-image`),
+  `tests/` (the battery driver on a fake PMIC against stub kernel headers, run by `scripts/c-tests.sh`).
 - `userspace/`: stage 2. `packages.txt` and `pacman.conf` (the Holo preview first; Frame
   packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
   layer, with `preinit`, the first process, and the system's own USB gadget, `usb-gadget`), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,

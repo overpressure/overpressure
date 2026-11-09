@@ -26,6 +26,11 @@ cd ../xr
 test_c test_pico4_lens_panel -std=gnu11 test_pico4_lens_panel.c -lm
 test_c test_pico4_onboarding -std=gnu11 test_pico4_onboarding.c
 
+# The PICO's battery driver on a fake PMIC, against stub kernel headers.
+cd ../../kernel/tests
+test_c test_pico4_battery -std=gnu11 -Istubs test_pico4_battery.c
+cd ../../src/xr
+
 # The controller tracker.
 cd ../monado
 "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror -c -o "$work/tcam.o" pico4_tcam.c

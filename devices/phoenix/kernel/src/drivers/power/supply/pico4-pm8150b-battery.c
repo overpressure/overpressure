@@ -4,13 +4,16 @@
  * them: the fuel gauge's monotonic state of charge and the battery's temperature, the charger's
  * state and temperature status, and whether USB powers the headset, as the "battery" and "usb"
  * power supplies the stock kernel has. The fuel gauge and the charger run on their own (PICO's
- * boot loader configures them); the one setting written is the charger's temperature window, the
- * stock kernel's thresholds from the device tree, which the boot loader leaves wider.
+ * boot loader configures them), except for what the stock kernel does about the battery's
+ * temperature: the charger's temperature window, which the boot loader leaves wider, and the float
+ * voltage by temperature (the stock charger driver's software JEITA and its soft-zone handling),
+ * all from the device tree. The charge current stays the boot loader's, below the stock one.
  */
 #include <linux/bitfield.h>
 #include <linux/bitops.h>
 #include <linux/bits.h>
 #include <linux/delay.h>
+#include <linux/limits.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -52,6 +55,22 @@ enum chgr_state {
  */
 #define CHGR_JEITA_SOFT			0x94
 #define CHGR_JEITA_HARD			0x98
+
+/*
+ * Charger block: charge inhibit, the float voltage (3.6 V and 10 mV steps) and the charger's own
+ * compensation of voltage and current in the soft zones, which the stock driver turns off.
+ */
+#define CHGR_CFG2			0x51
+#define CHARGER_INHIBIT			BIT(0)
+#define CHGR_FLOAT_VOLTAGE_CFG		0x70
+#define FV_MIN_UV			3600000
+#define FV_STEP_UV			10000
+#define CHGR_JEITA_EN_CFG		0x90
+#define JEITA_EN_COMPENSATION		GENMASK(3, 0)
+
+/* The stock software JEITA: up to eight temperature ranges, 1 °C hysteresis between them. */
+#define JEITA_RANGES			8
+#define JEITA_HYSTERESIS		10
 
 /*
  * Fuel gauge, memory interface block: the arbitration and access request for its memory, the grant,
@@ -98,6 +117,15 @@ struct pico4_battery {
 	int last_capacity, last_status, last_online, last_health;
 	int temp;		/* tenths of °C, from the last poll */
 	bool temp_valid;
+	/* From the device tree: the windows as <cold hot> codes, voltages in µV, temperatures in 0.1 °C. */
+	u32 soft[2], soft_hys[2], soft_fv[2], fv_ceiling;
+	struct { u32 low, high, value; } fv_ranges[JEITA_RANGES];
+	int num_fv_ranges;
+	bool jeita;		/* the float voltage by temperature is configured */
+	int fv_index;		/* the range in use, -1 for none */
+	bool soft_zone;		/* in a soft zone: the hysteresis window and its voltage */
+	u32 soft_zone_fv;
+	unsigned int fv_code;	/* the float voltage last written */
 };
 
 static int pico4_read(struct pico4_battery *b, u32 reg, unsigned int *val)
@@ -118,19 +146,30 @@ static int pico4_update(struct pico4_battery *b, u32 reg, unsigned int mask, uns
 	return ret;
 }
 
-/*
- * The stock charger driver's threshold write (smblib_update_jeita), from the property's <cold hot>
- * pair, read back to check it took.
- */
-static int pico4_write_jeita(struct pico4_battery *b, const char *prop, u32 offset)
+/* A write of a charger register, read back to check it took. */
+static int pico4_write_checked(struct pico4_battery *b, u32 reg, unsigned int mask, unsigned int val)
 {
-	u32 codes[2];
+	unsigned int got;
+	int ret = pico4_update(b, reg, mask, val);
+
+	if (!ret)
+		ret = pico4_read(b, reg, &got);
+	if (!ret && (got & mask) != (val & mask)) {
+		dev_err(b->dev, "0x%04x reads 0x%02x after writing 0x%02x\n", reg, got, val);
+		ret = -EIO;
+	}
+	return ret;
+}
+
+/*
+ * The stock charger driver's threshold write (smblib_update_jeita), a <cold hot> pair, read back
+ * to check it took.
+ */
+static int pico4_write_jeita(struct pico4_battery *b, const char *what, u32 offset, const u32 *codes)
+{
 	u8 want[4], got[4];
 	int ret;
 
-	ret = of_property_read_u32_array(b->dev->of_node, prop, codes, 2);
-	if (ret)
-		return ret;
 	want[0] = codes[1] >> 8;
 	want[1] = codes[1];
 	want[2] = codes[0] >> 8;
@@ -141,10 +180,122 @@ static int pico4_write_jeita(struct pico4_battery *b, const char *prop, u32 offs
 	if (!ret && memcmp(want, got, sizeof(want)))
 		ret = -EIO;
 	if (ret)
-		dev_err(b->dev, "%s: writing 0x%04x: %d\n", prop, b->chgr_base + offset, ret);
+		dev_err(b->dev, "%s thresholds: writing 0x%04x: %d\n", what, b->chgr_base + offset, ret);
 	else
-		dev_info(b->dev, "%s: hot 0x%04x, cold 0x%04x\n", prop, codes[1], codes[0]);
+		dev_info(b->dev, "%s thresholds: hot 0x%04x, cold 0x%04x\n", what, codes[1], codes[0]);
 	return ret;
+}
+
+/*
+ * The stock software JEITA's range (step-chg-jeita.c, get_val): none below the first range, the
+ * last one above the last, and a neighbouring range only once the temperature is 1 °C into it.
+ */
+static int pico4_fv_range(const struct pico4_battery *b, int temp, u32 *value)
+{
+	int i, n = b->num_fv_ranges, cur = b->fv_index;
+
+	if (!n || temp < (int)b->fv_ranges[0].low)
+		return -1;
+	for (i = 0; i < n; i++)
+		if (temp >= (int)b->fv_ranges[i].low && temp <= (int)b->fv_ranges[i].high)
+			break;
+	if (i == n)
+		i = n - 1;
+	if (cur >= 0 && i == cur + 1 && temp < (int)b->fv_ranges[i].low + JEITA_HYSTERESIS)
+		i = cur;
+	else if (cur >= 0 && i == cur - 1 && temp > (int)b->fv_ranges[i].high - JEITA_HYSTERESIS)
+		i = cur;
+	*value = b->fv_ranges[i].value;
+	return i;
+}
+
+/*
+ * The stock charger driver's soft zones (smblib_soft_jeita_arb_wa): entering one from a normal
+ * temperature, charge inhibit on, the window widened to the hysteresis codes and the zone's
+ * voltage; leaving it, all back. Nothing changes at the hard limits, where the charger stops.
+ */
+static void pico4_soft_zone(struct pico4_battery *b, int health)
+{
+	bool soft = health == POWER_SUPPLY_HEALTH_COOL || health == POWER_SUPPLY_HEALTH_WARM;
+
+	if (health == POWER_SUPPLY_HEALTH_COLD || health == POWER_SUPPLY_HEALTH_OVERHEAT ||
+	    soft == b->soft_zone)
+		return;
+	b->soft_zone = soft;
+	pico4_write_checked(b, b->chgr_base + CHGR_CFG2, CHARGER_INHIBIT, soft ? CHARGER_INHIBIT : 0);
+	pico4_write_jeita(b, soft ? "soft-zone hysteresis" : "soft", CHGR_JEITA_SOFT,
+			  soft ? b->soft_hys : b->soft);
+	b->soft_zone_fv = health == POWER_SUPPLY_HEALTH_COOL ? b->soft_fv[0] : b->soft_fv[1];
+	dev_info(b->dev, "%s the soft zone\n", soft ? "in" : "out of");
+}
+
+/*
+ * The float voltage as the stock driver votes it, the lowest of the ceiling, the temperature's
+ * range and the soft zone's voltage. Unchanged while there is no temperature, as in the stock driver.
+ */
+static void pico4_float_voltage(struct pico4_battery *b, int temp)
+{
+	u32 fv = b->fv_ceiling;
+	unsigned int code;
+	u32 value = 0;
+
+	b->fv_index = pico4_fv_range(b, temp, &value);
+	if (b->fv_index >= 0 && value < fv)
+		fv = value;
+	if (b->soft_zone && b->soft_zone_fv < fv)
+		fv = b->soft_zone_fv;
+	code = (fv - FV_MIN_UV) / FV_STEP_UV;
+	if (code == b->fv_code)
+		return;
+	if (!pico4_write_checked(b, b->chgr_base + CHGR_FLOAT_VOLTAGE_CFG, 0xff, code)) {
+		dev_info(b->dev, "float voltage %u mV at %s%d.%d C\n", FV_MIN_UV / 1000 + code * 10,
+			 temp < 0 ? "-" : "", abs(temp) / 10, abs(temp) % 10);
+		b->fv_code = code;
+	}
+}
+
+/*
+ * The stock temperature handling from the tree. Without every property the boot loader's
+ * float voltage and the charger's compensation stay as they are.
+ */
+static void pico4_jeita_init(struct pico4_battery *b)
+{
+	struct device_node *np = b->dev->of_node;
+	u32 hard[2], ranges[JEITA_RANGES * 3];
+	unsigned int fv;
+	int n, i;
+
+	if (!of_property_read_u32_array(np, "qcom,jeita-hard-thresholds", hard, 2))
+		pico4_write_jeita(b, "hard", CHGR_JEITA_HARD, hard);
+	if (of_property_read_u32_array(np, "qcom,jeita-soft-thresholds", b->soft, 2))
+		return;
+	pico4_write_jeita(b, "soft", CHGR_JEITA_SOFT, b->soft);
+
+	n = of_property_count_u32_elems(np, "qcom,jeita-fv-ranges");
+	if (n <= 0 || n % 3 || n > JEITA_RANGES * 3 ||
+	    of_property_read_u32_array(np, "qcom,jeita-fv-ranges", ranges, n) ||
+	    of_property_read_u32_array(np, "qcom,jeita-soft-hys-thresholds", b->soft_hys, 2) ||
+	    of_property_read_u32_array(np, "qcom,jeita-soft-fv-uv", b->soft_fv, 2) ||
+	    of_property_read_u32(np, "pico,float-voltage-max-uv", &b->fv_ceiling)) {
+		dev_err(b->dev, "no float voltage by temperature: incomplete JEITA properties\n");
+		return;
+	}
+	b->num_fv_ranges = n / 3;
+	for (i = 0; i < b->num_fv_ranges; i++) {
+		b->fv_ranges[i].low = ranges[3 * i];
+		b->fv_ranges[i].high = ranges[3 * i + 1];
+		b->fv_ranges[i].value = ranges[3 * i + 2];
+	}
+	if (!pico4_read(b, b->chgr_base + CHGR_FLOAT_VOLTAGE_CFG, &fv))
+		dev_info(b->dev, "boot loader's float voltage %u mV, ceiling %u mV\n",
+			 FV_MIN_UV / 1000 + fv * 10, b->fv_ceiling / 1000);
+	b->fv_index = -1;
+	b->fv_code = UINT_MAX;
+	/* The stock driver's start: no soft zone, the charger's compensation off (software JEITA). */
+	if (pico4_write_checked(b, b->chgr_base + CHGR_CFG2, CHARGER_INHIBIT, 0) ||
+	    pico4_write_checked(b, b->chgr_base + CHGR_JEITA_EN_CFG, JEITA_EN_COMPENSATION, 0))
+		return;
+	b->jeita = true;
 }
 
 /*
@@ -217,7 +368,7 @@ release:
 /* The stock gauge driver's battery temperature, in tenths of °C. */
 static int pico4_temp(struct pico4_battery *b, int *temp)
 {
-	u16 raw;
+	u16 raw = 0;
 	int ret = pico4_read_word(b, BATT_TEMP_WORD, &raw);
 
 	if (!ret)
@@ -379,19 +530,22 @@ static const struct power_supply_desc pico4_usb_desc = {
 };
 
 /*
- * Read the temperature, and tell userspace (UPower, the session) when the level, the status, the
- * health or the input changes.
+ * Read the temperature, set the float voltage for it, and tell userspace (UPower, the session)
+ * when the level, the status, the health or the input changes.
  */
 static void pico4_poll(struct work_struct *work)
 {
 	struct pico4_battery *b = container_of(work, struct pico4_battery, poll.work);
-	int capacity, status, online, health, temp;
+	int capacity, status, online, health, temp = 0;
+	bool have_temp = !pico4_temp(b, &temp);
 
-	if (!pico4_temp(b, &temp)) {
+	if (have_temp)
 		WRITE_ONCE(b->temp, temp);
-		WRITE_ONCE(b->temp_valid, true);
-	} else {
-		WRITE_ONCE(b->temp_valid, false);
+	WRITE_ONCE(b->temp_valid, have_temp);
+	if (b->jeita && !pico4_health(b, &health)) {
+		pico4_soft_zone(b, health);
+		if (have_temp)
+			pico4_float_voltage(b, temp);
 	}
 	if (!pico4_capacity(b, &capacity) && !pico4_status(b, &status) && !pico4_online(b, &online) &&
 	    !pico4_health(b, &health)) {
@@ -438,11 +592,10 @@ static int pico4_battery_probe(struct platform_device *pdev)
 				     "reg needs the SOC, charger, USB-in and memory interface blocks\n");
 
 	/*
-	 * The stock order, hard then soft. A failed write leaves the boot loader's window and is
+	 * The stock order, hard then soft. A failed write leaves the boot loader's setting and is
 	 * logged; the battery is still reported.
 	 */
-	pico4_write_jeita(b, "qcom,jeita-hard-thresholds", CHGR_JEITA_HARD);
-	pico4_write_jeita(b, "qcom,jeita-soft-thresholds", CHGR_JEITA_SOFT);
+	pico4_jeita_init(b);
 	if (pico4_memif_init(b))
 		dev_err(dev, "the gauge's memory window: no battery temperature\n");
 
