@@ -1,8 +1,11 @@
-# Every push and pull request: nothing here needs vendor files or a headset.
+# Every push and pull request, and every release before it is made (release.yml): nothing here needs
+# vendor files or a headset.
 name: CI
 on:
   push:
+    branches: ["**"]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read

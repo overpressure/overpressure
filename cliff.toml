@@ -1,0 +1,44 @@
+# The changelog, from the conventional commits, by git-cliff (docs/releasing.md):
+#   uvx git-cliff@2.14.2                     the whole changelog
+#   uvx git-cliff@2.14.2 --unreleased        what the next release brings
+# Features and fixes for users, each commit's subject; everything else in one count.
+
+[changelog]
+header = """
+# Changelog
+
+Generated from the conventional commits by git-cliff ([docs/releasing.md](docs/releasing.md)).
+"""
+body = """
+{% if version -%}
+## {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
+{%- else -%}
+## Unreleased
+{%- endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+{%- if group | striptags | trim == "Other" %}
+{{ commits | length }} other commits: documentation, tests, tooling and refactoring.
+{% else %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | trim }}{% if commit.breaking %} (breaking){% endif %}
+{%- endfor %}
+{% endif %}
+{%- endfor -%}
+"""
+trim = false
+footer = ""
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = true
+commit_parsers = [
+  { message = "^feat", group = "<!-- 0 -->Features" },
+  { message = "^fix", group = "<!-- 1 -->Fixes" },
+  { message = ".*", group = "<!-- 9 -->Other" },
+]
+filter_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "newest"

@@ -77,7 +77,7 @@ status in its roadmap and README current.
   `device.mk` (its Makefile targets).
 - `tests/`: host tests of the generic package. `docs/`: `tool.md`, `adding-a-headset.md`, `releasing.md`.
   `scripts/`: shell helpers for the headsets' scripts (`stock-lib.sh`: files out of a stock ext4 image), and the
-  repository's checks: `check-private.py`, `check-docs.py`, `run-shellcheck.py`, `c-tests.sh`, `changelog.py`.
+  repository's checks: `check-private.py`, `check-docs.py`, `run-shellcheck.py`, `c-tests.sh`, `release.py` (a release tag against `pyproject.toml`); `cliff.toml`, git-cliff's changelog setup.
 - `Install.cmd`, `Install.command`, `install.sh`: the start scripts; they fetch the pinned uv, a managed
   Python and CustomTkinter into `cache/` and open the window.
 - `LICENSE` (Unlicense) and `THIRD-PARTY.md`; a directory under another license says so in its `LICENSE.md`.

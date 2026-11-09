@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""The repository's own checks: the private-data scan, the link check and the changelog."""
+"""The repository's own checks: the private-data scan, the link check, the release tag and the changelog's setup."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def load(name: str) -> ModuleType:
 
 private = load("check-private")
 docs = load("check-docs")
-changelog = load("changelog")
+release = load("release")
 
 
 class PrivateDataTests(unittest.TestCase):
@@ -98,22 +98,41 @@ class LinkTests(unittest.TestCase):
             self.assertEqual(docs.broken(root / "a.md", text), ["c.md: no such file", "b.md#other: no such heading"])
 
 
-class ChangelogTests(unittest.TestCase):
-    def test_features_and_fixes_for_users_the_rest_as_a_count(self):
-        text = changelog.notes(
-            [
-                "fix: PipeWire survives a suspend",
-                "docs: remove what is obsolete",
-                "feat(steam): 72 Hz",
-                "feat!: a new layout",
-                "not conventional",
-            ],
-            "1.0-beta",
-        )
-        self.assertIn("## 1.0-beta", text)
-        self.assertIn("### Features\n\n- 72 Hz\n- a new layout (breaking)\n", text)
-        self.assertIn("### Fixes\n\n- PipeWire survives a suspend\n", text)
-        self.assertIn("2 other commit(s)", text)
+class ReleaseTests(unittest.TestCase):
+    PYPROJECT = '[build-system]\nrequires = []\n\n[project]\nname = "x"\nversion = "1.0b1"\n\n[tool.x]\nversion = "9"\n'
+
+    def test_tags_in_pythons_spelling(self):
+        self.assertEqual(release.python_version("v1.0-beta"), "1.0b1")
+        self.assertEqual(release.python_version("v1.0-beta.2"), "1.0b2")
+        self.assertEqual(release.python_version("v1.0"), "1.0")
+        self.assertEqual(release.python_version("v2.13"), "2.13")
+        for tag in ("1.0", "v1", "v1.0.1", "v1.0-rc1", "v1.0-beta.0", "v1.0-beta2", "v1.0-beta."):
+            with self.subTest(tag=tag), self.assertRaises(ValueError):
+                release.python_version(tag)
+
+    def test_the_tag_must_name_the_projects_version(self):
+        self.assertEqual(release.check("v1.0-beta", self.PYPROJECT), "prerelease")
+        self.assertEqual(release.check("v1.0", self.PYPROJECT.replace("1.0b1", "1.0")), "release")
+        with self.assertRaises(ValueError):
+            release.check("v1.0", self.PYPROJECT)
+        with self.assertRaises(ValueError):
+            release.check("v1.0-beta.2", self.PYPROJECT)
+        with self.assertRaises(ValueError):
+            release.project_version('[tool.x]\nversion = "1.0"\n')
+
+    def test_the_repositorys_version_has_a_tag_spelling(self):
+        version = release.project_version((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+        base, _, beta = version.partition("b")
+        tag = f"v{base}" + (f"-beta.{beta}" if beta and beta != "1" else "-beta" if beta else "")
+        self.assertEqual(release.python_version(tag), version)
+
+    def test_the_release_workflow_checks_the_tag_and_attaches_no_image(self):
+        workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("scripts/release.py check", workflow)
+        self.assertIn("git-cliff@", workflow)
+        self.assertIn("git archive", workflow)
+        for private_suffix in (".img", ".tar.zst", ".bin", ".elf", ".mbn"):
+            self.assertNotIn(private_suffix, workflow)
 
 
 class LintScopeTests(unittest.TestCase):

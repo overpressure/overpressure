@@ -1,0 +1,71 @@
+# A release from its tag (docs/releasing.md): a pushed tag vMAJOR.MINOR[-beta[.N]] runs every CI check on the
+# tagged commit, then makes the GitHub release: the tag's own message and the changelog section as its notes,
+# the source zip the start scripts install from, and its checksum. No image, package or vendor file is
+# attached (devices/phoenix/docs/distribution.md).
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.server_url == 'https://github.com'
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      # The checkout's tag is a lightweight copy; the annotated tag carries the release's own words.
+      - name: The tag itself
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.9.26"
+      - name: The tag names pyproject.toml's version
+        id: version
+        run: |
+          kind=$(python3 scripts/release.py check "$GITHUB_REF_NAME")
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "name=overpressure-${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Annotated, on main
+        run: |
+          [ "$(git cat-file -t "$GITHUB_REF_NAME")" = tag ] || { echo "::error::$GITHUB_REF_NAME is not annotated: git tag -a"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+      - name: Notes and changelog
+        run: |
+          {
+            git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME"
+            echo
+            uvx git-cliff@2.14.2 --latest --strip header
+          } > notes.md
+          uvx git-cliff@2.14.2 --output CHANGELOG.md
+          cat notes.md
+      - name: The source zip
+        run: |
+          name=${{ steps.version.outputs.name }}
+          git archive --format=zip --prefix="$name/" --add-file=CHANGELOG.md -o "$name.zip" "$GITHUB_REF_NAME"
+          sha256sum "$name.zip" > "$name.zip.sha256"
+          unzip -l "$name.zip" | tail -1
+      - name: The release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name=${{ steps.version.outputs.name }}
+          flag=""
+          [ "${{ steps.version.outputs.kind }}" = prerelease ] && flag=--prerelease
+          gh release create "$GITHUB_REF_NAME" $flag --verify-tag \
+            --title "overpressure ${GITHUB_REF_NAME#v}" --notes-file notes.md \
+            "$name.zip" "$name.zip.sha256"

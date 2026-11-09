@@ -8,26 +8,50 @@ release build's commit carries no `-dirty`.
 
 ## Changelog
 
-The documents state what is true now; what changed is in `CHANGELOG.md` and on each release's page, generated
-from the conventional commits:
+The documents state what is true now; what changed is in each release's notes and in the `CHANGELOG.md`
+inside its zip, both generated from the conventional commits by [git-cliff](https://git-cliff.org/), set up in
+[cliff.toml](../cliff.toml): features and fixes by their subjects, everything else as a count. To see what the
+next release brings:
 
 ```sh
-python scripts/changelog.py --since v1.0-beta --version 1.0
+uvx git-cliff@2.14.2 --unreleased
 ```
 
 ## A release
 
-1. Everything is on `main`, CI is green, and no issue the release depends on is open.
-2. Set the version in `pyproject.toml`.
-3. Build from a clean checkout, the whole path of the headset's README, with the package lock on, in a new
-   build root: a second such build gives the same archive and system image
-   ([devices/phoenix/docs/userspace.md](../devices/phoenix/docs/userspace.md#reproducible-builds)).
-4. Run the headset's checklist ([devices/phoenix/docs/release-checklist.md](../devices/phoenix/docs/release-checklist.md))
-   on that image, and keep the results.
-5. `python scripts/check-private.py --history` finds nothing.
-6. Add the changelog's section, tag, push the tag and write the release's page: its changelog, the checklist's
-   results and what is known not to work. No image or vendor file is attached
-   ([devices/phoenix/docs/distribution.md](../devices/phoenix/docs/distribution.md)).
+A pushed tag makes the release; nothing is uploaded by hand.
+
+1. **Ready.** Everything is on `main`, CI is green, and no issue the release depends on is open.
+2. **The version.** Set it in `pyproject.toml`, commit and push.
+3. **The image.** Build from a clean checkout, the whole path of the headset's README, with the package lock
+   on, in a new build root: a second such build gives the same archive and system image
+   ([devices/phoenix/docs/userspace.md](../devices/phoenix/docs/userspace.md#reproducible-builds)). Run the
+   headset's checklist ([devices/phoenix/docs/release-checklist.md](../devices/phoenix/docs/release-checklist.md))
+   on that image.
+4. **The tag.** An annotated tag on that commit of `main`: its first line the title, the rest the release's own
+   words, the checklist's results and what is known not to work. Then push it.
+
+   ```sh
+   git tag -a v1.0-beta -F tag-message.md
+   git push origin v1.0-beta
+   ```
+
+5. **CI** ([.github/workflows/release.yml](../.github/workflows/release.yml), on GitHub):
+   - runs every check of [ci.yml](../.github/workflows/ci.yml) on the tagged commit, the private-data scan over
+     the whole history among them;
+   - refuses a tag that is not annotated, not on `main`, or names another version than `pyproject.toml`
+     (`python scripts/release.py check TAG`);
+   - writes the notes: the tag's own words, then the changelog's section since the previous tag;
+   - makes the zip with `git archive`: the tagged tree under `overpressure-VERSION/`, with `CHANGELOG.md`, the
+     start scripts executable and `Install.cmd` with Windows line endings; and its SHA-256;
+   - creates the GitHub release with the notes, the zip and its checksum, as a pre-release for a beta.
+
+   No image, package or vendor file is attached
+   ([devices/phoenix/docs/distribution.md](../devices/phoenix/docs/distribution.md)): the start scripts build
+   everything on the owner's computer.
+
+A failed check stops the release before anything is published. Fix it on `main`, then delete the tag
+(`git push origin :refs/tags/v1.0-beta` and `git tag -d v1.0-beta`) and tag the fixed commit.
 
 ## Moving to new upstream versions
 
