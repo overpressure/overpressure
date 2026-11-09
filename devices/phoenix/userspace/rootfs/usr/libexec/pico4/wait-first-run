@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Unlicense
+# Hold the Steam client back while the first-run setup runs (docs/session.md#first-run-setup):
+# it starts once the setup left its mark (finished or skipped), once someone signed in before
+# (the client's CompletedOOBE), or when the setup's panel failed for good, so that a broken
+# panel never keeps the client from starting.
+set -euo pipefail
+mark=${HOME}/.local/share/pico4/setup-done
+registry=${HOME}/.steam/registry.vdf
+said=false
+while true; do
+	if [[ -e $mark ]]; then
+		exit 0
+	fi
+	if [[ -f $registry ]] && grep -Eq '"CompletedOOBE"[[:space:]]+"1"' "$registry"; then
+		exit 0
+	fi
+	if systemctl --user is-failed --quiet pico4-onboarding.service; then
+		echo "wait-first-run: the first-run setup's panel failed; Steam starts"
+		exit 0
+	fi
+	if ! $said; then
+		echo "wait-first-run: Steam starts after the first-run setup"
+		said=true
+	fi
+	sleep 1
+done

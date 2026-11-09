@@ -332,8 +332,8 @@ the ABL to stock (`python -m overpressure cycle --restore-only`) and entering de
 
 ## Open work
 
-1. **The way back.** `dev restore` for an installed system is implemented and tested on the
-   host, not yet on the headset; it ends in PICO OS's first-time setup.
+1. **The way back.** `dev restore` for an installed system ran on the headset and ends in PICO OS's
+   first-time setup; a restore interrupted part way is not tested.
 2. **Integrity.** The system image is checked when written, not at boot (no dm-verity).
 3. **The direct boot on the headset.** Still to run: the power key held 2 s in charger mode, the
    lenses dark there (by eye), a boot without the PC, and `dev check` with both controllers

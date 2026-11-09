@@ -183,19 +183,25 @@ session:
   on the data partition of the installed system) and sets the sentinel. `select_steam.sh` and
   `RUNSTEAM.sh` then run `steamrtarm64/steam -deckard -gamepadui -steamdeck -steamos3
   -vrgamepadui` from that folder; its UI is a SteamVR overlay through gamescope.
-- **First-run setup.** The client's out-of-box experience (OOBE) runs whenever its settings
-  `oobe_completed` and `oobe_stage_2_completed` are unset: `CompletedOOBEStage1` and
-  `CompletedOOBE` in `~/.steam/registry.vdf`, on the data partition. It does not depend on the
-  hardware, so an empty data partition starts it, as on the Frame. Stage 1 runs before the login:
-  - The welcome page is the Frame's variant (`s.team/frame`); its continue button waits for both
-    controllers, 30 s or a laser-mouse move.
-  - Then language, time zone, network and the update, which asks `steamos-update`.
-  - Stage 2 runs after the login: Steam Controller pairing, the controller firmware updater,
-    controller pairing, underscan and the audio pages.
-  - While it runs the client sets SteamVR's `/steam/oobe`, which locks the dashboard (no
-    exit, no room setup).
-  - Signing in marks stage 1 done.
-  - On the first page or the language page, 150 s without input turn on the screen reader.
+- **The client's own setup** (its out-of-box experience, OOBE) does not run here. Its settings
+  `oobe_completed` and `oobe_stage_2_completed` (`CompletedOOBEStage1` and `CompletedOOBE` in
+  `~/.steam/registry.vdf`) count as done, by `steamui.so`, on a platform where neither
+  `Plat_IsSteamOS()` nor `Plat_IsTesla()` holds, and on SteamOS whenever the login controller
+  knows no account, unless `Plat_IsSteamOS3FactoryImage()` (`/etc/steamos-oobe-image`, Valve's
+  factory image, whose setup ends by installing the release image) holds. So an installed system
+  with an empty data partition goes straight to the sign-in, and the first sign-in writes both
+  keys. The developer setting Force OOBE (`ForceOOBE`) runs it only in test mode, again at every
+  start. On the factory image its stage 1 is welcome (the Frame's variant, `s.team/frame`),
+  language, time zone, network and the update; stage 2, after the login, Steam Controller pairing
+  and firmware, controller pairing, underscan and audio. The [first-run setup](#first-run-setup)
+  covers it.
+- **Time zone.** The client's time-zone setting runs
+  `/usr/bin/steamos-polkit-helpers/steamos-set-timezone ZONE` on SteamOS, with one of its 62
+  zones. The Frame's packages here do not carry that helper; the image's
+  [own](../userspace/rootfs/usr/bin/steamos-polkit-helpers/steamos-set-timezone) takes a zone of
+  the system's zoneinfo and has timedated set it, which
+  [polkit](../userspace/rootfs/usr/share/polkit-1/rules.d/50-pico4-timezone.rules) lets the
+  session user do.
 
   The Frame's guided tour does not start here. It follows the OOBE on the Frame and covers
   controller pairing, the welcome and health page, the playspace, the laser mouse, the system
@@ -300,31 +306,110 @@ What a new owner meets, from an empty data partition:
 
 | Part | Covers | Here |
 | --- | --- | --- |
-| Steam's OOBE ([first-run setup](#the-steam-client)) | welcome, language, time zone, network, update, sign-in; stage 2: Steam Controller pairing and firmware, underscan, audio | runs as on the Frame; its welcome page waits for the laser or 30 s |
+| Steam's OOBE ([the client](#the-steam-client)) | welcome, language, time zone, network, update, sign-in; stage 2: Steam Controller pairing and firmware, underscan, audio | does not run: only on Valve's factory image |
+| [First-run setup](#first-run-setup) | welcome, language, time zone, Wi-Fi, controllers, the lens distance | before the first sign-in, once |
 | The Frame's guided tour | controller pairing, welcome and health, playspace, laser mouse, system button, PC pairing | does not run (device type 541) |
 | SteamVR | the playspace setup for a new room's universe ([xr.md](xr.md#room-setup)) | asked for when a game starts in a new room, or from the dashboard's Space Setup |
-| [`pico4-onboarding`](../src/xr/pico4-onboarding.cpp) | the PICO 4's controllers, health and safety, the laser and the PICO button, where the playspace setup is | a SteamVR overlay, [`pico4-onboarding.service`](../userspace/rootfs/usr/lib/systemd/user/pico4-onboarding.service), with SteamVR |
+| Introduction | the PICO 4's controllers, health and safety, the laser and the PICO button, where the playspace setup is | after the first sign-in, once |
 
-`pico4-onboarding` is a panel 1.5 m in front of the wearer, level, where they look when it comes up:
+Both are [`pico4-onboarding`](../src/xr/pico4-onboarding.cpp)
+([`pico4-onboarding.service`](../userspace/rootfs/usr/lib/systemd/user/pico4-onboarding.service), with
+SteamVR): a SteamVR overlay, a panel 1.3 m in front of the wearer, level, drawn over other overlays.
+Like Steam's window it follows the view: when the headset is put on, and a second after the panel
+left the view (more than 30 degrees aside, or 0.3 m above or below the eyes), it comes back in
+front; while looked at, it stays, for the laser. During the setup the program is SteamVR's scene
+application, otherwise a background one.
 
-- **Controllers.** With no controller connected 20 s after the start, nothing could point at a page,
-  Steam's OOBE included: the panel comes up and the station listens for one controller after the
-  other, 60 s each, through the driver's pairing socket ([xr.md](xr.md#pairing)), while the panel
-  says what to press (the controller's trigger and PICO button together for about 6 s, PICO OS's
-  instruction). With one controller connected, its laser pairs the other from the panel's Pair button.
-- **Once after Steam's OOBE** (`CompletedOOBE` in `~/.steam/registry.vdf`): the controllers, then
-  health and safety, the laser and the PICO button (press: the menu; hold: recenter), and the
-  playspace. Skip or Done leaves its mark, `~/.local/share/pico4/onboarding-done`, on the data
-  partition; the dashboard's Introduction tab shows it again.
+- **Controllers.** With no controller connected 20 s after the start, nothing could point at a page:
+  the panel comes up and the station listens for one controller after the other, 60 s each, through
+  the driver's pairing socket ([xr.md](xr.md#pairing)), while the panel says what to press (the
+  controller's trigger and PICO button together for about 6 s, PICO OS's instruction). With one
+  controller connected, its laser pairs the other from the panel's Pair button.
+- **The introduction**, once after the first sign-in (`CompletedOOBE` in `~/.steam/registry.vdf`,
+  which the client writes then): the controllers, then health and safety, the laser and the PICO
+  button (press: the menu; hold: recenter), and the playspace. Skip or Done leaves its mark,
+  `~/.local/share/pico4/onboarding-done`, on the data partition; the dashboard's Introduction tab
+  shows it again.
 - **Not covered**: the Frame tour's PC pairing; Steam Link is in the menu
   ([Steam Link](#steam-link)).
 
-The pages' decisions and texts are in [pico4_onboarding.h](../src/xr/pico4_onboarding.h), tested on
-the host; `pico4-onboarding --render DIR` draws every page without SteamVR. Worn, after an install with
-both controllers off: the panel came up and listened for the left controller hands-free; the right one
-connected when switched on, and its laser paired the left one from the panel; the introduction ran to
-its end and left its mark, and the Introduction tab replayed it. A run from an empty data partition,
-before Steam's first-run setup, is open.
+### First-run setup
+
+Before the first sign-in, once, the panel takes the place of the client's own setup, alone: the
+client unpacks itself at its first start, since the panel shows its texts and fonts, and then
+waits ([`wait-first-run`](../userspace/rootfs/usr/libexec/pico4/wait-first-run), a step of
+`steam.service`) until the setup is finished or skipped, someone signed in before, or the panel's
+service failed for good. For the time of the setup the program shapes SteamVR around it:
+
+- **Scene application.** It connects as SteamVR's scene application and submits a frame to both
+  eyes at every one of SteamVR's frames, an even dark room, which the room view covers.
+- **No wait for Steam.** SteamVR's `/settings/dashboard/expectSteam` is off: with it on, SteamVR's
+  system UI shows a loading spinner until Steam's UI is up and after 120 s the error "There was an
+  issue launching Steam", whose only button restarts the headset.
+- **Dashboard closed.** SteamVR's system UI opens its dashboard as it starts, on its home page
+  ("Welcome to SteamVR"), over the panel. The setup closes it as the system button does: the
+  message `hide_dashboard_requested` to the system UI's mailbox `vrwebui_dashboard`. The system
+  button still opens it during the setup.
+- **Keyboard started.** SteamVR's keyboard is a page of its web helper that starts on the first
+  message to the mailbox `keyboard_vrwebui/main`; the system UI sends one only while its own
+  dashboard is fully visible. With the dashboard closed there is no keyboard ("Rejecting
+  ShowKeyboard call because no keyboard implementation exists"), so the setup sends that message
+  itself, with the room view's switch. At its first showing the keyboard loads its keys' layout
+  and passes on no key ("render layout==null" in its log); from the second showing on it works.
+  The setup shows it once, 2 s after starting it, for 2 s, while the headset is seldom worn yet.
+- **Room view.** SteamVR's room view is on, as the dashboard's camera button switches it (the
+  compositor's `set_camera_roomview_enabled`), so the wearer sees the room
+  ([xr.md](xr.md#passthrough)); the dark room shows only while the cameras have no image. The
+  system UI sets the room view as it starts, so this switch and the dashboard's follow it: the
+  setup waits for the system UI's overlay (`system.systemui`), and 5 s more for its mailboxes,
+  which open about 2 s after it.
+
+SteamVR refuses most settings and messages to a scene application, so a short background
+application, [`pico4-steamvr-switch`](../src/xr/pico4-steamvr-switch.cpp), throws the switches,
+waited for each time. vrclient's mailbox client (`IVRMailbox_002`) carries the messages; its `open`
+takes a third string after the name and the handle, which vrclient copies when it is set: called
+with `nullptr` it opens the mailbox, and a stray value there crashes the caller. A settings file
+written before SteamVR starts does not do: on a first start an earlier SteamVR process wrote its own
+copy back. Steam's own setup works differently: the client sets the path property `/steam/oobe`,
+on which SteamVR's system UI forces the room view on, allows no actions and keeps the dashboard's
+contents in front of the wearer, with Steam's setup in them; without the client those contents are
+SteamVR's own bar, so the panel does not use it. As the setup ends the room view goes off and
+`expectSteam` on, the setup leaves its mark and starts again as the background application for
+the introduction, and the client starts. The panel runs in the
+language chosen on it. The client's own words come from its files at runtime (its localization
+files and its language-screen module in `~/.local/share/Steam/steamui`): its welcome, its language
+names and its zones' names, the network page's texts and the buttons. The panel's other texts are
+[pico4-onboarding.strings](../src/xr/pico4-onboarding.strings), in all of the client's 31
+languages; English is the reference, the others are machine-assisted translations awaiting a native
+speaker's review. Pango lays the texts out; the image's fonts cover Latin, Greek and Cyrillic, and
+the client's own Noto font (its `clientui/fonts`) every other script it shows.
+
+| The client's page | Here |
+| --- | --- |
+| Welcome | the client's welcome in the current language, the controllers' state; Skip leaves the setup for good |
+| Language | the client's 31 languages by their own names; a choice sets the client's language in its `registry.vdf` ([`steam-language`](../userspace/rootfs/usr/libexec/pico4/steam-language); the client then starts in it, and a running one restarts, as its own setting restarts it) and the panel's |
+| Time zone | the client's 62 zones with its names and cities; a choice sets the system's zone through `steamos-set-timezone`, as the client's own setting does |
+| Network | the Wi-Fi networks (`nmcli`), strongest first; Wi-Fi turned on when it is off. A network that asks for a password gets its own page, as in the client's settings ("Enter password for ..."): a field, a switch that shows the password, and SteamVR's keyboard in its minimal mode, which sends each key to the panel and keeps no text of its own, so the panel's field is the only one. The password goes to `nmcli --ask` on its input only. A hidden network's name comes first on the same kind of page. The attempt shows a turning circle, then a tick and the list, or a cross with the reason (a refused password, a name not in range, anything else) and the password again ("Re-enter password for ..."); a refused password's profile is deleted, so the next one starts afresh. Proxy settings and a captive portal's sign-in are in the client's network settings |
+| Update | none: the system is updated from the installer on a computer, and the client updates itself at every start |
+| Screen reader | none: the client turns its screen reader on after 150 s without input on its first pages; the panel cannot read itself out |
+| Stage 2: Steam Controller pairing and firmware | none: no Valve radio; a Steam Controller pairs over Bluetooth in the client's settings |
+| Stage 2: controller pairing | the PICO 4's controllers, as above; other controllers in the client's settings |
+| Stage 2: underscan | none: no television |
+| Stage 2: audio device and channels | none: the headset's own speakers; other devices in the client's settings |
+| (none) | the lens distance: closer and wider in 0.5 mm steps within 62 to 72 mm, through `pico4-lens` |
+
+Done on the last page, or Skip on the first, ends the setup with its mark,
+`~/.local/share/pico4/setup-done`, and the client starts; after the first sign-in there, the
+introduction follows.
+
+The pages' decisions, the zones and languages and the readers for the client's files and nmcli's
+output are in [pico4_setup.h](../src/xr/pico4_setup.h) and
+[pico4_onboarding.h](../src/xr/pico4_onboarding.h), tested on the host; `pico4-onboarding --render DIR
+[LANGUAGE]` draws every page without SteamVR. Worn, after an install with both controllers off: the
+panel came up and listened for the left controller hands-free; the right one connected when switched
+on, and its laser paired the left one from the panel; the introduction ran to its end and left its
+mark, and the Introduction tab replayed it. The setup's pages worn, from an empty data partition, are
+open.
 
 ### Monado as a service
 

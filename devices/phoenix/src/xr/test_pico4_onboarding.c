@@ -49,12 +49,7 @@ main(void)
 	EXPECT(pico4_tour_next(PICO4_TOUR_CONTROLLERS) == PICO4_TOUR_SAFETY);
 	EXPECT(pico4_tour_next(PICO4_TOUR_PLAYSPACE) == PICO4_TOUR_DONE);
 	EXPECT(pico4_tour_next(PICO4_TOUR_DONE) == PICO4_TOUR_PAGES);
-	for (int i = 0; i < PICO4_TOUR_PAGES; i++) {
-		EXPECT(pico4_tour_texts[i].title != NULL && pico4_tour_texts[i].lines[0] != NULL);
-		for (int l = 0; l < PICO4_TOUR_LINES && pico4_tour_texts[i].lines[l] != NULL; l++) {
-			EXPECT(strstr(pico4_tour_texts[i].lines[l], "Frame") == NULL); // the PICO 4, not the Frame
-		}
-	}
+	// The pages' texts are in pico4-onboarding.strings (tests/test_onboarding_strings.py).
 
 	// The driver's answers.
 	EXPECT(pico4_tour_pair_answer("pairing left") == 0);

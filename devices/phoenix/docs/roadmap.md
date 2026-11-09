@@ -216,9 +216,13 @@ Valve's headset-specific components are proprietary and built for the Frame's ha
   loaded per stream. Battery level and charging state reach UPower and SteamVR
   ([userspace.md](userspace.md)).
 - **Session.** Valve's session is the only session; it starts at boot.
-- **Onboarding.** `pico4-onboarding` pairs controllers hands-free when none is there and shows the
-  PICO 4's introduction once after Steam's first-run setup; worn, both and the replay from the
-  dashboard work ([session.md](session.md#onboarding)).
+- **Onboarding.** From an empty data partition, before the first sign-in, `pico4-onboarding` runs
+  the first-run setup as SteamVR's scene in the room view, alone: language (all 31 of the client's),
+  time zone, Wi-Fi with its own password page, controllers and the lens distance, in the client's own
+  words and fonts; the client starts after it, in the chosen language. It pairs controllers
+  hands-free when none is there and shows the PICO 4's introduction once after the sign-in; worn,
+  the setup, the pairing and the introduction's replay from the dashboard work
+  ([session.md](session.md#first-run-setup)).
 - **Acceptance.** `dev check` runs 30 s of Valve's session on the installed system, with the headset
   and both controllers in SteamVR.
 
@@ -239,13 +243,15 @@ brought no suspend. Whether a key wake behaves alike is not known.
 
 **Not verified.**
 
-- `dev restore` for an installed system: implemented and tested on the host, not on the headset
-  ([install.md](install.md)).
+- `dev restore` interrupted part way: a whole restore of an installed system ran on the headset into
+  PICO OS's first-time setup ([install.md](install.md)).
 - A second headset: everything ran on one unit ([device-preparation.md](device-preparation.md#verified-hardware)).
 - macOS as the host: the host tests cover it, a headset was never installed from one; Linux hosts built images,
   Windows also installed them. The stock firmware and assets in Python (any system, no Linux) match the shell
   extraction byte for byte on Windows and Linux; macOS and EDL device counting through pyusb on a Mac are not run.
-- The first run with only the headset, from an empty data partition.
+- The first-run setup's failure page (a refused password, a network out of range) worn: drawn and
+  host-tested only. Its texts in the 30 languages besides English are machine-assisted and not reviewed.
+  The screen reader of Steam's own setup has no counterpart.
 - Battery life unplugged: only inferred with the cable in.
 - Sessions much longer than 10 minutes ([cooling.md](cooling.md)).
 - MangoHud's `mangoapp`, the client's performance overlay: switching it on from the client's menu.

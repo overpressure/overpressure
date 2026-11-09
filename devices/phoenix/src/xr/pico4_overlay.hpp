@@ -45,31 +45,37 @@ struct Vr
 	vr::IVROverlay *overlay = nullptr;
 	vr::IVRSystem *system = nullptr;
 	vr::IVRCompositor *compositor = nullptr;
+	vr::IVRSettings *settings = nullptr; //!< may stay null: only some tools change settings
+	void *(*get_interface)(const char *, vr::EVRInitError *) = nullptr; //!< any other of SteamVR's interfaces
 	void (*shutdown)() = nullptr;
 };
 
 /*!
- * Open libopenvr_api.so and connect as a background application, trying for two minutes while
- * SteamVR starts. Returns 0, 1 on an error (printed with @p tool), or 2 when @p stop was set first.
+ * Open libopenvr_api.so and connect as @p type (a background application by default), trying for
+ * two minutes while SteamVR starts. Returns 0, 1 on an error (printed with @p tool), or 2 when
+ * @p stop was set first.
  */
 inline int
-vr_open(const char *tool, Vr &out, volatile sig_atomic_t *stop)
+vr_open(const char *tool, Vr &out, volatile sig_atomic_t *stop, vr::EVRApplicationType type = vr::VRApplication_Background)
 {
 	void *lib = dlopen(kOpenvrApi, RTLD_NOW);
 	if (lib == nullptr) {
 		fprintf(stderr, "%s: %s\n", tool, dlerror());
 		return 1;
 	}
-	auto vr_init = (uint32_t(*)(vr::EVRInitError *, vr::EVRApplicationType))dlsym(lib, "VR_InitInternal");
+	// openvr.h's own entry point, with its startup information: the older two-argument one would
+	// leave that argument to whatever the register holds, and vrclient copies it (strncpy) later.
+	auto vr_init = (uint32_t(*)(vr::EVRInitError *, vr::EVRApplicationType, const char *))dlsym(lib, "VR_InitInternal2");
 	auto vr_interface = (void *(*)(const char *, vr::EVRInitError *))dlsym(lib, "VR_GetGenericInterface");
 	out.shutdown = (void (*)())dlsym(lib, "VR_ShutdownInternal");
+	out.get_interface = vr_interface;
 	if (vr_init == nullptr || vr_interface == nullptr || out.shutdown == nullptr) {
 		fprintf(stderr, "%s: not an OpenVR library\n", tool);
 		return 1;
 	}
 	vr::EVRInitError err = vr::VRInitError_Driver_Failed;
 	for (int i = 0; i < 60 && err != vr::VRInitError_None && !*stop; i++) {
-		vr_init(&err, vr::VRApplication_Background);
+		vr_init(&err, type, nullptr);
 		if (err != vr::VRInitError_None && !*stop) {
 			sleep(2);
 		}
@@ -84,6 +90,8 @@ vr_open(const char *tool, Vr &out, volatile sig_atomic_t *stop)
 	out.overlay = static_cast<vr::IVROverlay *>(vr_interface(vr::IVROverlay_Version, &err));
 	out.system = static_cast<vr::IVRSystem *>(vr_interface(vr::IVRSystem_Version, &err));
 	out.compositor = static_cast<vr::IVRCompositor *>(vr_interface(vr::IVRCompositor_Version, &err));
+	vr::EVRInitError settings_err = vr::VRInitError_None;
+	out.settings = static_cast<vr::IVRSettings *>(vr_interface(vr::IVRSettings_Version, &settings_err));
 	if (out.overlay == nullptr || out.system == nullptr || out.compositor == nullptr) {
 		fprintf(stderr, "%s: no overlay interface: %d\n", tool, err);
 		return 1;
@@ -309,9 +317,9 @@ image_barrier(VkCommandBuffer commands, VkImage image, VkImageLayout from, VkIma
 	vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 }
 
-//! The surface's pixels into the texture, then the texture to SteamVR, in the layout it takes them.
+//! The surface's pixels into the texture, left in the layout SteamVR takes it in.
 inline bool
-texture_show(const Gpu &g, Texture &t, cairo_surface_t *surface, vr::IVROverlay *overlay, vr::VROverlayHandle_t handle)
+texture_upload(const Gpu &g, Texture &t, cairo_surface_t *surface)
 {
 	std::vector<uint8_t> rgba;
 	to_rgba(surface, rgba);
@@ -335,6 +343,13 @@ texture_show(const Gpu &g, Texture &t, cairo_surface_t *surface, vr::IVROverlay 
 		return false;
 	}
 	t.written = true;
+	return true;
+}
+
+//! The texture as SteamVR takes a Vulkan image: its device, its queue and its size.
+inline vr::VRVulkanTextureData_t
+vulkan_data(const Gpu &g, const Texture &t)
+{
 	vr::VRVulkanTextureData_t data{};
 	data.m_nImage = (uint64_t)t.image;
 	data.m_pDevice = g.device;
@@ -346,6 +361,17 @@ texture_show(const Gpu &g, Texture &t, cairo_surface_t *surface, vr::IVROverlay 
 	data.m_nHeight = t.height;
 	data.m_nFormat = VK_FORMAT_R8G8B8A8_UNORM;
 	data.m_nSampleCount = 1;
+	return data;
+}
+
+//! The surface's pixels into the texture, then the texture to SteamVR as the overlay's image.
+inline bool
+texture_show(const Gpu &g, Texture &t, cairo_surface_t *surface, vr::IVROverlay *overlay, vr::VROverlayHandle_t handle)
+{
+	if (!texture_upload(g, t, surface)) {
+		return false;
+	}
+	vr::VRVulkanTextureData_t data = vulkan_data(g, t);
 	vr::Texture_t texture{&data, vr::TextureType_Vulkan, vr::ColorSpace_Auto};
 	return overlay->SetOverlayTexture(handle, &texture) == vr::VROverlayError_None;
 }

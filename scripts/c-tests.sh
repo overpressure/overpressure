@@ -25,6 +25,7 @@ test_c test_pico4_tracking -std=c11 -D_GNU_SOURCE test_pico4_tracking.c pico4_st
 cd ../xr
 test_c test_pico4_lens_panel -std=gnu11 test_pico4_lens_panel.c -lm
 test_c test_pico4_onboarding -std=gnu11 test_pico4_onboarding.c
+test_c test_pico4_setup -std=gnu11 test_pico4_setup.c
 
 # The PICO's battery driver on a fake PMIC, against stub kernel headers.
 cd ../../kernel/tests

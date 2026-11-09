@@ -28,33 +28,8 @@ enum pico4_tour_page
 	PICO4_TOUR_PAGES,
 };
 
-#define PICO4_TOUR_LINES 4
-
-struct pico4_tour_text
-{
-	const char *title;
-	const char *lines[PICO4_TOUR_LINES];
-};
-
-//! The pages' texts; the controllers page adds each controller's state and what to press.
-static const struct pico4_tour_text pico4_tour_texts[PICO4_TOUR_PAGES] = {
-    {"Controllers", {"Both controllers connect to the headset by themselves when they are on.", NULL, NULL, NULL}},
-    {"Before you play",
-     {"Clear a space around you, free of furniture, people and pets.",
-      "The PICO 4 tracks with its cameras: keep the room lit.",
-      "Keep the lenses out of direct sunlight.", "Take the headset off if you feel unwell, and take breaks."}},
-    {"Pointing and the PICO button",
-     {"Point a controller at a window and pull its trigger to click.",
-      "Press the PICO button to open or close the menu.", "Hold the PICO button to recenter your view.", NULL}},
-    {"Your playspace",
-     {"SteamVR asks you to set up your playspace when you start a game in a new room.",
-      "You can set it up any time in SteamVR's dashboard, under Space Setup.", NULL, NULL}},
-    {"You're ready",
-     {"Open this introduction again from the dashboard's Introduction tab.", NULL, NULL, NULL}},
-};
-
-//! What to press to pair one controller: PICO OS's instruction (its station service listens meanwhile).
-#define PICO4_TOUR_PAIR_HOW "Hold its trigger and its PICO button together for about 6 seconds."
+// The pages' texts, in every language, are in pico4-onboarding.strings; what to press to pair one
+// controller is PICO OS's instruction (its station service listens meanwhile).
 
 enum pico4_tour_button
 {
