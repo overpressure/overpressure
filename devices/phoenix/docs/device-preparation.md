@@ -53,12 +53,13 @@ stops responding, restart the headset into PICO OS, check its ADB identity and e
 
 ## Verified hardware
 
-The tools run only on what the whole path has run on, and refuse the rest before they change anything:
+The tools run only on what the whole path has run on, or on PICO OS builds that run the same code before the
+kernel, and refuse the rest before they change anything:
 
 | | Verified | Checked by |
 | --- | --- | --- |
 | Headset | original PICO 4, A8110, *phoenix*, with LPDDR4X | the fingerprint, PICO OS's model (`pxr.vendorhw.product.model` `PICO 4`) and memory (`ro.vendor.ddr_type` `DDR4`), in `device probe` and every later command |
-| PICO OS | 5.13.7, `ro.oem.state` true (the `global-seko` build) | the same |
+| PICO OS | 5.13.7 `global-seko` (`ro.oem.state` true), where the whole path has run; 5.13.3 and 5.13.8 `global-seko`, which run the same code before the kernel ([other builds](#other-pico-os-builds)) | the same, with the fingerprint's region |
 | Panel | Sharp LS026B3SA | `dev install`, from the kernel command line in the maintenance stage 1: the stock tree also knows an Innolux NT57900, which our driver and tree do not |
 
 Neo 3 and Ultra have other fingerprints and are refused. The PICO 4 Pro and Enterprise take the same packages
@@ -84,37 +85,45 @@ by Git.
 ## Other PICO OS builds
 
 `tooling/firmware.json` lists PICO's public full packages for the PICO 4, all of them still on PICO's servers; 5.13.8
-is the newest build for the PICO 4. `seko` and `sek` are secure-boot user builds, `seko` with `ro.oem.state` true. Only
-the first row has run:
+is the newest build for the PICO 4. `seko` and `sek` are secure-boot user builds, `seko` with `ro.oem.state` true; the
+region is the fingerprint's product (`Phoenix_ovs` global, `Phoenix` China).
 
-| Build | `ro.oem.state` | Date | Here |
-| --- | --- | --- | --- |
-| 5.13.7 `global-seko` (b9665) | true | 2025-10-30 | verified |
-| 5.13.7 `global-sek`, `cn-seko`, `cn-sek` (b9666, b9650, b9651) | empty, true, empty | 2025-10-30 | refused: not run |
-| 5.13.8 `global-seko`, `global-sek` (b10102, b10113) | true, empty | 2026-09-02 and 03 | refused: not run |
-| 5.13.3 `global-seko`, `global-sek` (b9480, b9479) | true, empty | 2025-07-03 | refused: not run |
+**What the headset's own build still decides.** The installed system takes everything of PICO OS's it runs from the
+5.13.7 `global-seko` package, whatever the headset runs: the DSP images, the Wi-Fi and Bluetooth firmware, the GPU's
+firmware, PICO's tracker and its libraries, the sensor and audio configuration (`python -m overpressure assets`), and
+the stock recovery under the maintenance stage 1. Only `persist`, this headset's own data, is read from the headset.
+What stays the headset's own build is what runs before the kernel and is never written: the boot chain (XBL and its
+configuration, AOP, TrustZone and its libraries, the hypervisor, devcfg, the serial engines' firmware, the UEFI
+volume) and the board overlay in `dtbo`. The ABL is not among them: the install replaces it with the engineering ABL.
 
-What the packages themselves say (read from PICO's servers, their `updater-script` and firmware):
+`python -m overpressure bootchain` compares those members of each package with 5.13.7 `global-seko`'s: an image runs
+the same code when every segment but its hash segment (hashes, signature, certificates) is byte-identical, and `dtbo`
+is compared overlay by overlay, by each overlay's `compatible` and `qcom,board-id` (kona MTP and kona-iot MTP share
+a board-id; the order changes from build to build). PICO signs every build anew, so no image is byte-identical. The
+recovery the install writes is checked against the headset's `vbmeta`: its key and rollback index are read too.
+
+| Build | `ro.oem.state` | Date | Before the kernel | `vbmeta` and recovery key | Here |
+| --- | --- | --- | --- | --- | --- |
+| 5.13.7 `global-seko` (b9665) | true | 2025-10-30 | the reference | the reference | verified: the whole path has run |
+| 5.13.3 `global-seko` (b9480) | true | 2025-07-03 | the same code, re-signed; `dtbo` the same | the same, recovery rollback index 1 | accepted: the same code |
+| 5.13.8 `global-seko` (b10102) | true | 2026-09-02 | the same code, re-signed; `dtbo` the same | the same, recovery rollback index 1 | accepted: the same code |
+| 5.13.3, 5.13.7, 5.13.8 `global-sek` (b9479, b9666, b10113) | empty | | the same code, re-signed; `dtbo` the same | another key | refused: the install's recovery is signed with the `seko` key |
+| 5.13.7 `cn-seko`, `cn-sek` (b9650, b9651) | true, empty | 2025-10-30 | XBL and AOP differ | | refused: other code before the kernel |
+
+The tools refuse every build not in the table as well (`tooling/device.py`), naming the reason, before anything is
+written. An accepted build that has not run on a headset is accepted on this comparison: the engineering ABL, the
+unlock and the whole path have run on 5.13.7 only; the unlock's upstream reports the unlock working through 5.13.8.
+
+What the packages also say (read from PICO's servers, their `updater-script` and firmware):
 
 - **No way back through PICO's updater.** Every package refuses a headset whose build is newer
   (`E3003: Can't install this package ... over newer build`) and one of the other `ro.oem.state`
-  (`E3009`). A headset already on 5.13.8 cannot get 5.13.7 from PICO, nor move between `seko` and
-  `sek`.
-- **5.13.8's boot chain is a rebuild.** Every firmware image changes at the same size. XBL, TZ,
-  the hypervisor and devcfg keep their versions (`BOOT.XF.3.2-00354-SM8250-1`, `TZ.XF.5.8-00274`)
-  and certificate chains and differ only in their segment hashes and signatures; the ABL is rebuilt
-  and signed by a new attestation certificate (Pico's root and attestation CA are the same). None
-  carries an anti-rollback version in its signing header or certificates. Whether the engineering
-  ABL and the unlock run on 5.13.8 has not been tried here; the unlock's upstream reports it working through 5.13.8.
-  The engineering ABL chains to the same Pico root CA as the ABL and XBL of every 5.13.7 and 5.13.8 build.
-- **Rollback indexes.** In all eight packages `vbmeta` has rollback index 0 and `vbmeta_system` 1617580800, so 5.13.8
-  raised none of them (those of `boot` and `recovery` were not read).
-- **Who can install today.** A headset on 5.13.7 `global-seko`. One of the same variant on an older build (5.13.3
-  `global-seko`) can get there with PICO's offline update of the 5.13.7 package, which installs a package not older
-  than the running build; not tried here. A headset on 5.13.8, or on a `sek` build, cannot.
-- **What else differs per build.** The RGB camera's register table is generated from the build's
-  camera module, which `kernel/imx471_mode.py` checks by hash; the overlay labels and panel sequences
-  come from the build's stock recovery.
+  (`E3009`). A headset on 5.13.8 cannot get 5.13.7 from PICO, nor move between `seko` and `sek`; the install does not
+  need it to.
+- **No anti-rollback.** None of the boot chain's images carries an anti-rollback version in its signing header or
+  certificates, and the engineering ABL chains to the same Pico root CA as every 5.13.7 and 5.13.8 ABL and XBL. In all
+  eight packages `vbmeta` has rollback index 0 and `vbmeta_system` 1617580800; recovery's is 1 in every `global` one.
+- **Who can install today.** A headset on a `global-seko` build: 5.13.3, 5.13.7 or 5.13.8.
 
 ## Entering and leaving EDL
 

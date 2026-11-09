@@ -389,7 +389,7 @@ class Plan:
             record = device.read_identity(path)
         except (OSError, ValueError, KeyError) as exc:
             raise Failed(str(exc), NOTHING_CHANGED + " PICO OS keeps running as it is.") from exc
-        ctx.log(f"identity: {record['fingerprint'].split('/')[3]}, verified")
+        ctx.log(f"identity: PICO OS {record['fingerprint'].split('/')[3]}, {device.firmware_support(record)}")
 
     def panel(self, ctx: Context) -> None:
         """Refuse a display panel Valve's kernel does not drive, from what PICO OS tells its adb shell."""

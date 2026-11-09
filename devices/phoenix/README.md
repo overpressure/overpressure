@@ -35,12 +35,12 @@ PC), and a power press after a long sleep. Plan and details:
 
 **Before you start.** This replaces PICO OS on your headset: unlocking and installing wipe its apps and data.
 It voids what warranty is left, and a failed step can leave the headset needing the recovery in
-[docs/device-preparation.md](docs/device-preparation.md). Everything here has run on **one** headset, and the way back
-to PICO OS from an installed system has not been run on it yet ([docs/roadmap.md](docs/roadmap.md)). The installer
-chains steps that have each run on it; as one path it has not run yet ([what is open](docs/install.md#the-installer)). The tools
+[docs/device-preparation.md](docs/device-preparation.md). Everything here has run on **one** headset, the way back
+to PICO OS from an installed system included ([docs/roadmap.md](docs/roadmap.md)). The installer has run on it from PICO
+OS to the installed system, with its builds done beforehand ([what is open](docs/install.md#the-installer)). The tools
 refuse a headset, firmware or panel that hasn't been verified
-([list](docs/device-preparation.md#verified-hardware)): today only PICO OS 5.13.7 of the `global-seko` build. A headset that has updated past it
-(5.13.8, the newest) can't go back through PICO's own updater, and a `sek` build can't become `seko`
+([list](docs/device-preparation.md#verified-hardware)): today a PICO OS `global-seko` build, 5.13.3, 5.13.7 (where the whole
+path has run) or 5.13.8 (the newest), which run the same code before the kernel; not a `sek` or a China build
 ([who can install](docs/device-preparation.md#other-pico-os-builds)). You
 build your own image; the project publishes no image and no vendor file ([docs/distribution.md](docs/distribution.md)).
 

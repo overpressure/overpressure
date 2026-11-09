@@ -55,8 +55,13 @@ def unlock_token(number: int) -> str:
     return "pico" + format(number & 0xF7F3F37F, "x").translate(str.maketrans("0123456789abcdef", "0XD9J6FB3ATQIHNM"))
 
 
-#: What the whole path has run on (docs/device-preparation.md): (PICO OS version, ro.oem.state).
-VERIFIED_FIRMWARES = {("5.13.7", "true")}
+#: The PICO OS builds the install accepts (docs/device-preparation.md#other-pico-os-builds), as (version,
+#: region, ro.oem.state): the one the whole path has run on, and the ones that run the same code before
+#: the kernel by `python -m overpressure bootchain` (the boot chain re-signed, the board overlay the same)
+#: and sign vbmeta and recovery with the same key at the same rollback index. Everything else the system
+#: runs comes from the verified build's public package, whatever the headset runs.
+VERIFIED_FIRMWARES = {("5.13.7", "global", "true")}
+SAME_CODE_FIRMWARES = {("5.13.3", "global", "true"), ("5.13.8", "global", "true")}
 #: Panels the kernel's driver and tree know, as the bootloader names them to the stock kernel.
 VERIFIED_PANELS = ("sharp_ls026b3sa",)
 #: The PICO 4 among the headsets PICO OS's one package serves, as PICO OS tells them apart: the model from
@@ -67,15 +72,41 @@ MODEL_PROPERTIES = {"model": "pxr.vendorhw.product.model", "ddr_type": "ro.vendo
 VERIFIED_MODEL = {"model": "PICO 4", "ddr_type": "DDR4"}
 
 
-def check_firmware(version: str, oem_state: str) -> None:
-    """Refuse a PICO OS build the whole path has not run on."""
-    if (version, str(oem_state).lower()) not in VERIFIED_FIRMWARES:
-        verified = ", ".join(f"{v} (ro.oem.state {s})" for v, s in sorted(VERIFIED_FIRMWARES))
-        msg = (
-            f"PICO OS {version} (ro.oem.state {oem_state}) is not verified, only {verified}: "
-            "nothing was changed (docs/device-preparation.md)"
+def firmware_region(fingerprint: str) -> str:
+    """Return a PICO 4 fingerprint's region: global for its product Phoenix_ovs, cn for Phoenix."""
+    product = fingerprint.split("/")[1] if fingerprint.count("/") >= 1 else ""
+    return "global" if product.lower().endswith("_ovs") else "cn"
+
+
+def firmware_support(identity: dict) -> str:
+    """Return how the install supports a saved identity's PICO OS build; refuse one it does not."""
+    fingerprint = identity.get("fingerprint", "")
+    return check_firmware(fingerprint.split("/")[3], identity.get("oem_state", ""), firmware_region(fingerprint))
+
+
+def check_firmware(version: str, oem_state: str, region: str = "global") -> str:
+    """Return whether a PICO OS build is verified or the same code before the kernel; refuse any other."""
+    state = str(oem_state).lower()
+    build = (version, region, state)
+    if build in VERIFIED_FIRMWARES:
+        return "verified"
+    if build in SAME_CODE_FIRMWARES:
+        return "the verified build's code before the kernel"
+    if region != "global":
+        why = "China builds run another XBL and AOP than the verified build"
+    elif state != "true":
+        why = (
+            "builds with an empty ro.oem.state (sek) sign vbmeta and recovery with another key than the seko "
+            "build whose recovery the install writes"
         )
-        raise ValueError(msg)
+    else:
+        why = "this build has not been compared with the verified one (python -m overpressure bootchain)"
+    accepted = ", ".join(v for v, _r, _s in sorted(VERIFIED_FIRMWARES | SAME_CODE_FIRMWARES))
+    msg = (
+        f"PICO OS {version} ({region}, ro.oem.state {oem_state}) is not supported: {why}. Supported: the global "
+        f"seko builds {accepted}. Nothing was changed (docs/device-preparation.md)"
+    )
+    raise ValueError(msg)
 
 
 def check_model(identity: dict) -> None:
@@ -160,8 +191,7 @@ def read_identity(path: Path) -> dict:
     if not re.fullmatch(r"Pico/[Pp]hoenix(?:_ovs)?/PICOA8110:10/[^/]+/[^\s]+", fp):
         msg = "This workflow supports original PICO 4 A8110/phoenix only"
         raise ValueError(msg)
-    version = fp.split("/")[3]
-    check_firmware(version, identity.get("oem_state", ""))
+    firmware_support(identity)
     check_model(identity)
     chip_id(str(identity["chip_id"]))
     return identity

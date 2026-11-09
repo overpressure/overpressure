@@ -59,6 +59,9 @@ class Phoenix(Headset):
             "match": Command("image", "find the firmware.json entry for a headset's fingerprint", keep=True),
             "stock": Command("stock", "the stock firmware's partitions from PICO's public OTA"),
             "assets": Command("assets", "the stock firmware, then every file the userspace build takes from it"),
+            "bootchain": Command(
+                "bootchain", "each PICO OS build's boot chain against the verified one, from PICO's OTAs"
+            ),
             "device": Command("device", "identity, EDL backups, engineering ABL, unlock and restore"),
             "hwtest": Command("hardware_test", "preflight and the bounded acceptance runner"),
             "dev": Command("devloop", "the development loop: maintenance stage 1, install, checks"),

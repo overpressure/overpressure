@@ -280,12 +280,12 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(text.count("PICO4_ADB_SERIAL="), 1)
         self.assertIn(f"PICO4_IDENTITY={self.identity.as_posix()}", text)  # the other lines stay
 
-    def test_an_unverified_firmware_is_refused_before_any_write(self):
-        self.version = "5.13.8"
+    def test_an_unsupported_firmware_is_refused_before_any_write(self):
+        self.version = "5.13.9"
         ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
         finished = ui.finished()
         self.assertEqual((finished["status"], finished["task"]), ("failed", "identity"))
-        self.assertIn("5.13.8", finished["error"])
+        self.assertIn("5.13.9", finished["error"])
         self.assertIn("Nothing was changed", finished["where"])
         self.assertEqual(self.commands(), ["device probe"])
         self.assertFalse(any("reboot" in " ".join(c) for c in self.captured))

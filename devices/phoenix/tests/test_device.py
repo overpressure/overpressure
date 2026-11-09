@@ -160,13 +160,35 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(self.call(self.args("unlock")), 1)
             run.assert_not_called()
 
-    def test_only_the_verified_firmware_passes(self):
-        for version, state in (("5.13.8", "true"), ("5.13.7", "false"), ("5.13.3", "true")):
+    def test_the_global_seko_builds_with_the_verified_code_pass(self):
+        for version, support in (
+            ("5.13.7", "verified"),
+            ("5.13.3", "the verified build's code before the kernel"),
+            ("5.13.8", "the verified build's code before the kernel"),
+        ):
             self.record["fingerprint"] = f"Pico/Phoenix_ovs/PICOA8110:10/{version}/build:user/dev-keys"
+            self.identity.write_text(json.dumps(self.record))
+            # The saved record stays as it is: backups compare it as a whole.
+            self.assertEqual(device.read_identity(self.identity), self.record)
+            self.assertEqual(device.firmware_support(self.record), support)
+
+    def test_every_other_build_is_refused_with_its_reason(self):
+        for product, version, state, reason in (
+            ("Phoenix_ovs", "5.13.7", "false", "another key"),  # sek: another AVB key
+            ("Phoenix_ovs", "5.13.8", "", "another key"),
+            ("Phoenix", "5.13.7", "true", "China builds run another XBL and AOP"),
+            ("phoenix", "5.13.7", "false", "China builds"),
+            ("Phoenix_ovs", "5.13.9", "true", "has not been compared"),
+            ("Phoenix_ovs", "5.12.0", "true", "has not been compared"),
+        ):
+            self.record["fingerprint"] = f"Pico/{product}/PICOA8110:10/{version}/build:user/dev-keys"
             self.record["oem_state"] = state
             self.identity.write_text(json.dumps(self.record))
-            with self.assertRaisesRegex(ValueError, "not verified"):
-                device.read_identity(self.identity)
+            with self.subTest(product=product, version=version, state=state):
+                with self.assertRaisesRegex(ValueError, reason):
+                    device.read_identity(self.identity)
+                with self.assertRaisesRegex(ValueError, "Nothing was changed"):
+                    device.read_identity(self.identity)
 
     def test_other_pico_headsets_are_refused(self):
         for model in (

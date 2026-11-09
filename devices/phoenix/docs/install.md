@@ -328,7 +328,7 @@ the ABL to stock (`python -m overpressure cycle --restore-only`) and entering de
 | Development loop | `dev recovery`, `dev reboot` (stays in maintenance), `dev normal` (installed system again); from fastboot without the recovery request, `dev reboot` connects to the installed system that `boot` starts |
 | Boot indication | Monado and SteamVR's compositor take the display from `pico4-splash.service` (it exits within 0.5 s) |
 | Power-off | stays off without the cable; with the cable attached the headset starts again with `androidboot.mode=charger` |
-| Installer | on the host only, with fakes: the stages, the done checks, the serials written to `.env`, the refusals before any write, the Wi-Fi password on stdin only. Not run on a headset: the chained path as a whole, the LUNs from `printgpt`, the panel check over adb on PICO OS (whether its shell may read `/proc/cmdline`), whether PICO OS needs the factory reset when the installer goes from the unlock straight to fastboot, and the Wi-Fi keyfile in the read-only system's `/etc` overlay |
+| Installer | on the host, with fakes: the stages, the done checks, the serials written to `.env`, the refusals before any write, the Wi-Fi password on stdin only. On the headset, from PICO OS after a `dev restore`, on Windows: the headset's half as one path in about 11 minutes, from finding it through the panel check over adb (PICO OS's shell cannot read `/proc/cmdline`; the check reads what it may), the engineering ABL, the unlock (also of a headset unlocked before) and the maintenance stage 1 without a factory reset, to the install and `dev check`; the backup and identity were there already, the builds skipped, and no Wi-Fi was given. Not run: the LUNs from `printgpt` (the backup's step), the Wi-Fi keyfile in the read-only system's `/etc` overlay, the whole path with its builds |
 
 ## Open work
 
@@ -338,6 +338,5 @@ the ABL to stock (`python -m overpressure cycle --restore-only`) and entering de
 3. **The direct boot on the headset.** Still to run: the power key held 2 s in charger mode, the
    lenses dark there (by eye), a boot without the PC, and `dev check` with both controllers
    connected on an image with the new check.
-4. **The installer on a headset.** Run the whole path once on a headset in PICO OS: the LUNs from `printgpt`, the panel
-   check over adb, the step from the unlock to `dev flash` without a factory reset, and the Wi-Fi keyfile on the
-   installed system (WPA2; a WPA3-only network may need `key-mgmt=sae`).
+4. **The installer on a headset.** The whole path with its builds and a new backup: the LUNs from `printgpt`, and the
+   Wi-Fi keyfile on the installed system (WPA2; a WPA3-only network may need `key-mgmt=sae`).
