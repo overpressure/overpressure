@@ -23,17 +23,11 @@ section lists what comes next. Each step has its own document:
 | 5 XR hardware: IMU, Monado driver, lenses and IPD, cameras, controllers (inputs, vibration, positions), 6DoF (PICO OS's libSlam on the CDSP; Basalt selectable), colour room view | verified worn | [docs/xr.md](docs/xr.md) |
 | 6 Valve's VR session: gamescope + SteamVR with `driver_monado` in direct mode through Turnip's display WSI | verified worn; 90 fps on the Frame's compositor path; the Steam client signs in, its library runs games through Proton and FEX, Android apps through Lepton, Steam Link from a PC; heavy games run at what the GPU allows | [docs/session.md](docs/session.md) |
 
-Installed system: the system image read-only in `super`, data in `userdata`, the maintenance
-stage 1 in `recovery`, following PICO OS's layout; installed, starts without the PC, persistent
-across reboots and updates; the way back is open ([docs/install.md](docs/install.md)). `boot`
-holds Valve's kernel without a ramdisk: the kernel mounts the system image in `super` read-only and
-starts its `preinit`, which mounts the data and executes systemd; a failure reboots into `recovery`.
-The direct boot runs on the headset (graphical target in 10 to 11 s); the power key in charger mode
-and a boot without the PC are open.
-Powering off with the USB cable attached starts the headset in charger mode (`pico4-charger.target`
-waits for a 2 s power press, then reboots into the system); a short power press does nothing.
-Cooling: `pico4-fan.service` runs PICO OS's fan policy on the lens-motor MCU; on the headset the
-MCU acknowledges ([docs/cooling.md](docs/cooling.md)).
+Installed system ([docs/install.md](docs/install.md)): Valve's kernel in `boot` (no ramdisk), the
+system image read-only in `super`, data in `userdata`, the maintenance stage 1 in `recovery`. The
+kernel mounts `super` and starts its `preinit`, which mounts the data and executes systemd; a failure
+reboots into `recovery`. Powered off on the cable it starts in charger mode. The installer installs,
+upgrades and restores to stock ([README](README.md#install)). Cooling: [docs/cooling.md](docs/cooling.md).
 Build system, the build container, tests and the Windows environment: [docs/development.md](docs/development.md).
 
 ## Backlog
@@ -48,19 +42,13 @@ README.md current.
 
 ## Layout
 
-- `tooling/`: the PICO 4's host tooling, a Python package (3.9+, the repository's conventions), reached as
-  `python -m overpressure build|inspect|match|stock|assets|device|hwtest|dev|cycle`; `__init__.py`
-  holds `HEADSET` (its commands and the window's steps). Modules: `image.py` (stage-1 image on `overpressure/stage1.py`),
-  `device.py` (EDL/fastboot/ADB), `hardware_test.py` (bounded acceptance runner), `cycle.py`
-  (acceptance cycle), `devloop.py` (development loop), `localconfig.py` (`.env`, `PICO4_` keys),
-  `userspace.py` and `graphics.py` (validators), `stock.py` (PICO's OTA members), `assets.py` (every
-  file the userspace build takes from them, in Python on any system),
-  `doctor.py` (its dependency checks), and the
-  controller data extractors. What other headsets share is in the root package `overpressure/`: the settings
-  every Qualcomm Android headset has and their doctor checks, the stage-1 builder, OTA handling, adb/fastboot,
-  Qualcomm EDL (backup, verified writes), verified backups, processes and waits, SSH, recorded runs and the
-  read-only storage policy, sparse flashing and the RAM boot, the formats (with the ext4 and FAT readers and
-  `assets.py`), `elfdeps.py` and `windows_ncm.py`.
+- `tooling/`: the PICO 4's host tooling, reached as `python -m overpressure
+  build|inspect|match|stock|assets|bootchain|device|hwtest|dev|cycle`. `__init__.py` holds `HEADSET`
+  (its commands, the window's steps, the installer's workflows, its backup); `install.py` the
+  installer's plans (install, upgrade, restore); `device.py` EDL/fastboot/ADB and the verified
+  firmware list; `devloop.py` the development loop; `cycle.py`, `hardware_test.py` the acceptance
+  runs; `image.py` the stage-1 image; `stock.py`, `assets.py` PICO's public OTA and what the build
+  takes from it. What every headset shares is in `overpressure/` ([docs/tool.md](../../docs/tool.md#how-it-fits-together)).
 - `initramfs/`: stage 1, the maintenance environment in `recovery` and the base of test images;
   `pico4-install` is the installer's only writer. `pico4-init` is PID 1, not busybox init: busybox's
   `kill(-1)` killed the f_mass_storage kernel thread and with it the USB link.
@@ -112,7 +100,8 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-syste
 # python -m overpressure --accept-disclaimer dev ..., or OVERPRESSURE_ACCEPT_DISCLAIMER=1.
 python -m overpressure dev recovery && python -m overpressure dev install   # boot, super, data; starts it
 python -m overpressure dev installed && python -m overpressure dev check    # reconnect after a reboot; check
-# Back to stock only when the user asks: python -m overpressure dev restore, then
+# Back to stock only when the user asks: the installer's restore (python -m overpressure restore, or
+# the window's Restore to stock), or by hand python -m overpressure dev restore, then after PICO OS's setup
 python -m overpressure cycle --restore-only              # verified stock boot and ABL, PICO OS
 ```
 
@@ -198,11 +187,10 @@ passed.
   the kernel's `step_wise` zones throttle. Keep GPU-heavy runs short (`pico4-valve-session-check`
   runs 30 s), stop them as soon as the evidence is in, and read
   `/sys/class/thermal/thermal_zone*/temp` when in doubt.
-- **Back to stock, only when the user asks** (PICO OS needed):
-  `dev restore`, then `python -m overpressure cycle --restore-only`. Once the headset stayed off after
-  the final EDL reset with stock boot and ABL already verified; a hard reset by the user brought
-  PICO OS back. If PICO OS does not appear, ask the user to look at the headset rather than
-  retrying anything.
+- **Back to stock, only when the user asks**: the installer's restore, or `dev restore`, PICO OS's
+  setup with USB debugging, then `cycle --restore-only`. The headset can stay off after the final
+  EDL reset with stock boot and ABL verified; a hard reset brings PICO OS back. If PICO OS does not
+  appear, ask the user to look at the headset rather than retrying anything.
 - **Venus.** A firmware exception can end the driver's recovery in an interrupt storm that starves storage or
   in a panic; both reboot the headset by themselves. Run decoder experiments that may crash it with the user near.
 - **Windows NCM.** Stage 1 on the stock kernel needs `overpressure/windows_ncm.py` (repository root)

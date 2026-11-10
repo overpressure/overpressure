@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * PICO OS's audio calibration on mainline's q6 drivers (docs/userspace.md#audio-on-a-mainline-kernel).
+ * PICO OS's audio calibration on mainline's q6 drivers (docs/userspace.md#audio).
  *
  * PICO's audio HAL hands the ADSP its custom topologies once, and for each stream the device
  * (ADM) topology of the stream's path and the path's processing and volume parameters, all from

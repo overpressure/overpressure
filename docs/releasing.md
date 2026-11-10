@@ -3,15 +3,14 @@
 ## Versions
 
 `MAJOR.MINOR[-beta[.N]]`, as a Git tag `vMAJOR.MINOR...`. `pyproject.toml` holds the same version in Python's
-spelling (`1.0-beta` is `1.0b1`). The image reports its version and Git commit in `/usr/share/pico4/version`. A
-release build's commit carries no `-dirty`.
+spelling (`1.0-beta` is `1.0b1`, `1.0-beta.2` is `1.0b2`). The image reports its version and Git commit in
+`/usr/share/pico4/version`; a release build's commit carries no `-dirty`.
 
 ## Changelog
 
-The documents state what is true now; what changed is in each release's notes and in the `CHANGELOG.md`
-inside its zip, both generated from the conventional commits by [git-cliff](https://git-cliff.org/), set up in
-[cliff.toml](../cliff.toml): features and fixes by their subjects, everything else as a count. To see what the
-next release brings:
+What changed is in each release's notes and in the `CHANGELOG.md` inside its zip, both generated from the
+conventional commits by [git-cliff](https://git-cliff.org/) as [cliff.toml](../cliff.toml) sets it up: features
+and fixes by their subjects, everything else as a count. What the next release brings:
 
 ```sh
 uvx git-cliff@2.14.2 --unreleased
@@ -41,14 +40,14 @@ A pushed tag makes the release; nothing is uploaded by hand.
      the whole history among them;
    - refuses a tag that is not annotated, not on `main`, or names another version than `pyproject.toml`
      (`python scripts/release.py check TAG`);
-   - writes the notes: the tag's own words, then the changelog's section since the previous tag;
+   - writes the notes: the tag's own words, then the changelog's section of this release (`git-cliff --latest`);
    - makes the zip with `git archive`: the tagged tree under `overpressure-VERSION/`, with `CHANGELOG.md`, the
      start scripts executable and `Install.cmd` with Windows line endings; and its SHA-256;
    - creates the GitHub release with the notes, the zip and its checksum, as a pre-release for a beta.
 
    No image, package or vendor file is attached
-   ([devices/phoenix/docs/distribution.md](../devices/phoenix/docs/distribution.md)): the start scripts build
-   everything on the owner's computer.
+   ([devices/phoenix/docs/distribution.md](../devices/phoenix/docs/distribution.md)): everything is built on
+   the owner's computer.
 
 A failed check stops the release before anything is published. Fix it on `main`, then delete the tag
 (`git push origin :refs/tags/v1.0-beta` and `git tag -d v1.0-beta`) and tag the fixed commit.
@@ -64,5 +63,5 @@ says what Valve has moved and whether the image still builds on it
 | --- | --- | --- |
 | Holo and Frame packages, SteamVR, Mesa | `build-userspace.sh --refresh --update-lock`, review `OUTPUT_DIR/packages.lock` and copy it to `userspace/packages.lock` | the whole checklist: `driver_monado`, the patches and masks depend on SteamVR's behaviour |
 | PipeWire | `pkgver` of `pico4-spa-alsa` to the new version, its patch rebased; the build stops otherwise | suspend with the microphone capturing |
-| Valve's kernel | the package name and hash in `kernel/build-kernel.sh` and `scripts/build-kernel-step.sh`, the commit, the patches rebased | the whole checklist |
+| Valve's kernel | the source package's name, SHA-256 and commit in `kernel/build-kernel.sh`, its name and URL in `scripts/build-kernel-step.sh`, the patches rebased | the whole checklist |
 | PICO OS firmware | a new entry in `VERIFIED_FIRMWARES`, only after the whole path has run on it | the whole checklist |

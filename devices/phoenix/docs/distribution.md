@@ -24,6 +24,8 @@ legal advice.
 - The install needs no file from anyone's private collection: everything comes from public downloads.
 - The built images (`out/`) hold PICO's and Valve's files, and are the owner's own copies. They stay private:
   an owner who publishes one redistributes those files.
+- The backup (`backup/`) and its exported file (`python -m overpressure backup export`) hold the headset's own
+  partitions and the key to its maintenance system: they stay private too.
 - A PICO account or a purchase isn't involved; a Steam account is, on the headset, as for any Steam machine.
 - The engineering ABL is PICO's own file for another headset, the Neo 3. It boots PICO OS on the tested PICO 4,
   as [device-preparation.md](device-preparation.md) describes.

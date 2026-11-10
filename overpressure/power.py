@@ -3,7 +3,7 @@
 
 A write to the headset cut off halfway needs its way back, so whatever touches the headset refuses
 to start on a computer that runs on its battery below MIN_BATTERY percent (overpressure/disclaimer.py),
-and the installer asks again before each task that writes. A computer without a battery, or one
+and the installer checks again before each task that writes. A computer without a battery, or one
 whose state cannot be read, goes on. Windows: GetSystemPowerStatus; Linux: /sys/class/power_supply;
 macOS: pmset -g batt.
 """

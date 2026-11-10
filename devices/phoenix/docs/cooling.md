@@ -1,25 +1,21 @@
 # Cooling
 
-The fan and a thermal policy for the Linux userspace on Valve's kernel, following PICO OS. The
-fan is not a Linux device on either system: it hangs off the GD32 MCU that also moves the lenses
-and drives the backlight ([xr.md](xr.md#lens-distortion-and-ipd)), and PICO OS's
-`pxrfanservice` sets its duty over that MCU's UART. [`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan)
-runs the same policy with the same frames under stage 2: the userspace build enables its
-service, and the acceptance checks require it on the headset. On the headset the MCU
-acknowledges its duty and reports the fan's speed, and Valve's 30 s session check on Valve's kernel
-peaks at a hottest zone of 65.5 °C. On the stock kernel, without fan control, the same check went
-from 47 °C to 86 °C, and a minute of the session from 54 °C to 92 °C. The limit for the hottest
-zone is 90 °C. PICO OS's early table is the default; that it holds 10 minutes of a rendering
-Valve's session below 80 °C rests on one run on the stock kernel (peak zone 79.5 °C,
-[Verified results](#verified-results)). On Valve's kernel, about 10 minutes of a worn game peak at
-75.6 °C ([kernel.md](kernel.md#results)).
+| | |
+| --- | --- |
+| What | The fan, the thermal policy, the VR CPU limits and the hardware limits of the system on Valve's kernel, following PICO OS |
+| How | The fan hangs off the GD32 MCU that also moves the lenses and drives the backlight ([xr.md](xr.md#lens-distortion-and-ipd)); `pico4-fan` sends it PICO OS's duty frames over `/dev/ttyHS1`, from PICO OS's policy on the CPU and GPU zones. The kernel throttles at the stock trips; `pico4-battery-guard` takes PICO OS's battery decisions |
+| Code | [`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan) and its unit, [`battery-guard`](../userspace/rootfs/usr/libexec/pico4/battery-guard), [`vr-performance`](../userspace/rootfs/usr/libexec/pico4/vr-performance), the trips in [the device tree](../kernel/sm8250-pico4-phoenix.dts) |
+| State | The MCU acknowledges duties and reports the fan's speed; Valve's 30 s session check peaks at 65.5 °C, about 10 minutes of a worn game at 75.6 °C ([kernel.md](kernel.md#results)). The limit for the hottest zone is 90 °C |
+
+Without fan control the 30 s session check went from 47 °C to 86 °C. PICO OS's early table is the default; that it
+holds 10 minutes of a rendering session below 80 °C rests on one run (peak zone 79.5 °C,
+[Verified results](#verified-results)). Sessions much beyond 10 minutes are unmeasured.
 
 ## How PICO OS cools the PICO 4
 
 The fan is an AVC blower, BAPA0405R5HY001 in the public part list of
-[PICO-documentation](https://github.com/thoricelli/PICO-documentation/blob/main/devices/README.md),
-which also lists the `pxrfanservice` system service. Its control path in the stock system and
-vendor partitions:
+[PICO-documentation](https://github.com/thoricelli/PICO-documentation/blob/main/devices/README.md). Its control path in
+the stock system and vendor partitions:
 
 ```text
 pxrfanservice                 /system/bin, init class core, root (pxrfanservice.rc)
@@ -29,18 +25,14 @@ pxrfanservice                 /system/bin, init class core, root (pxrfanservice.
         GD32F330 MCU          fan PWM; also the lens motor and the backlight
 ```
 
-What PICO OS does not use, on either system:
+PICO OS does not use:
 
-- **The kernel's fan driver.** The stock kernel has a PICO-modified `pwm-fan`
-  (`CONFIG_SENSORS_PWM_FAN=y`): hwmon `pwmfan` with a `pwm_rpm` tachometer attribute and the
-  GPIOs `pwm_pwr_enable` and `fan_pwm_irq`. None of the stock DTBs or overlays has a `pwm-fan`
-  node, and neither has the live tree. The only trace is a pinctrl state, `fan_pwm_test_active`
-  (gpio49), that nothing references. The hwmon lines in `init.picovr.rc` (`hwmon1/pwm1`,
-  `fan1_target`) and pxrfanservice's sysfs branch serve other products: pxrfanservice uses the
-  MCU when `ro.picovr.product.name` is `Phoenix`, the PICO 4.
-- **thermal-engine.** Qualcomm's daemon is off: its service is commented out in
-  `init_thermal-engine.rc`, and `thermal-engine.conf` is the empty default. The `*-usr` zones
-  (`user_space` governor, trips at 115 and 125 °C) have no listener on either system.
+- **The kernel's fan driver.** The stock kernel has a PICO-modified `pwm-fan` (`CONFIG_SENSORS_PWM_FAN=y`, hwmon
+  `pwmfan`), but no stock DTB, overlay or the live tree has a `pwm-fan` node; only an unreferenced pinctrl state
+  `fan_pwm_test_active` (gpio49) remains. The hwmon lines in `init.picovr.rc` and pxrfanservice's sysfs branch serve
+  other products: pxrfanservice uses the MCU when `ro.picovr.product.name` is `Phoenix`, the PICO 4.
+- **thermal-engine.** Qualcomm's daemon is commented out in `init_thermal-engine.rc`, and `thermal-engine.conf` is the
+  empty default. The `*-usr` zones (`user_space` governor, trips at 115 and 125 °C) have no listener.
 
 The stock tree's zones:
 
@@ -54,19 +46,13 @@ The stock tree's zones:
 | `apc-*-max-step` | 120 °C | none |
 | `pm8150*_tz` | 95, 115, 145 °C | none (PMIC) |
 
-PICO OS therefore cools with the fan and the kernel's throttling; `pico4-fan` provides the fan
-here.
-
-Valve's kernel takes part of this onto mainline's zones
-([kernel.md](kernel.md#thermal-throttling)): the GPU from 95 °C; the big
-and prime cores from a DDR at 95 °C; the GPU held at 400 MHz from 100 °C at the WLAN, video, DDR,
-Q6/HVX, camera, compute and NPU sensors. The CPUs keep mainline's frequency trips at 90 and 95 °C,
-critical at 110 °C.
+So PICO OS cools with the fan and the kernel's throttling. Valve's kernel takes the GPU, DDR and 100 °C trips onto
+mainline's zones and keeps mainline's CPU trips at 90 and 95 °C, critical at 110 °C
+([kernel.md](kernel.md#thermal-throttling)).
 
 ### The fan protocol
 
-Frames as `gd32ipdservice` builds them, in the MCU's framing (requests `A0 cmd p1 p2 p3 xor`,
-replies `79 … xor`):
+Frames as `gd32ipdservice` builds them (requests `A0 cmd p1 p2 p3 xor`, replies `79 … xor`):
 
 | Request | Reply | Command |
 | --- | --- | --- |
@@ -74,20 +60,18 @@ replies `79 … xor`):
 | `A0 0F 00 00 00 AF` | `79 lo hi xx` | GetFanSpeed: the duty |
 | `A0 10 00 00 00 B0` | `79 lo hi xx` | GetFanRPM: the tachometer |
 | `A0 26 00 00 00 86` | 8 bytes | one of GetGD32MCUVersion's three queries |
-| `A0 30 00 00 00 90` | `79 dd lo hi 00 00 00 rr 00 xx` | GetFanInfo (`fan_info_t`): duty `dd`, RPM `hi lo`, `rr` 1 while the fan runs; the other bytes read zero |
+| `A0 30 00 00 00 90` | `79 dd lo hi 00 00 00 rr 00 xx` | GetFanInfo (`fan_info_t`): duty `dd`, RPM `hi lo`, `rr` 1 while the fan runs |
 | `A0 29 …` | | SetFanRPM, for the RPM tables below |
 
-Each transaction votes the port's clocks (`ioctl 0x544D`), flushes both queues, writes the
-6 bytes and polls up to ten times at 1 ms for a reply starting with `79`.
+Each transaction votes the port's clocks (`ioctl 0x544D`), flushes both queues, writes the 6 bytes and polls up to ten
+times at 1 ms for a reply starting with `79`.
 
 ### PICO OS's policy
 
 `FanControl` in `libpxrfanservice.so` (symbols from its `.gnu_debugdata`):
 
-- **Input.** On `kona` the service reads 14 zones every 200 ms: `cpu-0-0…3-usr`,
-  `cpu-1-0…7-usr`, `gpuss-0-usr` and `gpuss-1-usr` (zones 1–4, 7–15 and 24).
-- **Mean.** Each zone keeps its last 50 readings (10 s) and ignores readings above 110 °C; the
-  hottest zone mean decides.
+- **Input.** On `kona`, 14 zones every 200 ms: `cpu-0-0…3-usr`, `cpu-1-0…7-usr`, `gpuss-0-usr` and `gpuss-1-usr`.
+- **Mean.** Each zone keeps its last 50 readings (10 s), ignoring readings above 110 °C; the hottest zone mean decides.
 - **Table.** Six thresholds with a duty from each threshold up:
 
   | Table | Thresholds (°C) | Duty (%) |
@@ -95,62 +79,48 @@ Each transaction votes the port's clocks (`ioctl 0x544D`), flushes both queues, 
   | early | 90, 85, 70, 60, 55, 50 | 75, 60, 45, 30, 30, 30 |
   | late | 90, 85, 80.5, 72, 60, 55 | 50, 45, 40, 35, 30, 0 |
 
-  On the way down a duty holds until the temperature falls one more step: in the band below
-  threshold *k*, a fan running faster than duty *k* runs at duty *k−1*. Between the two lowest
-  thresholds nothing changes.
-- **Which table.** The production batch decides. The serial number in `persist/falcon/sn` (its
-  ninth character, then a date code compared with the properties
-  `persist.pxr.fancontrol.limit1/limit2/serial1`, defaults 717, 726, D) selects "early" or
-  "late". `persist.pxr.fancontrol.control.type` can switch late headsets to RPM control with
-  SetFanRPM: type 2 uses the late table's RPM column (8,500, 7,800, 7,170, 6,540, 5,700 and
-  0 rpm), type 3, the default with eye tracking (the Pro), 13 steps from 3,700 rpm at 55 °C to
-  7,500 rpm at 90 °C. Without eye tracking the default is 1, duty.
+  On the way down a duty holds one more step: in the band below threshold *k*, a fan faster than duty *k* runs at
+  duty *k−1*. Between the two lowest thresholds nothing changes.
+- **Which table.** The production batch: the ninth character of the serial number in `persist/falcon/sn`, then a date
+  code compared with `persist.pxr.fancontrol.limit1/limit2/serial1` (defaults 717, 726, D). On late headsets
+  `persist.pxr.fancontrol.control.type` can select RPM control with SetFanRPM: type 2 uses the late table's RPM
+  column (8,500, 7,800, 7,170, 6,540, 5,700, 0 rpm), type 3, the default with eye tracking (the Pro), 13 steps from
+  3,700 rpm at 55 °C to 7,500 rpm at 90 °C. Without eye tracking the default is type 1, duty.
 - **Sending.** A changed duty goes out at once, an unchanged one again after 10 s.
-- **Overheating.** When the hottest mean stays at or above 95.1 °C for two minutes, PICO OS
-  shows a notice in VR, again every 30 s.
-- **A stopped fan.** The service's symbols and strings show no reaction to a silent MCU or a
-  fan at 0 rpm; the framework's `sysmonitor-services` only records the fan's RPM.
+- **Overheating.** When the hottest mean stays at or above 95.1 °C for two minutes, PICO OS shows a notice in VR,
+  again every 30 s.
+- **A stopped fan.** No reaction to a silent MCU or a fan at 0 rpm; `sysmonitor-services` only records the RPM.
 - **Overrides.** `/data/picovr/fancontrol_config.txt` replaces tables. While a factory test runs
-  (`pvr.factorytest.running`), the service sets 0 % once and stops controlling the fan, unless
-  `pvr.fan.forced` is set.
+  (`pvr.factorytest.running`), the service sets 0 % once and stops, unless `pvr.fan.forced` is set.
 
-The development headset is a standard PICO 4 of the late batch: control type 1, the "late"
-table.
+The development headset is a standard PICO 4 of the late batch: control type 1, the late table.
 
 ## pico4-fan
 
 [`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan) (Python, standard library) runs as
 [`pico4-fan.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-fan.service):
 
-- **The stock policy.** The same 14 zones, matched by type, every 200 ms; means over 50
-  readings; the same tables and hysteresis; an unchanged duty resent every 10 s. The overheating
-  notice becomes a journal warning.
-- **Full speed when hot**, which PICO OS does not have: while any of the 14 sensors reads 95 °C
-  or more, the fan runs at 100 % until the hottest mean is below 90 °C, then steps down through
-  the table. 95 °C is where the kernel starts throttling the GPU.
-- **Failsafe.** Without usable readings the fan runs at 100 %. A failed transaction is retried
-  every second and logged once per outage, then once a minute; a fan that reports 0 rpm at 30 %
-  or more three times in a row is logged once.
-- **A fan that does not cool**, which PICO OS has no reaction to: at PICO OS's overheating notice
-  (hottest mean at or above 95.1 °C for two minutes, then every 30 s), a failed last transaction or
-  that stall logs the reason and runs `systemctl poweroff`. The kernel's throttling runs meanwhile.
-- **The MCU.** Frames come only from an allowlist: SetFanSpeed with a duty of 0–100 and the
-  four queries above. Nothing can build a lens move, calibration write or firmware frame. Each
-  transaction holds an exclusive `flock` on `/dev/ttyHS1`. Monado's PICO 4 driver takes the same
-  lock for its IPD read ([pico4_ipd.c](../src/monado/pico4_ipd.c)); after waiting a second for
-  it, the driver uses Monado's default IPD.
-- **The table.** PICO OS's early table on every headset by default. Valve's GPU-bound session
-  heats the headset more than PICO OS's own apps, and the early table runs the fan at least as
-  fast at every temperature (see [Verified results](#verified-results) for both tables in a
-  10-minute session). `PICO4_FAN_PROFILE=auto` picks the table by batch as PICO OS does: it
-  reads the serial number in `/mnt/vendor/persist/falcon/sn` (persist, mounted read-only at
-  boot, [userspace.md](userspace.md#the-headsets-own-data)), takes only the batch from it, and
-  uses "early" without it. The MCU cannot tell: GetFanInfo reports
-  the fan's duty, RPM and whether it runs, nothing that identifies the fan or its batch. This
-  headset's batch is late.
+- **The stock policy.** The same 14 zones, matched by type, every 200 ms; means over 50 readings; the same tables and
+  hysteresis; an unchanged duty resent every 10 s. The overheating notice becomes a journal warning.
+- **Full speed when hot** (not in PICO OS): while any of the 14 sensors reads 95 °C or more, the fan runs at 100 %
+  until the hottest mean is below 90 °C, then steps down through the table. 95 °C is where the kernel throttles the GPU.
+- **Failsafe.** Without usable readings the fan runs at 100 %. A failed transaction is retried every second and logged
+  once per outage, then once a minute; a fan that reports 0 rpm at 30 % or more three times in a row is logged once.
+- **A fan that does not cool** (not in PICO OS): at PICO OS's overheating point (hottest mean at or above 95.1 °C for
+  two minutes, then every 30 s), a failed last transaction or a stalled fan logs the reason and runs
+  `systemctl poweroff`. The kernel throttles meanwhile.
+- **The MCU.** Frames come only from an allowlist: SetFanSpeed with a duty of 0–100 and the four queries. Nothing can
+  build a lens move, calibration write or firmware frame. Each transaction holds an exclusive `flock` on
+  `/dev/ttyHS1`; Monado's PICO 4 driver takes the same lock for its IPD read ([pico4_ipd.c](../src/monado/pico4_ipd.c))
+  and uses Monado's default IPD after waiting a second for it.
+- **The table.** PICO OS's early table on every headset by default: Valve's GPU-bound session heats the headset more
+  than PICO OS's apps, and the early table runs the fan at least as fast at every temperature
+  ([Verified results](#verified-results)). `PICO4_FAN_PROFILE=auto` picks the table by batch as PICO OS does, from
+  `/mnt/vendor/persist/falcon/sn` ([userspace.md](userspace.md#the-headsets-own-data)), and uses early without it. The
+  MCU cannot tell the batch: GetFanInfo reports only duty, RPM and whether the fan runs.
 - **Stopping.** The fan keeps its last duty when the service stops.
-- **Where it runs.** The unit's condition is `/sys/class/tty/ttyHS1`, present from kernel boot
-  on the headset (udev creates the `/dev` node later).
+- **Where it runs.** The unit's condition is `/sys/class/tty/ttyHS1`, present from kernel boot (udev creates the
+  `/dev` node later).
 
 Settings, in `/etc/pico4/fan.conf` (the service's `EnvironmentFile`):
 
@@ -160,17 +130,15 @@ Settings, in `/etc/pico4/fan.conf` (the service's `EnvironmentFile`):
 | `PICO4_FAN_TABLE` | | own table, `threshold °C:duty %` pairs hottest first, e.g. `90:50,85:45,80.5:40,72:35,60:30,55:0` |
 | `PICO4_FAN_BOOST` | `95:90:100` | full speed from °C, until the mean is below °C, at duty %; or `off` |
 
-The daemon writes its state to `/run/pico4-fan/state.json` every second: duty, reason, RPM,
-the hottest mean, and every sensor's reading and mean.
+The daemon writes its state to `/run/pico4-fan/state.json` every second: duty, reason, RPM, the hottest mean, and
+every sensor's reading and mean.
 
 ## VR CPU limits
 
-While a VR app runs, PICO OS limits the CPU through Qualcomm's VR service. `svrSetPerformanceLevels`
-in `libsvrapi.so` hands the app's CPU and GPU levels to `qvrservice`, whose configuration
-(`/system/etc/qvr/qvrservice_config.txt`, `performance_perf_hints`) maps each of the nine level
-pairs to a power hint in the vendor's `powerhint.xml`, `0x130A`–`0x1312`. All nine hints hold
-the same resources (perf HAL opcodes, decoded with the vendor's `commonresourceconfigs.xml`; the
-hint's clusters count big, little, prime):
+While a VR app runs, PICO OS limits the CPU through Qualcomm's VR service: `svrSetPerformanceLevels` in
+`libsvrapi.so` hands the app's levels to `qvrservice`, whose configuration (`/system/etc/qvr/qvrservice_config.txt`,
+`performance_perf_hints`) maps each of the nine level pairs to a power hint in the vendor's `powerhint.xml`,
+`0x130A`–`0x1312`. All nine hold the same resources (perf HAL opcodes, decoded with `commonresourceconfigs.xml`):
 
 | Resource | Value |
 | --- | --- |
@@ -181,113 +149,99 @@ hint's clusters count big, little, prime):
 | KGSL `min_pwrlevel` / `max_pwrlevel` | 5 / 0 |
 
 Without limits the big cores reach 2419 MHz and the prime core 2842 MHz.
-[`vr-performance`](../userspace/rootfs/usr/libexec/pico4/vr-performance) applies the CPU part
-through the cpufreq policies (every core stays online, which meets `core_ctl`'s minimum):
-[`pico4-vr-performance.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-vr-performance.service)
-runs it while `pico4-session.service` or `pico4-monado.service` runs (both want the unit, which
-stops when neither does) and puts the limits it found back when it stops. It also keeps the big
-cores, where the compositor runs, at their limit (governor `performance`), and puts the governor
-it found back: without it the compositor misses frames while Steam's panel redraws
-([kernel.md](kernel.md)). In the session with the panel idle, 3 minutes
-each, this costs about 0.6 °C: hottest zone mean 58.7 and 59.7 °C (peaks 60.5 and 64.0) against
-58.4 and 58.7 °C (59.7 and 61.6); the little cores' load falls from about 45 to about 31 %.
-The GPU's clock stays with msm's devfreq governor.
+[`vr-performance`](../userspace/rootfs/usr/libexec/pico4/vr-performance) applies the CPU part through the cpufreq
+policies (every core stays online, which meets `core_ctl`'s minimum).
+[`pico4-vr-performance.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-vr-performance.service) runs while
+`pico4-session.service` or `pico4-monado.service` runs and restores the limits it found when it stops. It also keeps
+the big cores, where the compositor runs, at their limit (governor `performance`), and restores the governor: without
+it the compositor misses frames while Steam's panel redraws ([kernel.md](kernel.md#results)). In the session with the
+panel idle, 3 minutes each, this costs about 0.6 °C (hottest zone mean 58.7 and 59.7 °C against 58.4 and 58.7 °C);
+the little cores' load falls from about 45 to about 31 %. The GPU's clock stays with msm's devfreq governor.
 
 ## Hardware limits
 
-What protects the hardware, against PICO OS's own limits. The stock values come from the stock
-firmware: the live tree (DTB 3 with board overlay 7, the same overlay as in `recovery.img`),
-`services.jar`, `framework-res.apk` and the vendor partition. The battery values are those of the
-profile the stock kernel picks on the development headset by its battery ID,
-`5742753_delta_fpr_50k_5300mah`. The profiles for 50, 80, 100 and 220 kΩ have these values; the
-one for 20 kΩ is for 6070 mAh, with 4.48 V and 5.8 A. "Read" in the last column means
-taken from images and sources; none of these limits has been triggered on the headset.
+What protects the hardware, against PICO OS's limits. The stock values come from the stock firmware: the live tree
+(DTB 3 with board overlay 7, the same overlay as in `recovery.img`), `services.jar`, `framework-res.apk` and the vendor
+partition. The battery values are those of the profile the stock kernel picks on the development headset by its
+battery ID, `5742753_delta_fpr_50k_5300mah`; the 50, 80, 100 and 220 kΩ profiles share them, the 20 kΩ one is for
+6070 mAh, with 4.48 V and 5.8 A. "Read" means taken from images and sources; none of these limits has been triggered
+on the headset.
 
 | Limit | PICO OS, and where from | Here | Verified |
 | --- | --- | --- | --- |
-| SoC overheat, shutdown | none: every trip in the live tree is `passive`; core isolation at 110 °C, `apc-*-max-step` at 120 °C without cooling | `critical` at 110 °C on the CPU, cluster and GPU zones (mainline's `sm8250.dtsi`, in the built tree): the kernel's `orderly_poweroff`, forced only if it cannot start, no timer (`THERMAL_EMERGENCY_POWEROFF_DELAY_MS=0`) | read |
-| SoC overheat, throttling | GPU and DDR 95 °C, other sensors 100 °C (table above) | the same, and the CPUs at 90 and 95 °C ([kernel.md](kernel.md#thermal-throttling)) | read |
+| SoC overheat, shutdown | none: every trip in the live tree is `passive`; core isolation at 110 °C, `apc-*-max-step` at 120 °C without cooling | `critical` at 110 °C on the CPU, cluster and GPU zones (mainline's `sm8250.dtsi`): the kernel's `orderly_poweroff`, forced only if it cannot start, no timer (`THERMAL_EMERGENCY_POWEROFF_DELAY_MS=0`) | read |
+| SoC overheat, throttling | GPU and DDR 95 °C, other sensors 100 °C | the same, and the CPUs at 90 and 95 °C ([kernel.md](kernel.md#thermal-throttling)) | read |
 | PMIC overheat | `pm8150*_tz` 95, 115, 145 °C | `pm8150` and `pm8150b` zones 95, 115, `critical` 145 °C (mainline) | read |
 | Overheating notice | hottest mean 95.1 °C for 2 minutes (`libpxrfanservice.so`) | journal warning at the same point | host tests |
 | Fan stopped or MCU silent | no reaction | `pico4-fan`: power-off at the same point; throttling before it | host tests |
-| Battery overheat | above 59.0 °C shutdown, from 58.0 °C notice (`BatteryService.shutdownIfOverTempLocked`, `ExtBatteryServiceImpl.checkBatteryStatus`; `persist.pxr.shutdown_overtemp`, default 1) | `pico4-battery-guard`: power-off above 59.0 °C, also while charging, and a journal notice from 58.0 °C, on the driver's `temp` (the stock gauge driver's reading, every 30 s) | host tests; the temperature read on the headset |
+| Battery overheat | above 59.0 °C shutdown, from 58.0 °C notice (`BatteryService.shutdownIfOverTempLocked`, `ExtBatteryServiceImpl.checkBatteryStatus`; `persist.pxr.shutdown_overtemp`, default 1) | `pico4-battery-guard`: power-off above 59.0 °C, also while charging, a journal notice from 58.0 °C, on the driver's `temp` | host tests; the temperature read on the headset |
 | Empty battery | below 1 % shutdown, also while charging (`ExtBatteryServiceImpl.shouldShutdownLocked`; `persist.pxr.shutdown_lowpower`, default 1) | `pico4-battery-guard`: power-off below 1 %, also while charging | host tests |
 | Low battery, screen off | not charging, at 4 % or less: 60 s after the screen went off, or once the level fell since (`MIN_BATTERY_LEVEL_SHUTDOWN`, `checkLowPowerByScreenState`) | `pico4-battery-guard`, with the backlight's `bl_power` as the screen; not while the headset sleeps | host tests |
-| Float voltage | 4.40 V from 0 to 45 °C, 4.20 V from 45.1 to 50 °C (`qcom,max-voltage-uv`, `qcom,jeita-fv-ranges`) | the stock driver's vote, the lowest of a ceiling, the temperature's range and the soft zone's voltage, set by the driver every 30 s from the battery's temperature: 4.35 V, the boot loader's (`pico,float-voltage-max-uv`, below the profile's 4.40 V), and 4.20 V from 46.1 °C (45.1 °C and the stock 1 °C hysteresis, back at 44.0 °C) and in the charger's warm zone | host tests on a fake PMIC; on the headset 4.35 V at 24 °C, and `vbat_sns` 4.29 to 4.36 V at 100 % while charging, the session's load running |
-| Charge current | 2.65 A from 0 to 10 °C, 3.71 A to 20 °C, 5.3 A to 50 °C (`qcom,jeita-fcc-ranges`, `qcom,fastchg-current-ma`) | the boot loader's 2.0 A (`0x1061` at 0x28) at every temperature: below PICO OS's in every range | read on the headset |
-| Charging temperature window | software JEITA over those ranges, 0 to 50 °C (`qcom,sw-jeita-enable`); ADC codes hard `0x58cd`/`0x1c22`, soft `0x4ccc`/`0x20b8`, hysteresis `0x48d4`/`0x23c0`; notices at 45, 50 and 0 °C | the stock hard and soft codes, written by the driver at boot and read back (the boot loader leaves hard `0x581c`/`0x1811` and soft `0x45e2`/`0x20c4`, a hot cut-off about 5 °C higher); the charger's own soft-zone compensation off, as the stock driver turns it off (`0x1090` 0xdb to 0xd0); in a soft zone the stock driver's handling: charge inhibit on, the window widened to the hysteresis codes, the zone's voltage; outside 0 to 50 °C the charger stops; no notices; the battery's health shows the zone | host tests on a fake PMIC; read back on the headset |
-| Charger's own temperature | 80.0 °C (`qcom,charger-temp-max`, `qcom,smb-temp-max`): on PM8150B the stock driver only reports these, writing no register; `smb-temp-max` goes to the SMB1390 charge pump, disabled in the stock tree. The charger's die regulation is the hardware's own | the same: the hardware's own regulation, nothing written | read |
-| Charging end | ends by the ADC's charge current at 200 mA, judged on a count of samples (`qcom,chg-term-src` 1, `qcom,chg-term-current-ma` −200); recharges by the state of charge below 98 % on one sample (`qcom,auto-recharge-soc`); the fast charge's safety timer at 768 minutes; after a termination at 100 % a workaround suspends the input while the gauge's charge counter overshoots (`CHG_TERMINATION_WA`) | the driver writes the stock termination, recharge and timer at boot and reads them back (the boot loader leaves −100 mA, a recharge by voltage and 384 minutes); the termination workaround does not run | host tests on a fake PMIC; read back on the headset |
+| Float voltage | 4.40 V from 0 to 45 °C, 4.20 V from 45.1 to 50 °C (`qcom,max-voltage-uv`, `qcom,jeita-fv-ranges`) | the stock driver's vote, set every 30 s from the battery's temperature: the lowest of 4.35 V (the boot loader's, `pico,float-voltage-max-uv`), 4.20 V from 46.1 °C (45.1 °C and the stock 1 °C hysteresis, back at 44.0 °C) and the charger's warm zone | host tests on a fake PMIC; on the headset 4.35 V at 24 °C, `vbat_sns` 4.29 to 4.36 V at 100 % while charging under the session's load |
+| Charge current | 2.65 A from 0 to 10 °C, 3.71 A to 20 °C, 5.3 A to 50 °C (`qcom,jeita-fcc-ranges`, `qcom,fastchg-current-ma`) | the boot loader's 2.0 A (`0x1061` at 0x28) at every temperature, below PICO OS's in every range | read on the headset |
+| Charging temperature window | software JEITA, 0 to 50 °C (`qcom,sw-jeita-enable`); ADC codes hard `0x58cd`/`0x1c22`, soft `0x4ccc`/`0x20b8`, hysteresis `0x48d4`/`0x23c0`; notices at 45, 50 and 0 °C | the stock hard and soft codes, written at boot and read back (the boot loader's hard `0x581c`/`0x1811` and soft `0x45e2`/`0x20c4` cut off about 5 °C hotter); the charger's soft-zone compensation off, as the stock driver does (`0x1090` 0xdb to 0xd0); in a soft zone the stock handling: charge inhibit, the window widened to the hysteresis codes, the zone's voltage; outside 0 to 50 °C the charger stops; no notices; the battery's health shows the zone | host tests on a fake PMIC; read back on the headset |
+| Charger's own temperature | 80.0 °C (`qcom,charger-temp-max`, `qcom,smb-temp-max`): on PM8150B the stock driver only reports these; `smb-temp-max` is for the SMB1390 charge pump, disabled in the stock tree; die regulation is the hardware's own | the same: nothing written | read |
+| Charging end | at 200 mA charge current by the ADC, on a count of samples (`qcom,chg-term-src` 1, `qcom,chg-term-current-ma` −200); recharge below 98 % state of charge on one sample (`qcom,auto-recharge-soc`); safety timer 768 minutes; after a termination at 100 % a workaround suspends the input while the gauge's charge counter overshoots (`CHG_TERMINATION_WA`) | the stock termination, recharge and timer, written at boot and read back (the boot loader's: −100 mA, recharge by voltage, 384 minutes); the termination workaround does not run | host tests on a fake PMIC; read back on the headset |
 | Battery current and voltage limiter | zones at 4.5 and 5.1 A, 2.9, 2.8 and 2.6 V (`pm8150b-ibat-*`, `pm8150b-vbat-*`), 3.0, 2.75 and 2.5 V (`pm8150l-vph-*`); `limits-dcvs` nodes | no nodes in the tree | read |
 | Speaker protection | off: `persist.vendor.audio.speaker.prot.enable=false` | off | read |
 | Speaker volume cap | none | none | read |
 
 ### Low battery
 
-Without `pico4-battery-guard` nothing would act on a level. logind has no battery policy, and the
-power key is only the key. UPower reads the battery when something activates it (the unit is not
-enabled): its configuration has `PercentageAction=2` and `CriticalPowerAction=HybridSleep`, with
-Hibernate and PowerOff as its fallbacks where those are not possible.
+Only `pico4-battery-guard` acts on the level: logind has no battery policy, the power key is only a key, and UPower
+(D-Bus activated, not enabled) has `PercentageAction=2` and `CriticalPowerAction=HybridSleep`, with Hibernate and
+PowerOff as fallbacks.
 
-[`battery-guard`](../userspace/rootfs/usr/libexec/pico4/battery-guard) reads the driver's `capacity`,
-`status` and `temp` every 5 s and takes PICO OS's decision; the driver renews `temp` every 30 s, and
-without a reading the temperature decides nothing. Below 1 % it powers off whatever `status` says:
-on a port too weak for the load, `status` says `Charging` while the battery drains
-([userspace.md](userspace.md#adaptations-in-the-image)). Powered off with the cable in, the headset
-starts in charger mode and charges there.
-
-The guard does not run while the headset sleeps: the driver takes no interrupts, so the level is
-judged again at the next wake.
+[`battery-guard`](../userspace/rootfs/usr/libexec/pico4/battery-guard) reads the driver's `capacity`, `status` and
+`temp` every 5 s and takes PICO OS's decision; the driver renews `temp` every 30 s, and without a reading the
+temperature decides nothing. Below 1 % it powers off whatever `status` says: on a port too weak for the load, `status`
+says `Charging` while the battery drains ([userspace.md](userspace.md#adaptations-in-the-image)). Powered off with the
+cable in, the headset starts in charger mode and charges there. The guard does not run while the headset sleeps (the
+driver takes no interrupts), so the level is judged again at the next wake.
 
 ### Speakers
 
-The risk is the same as on PICO OS, which runs the speakers without an active protection and
-without a cap:
+The risk is the same as on PICO OS, which runs the speakers without active protection and without a cap:
 
 - **Protection.** The vendor's `build.prop` sets `persist.vendor.audio.speaker.prot.enable=false`;
-  `vendor.audio.feature.spkr_prot.enable=true` only loads `libspkrprot.so`, which reads that
-  property and then disables itself. The development headset's persist holds no speaker
-  calibration. The `speaker` mixer path turns the amplifiers' `VISENSE` on, but only the
-  `speaker-protected` path, which protection off leaves unused, routes it back to the DSP.
-- **Volume.** PICO OS's speaker curve for media ends at 0 dB (`audio_policy_volumes.xml`: −29.7 dB
-  at 0, −20.1 at 33, −10.2 at 66, 0 at 100), and `config_safe_media_volume_enabled` is false.
-- **Here.** `WSA_RXn Digital Volume` 84 as in `mixer_paths.xml`, the compander and boost on, the
-  amplifier registers read from the stock kernel during playback (patch 0024) and PICO's calibration
-  with its processing blocks ([userspace.md](userspace.md#audio)). `VISENSE` stays off. A path whose
-  topology the DSP refuses has none of PICO's processing.
+  `vendor.audio.feature.spkr_prot.enable=true` only loads `libspkrprot.so`, which reads that property and disables
+  itself. The development headset's persist holds no speaker calibration. Only the `speaker-protected` mixer path,
+  unused with protection off, routes `VISENSE` back to the DSP.
+- **Volume.** PICO OS's media speaker curve ends at 0 dB (`audio_policy_volumes.xml`: −29.7 dB at 0, −20.1 at 33,
+  −10.2 at 66, 0 at 100), and `config_safe_media_volume_enabled` is false.
+- **Here.** `WSA_RXn Digital Volume` 84 as in `mixer_paths.xml`, compander and boost on, the amplifier registers of the
+  stock kernel during playback (patch 0024), PICO's calibration with its processing blocks
+  ([userspace.md](userspace.md#audio)). `VISENSE` stays off. A path whose topology the DSP refuses has none of PICO's
+  processing.
 
-PICO OS has no number to cap at, so the volume is not capped. That the property holds on a running
-PICO OS is read from the images, not checked with `getprop`.
+PICO OS has no number to cap at, so the volume is not capped. That the property holds on a running PICO OS is read
+from the images, not checked with `getprop`.
 
 ### Open work
 
-- No limit has been triggered: the shutdown above 59.0 °C, the charger's zones and the charge's end
-  are checked by host tests and register readback, not with a hot or a full battery.
-- The stock driver's termination workaround (input suspended while the gauge's charge counter
-  overshoots after a termination at 100 %) does not run.
+- No limit has been triggered: the shutdown above 59.0 °C, the charger's zones and the charge's end are checked by
+  host tests and register readback, not with a hot or a full battery.
+- The stock driver's termination workaround does not run.
 - A wake for a low battery during sleep.
 
 ## Build
 
-The overlay in [userspace/rootfs](../userspace/rootfs) puts `pico4-fan` and its unit into the
-userspace archive, and `scripts/build-userspace.sh` enables the unit
-([development.md](development.md)). Nothing about the batch is in the image: the `auto` profile
-reads the serial number from persist at start and keeps only the batch word, so the serial goes
-no further; `pico4-fan batch FILE` prints that word for a serial number file.
+The overlay in [userspace/rootfs](../userspace/rootfs) puts `pico4-fan` and its unit into the userspace archive, and
+`scripts/build-userspace.sh` enables the unit ([development.md](development.md)). Nothing about the batch is in the
+image: the `auto` profile reads the serial number from persist at start and keeps only the batch word;
+`pico4-fan batch FILE` prints that word for a serial number file.
 
 ## Checks
 
-- **`pico4-userspace-check`.** Where `/sys/class/tty/ttyHS1` exists, `pico4-fan.service` must
-  be active and write its state. The result's `fan` object holds the service state and
-  `pico4-fan state`: profile, duty, reason, boost, RPM, hottest sensor and mean, and the MCU
-  error if any. The MCU must have acknowledged a duty (the daemon's `duty` is the last
-  acknowledged one) and report no error; otherwise the check fails and names the MCU's error.
-  It waits up to 10 s for the first acknowledgement. Without the UART the section is `skipped`.
-- **The acceptance runner** requires the service (`validate_check` in
-  [tooling/userspace.py](../tooling/userspace.py)), rejects a state without an
-  acknowledged duty or with an MCU error, and keeps the `fan` object in `result.json`.
-- **`pico4-valve-session-check`** records the daemon's state before and after the session
-  (`fan.before`, `fan.after_run`; null without a daemon), next to the hottest zone.
+- **`pico4-userspace-check`.** Where `/sys/class/tty/ttyHS1` exists, `pico4-fan.service` must be active and write its
+  state; the result's `fan` object holds the service state and `pico4-fan state` (profile, duty, reason, boost, RPM,
+  hottest sensor and mean, MCU error). The MCU must have acknowledged a duty (the daemon's `duty` is the last
+  acknowledged one) within 10 s and report no error; otherwise the check fails and names the error. Without the UART
+  the section is `skipped`.
+- **The acceptance runner** requires the service (`validate_check` in [tooling/userspace.py](../tooling/userspace.py)),
+  rejects a state without an acknowledged duty or with an MCU error, and keeps the `fan` object in `result.json`.
+- **`pico4-valve-session-check`** records the daemon's state before and after the session (`fan.before`,
+  `fan.after_run`; null without a daemon), next to the hottest zone.
 
 ## Run
 
@@ -303,36 +257,26 @@ pico4-fan sweep --settle 5           # duty 0-100 % against RPM; restores the du
 pico4-fan run --dry-run              # the policy without the MCU: logs the duties it would set
 ```
 
-`monitor` reports the hottest zone as `pico4-valve-session-check` counts it (every zone below
-200 °C), next to the daemon's hottest CPU/GPU mean.
+`monitor` reports the hottest zone as `pico4-valve-session-check` counts it (every zone below 200 °C), next to the
+daemon's hottest CPU/GPU mean.
 
 ## Verified results
 
 | Check | Result |
 | --- | --- |
 | Stock kernel configuration (live) | `SENSORS_PWM_FAN=y`, `PWM_QTI_LPG=y`, `PWM_SYSFS=y`, `GPIO_SYSFS=y`, `THERMAL_GOV_USER_SPACE=y`, `THERMAL_WRITABLE_TRIPS=y` |
-| Stock kernel image | PICO's `pwm-fan`: hwmon `pwmfan`, `pwm1_enable`, `pwm_rpm`; GPIOs `pwm_pwr_enable`, `fan_pwm_irq` |
-| Stock DTBs (6), overlays (16) and the live tree (DTB 3, overlay 7) | no `pwm-fan` node; pinctrl `fan_pwm_test_active` (gpio49) unreferenced |
+| Stock DTBs (6), overlays (16) and the live tree (DTB 3, overlay 7) | no `pwm-fan` node; pinctrl `fan_pwm_test_active` (gpio49) unreferenced; thermal trips and cooling maps as in the table above |
 | Stock vendor partition | `thermal-engine` service commented out, its configuration empty |
-| Stock system partition: `pxrfanservice` | starts at boot as root; MCU path for product `Phoenix`; zones, means, tables, hysteresis, timing and overheating notice as above |
-| Stock system partition: GD32 service and client | SetFanSpeed `A0 0E 00 dd 00 xx` (duty < 101, ack `79`), GetFanSpeed `0F`, GetFanRPM `10` (`79 lo hi xx`); SetFanRPM `29` and GetFanInfo `30` through the generic command path, which recomputes the checksum |
-| Stock live tree thermal zones | trips and cooling maps as in the table above |
-| Development headset (`pico4-fan batch /mnt/vendor/persist/falcon/sn`) | late batch; standard PICO 4, control type 1 |
-| Headset: `pico4-fan` with `PICO4_FAN_PROFILE=auto` | profile `late` from the serial's batch; at a hottest mean of 41 °C the fan stands (the late table runs it from 55 °C) |
-| Headset: GetFanInfo at 0, 30, 45 and 60 % | `00 0000 … 00`, `1e d312 … 01`, `2d 131b … 01`, `3c 0e23 … 01`: duty, RPM (4,819, 6,931, 8,974) and running; no fan identity |
-| Host: [tests/test_fan.py](../tests/test_fan.py) | passes: frames against the stock bytes and the allowlist, replies, both tables and their hysteresis, boost and failsafe, the loop's means and timing, retries, the state file and what the checks read from it, zone selection, profile choice, the batch rule on synthetic serial numbers (the serial is never printed), the unit; one UART transaction over a pty on Linux; the power-off with a silent MCU or a stalled fan, and none with a cooling fan, below the limit or after the MCU answers again |
-| Host: [tests/test_battery_guard.py](../tests/test_battery_guard.py) | passes: PICO OS's levels and delay, screen on and off, charging, an unreadable battery, the unit and its place in the build |
-| Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | pass: the userspace check's `fan` object (active with a state; a state without an acknowledged duty or with an MCU error fails) and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
-| Headset: `pico4-userspace-check` and `dev check` | pass with the duty acknowledged (30 %, about 5,080 rpm, no MCU error); a daemon state with a SetFanSpeed error fails the check and names it |
-| Headset, stock kernel: `pico4-fan.service` in the acceptance cycle | active; the MCU answers the queries and acknowledges SetFanSpeed, no MCU error in the journal; the fan reads 0 % and 0 rpm before the daemon, then runs at 30 % from the early table (hottest mean 35–43 °C) at 4,849–4,914 rpm; Monado reads the IPD (71.99 mm) through the shared port lock |
-| Headset: duty against RPM (`pico4-fan sweep`, 10–100 %) | 10 and 20 %: 3,650 and 3,670 rpm (the fan's lowest speed); 30 %: 5,265; 40 %: 6,770; 50 %: 8,160; 60 %: 9,470; 70 %: 10,740; 80 %: 11,940; 90 %: 13,070; 100 %: 14,150 rpm |
-| Headset, stock kernel: Valve's session for 10 minutes on the Frame's compositor path (90 fps), late table | fan at 30 %, then 35 % (5,160–6,090 rpm); hottest CPU/GPU mean 61.8–73.5 °C in minutes 5–10, peak zone 77.5 °C; 31 gaps above 100 ms |
-| Headset, stock kernel: the same with the early table | fan at 45 % from the first minute (7,540–7,650 rpm); hottest mean 65.6–72.1 °C in minutes 5–10, peak zone 79.5 °C (from a warmer start); 8 gaps above 100 ms |
-| Headset, stock kernel: Valve's session check (30 s) with the fan | hottest zone 45.3 °C before, 69.4 °C after; the fan stayed at 30 % (the early table holds 30 % up to a 70 °C mean); without fan control the same check went from 47.1 to 85.7 °C |
-| Headset, stock kernel: Valve's idle session with PICO OS's tracker, still, 3 minutes each without, with and again without the VR CPU limits | hottest zone mean 59.7, 59.4 and 59.4 °C; peaks 75.6, 60.8 and 70.9 °C (the limits cap the gold and prime cores' boosts); CPU 297, 289 and 307 % busy of 800; big-core clock 921, 1,047 (the hint's floor) and 938 MHz; the tracker lost no pose in the 10 minutes and stayed within 1.1 mm |
-| Headset, stock kernel: Valve's session with the VR CPU limits (`pico4-vr-performance.service` on with the session, off when it stops) | the big and prime cores capped at 2016/2054 MHz, `core_ctl` at least 3 big cores; Valve's 30 s session check passes (89.95 commits/s, 0.19 % late, no stall, hottest zone 64.7 °C); the tracker still holds within 0.6 mm, no pose lost |
-| Headset, stock kernel: Beat Saber (Proton, FEX) as SteamVR's scene application for 63 s, VR CPU limits on, PICO OS's tracker | hottest zone 70.5 °C at its peak, 59–61 °C for most of the run (with Basalt and without limits it passed 88 °C within a minute) |
-| Headset, Valve's kernel: `dev check` on the installed system | Valve's session check (30 s): hottest zone 65.5 °C, 90.03 commits/s |
+| Stock system partition | `pxrfanservice` starts at boot as root, MCU path for product `Phoenix`; zones, means, tables, hysteresis, timing and notice as above. GD32 service: SetFanSpeed `0E` (duty < 101, ack `79`), GetFanSpeed `0F`, GetFanRPM `10`; SetFanRPM `29` and GetFanInfo `30` through the generic command path, which recomputes the checksum |
+| Development headset (`pico4-fan batch /mnt/vendor/persist/falcon/sn`) | late batch; standard PICO 4, control type 1; with `PICO4_FAN_PROFILE=auto` the daemon picks `late`, and at a hottest mean of 41 °C the fan stands |
+| GetFanInfo at 0, 30, 45 and 60 % | `00 0000 … 00`, `1e d312 … 01`, `2d 131b … 01`, `3c 0e23 … 01`: duty, RPM (4,819, 6,931, 8,974) and running; no fan identity |
+| Duty against RPM (`pico4-fan sweep`, 10–100 %) | 10 and 20 %: 3,650 and 3,670 rpm (the fan's lowest speed); 30 %: 5,265; 40 %: 6,770; 50 %: 8,160; 60 %: 9,470; 70 %: 10,740; 80 %: 11,940; 90 %: 13,070; 100 %: 14,150 rpm |
+| `pico4-userspace-check` and `dev check` | pass with the duty acknowledged (30 %, about 5,080 rpm, no MCU error); a SetFanSpeed error fails the check and names it; Monado reads the IPD through the shared port lock |
+| Valve's 30 s session check, installed system | hottest zone 65.5 °C, 90.03 commits/s; without fan control (stock kernel) the check went from 47.1 to 85.7 °C |
+| Valve's session for 10 minutes at 90 fps, late table (stock kernel) | fan at 30 %, then 35 % (5,160–6,090 rpm); hottest CPU/GPU mean 61.8–73.5 °C in minutes 5–10, peak zone 77.5 °C; 31 gaps above 100 ms |
+| The same with the early table (stock kernel) | fan at 45 % from the first minute (7,540–7,650 rpm); hottest mean 65.6–72.1 °C in minutes 5–10, peak zone 79.5 °C (from a warmer start); 8 gaps above 100 ms |
+| Idle session with PICO OS's tracker, still, 3 minutes each without, with and again without the VR CPU limits (stock kernel) | hottest zone mean 59.7, 59.4 and 59.4 °C; peaks 75.6, 60.8 and 70.9 °C (the limits cap the boosts); big-core clock 921, 1,047 (the hint's floor) and 938 MHz; the tracker lost no pose and stayed within 1.1 mm |
+| Host: [tests/test_fan.py](../tests/test_fan.py) | frames against the stock bytes and the allowlist, replies, both tables and their hysteresis, boost and failsafe, means and timing, retries, the state file, zone selection, profile choice, the batch rule on synthetic serial numbers, the unit; a UART transaction over a pty on Linux; the power-off with a silent MCU or stalled fan, and none with a cooling fan, below the limit or after the MCU answers again |
+| Host: [tests/test_battery_guard.py](../tests/test_battery_guard.py) | PICO OS's levels and delay, screen on and off, charging, an unreadable battery, the unit and its place in the build |
+| Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | the userspace check's `fan` object and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
 | Build: [test_pico4_lens.c](../src/monado/test_pico4_lens.c) | the IPD reader gives up with `-EBUSY` after a second while another descriptor holds the port lock, and goes on once it is free |
-
-Sessions much beyond 10 minutes are unmeasured.

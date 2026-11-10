@@ -1,12 +1,12 @@
 # Stock components
 
-What the PICO 4's images take unchanged from PICO OS's stock image, where each comes from, what
-uses it and what could replace it. Every file below is extracted at build time from the user's
-own stock firmware (PICO's public OTA, `python -m overpressure stock`, or the device backup) by
-the scripts named; none is in the repository. What loads was measured on one headset (camera
-module vendor 9): the kernel log for the WLAN files, the files a tracker start opens for the rest. Device-specific data (calibration, OTP, persist)
-is not listed: the image links it from the headset's own `persist` partition at boot
-([userspace.md](userspace.md#the-headsets-own-data)).
+What the PICO 4's images take unchanged from PICO OS's stock image, where each comes from, what uses it and
+what could replace it. Every file below comes at build time from PICO's public OTA of the headset's firmware
+(`python -m overpressure stock`, then `assets`, [development.md](development.md#stock-firmware)) through the
+commands named; none is in the repository. What loads was measured on one headset (camera module vendor 9):
+the kernel log for the WLAN files, the files a tracker start opens for the rest. Device-specific data
+(calibration, OTP, persist) is not listed: the image links it from the headset's own `persist` partition at
+boot ([userspace.md](userspace.md#the-headsets-own-data)).
 
 Classes: **signed** (firmware or images that TrustZone, a DSP or the ABL verifies: they stay),
 **free** (free software can replace it), **data** (configuration or models that could be
@@ -15,8 +15,8 @@ be reimplemented).
 
 | Component | Stock files (partition: path) | Extracted by | Used by | Class |
 | --- | --- | --- | --- | --- |
-| Kernel, device tree, boot header | boot.img (OTA) | `overpressure stock` | the maintenance stage 1 and the way back to PICO OS; the system runs Valve's kernel | signed |
-| Recovery device-tree overlay, vbmeta | recovery | `dev image` | the maintenance stage 1 in `recovery` | signed (the ABL checks the AVB chain) |
+| Kernel, device tree, boot header | boot.img (OTA) | `build` (stage 1), `overpressure stock` | the maintenance stage 1 and the way back to PICO OS; the system runs Valve's kernel | signed |
+| Recovery device-tree overlay, vbmeta | recovery.img (OTA) | `dev image` | the maintenance stage 1 in `recovery` | signed (the ABL checks the AVB chain) |
 | GPU firmware | vendor `/firmware`: a650_gmu.bin, a650_sqe.fw, a650_zap.mdt and .b00–.b02 | `assets graphics-firmware` | msm | zap signed; GMU and SQE in linux-firmware (same files unverified) |
 | Video codec firmware | modem `/image`: venus.mdt, venus.b00–.b10, venus.b19 | `assets graphics-firmware` | Venus (Steam Link's decoder) | signed |
 | SLPI image and PD maps | modem `/image`: slpi.mdt, slpi.b00–.b20, slpir.jsn, slpius.jsn | `assets sensor-data` | the SLPI (IMU, wear sensor) | signed |

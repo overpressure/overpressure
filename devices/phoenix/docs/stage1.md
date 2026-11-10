@@ -1,68 +1,62 @@
 # Stage 1: the bootable Linux image
 
-Stage 1 is a standard Android boot image for the original PICO 4 (A8110, *phoenix*): the
-maintenance environment in `recovery`, where the installed system is written and rescued, and the
-base of the test images. The dev and maintenance images keep the stock PICO kernel
-(`4.19.81-perf+`) and device trees byte for byte, and this document describes them; a one-shot test
-image carries Valve's kernel and tree instead ([kernel.md](kernel.md#a-one-shot-test-boot)). In
-both the ramdisk is replaced by Alpine Linux 3.24 (aarch64) and the project's init from
-[initramfs/](../initramfs/). Over the USB-C cable it offers a network link with SSH, telnet and a
-status web page, and a read-only USB drive with the boot logs. Every disk and partition of the
-headset is read-only while it runs, except what the installer writes on purpose
-([install.md](install.md)). Stage 1 runs on the tested headset (original PICO 4, PICO OS 5.13.7)
-and returns to fastboot by itself when no PC uses it. The installed system, the SteamOS-compatible
-userspace of stage 2 ([userspace.md](userspace.md)), starts without it: its boot image has no
-ramdisk ([install.md](install.md#how-it-starts)).
+**TL;DR.** Stage 1 is an Android boot image for the original PICO 4 (A8110, *phoenix*): the stock kernel
+(`4.19.81-perf+`) and device trees byte for byte, with the ramdisk replaced by Alpine Linux 3.24 and the
+project's init. It is the maintenance environment in `recovery`, where the installed system is written and
+rescued, and the base of the test images. Over USB-C it offers NCM networking with SSH, telnet and a status
+page, and a read-only log drive. Every disk and partition is read-only, except what `pico4-install` writes on
+purpose ([install.md](install.md)). With no PC using it, it returns to fastboot by itself.
+
+| | |
+| --- | --- |
+| Build | `python -m overpressure build --firmware 5.13.7-global-seko` → `out/pico4-stage1-<firmware>.img` |
+| Into `recovery` | `python -m overpressure dev image`, `dev flash` ([hardware-testing.md](hardware-testing.md)) |
+| Connect | `ssh root@172.16.42.1`, <http://172.16.42.1/>, or the `PICO4LOGS` drive |
+| Code | [tooling/image.py](../tooling/image.py) on [overpressure/stage1.py](../../../overpressure/stage1.py); [initramfs/](../initramfs/) |
+
+The installed system (stage 2, [userspace.md](userspace.md)) starts without it: its boot image has no ramdisk
+([install.md](install.md#how-it-starts)). A one-shot test image carries Valve's kernel instead
+([kernel.md](kernel.md#a-one-shot-test-boot)); this document describes the stock-kernel images.
 
 ## The image
 
 | Part | Content |
 | --- | --- |
-| Kernel and device trees | the stock image's, byte for byte, with every other header field (load addresses, page size, OS version and patch level) |
-| Kernel command line | the stock one plus `printk.devkmsg=on`, so the init's lines in `/dev/kmsg` are not rate-limited, `rng_core.default_quality=1000`, so the Qualcomm hardware RNG credits entropy and dropbear's first host-key generation cannot block, and `console=none`: the device tree names the UART as the console (`stdout-path`), and at 115200 baud the kernel's log took 5.9 s to replay there when it registered, with every later message waiting for it (`/init` at 14 s, without it at 1.0 s). `dmesg` and pstore's RAM console keep every message |
-| Ramdisk | Alpine Linux 3.24.2 aarch64: the minirootfs, the packages listed in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, exploration tools, e2fsprogs, which formats the installed system's data partition, zstd for the compressed system image and OpenSSL, whose SHA-256 uses the CPU's instructions), the overlay in [initramfs/](../initramfs/) and the `pico4-reboot` helper |
+| Kernel and device trees | the stock image's, byte for byte, with every other header field (load addresses, page size, OS version, patch level) |
+| Kernel command line | the stock one plus `printk.devkmsg=on` (the init's `/dev/kmsg` lines are not rate-limited), `rng_core.default_quality=1000` (the hardware RNG credits entropy, so dropbear's first host key cannot block) and `console=none` (the tree's UART console at 115200 baud delayed `/init` from 1.0 s to 14 s; `dmesg` and pstore keep every message) |
+| Ramdisk | Alpine 3.24.2 aarch64: the minirootfs, the packages of `PACKAGES` in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, e2fsprogs for the data partition, zstd for the compressed system image, OpenSSL for fast SHA-256, exploration tools), the [initramfs/](../initramfs/) overlay and `pico4-reboot` |
 | PID 1 | `pico4-init`, which runs `/etc/inittab` like busybox init ([PID 1](#pid-1)) |
 
 Over the USB-C cable:
 
 | Function | What it offers |
 | --- | --- |
-| Network (CDC NCM) | the headset at `172.16.42.1/24`; DHCP gives the PC `172.16.42.2` and no router or DNS, so the PC keeps its internet route. SSH with SFTP, telnet, HTTP |
-| Log drive (mass storage) | a read-only FAT drive `PICO4LOGS` with the boot logs and the hardware report, readable without any network driver |
+| Network (CDC NCM) | the headset at `172.16.42.1/24`; DHCP gives the PC `172.16.42.2`, no router or DNS, so the PC keeps its internet route. SSH with SFTP, telnet, HTTP |
+| Log drive (mass storage) | read-only FAT drive `PICO4LOGS` with the boot logs and the hardware report, readable without a network driver |
 | Serial shell (CDC ACM) | only on kernels with ACM; the stock kernel has none |
 
 ## Prerequisites
 
-* An original PICO 4 (A8110, *phoenix*; the Pro and Enterprise share its packages but are refused,
-  [device-preparation.md](device-preparation.md#verified-hardware)) with an unlocked bootloader and the engineering ABL staged, as described in
-  [device-preparation.md](device-preparation.md). That workflow independently implements the
-  approach documented by [more-picohaxx-tool](https://github.com/chaixshot/more-picohaxx-tool),
-  without bundling that repository or its binaries. Unlocking wipes user data. The tools take
-  only the PICO OS builds the whole path has run on
-  ([device-preparation.md](device-preparation.md#verified-hardware)).
-* Android platform-tools (`adb`, `fastboot`) and an SSH client on the PC.
-* Python 3.9+ (standard library only) on Windows, Linux or macOS. [development.md](development.md)
-  lists what the other builds and the QEMU tests need.
+* An original PICO 4 with an unlocked bootloader and the engineering ABL
+  ([device-preparation.md](device-preparation.md)). The tools refuse the Pro and Enterprise and the PICO OS
+  builds outside their verified list ([device-preparation.md](device-preparation.md#verified-hardware)).
+* `adb`, `fastboot` (`python -m overpressure tools`) and an SSH client on the PC; Python 3.9+ on Windows,
+  Linux or macOS. [development.md](development.md) lists what the other builds and the QEMU tests need.
 
 ## Preflight on the unmodified headset
 
-Optional, and useful before any bootloader work. With USB debugging authorized (the bootloader
-may still be locked), after a build:
+Optional, before any bootloader work; needs only USB debugging (the bootloader may still be locked):
 
 ```sh
 python -m overpressure hwtest preflight        # the newest rootfs tar in out/, or --rootfs TAR
 ```
 
-The preflight runs the image's own binaries on the real PICO kernel from `adb shell`, without
-root, through the image's musl loader: BusyBox (shell, arithmetic, fractional sleep, md5sum,
-awk), the DHCP, telnet and web servers, dropbear and host-key generation, mtools building a FAT
-image, and the other tools. It prints what stage 1 relies on (USB device controller, LED names,
-DRM and backlight devices, CPU governors and idle state, pstore, kernel options) and the
-headset's fingerprint and OEM state for `python -m overpressure match`. It uses a directory under
-`/data/local/tmp` and removes it afterwards. Results go to a new `out/hardware-<id>/` directory;
-a failed check gives a nonzero exit status. `--serial` selects the headset when several are
-attached. The preflight exists because the PICO community's Magisk port had to replace its bundled
-BusyBox to run on this kernel.
+It runs the image's own binaries (BusyBox, the DHCP, telnet and web servers, dropbear and host-key
+generation, mtools, the other tools) on the stock kernel from `adb shell`, without root, through the image's
+musl loader. It prints what stage 1 relies on (USB device controller, LED names, DRM and backlight devices,
+CPU governors and idle state, pstore, kernel options) and the fingerprint and OEM state for `match`. It uses
+a directory under `/data/local/tmp` and removes it; results go to `out/hardware-<id>/`; a failure exits
+nonzero. `--serial` selects a headset when several are attached.
 
 ## Building
 
@@ -78,170 +72,130 @@ adb shell getprop ro.oem.state           # true = "seko" build, empty = "sek" bu
 python -m overpressure match --fingerprint "Pico/Phoenix_ovs/..." --oem-state false
 ```
 
-[tooling/firmware.json](../tooling/firmware.json) lists PICO's official full OTAs: 5.13.3 (global),
-5.13.7 (global and CN) and 5.13.8 (global), each as sek and seko build. The same OTA serves
-PICO 4, PICO 4 Pro and PICO 4 Enterprise. `match` returns the entry with the same fingerprint,
-or else the one with the same version, region (`_ovs` = global) and OEM state, with a note that
-the build number is not confirmed (`ro.pvr.internal.version` contains it as `_bNNNN_`). The
-stock kernel, device trees and kernel configuration are identical across the 5.13.7 and 5.13.8
-builds compared, so a close match works. An exact match is the safe choice, because the stock
-boot image of the same build is what restores PICO OS after a flashed test.
+[tooling/firmware.json](../tooling/firmware.json) lists PICO's official full OTAs: 5.13.3 (global), 5.13.7
+(global and CN) and 5.13.8 (global), each as sek and seko; the same OTA serves PICO 4, Pro and Enterprise.
+`match` returns the entry with the same fingerprint, else the one with the same version, region (`_ovs` =
+global) and OEM state, with a note that the build number (`_bNNNN_` in `ro.pvr.internal.version`) is not
+confirmed. Kernel, trees and configuration are identical across the 5.13.7 and 5.13.8 builds compared, so a
+close match works, but an exact match is safer: the stock boot image of the same build restores PICO OS.
 
-Without `--firmware`, the build uses `5.13.7-global-seko`. `--stock-boot` takes a `boot.img`
-(for example from the headset's own EDL backup), an OTA zip, a `payload.bin`, or a URL of
-either. The first build downloads about 17 MB of the stock OTA and about 12 MB of Alpine
-packages into `cache/`: only the zip's central directory and its `boot.img` member are fetched,
-with HTTP range requests, and checked against the CRC-32 in the zip directory.
+| Option | Effect |
+| --- | --- |
+| `--firmware NAME` | entry of `firmware.json` (default `5.13.7-global-seko`) |
+| `--stock-boot PATH` | instead: a `boot.img` (for example from the EDL backup), an OTA zip, or a URL of either |
+| `--cmdline-append ARG...` | extra kernel arguments ([options](#kernel-command-line-options)) |
+| `--out DIR` | output directory (default `out/`) |
+| `--force` | build even if the kernel checks fail (not `RD_GZIP`) |
 
-[tooling/image.py](../tooling/image.py) gives overpressure's stage-1 builder
-([overpressure/stage1.py](../../../overpressure/stage1.py)) the PICO 4's packages, overlay, prebuilt
-helpers and kernel arguments, and adds its own files (hostname, build record). The build:
+The first build downloads about 17 MB of the OTA (the zip's central directory and its `boot.img` member, by
+HTTP range requests, checked against the zip's CRC-32) and about 12 MB of Alpine packages into `cache/`. The
+build:
 
-1. Gets the stock `boot.img` from a file, an OTA zip or a URL ([overpressure/ota.py](../../../overpressure/ota.py)).
-   PICO 4 OTAs are non-A/B; full A/B OTAs with `payload.bin` work too ([overpressure/payload.py](../../../overpressure/payload.py)).
-2. Parses it ([overpressure/bootimg.py](../../../overpressure/bootimg.py), header versions 0–4) and analyses the
-   kernel ([overpressure/kernelinfo.py](../../../overpressure/kernelinfo.py)): version, embedded configuration
-   (`IKCONFIG`), device trees. The build stops if the kernel lacks `BLK_DEV_INITRD`, `RD_GZIP`,
-   `USB_CONFIGFS`, `CONFIGFS_FS` or `UNIX98_PTYS`, or has none of the NCM, RNDIS and ECM gadget
-   functions. `--force` overrides these checks, except `RD_GZIP`.
-3. Assembles the root file system in memory ([overpressure/cpio.py](../../../overpressure/cpio.py)), so device
-   nodes, modes and ownership are right on Windows too:
-   * the Alpine minirootfs, checked against its published SHA-256;
-   * the packages of `PACKAGES` in `tooling/image.py` with their dependencies, each verified
-     through Alpine's checksum chain: APKINDEX, SHA-1 of the control segment, SHA-256 of the
-     data segment ([overpressure/alpine.py](../../../overpressure/alpine.py)). Each APKINDEX's RSA signature is
-     verified against Alpine's aarch64 signing keys pinned in
-     [overpressure/apksign.py](../../../overpressure/apksign.py); an unsigned index, an unknown key or a bad
-     signature stops the build and drops the index from the cache;
-   * kernel modules from the stock ramdisk's `lib/modules` (current firmware has none);
-   * the [initramfs/](../initramfs/) overlay;
-   * `pico4-reboot` from [prebuilt/aarch64/](../prebuilt/aarch64/);
-   * static device nodes (`console`, `null`, `zero`, `kmsg`, `tty`, `ptmx`, `random`,
-     `urandom`): the kernel opens `/dev/console` before `/init` runs, and there is no devtmpfs;
-   * a root account without password, the host name `pico4` and the build record
-     `/etc/pico4/build-info`.
-4. Writes a gzip-compressed newc cpio, extends the command line and repacks the image with every
-   other stock header field. It parses its own output and checks kernel, device trees, header
-   version, page size, OS version, load addresses, the header ID and an executable `/init`
-   before writing to `out/`.
+1. Gets the stock `boot.img` ([overpressure/ota.py](../../../overpressure/ota.py); A/B OTAs with `payload.bin`
+   work too, [overpressure/payload.py](../../../overpressure/payload.py)).
+2. Parses it ([overpressure/bootimg.py](../../../overpressure/bootimg.py), header v0–4) and analyses the
+   kernel ([overpressure/kernelinfo.py](../../../overpressure/kernelinfo.py)). It stops if the kernel lacks
+   `BLK_DEV_INITRD`, `RD_GZIP`, `USB_CONFIGFS`, `CONFIGFS_FS` or `UNIX98_PTYS`, or has none of the NCM,
+   RNDIS and ECM gadget functions.
+3. Assembles the root file system in memory ([overpressure/cpio.py](../../../overpressure/cpio.py)), so nodes,
+   modes and ownership are right on Windows too: the minirootfs (checked against its SHA-256); the packages
+   with dependencies, each verified through Alpine's checksum chain
+   ([overpressure/alpine.py](../../../overpressure/alpine.py)) and each APKINDEX's RSA signature against
+   Alpine's aarch64 keys pinned in [overpressure/apksign.py](../../../overpressure/apksign.py) (a bad or
+   unknown signature stops the build and drops the index from the cache); modules from the stock ramdisk
+   (current firmware has none); the overlay; `pico4-reboot`; static device nodes (`console`, `null`, `zero`,
+   `kmsg`, `tty`, `ptmx`, `random`, `urandom`: the kernel opens `/dev/console` before `/init`); a root
+   account without password, host name `pico4`, the build record `/etc/pico4/build-info`.
+4. Writes a gzip newc cpio, extends the command line and repacks with every other stock header field, then
+   parses its own output and checks kernel, trees, header fields, the header ID and an executable `/init`.
 
 | Output in `out/` | Use |
 | --- | --- |
 | `pico4-stage1-<firmware>.img` | the boot image |
 | `pico4-stage1-<firmware>-initramfs.cpio.gz` | the bare ramdisk, for the QEMU tests |
 | `pico4-stage1-<firmware>-rootfs.tar` | the root file system without device nodes, for the preflight |
-| `pico4-stage1-<firmware>.json` | build record: image SHA-256 and size, command line, package versions, analysis of the stock image |
+| `pico4-stage1-<firmware>.json` | build record: SHA-256 and size, command line, package versions, stock analysis |
 | `stock-boot-<firmware>.img` | the untouched stock boot image of the same OTA |
 
-| Option | Effect |
-| --- | --- |
-| `--firmware NAME`, `--stock-boot PATH` | source of the stock image (see above) |
-| `--cmdline-append ARG...` | extra kernel arguments ([options](#kernel-command-line-options)) |
-| `--out DIR` | output directory (default `out/`) |
-| `--force` | build even if the kernel checks fail |
+`python -m overpressure inspect` (`--firmware` or `--stock-boot`) prints the analysis without building and
+writes `out/inspect/<firmware>/analysis.json` and `kernel.config`. With `SOURCE_DATE_EPOCH` set the image is
+byte-reproducible on Windows and Linux; without it only the build time in `build-info` differs. The build
+warns when the image is larger than the stock partition.
 
-`python -m overpressure inspect` (with `--firmware` or `--stock-boot`) prints the same analysis
-without building and writes `out/inspect/<firmware>/`: `analysis.json` and the kernel's
-`kernel.config`.
+### Freestanding helpers
 
-With `SOURCE_DATE_EPOCH` set, the image is byte-reproducible from the same downloads, on
-Windows and Linux alike; without it, only the build time in `/etc/pico4/build-info` differs
-between builds. The build warns when the image is larger than the stock partition image; such
-an image can only be booted from RAM.
-
-`pico4-reboot` ([source](../src/reboot/pico4-reboot.c)) is a freestanding aarch64 program
-without libc, about 1.5 KB. BusyBox's `reboot` cannot pass a command string to the kernel, and
-that string is how the Qualcomm restart driver chooses the next boot target (fastboot,
-recovery). The userspace build puts the same file into the system image. Any aarch64 cross
-compiler rebuilds it, from `devices/phoenix/`:
+`pico4-reboot` ([source](../src/reboot/pico4-reboot.c), about 1.5 KB, no libc) passes a command string to the
+kernel, which BusyBox's `reboot` cannot; the Qualcomm restart driver picks the next boot target (fastboot,
+recovery) from it. The system image carries the same file. `pico4-splash` ([source](../src/splash/pico4-splash.c),
+about 13 KB, no libm), the installed system's boot indication in the lenses, is in the system image only, so
+preinit runs it before the data partition is mounted. From `devices/phoenix/`, with any aarch64 cross
+compiler:
 
 ```sh
 aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector \
     -fno-asynchronous-unwind-tables -Wl,--build-id=none -s \
     -o prebuilt/aarch64/pico4-reboot src/reboot/pico4-reboot.c
-```
-
-`pico4-splash` ([source](../src/splash/pico4-splash.c)), the installed system's boot indication
-in the lenses ([install.md](install.md)), is freestanding the same way (about 13 KB, without libm:
-it draws the logo's headset and the name from their geometry), so preinit runs it before the data
-partition is mounted; it is in the system image, not in stage 1. From `devices/phoenix/`:
-
-```sh
 aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector \
     -fno-asynchronous-unwind-tables -fno-builtin -Wall -Wextra -Werror \
     -Wl,--build-id=none,-z,max-page-size=4096 -s \
     -o prebuilt/aarch64/pico4-splash src/splash/pico4-splash.c
 ```
 
-The build container's cross compiler has no arm64 kernel headers: in a `container run`, install
-them first (`apt-get install linux-libc-dev-arm64-cross`). Its picture is tested on the host
-(`test_pico4_splash.c` in [scripts/c-tests.sh](../../../scripts/c-tests.sh)), which also writes it
-as a PPM file when given a name.
+The build container's cross compiler lacks arm64 kernel headers: in a `container run`, first
+`apt-get install linux-libc-dev-arm64-cross`. The splash picture is tested on the host
+(`test_pico4_splash.c` in [scripts/c-tests.sh](../../../scripts/c-tests.sh)), which writes it as a PPM when
+given a name.
 
 ## Booting
 
-Stage 1 boots from a partition: the development loop writes the dev image to `recovery` (the
-maintenance stage 1) with `python -m overpressure dev flash`, and the acceptance
-runner and cycle write a test image to `boot` and restore the backup's image after their run
-(`python -m overpressure hwtest flash-run`, `python -m overpressure cycle`,
-[hardware-testing.md](hardware-testing.md)). The signed Neo3 engineering ABL used on the
-PICO 4 rejects `fastboot boot` with an unknown-command error after the image transfer, even
-after persistent normal and critical unlock, so overpressure's RAM boot
-([tool.md](../../../docs/tool.md#ram-boot)) has no target on the PICO 4.
-
-Back to PICO OS: `python -m overpressure dev restore` ([hardware-testing.md](hardware-testing.md)).
-`pico4-reboot bootloader` in stage 1 returns to fastboot for the next attempt.
+Stage 1 boots from a partition: `python -m overpressure dev flash` writes the dev image to `recovery` (the
+maintenance stage 1); `hwtest flash-run` and `cycle` write a test image to `boot` and restore it
+([hardware-testing.md](hardware-testing.md)). The engineering ABL rejects `fastboot boot` (unknown command
+after the transfer, even with persistent normal and critical unlock), so overpressure's RAM boot
+([tool.md](../../../docs/tool.md#ram-boot)) has no target on the PICO 4. `pico4-reboot bootloader` returns to
+fastboot; `python -m overpressure dev restore` returns to PICO OS.
 
 ### Writing boot by hand
 
-The tools above check the headset's verified backup and the image before writing and restore
-the original boot image afterwards. On a headset without the installed system, the equivalent
-manual sequence replaces the only Android boot partition (the PICO 4 has no A/B slots), so PICO OS
-cannot start until the original image is flashed back; with the system installed, the way back is
-`dev restore`. Keep the engineering ABL and a working EDL recovery path
-([device-preparation.md](device-preparation.md)) available:
+The tools check the backup and the image and restore the original. The manual sequence replaces the only boot
+partition (no A/B slots), so PICO OS cannot start until the original is back; with the system installed, the
+way back is `dev restore`. Keep the engineering ABL and a working EDL path
+([device-preparation.md](device-preparation.md)):
 
 ```sh
 fastboot oem <token> unlock               # engineering ABL: authorizes writes in this session
 fastboot flash boot out/pico4-stage1-5.13.7-global-seko.img
 fastboot reboot                           # every normal boot now starts stage 1
-# back to PICO OS: into fastboot (pico4-reboot bootloader in stage 1, or its 5-minute
-# auto-reboot when no PC answers), then:
+# back: into fastboot (pico4-reboot bootloader, or the 5-minute auto-reboot), then:
 fastboot oem <token> unlock
 fastboot flash boot out/stock-boot-5.13.7-global-seko.img
 fastboot reboot
 ```
 
-`python -m overpressure device token CHIP_ID` prints the `oem` command for the headset's SoC ID, which
-`python -m overpressure device probe` records. It is the engineering ABL's per-session command
-authorization, not `flashing unlock`, and resets nothing. `out/stock-boot-<firmware>.img` is the
-untouched image from the same OTA: flash back the one that matches the firmware on the headset,
-or the boot image of the headset's own EDL backup. The sequence writes only `boot`; recovery and
-the bootloader are separate partitions.
+`python -m overpressure device token CHIP_ID` prints the `oem` command for the SoC ID that `device probe`
+records; it is a per-session authorization, not `flashing unlock`, and resets nothing. Flash back the stock
+image that matches the headset's firmware, or the boot image of its EDL backup. Only `boot` is written.
 
 ## Connecting
 
-About 20–40 s after the boot the headset answers on the USB link:
+About 20–40 s after boot the headset answers on the USB link:
 
 | How | Command |
 | --- | --- |
-| SSH (Windows has a client built in) | `ssh root@172.16.42.1`, empty password |
-| Telnet (Windows: the optional client, or PuTTY) | `telnet 172.16.42.1` |
+| SSH (Windows has a client) | `ssh root@172.16.42.1`, empty password |
+| Telnet | `telnet 172.16.42.1` |
 | Browser: status, logs, report, probe and reboot buttons | <http://172.16.42.1/> |
-| Copy files (SFTP server included) | `scp root@172.16.42.1:/run/pico4/report.tar.gz .` |
-| Logs without any network | the USB drive `PICO4LOGS` on the PC |
-| Serial shell, on kernels with CDC ACM | the gadget's serial port on the PC (`/dev/ttyACM0` on Linux); any login name, no password |
+| Copy files (SFTP) | `scp root@172.16.42.1:/run/pico4/report.tar.gz .` |
+| Logs without network | the USB drive `PICO4LOGS` |
+| Serial shell, kernels with CDC ACM | the gadget's serial port (`/dev/ttyACM0` on Linux); any login name, no password |
 
-dropbear runs with `-R` (host keys are generated at the first connection, so they are new on
-every boot), `-B` (the empty root password is accepted) and `-W 4194304`, a 4 MiB receive
-window: with dropbear's 24 KiB default, uploads over the USB link, such as the system image, are
-limited to about 4.4 MB/s; with the 4 MiB window it carries 26 to 28 MB/s with any cipher, the USB link's limit.
-On this kernel BusyBox's SHA-256 does 42 MB/s, OpenSSL's 1.77 GB/s; `pico4-install` hashes with
-OpenSSL and reads partitions with `dd` in 4 MiB blocks (about 190 MB/s with the hash; `head -c`
-reads a block device in small pieces), and it writes without a hash beside the stream (`tee` held
-the write to 25 MB/s): the readback checks it. Images that the hardware runner or the development loop prepare also carry an
-`authorized_keys` entry for the runner's per-run key or the loop's key
-([hardware-testing.md](hardware-testing.md)).
+dropbear runs with `-R` (host keys generated at the first connection, new every boot), `-B` (empty root
+password accepted) and `-W 4194304`: a 4 MiB receive window carries 26 to 28 MB/s, the link's limit, against
+4.4 MB/s with the 24 KiB default. On this kernel BusyBox's SHA-256 does 42 MB/s, OpenSSL's 1.77 GB/s:
+`pico4-install` hashes with OpenSSL, reads partitions with `dd` in 4 MiB blocks (about 190 MB/s with the hash;
+`head -c` reads a block device in small pieces) and writes without a hash beside the stream (`tee` held it to
+25 MB/s); the readback checks it. Runner and dev images also carry an `authorized_keys` entry for the run's or
+the loop's key ([hardware-testing.md](hardware-testing.md)).
 
 The web server is BusyBox `httpd` on port 80 (`/srv/www`):
 
@@ -249,228 +203,177 @@ The web server is BusyBox `httpd` on port 80 (`/srv/www`):
 | --- | --- |
 | `/` | status, refreshed every 5 s; links; buttons to rerun the probe and to reboot into PICO OS, fastboot or recovery |
 | `/cgi-bin/status` | `pico4-info` as text |
-| `/cgi-bin/log?boot`, `?dmesg`, `?services`, `?pstore` | `boot.log`, kernel log, service logs (last 200 lines each), pstore contents from the previous boot |
+| `/cgi-bin/log?boot`, `?dmesg`, `?services`, `?pstore` | `boot.log`, kernel log, service logs (last 200 lines each), pstore of the previous boot |
 | `/report/`, `/cgi-bin/report` | the hardware report, browsable and as `report.tar.gz` (collected first if missing) |
 | `POST /cgi-bin/probe` | rerun `pico4-probe` |
 | `POST /cgi-bin/reboot`, body `target=android`, `bootloader` or `recovery` | reboot after 2 s |
 
-The log drive is a 32 MiB FAT image in RAM, exported read-only and removable:
+The log drive is a 32 MiB FAT image in RAM, read-only and removable: `README.txt`, `boot.log` (what `/init`
+and the USB setup did), `dmesg.txt`, `cmdline.txt`, `build-info.json`, `report.tar.gz` once the probe ran,
+`svc-*.log`, `usb.state`, `usb.link` and `pstore/` (the previous boot's kernel logs). It is rebuilt after the
+probe and swapped in as a media change; eject and replug it to see the newer files.
 
-| File | Content |
-| --- | --- |
-| `README.txt` | how to connect |
-| `boot.log` | what `/init` and the USB setup did |
-| `dmesg.txt`, `cmdline.txt`, `build-info.json` | kernel log, kernel command line, build record of the image |
-| `report.tar.gz` | hardware report, once the probe has run |
-| `svc-*.log`, `usb.state`, `usb.link` | service logs, gadget and link state |
-| `pstore/` | logs the kernel kept from the previous boot |
-
-The drive is rebuilt after the probe and swapped in as a media change. When the PC holds the
-medium, eject and replug it to see the newer files.
-
-The USB device is a composite gadget `1d6b:0104` (Linux Foundation Multifunction Composite
-Gadget, device class `EF/02/01` with interface association descriptors for Windows), product
-`PICO 4 Linux`. Its serial number is `androidboot.serialno` from the kernel command line,
-normally the headset's fastboot serial (the ADB serial under PICO OS can differ). The network
-function is the first one in `pico4.usbnet` that the kernel provides. Its MAC addresses are
-locally administered and derived from the serial number, so the PC sees the same adapter on
-every boot. If the controller rejects the set of functions, the setup binds again without the
-serial function, then without the log drive.
+The USB device is a composite gadget `1d6b:0104` (class `EF/02/01` with interface association descriptors for
+Windows), product `PICO 4 Linux`, serial `androidboot.serialno` (normally the fastboot serial; the ADB serial
+can differ). The network function is the first of `pico4.usbnet` the kernel has; its MAC addresses are locally
+administered and derived from the serial, so the PC sees the same adapter every boot. If the controller rejects
+the set of functions, the setup binds again without the serial function, then without the log drive.
 
 ## What happens during boot
 
 | Step | What happens | Status LED |
 | --- | --- | --- |
-| 1 | [/init](../initramfs/init) mounts proc, sysfs, `/run` and `/tmp`, fills `/dev` with `mdev` (the stock kernel has no devtmpfs) and keeps `mdev` running for hotplug; mounts devpts, configfs, pstore and debugfs | |
-| 2 | every disk and partition becomes read-only (`blockdev --setro`) as soon as it appears; `/dev/block/by-name/*` links as on Android | blue |
-| 3 | modules listed in the stock ramdisk's `modules.load` are loaded (current firmware has none) | |
-| 4 | USB gadget via configfs: NCM network, mass-storage log drive, ACM serial if the kernel has it | amber once bound |
-| 5 | `usb0` = `172.16.42.1/24`; `udhcpd` gives the PC `172.16.42.2` | green when a PC configures the device |
-| 6 | CPU power management as PICO OS's post-boot script does it: cpufreq governor `schedutil`, deep idle states enabled after 30 s, Qualcomm crash-dump mode off | |
+| 1 | [/init](../initramfs/init) mounts proc, sysfs, `/run`, `/tmp`; fills `/dev` with `mdev` (no devtmpfs on the stock kernel), kept running for hotplug; mounts devpts, configfs, pstore, debugfs | |
+| 2 | every disk and partition becomes read-only (`blockdev --setro`) as it appears; `/dev/block/by-name/*` links as on Android | blue |
+| 3 | modules of the stock ramdisk's `modules.load` (none in current firmware) | |
+| 4 | USB gadget via configfs: NCM, log drive, ACM if the kernel has it | amber once bound |
+| 5 | `usb0` = `172.16.42.1/24`; `udhcpd` gives the PC `172.16.42.2` | green when a PC configures it |
+| 6 | CPU power management as PICO OS's post-boot script: governor `schedutil`, deep idle states after 30 s, Qualcomm crash-dump mode off | |
 | 7 | `pico4-init` becomes PID 1 and starts `udhcpd`, `telnetd`, `dropbear`, `httpd`, the serial getty, the USB link watcher and the recovery watchdog | |
 | 8 | `pico4-probe` collects a hardware inventory 15 s after the USB setup and refreshes the log drive | |
 
-Steps 4 to 8 run concurrently. The stock kernel boots with the `performance` governor and with
-deep idle states disabled (`lpm_levels.sleep_disabled=1` on its command line); without step 6
-every core would stay at its maximum clock. Firmware requests fall back to userspace on this
-kernel; `/init` lets them fail after 5 s instead of waiting 60 s for Android's `ueventd`, which
-is absent. The USB setup waits up to 60 s for a device controller.
+Steps 4 to 8 run concurrently. The stock kernel boots with `performance` and deep idle disabled
+(`lpm_levels.sleep_disabled=1`); without step 6 every core stays at its maximum clock. Firmware requests fall
+back to userspace; `/init` fails them after 5 s instead of 60 s (Android's `ueventd` is absent). The USB setup
+waits up to 60 s for a device controller. Only LEDs named red, green and blue are driven (never flash, torch,
+IR or backlight); a failed USB setup blinks red. Valve's kernel has no `/sys/class/leds`.
 
-The LED column applies on the stock-kernel dev image: only LEDs named red, green and blue are
-driven, never flash, torch, IR or backlight LEDs, and a failed USB setup shows blinking red.
-Valve's kernel has no `/sys/class/leds`, so on it the helper does nothing.
-
-Every step is logged to the kernel log (lines start with `pico4:`), to
-`/run/pico4/boot.log` and to pstore's `pmsg`, which survives a warm reboot. Services log to
-`/run/pico4/svc-<name>.log`.
+Every step is logged to the kernel log (lines start with `pico4:`), `/run/pico4/boot.log` and pstore's `pmsg`
+(survives a warm reboot); services log to `/run/pico4/svc-<name>.log`.
 
 ### PID 1
 
-[pico4-init](../initramfs/usr/libexec/pico4/pico4-init) runs the `::respawn:` and
-`::shutdown:` entries of [/etc/inittab](../initramfs/etc/inittab) like busybox init, but its stop signals reach only user processes (those with an executable), never kernel
-threads. busybox init stops everything with `kill(-1)`, which also reaches the kernel thread of
-the USB mass-storage function that serves the log drive; that thread exits on SIGTERM or
-SIGKILL, the PC then resets the composite device, and the NCM link is lost. Each service runs in
-its own respawn loop through [svc](../initramfs/usr/libexec/pico4/svc), which waits for the
-service's prerequisites and rate-limits restarts.
-
-| Signal to PID 1 | Effect |
-| --- | --- |
-| SIGTERM | stop, reboot |
-| SIGUSR1, SIGUSR2 | stop, then halt or power off |
+[pico4-init](../initramfs/usr/libexec/pico4/pico4-init) runs the `::respawn:` and `::shutdown:` entries of
+[/etc/inittab](../initramfs/etc/inittab) like busybox init, but its stop signals reach only user processes,
+never kernel threads: busybox init's `kill(-1)` kills the USB mass-storage function's kernel thread, the PC
+resets the composite device and the NCM link is lost. Each service runs in its own respawn loop through
+[svc](../initramfs/usr/libexec/pico4/svc), which waits for its prerequisites and rate-limits restarts.
+SIGTERM to PID 1 stops and reboots; SIGUSR1 and SIGUSR2 stop, then halt or power off.
 
 ## Recovery behaviour
 
-* **Watchdog.** `recovery-watch`, independent of the USB setup, reboots into fastboot after
-  300 s (`pico4.autoreboot`) unless a packet from the PC has arrived on the USB network or a
-  login shell has started (SSH, telnet or serial: the shell profile creates
-  `/run/pico4/no-autoreboot`). USB enumeration and carrier alone do not count.
-* **Test images.** Images that the hardware runner prepares use its deadlines instead: the
-  runner must authenticate over SSH within the connection deadline (network traffic and login
-  shells do not count), and a maximum runtime returns the headset to fastboot even after
-  authentication. These limits apply even when the image disables the watchdog
-  ([hardware-testing.md](hardware-testing.md)). On the tested headset, a test image whose USB
-  link is configured but unusable returns to fastboot this way, and the runner restores PICO OS
-  without a button press.
-* **USB re-plug.** If the link is configured but no packet has arrived from the PC for 20 s
-  (`pico4.usbkick`), the USB link watcher unbinds the gadget from the controller and binds it
-  again, at most twice per boot and never after the first received packet. It then re-applies
-  the address and restarts `udhcpd`. A PC whose side of the link is up sends packets at once
-  (DHCP, IPv6 router solicitations). In QEMU, the PC side intermittently (about one run in
-  three) misses NCM's "connected" notification and shows the cable as unplugged; a re-plug
-  fixes that. Unbind and rebind is what Android's init does when it switches USB functions;
-  toggling the controller's `soft_connect` instead leaves the QEMU test controller unable to
-  enumerate the device.
-* **Kernel panics.** The stock kernel enables Qualcomm download mode, so a panic would leave the
-  headset in crash-dump mode (USB `05c6:900e`) until the power button is held. Stage 1 sets
-  `msm_poweroff`'s `download_mode` to 0, so a panic reboots; a flashed stage 1 then starts again,
-  and its deadlines return the headset to fastboot. `pico4.ramdump=1` keeps crash-dump mode.
-* **Limits.** A kernel hard hang or loss of host power can still need a hardware reset (power
-  button held for more than 10 s) or EDL recovery.
+* **Watchdog.** `recovery-watch`, independent of the USB setup, reboots into fastboot after 300 s
+  (`pico4.autoreboot`) unless a packet from the PC arrived on the USB network or a login shell started (SSH,
+  telnet or serial: the profile creates `/run/pico4/no-autoreboot`). Enumeration and carrier alone do not
+  count.
+* **Test images** use the runner's deadlines instead: SSH authentication within the connection deadline and
+  a maximum runtime, also when the image disables the watchdog
+  ([hardware-testing.md](hardware-testing.md#device-deadlines)).
+  On the headset, a test image with a configured but unusable link returns to fastboot this way and the runner
+  restores PICO OS without a button press.
+* **USB re-plug.** On a configured link with no packet from the PC for 20 s (`pico4.usbkick`), the link
+  watcher unbinds and rebinds the gadget (at most twice per boot, never after the first packet), then
+  re-applies the address and restarts `udhcpd`. A PC whose side is up sends packets at once (DHCP, IPv6 router
+  solicitations). In QEMU the PC side sometimes misses NCM's "connected" notification; the re-plug fixes it.
+  Toggling the controller's `soft_connect` instead leaves the QEMU controller unable to enumerate.
+* **Kernel panics.** The stock kernel enables Qualcomm download mode (crash-dump mode, USB `05c6:900e`, until
+  the power button is held). Stage 1 sets `msm_poweroff`'s `download_mode` to 0, so a panic reboots and the
+  deadlines apply; `pico4.ramdump=1` keeps crash-dump mode.
+* **Limits.** A kernel hard hang or loss of host power can need a hardware reset (power button held for more
+  than 10 s) or EDL recovery.
 
 ## Kernel command-line options
 
-Add them at build time, e.g.
-`python -m overpressure build --cmdline-append pico4.autoreboot=0 pico4.cpugov=keep`. A bare
-`pico4.NAME` means `pico4.NAME=1`. [lib.sh](../initramfs/usr/libexec/pico4/lib.sh)
-reads them; the scripts next to it use them.
+Add them at build time, e.g. `python -m overpressure build --cmdline-append pico4.autoreboot=0 pico4.cpugov=keep`.
+A bare `pico4.NAME` means `pico4.NAME=1`. [lib.sh](../initramfs/usr/libexec/pico4/lib.sh) reads them.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `pico4.usbnet=` | `ncm,rndis,ecm` | network functions to try, in order; the stock kernel has only NCM |
-| `pico4.usbserial=` | `acm` | serial shell function, absent from the stock kernel; `gser` needs a host driver, `none` disables it. The serial getty asks for a login name first (any name, no password) |
+| `pico4.usbserial=` | `acm` | serial shell function (absent from the stock kernel); `gser` needs a host driver, `none` disables it |
 | `pico4.logdisk=` | `1` | read-only USB log drive |
 | `pico4.autoreboot=` | `300` | seconds without a usable connection before rebooting into fastboot; `0` = never |
-| `pico4.usbkick=` | `20` | seconds of silence on a configured link before a software USB re-plug (at most 2); `0` = never |
+| `pico4.usbkick=` | `20` | seconds of silence on a configured link before a software re-plug (at most 2); `0` = never |
 | `pico4.ip=`, `pico4.host_ip=` | `172.16.42.1`, `172.16.42.2` | addresses on the USB link (/24) |
-| `pico4.rw=` | `0` | `1` leaves block devices writable; the hardware runner refuses such images |
-| `pico4.led=` | `1` | drive the status LED where the kernel has one (only LEDs named red, green, blue; Valve's kernel has none) |
+| `pico4.rw=` | `0` | `1` leaves block devices writable; the runner refuses such images |
+| `pico4.led=` | `1` | drive the status LED where the kernel has one |
 | `pico4.cpugov=` | `schedutil` | cpufreq governor; `keep` leaves the stock `performance` |
 | `pico4.lpm=` | `1` | enable the CPU low-power idle states |
 | `pico4.ramdump=` | `0` | `1` keeps Qualcomm crash-dump mode after a kernel panic |
 | `pico4.probe=` | `1` | run `pico4-probe` automatically |
-| `pico4.modules=` | `1` | load modules from the stock ramdisk (none in current firmware) |
+| `pico4.modules=` | `1` | load modules from the stock ramdisk |
 | `pico4.devtmpfs=` | `1` | mount devtmpfs when the kernel has it (the stock kernel does not) |
 | `pico4.probe_delay=` | `15` | seconds between the USB setup and the automatic probe |
 | `pico4.lpm_delay=` | `30` | seconds before the idle states are enabled |
 | `pico4.udc_timeout=` | `60` | seconds to wait for a USB device controller |
 | `pico4.logdisk_mb=` | `32` | size of the log drive in MiB |
 
-Options for the test harnesses:
+For the test harnesses: `pico4.selftest=1` (the [QEMU self-test](#qemu-self-test); `pico4.selftest_hostdelay=N`
+keeps the PC side silent for N s, `pico4.selftest_poweroff=0` keeps the VM on; the runner refuses such
+images), `pico4.part=recovery` (the dev image, so the dev loop knows which partition started it) and
+`pico4.test_run=ID` (set by the runner).
 
-| Option | Used by |
-| --- | --- |
-| `pico4.selftest=1` | the QEMU self-test ([QEMU self-test](#qemu-self-test)); with `pico4.selftest_hostdelay=N` the PC side stays silent for N s, with `pico4.selftest_poweroff=0` the VM stays on afterwards. The hardware runner refuses images with `selftest` |
-| `pico4.part=recovery` | the dev image written to `recovery` (the maintenance stage 1), so the dev loop can tell which partition started it |
-| `pico4.test_run=ID` | set by the hardware runner in its per-run image |
-
-Do not add a bare `earlycon` (without a value). According to PICO's published kernel source
-([bytedance/phoenix-kernel](https://github.com/bytedance/phoenix-kernel), 4.19.81, without the
-board DTS), its earlycon parser dereferences the missing argument, and the kernel panics before
-anything is logged.
+**Never add a bare `earlycon`** (without a value): according to PICO's published kernel source
+([bytedance/phoenix-kernel](https://github.com/bytedance/phoenix-kernel), 4.19.81, without the board DTS), its
+earlycon parser dereferences the missing argument and the kernel panics before anything is logged.
 
 ## Commands on the headset
 
 | Command | Purpose |
 | --- | --- |
 | `pico4-info` | status summary, also the login banner |
-| `pico4-probe` | hardware inventory into `/run/pico4/report/` and `report.tar.gz`, also on the web page and the log drive |
-| `pico4-mount-ro PART [DIR]` | mount a stock partition read-only, by default on `/mnt/PART`: ext4 with `noload` (no journal replay), f2fs with `norecovery`, vfat. The dynamic partitions inside `super` are not handled |
-| `pico4-reboot [bootloader\|recovery\|poweroff]` | reboot into a mode; without argument, a normal reboot. `-r STRING` passes any other reboot reason; unknown words are refused. Aliases: `fastboot-mode`, `android` |
-| `pico4-install write\|format-data\|keys\|wipe\|bootmode\|status` | the installer of the maintenance stage 1: the only writer of `boot`, `super`, `userdata` (its file system, and the SSH keys and install ID on it), `metadata` and `misc`'s bootloader message, each against the backup's size and read back where it writes raw ([install.md](install.md#install-and-update)) |
+| `pico4-probe` | hardware inventory into `/run/pico4/report/` and `report.tar.gz` |
+| `pico4-mount-ro PART [DIR]` | mount a stock partition read-only (default `/mnt/PART`): ext4 with `noload` (no journal replay), f2fs with `norecovery`, vfat; not the partitions inside `super` |
+| `pico4-reboot [bootloader\|recovery\|poweroff]` | reboot into a mode, without argument a normal reboot; `-r STRING` passes another reason; unknown words are refused; aliases `fastboot-mode`, `android` |
+| `pico4-install write\|format-data\|keys\|hash\|wipe\|bootmode\|status` | the maintenance stage 1's installer, the only writer of `boot`, `super`, `userdata` (its file system, the SSH keys and install ID on it), `metadata` and `misc`'s bootloader message, each against the backup's size and read back where it writes raw ([install.md](install.md#install-and-update)) |
 | `drm_info`, `modetest`, `evtest`, `i2cdetect`, `gpioinfo`, `tinymix`, `lsusb`, `lspci`, `lsblk`, `dtc`, `dmsetup`, `strace`, `htop` | exploration tools |
 
-`pico4-probe` reads procfs, sysfs and device-tree data only. It skips debugfs GPIO and clock
-dumps, PCIe configuration reads and audio mixer reads, because those can hard-crash Qualcomm
-SoCs; run such tools by hand, knowing the risk. Its progress also goes to pstore, so a crash
-during the probe can be located.
-
-Three details keep a PC terminal that echoes text back from running commands on the serial
-console: the getty asks for a login name first, so echoed text lands in that prompt; every line
-of `pico4-info`, the login banner, starts with `#`; and `pico4-reboot` refuses unknown words.
+`pico4-probe` reads procfs, sysfs and device-tree data only. It skips debugfs GPIO and clock dumps, PCIe
+configuration reads and audio mixer reads, **which can hard-crash Qualcomm SoCs**; run those by hand knowing the
+risk. Its progress also goes to pstore, so a crash during the probe can be located. A PC terminal that echoes
+text back cannot run commands on the serial console: the getty asks for a login name first, every line of the
+banner starts with `#`, and `pico4-reboot` refuses unknown words.
 
 ## Troubleshooting
 
-* **The PC sees a "PICO 4 Linux" device but no network adapter (Windows).** Windows 11 ships
-  `UsbNcm.sys` as the in-box class driver for CDC NCM (class 02h, subclass 0Dh) and should load
-  it automatically ([Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/supported-usb-classes)).
-  If it does not, use Device Manager: *Update driver → Browse my computer → Let me pick →
-  Network adapters → Microsoft → UsbNcm Host Device*. Windows 10 has no NCM driver, and the
-  stock kernel has no RNDIS function; there, use the log drive, a Windows 11 or Linux PC, or a
-  Linux VM with USB passthrough.
-* **Windows has an NCM adapter, but no DHCP or SSH, and the kernel log shows `Wrong NDP SIGN`.**
-  The stock kernel's NCM function rejects the packets of Windows' driver until the host sends one
-  CDC request through UsbDk. The hardware runner (`--windows-ncm-python`) and
-  `python -m overpressure dev connect` send it after every stage-1 boot; the setup and its limits
-  are in [hardware-testing.md](hardware-testing.md#windows-ncm-initialization). Valve's kernel,
-  under the installed system, does not need it. Leave the adapter on DHCP.
-* **No network, but a PICO4LOGS drive appeared.** `boot.log` on it shows what the USB setup did.
-  The drive is rebuilt after the probe; eject and replug it to see the newer files.
-* **Nothing appears on the PC.** After 5 minutes the watchdog reboots into fastboot. The next
-  stage-1 boot shows the previous boot's logs from pstore (`pstore/` on the log drive,
-  `/cgi-bin/log?pstore`); under PICO OS they are in `/sys/fs/pstore/console-ramoops*` and
-  `pmsg-ramoops*` (readable by root only). Every stage-1 line starts with `pico4`.
-* **`check-unlocked` fails although the bootloader is unlocked.** The stock ABL reports the
-  state as `DeviceUnlocked=true`, which the tools do not accept; stage the engineering ABL
-  ([device-preparation.md](device-preparation.md)).
-* **SSH warns about a changed host key.** Stage 1 creates new host keys on every boot;
-  `ssh-keygen -R 172.16.42.1` removes the old entry.
-* **The headset is stuck.** Hold the power button for more than 10 s; that is a hardware reset.
-  The next boot starts the maintenance stage 1 while `misc` holds its request, else what `boot`
-  holds: the installed system, or PICO OS after `dev restore`.
+* **"PICO 4 Linux" appears but no network adapter (Windows).** Windows 11's in-box `UsbNcm.sys` should load
+  for CDC NCM ([Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/supported-usb-classes));
+  if not: Device Manager, *Update driver → Browse my computer → Let me pick → Network adapters → Microsoft →
+  UsbNcm Host Device*. Windows 10 has no NCM driver and the stock kernel no RNDIS: use the log drive, Windows 11,
+  Linux, or a Linux VM with USB passthrough.
+* **An NCM adapter, but no DHCP or SSH, and `Wrong NDP SIGN` in the kernel log.** The stock kernel needs one CDC
+  request through UsbDk after every stage-1 boot; the runner and `dev connect` send it
+  ([hardware-testing.md](hardware-testing.md#windows-ncm-initialization)). Leave the adapter on DHCP.
+* **No network, but a PICO4LOGS drive.** `boot.log` on it shows what the USB setup did.
+* **Nothing appears on the PC.** After 5 minutes the watchdog reboots into fastboot. The next stage-1 boot shows
+  the previous boot's logs from pstore (`pstore/` on the log drive, `/cgi-bin/log?pstore`); under PICO OS they
+  are in `/sys/fs/pstore/console-ramoops*` and `pmsg-ramoops*` (root only). Every stage-1 line starts with `pico4`.
+* **`check-unlocked` fails although the bootloader is unlocked.** The stock ABL reports `DeviceUnlocked=true`,
+  which the tools refuse; stage the engineering ABL ([device-preparation.md](device-preparation.md)).
+* **SSH warns about a changed host key.** New host keys every boot: `ssh-keygen -R 172.16.42.1`.
+* **The headset is stuck.** Hold the power button for more than 10 s (hardware reset). The next boot starts the
+  maintenance stage 1 while `misc` holds its request, else what `boot` holds: the installed system, or PICO OS
+  after `dev restore`.
 
 ## Safety notes
 
-* The PICO 4 is not an A/B device: `fastboot flash boot` replaces the only boot partition, and PICO OS does not start until the original image is
-  back. Copies of the stock image: `cache/stock/*.boot.img` (the build's download),
-  `out/stock-boot-<firmware>.img` and the boot image in the headset's own EDL backup.
-* Stage 1 switches every disk and every partition to read-only individually: the 4.19 kernel
-  tracks a partition's read-only flag separately from its disk's. Newer kernels also treat a
-  partition as read-only while its disk is, so making a partition writable there takes
-  `blockdev --setrw` on both.
-* `persist` (sensor and camera calibration) and `fsg` (PICO VR data) are unique to each headset
-  and cannot be downloaded again. Treat them as irreplaceable in every stage.
-* `pico4-mount-ro` mounts stock partitions read-only with journal replay disabled, e.g. `modem`
-  for firmware files.
-* The maintenance stage 1's shell has no password: its only network is the USB cable to one PC, and
-  nothing is forwarded ([security.md](security.md)).
+* No A/B slots: `fastboot flash boot` replaces the only boot partition, and PICO OS does not start until the
+  original is back. Copies of the stock image: `cache/stock/*.boot.img`, `out/stock-boot-<firmware>.img` and
+  the boot image in the headset's EDL backup.
+* Stage 1 makes every disk and every partition read-only individually: the 4.19 kernel tracks a partition's
+  flag separately from its disk's. Newer kernels treat a partition as read-only while its disk is, so making a
+  partition writable there takes `blockdev --setrw` on both.
+* **`persist` (sensor and camera calibration) and `fsg` (PICO VR data) are unique to each headset** and cannot
+  be downloaded again: irreplaceable in every stage.
+* The maintenance stage 1's shell has no password: its only network is the USB cable to one PC, and nothing is
+  forwarded ([security.md](security.md)).
 
 ## The stock kernel as found
 
-Read from the boot image of PICO OS 5.13.8 and the kernel's embedded configuration
-(`IKCONFIG`); 5.13.7 has the same kernel, device trees and configuration.
+Read from the PICO OS 5.13.8 boot image and the kernel's `IKCONFIG`; 5.13.7 has the same kernel, trees and
+configuration.
 
 | | |
 | --- | --- |
 | Boot image | header v2, page 4096, 96 MiB partition, kernel `0x8000`, ramdisk `0x1000000`, DTB `0x1f00000` (base 0) |
 | Kernel | `4.19.81-perf+`, clang 8, uncompressed `Image` (35 MB), `CMDLINE_EXTEND`, `PANIC_TIMEOUT=-1` |
 | Ramdisk | gzip only (`RD_GZIP`); the stock one is Android 10's first-stage init with `fstab.qcom` and no modules, so no `skip_initramfs` patch is needed |
-| DTB | 7 trees: kona v1/v2/v2.1, kona-iot v1/v2/v2.1, RTIC; identical in 5.13.7 and 5.13.8 |
+| DTB | 7 trees: kona v1/v2/v2.1, kona-iot v1/v2/v2.1, RTIC |
 | `/dev` | no `DEVTMPFS`, hence mdev; `UEVENT_HELPER=y`; firmware loading falls back to userspace (`FW_LOADER_USER_HELPER_FALLBACK`) |
 | USB gadget | configfs with NCM, mass storage, gser, FunctionFS, UAC1/2, UVC, HID, MIDI, MTP, Qualcomm GSI; no ACM, no generic RNDIS, no ECM |
 | Logs | `PSTORE_RAM`, `PSTORE_CONSOLE`, `PSTORE_PMSG` |
-| Graphics | `DRM` and the KGSL GPU driver (`QCOM_KGSL`); the display driver comes from techpack (not in `IKCONFIG`); `video=vfb:640x400` on the command line ([graphics.md](graphics.md)) |
-| Other | `HID_QVR` (Qualcomm VR HID), LEDs `QTI_TRI_LED` and `AW210XX`, `ANDROID_PARANOID_NETWORK`, SELinux (no policy loaded, hence permissive), cpufreq default `performance`, 39-bit VA with 4K pages |
+| Graphics | `DRM` and KGSL (`QCOM_KGSL`); the display driver comes from techpack (not in `IKCONFIG`); `video=vfb:640x400` on the command line ([graphics.md](graphics.md)) |
+| Other | `HID_QVR`, LEDs `QTI_TRI_LED` and `AW210XX`, `ANDROID_PARANOID_NETWORK`, SELinux (no policy loaded, permissive), cpufreq default `performance`, 39-bit VA with 4K pages |
 | Modules | `MODULE_SIG_FORCE`: only modules signed with PICO's per-build key load, so new drivers mean rebuilding the kernel |
 | Storage | UFS; dynamic partitions (system, vendor, product, odm in `super`); f2fs userdata with file-based encryption; separate `persist`, `fsg`, `modem`, `dsp`, `bluetooth`, `cache` |
 
@@ -478,28 +381,24 @@ Read from the boot image of PICO OS 5.13.8 and the kernel's embedded configurati
 
 ### Offline
 
-* **Stock image.** `python -m overpressure inspect` downloads only the `boot.img` member of the
-  official OTA zip, checks it against the zip's CRC-32 and reads the kernel's `IKCONFIG`. For
-  5.13.8 global sek (b10113), CRC-32 `87016fbf` matches the zip directory, with 17 MB
-  downloaded of the 3.72 GB zip.
-* **Image format.** Google's `unpack_bootimg.py` parses the output: header v2, addresses, OS
-  version and patch level as stock. Repacking its extracted parts with Google's `mkbootimg.py`
-  reproduces the image byte for byte, except `second_addr`: that unused field keeps the stock
-  value `0x00f00000`, where current mkbootimg writes 0. Kernel and DTB are identical to stock.
-  The header's SHA-1 ID is computed the way mkbootimg computes it, which also reproduces the
-  stock image's ID.
-* **Ramdisk.** GNU cpio lists it with the expected device nodes, symlinks and modes, and the
-  scripts pass `sh -n` under the image's aarch64 BusyBox.
+* **Stock image.** `inspect` fetches only the OTA's `boot.img` member and checks it against the zip's CRC-32
+  (5.13.8 global sek, b10113: `87016fbf`, 17 MB of the 3.72 GB zip).
+* **Image format.** Google's `unpack_bootimg.py` parses the output (header v2, addresses, OS version and patch
+  level as stock); `mkbootimg.py` reproduces it byte for byte from the parts, except the unused `second_addr`,
+  which keeps the stock `0x00f00000` where mkbootimg writes 0. Kernel and DTB are identical to stock; the header
+  ID is computed as mkbootimg does, which also reproduces the stock image's.
+* **Ramdisk.** GNU cpio lists the expected nodes, symlinks and modes; the scripts pass `sh -n` under the image's
+  BusyBox.
 * **Recovery policy.** `bash devices/phoenix/tests/test_recovery_policy.sh` checks the watchdog's decisions
   ([recovery-policy.sh](../initramfs/usr/libexec/pico4/recovery-policy.sh)) on the host.
 
 ### QEMU self-test
 
-[tests/qemu/](../tests/qemu/) boots the exact ramdisk on a mainline arm64 kernel (6.18.56)
-configured like the stock one where it matters: no devtmpfs, no modules, a configfs gadget, 4K
-pages and a 39-bit address space. `dummy_hcd` connects the gadget to a virtual host controller
-in the same kernel, so the VM is both headset and PC. A 32 MiB GPT disk provides a `stage1_test`
-partition for the read-only checks and a `stage1_export` partition that receives the probe report.
+[tests/qemu/](../tests/qemu/) boots the exact ramdisk on a mainline arm64 kernel (6.18.56) configured like the
+stock one where it matters (no devtmpfs, no modules, a configfs gadget, 4K pages, 39-bit VA). `dummy_hcd`
+connects the gadget to a virtual host controller in the same kernel, so the VM is both headset and PC. A 32 MiB
+GPT disk has a `stage1_test` partition for the read-only checks and a `stage1_export` partition for the report.
+Optional; it covers stage 1 only.
 
 ```sh
 # once, in the build container: cache/qemu/Image
@@ -507,46 +406,27 @@ python -m overpressure container run -- bash devices/phoenix/tests/qemu/build-te
 devices/phoenix/tests/qemu/run-selftest.sh            # Linux, with qemu-system-aarch64: PASS or FAIL
 ```
 
-Further arguments to `run-selftest.sh` are kernel arguments: `pico4.usbserial=none` gives
-the stock kernel's function set (NCM and log drive, no serial), and
-`pico4.selftest_hostdelay=35` keeps the PC side silent for 35 s, which forces the re-plug
-path. The console log goes to `out/qemu-console.log`, the probe report to `out/qemu-report/`.
-`make qemu-stage1` runs the test for the Makefile's firmware.
-
-The self-test checks:
-
-* `/dev` populated by mdev without devtmpfs, the gadget bound, the headset address on its
-  interface;
-* the PC side's enumeration of the network function, the configured controller state, and a
-  DHCP lease of `172.16.42.2` across the USB link;
-* SSH, telnet and HTTP listening, SSH login as root with the empty password, the web status
-  page and boot log;
-* the `/dev/block/by-name` and `/dev/block/bootdevice/by-name` links, a read-only partition and
-  a refused write;
-* the log drive mounted from the PC side, with `boot.log` on it;
-* a login shell on the USB serial port (ACM);
-* the hardware report: collected, downloadable and browsable over HTTP;
-* with a silent PC side, one or two re-plugs. With 35 s of silence the headset re-plugs twice,
-  and DHCP, the log drive and the serial shell work afterwards. Normal runs need no re-plug.
+Further arguments are kernel arguments: `pico4.usbserial=none` gives the stock kernel's functions,
+`pico4.selftest_hostdelay=35` forces the re-plug path. Console log: `out/qemu-console.log`; report:
+`out/qemu-report/`. `make qemu-stage1` runs it for the Makefile's firmware. It checks: `/dev` by mdev, the gadget
+bound and addressed; the PC side's enumeration, the controller state and a DHCP lease of `172.16.42.2`; SSH,
+telnet and HTTP, root login with the empty password, the status page and boot log; the `by-name` links, a
+read-only partition and a refused write; the log drive from the PC side; a login shell on ACM; the hardware
+report over HTTP; with 35 s of silence two re-plugs, after which DHCP, the log drive and the serial shell work.
 
 ### On the headset
 
-The hardware acceptance runner ([hardware-testing.md](hardware-testing.md)) checks stage 1 on a
-prepared headset: the preflight under PICO OS, a per-run image with its own SSH key, the SSH
-identity, the root shell, storage protection, HTTP diagnostics and the return to the original
-PICO OS. `python -m overpressure hwtest flash-run` writes `boot` and restores it.
-
-Results on the tested headset (original PICO 4, PICO OS 5.13.7, engineering ABL, Windows 11
-host):
+The acceptance runner ([hardware-testing.md](hardware-testing.md)) checks stage 1 on a prepared headset.
+Results on the tested headset (original PICO 4, PICO OS 5.13.7, engineering ABL, Windows 11 host):
 
 | Check | Result |
 | --- | --- |
 | Preflight under PICO OS | all checks pass |
 | Kernel and userspace | stock `4.19.81-perf+`, Alpine 3.24.2; build metadata matches the image |
 | Shell | SSH with the per-run key; run identifier and SoC ID match; aarch64, UID 0 |
-| Storage | all 99 physical block devices (disks and partitions) read-only; root file system in RAM; no device file system mounted writable |
+| Storage | all 99 physical block devices (disks and partitions) read-only; root in RAM; no device file system mounted writable |
 | HTTP | status, boot log and hardware report of the same boot |
 | Flashed image | `boot` reads back with the SHA-256 of the per-run image |
 | Restoration | original boot image flashed; PICO OS boots with the original identity; full EDL readbacks of `boot` (96 MiB) and `abl` (1 MiB) match the backup |
-| Watchdog | a test image whose USB link is configured but unusable returns to fastboot, and the runner restores PICO OS without a button press |
-| Windows | the automatic NCM initialization makes DHCP, SSH and HTTP work; a run needs no button presses, administrator actions or manual network commands |
+| Watchdog | a test image with a configured but unusable link returns to fastboot; the runner restores PICO OS without a button press |
+| Windows | the automatic NCM initialization makes DHCP, SSH and HTTP work; no button presses, administrator actions or manual network commands |

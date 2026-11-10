@@ -8,7 +8,7 @@
 <h1 align="center">overpressure</h1>
 
 <p align="center">
-  <b>Linux and a SteamOS-compatible userspace on standalone VR headsets.</b>
+  <b>Linux and Valve's SteamOS VR session on standalone VR headsets.</b>
 </p>
 
 <p align="center">
@@ -23,83 +23,65 @@
   <a href="LICENSE">Unlicense</a>
 </p>
 
-A headset boots a SteamOS-compatible stage 2 installed on it, and a small Linux stage 1 in another boot partition
-installs and rescues it; stage 2 runs Valve's VR session (gamescope and SteamVR) with a Monado driver for the
-headset's hardware.
+overpressure turns a PICO 4 into a SteamOS headset: Valve's Steam Frame kernel and VR session (SteamVR in
+gamescope) with a driver for the headset's own lenses, cameras, sensors and controllers. Your Steam library runs
+on it, Windows games through Proton and FEX, Android games through Valve's Lepton, and PC games over Steam Link.
+One installer builds the system on your computer from Valve's and PICO's public downloads and puts it on the
+headset; the way back to PICO OS is one click away.
 
 > [!WARNING]
-> This is a beta for owners who accept the risk. It replaces the headset's system, wipes its data and voids what
-> warranty is left; a failed step can leave a headset needing recovery. It has run on one headset. Keep your backup;
-> each headset's documents say how its way back to stock works. This project isn't affiliated with Valve or PICO.
+> A beta for owners who accept the risk. It replaces the headset's system, erases its data and ends what is left of
+> its warranty. It has run on one headset. The installer backs your headset up first: keep that backup. Not
+> affiliated with Valve or PICO.
 
-## Headsets
-
-| Codename | Headset | Status | Folder |
-| --- | --- | --- | --- |
-| phoenix | PICO 4 (2022, Snapdragon XR2), PICO OS 5.13.7 | Valve's kernel and VR session with 6DoF head and controller tracking, games and Steam Link | [devices/phoenix](devices/phoenix/README.md) |
+## What works
 
 | | On the tested PICO 4 |
 | --- | --- |
-| **Works** | Both lenses at 72 and 90 Hz, head and controller tracking, the room view, sound and microphone, Wi-Fi, sleep, Steam with Proton and FEX, Android apps through Lepton and Steam Link from a PC |
-| **Doesn't, or isn't known** | Heavy games run at what the GPU allows; no other unit, firmware or panel has run this; a boot from an empty data partition wearing only the headset, the way back to PICO OS and battery life unplugged aren't verified ([roadmap](devices/phoenix/docs/roadmap.md)) |
-| **Isn't included** | No image and no vendor file. You build your own from the public downloads of Valve and PICO ([what comes from where](devices/phoenix/docs/distribution.md)) |
+| **Works** | Both lenses at 90 and 72 Hz, head and controller tracking, the room view, sound and microphone, Wi-Fi and Bluetooth, sleep, Steam with Proton and FEX, Android games, Steam Link, the way back to PICO OS |
+| **Limits** | Heavy games run at what the GPU allows. Only one unit, firmware and panel have run this; battery life unplugged is not measured ([roadmap](devices/phoenix/docs/roadmap.md)) |
+| **Not included** | No image and no vendor file: you build your own ([what comes from where](devices/phoenix/docs/distribution.md)) |
 
 ## Quick start
 
-1. Download the release zip and unpack it on a drive with room for the build (the headset's README says how
-   much).
-2. Start the installer in that folder: double-click `Install.cmd` on Windows or `Install.command` on macOS (the
-   first time: right-click, *Open*), or run `sh install.sh` on Linux. The start script fetches a pinned
-   [uv](https://docs.astral.sh/uv/), which brings Python and the window's toolkit into `cache/`; nothing is
+**You need** the headset and a USB-C data cable, a computer with Windows, macOS or Linux, about 40 GB free, a few
+hours for the first build, and [Docker](https://docs.docker.com/get-docker/) or [Podman](https://podman.io)
+running (the build's Linux side runs in a container).
+
+1. Download the release zip and unpack it.
+2. Start the installer: double-click `Install.cmd` (Windows) or `Install.command` (macOS; the first time
+   right-click, *Open*), or run `sh install.sh` (Linux). It fetches its own Python into `cache/`; nothing is
    installed on the computer.
-3. Choose your headset on the window's first page, *Which headset do you have?*, then follow its five stages,
-   one main button each: check this computer, build SteamOS, connect your headset, prepare your headset,
-   install. It goes on where it stopped when it is started again.
+3. Accept the disclaimer, choose your headset, then what to do: **Install**, **Upgrade** or **Restore to stock**.
+   Each is a few stages with one button each, and goes on where it stopped when started again.
 
-What each stage does on the PICO 4, and what it needs: [devices/phoenix/README.md](devices/phoenix/README.md#install).
+The PICO 4's stages, what they need and do: [devices/phoenix/README.md](devices/phoenix/README.md#install).
 
-## The tool
+## Headsets
 
-One tool builds the images and works on the headset, as a window or on the command line
-([docs/tool.md](docs/tool.md)). It needs Python 3.9+ and nothing else (the window adds Tk and
-CustomTkinter, which the start scripts bring); run it from the repository root:
+| Codename | Headset | Status |
+| --- | --- | --- |
+| [phoenix](devices/phoenix/README.md) | PICO 4 (2022, Snapdragon XR2), PICO OS 5.13.7 | Installs and runs; see [what works](#what-works) |
+
+## For developers
+
+Everything the window does, the command line does too ([docs/tool.md](docs/tool.md)); Python 3.9+, from the
+repository root:
 
 ```sh
-python -m overpressure doctor                 # what this computer has and lacks, with fixes
-python -m overpressure tools                  # fetch the pinned host tools (adb, fastboot, edl-ng, ...)
-python -m overpressure gui                    # the window: the installer (--advanced: every step, one click each)
-python -m overpressure devices                # the supported headsets
-python -m overpressure steps                  # the headset's steps and their command lines
-python -m overpressure dev check              # a command of the headset (here the PICO 4's)
+python -m overpressure doctor        # what this computer lacks, with fixes
+python -m overpressure gui           # the window (--advanced: every step, one click each)
+python -m overpressure install       # the installer in a terminal; also upgrade, restore
+python -m overpressure steps         # the headset's steps and the command lines they run
+python -m unittest                   # every host test, in seconds; make lint: ruff and ty
 ```
 
-With more than one headset, `--device CODENAME` (or `OVERPRESSURE_DEVICE` in `.env`) picks
-one. Every step in the window shows the command line it runs, so the terminal can do the same.
-The builds' Linux side runs in the build container on every host, which needs Docker or Podman
-([docs/tool.md](docs/tool.md#linux-root-steps)).
-
-## Repository
-
-```text
-overpressure/   the generic host package: image formats, headset registry, command line, the window
-devices/        one folder per headset: its tooling, images, sources, tests and documents
-tests/          host tests of the generic package
-docs/           the tool, how to add a headset, and the logo (docs/logo)
-Install.cmd, Install.command, install.sh
-                the installer's start scripts (Windows, macOS, Linux)
-```
-
-`make test` (or `python -m unittest`) runs every host test, the generic and each headset's, in
-seconds; `make lint` checks formatting, lint and types with uv, ruff and ty
-([docs/tool.md](docs/tool.md#development)). Adding a headset: [docs/adding-a-headset.md](docs/adding-a-headset.md).
-
-Device data and vendor files never enter the repository: backups, bootloader images, firmware,
-Valve's packages and the built archives stay private in the ignored `backup/`, `assets/`,
-`cache/` and `out/` folders and in `.env` ([.env.example](.env.example)).
+`overpressure/` is the generic tool, `devices/<codename>/` one headset each ([adding a
+headset](docs/adding-a-headset.md)). Device data, vendor files and builds stay in the ignored `backup/`, `assets/`,
+`cache/`, `out/` and `.env`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 
-The project's own code is released into the public domain under [the Unlicense](LICENSE). What comes from elsewhere
-keeps its license, as [THIRD-PARTY.md](THIRD-PARTY.md) and the folders' `LICENSE.md` say: the kernel's sources
-are under the GPL, the Monado driver under BSL-1.0. See [CONTRIBUTING.md](CONTRIBUTING.md) and
-[SECURITY.md](SECURITY.md).
+The project's own code is in the public domain ([the Unlicense](LICENSE)). What comes from elsewhere keeps its
+license ([THIRD-PARTY.md](THIRD-PARTY.md)): the kernel's sources are under the GPL, the Monado driver under
+BSL-1.0.

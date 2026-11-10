@@ -3,9 +3,8 @@
 A headset whose two lenses are pressure gauges, each needle through the red zone: overpressure. The
 drawings are the SVG files here; the PNG and ICO files are rendered from them.
 
-[mockups.html](mockups.html) shows the logo in use: the README, the social card, the headset's boot
-indication, the installer window, a taskbar, a dock and Finder, a Linux app grid, a notification, a
-browser tab and stickers, in light and dark.
+[mockups.html](mockups.html) shows the logo in use (the README, the social card, the boot indication, the
+window, docks, app grids, a browser tab), in light and dark.
 
 ## Drawings
 
@@ -29,7 +28,7 @@ the lenses are `#0b0d12`, the red zone `#ff7849`, the needle and hub white. The 
 | [overpressure-social.png](overpressure-social.png), [overpressure-social-light.png](overpressure-social-light.png) | 1280 &times; 640 | The repository's social preview (the image a link to it unfurls into) |
 | [`overpressure/window/icons/`](../../overpressure/window/icons/) | `app-*.png` 16 to 256 px, `app-light-*.png` 64 to 192 px, `mark-*.png` 18 to 54 px high, `overpressure.ico` | The window: Tk draws no SVG and scales no image, so [logo.py](../../overpressure/window/logo.py) picks the rendering nearest to the display's scaling |
 
-They are rendered by a browser (Chromium) from the drawings: each SVG drawn on a canvas at the size it is
-used, the social cards as pages of 1280 &times; 640. After a drawing changes, render them again rather
-than editing them. The headset's boot indication draws the mark itself, from the same geometry
+A browser (Chromium) renders them from the drawings, each at the size it is used. After a drawing changes,
+render them again rather than editing them. The headset's boot indication draws the mark itself, from the
+same geometry
 ([pico4-splash.c](../../devices/phoenix/src/splash/pico4-splash.c)).
