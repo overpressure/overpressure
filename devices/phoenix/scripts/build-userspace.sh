@@ -132,11 +132,14 @@ unmount_below() {
     ! awk -v d="$1" -v i="${2:-}" '(i == "" && $2 == d) || index($2, d "/") == 1 {found=1} END {exit !found}' /proc/mounts ||
         { echo "mounts remain below $1" >&2; exit 1; }
 }
-# mount_api DIR: the kernel file systems a chroot into DIR needs.
+# mount_api DIR: the kernel file systems a chroot into DIR needs. /dev goes in recursively: rootless
+# Podman binds each device over a placeholder file (root's, mode 0700), and a plain bind shows the
+# placeholders, which only root can open. A slave, so that the devpts below stays the chroot's.
 mount_api() {
     mnt --bind /proc "$1/proc"
     mnt --bind /sys "$1/sys"
-    mnt --bind /dev "$1/dev"
+    mnt --rbind /dev "$1/dev"
+    mount --make-rslave "$1/dev"
     mnt -t devpts -o newinstance,ptmxmode=0666 devpts "$1/dev/pts"
     mnt -t tmpfs tmpfs "$1/run"
 }
