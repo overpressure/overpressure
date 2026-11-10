@@ -189,3 +189,28 @@ class LintScopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScriptModeTests(unittest.TestCase):
+    #: Where the image builds set each file's mode themselves.
+    IMAGE_TREES = ("/userspace/rootfs/", "/initramfs/")
+
+    def test_every_script_is_executable_in_git(self):
+        # A Windows checkout, and Docker's view of it, show every file as executable; Linux and macOS
+        # (a clone, or the release zip from git archive) keep git's mode: a script started by its
+        # path must be 100755 there.
+        git = shutil.which("git")
+        if git is None or not (REPO / ".git").exists():
+            self.skipTest("not a git checkout")
+        listed = subprocess.run(  # noqa: S603  # git with fixed arguments
+            [git, "ls-files", "-s"], cwd=REPO, capture_output=True, text=True, check=True
+        ).stdout
+        missing = []
+        for row in listed.splitlines():
+            mode, _, path = row.partition("\t")
+            if not mode.startswith("100644") or any(tree in "/" + path for tree in self.IMAGE_TREES):
+                continue
+            with (REPO / path).open("rb") as stream:
+                if stream.read(2) == b"#!":
+                    missing.append(path)
+        self.assertEqual(missing, [], "git update-index --chmod=+x these scripts")

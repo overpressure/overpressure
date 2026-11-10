@@ -27,7 +27,7 @@ if [ ! -f "$repo/cache/kernel/$PACKAGE" ]; then
 	curl -fL --retry 3 -o "$repo/cache/kernel/$PACKAGE.part" "$URL"
 	mv "$repo/cache/kernel/$PACKAGE.part" "$repo/cache/kernel/$PACKAGE"
 fi
-"$here/../kernel/build-kernel.sh" "$repo/cache/kernel/$PACKAGE" "$recovery" "$stock/vendor.img" "$work" "$work/out"
+bash "$here/../kernel/build-kernel.sh" "$repo/cache/kernel/$PACKAGE" "$recovery" "$stock/vendor.img" "$work" "$work/out"
 mkdir -p "$repo/out/kernel"
 for f in Image.gz sm8250-pico4-phoenix.dtb version config; do
 	install -m 0644 "$work/out/$f" "$repo/out/kernel/$f"
