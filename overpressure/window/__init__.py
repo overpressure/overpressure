@@ -11,7 +11,8 @@ terminal cannot: the installer is the engine's command line, a step shows the co
   so tests drive them without a display.
 - app.py (the header, the installer view, the panel for asks), advanced_view.py: the widgets.
 - theme.py: the design tokens (spacing, radii, colours for light and dark, the type scale and the
-  fonts picked per platform); kit.py: the components built from them, which the widgets reuse.
+  fonts picked per platform); kit.py: the components built from them, which the widgets reuse;
+  logo.py: the logo's PNG renderings (icons/), picked for the display's scaling.
 
 Only the widgets need CustomTkinter (the ``gui`` extra, which the start scripts install). It is
 imported when the window opens, so the rest of the tool imports without it or without Tk.

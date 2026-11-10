@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>overpressure logo mockups</title>
+<link rel="icon" href="overpressure-small.svg">
+<style>
+:root{--page:#eceef2;--ink:#16181d;--muted:#5c626b;--card:#ffffff;--line:#dcdfe5;--chip:#e2e5ea}
+@media (prefers-color-scheme:dark){:root{--page:#0c0d0f;--ink:#ececef;--muted:#8f949d;--card:#16171a;--line:#2a2c31;--chip:#202227}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",-apple-system,system-ui,sans-serif}
+img{display:block}
+svg.i{width:1em;height:1em;flex:none}
+.top{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--page) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.top-in{max-width:1280px;margin:0 auto;padding:10px 24px;display:flex;align-items:center;gap:12px;overflow-x:auto}
+.top-in img{width:36px;height:18px}
+.top-in b{font-size:15px;white-space:nowrap}
+.top-in nav{display:flex;gap:6px;margin-left:12px}
+.top-in nav a{white-space:nowrap;color:var(--ink);text-decoration:none;font-size:12.5px;padding:4px 10px;border-radius:99px;background:var(--chip)}
+.top-in nav a:hover{background:var(--line)}
+main{max-width:1280px;margin:0 auto;padding:8px 24px 80px}
+.intro{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin:24px 0 8px}
+.vcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
+.vcard .pic{height:72px;display:grid;place-items:center}
+.vcard code{font-size:11.5px}
+.vcard span{font-size:12px;color:var(--muted)}
+.mono-w{display:none}
+@media (prefers-color-scheme:dark){.mono-k{display:none}.mono-w{display:block}}
+section{padding-top:44px;scroll-margin-top:56px}
+section>h2{font-size:20px;margin:0 0 2px;font-weight:600}
+section>p.note{margin:0 0 16px;color:var(--muted)}
+section>p.note code{font-size:12.5px;background:var(--chip);padding:1px 6px;border-radius:5px;color:var(--ink)}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+.pair.one{grid-template-columns:1fr}
+@media (max-width:1000px){.pair{grid-template-columns:1fr}}
+figure.shot{margin:0;min-width:0}
+figure.shot figcaption{font-size:12px;color:var(--muted);margin-top:8px;text-align:center}
+.mock{border-radius:14px;overflow:hidden;position:relative;border:1px solid var(--line);font-family:"Segoe UI Variable Text","Segoe UI",-apple-system,system-ui,sans-serif}
+.mock.light .on-dark,.mock.dark .on-light{display:none}
+.mock.light{--bg:#ffffff;--bg2:#f6f8fa;--fg:#1f2328;--sub:#59636e;--bd:#d1d9e0;--link:#0969da;--accent:#2563eb;--glass:rgba(255,255,255,.74);--glass2:rgba(246,247,249,.9);--wall:radial-gradient(120% 90% at 10% 0%,#e8efff 0%,transparent 55%),radial-gradient(90% 80% at 100% 100%,#efe4ff 0%,transparent 60%),linear-gradient(140deg,#dbe5f8,#c9d7f3 50%,#e6e0f4)}
+.mock.dark{--bg:#0d1117;--bg2:#151b23;--fg:#f0f6fc;--sub:#9198a1;--bd:#3d444d;--link:#4493f8;--accent:#4b83f0;--glass:rgba(28,29,34,.74);--glass2:rgba(36,37,43,.92);--wall:radial-gradient(120% 90% at 10% 0%,#1d2c57 0%,transparent 55%),radial-gradient(90% 80% at 100% 100%,#33204f 0%,transparent 60%),linear-gradient(140deg,#0e1730,#141c38 50%,#1f1733)}
+.sp{flex:1}
+pre.snip{margin:14px 0 0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font:12px/1.6 "Cascadia Mono",Consolas,ui-monospace,monospace;overflow-x:auto;color:var(--ink)}
+
+/* generic app tiles (stand-ins for other apps) */
+.app{display:grid;place-items:center;border-radius:23%;color:#fff;flex:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.app svg{width:56%;height:56%}
+.b-blue{background:linear-gradient(160deg,#5b9bff,#2a5fd8)}.b-green{background:linear-gradient(160deg,#3fd38a,#17975a)}
+.b-orange{background:linear-gradient(160deg,#ffb54d,#f07800)}.b-gray{background:linear-gradient(160deg,#a9b0ba,#6b727c)}
+.b-purple{background:linear-gradient(160deg,#b28bff,#6f3fe0)}.b-teal{background:linear-gradient(160deg,#41d0cf,#158a9a)}
+.b-red{background:linear-gradient(160deg,#ff7a7a,#d43a3a)}.b-slate{background:linear-gradient(160deg,#4b5563,#1c2330)}
+.b-yellow{background:linear-gradient(160deg,#ffd95a,#f2b100)}.b-pink{background:linear-gradient(160deg,#ff8fc0,#e0447f)}
+
+/* 1 README */
+.gh{background:var(--bg);color:var(--fg);font-size:13.5px}
+.gh-top{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--bd)}
+.gh-top .gh-logo{width:26px;height:26px;border-radius:50%;background:var(--fg);color:var(--bg);display:grid;place-items:center}
+.gh-top .gh-logo svg{width:15px;height:15px}
+.gh-crumb{font-size:14px}.gh-crumb b{font-weight:600}
+.gh-public{font-size:11px;border:1px solid var(--bd);border-radius:99px;padding:0 7px;color:var(--sub)}
+.gh-btn{display:flex;align-items:center;gap:6px;font-size:12px;border:1px solid var(--bd);border-radius:6px;padding:3px 10px;background:var(--bg)}
+.gh-tabs{display:flex;gap:4px;padding:0 12px;border-bottom:1px solid var(--bd);background:var(--bg2)}
+.gh-tabs span{padding:8px 10px;font-size:13px;color:var(--sub);border-bottom:2px solid transparent}
+.gh-tabs span.on{color:var(--fg);border-bottom-color:#fd8c73;font-weight:600}
+.gh-body{padding:18px}
+.gh-readme{border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+.gh-rh{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--bd);font-weight:600;font-size:13px}
+.md{padding:22px 28px 26px;line-height:1.6}
+.md .c{text-align:center;display:flex;justify-content:center;flex-wrap:wrap;gap:4px}
+.md h1{font-size:30px;font-weight:600;margin:10px 0 2px;padding-bottom:8px;border-bottom:1px solid var(--bd);justify-content:center}
+.md h2{font-size:20px;font-weight:600;margin:22px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--bd)}
+.md p{margin:10px 0}
+.md .lead{color:var(--fg);font-size:15px}
+.bdg{display:inline-flex;font:11px/20px Verdana,Geneva,sans-serif;border-radius:3px;overflow:hidden}
+.bdg i{font-style:normal;background:#555;color:#fff;padding:0 6px}.bdg b{font-weight:400;color:#fff;padding:0 6px}
+.bdg .g{background:#2ea44f}.bdg .b{background:#2563eb}.bdg .o{background:#e0763a}
+.md table{border-collapse:collapse;width:100%;font-size:13px}
+.md th,.md td{border:1px solid var(--bd);padding:6px 10px;text-align:left}
+.md th{background:var(--bg2);font-weight:600}
+.md a{color:var(--link);text-decoration:none}
+
+/* 2 social card */
+.social{aspect-ratio:2/1;position:relative;overflow:hidden;display:flex;align-items:center;padding:0 7%}
+.mock.light .social{background:radial-gradient(70% 90% at 15% 50%,#e3ecff 0%,transparent 70%),#f7f8fa;color:#16181d}
+.mock.dark .social{background:radial-gradient(70% 90% at 15% 50%,#14234a 0%,transparent 70%),#0d0e11;color:#ececef}
+.social .wm{position:absolute;right:-24%;top:50%;width:62%;transform:translateY(-50%);opacity:.05}
+.mock.light .social .wm{opacity:.07}
+.so-in{position:relative;display:flex;align-items:center;gap:5%;width:100%}
+.so-in>img{width:26%;height:auto;flex:none;filter:drop-shadow(0 18px 30px rgba(0,0,0,.28))}
+.so-name{font-size:clamp(26px,4.6vw,52px);font-weight:700;letter-spacing:-.02em;line-height:1.05}
+.so-tag{font-size:clamp(12px,1.55vw,18px);opacity:.78;margin-top:10px;max-width:30em}
+.so-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.so-meta span{font-size:clamp(10px,1.1vw,13px);padding:3px 10px;border-radius:99px;border:1px solid currentColor;opacity:.6}
+
+/* 3 boot */
+.boot{background:#000;padding:26px;border-radius:14px}
+.eyes{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:760px;margin:0 auto}
+.eye{aspect-ratio:1/1;border-radius:16px;background:#000;box-shadow:0 0 0 1px #1d1e23;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5%;overflow:hidden}
+.eye::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,transparent 52%,rgba(0,0,0,.92) 71%)}
+.eye img{width:32%;height:auto}
+.eye .bn{color:rgba(255,255,255,.62);letter-spacing:.32em;font-size:clamp(9px,1.1vw,13px);text-transform:lowercase}
+.eye .bb{width:22%;height:3px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden}
+.eye .bb i{display:block;height:100%;width:38%;border-radius:2px;background:#3d7bf5;animation:load 2.4s ease-in-out infinite}
+@keyframes load{0%{transform:translateX(-100%)}100%{transform:translateX(270%)}}
+.boot-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:28px auto 0;max-width:900px;align-items:center}
+.lensview{aspect-ratio:1/1;border-radius:50%;background:#000;display:grid;place-items:center;position:relative;overflow:hidden;max-width:300px;margin:0 auto;width:100%;box-shadow:0 0 0 1px #1a1b1f,inset 0 0 60px 30px #000}
+.lensview img{width:46%;height:auto}
+.lensview::after{content:"";position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle,transparent 58%,rgba(0,0,0,.85) 72%)}
+.console{border-radius:16px;background:#000;border:1px solid #1a1b1f;padding:22px;display:flex;flex-direction:column;gap:14px;font:12px/1.7 "Cascadia Mono",Consolas,ui-monospace,monospace;color:#b9bec7}
+.console .ch{display:flex;align-items:center;gap:12px;color:#fff;font:600 13px/1 "Segoe UI",system-ui,sans-serif;letter-spacing:.04em}
+.console .ch img{width:52px;height:auto}
+.console .ok{color:#5fd38d}.console .wait{color:#f0c060}
+.boot-cap{color:#8f949d;font-size:12px;text-align:center;margin-top:8px}
+
+/* 4 installer window (the app's own tokens, from theme.py) */
+.mock.light .ow{--page:#f5f6f8;--raised:#ffffff;--sunken:#eef0f3;--t:#16181d;--t2:#4a4f58;--t3:#62676f;--b1:#e3e5e9;--b2:#c5c9d0;--acc:#2563eb;--accs:#e9f0fe;--acct:#1d4fd7;--chrome:#eef0f3}
+.mock.dark .ow{--page:#16171a;--raised:#1f2024;--sunken:#111214;--t:#ececef;--t2:#b8bcc4;--t3:#8f949d;--b1:#2e3036;--b2:#474b54;--acc:#2f6ae0;--accs:#1d2840;--acct:#8ab4ff;--chrome:#111214}
+.ow{background:var(--page);color:var(--t);font-size:13px}
+.ow-tb{display:flex;align-items:center;gap:9px;height:32px;padding:0 0 0 12px;background:var(--chrome);font-size:12px;color:var(--t2)}
+.ow-tb img{width:16px;height:16px}
+.ow-wc{display:flex;height:100%}.ow-wc span{width:44px;display:grid;place-items:center;color:var(--t2)}.ow-wc svg{width:10px;height:10px}
+.ow-head{display:flex;align-items:center;gap:12px;height:56px;padding:0 24px;background:var(--raised);border-bottom:1px solid var(--b1)}
+.ow-head img{width:36px;height:18px}
+.ow-head b{font-size:16px;font-weight:600}
+.ow-head i{width:1px;height:18px;background:var(--b2)}
+.ow-head .sub{color:var(--t3)}
+.ow-quiet{font-size:12.5px;color:var(--t2);padding:5px 10px;border-radius:6px;border:1px solid var(--b2)}
+.ow-main{display:grid;grid-template-columns:200px 1fr;min-height:400px}
+.ow-side{background:var(--raised);border-right:1px solid var(--b1);padding:20px 14px;display:flex;flex-direction:column;gap:4px}
+.ow-step{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:6px;color:var(--t2);font-size:12.5px}
+.ow-step .d{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--b2);display:grid;place-items:center;font-size:11px;color:var(--t3);flex:none}
+.ow-step.cur{background:var(--accs);color:var(--acct);font-weight:600}
+.ow-step.cur .d{border-color:var(--acc);color:var(--acc)}
+.ow-content{padding:30px 34px;display:flex;flex-direction:column;align-items:flex-start}
+.ow-hero{display:flex;align-items:center;gap:16px;margin-bottom:18px}
+.ow-hero img{width:84px;height:84px}
+.ow-hero .v{font-size:12px;color:var(--t3)}
+.ow-hero .n{font-size:22px;font-weight:600;line-height:1.1}
+.ow-content h3{font-size:18px;font-weight:600;margin:4px 0 4px}
+.ow-content p{color:var(--t2);margin:0 0 16px;max-width:34em}
+.ow-card{display:flex;align-items:center;gap:14px;width:100%;max-width:440px;padding:14px 16px;border-radius:10px;background:var(--raised);border:1.5px solid var(--acc)}
+.ow-card .r{width:18px;height:18px;border-radius:50%;border:5px solid var(--acc);flex:none}
+.ow-card b{display:block;font-size:14px}.ow-card span{font-size:12px;color:var(--t3)}
+.ow-card img{width:52px;height:26px;margin-left:auto}
+.ow-btn{margin-top:20px;background:var(--acc);color:#fff;font-weight:600;padding:9px 18px;border-radius:6px;font-size:13px}
+
+/* 5 Windows-like desktop and taskbar */
+.desk{background:var(--wall);height:440px;position:relative;overflow:hidden}
+.desk-icons{position:absolute;left:18px;top:16px;display:flex;flex-direction:column;gap:14px}
+.dicon{width:76px;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11.5px;padding:6px 2px;border-radius:4px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.dicon.sel{background:rgba(255,255,255,.22);outline:1px solid rgba(255,255,255,.4)}
+.mock.light .dicon{color:#1f2328;text-shadow:0 1px 1px rgba(255,255,255,.6)}
+.mock.light .dicon.sel{background:rgba(37,99,235,.14);outline-color:rgba(37,99,235,.35)}
+.dicon img,.dicon .app{width:44px;height:44px}
+.taskbar{position:absolute;left:0;right:0;bottom:0;height:48px;display:flex;align-items:center;gap:4px;padding:0 10px;background:var(--glass2);backdrop-filter:blur(20px);border-top:1px solid color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg)}
+.tbi{width:40px;height:40px;border-radius:6px;display:grid;place-items:center;position:relative}
+.tbi.on,.tbi.hov{background:color-mix(in srgb,var(--fg) 9%,transparent)}
+.tbi .app{width:24px;height:24px}.tbi img{width:24px;height:24px}
+.tbi .ind{position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:16px;height:3px;border-radius:2px;background:var(--accent)}
+.tbi.start svg{width:22px;height:22px;color:var(--accent)}
+.tb-search{display:flex;align-items:center;gap:8px;height:32px;width:170px;padding:0 12px;border-radius:99px;background:color-mix(in srgb,var(--fg) 7%,transparent);font-size:12px;color:var(--sub);margin:0 4px}
+.tray{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--fg)}
+.tray img{width:16px;height:16px}
+.tray svg{width:15px;height:15px}
+.clock{text-align:right;line-height:1.25}
+.thumb{position:absolute;bottom:56px;left:50%;transform:translateX(18px);width:230px;border-radius:10px;background:var(--glass2);backdrop-filter:blur(20px);box-shadow:0 12px 32px rgba(0,0,0,.28);padding:8px;color:var(--fg);border:1px solid color-mix(in srgb,var(--fg) 10%,transparent)}
+.thumb-h{display:flex;align-items:center;gap:8px;font-size:12px;padding:2px 4px 8px}
+.thumb-h img{width:16px;height:16px}
+.mini-win{height:118px;border-radius:6px;overflow:hidden;display:flex;flex-direction:column}
+.mock.light .mini-win{background:#f5f6f8;--mr:#fff;--mb:#e3e5e9;--mt:#c5c9d0}
+.mock.dark .mini-win{background:#16171a;--mr:#1f2024;--mb:#2e3036;--mt:#474b54}
+.mini-win .h{height:18px;background:var(--mr);border-bottom:1px solid var(--mb);display:flex;align-items:center;gap:5px;padding:0 7px}
+.mini-win .h img{width:16px;height:8px}
+.mini-win .h i{height:4px;width:34px;border-radius:2px;background:var(--mt)}
+.mini-win .b{flex:1;display:grid;grid-template-columns:52px 1fr}
+.mini-win .s{background:var(--mr);border-right:1px solid var(--mb)}
+.mini-win .c{padding:10px;display:flex;flex-direction:column;gap:6px}
+.mini-win .c img{width:26px;height:26px}
+.mini-win .c i{height:5px;border-radius:3px;background:var(--mt);width:70%}
+.mini-win .c i+i{width:50%}
+.mini-win .c u{margin-top:auto;width:34px;height:10px;border-radius:3px;background:#2563eb}
+.start-menu{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);display:none}
+
+/* 6 macOS-like */
+.mac{background:var(--wall);height:550px;position:relative;overflow:hidden;color:var(--fg)}
+.menubar{height:28px;display:flex;align-items:center;gap:16px;padding:0 14px;font-size:12.5px;background:var(--glass);backdrop-filter:blur(20px)}
+.menubar b{font-weight:700}
+.menubar .gl{width:15px;height:15px}
+.menubar .status{display:flex;align-items:center;gap:14px}
+.menubar .status img{width:25px;height:14px}
+.menubar .status .mi{padding:2px 6px;border-radius:5px;background:color-mix(in srgb,var(--fg) 14%,transparent)}
+.menubar svg{width:15px;height:15px}
+.drop{position:absolute;top:32px;right:150px;width:250px;padding:6px;border-radius:10px;background:var(--glass2);backdrop-filter:blur(24px);box-shadow:0 14px 36px rgba(0,0,0,.28);font-size:12.5px;z-index:2;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent)}
+.drop .row{padding:6px 10px;border-radius:5px}
+.drop .row.hl{background:var(--accent);color:#fff}
+.drop .sep{height:1px;background:color-mix(in srgb,var(--fg) 12%,transparent);margin:5px 8px}
+.drop .prog{height:5px;border-radius:3px;background:color-mix(in srgb,var(--fg) 14%,transparent);margin:6px 10px 2px;overflow:hidden}
+.drop .prog i{display:block;height:100%;width:64%;background:var(--accent)}
+.drop .dim{color:var(--sub);font-size:11.5px;padding:2px 10px 6px}
+.finder{position:absolute;left:28px;top:180px;width:540px;height:262px;border-radius:12px;overflow:hidden;display:grid;grid-template-columns:150px 1fr;box-shadow:0 22px 60px rgba(0,0,0,.35);border:1px solid color-mix(in srgb,var(--fg) 12%,transparent)}
+.f-side{background:var(--glass);backdrop-filter:blur(30px);padding:12px 8px;font-size:12px}
+.lights{display:flex;gap:7px;padding:2px 6px 14px}.lights i{width:11px;height:11px;border-radius:50%;background:#ff5f57}.lights i+i{background:#febc2e}.lights i+i+i{background:#28c840}
+.f-sec{font-size:10.5px;color:var(--sub);padding:4px 8px;font-weight:600}
+.f-item{padding:4px 8px;border-radius:5px;display:flex;align-items:center;gap:7px}
+.f-item svg{width:14px;height:14px;color:var(--accent)}
+.f-item.on{background:color-mix(in srgb,var(--fg) 10%,transparent)}
+.f-main{background:var(--bg)}
+.f-title{height:44px;display:flex;align-items:center;padding:0 16px;font-weight:700;font-size:13px;border-bottom:1px solid color-mix(in srgb,var(--fg) 8%,transparent)}
+.f-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 6px;padding:14px 10px}
+.f-app{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11.5px;text-align:center}
+.f-app img,.f-app .app{width:58px;height:58px}
+.f-app.on img{background:color-mix(in srgb,var(--fg) 12%,transparent);border-radius:12px;padding:3px}
+.f-app.on span{background:var(--accent);color:#fff;border-radius:4px;padding:0 5px}
+.dock{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;align-items:flex-end;gap:7px;padding:7px 9px;border-radius:20px;background:var(--glass);backdrop-filter:blur(24px);border:1px solid color-mix(in srgb,var(--fg) 12%,transparent)}
+.dock .app,.dock>div>img{width:50px;height:50px}
+.dock>div{position:relative;display:flex;flex-direction:column;align-items:center}
+.dock .dot{position:absolute;bottom:-6px;width:4px;height:4px;border-radius:50%;background:var(--fg);opacity:.7}
+.dock .vsep{width:1px;height:46px;background:color-mix(in srgb,var(--fg) 18%,transparent);margin:0 3px;align-self:center}
+.dock .tip{position:absolute;bottom:64px;white-space:nowrap;font-size:12px;padding:3px 10px;border-radius:6px;background:var(--glass2);border:1px solid color-mix(in srgb,var(--fg) 12%,transparent)}
+
+/* 7 Linux app grid */
+.gn{height:460px;position:relative;overflow:hidden;color:var(--fg)}
+.mock.light .gn{background:#e6e8ec;--tile:rgba(0,0,0,.06);--tileh:rgba(0,0,0,.1)}
+.mock.dark .gn{background:#1d1e22;--tile:rgba(255,255,255,.06);--tileh:rgba(255,255,255,.12)}
+.gn-top{height:30px;display:flex;align-items:center;padding:0 12px;font-size:12.5px;font-weight:600;gap:10px}
+.mock.light .gn-top{background:#f6f6f7}.mock.dark .gn-top{background:#000;color:#fff}
+.gn-top svg{width:14px;height:14px}
+.gn-pill{width:34px;height:7px;border-radius:5px;background:currentColor;opacity:.85}
+.gn-search{margin:22px auto 0;width:300px;height:36px;border-radius:99px;display:flex;align-items:center;gap:10px;padding:0 14px;font-size:13px;background:var(--tile)}
+.gn-search svg{width:15px;height:15px;opacity:.7}
+.gn-grid{display:grid;grid-template-columns:repeat(5,96px);justify-content:center;gap:12px 10px;margin-top:26px}
+.gn-app{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 4px;border-radius:14px;font-size:12px;text-align:center}
+.gn-app img,.gn-app .app{width:64px;height:64px}
+.gn-app.on{background:var(--tileh)}
+.gn-dash{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:8px;padding:8px;border-radius:22px;background:var(--tile)}
+.gn-dash .app,.gn-dash>div>img{width:44px;height:44px}
+.gn-dash>div{position:relative;display:flex;justify-content:center}
+.gn-dash .dot{position:absolute;bottom:-5px;width:5px;height:5px;border-radius:50%;background:currentColor}
+
+/* 8 notification */
+.nwrap{background:var(--wall);height:300px;position:relative;overflow:hidden}
+.toast{position:absolute;right:18px;bottom:18px;width:360px;border-radius:10px;background:var(--glass2);backdrop-filter:blur(26px);box-shadow:0 16px 40px rgba(0,0,0,.3);color:var(--fg);padding:12px 14px 14px;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent)}
+.t-h{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--sub)}
+.t-h img{width:16px;height:16px}
+.t-h svg{width:10px;height:10px}
+.t-b{display:flex;gap:12px;margin-top:10px}
+.t-b img{width:48px;height:48px;flex:none}
+.t-b b{display:block;font-size:13.5px}
+.t-b p{margin:2px 0 0;font-size:12.5px;color:var(--sub)}
+.t-a{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.t-a span{text-align:center;font-size:12.5px;padding:6px;border-radius:5px;background:color-mix(in srgb,var(--fg) 8%,transparent)}
+.t-a span.p{background:var(--accent);color:#fff}
+
+/* 9 browser */
+.br{color:var(--fg)}
+.mock.light .br{--strip:#dfe3ea;--tab:#ffffff;--bar:#ffffff;--field:#eef1f5}
+.mock.dark .br{--strip:#1b1c20;--tab:#2b2c31;--bar:#2b2c31;--field:#1b1c20}
+.br-tabs{display:flex;align-items:flex-end;gap:2px;padding:8px 8px 0;background:var(--strip);height:44px}
+.br-tab{display:flex;align-items:center;gap:8px;height:34px;width:250px;padding:0 12px;border-radius:9px 9px 0 0;font-size:12px;white-space:nowrap;overflow:hidden}
+.br-tab span{overflow:hidden;text-overflow:ellipsis;flex:1}
+.br-tab.on{background:var(--tab)}
+.br-tab img{width:16px;height:16px;flex:none}
+.br-tab svg{width:10px;height:10px;opacity:.6;flex:none}
+.br-tab .gf{width:16px;height:16px;border-radius:50%;background:var(--sub);opacity:.5;flex:none}
+.br-bar{display:flex;align-items:center;gap:12px;padding:7px 12px;background:var(--bar);font-size:13px}
+.br-bar .nav{display:flex;gap:14px;opacity:.6}.br-bar .nav svg{width:14px;height:14px}
+.br-url{flex:1;height:30px;border-radius:99px;background:var(--field);display:flex;align-items:center;padding:0 14px;font-size:12.5px;color:var(--sub)}
+.br-url b{color:var(--fg);font-weight:400}
+.br-bm{display:flex;gap:14px;padding:5px 14px 7px;background:var(--bar);font-size:12px;border-bottom:1px solid var(--bd)}
+.br-bm span{display:flex;align-items:center;gap:6px}
+.br-bm img{width:16px;height:16px}
+.br-page{height:150px;background:var(--bg);display:flex;align-items:center;justify-content:center;gap:18px}
+.br-page img{width:72px;height:72px}
+.br-page b{font-size:26px;font-weight:600}
+.br-page span{display:block;font-size:13px;color:var(--sub);font-weight:400}
+
+/* 10 stickers */
+.stk{min-height:380px;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;gap:30px 34px;flex-wrap:wrap;padding:24px 20px 44px}
+.mock.light .stk{background:radial-gradient(circle at 30% 20%,#f4f1ea,#e4ddd0)}
+.mock.dark .stk{background:radial-gradient(circle at 30% 20%,#2c2e33,#17181b)}
+.sticker{background:#fff;box-shadow:0 2px 3px rgba(0,0,0,.18),0 10px 22px rgba(0,0,0,.18);position:relative}
+.sticker.tile{padding:9px;border-radius:44px;transform:rotate(-7deg)}
+.sticker.tile img{width:150px;height:150px}
+.sticker.mk{padding:12px 14px;border-radius:70px;transform:rotate(5deg)}
+.sticker.mk img{width:170px;height:auto}
+.vinyl{transform:rotate(-3deg);opacity:.92}
+.vinyl img{width:150px;height:auto}
+.stk .lab{position:absolute;bottom:12px;left:0;right:0;text-align:center;font-size:11.5px;color:#8a8478}
+.mock.dark .stk .lab{color:#7d828b}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="g-folder" viewBox="0 0 24 24"><path fill="currentColor" d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"/></symbol>
+<symbol id="g-globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.8" ry="8.5"/><path d="M3.5 12h17"/></g></symbol>
+<symbol id="g-term" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8l4 4-4 4"/><path d="M12.5 16H18"/></g></symbol>
+<symbol id="g-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.4"/><path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3M6 6l2.1 2.1M15.9 15.9L18 18M6 18l2.1-2.1M15.9 8.1L18 6"/></g></symbol>
+<symbol id="g-mail" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="3.5" y="6" width="17" height="12" rx="2.5"/><path d="M4 7.5l8 5.5 8-5.5"/></g></symbol>
+<symbol id="g-note" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M7 8h10M7 12h10M7 16h6"/></g></symbol>
+<symbol id="g-music" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="8" cy="17" r="2.6"/><circle cx="17" cy="15" r="2.6"/><path d="M10 17V7l9.6-2v10h-1.6V7.1L11.6 8.4V17z"/></g></symbol>
+<symbol id="g-photo" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="8.5" cy="8.5" r="2"/><path d="M4 18l5-6 3.5 4 2.5-3 5 5z"/></g></symbol>
+<symbol id="g-chat" viewBox="0 0 24 24"><path fill="currentColor" d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4 3v-3H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></symbol>
+<symbol id="g-cal" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="5.5" width="16" height="14" rx="2.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></g></symbol>
+<symbol id="g-grid" viewBox="0 0 24 24"><g fill="currentColor"><rect x="4" y="4" width="7" height="7" rx="2.2"/><rect x="13" y="4" width="7" height="7" rx="3.5"/><rect x="4" y="13" width="7" height="7" rx="3.5"/><rect x="13" y="13" width="7" height="7" rx="2.2"/></g></symbol>
+<symbol id="g-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></g></symbol>
+<symbol id="g-wifi" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M3 9.5a13 13 0 0 1 18 0M6 13a8.5 8.5 0 0 1 12 0M9 16.5a4 4 0 0 1 6 0"/></g><circle cx="12" cy="19.5" r="1.4" fill="currentColor"/></symbol>
+<symbol id="g-sound" viewBox="0 0 24 24"><path fill="currentColor" d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10"/></g></symbol>
+<symbol id="g-battery" viewBox="0 0 24 24"><rect x="2.5" y="7" width="17" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4.5" y="9" width="10" height="6" rx="1.2" fill="currentColor"/><rect x="20.3" y="10" width="1.8" height="4" rx=".9" fill="currentColor"/></symbol>
+<symbol id="g-close" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.1" fill="none"/></symbol>
+<symbol id="g-min" viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" stroke-width="1.1"/></symbol>
+<symbol id="g-max" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.1" fill="none"/></symbol>
+<symbol id="g-book" viewBox="0 0 24 24"><path fill="currentColor" d="M6 3.5h11.5a1 1 0 0 1 1 1V18H7a1.5 1.5 0 0 0 0 3h11.5v-1.6H7.2V19.4H18.5v1.6H7A3.5 3.5 0 0 1 3.5 17.5V6A2.5 2.5 0 0 1 6 3.5z"/></symbol>
+<symbol id="g-star" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M12 3.8l2.5 5.2 5.7.7-4.2 3.9 1.1 5.6L12 16.4l-5.1 2.8L8 13.6 3.8 9.7l5.7-.7z"/></symbol>
+<symbol id="g-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="g-fwd" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="g-reload" viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.1-5M19 4v4h-4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="g-home" viewBox="0 0 24 24"><path fill="currentColor" d="M12 4l8 7h-2.5v8h-4v-5h-3v5h-4v-8H4z"/></symbol>
+<symbol id="g-down" viewBox="0 0 24 24"><path fill="currentColor" d="M11 4h2v9.2l3.3-3.3 1.4 1.4L12 17l-5.7-5.7 1.4-1.4 3.3 3.3z M5 19h14v2H5z"/></symbol>
+<symbol id="g-trash" viewBox="0 0 24 24"><path fill="currentColor" d="M9 3.5h6l1 1.5h4v2H4V5h4zM6 8.5h12l-1 12H7z"/></symbol>
+</defs></svg>
+
+<div class="top"><div class="top-in">
+  <img src="overpressure-mark.svg" alt=""><b>overpressure logo in use</b>
+  <nav>
+    <a href="#readme">README</a><a href="#social">Social card</a><a href="#boot">Headset boot</a><a href="#installer">Installer</a>
+    <a href="#windows">Taskbar</a><a href="#mac">Dock and Finder</a><a href="#linux">Launcher</a><a href="#notify">Notification</a>
+    <a href="#browser">Browser tab</a><a href="#stickers">Stickers</a>
+  </nav>
+</div></div>
+
+<main>
+  <div class="intro">
+    <div class="vcard"><div class="pic"><img src="overpressure.svg" width="64" height="64" alt=""></div><code>overpressure.svg</code><span>The app icon, 64 px and up: dock, Finder, launcher, social card, README in dark mode</span></div>
+    <div class="vcard"><div class="pic"><img src="overpressure-light.svg" width="64" height="64" alt=""></div><code>overpressure-light.svg</code><span>On light pages: README in light mode, the installer's light theme, the light social card</span></div>
+    <div class="vcard"><div class="pic"><img src="overpressure-small.svg" width="32" height="32" alt=""></div><code>overpressure-small.svg</code><span>Below 64 px: taskbar, title bar, tray, favicon, notifications</span></div>
+    <div class="vcard"><div class="pic"><img src="overpressure-mark.svg" width="96" height="48" alt=""></div><code>overpressure-mark.svg</code><span>The icon without its tile: the window's header, the headset's boot screen, stickers</span></div>
+    <div class="vcard"><div class="pic"><img class="mono-k" src="overpressure-mono.svg" width="88" height="44" alt=""><img class="mono-w" src="overpressure-mono.svg" style="filter:invert(1)" width="88" height="44" alt=""></div><code>overpressure-mono.svg</code><span>One colour: the menu bar, the rescue console, a vinyl cut</span></div>
+  </div>
+
+  <section id="readme">
+    <h2>GitHub README</h2>
+    <p class="note">The README's header picks the tile by the reader's theme: <code>overpressure-light.svg</code> on light, <code>overpressure.svg</code> on dark.</p>
+    <div class="pair"><template>
+      <div class="gh">
+        <div class="gh-top"><span class="gh-logo"><svg><use href="#g-book"/></svg></span><span class="gh-crumb">overpressure / <b>overpressure</b></span><span class="gh-public">Public</span><span class="sp"></span><span class="gh-btn"><svg class="i"><use href="#g-star"/></svg>Star</span></div>
+        <div class="gh-tabs"><span class="on">Code</span><span>Issues</span><span>Pull requests</span><span>Actions</span><span>Releases</span></div>
+        <div class="gh-body"><div class="gh-readme">
+          <div class="gh-rh"><svg class="i"><use href="#g-note"/></svg>README</div>
+          <div class="md">
+            <p class="c"><img class="on-light" src="overpressure-light.svg" width="128" height="128" alt="overpressure"><img class="on-dark" src="overpressure.svg" width="128" height="128" alt="overpressure"></p>
+            <h1 class="c">overpressure</h1>
+            <p class="c lead">Linux and a SteamOS-compatible userspace on standalone VR headsets.</p>
+            <p class="c"><span class="bdg"><i>license</i><b class="g">Unlicense</b></span> <span class="bdg"><i>release</i><b class="b">1.0b1</b></span> <span class="bdg"><i>headset</i><b class="o">PICO 4</b></span></p>
+            <p>A headset boots a SteamOS-compatible stage 2 installed on it, and a small Linux stage 1 in another boot partition installs and rescues it; stage 2 runs Valve's VR session (gamescope and SteamVR) with a Monado driver for the headset's hardware.</p>
+            <h2>Headsets</h2>
+            <table><tr><th>Codename</th><th>Headset</th><th>Folder</th></tr><tr><td>phoenix</td><td>PICO 4 (2022, Snapdragon XR2)</td><td><a href="#readme">devices/phoenix</a></td></tr></table>
+          </div>
+        </div></div>
+      </div>
+    </template></div>
+    <pre class="snip">&lt;p align="center"&gt;
+  &lt;picture&gt;
+    &lt;source media="(prefers-color-scheme: dark)" srcset="docs/logo/overpressure.svg"&gt;
+    &lt;img src="docs/logo/overpressure-light.svg" width="128" alt="overpressure"&gt;
+  &lt;/picture&gt;
+&lt;/p&gt;</pre>
+  </section>
+
+  <section id="social">
+    <h2>Social preview card</h2>
+    <p class="note">The 1280 &times; 640 image a link to the repository unfurls into: <code>overpressure.svg</code> (dark) or <code>overpressure-light.svg</code> (light), with <code>overpressure-mark.svg</code> as a faint watermark.</p>
+    <div class="pair"><template>
+      <div class="social">
+        <img class="wm" src="overpressure-mark.svg" alt="">
+        <div class="so-in">
+          <img class="on-light" src="overpressure-light.svg" alt=""><img class="on-dark" src="overpressure.svg" alt="">
+          <div><div class="so-name">overpressure</div><div class="so-tag">Linux and a SteamOS-compatible userspace on standalone VR headsets</div>
+          <div class="so-meta"><span>PICO 4</span><span>Valve's kernel</span><span>SteamVR</span><span>Unlicense</span></div></div>
+        </div>
+      </div>
+    </template></div>
+  </section>
+
+  <section id="boot">
+    <h2>Boot logo in the headset</h2>
+    <p class="note">A headset boots dark, so there is one version. Stage 2's splash shows <code>overpressure-mark.svg</code> on black on both panels; stage 1, the rescue and install system, shows <code>overpressure-mono.svg</code> in white over its console.</p>
+    <div class="pair one">
+      <figure class="shot">
+        <div class="boot">
+          <div class="eyes">
+            <div class="eye"><img src="overpressure-mark.svg" alt=""><div class="bn">overpressure</div><div class="bb"><i></i></div></div>
+            <div class="eye"><img src="overpressure-mark.svg" alt=""><div class="bn">overpressure</div><div class="bb"><i></i></div></div>
+          </div>
+          <div class="boot-cap">Both panels as the boot draws them (left eye, right eye)</div>
+          <div class="boot-row">
+            <div><div class="lensview"><img src="overpressure-mark.svg" alt=""></div><div class="boot-cap">Through one lens</div></div>
+            <div><div class="console">
+              <div class="ch"><img src="overpressure-mono.svg" style="filter:invert(1)" alt="">overpressure stage 1</div>
+              <div><span class="ok">[  ok  ]</span> Mounted the data partition</div>
+              <div><span class="ok">[  ok  ]</span> Started the USB network</div>
+              <div><span class="ok">[  ok  ]</span> Checked stage 2's boot image</div>
+              <div><span class="wait">[ wait ]</span> Waiting for the installer on USB &hellip;</div>
+            </div><div class="boot-cap">Stage 1, the rescue and install system</div></div>
+          </div>
+        </div>
+      </figure>
+    </div>
+  </section>
+
+  <section id="installer">
+    <h2>Installer window</h2>
+    <p class="note">The app in its own theme (the colours of <code>theme.py</code>): <code>overpressure-small.svg</code> in the title bar, <code>overpressure-mark.svg</code> in the header, and the app icon on the first page, <code>overpressure-light.svg</code> in the light theme and <code>overpressure.svg</code> in the dark one.</p>
+    <div class="pair"><template>
+      <div class="ow">
+        <div class="ow-tb"><img src="overpressure-small.svg" alt="">overpressure<span class="sp"></span><span class="ow-wc"><span><svg><use href="#g-min"/></svg></span><span><svg><use href="#g-max"/></svg></span><span><svg><use href="#g-close"/></svg></span></span></div>
+        <div class="ow-head"><img src="overpressure-mark.svg" alt=""><b>overpressure</b><i></i><span class="sub">PICO 4</span><span class="sp"></span><span class="ow-quiet">Advanced</span></div>
+        <div class="ow-main">
+          <div class="ow-side">
+            <div class="ow-step cur"><span class="d">1</span>Check this computer</div>
+            <div class="ow-step"><span class="d">2</span>Build SteamOS</div>
+            <div class="ow-step"><span class="d">3</span>Connect your headset</div>
+            <div class="ow-step"><span class="d">4</span>Prepare your headset</div>
+            <div class="ow-step"><span class="d">5</span>Install</div>
+          </div>
+          <div class="ow-content">
+            <div class="ow-hero"><img class="on-light" src="overpressure-light.svg" alt=""><img class="on-dark" src="overpressure.svg" alt=""><div><div class="n">overpressure</div><div class="v">1.0b1</div></div></div>
+            <h3>Which headset do you have?</h3>
+            <p>Choose it, then follow its five stages, one main button each. It goes on where it stopped when it is started again.</p>
+            <div class="ow-card"><span class="r"></span><div><b>PICO 4</b><span>2022, Snapdragon XR2 &middot; phoenix</span></div><img src="overpressure-mark.svg" alt=""></div>
+            <div class="ow-btn">Continue</div>
+          </div>
+        </div>
+      </div>
+    </template></div>
+  </section>
+
+  <section id="windows">
+    <h2>Taskbar and desktop</h2>
+    <p class="note">One icon in both themes, as the system uses it: <code>overpressure-small.svg</code> for the taskbar (24 px), the tray, the thumbnail's title and the desktop shortcut (44 px). The thumbnail shows the window.</p>
+    <div class="pair"><template>
+      <div class="desk">
+        <div class="desk-icons">
+          <div class="dicon sel"><img src="overpressure-small.svg" alt="">overpressure</div>
+          <div class="dicon"><span class="app b-yellow"><svg><use href="#g-folder"/></svg></span>Documents</div>
+          <div class="dicon"><span class="app b-gray"><svg><use href="#g-trash"/></svg></span>Recycle bin</div>
+        </div>
+        <div class="thumb"><div class="thumb-h"><img src="overpressure-small.svg" alt="">overpressure</div>
+          <div class="mini-win"><div class="h"><img src="overpressure-mark.svg" alt=""><i></i></div><div class="b"><div class="s"></div><div class="c"><img class="on-light" src="overpressure-light.svg" alt=""><img class="on-dark" src="overpressure.svg" alt=""><i></i><i></i><u></u></div></div></div>
+        </div>
+        <div class="taskbar">
+          <span class="sp"></span>
+          <span class="tbi start"><svg><use href="#g-grid"/></svg></span>
+          <span class="tb-search"><svg class="i"><use href="#g-search"/></svg>Search</span>
+          <span class="tbi"><span class="app b-yellow"><svg><use href="#g-folder"/></svg></span></span>
+          <span class="tbi"><span class="app b-blue"><svg><use href="#g-globe"/></svg></span></span>
+          <span class="tbi"><span class="app b-slate"><svg><use href="#g-term"/></svg></span></span>
+          <span class="tbi"><span class="app b-purple"><svg><use href="#g-chat"/></svg></span></span>
+          <span class="tbi on hov"><img src="overpressure-small.svg" alt=""><i class="ind"></i></span>
+          <span class="sp"></span>
+          <span class="tray"><img src="overpressure-small.svg" alt=""><svg><use href="#g-wifi"/></svg><svg><use href="#g-sound"/></svg><svg><use href="#g-battery"/></svg><span class="clock">10:58<br>10/11/2026</span></span>
+        </div>
+      </div>
+    </template></div>
+  </section>
+
+  <section id="mac">
+    <h2>Dock, Finder and menu bar</h2>
+    <p class="note"><code>overpressure.svg</code> in the dock and in Finder (both draw at twice the size on a Retina screen); the menu bar takes a one-colour icon, <code>overpressure-mono.svg</code>, in the menu bar's text colour, here with the installer's progress.</p>
+    <div class="pair"><template>
+      <div class="mac">
+        <div class="menubar"><svg class="gl"><use href="#g-grid"/></svg><b>overpressure</b><span>File</span><span>Edit</span><span>View</span><span>Window</span><span>Help</span><span class="sp"></span>
+          <span class="status"><span class="mi"><img class="on-light" src="overpressure-mono.svg" alt=""><img class="on-dark" src="overpressure-mono.svg" style="filter:invert(1)" alt=""></span><svg><use href="#g-wifi"/></svg><svg><use href="#g-battery"/></svg><span>Tue 10 Nov 10:58</span></span></div>
+        <div class="drop"><div class="row"><b>Building SteamOS</b></div><div class="prog"><i></i></div><div class="dim">Stage 2 of 5 &middot; about 20 minutes left</div><div class="sep"></div><div class="row hl">Show the window</div><div class="row">Stop the installer&hellip;</div></div>
+        <div class="finder">
+          <div class="f-side"><div class="lights"><i></i><i></i><i></i></div><div class="f-sec">Favourites</div>
+            <div class="f-item on"><svg><use href="#g-grid"/></svg>Applications</div><div class="f-item"><svg><use href="#g-home"/></svg>Home</div><div class="f-item"><svg><use href="#g-folder"/></svg>Documents</div><div class="f-item"><svg><use href="#g-down"/></svg>Downloads</div></div>
+          <div class="f-main"><div class="f-title">Applications</div><div class="f-grid">
+            <div class="f-app"><span class="app b-blue"><svg><use href="#g-globe"/></svg></span>Browser</div>
+            <div class="f-app"><span class="app b-red"><svg><use href="#g-cal"/></svg></span>Calendar</div>
+            <div class="f-app"><span class="app b-teal"><svg><use href="#g-mail"/></svg></span>Mail</div>
+            <div class="f-app"><span class="app b-pink"><svg><use href="#g-music"/></svg></span>Music</div>
+            <div class="f-app"><span class="app b-yellow"><svg><use href="#g-note"/></svg></span>Notes</div>
+            <div class="f-app on"><img src="overpressure.svg" alt=""><span>overpressure</span></div>
+            <div class="f-app"><span class="app b-orange"><svg><use href="#g-photo"/></svg></span>Photos</div>
+            <div class="f-app"><span class="app b-slate"><svg><use href="#g-term"/></svg></span>Terminal</div>
+          </div></div>
+        </div>
+        <div class="dock">
+          <div><span class="app b-blue"><svg><use href="#g-folder"/></svg></span><i class="dot"></i></div>
+          <div><span class="app b-green"><svg><use href="#g-globe"/></svg></span><i class="dot"></i></div>
+          <div><span class="app b-teal"><svg><use href="#g-mail"/></svg></span></div>
+          <div><span class="app b-pink"><svg><use href="#g-music"/></svg></span></div>
+          <div><span class="app b-slate"><svg><use href="#g-term"/></svg></span><i class="dot"></i></div>
+          <div><span class="tip">overpressure</span><img src="overpressure.svg" alt=""><i class="dot"></i></div>
+          <span class="vsep"></span>
+          <div><span class="app b-gray"><svg><use href="#g-trash"/></svg></span></div>
+        </div>
+      </div>
+    </template></div>
+  </section>
+
+  <section id="linux">
+    <h2>Linux app launcher</h2>
+    <p class="note">A desktop's app grid, searched for the app, and the dash below: <code>overpressure.svg</code> at 64 and 44 px (the grid and the dash draw at 128 and 88 on a 2&times; screen).</p>
+    <div class="pair"><template>
+      <div class="gn">
+        <div class="gn-top"><span>Activities</span><span class="gn-pill"></span><span class="sp"></span><span>Nov 10 10:58</span><span class="sp"></span><svg><use href="#g-wifi"/></svg><svg><use href="#g-sound"/></svg><svg><use href="#g-battery"/></svg></div>
+        <div class="gn-search"><svg><use href="#g-search"/></svg>over</div>
+        <div class="gn-grid">
+          <div class="gn-app on"><img src="overpressure.svg" alt="">overpressure</div>
+          <div class="gn-app"><span class="app b-blue"><svg><use href="#g-globe"/></svg></span>Browser</div>
+          <div class="gn-app"><span class="app b-slate"><svg><use href="#g-term"/></svg></span>Terminal</div>
+          <div class="gn-app"><span class="app b-gray"><svg><use href="#g-gear"/></svg></span>Settings</div>
+          <div class="gn-app"><span class="app b-yellow"><svg><use href="#g-folder"/></svg></span>Files</div>
+        </div>
+        <div class="gn-dash">
+          <div><span class="app b-yellow"><svg><use href="#g-folder"/></svg></span></div>
+          <div><span class="app b-blue"><svg><use href="#g-globe"/></svg></span><i class="dot"></i></div>
+          <div><span class="app b-slate"><svg><use href="#g-term"/></svg></span></div>
+          <div><img src="overpressure.svg" alt=""><i class="dot"></i></div>
+          <div><span class="app b-gray"><svg><use href="#g-grid"/></svg></span></div>
+        </div>
+      </div>
+    </template></div>
+  </section>
+
+  <section id="notify">
+    <h2>Notification</h2>
+    <p class="note">When a long stage ends while the window is in the background: <code>overpressure-small.svg</code> as the app's icon (16 px) and as the picture (48 px).</p>
+    <div class="pair"><template>
+      <div class="nwrap">
+        <div class="toast">
+          <div class="t-h"><img src="overpressure-small.svg" alt="">overpressure<span class="sp"></span><svg><use href="#g-close"/></svg></div>
+          <div class="t-b"><img src="overpressure-small.svg" alt=""><div><b>Your headset is ready</b><p>SteamOS is installed on the PICO 4. Unplug the cable and put the headset on.</p></div></div>
+          <div class="t-a"><span class="p">Open overpressure</span><span>Dismiss</span></div>
+        </div>
+      </div>
+    </template></div>
+  </section>
+
+  <section id="browser">
+    <h2>Browser tab and bookmark</h2>
+    <p class="note">The favicon of the repository's pages and documents: <code>overpressure-small.svg</code> at 16 px, in the tab and the bookmarks bar.</p>
+    <div class="pair"><template>
+      <div class="br">
+        <div class="br-tabs"><div class="br-tab on"><img src="overpressure-small.svg" alt=""><span>overpressure: Linux and a SteamOS-compatible userspace</span><svg><use href="#g-close"/></svg></div><div class="br-tab"><span class="gf"></span><span>Search results</span><svg><use href="#g-close"/></svg></div></div>
+        <div class="br-bar"><span class="nav"><svg><use href="#g-back"/></svg><svg><use href="#g-fwd"/></svg><svg><use href="#g-reload"/></svg></span><div class="br-url">https://<b>overpressure.example</b>/docs/install</div></div>
+        <div class="br-bm"><span><img src="overpressure-small.svg" alt="">overpressure docs</span><span><span class="gf" style="width:14px;height:14px;border-radius:50%;background:var(--sub);opacity:.5;display:inline-block"></span>News</span></div>
+        <div class="br-page"><img class="on-light" src="overpressure-light.svg" alt=""><img class="on-dark" src="overpressure.svg" alt=""><b>Install<span>Five stages, one main button each</span></b></div>
+      </div>
+    </template></div>
+  </section>
+
+  <section id="stickers">
+    <h2>Stickers</h2>
+    <p class="note">Printed: a die-cut <code>overpressure.svg</code>, a die-cut <code>overpressure-mark.svg</code> and a vinyl cut of <code>overpressure-mono.svg</code> (black on a light desk, white on a dark laptop lid).</p>
+    <div class="pair"><template>
+      <div class="stk">
+        <div class="sticker tile"><img src="overpressure.svg" alt=""></div>
+        <div class="sticker mk"><img src="overpressure-mark.svg" alt=""></div>
+        <div class="vinyl"><img class="on-light" src="overpressure-mono.svg" alt=""><img class="on-dark" src="overpressure-mono.svg" style="filter:invert(1)" alt=""></div>
+        <div class="lab on-light">on a desk</div><div class="lab on-dark">on a laptop lid</div>
+      </div>
+    </template></div>
+  </section>
+</main>
+
+<script>
+document.querySelectorAll('.pair').forEach(function (p) {
+  var t = p.querySelector('template');
+  if (!t) return;
+  ['light', 'dark'].forEach(function (theme) {
+    var fig = document.createElement('figure');
+    fig.className = 'shot';
+    var box = document.createElement('div');
+    box.className = 'mock ' + theme;
+    box.appendChild(t.content.cloneNode(true));
+    var cap = document.createElement('figcaption');
+    cap.textContent = theme === 'light' ? 'Light mode' : 'Dark mode';
+    fig.appendChild(box);
+    fig.appendChild(cap);
+    p.appendChild(fig);
+  });
+});
+</script>
+</body>
+</html>

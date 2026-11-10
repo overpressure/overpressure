@@ -44,9 +44,11 @@ come from the image ([stage1.md](stage1.md), [xr.md](xr.md)).
 - **Updates.** A new system image replaces `super` whole; the data stays. When preinit sees an
   image it has not booted before, `/var/lib/pacman` (the package database, which describes the
   image) is taken from the new image.
-- **Boot indication.** [`pico4-splash`](../src/splash/pico4-splash.c) shows a turning ring of
-  dots in the middle of both lenses while the system starts. preinit starts it before it mounts
-  the data partition; systemd's `pico4-splash.service` takes the display from it. It sets the
+- **Boot indication.** [`pico4-splash`](../src/splash/pico4-splash.c) shows the logo's headset
+  ([docs/logo](../../../docs/logo/README.md)), the name and a moving bar in the middle of both lenses
+  while the system starts; it draws them itself ([pico4-splash-draw.h](../src/splash/pico4-splash-draw.h)).
+  preinit starts it before it mounts the data partition; systemd's `pico4-splash.service` takes the
+  display from it, and the bar carries on where it was (its place follows the clock). It sets the
   panels' 90 Hz mode on msm's primary plane and then gives up DRM master, so the next compositor
   (Monado, SteamVR's) becomes master as usual; its commit ends the indication. After four minutes
   it ends in any case.
@@ -395,3 +397,6 @@ cable has not been pulled in a restore on the headset.
    connected on an image with the new check.
 4. **The installer on a headset.** The whole path with its builds and a new backup: the LUNs from `printgpt`, and the
    Wi-Fi keyfile on the installed system (WPA2; a WPA3-only network may need `key-mgmt=sae`).
+5. **The boot indication's logo in the lenses.** The logo, the name and the moving bar are tested on the host
+   (and the drawing on aarch64 under QEMU); on the headset still to see: the picture in both lenses and the
+   bar carrying on when `pico4-splash.service` takes over.

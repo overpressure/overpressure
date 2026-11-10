@@ -32,6 +32,19 @@ class SplashTests(unittest.TestCase):
         self.assertIn("DRM_IOCTL_DROP_MASTER", source)
         self.assertIn('quit("a compositor took the display", 0)', source)
 
+    def test_source_draws_the_logo(self):
+        source = (ROOT / "src/splash/pico4-splash.c").read_text(encoding="utf-8")
+        self.assertIn('#include "pico4-splash-draw.h"', source)
+        self.assertIn("draw_bar(&buffer, now_ms());", source)  # the bar follows the clock across instances
+        # The headset in the logo's colours: docs/logo/overpressure-mark.svg is the drawing it follows.
+        drawing = (ROOT.parents[1] / "docs/logo/overpressure-mark.svg").read_text(encoding="utf-8").lower()
+        draw = (ROOT / "src/splash/pico4-splash-draw.h").read_text(encoding="utf-8")
+        colours = ("5a92ff", "2a66ec", "1a43b8", "2457cf", "163a9e", "173a9a", "0b0d12", "ff7849")
+        for colour in colours:
+            self.assertIn(f"#{colour}", drawing)
+            self.assertIn(f"0x{colour}", draw.lower())
+        self.assertIn('NAME[] = "overpressure"', draw)
+
     def test_source_drives_msm(self):
         source = (ROOT / "src/splash/pico4-splash.c").read_text(encoding="utf-8")
         # Valve's kernel: the device is "msm", one primary plane over the whole mode.

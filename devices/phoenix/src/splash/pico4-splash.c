@@ -2,15 +2,17 @@
 /*
  * pico4-splash: a sign of life in the lenses while the headset starts (docs/install.md).
  *
- * Shows a turning ring of dots in the middle of both eyes from stage 1 until a compositor takes
- * the display. It sets the panels' native 90 Hz mode on msm's primary plane over the whole mode,
- * which the display controller splits between the two links. As the first master it is also
- * what makes the kernel probe the panels' connector, so that a compositor that starts later
- * finds their mode (mainline probes a connector only for its master). Then it gives up DRM
- * master at once: whoever starts next (Monado, SteamVR's compositor) must become master, and
- * the kernel has no way to take master from a running program. Without master there are no
- * more commits, so the ring turns by drawing into the framebuffer the panels scan out. When a
- * compositor's commit replaces that framebuffer, pico4-splash exits.
+ * Shows the logo's headset, the name and a moving bar in the middle of both eyes
+ * (pico4-splash-draw.h) until a compositor takes the display. It sets the panels' native 90 Hz
+ * mode on msm's primary plane over the whole mode, which the display controller splits between
+ * the two links. As the first master it is also what makes the kernel probe the panels'
+ * connector, so that a compositor that starts later finds their mode (mainline probes a connector
+ * only for its master). Then it gives up DRM master at once: whoever starts next (Monado,
+ * SteamVR's compositor) must become master, and the kernel has no way to take master from a
+ * running program. Without master there are no more commits, so the bar moves by drawing into
+ * the framebuffer the panels scan out; its place follows the monotonic clock, so it carries on
+ * where it was when the next instance takes over. When a compositor's commit replaces that
+ * framebuffer, pico4-splash exits.
  *
  * A freestanding aarch64 program without libc, like pico4-reboot, so that stage 1 runs it
  * without a C library and stage 2 runs the same file:
@@ -315,35 +317,31 @@ static void allocate(struct buffer *b)
 	/* Dumb buffers start zeroed: black. */
 }
 
-/* Twelve dots on a circle in the middle of each eye; dot STEP is the brightest, the ones
- * behind it fade (a spinner). Integer maths only, on the square around the ring. */
-#define DOTS 12
-#define RING 70
-#define DOT 11
-static const int dot_x[DOTS] = {0, 35, 61, 70, 61, 35, 0, -35, -61, -70, -61, -35};
-static const int dot_y[DOTS] = {-70, -61, -35, 0, 35, 61, 70, 61, 35, 0, -35, -61};
+#include "pico4-splash-draw.h"
 
-static void draw(struct buffer *b, int step)
+#define FRAME_MS 33                     /* the bar moves about 30 times a second */
+#define GROUP_TOP (EYE / 2 - GROUP_H / 2) /* the picture's top, centred in each eye */
+
+static unsigned *pixel(struct buffer *b, int x, int y)
 {
-	const int r = RING + DOT + 1;
-	for (int eye = 0; eye < 2; eye++) {
-		int cx = eye * EYE + EYE / 2, cy = EYE / 2;
-		for (int y = -r; y <= r; y++) {
-			unsigned *row = (unsigned *)(b->map + (unsigned long)(cy + y) * b->pitch) + cx;
-			for (int x = -r; x <= r; x++) {
-				unsigned level = 0;
-				for (int d = 0; d < DOTS; d++) {
-					int dx = x - dot_x[d], dy = y - dot_y[d];
-					if (dx * dx + dy * dy <= DOT * DOT) {
-						int age = (step - d + DOTS) % DOTS;
-						level = age < 8 ? 200 - age * 22 : 30;
-						break;
-					}
-				}
-				row[x] = level << 16 | level << 8 | level;
-			}
-		}
-	}
+	return (unsigned *)(b->map + (unsigned long)y * b->pitch) + x;
+}
+
+/* The bar in both eyes, as it stands at MS on the monotonic clock. */
+static void draw_bar(struct buffer *b, long ms)
+{
+	for (int eye = 0; eye < 2; eye++)
+		for (int y = 0; y < BAR_H; y++)
+			bar_row(pixel(b, eye * EYE + EYE / 2 - BAR_W / 2, GROUP_TOP + CANVAS_H + BAR_GAP + y), y, ms);
+}
+
+/* The headset and the name (drawn once into the canvas), then the bar, in the middle of each eye. */
+static void draw(struct buffer *b, long ms)
+{
+	for (int eye = 0; eye < 2; eye++)
+		for (int y = 0; y < CANVAS_H; y++)
+			memcpy(pixel(b, eye * EYE + EYE / 2 - CANVAS_W / 2, GROUP_TOP + y), canvas[y], sizeof(canvas[y]));
+	draw_bar(b, ms);
 }
 
 /* -- commits ---------------------------------------------------------------------------- */
@@ -420,7 +418,9 @@ long pico4_main(long argc, char **argv)
 	find_output();
 	find_primary();
 	allocate(&buffer);
-	draw(&buffer, 0);
+	draw_canvas();
+	draw_track();
+	draw(&buffer, now_ms());
 
 	struct drm_mode_create_blob blob = {.data = (__u64)(unsigned long)&mode, .length = sizeof(mode)};
 	if (ioc(DRM_IOCTL_MODE_CREATEPROPBLOB, &blob))
@@ -439,11 +439,11 @@ long pico4_main(long argc, char **argv)
 	ioc(DRM_IOCTL_DROP_MASTER, 0);
 	say("showing the boot indication");
 
-	for (int step = 1; now_ms() < end; step++) {
-		sleep_ms(83);
+	while (now_ms() < end) {
+		sleep_ms(FRAME_MS);
 		if (!still_ours())
 			quit("a compositor took the display", 0);
-		draw(&buffer, step % DOTS);
+		draw_bar(&buffer, now_ms());
 	}
 	quit("time is up", 0);
 }

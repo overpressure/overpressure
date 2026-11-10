@@ -58,7 +58,7 @@ TEST_PATHS = re.compile(r"^(?:tests/|devices/[^/]+/tests/|scripts/check-private\
 TEST_ONLY = {"MAC address", "Steam ID", "private key"}
 #: This repository's own binaries: built from src/ here, so stage 1 builds without a compiler.
 BINARIES = re.compile(r"^devices/[^/]+/prebuilt/aarch64/pico4-(?:reboot|splash)$")
-BINARY_SUFFIXES = {".png", ".jpg", ".svg"}
+BINARY_SUFFIXES = {".png", ".jpg", ".svg", ".ico"}
 
 
 def findings(path: str, data: bytes, secrets: Iterable[bytes] = ()) -> list[str]:

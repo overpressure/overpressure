@@ -3,15 +3,16 @@
 
 Buttons (primary, secondary, quiet, the header's links) with hover and pressed shades, cards,
 clickable list rows, status icons, pills, notes in a tone, code blocks with a copy button,
-progress bars, fields, a scrolling area that shows its bar only when needed, and the reflow that
-keeps a page's column readable in a wide window. CustomTkinter is handed in as a module (window.main
-imports it), so this module imports without it.
+progress bars, fields, pictures, a scrolling area that shows its bar only when needed, and the
+reflow that keeps a page's column readable in a wide window. CustomTkinter is handed in as a module
+(window.main imports it), so this module imports without it.
 """
 
 from __future__ import annotations
 
 import contextlib
 import sys
+import warnings
 from typing import TYPE_CHECKING, Any, Callable
 
 from overpressure.window.installer import DONE, FAILED, RUNNING, SKIPPED
@@ -54,6 +55,8 @@ from overpressure.window.theme import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from overpressure.window.theme import Pair
 
 #: The kinds of button: the view's one main action, an outlined one, a text-only one, the header's links.
@@ -83,6 +86,7 @@ class Kit:
         fixed = tkinter.font.Font(root=root, name="TkFixedFont", exists=True).actual("family")
         self.families: Families = families(tkinter.font.families(root), sys.platform, system=default, fixed=fixed)
         self.fonts: dict[tuple[int, bool, bool], Any] = {}
+        self.images: dict[Path, Any] = {}  # the pictures' Tk images: Tk forgets one that Python no longer holds
 
     # -- type ----------------------------------------------------------------------------------
     def font(self, size: int, *, strong: bool = False, mono: bool = False) -> Any:  # noqa: ANN401  # a CTkFont
@@ -119,6 +123,31 @@ class Kit:
     def scaling(self, widget: Any) -> float:  # noqa: ANN401  # a CustomTkinter widget
         """Return WIDGET's scaling: points to pixels."""
         return float(self.ctk.ScalingTracker.get_widget_scaling(widget))
+
+    # -- pictures ------------------------------------------------------------------------------
+    def image(self, path: Path) -> Any:  # noqa: ANN401  # a tkinter.PhotoImage
+        """Return the Tk image of the PNG file at PATH, loaded once."""
+        if path not in self.images:
+            import tkinter as tk  # noqa: PLC0415  # Tk only with the window: the tool imports without it
+
+            self.images[path] = tk.PhotoImage(master=self.root, file=str(path))
+        return self.images[path]
+
+    def picture(self, parent: Any, path: Path) -> Any:  # noqa: ANN401  # Tk widgets
+        """Return a label showing the PNG file at PATH pixel for pixel, on its parent's colour (the logo's renderings).
+
+        CustomTkinter scales only its CTkImage, which needs Pillow; the caller picks the rendering for the
+        display's scaling instead (logo.py).
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # CustomTkinter's advice to use CTkImage
+            return self.ctk.CTkLabel(parent, text="", image=self.image(path), width=1, height=1, fg_color="transparent")
+
+    def show(self, picture: Any, path: Path) -> None:  # noqa: ANN401  # a picture's label
+        """Show the PNG file at PATH in PICTURE (a label from picture())."""
+        with warnings.catch_warnings(), contextlib.suppress(Exception):  # it may be gone with its page
+            warnings.simplefilter("ignore")  # CustomTkinter's advice to use CTkImage
+            picture.configure(image=self.image(path))
 
     # -- buttons -------------------------------------------------------------------------------
     def button(

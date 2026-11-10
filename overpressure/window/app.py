@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import importlib.metadata
+import sys
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from overpressure import disclaimer
 from overpressure.backup import ARCHIVE_SUFFIX
 from overpressure.headset import INSTALL, AfterInstall
+from overpressure.window import logo
 from overpressure.window.advanced import INSTALLER, busy
 from overpressure.window.advanced_view import AdvancedView
 from overpressure.window.headsets import INTRO, LAST_USED, QUESTION, Choice, Probe
@@ -37,6 +40,7 @@ from overpressure.window.theme import (
     ACCENT,
     ACCENT_SOFT,
     ACCENT_TEXT,
+    APP_ICON,
     BACKDROP,
     BADGE,
     BODY,
@@ -52,7 +56,6 @@ from overpressure.window.theme import (
     HEADING,
     INFO,
     LABEL,
-    LENS,
     LEVELS,
     LOGO,
     PAGE,
@@ -105,6 +108,16 @@ BACK = "\N{SINGLE LEFT-POINTING ANGLE QUOTATION MARK} Headsets"
 STAGES = "Install"
 #: A task's state in words at the right of its row, once it has one.
 TASK_WORDS = {DONE: "done", SKIPPED: "already done", FAILED: "failed"}
+#: CustomTkinter's appearance names.
+LIGHT = "Light"
+
+
+def version() -> str:
+    """Return overpressure's version as installed (the start scripts install it), or "" when it is not."""
+    try:
+        return importlib.metadata.version("overpressure")
+    except importlib.metadata.PackageNotFoundError:
+        return ""
 
 
 class Window:
@@ -160,6 +173,7 @@ class Window:
         self.details_shown = False
         self.task_rows: dict[str, dict[str, Any]] = {}
         ctk_module.set_appearance_mode("system")
+        logo.name_the_app()  # before the window: Windows' taskbar shows the window's icon, not Python's
         self.root: ctk.CTk = ctk_module.CTk(fg_color=PAGE)
         self.kit = Kit(ctk_module, self.root)
         self.root.title("overpressure")
@@ -214,6 +228,18 @@ class Window:
         self.disclaimer.lift()
 
     # -- layout ----------------------------------------------------------------------------
+    def set_icon(self) -> None:
+        """Give the window the app icon: in its title bar, the taskbar or the dock, and the window lists.
+
+        Windows takes the .ico with every size it asks for (and CustomTkinter then leaves its own
+        icon out); macOS and Linux take Tk's photo images.
+        """
+        if sys.platform == "win32":
+            self.root.iconbitmap(default=str(logo.ICO))
+        else:
+            images = [self.kit.image(path) for path in logo.window_icons()]
+            self.root.iconphoto(True, *images)  # noqa: FBT003  # Tk's own positional flag: later windows too
+
     def first_size(self) -> str:
         """Return the window's first size: WINDOW where the screen has room, else what it has, at least WINDOW_MIN."""
         scaling = float(self.ctk.ScalingTracker.get_window_scaling(self.root))
@@ -224,6 +250,7 @@ class Window:
 
     def _build(self) -> None:
         kit = self.kit
+        self.set_icon()
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(2, weight=1)
         self._build_header()
@@ -296,11 +323,7 @@ class Window:
         header.pack_propagate(False)  # noqa: FBT003  # Tk's own positional flag: the same height on every page
         bar = kit.frame(header)
         bar.pack(fill="x", expand=True, padx=Space.XL)
-        visor = self.ctk.CTkFrame(bar, width=LOGO[0], height=LOGO[1], corner_radius=RADIUS_CONTROL, fg_color=ACCENT)
-        visor.pack(side="left")  # the headset: a visor with two lenses
-        for x in (0.3, 0.7):
-            lens = self.ctk.CTkFrame(visor, width=LENS, height=LENS, corner_radius=LENS // 2, fg_color=RAISED)
-            lens.place(relx=x, rely=0.5, anchor="center")
+        kit.picture(bar, logo.mark(LOGO[1], kit.scaling(self.root))).pack(side="left")  # the logo's headset
         kit.label(bar, "overpressure", size=HEADING, strong=True).pack(side="left", padx=(Space.M, Space.M))
         self.divider = kit.line(bar, vertical=True)
         self.divider.configure(height=LOGO[1])
@@ -321,16 +344,33 @@ class Window:
         column = kit.frame(scroll.frame)
         column.grid(row=0, column=0, sticky="ew", padx=Space.XXXL, pady=(Space.XXL + Space.S, Space.XXL))
         column.grid_columnconfigure(0, weight=1)
-        kit.label(column, QUESTION, size=TITLE, strong=True).grid(row=0, column=0, sticky="ew")
+        self._build_app_card(column).grid(row=0, column=0, sticky="w", pady=(0, Space.XL))
+        kit.label(column, QUESTION, size=TITLE, strong=True).grid(row=1, column=0, sticky="ew")
         intro = kit.label(column, INTRO, size=BODY, colour=TEXT_SECONDARY, wrap=CARDS)
-        intro.grid(row=1, column=0, sticky="ew", pady=(Space.S, Space.XL))
+        intro.grid(row=2, column=0, sticky="ew", pady=(Space.S, Space.XL))
         self.headset_list = kit.frame(column)
-        self.headset_list.grid(row=2, column=0, sticky="ew")
+        self.headset_list.grid(row=3, column=0, sticky="ew")
         self.headset_list.grid_columnconfigure(0, weight=1)
         self.headset_cards: dict[str, Any] = {}  # codename -> its card
         self.chooser_flow = Reflow(kit, scroll.canvas, CARDS, sides=(Space.XXXL, Space.XXXL), center=True)
         self.chooser_flow.add(column)
         self.chooser_flow.wrap(intro)
+
+    def _build_app_card(self, parent: Any) -> Any:  # noqa: ANN401  # Tk widgets
+        """Return the headset page's top: the app icon (its light tile in the light appearance), name and version."""
+        kit = self.kit
+        card = kit.frame(parent)
+        scaling = kit.scaling(self.root)
+        tiles = {light: logo.app_icon(APP_ICON, scaling, light=light) for light in (True, False)}
+        icon = kit.picture(card, tiles[self.ctk.get_appearance_mode() == LIGHT])
+        icon.grid(row=0, column=0, rowspan=2, padx=(0, Space.L))
+        # The system's appearance can change while the window is open: the tile follows it.
+        self.ctk.AppearanceModeTracker.add(lambda mode: kit.show(icon, tiles[mode == LIGHT]), icon)
+        kit.label(card, "overpressure", size=HEADING, strong=True).grid(row=0, column=1, sticky="sw")
+        shown = version()
+        if shown:
+            kit.label(card, f"Version {shown}", size=SMALL, colour=TEXT_MUTED).grid(row=1, column=1, sticky="nw")
+        return card
 
     def render_chooser(self) -> None:
         """List the headsets: name, SoC and summary, what choosing one opens, where it stopped last time.

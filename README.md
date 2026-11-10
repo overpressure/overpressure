@@ -1,12 +1,36 @@
-# overpressure
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/overpressure.svg">
+    <img src="docs/logo/overpressure-light.svg" width="128" height="128" alt="The overpressure logo: a headset whose two lenses are pressure gauges reading in the red">
+  </picture>
+</p>
 
-Linux and a SteamOS-compatible userspace on standalone VR headsets. A headset boots a SteamOS-compatible stage 2 installed on it, and a
-small Linux stage 1 in another boot partition installs and rescues it; stage 2 runs Valve's VR session (gamescope and SteamVR) with a Monado driver for the headset's
-hardware.
+<h1 align="center">overpressure</h1>
 
-This is a beta for owners who accept the risk. It replaces the headset's system, wipes its data and voids what
-warranty is left; a failed step can leave a headset needing recovery. It has run on one headset. Keep your backup;
-each headset's documents say how its way back to stock works. This project isn't affiliated with Valve or PICO.
+<p align="center">
+  <b>Linux and a SteamOS-compatible userspace on standalone VR headsets.</b>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a>
+  &nbsp;&middot;&nbsp;
+  <a href="#headsets">Headsets</a>
+  &nbsp;&middot;&nbsp;
+  <a href="docs/tool.md">The tool</a>
+  &nbsp;&middot;&nbsp;
+  <a href="devices/phoenix/docs/roadmap.md">Roadmap</a>
+  &nbsp;&middot;&nbsp;
+  <a href="LICENSE">Unlicense</a>
+</p>
+
+A headset boots a SteamOS-compatible stage 2 installed on it, and a small Linux stage 1 in another boot partition
+installs and rescues it; stage 2 runs Valve's VR session (gamescope and SteamVR) with a Monado driver for the
+headset's hardware.
+
+> [!WARNING]
+> This is a beta for owners who accept the risk. It replaces the headset's system, wipes its data and voids what
+> warranty is left; a failed step can leave a headset needing recovery. It has run on one headset. Keep your backup;
+> each headset's documents say how its way back to stock works. This project isn't affiliated with Valve or PICO.
 
 ## Headsets
 
@@ -14,13 +38,11 @@ each headset's documents say how its way back to stock works. This project isn't
 | --- | --- | --- | --- |
 | phoenix | PICO 4 (2022, Snapdragon XR2), PICO OS 5.13.7 | Valve's kernel and VR session with 6DoF head and controller tracking, games and Steam Link | [devices/phoenix](devices/phoenix/README.md) |
 
-**What works** on the tested PICO 4: both lenses at 72 and 90 Hz, head and controller tracking, the room view,
-sound and microphone, Wi-Fi, sleep, Steam with Proton and FEX, Android apps through Lepton
-and Steam Link from a PC. **What doesn't, or isn't known:** heavy games run at what the GPU allows; no other unit,
-firmware or panel has run this; a boot from an empty data partition wearing only the headset, the way back to PICO OS
-and battery life unplugged aren't verified ([roadmap](devices/phoenix/docs/roadmap.md)). **What isn't included:** no
-image and no vendor file. You build your own from the public downloads of Valve and PICO
-([what comes from where](devices/phoenix/docs/distribution.md)).
+| | On the tested PICO 4 |
+| --- | --- |
+| **Works** | Both lenses at 72 and 90 Hz, head and controller tracking, the room view, sound and microphone, Wi-Fi, sleep, Steam with Proton and FEX, Android apps through Lepton and Steam Link from a PC |
+| **Doesn't, or isn't known** | Heavy games run at what the GPU allows; no other unit, firmware or panel has run this; a boot from an empty data partition wearing only the headset, the way back to PICO OS and battery life unplugged aren't verified ([roadmap](devices/phoenix/docs/roadmap.md)) |
+| **Isn't included** | No image and no vendor file. You build your own from the public downloads of Valve and PICO ([what comes from where](devices/phoenix/docs/distribution.md)) |
 
 ## Quick start
 
@@ -62,7 +84,7 @@ The builds' Linux side runs in the build container on every host, which needs Do
 overpressure/   the generic host package: image formats, headset registry, command line, the window
 devices/        one folder per headset: its tooling, images, sources, tests and documents
 tests/          host tests of the generic package
-docs/           the tool and how to add a headset
+docs/           the tool, how to add a headset, and the logo (docs/logo)
 Install.cmd, Install.command, install.sh
                 the installer's start scripts (Windows, macOS, Linux)
 ```

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>overpressure (light, 16 to 48 px)</title>
+  <defs>
+    <linearGradient id="opls-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef0f3"/></linearGradient>
+    <linearGradient id="opls-visor" x1="0" y1="150" x2="0" y2="370" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5a92ff"/><stop offset="0.5" stop-color="#2a66ec"/><stop offset="1" stop-color="#1a43b8"/></linearGradient>
+  </defs>
+  <rect x="1" y="1" width="510" height="510" rx="115" fill="url(#opls-bg)" stroke="#d9dce2" stroke-width="2"/>
+  <path d="M150 150 H362 A98 98 0 0 1 460 248 V272 A98 98 0 0 1 362 370 H310 C292.7 370 288.4 326 256 326 C223.6 326 219.3 370 202 370 H150 A98 98 0 0 1 52 272 V248 A98 98 0 0 1 150 150 Z" fill="url(#opls-visor)"/>
+  <circle cx="165" cy="258" r="78" fill="#111a33"/>
+  <path d="M197.6 221.8 A48.8 48.8 0 0 1 199.5 292.5" fill="none" stroke="#ff7849" stroke-width="24.4" stroke-linecap="round"/>
+  <path d="M153.7 262.6 L170 270.4 L221.5 235.2 L160 245.6 Z" fill="#ffffff" stroke="#ffffff" stroke-width="3.7" stroke-linejoin="round"/>
+  <circle cx="165" cy="258" r="15.8" fill="#ffffff"/>
+  <circle cx="347" cy="258" r="78" fill="#111a33"/>
+  <path d="M379.6 221.8 A48.8 48.8 0 0 1 381.5 292.5" fill="none" stroke="#ff7849" stroke-width="24.4" stroke-linecap="round"/>
+  <path d="M335.7 262.6 L352 270.4 L403.5 235.2 L342 245.6 Z" fill="#ffffff" stroke="#ffffff" stroke-width="3.7" stroke-linejoin="round"/>
+  <circle cx="347" cy="258" r="15.8" fill="#ffffff"/>
+</svg>

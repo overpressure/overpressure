@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>overpressure (light)</title>
+  <defs>
+    <linearGradient id="opl-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef0f3"/></linearGradient>
+    <linearGradient id="opl-visor" x1="0" y1="110" x2="0" y2="380" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5a92ff"/><stop offset="0.5" stop-color="#2a66ec"/><stop offset="1" stop-color="#1a43b8"/></linearGradient>
+    <linearGradient id="opl-sheen" x1="0" y1="170" x2="0" y2="300" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/><stop offset="0.45" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="opl-mount" x1="0" y1="230" x2="0" y2="300" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2457cf"/><stop offset="1" stop-color="#163a9e"/></linearGradient>
+  </defs>
+  <rect x="1" y="1" width="510" height="510" rx="115" fill="url(#opl-bg)" stroke="#d9dce2" stroke-width="2"/>
+  <rect x="56" y="232" width="40" height="64" rx="16" fill="url(#opl-mount)"/>
+  <rect x="416" y="232" width="40" height="64" rx="16" fill="url(#opl-mount)"/>
+  <path d="M166 170 H346 A88 88 0 0 1 434 258 V274 A88 88 0 0 1 346 362 H308 C291.4 362 287.2 322 256 322 C224.8 322 220.6 362 204 362 H166 A88 88 0 0 1 78 274 V258 A88 88 0 0 1 166 170 Z" fill="url(#opl-visor)"/>
+  <path d="M166 170 H346 A88 88 0 0 1 434 258 V274 A88 88 0 0 1 346 362 H308 C291.4 362 287.2 322 256 322 C224.8 322 220.6 362 204 362 H166 A88 88 0 0 1 78 274 V258 A88 88 0 0 1 166 170 Z" fill="url(#opl-sheen)"/>
+  <circle cx="174" cy="264" r="70" fill="#1a3a91"/>
+  <circle cx="174" cy="264" r="64" fill="#111a33"/>
+  <path d="M200.8 234.3 A40 40 0 0 1 202.3 292.3" fill="none" stroke="#ff7849" stroke-width="20" stroke-linecap="round"/>
+  <path d="M164.7 267.7 L178.1 274.2 L220.4 245.3 L169.9 253.8 Z" fill="#ffffff" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="174" cy="264" r="13" fill="#ffffff"/>
+  <circle cx="338" cy="264" r="70" fill="#1a3a91"/>
+  <circle cx="338" cy="264" r="64" fill="#111a33"/>
+  <path d="M364.8 234.3 A40 40 0 0 1 366.3 292.3" fill="none" stroke="#ff7849" stroke-width="20" stroke-linecap="round"/>
+  <path d="M328.7 267.7 L342.1 274.2 L384.4 245.3 L333.9 253.8 Z" fill="#ffffff" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="338" cy="264" r="13" fill="#ffffff"/>
+</svg>

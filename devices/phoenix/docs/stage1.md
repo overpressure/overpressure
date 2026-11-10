@@ -162,9 +162,9 @@ aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector 
 ```
 
 `pico4-splash` ([source](../src/splash/pico4-splash.c)), the installed system's boot indication
-in the lenses ([install.md](install.md)), is freestanding the same way (about 9 KB), so preinit
-runs it before the data partition is mounted; it is in the system image, not in stage 1. From
-`devices/phoenix/`:
+in the lenses ([install.md](install.md)), is freestanding the same way (about 13 KB, without libm:
+it draws the logo's headset and the name from their geometry), so preinit runs it before the data
+partition is mounted; it is in the system image, not in stage 1. From `devices/phoenix/`:
 
 ```sh
 aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector \
@@ -172,6 +172,11 @@ aarch64-linux-gnu-gcc -Os -static -nostdlib -ffreestanding -fno-stack-protector 
     -Wl,--build-id=none,-z,max-page-size=4096 -s \
     -o prebuilt/aarch64/pico4-splash src/splash/pico4-splash.c
 ```
+
+The build container's cross compiler has no arm64 kernel headers: in a `container run`, install
+them first (`apt-get install linux-libc-dev-arm64-cross`). Its picture is tested on the host
+(`test_pico4_splash.c` in [scripts/c-tests.sh](../../../scripts/c-tests.sh)), which also writes it
+as a PPM file when given a name.
 
 ## Booting
 

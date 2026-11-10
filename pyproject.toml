@@ -33,6 +33,7 @@ exclude = ["devices.*.tests"]
 
 [tool.setuptools.package-data]
 "devices.phoenix.tooling" = ["firmware.json"]
+"overpressure.window" = ["icons/*.png", "icons/*.ico"]
 
 # Development: uv, ruff and ty (docs/development.md in the repository root's docs).
 [dependency-groups]

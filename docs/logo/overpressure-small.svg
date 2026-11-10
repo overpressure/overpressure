@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>overpressure (16 to 48 px)</title>
+  <defs>
+    <linearGradient id="ops-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b2e35"/><stop offset="1" stop-color="#0f1013"/></linearGradient>
+    <linearGradient id="ops-visor" x1="0" y1="150" x2="0" y2="370" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5a92ff"/><stop offset="0.5" stop-color="#2a66ec"/><stop offset="1" stop-color="#1a43b8"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#ops-bg)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="114.5" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="3"/>
+  <path d="M150 150 H362 A98 98 0 0 1 460 248 V272 A98 98 0 0 1 362 370 H310 C292.7 370 288.4 326 256 326 C223.6 326 219.3 370 202 370 H150 A98 98 0 0 1 52 272 V248 A98 98 0 0 1 150 150 Z" fill="url(#ops-visor)"/>
+  <circle cx="165" cy="258" r="78" fill="#0b0d12"/>
+  <path d="M197.6 221.8 A48.8 48.8 0 0 1 199.5 292.5" fill="none" stroke="#ff7849" stroke-width="24.4" stroke-linecap="round"/>
+  <path d="M153.7 262.6 L170 270.4 L221.5 235.2 L160 245.6 Z" fill="#ffffff" stroke="#ffffff" stroke-width="3.7" stroke-linejoin="round"/>
+  <circle cx="165" cy="258" r="15.8" fill="#ffffff"/>
+  <circle cx="347" cy="258" r="78" fill="#0b0d12"/>
+  <path d="M379.6 221.8 A48.8 48.8 0 0 1 381.5 292.5" fill="none" stroke="#ff7849" stroke-width="24.4" stroke-linecap="round"/>
+  <path d="M335.7 262.6 L352 270.4 L403.5 235.2 L342 245.6 Z" fill="#ffffff" stroke="#ffffff" stroke-width="3.7" stroke-linejoin="round"/>
+  <circle cx="347" cy="258" r="15.8" fill="#ffffff"/>
+</svg>

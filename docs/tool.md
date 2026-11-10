@@ -145,7 +145,9 @@ the components built from them ([kit.py](../overpressure/window/kit.py)). It use
 has (Segoe UI Variable or Segoe UI on Windows, the system font on macOS, the first of Inter, Cantarell, Noto
 Sans, Ubuntu and DejaVu Sans on Linux) and a monospaced one for command lines and output; no font files are
 bundled. A page keeps a readable width in a wide window and scrolls in a short one; the window opens at
-1120×760 where the screen has room and is at least 900×600.
+1120×760 where the screen has room and is at least 900×600. The logo ([docs/logo](logo/README.md)) is the
+window's icon in the title bar, the taskbar or the dock, the mark in the header and the app icon on the
+headset page, from PNG renderings at the display's scaling ([logo.py](../overpressure/window/logo.py)).
 
 It needs Tk and [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) (`customtkinter==6.0.0`,
 the `gui` extra in `pyproject.toml`, pinned with its dependencies in `uv.lock`); nothing else in the tool
@@ -441,7 +443,7 @@ python -m overpressure dev check
 | [overpressure/install.py](../overpressure/install.py) | the install engine: `Stage`, `Task`, `Ask`, the `Context` a task gets, the state, the lock, the events, `python -m overpressure install` |
 | [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (a Linux-root step's in the build container), its display, running and stopping it |
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
-| [overpressure/window/](../overpressure/window/__init__.py) | the window (CustomTkinter). Its models, without widgets: `installer.py` (the engine's events as stages and asks; the child engine, the demo engine), `advanced.py` (the steps, their values and command lines, one run at a time, the checks) and `headsets.py` (which headset: the headset page, its plan probes, the last choice in `out/window.json`, the demo's second headset). Its widgets: `app.py` (the header, the installer view, the panels) and `advanced_view.py`; `theme.py` holds the design tokens and the fonts' choice, `kit.py` the components built from them |
+| [overpressure/window/](../overpressure/window/__init__.py) | the window (CustomTkinter). Its models, without widgets: `installer.py` (the engine's events as stages and asks; the child engine, the demo engine), `advanced.py` (the steps, their values and command lines, one run at a time, the checks) and `headsets.py` (which headset: the headset page, its plan probes, the last choice in `out/window.json`, the demo's second headset). Its widgets: `app.py` (the header, the installer view, the panels) and `advanced_view.py`; `theme.py` holds the design tokens and the fonts' choice, `kit.py` the components built from them, `logo.py` the logo's renderings (`icons/`) for the display's scaling |
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix; `DeviceSettings`, what every Qualcomm Android headset names |
 | [overpressure/fastboot.py](../overpressure/fastboot.py) | flashing an image sparse above a size, raw below; the RAM boot: `fastboot boot` with the headset's checks, never a write |
 | [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, then the headset's (`Headset.dependencies()`), built from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link) and the build container's |

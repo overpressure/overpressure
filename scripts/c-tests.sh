@@ -27,6 +27,10 @@ test_c test_pico4_lens_panel -std=gnu11 test_pico4_lens_panel.c -lm
 test_c test_pico4_onboarding -std=gnu11 test_pico4_onboarding.c
 test_c test_pico4_setup -std=gnu11 test_pico4_setup.c
 
+# The boot indication's picture (pico4-splash's drawing, without the display).
+cd ../splash
+test_c test_pico4_splash -std=gnu11 test_pico4_splash.c
+
 # The PICO's battery driver on a fake PMIC, against stub kernel headers.
 cd ../../kernel/tests
 test_c test_pico4_battery -std=gnu11 -Istubs test_pico4_battery.c

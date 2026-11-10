@@ -55,7 +55,8 @@ status in its roadmap and README current.
   JSON events; `python -m overpressure install`), `window/` (the window, CustomTkinter, which
   only the window imports; `installer.py` and `advanced.py` are the
   installer view's and Advanced mode's models without widgets, `app.py` and `advanced_view.py` draw
-  them on `kit.py`'s components, `theme.py` the design tokens: colours, spacing, type and fonts),
+  them on `kit.py`'s components, `theme.py` the design tokens: colours, spacing, type and fonts,
+  `logo.py` the logo's PNG renderings in `icons/`; the drawings are in `docs/logo/`),
   `tools.py` (pinned host tools:
   platform-tools, edl-ng), `linux.py` and `container/` (the build container, where every
   Linux-root step runs: one named build at a time, its stop, the aarch64 handler), `doctor.py` (dependency checks:
@@ -75,7 +76,7 @@ status in its roadmap and README current.
 - `devices/<codename>/`: one headset: `tooling/` (its Python package with `HEADSET`), its
   images' sources and recipes, `scripts/`, `tests/`, `docs/`, `README.md`, `CLAUDE.md`,
   `device.mk` (its Makefile targets).
-- `tests/`: host tests of the generic package. `docs/`: `tool.md`, `adding-a-headset.md`, `releasing.md`.
+- `tests/`: host tests of the generic package. `docs/`: `tool.md`, `adding-a-headset.md`, `releasing.md`, `logo/` (the logo: SVG drawings, social cards, mockups).
   `scripts/`: shell helpers for the headsets' scripts (`stock-lib.sh`: files out of a stock ext4 image), and the
   repository's checks: `check-private.py`, `check-docs.py`, `run-shellcheck.py`, `c-tests.sh`, `release.py` (a release tag against `pyproject.toml`); `cliff.toml`, git-cliff's changelog setup.
 - `Install.cmd`, `Install.command`, `install.sh`: the start scripts; they fetch the pinned uv, a managed
