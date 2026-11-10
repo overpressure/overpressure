@@ -56,7 +56,9 @@ A failed check stops the release before anything is published. Fix it on `main`,
 ## Moving to new upstream versions
 
 Valve's packages, the kernel and Steam's client hold still between releases
-([devices/phoenix/docs/userspace.md](../devices/phoenix/docs/userspace.md#package-lock)). To move:
+([devices/phoenix/docs/userspace.md](../devices/phoenix/docs/userspace.md#package-lock)). The weekly upgrade check
+says what Valve has moved and whether the image still builds on it
+([devices/phoenix/docs/development.md](../devices/phoenix/docs/development.md#upgrade-check)). To move:
 
 | What | Change | Then |
 | --- | --- | --- |

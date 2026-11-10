@@ -14,6 +14,11 @@
 # WORKDIR         build tree (Linux file system; a few GB).
 # OUTDIR          Image.gz, sm8250-pico4-phoenix.dtb, config, version.
 #
+# With - for STOCK_RECOVERY and STOCK_VENDOR, the upgrade check (scripts/upgrade-check.sh): any of
+# Valve's source packages, not checked against the pin, at the commit its name gives, with the
+# PICO 4's patches, configuration and sources, an empty camera table in place of the one generated
+# from PICO OS, and Image.gz only (the tree's generated parts come from the stock recovery image).
+#
 # The PICO 4's kernel patches are in patches/, applied in name order; its own sources are in
 # src/, at their paths in the tree.
 #
@@ -28,7 +33,16 @@ DTB=sm8250-pico4-phoenix
 CAMERA_MODULE=/lib64/camera/com.qti.sensormodule.sunny_imx471.bin
 
 [ $# -eq 5 ] || { sed -n '3,18p' "$0" >&2; exit 2; }
-package=$(realpath "$1") recovery=$(realpath "$2") vendor=$(realpath "$3") work=$4 out=$5
+package=$(realpath "$1") recovery=$2 vendor=$3 work=$4 out=$5
+check=0
+if [ "$recovery" = - ] && [ "$vendor" = - ]; then
+	check=1
+	# The commit the package was made from, by its name (linux-72-deckard-7.2.0+gSHORT-N).
+	short=$(basename "$package" | sed -n 's/.*+g\([0-9a-f]*\)-[0-9]*\.src\.tar\.gz$/\1/p')
+	[ -n "$short" ] || { echo "no commit in the package's name: $package" >&2; exit 2; }
+else
+	recovery=$(realpath "$recovery") vendor=$(realpath "$vendor")
+fi
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/../../../scripts/stock-lib.sh"  # overpressure's
 mkdir -p "$work" "$out"
@@ -38,13 +52,16 @@ repo=$work/linux-valve.git
 src=$work/linux
 if [ ! -d "$repo" ]; then
 	echo "checking $package" >&2
-	echo "$PACKAGE_SHA256  $package" | sha256sum -c --quiet
+	[ "$check" = 1 ] || echo "$PACKAGE_SHA256  $package" | sha256sum -c --quiet
 	tar -xzf "$package" -C "$work" linux-72-deckard/archlinux-linux-deckard
 	mv "$work/linux-72-deckard/archlinux-linux-deckard" "$repo"
 	rmdir "$work/linux-72-deckard"
 fi
+[ "$check" = 0 ] || COMMIT=$(git --git-dir="$repo" rev-parse "$short^{commit}")
 if [ "$(git -C "$src" rev-parse HEAD 2>/dev/null)" != "$COMMIT" ]; then
 	rm -rf "$src"
+	# A new tree has none of the patches yet, whatever the last tree had.
+	rm -f "$work/patches.applied"
 	git --git-dir="$repo" worktree prune
 	git --git-dir="$repo" worktree add --detach "$src" "$COMMIT"
 fi
@@ -71,19 +88,29 @@ update() {
 done
 
 # The RGB camera's register table, generated from PICO OS's camera module.
-dump "$vendor" "$CAMERA_MODULE" "$work/imx471-module.bin"
-python3 "$here/imx471_mode.py" "$work/imx471-module.bin" "$work/pico4-imx471-mode.h"
+if [ "$check" = 1 ]; then
+	printf '%s\n' '/* The upgrade check: no camera module, no registers. */' \
+		'static const struct imx471_reg imx471_mode[] = {' '};' > "$work/pico4-imx471-mode.h"
+else
+	dump "$vendor" "$CAMERA_MODULE" "$work/imx471-module.bin"
+	python3 "$here/imx471_mode.py" "$work/imx471-module.bin" "$work/pico4-imx471-mode.h"
+fi
 update "$work/pico4-imx471-mode.h" "$src/drivers/media/i2c/pico4-imx471-mode.h"
 
 # The PICO 4's tree beside mainline's SM8250 boards, with the sink for the ABL's overlay and
 # the panels' command sequences, both generated from the stock recovery image.
 dts=$src/arch/arm64/boot/dts/qcom
+if [ "$check" = 1 ]; then
+	: > "$work/$DTB-dtbo-sink.dtsi"
+	: > "$work/$DTB-panel.dtsi"
+else
 update "$here/$DTB.dts" "$dts/$DTB.dts"
 python3 "$here/dtbo_sink.py" "$recovery" "$work/$DTB-dtbo-sink.dtsi"
 update "$work/$DTB-dtbo-sink.dtsi" "$dts/$DTB-dtbo-sink.dtsi"
 python3 "$here/panel_sequence.py" "$recovery" "$work/$DTB-panel.dtsi"
 update "$work/$DTB-panel.dtsi" "$dts/$DTB-panel.dtsi"
 grep -q "$DTB.dtb" "$dts/Makefile" || echo "dtb-\$(CONFIG_ARCH_QCOM) += $DTB.dtb" >> "$dts/Makefile"
+fi
 
 # The version string (uname -v) names the inputs, not the build: instead of a local build counter
 # and the build's time, a hash of everything this script puts into the tree (the patches, the own
@@ -127,9 +154,13 @@ while IFS= read -r line; do
 	esac
 done < "$here/pico4.config"
 
-"${make[@]}" Image.gz "qcom/$DTB.dtb"
+if [ "$check" = 1 ]; then
+	"${make[@]}" Image.gz
+else
+	"${make[@]}" Image.gz "qcom/$DTB.dtb"
+	install -m 644 "$work/build/arch/arm64/boot/dts/qcom/$DTB.dtb" "$out/$DTB.dtb"
+fi
 install -m 644 "$work/build/arch/arm64/boot/Image.gz" "$out/Image.gz"
-install -m 644 "$work/build/arch/arm64/boot/dts/qcom/$DTB.dtb" "$out/$DTB.dtb"
 install -m 644 "$config" "$out/config"
 "${make[@]}" -s kernelrelease > "$out/version"
 echo "$(cat "$out/version"): $(stat -c %s "$out/Image.gz") bytes Image.gz, $(stat -c %s "$work/build/arch/arm64/boot/Image") bytes Image" >&2

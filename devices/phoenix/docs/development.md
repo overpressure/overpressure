@@ -228,6 +228,28 @@ Writing that archive took about 25 s of each (tar, zstd and the copy to the outp
 directory). Package builds keep emulated overhead outside the compiler: makepkg's stripping,
 debug packages and compression take about a minute for Monado.
 
+## Upgrade check
+
+The image pins every package and the kernel, and moves only when a release moves it (docs/releasing.md).
+Whether it still would build on what Valve publishes meanwhile is checked weekly, in CI on GitHub's ARM64
+runner ([upgrade.yml](../../../.github/workflows/upgrade.yml), Mondays, or by hand), and on any computer
+with the build container:
+
+```sh
+python -m overpressure container run -- bash devices/phoenix/scripts/upgrade-check.sh \
+    /var/tmp/pico4-upgrade-check out/upgrade-check
+```
+
+[`upgrade-check.sh`](../scripts/upgrade-check.sh) needs none of PICO OS's files:
+
+| Part | What it does | Fails when |
+| --- | --- | --- |
+| Userspace | `build-userspace.sh --refresh --update-lock` in its own build root, without the asset folders; [`upstream.py lock-diff`](../scripts/upstream.py) lists every package that moved since `userspace/packages.lock`, the session's packages first | a project package does not build, a patch does not apply, or a dependency stays unresolved |
+| Kernel | reads Valve's current `linux-72-deckard` from the Frame repository's database; a newer one whose source package Valve has published is built by `kernel/build-kernel.sh` with `-` for the stock images: our patches, configuration and drivers, an empty camera table and no device tree, which come from PICO OS's files | a patch does not apply, an option of `pico4.config` does not survive, or the kernel does not compile |
+
+`out/upgrade-check/upgrade-check.md` is the summary, and the run's page in CI shows it. A moved package that
+still builds fails nothing: whether the session runs on it is the headset's check before a release.
+
 ## Tests
 
 | Level | Command | Takes |
