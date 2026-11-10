@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import time
@@ -15,7 +16,7 @@ from typing import Any, Callable
 from unittest import mock
 
 from overpressure import __main__ as cli
-from overpressure import window
+from overpressure import disclaimer, window
 from overpressure.headset import Action, AfterInstall, BackupSet, Command, Headset, Info, Registry, Step, Workflow
 from overpressure.install import Stage, Task
 from overpressure.window import advanced, app, headsets, installer
@@ -631,6 +632,44 @@ class WhatToDoTests(Folder):
         self.assertTrue(any("Keep the file private" in t for t in panel_texts(shown)))
         press_panel(shown, "OK")
         self.assertEqual(shown.view, app.ACTIONS_VIEW)
+
+
+class DisclaimerTests(Folder):
+    """The disclaimer over the whole window on every start: accepted, or the window closes."""
+
+    open = WindowTests.open
+    engines = WhatToDoTests.engines
+    jobs = WhatToDoTests.jobs
+    open_choosy = WhatToDoTests.open_choosy
+
+    def setUp(self):
+        super().setUp()
+        self.made: list[installer.DemoEngine] = []
+        self.recorded = False
+
+    def test_accepting_holds_for_what_the_window_starts(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop(disclaimer.ENV, None)
+            shown = self.open_choosy()
+            self.assertIsNotNone(shown.disclaimer)
+            self.assertIn(disclaimer.TEXT, texts(shown.disclaimer))
+            press(shown.disclaimer, disclaimer.ACCEPT)
+            self.assertIsNone(shown.disclaimer)
+            self.assertTrue(disclaimer.accepted())
+
+    def test_it_shows_also_when_accepted_before_and_declining_closes(self):
+        with mock.patch.dict(os.environ, {disclaimer.ENV: "1"}):
+            shown = self.open_choosy()
+            self.assertIsNotNone(shown.disclaimer)  # the window always asks
+            closed = mock.Mock()
+            with mock.patch.object(shown.root, "destroy", closed):
+                press(shown.disclaimer, disclaimer.DECLINE)
+            closed.assert_called_once()
+
+
+def press(widget: Any, label: str) -> None:  # noqa: ANN401  # a Tk widget
+    """Press the button LABEL inside WIDGET."""
+    next(w for w in all_widgets(widget) if type(w).__name__ == "CTkButton" and w.cget("text") == label).invoke()
 
 
 def all_widgets(widget: Any) -> list[Any]:  # noqa: ANN401  # a Tk widget

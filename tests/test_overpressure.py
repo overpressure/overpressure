@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 from unittest import mock
 
-from overpressure import REPO, fastboot, linux, runner
+from overpressure import REPO, disclaimer, fastboot, linux, runner
 from overpressure import __main__ as cli
 from overpressure.headset import Command, Headset, Info, Param, Registry, Step, discover
 
@@ -298,6 +298,8 @@ class CommandLineTests(unittest.TestCase):
                 mock.patch.object(cli, "discover", return_value=registry),
                 mock.patch.object(Fake, "ram_boot", return_value=target, create=True),
                 mock.patch.object(fastboot, "ram_boot", side_effect=effect) as boot,
+                mock.patch.dict(os.environ, {disclaimer.ENV: "1"}),  # accepted, as an unattended run
+                mock.patch.object(disclaimer.power, "battery_problem", return_value=""),
             ):
                 code, _ = self.run_cli("ram-boot", "out/x.img")
             self.assertEqual(code, expected)

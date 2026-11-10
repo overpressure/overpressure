@@ -68,7 +68,9 @@ headset is in and what to do. *Advanced mode* in the window's header (`python -m
 opens it right after the choice) has every step on its own.
 
 **In a terminal.** `python -m overpressure install` runs the same stages as text, and asks through the keyboard
-(`--plan` shows them and what is done; [the tool](../../docs/tool.md#the-installer)). Each task runs one of these
+(`--plan` shows them and what is done; [the tool](../../docs/tool.md#the-installer)). Every command that touches
+the headset first shows the disclaimer and asks `y` or `n`; `--accept-disclaimer` accepts it for unattended runs.
+On a laptop, plug in its charger: below 30 % on battery these commands do not start. Each task runs one of these
 commands, which also work on their own:
 
 | Stage | Commands |

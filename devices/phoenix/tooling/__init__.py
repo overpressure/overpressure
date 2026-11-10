@@ -35,6 +35,23 @@ if TYPE_CHECKING:
 
 #: The installer's other workflows (overpressure/headset.py, Workflow).
 UPGRADE, RESTORE = "upgrade", "restore"
+#: The dev loop's subcommands that touch the headset: all but its two builds (image, boot-image).
+DEV_ON_HEADSET = (
+    "stage-abl",
+    "flash",
+    "connect",
+    "check",
+    "reboot",
+    "restore",
+    "normal",
+    "recovery",
+    "installed",
+    "release-check",
+    "support-bundle",
+    "install",
+    "restore-partition",
+    "ssh",
+)
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -87,10 +104,18 @@ class Phoenix(Headset):
             "bootchain": Command(
                 "bootchain", "each PICO OS build's boot chain against the verified one, from PICO's OTAs"
             ),
-            "device": Command("device", "identity, EDL backups, engineering ABL, unlock and restore"),
-            "hwtest": Command("hardware_test", "preflight and the bounded acceptance runner"),
-            "dev": Command("devloop", "the development loop: maintenance stage 1, install, checks"),
-            "cycle": Command("cycle", "unattended acceptance cycle that ends on stock boot and ABL"),
+            "device": Command(
+                "device",
+                "identity, EDL backups, engineering ABL, unlock and restore",
+                headset=("probe", "check-unlocked", "backup", "stage", "unlock", "restore-abl"),
+            ),
+            "hwtest": Command("hardware_test", "preflight and the bounded acceptance runner", headset=True),
+            "dev": Command(
+                "devloop",
+                "the development loop: maintenance stage 1, install, checks",
+                headset=DEV_ON_HEADSET,
+            ),
+            "cycle": Command("cycle", "unattended acceptance cycle that ends on stock boot and ABL", headset=True),
         }
 
     def steps(self) -> Sequence[Step]:

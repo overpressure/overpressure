@@ -701,6 +701,28 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse((self.out / "lock").exists())
         self.assertEqual(install.upgrade(Workflows(), ["--plan"]), 0)
 
+    def test_a_write_waits_for_enough_power(self):
+        ran: list[str] = []
+        stages = (
+            Stage(
+                "s",
+                "Stage",
+                "",
+                (
+                    Task("build", "Build", lambda _ctx: ran.append("build")),
+                    Task("write", "Write", lambda _ctx: ran.append("write"), writes=True),
+                ),
+            ),
+        )
+        ui = Recorder()
+        low = "This computer runs on its battery at 12 %."
+        self.assertEqual(Engine(INFO, stages, ui, root=self.out, battery=lambda: low).run(), "failed")
+        self.assertEqual(ran, ["build"])  # the build ran; the write did not start
+        self.assertEqual(ui.finished()["error"], low)
+        self.assertIn("Nothing was written", ui.finished()["where"])
+        self.assertEqual(Engine(INFO, stages, Recorder(), root=self.out, battery=lambda: "").run(), "done")
+        self.assertEqual(ran, ["build", "write"])
+
     def test_a_headset_with_the_install_alone(self):
         stages = (Stage("s", "Stage", "", (Task("t", "Task", lambda _ctx: None),)),)
         self.assertEqual([w.key for w in Fake(stages).workflows()], ["install"])

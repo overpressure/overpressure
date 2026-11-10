@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""overpressure's command line: python -m overpressure [--device CODENAME] COMMAND [ARGS...].
+"""overpressure's command line: python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS...].
 
   devices              the headsets in devices/
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
@@ -27,6 +27,11 @@
 The headset is --device, else OVERPRESSURE_DEVICE (environment or .env), else the only one in
 devices/; the window asks instead, unless --device names one. "python -m overpressure COMMAND
 --help" shows a command's options.
+
+A command that touches the headset (the installer, ram-boot, a headset command such as dev install;
+not the builds) first shows the disclaimer and asks y or n; --accept-disclaimer accepts it without
+asking, for unattended runs (overpressure/disclaimer.py). It also refuses to start on a computer
+that runs on its battery below 30 %.
 """
 
 from __future__ import annotations
@@ -36,7 +41,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from . import backup, doctor, fastboot, install, linux, localconfig, runner, tools
+from . import backup, disclaimer, doctor, fastboot, install, linux, localconfig, runner, tools
 from .headset import Headset, Registry, discover
 
 
@@ -186,6 +191,26 @@ ON_HEADSET: dict[str, Callable[[Headset, list[str]], int]] = {
 }
 
 
+#: overpressure's own commands that touch the headset; --plan and --help run nothing.
+TOUCHING = ("ram-boot", "install", "upgrade", "restore")
+
+
+def touches(headset: Headset, argv: list[str]) -> bool:
+    """Tell whether ARGV (its command word first) touches the headset: the disclaimer and the power check first."""
+    word, rest = argv[0], argv[1:]
+    if any(a in ("-h", "--help", "--plan") for a in rest):
+        return False
+    if word == "ram-boot":
+        return headset.ram_boot() is not None  # else it only says the headset has none
+    if word in TOUCHING:
+        return True
+    if word == "run":
+        steps = {s.key: s for s in headset.steps()}
+        step = steps.get(rest[0]) if rest else None
+        return step is not None and not step.script and bool(step.argv) and headset.touches(list(step.argv))
+    return word not in ON_HEADSET and headset.touches(argv)
+
+
 def _dispatch(registry: Registry, headset: Headset | None, argv: list[str]) -> int:
     word = argv[0]
     if word in GENERIC:
@@ -193,17 +218,24 @@ def _dispatch(registry: Registry, headset: Headset | None, argv: list[str]) -> i
     if headset is None:
         print("error: choose a headset with --device (python -m overpressure devices)", file=sys.stderr)
         return 2
-    if word in ON_HEADSET:
-        return ON_HEADSET[word](headset, argv[1:])
-    if word not in headset.commands():
+    if word not in ON_HEADSET and word not in headset.commands():
         print(usage(headset))
         return 2
+    if touches(headset, argv):
+        refused = disclaimer.gate()
+        if refused:
+            return refused
+    if word in ON_HEADSET:
+        return ON_HEADSET[word](headset, argv[1:])
     return headset.main(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command line."""
     argv = list(sys.argv[1:] if argv is None else argv)
+    if disclaimer.FLAG in argv:  # anywhere: no command has an option of that name
+        argv.remove(disclaimer.FLAG)
+        disclaimer.accept()
     codename = None
     if argv[:1] == ["--device"] and len(argv) > 1:
         codename, argv = argv[1], argv[2:]

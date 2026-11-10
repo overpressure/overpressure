@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, ClassVar, Protocol, TypeVar
 
-from . import REPO, localconfig, runner
+from . import REPO, localconfig, power, runner
 from .headset import INSTALL
 
 if TYPE_CHECKING:
@@ -630,12 +630,13 @@ class Engine:
         clock: Timing = time,
         workflow: str = INSTALL,
         others: Sequence[str] = (),
+        battery: Callable[[], str] | None = None,
     ) -> None:
         """Run @p stages of the headset @p info through @p ui; tests pass the root folder, .env and fakes.
 
         The lock is @p root/lock, the state and the logs are in @p root/<codename> for the install and
         in @p root/<codename>/<workflow> for another @p workflow; finished, it forgets the state of the
-        @p others.
+        @p others. Before each task that writes, @p battery (this computer's, overpressure.power) may refuse it.
         """
         check_plan(stages)
         self.info = info
@@ -644,6 +645,7 @@ class Engine:
         self.root = root
         self.workflow = workflow
         self.others = tuple(o for o in others if o != workflow)
+        self.battery = battery or power.battery_problem
         self.folder = workflow_folder(root, info.codename, workflow)
         self.env = env if env is not None else localconfig.ROOT / ".env"
         self.spawn: Spawn = spawn or self._spawn
@@ -869,14 +871,27 @@ class Engine:
             return True
         return False
 
+    def _refused(self, stage: Stage, task: Task) -> str | None:
+        """Return the run's end status when TASK must not start: a stop asked for, or too little power to write."""
+        if self.stopping:
+            self.set_status(stage, task, PENDING)
+            return self.finish(STOPPED, task, "", STOPPED_BETWEEN)
+        problem = self.battery() if task.writes else ""
+        if problem:  # the computer went on its battery during the run (a build takes hours)
+            self.set_status(stage, task, FAILED)
+            return self.finish(
+                FAILED, task, problem, "Nothing was written to the headset by this step. " + STOPPED_AGAIN
+            )
+        return None
+
     def step(self, stage: Stage, task: Task) -> str | None:
         """Run one task unless it needs no run; return the run's end status when it ends the run."""
         ctx = Context(self, stage, task)
         if self._needs_no_run(ctx, stage, task):
             return None
-        if self.stopping:
-            self.set_status(stage, task, PENDING)
-            return self.finish(STOPPED, task, "", STOPPED_BETWEEN)
+        refused = self._refused(stage, task)
+        if refused is not None:
+            return refused
         self.set_status(stage, task, RUNNING)
         try:
             with self._output_as_log(ctx):

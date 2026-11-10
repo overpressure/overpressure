@@ -108,6 +108,8 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 # test (docs/install.md): the image in the build container, then from the maintenance stage 1:
 python -m overpressure container run -- bash devices/phoenix/scripts/build-system-image.sh \
     out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
+# Commands that touch the headset ask the disclaimer first; unattended (an agent, a script):
+# python -m overpressure --accept-disclaimer dev ..., or OVERPRESSURE_ACCEPT_DISCLAIMER=1.
 python -m overpressure dev recovery && python -m overpressure dev install   # boot, super, data; starts it
 python -m overpressure dev installed && python -m overpressure dev check    # reconnect after a reboot; check
 # Back to stock only when the user asks: python -m overpressure dev restore, then

@@ -13,6 +13,7 @@ import contextlib
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
+from overpressure import disclaimer
 from overpressure.backup import ARCHIVE_SUFFIX
 from overpressure.headset import INSTALL, AfterInstall
 from overpressure.window.advanced import INSTALLER, busy
@@ -147,6 +148,7 @@ class Window:
         self.logs: dict[tuple[str, str], list[str]] = {}  # its details, while another headset or workflow is chosen
         self.workflow = INSTALL  # what the installer view runs: the install, or another of the headset's workflows
         self.job: BackupJob | None = None  # a backup's export or import, while it runs and until its end is shown
+        self.disclaimer: Any = None  # the disclaimer over the whole window, until it is accepted
         self.model = Model()
         self.view = INSTALLER_VIEW
         self.first_view = view  # the view the first choice opens (gui --advanced)
@@ -181,7 +183,35 @@ class Window:
             engine.start(["--plan"])
         if not self.choice.asking():
             self.first_view = INSTALLER_VIEW  # shown already: a later choice opens the installer
+        self.show_disclaimer()
         self.root.after(100, self._tick)
+
+    def show_disclaimer(self) -> None:
+        """Cover the whole window with the disclaimer, on every start: accepted, or the window closes.
+
+        Accepted, it holds for every program the window starts (the installer, a step, a backup job),
+        as --accept-disclaimer does on the command line (overpressure/disclaimer.py).
+        """
+
+        def answer(accepted: bool, _values: dict[str, str]) -> None:  # noqa: FBT001  # the panel's callback
+            if not accepted:
+                self.root.destroy()
+                return
+            disclaimer.accept()
+            if self.disclaimer is not None:
+                self.disclaimer.destroy()
+            self.disclaimer = None
+
+        self.disclaimer, _entries = self.build_panel(
+            self.root,
+            disclaimer.TITLE,
+            disclaimer.TEXT,
+            fields=[],
+            accept=disclaimer.ACCEPT,
+            decline=disclaimer.DECLINE,
+            on_answer=answer,
+        )
+        self.disclaimer.lift()
 
     # -- layout ----------------------------------------------------------------------------
     def first_size(self) -> str:

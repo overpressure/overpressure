@@ -47,12 +47,15 @@ class Info:
 class Command:
     """A command of the command line: a module whose main(argv) takes the rest of the words.
 
-    With keep, the command word itself is passed on first (one module, several commands).
+    With keep, the command word itself is passed on first (one module, several commands). headset
+    says whether it touches the headset (the disclaimer and the power check come first): every use
+    (True), none (False, the default), or only these subcommands (the word after it).
     """
 
     module: str
     help: str
     keep: bool = False
+    headset: bool | tuple[str, ...] = False
 
 
 @dataclass(frozen=True)
@@ -254,6 +257,15 @@ class Headset(ABC):
         """Make an imported backup this computer's: the .env settings that name it and its serials."""
         msg = f"the {self.info.name} keeps no backup in overpressure"
         raise ValueError(msg)
+
+    def touches(self, argv: list[str]) -> bool:
+        """Tell whether the command line ARGV (argv[0] its command word) touches the headset; help never does."""
+        if any(word in ("-h", "--help") for word in argv[1:]):
+            return False
+        command = self.commands().get(argv[0]) if argv else None
+        if command is None or isinstance(command.headset, bool):
+            return bool(command and command.headset)
+        return len(argv) > 1 and argv[1] in command.headset
 
     def main(self, argv: list[str]) -> int:
         """Run a command of its command line (argv[0] is the command word)."""

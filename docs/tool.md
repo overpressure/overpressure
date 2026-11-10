@@ -153,6 +153,10 @@ does. The start scripts below bring both; in a development environment `uv sync 
 them `gui` says how to get them and exits with status 1, and without a display it exits with status 2; the
 command line does everything the window does.
 
+- **The disclaimer.** On every start the window is covered by *Before you go on*: the warranty is void,
+  nobody else is to blame, and overpressure comes with no warranty of any kind. *I accept* lets the window be
+  used and holds for every program it starts (the installer, a step, a backup job); *Close* closes it. It
+  shows on every start, also when the environment has accepted it ([below](#the-command-line)).
 - **The headset page.** The window always opens on *Which headset do you have?*, also with one headset in
   `devices/`: one card per headset with its name, SoC and summary, what choosing it opens (the installer
   and Advanced mode, or Advanced mode only for a headset without an installer) and, for a headset with an
@@ -384,7 +388,7 @@ output indented below; asks use `input()`, secret fields `getpass()`.
 ## The command line
 
 ```text
-python -m overpressure [--device CODENAME] COMMAND [ARGS...]
+python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS...]
 
   devices              the headsets in devices/
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
@@ -404,6 +408,20 @@ python -m overpressure [--device CODENAME] COMMAND [ARGS...]
                        the build container
   COMMAND [ARGS...]    a command of the headset
 ```
+
+**Before anything touches the headset.** A command that touches the headset shows the disclaimer first
+and asks `y` or `n` ([overpressure/disclaimer.py](../overpressure/disclaimer.py)): the installer and its
+`upgrade` and `restore`, `ram-boot`, `run` of a step that does, and the headset's own commands that do
+(`Command(headset=...)`: the PICO 4's `dev` but its two builds, `device` probe, backup, stage, unlock and
+restore-abl, `hwtest`, `cycle`). The builds, `--plan`, `--help`, `steps` and `backup` do not. `n` does
+nothing (exit status 1), no answer (the end of the input) neither (2). `--accept-disclaimer`, anywhere on
+the command line, accepts it without asking for unattended runs, as `OVERPRESSURE_ACCEPT_DISCLAIMER=1` in
+the environment does; an accepted disclaimer holds for the programs a command starts (the installer's
+tasks, a step's command). The same commands refuse to start on a computer that runs on its battery below
+30 % ([overpressure/power.py](../overpressure/power.py): Windows' `GetSystemPowerStatus`, Linux's
+`/sys/class/power_supply`, macOS's `pmset -g batt`); on mains, without a battery, or when its state cannot
+be read, they go on. The installer asks again before each task that writes to the headset, and fails it
+before its write when the computer has gone on its battery since.
 
 The headset is `--device`, else `OVERPRESSURE_DEVICE` (environment or `.env`), else the only one
 in `devices/`; `gui` asks on its headset page instead, unless `--device` names one. `python -m overpressure` without arguments lists the headset's commands;
