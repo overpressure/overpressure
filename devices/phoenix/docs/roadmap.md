@@ -251,7 +251,8 @@ brought no suspend. Whether a key wake behaves alike is not known.
   extraction byte for byte on Windows and Linux; macOS and EDL device counting through pyusb on a Mac are not run.
 - The first-run setup's failure page (a refused password, a network out of range) worn: drawn and
   host-tested only. Its texts in the 30 languages besides English are machine-assisted and not reviewed.
-  The screen reader of Steam's own setup has no counterpart.
+  The panel is not read out; the client's screen reader (Orca) speaks, its voice choice in the client's
+  settings is not tried.
 - Battery life unplugged: only inferred with the cable in.
 - Sessions much longer than 10 minutes ([cooling.md](cooling.md)).
 - MangoHud's `mangoapp`, the client's performance overlay: switching it on from the client's menu.
