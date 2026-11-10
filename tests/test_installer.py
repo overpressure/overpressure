@@ -7,8 +7,10 @@ import contextlib
 import io
 import json
 import sys
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from typing import Callable
 from unittest import mock
 
@@ -474,6 +476,44 @@ class ChildEngineTests(unittest.TestCase):
         self.assertEqual(engine.items.get(timeout=30), ("line", "stopped\n"))
         self.assertEqual(engine.items.get(timeout=30), ("exit", 0))
         engine.end()  # it has exited: nothing to end
+
+
+class FontSystemTests(unittest.TestCase):
+    """A Linux Tk without Xft draws bitmap fonts and broken shapes: the window says what to install."""
+
+    @staticmethod
+    def root(fontsystem: str | None, windowing: str = "x11") -> mock.Mock:
+        def call(*words: str) -> str:
+            if words[0] == "::tk::pkgconfig":
+                if fontsystem is None:
+                    msg = 'invalid command name "::tk::pkgconfig"'  # Tk 8.6
+                    raise RuntimeError(msg)
+                return fontsystem
+            return windowing
+
+        return mock.Mock(tk=mock.Mock(call=call))
+
+    def test_tk9_says_it_tk86_shows_it_in_what_is_loaded(self):
+        self.assertEqual(window.font_system(self.root("xft")), "xft")
+        self.assertEqual(window.font_system(self.root("x11")), "x11")
+        with tempfile.TemporaryDirectory() as folder:
+            maps = Path(folder) / "maps"
+            maps.write_text("7f00 r-xp /usr/lib/x86_64-linux-gnu/libXft.so.2.3.6\n", encoding="utf-8")
+            self.assertEqual(window.font_system(self.root(None), maps), "xft")
+            maps.write_text("7f00 r-xp /usr/lib/libX11.so.6\n", encoding="utf-8")
+            self.assertEqual(window.font_system(self.root(None), maps), "x11")
+        self.assertEqual(window.font_system(self.root(None, "win32")), "")
+
+    def test_only_a_tk_without_xft_gets_the_note(self):
+        self.assertIn("python3-tk", window.rough_fonts(self.root("x11")))
+        self.assertEqual(window.rough_fonts(self.root("xft")), "")
+        self.assertEqual(window.rough_fonts(self.root(None, "aqua")), "")
+
+    def test_install_sh_prefers_a_system_python_whose_tk_draws_with_xft(self):
+        script = (Path(__file__).resolve().parents[1] / "install.sh").read_text(encoding="utf-8")
+        self.assertIn('set -- --no-managed-python --python "$found"', script)
+        self.assertIn('"libXft" in open("/proc/self/maps").read()', script)
+        self.assertIn('"$uv" run --locked --no-dev --extra gui "$@" python -m overpressure gui', script)
 
 
 class GuiCommandTests(unittest.TestCase):

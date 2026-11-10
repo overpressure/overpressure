@@ -205,6 +205,13 @@ with `UV_CACHE_DIR=cache/uv-cache`, `UV_PYTHON_INSTALL_DIR=cache/python` and
 `UV_PROJECT_ENVIRONMENT=cache/venv`, so uv's Python 3.12 (which has Tk everywhere), CustomTkinter and the
 environment stay inside the folder. When the start fails, the terminal window stays open with the error.
 
+**Linux.** uv's Python brings a Tk built without Xft: bitmap fonts, and CustomTkinter's rounded corners and
+shapes, which it draws with a font, break. `install.sh` therefore takes the first system Python 3.9+ whose Tk
+draws with Xft (Tk 9 names its font system; a Tk 8.6 with Xft has `libXft` loaded) and runs uv with
+`--no-managed-python --python` it; without one it keeps uv's Python and says which package to install:
+`python3-tk` (Debian, Ubuntu, openSUSE), `python3-tkinter` (Fedora) or `tk` (Arch). The window prints the same
+note when its Tk draws without Xft.
+
 ## The installer
 
 ```sh

@@ -28,7 +28,8 @@ that isn't verified ([list](docs/device-preparation.md#verified-hardware)): toda
 You build your own system; the project publishes no image and no vendor file ([docs/distribution.md](docs/distribution.md)).
 
 **You need** the headset, a USB-C data cable, a computer with Windows, macOS or Linux, about 40 GB free, a few
-hours for the first build (it downloads about 15 GB), and Docker or Podman running.
+hours for the first build (it downloads about 15 GB), and Docker or Podman running; on Linux also `python3-tk`
+(or your distribution's equivalent), for a smooth window.
 
 **The installer.** Double-click `Install.cmd` (Windows) or `Install.command` (macOS), or run `sh install.sh`
 (Linux). Accept the disclaimer, choose the PICO 4, then **Install**, **Upgrade** or **Restore to stock**. Each

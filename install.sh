@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Unlicense
 # Start the overpressure installer on Linux (and macOS, through Install.command): sh install.sh
 #
-# It fetches the pinned uv into cache/uv (checked by its SHA-256), which fetches Python 3.12 (with
-# Tk, which a system Python often lacks) and CustomTkinter into cache/ and opens the window.
-# Everything stays inside this folder: nothing is installed on the computer.
+# It fetches the pinned uv into cache/uv (checked by its SHA-256), which fetches CustomTkinter and,
+# where needed, Python 3.12 with Tk into cache/ and opens the window. On Linux a system Python whose Tk
+# draws with Xft is taken first (below). Everything stays inside this folder: nothing is installed on
+# the computer.
 set -eu
 
 UV_VERSION=0.13.4
@@ -87,4 +88,33 @@ UV_CACHE_DIR="$PWD/cache/uv-cache"
 UV_PYTHON_INSTALL_DIR="$PWD/cache/python"
 UV_PROJECT_ENVIRONMENT="$PWD/cache/venv"
 export UV_CACHE_DIR UV_PYTHON_INSTALL_DIR UV_PROJECT_ENVIRONMENT
-"$uv" run --locked --no-dev --extra gui --managed-python --python 3.12 python -m overpressure gui
+
+# On Linux uv's own Python brings a Tk built without Xft: bitmap fonts, and CustomTkinter's rounded
+# corners and shapes, which it draws with a font, break. A system Python whose Tk draws with Xft (the
+# distribution's python3-tk) makes the window look as it should, so it is taken when there is one.
+set -- --managed-python --python 3.12
+if [ "$(uname -s)" = Linux ]; then
+    # Tk 9 names its font system; a Tk 8.6 built with Xft has libXft loaded (overpressure/window/__init__.py).
+    probe='import sys, tkinter
+assert sys.version_info >= (3, 9)
+root = tkinter.Tk()
+root.withdraw()
+try:
+    print(root.tk.call("::tk::pkgconfig", "get", "fontsystem"))
+except tkinter.TclError:
+    print("xft" if "libXft" in open("/proc/self/maps").read() else "x11")
+root.destroy()'
+    for candidate in python3 python3.13 python3.12 python3.11 python3.10 python3.9; do
+        found=$(command -v "$candidate" 2>/dev/null) || continue
+        if [ "$("$found" -c "$probe" 2>/dev/null)" = xft ]; then
+            set -- --no-managed-python --python "$found"
+            break
+        fi
+    done
+    if [ "$1" = --managed-python ]; then
+        printf '%s\n' "note: no Python with Tk on this computer draws smooth fonts, so the window looks rough." \
+            "      Install your distribution's Tk for Python and start again: python3-tk (Debian, Ubuntu," \
+            "      openSUSE), python3-tkinter (Fedora), tk (Arch)." >&2
+    fi
+fi
+"$uv" run --locked --no-dev --extra gui "$@" python -m overpressure gui
