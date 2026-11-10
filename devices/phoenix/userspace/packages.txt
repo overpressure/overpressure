@@ -41,15 +41,15 @@ deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64
 # libsensors.so.5, which Valve's Mesa links (gallium's HUD) and does not declare
 lm_sensors
 xorg-xwayland
-pipewire
-pipewire-pulse
-wireplumber
+deckard-arch-hotfixes-release-0.3/pipewire
+deckard-arch-hotfixes-release-0.3/pipewire-pulse
+deckard-arch-hotfixes-release-0.3/wireplumber
 # PipeWire's ALSA plugin with a fix for capture through a suspend; the build installs it over
 # pipewire-audio's (docs/userspace.md#audio).
 pico4/pico4-spa-alsa
 # Real-time priority for PipeWire's audio threads, as on SteamOS: with a session bus PipeWire
 # asks RTKit and stays at normal priority without it, and sounds break up under the session's load
-rtkit
+deckard-arch-hotfixes-release-0.3/rtkit
 # amixer, aplay, arecord, alsaucm: the sound card's checks (docs/userspace.md#audio)
 alsa-utils
 vulkan-icd-loader
@@ -127,8 +127,30 @@ inotify-tools
 !sddm
 
 # Diagnostics (mtools: the stage-2 USB log drive)
-libdrm
+deckard-arch-hotfixes-release-0.3/libdrm
 mtools
 evtest
 strace
 usbutils
+
+# The Frame's builds of dependencies that Holo's core and extra also have, where the Frame's is the
+# same version or newer (docs/userspace.md#where-the-packages-come-from): filesystem gives
+# os-release ID=steamos and /etc/steamos-release; PipeWire and WirePlumber are the Frame's 1.6.8 and
+# 0.5.14; bluez-libs matches the Frame's bluez. The Frame's older builds of the others need its
+# private base.
+deckard-arch-hotfixes-release-0.3/filesystem
+deckard-arch-hotfixes-release-0.3/bash
+deckard-arch-hotfixes-release-0.3/gptfdisk
+deckard-arch-hotfixes-release-0.3/mkinitcpio-busybox
+deckard-arch-hotfixes-release-0.3/linux-api-headers
+deckard-arch-hotfixes-release-0.3/alsa-card-profiles
+deckard-arch-hotfixes-release-0.3/libpipewire
+deckard-arch-hotfixes-release-0.3/pipewire-audio
+deckard-arch-hotfixes-release-0.3/libwireplumber
+deckard-arch-hotfixes-release-0.3/wayland
+deckard-arch-hotfixes-release-0.3/libxkbcommon
+deckard-arch-hotfixes-release-0.3/libxkbcommon-x11
+deckard-arch-hotfixes-release-0.3/v4l-utils
+deckard-arch-hotfixes-release-0.3/bluez-libs
+# libxml2.so.2, which the Frame's wayland and libxkbcommon link (core's libxml2 is 2.15, libxml2.so.16)
+libxml2-legacy

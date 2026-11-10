@@ -14,7 +14,7 @@ another project and takes its license. Each source file names its license in its
 | `devices/phoenix/userspace/pkgbuilds/pico4-gamescope/`: the patch | a change to gamescope | gamescope | 3.16.28, commit `ea3579ed6121` | BSD-2-Clause |
 | `devices/phoenix/userspace/pkgbuilds/pico4-monado/`: the patches | changes to Monado | Monado | 25.1.0, commit `3b450e37b624` | BSL-1.0 |
 | `devices/phoenix/userspace/pkgbuilds/pico4-sensors/`: the patches | changes to hexagonrpc | hexagonrpc | commit `da7a3742ab8d` | GPL-3.0-or-later |
-| `devices/phoenix/userspace/pkgbuilds/pico4-spa-alsa/`: the patch | a change to PipeWire | PipeWire | 1.4.9 (release archive, SHA-256 in the recipe) | MIT |
+| `devices/phoenix/userspace/pkgbuilds/pico4-spa-alsa/`: the patch | a change to PipeWire | PipeWire | 1.6.8 (release archive, SHA-256 in the recipe) | MIT |
 | `overpressure/apksign.py`: `ALPINE_KEYS` | Alpine's two aarch64 signing public keys, to check its package index | Alpine Linux (`alpine-keys`) | the two keys as in the file | public keys, published at alpinelinux.org/keys |
 
 ## The project's own code under another license

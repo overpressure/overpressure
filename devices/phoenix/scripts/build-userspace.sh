@@ -182,6 +182,14 @@ unmount_below "$B"
 cp -L /etc/resolv.conf "$B/etc/resolv.conf"
 mkdir -p "$B"/{proc,sys,dev,run,tmp} "$B/etc/pico4" "$B/var/cache/pico4-repo" "$B/var/cache/pico4-pkgs" "$B/build"
 cp "$project/userspace/pacman.conf" "$B/etc/pico4/pacman.conf"
+# The project's packages build against the image's versions: what packages.txt takes from the Frame's
+# repository, the build environment takes from there too (after its core and extra, as the image does).
+frame_repo=deckard-arch-hotfixes-release-0.3
+if ! grep -q "^\[$frame_repo\]" "$B/etc/pacman.conf"; then
+    printf '\n[%s]\nSigLevel = Never\n%s\n' "$frame_repo" \
+        "$(sed -n "/^\[$frame_repo\]/,/^\$/s/^Server.*/&/p" "$project/userspace/pacman.conf")" >> "$B/etc/pacman.conf"
+fi
+mapfile -t frame_packages < <(sed -n "s|^$frame_repo/\([^[:space:]#]*\).*|\1|p" "$project/userspace/packages.txt")
 mount_api "$B"
 in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root \
     SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$@"; }
@@ -189,15 +197,24 @@ in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bi
 # Package databases are downloaded by the first build and with --refresh only, so that
 # repeated builds install the same versions.
 sync=""
-[[ $refresh == 1 || -z "$(ls "$B"/var/lib/pacman/sync/*.db 2>/dev/null)" ]] && sync=y
-in_b pacman "-S$sync" --noconfirm --needed base-devel git meson ninja cmake eigen openxr python-mako python-yaml \
-    alsa-lib pipewire-audio \
-    python-packaging glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland \
-    wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache \
-    glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage \
-    shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon libnl pcsclite \
-    hwdata libavif libcap libdecor libei libinput libxmu libxres libxtst libxxf86vm luajit pipewire pixman \
-    sdl2 seatd xcb-util-errors xcb-util-wm xorg-xwayland libbsd
+[[ $refresh == 1 || ! -s "$B/var/lib/pacman/sync/$frame_repo.db" ]] && sync=y
+builder_packages=(base-devel git meson ninja cmake eigen openxr python-mako python-yaml
+    alsa-lib pipewire-audio
+    python-packaging glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland
+    wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache
+    glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage
+    shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon libnl pcsclite
+    hwdata libavif libcap libdecor libei libinput libxmu libxres libxtst libxxf86vm luajit pipewire pixman
+    sdl2 seatd xcb-util-errors xcb-util-wm xorg-xwayland libbsd libxml2-legacy)
+for i in "${!builder_packages[@]}"; do
+    for f in "${frame_packages[@]}"; do
+        [[ ${builder_packages[i]} == "$f" ]] && builder_packages[i]=$frame_repo/$f
+    done
+done
+in_b pacman "-S$sync" --noconfirm --needed "${builder_packages[@]}"
+# Dependencies the list does not name (libpipewire, filesystem, ...), installed from the first repository.
+mapfile -t frame_here < <(in_b pacman -Qq "${frame_packages[@]}" 2>/dev/null)
+[[ ${#frame_here[@]} == 0 ]] || in_b pacman -S --noconfirm --needed "${frame_here[@]/#/$frame_repo/}"
 in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
 builder=$(in_b id -u builder):$(in_b id -g builder)
 # Emulated compilers: ccache (in the builder's home, kept between builds) saves repeats.
@@ -222,8 +239,10 @@ if [[ -n $llvm ]]; then
         mnt --bind "$d" "$B$d"
         mount -o remount,bind,ro "$B$d"
     done
-    # The x86-64 dynamic loader where x86-64 programs look for it (/lib64 is usr/lib here).
+    # The x86-64 dynamic loader where x86-64 programs look for it: /lib64, which is usr/lib in Holo's
+    # filesystem package and missing from the Frame's.
     ln -sfn "$multiarch/ld-linux-x86-64.so.2" "$B/usr/lib/ld-linux-x86-64.so.2"
+    [[ -e "$B/lib64" || -L "$B/lib64" ]] || ln -s usr/lib "$B/lib64"
     mkdir -p "$B/usr/local/bin"
     ln -sfn "$llvm/bin/clang" "$B/usr/local/bin/aarch64-unknown-linux-gnu-clang"
     ln -sfn "$llvm/bin/clang++" "$B/usr/local/bin/aarch64-unknown-linux-gnu-clang++"
@@ -561,7 +580,9 @@ if [[ ! -d "$T/home/$user" ]]; then
 fi
 in_t usermod -a -G wheel,video,render,input,audio "$user"
 # Subordinate IDs for rootless podman (Lepton's Android runs in it), as useradd gives a user
-# from login.defs; sysusers created this one without them.
+# from login.defs; sysusers created this one without them. The Frame's filesystem package has no
+# subuid and subgid files, Holo's empty ones.
+for f in subuid subgid; do [[ -e "$T/etc/$f" ]] || install -m 0644 /dev/null "$T/etc/$f"; done
 grep -q "^$user:" "$T/etc/subuid" 2>/dev/null || in_t usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$user"
 # No password logs in, here or through su: SSH takes keys, the session logs in by itself.
 in_t usermod -p '*' root

@@ -9,6 +9,9 @@
 set -eu
 dir=/mnt/vendor/persist
 mountpoint -q "$dir" && exit 0
+# /mnt is SteamOS's link to /var/mnt, which lives on the data partition: an installed system keeps
+# its /var from its first boot, and SteamOS's tmpfiles entry makes /var/mnt only after this runs.
+mkdir -p "$(readlink -f /mnt)" "$dir"
 dev=$(readlink -f /dev/block/by-name/persist 2>/dev/null || true)
 [ -n "$dev" ] && [ -b "$dev" ] || { echo "persist: no partition named persist" >&2; exit 1; }
 blockdev --setro "$dev"

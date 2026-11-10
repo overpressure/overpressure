@@ -44,7 +44,7 @@ class GamescopeTests(unittest.TestCase):
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertIn("build_package pico4-gamescope", build)
         # Its libraries in the build root (makepkg runs without -s).
-        match = re.search(r"in_b pacman \"-S\$sync\" --noconfirm --needed (.*?)\nin_b id builder", build, re.DOTALL)
+        match = re.search(r"builder_packages=\((.*?)\)\n", build, re.DOTALL)
         assert match is not None
         deps = match.group(1)
         for dep in ("libei", "luajit", "libdecor", "seatd", "xorg-xwayland", "sdl2", "libavif"):

@@ -49,7 +49,7 @@ class AudioTimingTests(unittest.TestCase):
         for option in ("--max-realtime-priority=80", "--our-realtime-priority=81", "--no-chroot"):
             self.assertIn(option, command)
         packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
-        self.assertIn("rtkit", packages)
+        self.assertIn("deckard-arch-hotfixes-release-0.3/rtkit", packages)
 
     def test_sound_card_keeps_two_periods_of_headroom(self):
         rule = (ROOTFS / "etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf").read_text(encoding="utf-8")
@@ -81,7 +81,11 @@ class CaptureThroughSuspendTests(unittest.TestCase):
 
     def test_the_plugin_is_built_from_the_version_valve_ships_with_the_fix(self):
         recipe = (self.RECIPE / "PKGBUILD").read_text(encoding="utf-8")
-        self.assertIn("pkgver=1.4.9\n", recipe)
+        lock = (ROOT / "userspace/packages.lock").read_text(encoding="utf-8")
+        locked = re.search(r" pipewire-audio-1:([0-9.]+)-[^-]+-aarch64\.pkg\.tar\.zst$", lock, re.MULTILINE)
+        if locked is None:
+            self.fail("packages.lock has no pipewire-audio")
+        self.assertIn(f"pkgver={locked[1]}\n", recipe)
         self.assertIn('"pipewire-audio=1:$pkgver"', recipe)
         patch = (self.RECIPE / "early-wakeup-from-the-clock.patch").read_text(encoding="utf-8")
         self.assertIn("+\t\tstate->next_time = SPA_MAX(current_time, get_time_ns(state)) +", patch)

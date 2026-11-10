@@ -1,6 +1,6 @@
 --- a/spa/plugins/alsa/alsa-pcm.c
 +++ b/spa/plugins/alsa/alsa-pcm.c
-@@ -3310,6 +3310,8 @@
+@@ -3439,6 +3439,8 @@
  	return total_frames;
  }
  
@@ -9,7 +9,7 @@
  static int alsa_read_sync(struct state *state, uint64_t current_time)
  {
  	int res, suppressed;
-@@ -3331,8 +3333,11 @@
+@@ -3460,8 +3462,11 @@
  	if (SPA_UNLIKELY(!following && avail < state->read_size)) {
  		spa_log_trace(state->log, "%p: early wakeup %ld %ld %ld %d", state,
  				delay, avail, target, state->read_size);

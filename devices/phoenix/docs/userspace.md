@@ -30,7 +30,26 @@ as satisfied without installing it: `sddm`, which `pico4-session.service` replac
 ([session.md](session.md)). The Steam client is installed with the libraries it needs but does
 not declare ([session.md](session.md#the-steam-client)). gamescope is the Frame's version built
 here with a fix (`pico4-gamescope`). The build checks that the Frame's programs find their
-libraries ([Build](#build)).
+libraries ([Build](#build)). The build environment takes the same Frame packages, so that the
+project's packages build against the image's versions.
+
+**Packages both repositories have.** The Frame's SteamOS image updates as a whole, built on its
+private base, so the Frame repository's builds of base packages assume that base. Where the
+Frame's build is the same version or newer, the image takes it; where it is older, core and extra's:
+
+| Package | From | Why |
+| --- | --- | --- |
+| `filesystem` | Frame | SteamOS's: `/etc/os-release` says `ID=steamos`, `/etc/steamos-release` exists; it has no `/lib64` |
+| `pipewire`, `pipewire-audio`, `pipewire-pulse`, `libpipewire`, `alsa-card-profiles` 1.6.8; `wireplumber`, `libwireplumber` 0.5.14 | Frame | the Frame's audio stack; `pico4-spa-alsa` is built from the same version |
+| `bluez-libs` 5.79 | Frame | the version of the Frame's `bluez` |
+| `wayland`, `libdrm`, `libxkbcommon`, `libxkbcommon-x11`, `rtkit`, `v4l-utils`, `linux-api-headers` | Frame | newer than core and extra's; the Frame's `wayland` and `libxkbcommon` link `libxml2.so.2`, which extra's `libxml2-legacy` provides next to core's `libxml2` 2.15; `v4l-utils`' Qt tools (`qv4l2`, `qvidcap`) need the Frame's Qt and are not used, as core's `qv4l2` did not run either |
+| `bash`, `gptfdisk`, `mkinitcpio-busybox` | Frame | the Frame's rebuild of the same version |
+| `xorg-xwayland` 24.1.9 | extra | the Frame's rebuild calls `ei_device_text_keysym`, which the Frame's `libei` has and extra's 1.5 does not: Xwayland would not start |
+| `ffmpeg` 8.0 (Frame: 7.0) | extra | the Frame's needs libraries that only its private base has (`libjxl` 0.10, `libplacebo` 338, x264, x265, `libvpx` 9, `rav1e` 0.7, `rubberband` 2) |
+| `podman` 5.6 (5.5) | extra | the Frame's needs `libgpgme` 11 |
+| `glib2` 2.86 and the `gsettings` schemas 49 (2.84, 47) | core | older; the Frame's `glib2` also holds the tools of Holo's `glib2-devel`, which it conflicts with |
+| `gcc`, `gcc-libs` 15.2 (15.1), `qt6-base`, `qt6-translations` 6.10 (6.8), `protobuf`, `python-protobuf` 33 (25.3), `libinput` 1.29 (1.26), `libei` 1.5 (1.4), `wpa_supplicant` 2.11 (2.10), `openxr` 1.1.53 (1.1.47), `vulkan-icd-loader`, `vulkan-tools`, `spirv-tools` 1.4.328 (1.4.309), `libtool` 2.6 (2.5), `mkinitcpio` 40 (39) | core, extra | older; core and extra's packages are built against the newer versions, and the build's library check does not see a single missing function |
+| `e2fsprogs`, `zram-generator` | core, extra | the same version, Holo's rebuild newer |
 
 Valve also publishes the Frame's complete OS image as a RAUC bundle with a casync chunk store
 (`steamdeck-atomupd.steamos.cloud/meta/holo/steamos/aarch64/vr/stable.json`; `steamac`

@@ -3,7 +3,7 @@
 # RT watchdog killed PipeWire (docs/userspace.md#audio). Only the plugin: the build installs it over
 # the one from Valve's pipewire-audio. The exact version in depends stops the build when Valve's moves.
 pkgname=pico4-spa-alsa
-pkgver=1.4.9
+pkgver=1.6.8
 pkgrel=1
 pkgdesc="PipeWire's ALSA plugin with the capture wakeup taken from the clock"
 arch=(aarch64)
@@ -13,8 +13,8 @@ depends=(alsa-lib glibc systemd-libs "pipewire-audio=1:$pkgver")
 makedepends=(meson ninja)
 source=("pipewire-$pkgver.tar.gz::https://gitlab.freedesktop.org/pipewire/pipewire/-/archive/$pkgver/pipewire-$pkgver.tar.gz"
         early-wakeup-from-the-clock.patch)
-sha256sums=(8066a7b220069e4c6e3b02bd2b6ea303bba66df255023c07c99323449ba8fe3c
-            466ce56db21086f7d7582adff68b10092bd566f938f6531ba0a8cd4f4cb1c70d)
+sha256sums=(8181172a1d95131f6af8bbc0b98f90b2a33349b042b84c3ce57dd5d11348cc58
+            fa3fb7912ba223c047f64f0889e2a31b1ff5e7106e3f67f24c3c04430b57afe1)
 
 prepare() {
   patch -d "pipewire-$pkgver" -p1 -N -r - < early-wakeup-from-the-clock.patch || true
