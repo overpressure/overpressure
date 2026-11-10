@@ -380,13 +380,15 @@ cable has not been pulled in a restore on the headset.
 | Boot indication | Monado and SteamVR's compositor take the display from `pico4-splash.service` (it exits within 0.5 s) |
 | Power-off | stays off without the cable; with the cable attached the headset starts again with `androidboot.mode=charger` |
 | Installer | on the host, with fakes: the stages, the done checks, the serials written to `.env`, the refusals before any write, the Wi-Fi password on stdin only. On the headset, from PICO OS after a `dev restore`, on Windows: the headset's half as one path in about 11 minutes, from finding it through the panel check over adb (PICO OS's shell cannot read `/proc/cmdline`; the check reads what it may), the engineering ABL, the unlock (also of a headset unlocked before) and the maintenance stage 1 without a factory reset, to the install and `dev check`; the backup and identity were there already, the builds skipped, and no Wi-Fi was given. Not run: the LUNs from `printgpt` (the backup's step), the Wi-Fi keyfile in the read-only system's `/etc` overlay, the whole path with its builds |
+| Restore to stock in the window | on the headset, on Windows: from the installed system through all four stages (the backup checked, PICO OS's system with fresh data, PICO OS's setup and USB debugging by the owner, the stock bootloader) to PICO OS with its stock bootloader; the install's recorded progress and `out/dev/installed.json` gone afterwards |
+| The backup as one file | this computer's backup (116 files, 12.5 GiB): exported with the read-back in 57 s, imported into another place and verified in 81 s, with the SSH key and the serials |
 
 ## Open work
 
 1. **The way back.** `dev restore` for an installed system ran on the headset and ends in PICO OS's
    first-time setup. A restore interrupted part way has its ways out ([above](#an-interrupted-restore)), not tried
-   with a pulled cable. The restore stepper, the upgrade and a backup's export and import ran on the host with
-   fakes only; a restore from an imported backup on another computer is not run.
+   with a pulled cable. Not run on the headset: the upgrade, and a restore from an imported backup on another
+   computer.
 2. **Integrity.** The system image is checked when written, not at boot (no dm-verity).
 3. **The direct boot on the headset.** Still to run: the power key held 2 s in charger mode, the
    lenses dark there (by eye), a boot without the PC, and `dev check` with both controllers
