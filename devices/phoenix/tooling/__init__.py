@@ -12,13 +12,38 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
-from overpressure.headset import Action, AfterInstall, Command, Headset, Info, Param, Step, tools_step
+from overpressure.headset import (
+    INSTALL,
+    Action,
+    AfterInstall,
+    BackupSet,
+    Command,
+    Headset,
+    Info,
+    Param,
+    Step,
+    Workflow,
+    tools_step,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from overpressure.doctor import Check, Host
     from overpressure.install import Stage
+
+#: The installer's other workflows (overpressure/headset.py, Workflow).
+UPGRADE, RESTORE = "upgrade", "restore"
+
+
+def _relative(path: Path, root: Path) -> str:
+    """Return PATH relative to ROOT in .env's spelling when it is under ROOT, else absolute."""
+    for inside, base in ((path, root), (path.resolve(), root.resolve())):
+        if inside == base or base in inside.parents:
+            return inside.relative_to(base).as_posix()
+    return str(path)
+
 
 #: The firmware every default names; device.mk and .env.example repeat it (tests/test_stock.py).
 FIRMWARE = "5.13.7-global-seko"
@@ -295,13 +320,115 @@ class Phoenix(Headset):
 
         return Plan(self).stages()
 
+    def workflows(self) -> Sequence[Workflow]:
+        """Return the installer's three workflows: install, upgrade, back to PICO OS."""
+        return (
+            Workflow(
+                INSTALL,
+                "Install",
+                "Replaces PICO OS with the SteamOS-compatible system. Your headset is backed up to this computer "
+                "first; its apps, games and data are erased.",
+                erases=True,
+            ),
+            Workflow(
+                UPGRADE,
+                "Upgrade",
+                "Builds this version of the system and installs it over the one this computer installed. Your "
+                "Steam account, games, settings and Wi-Fi stay.",
+            ),
+            Workflow(
+                RESTORE,
+                "Restore to stock",
+                "Brings back PICO OS and its bootloader from your headset's backup, as it came. The system and "
+                "everything on it is erased.",
+                erases=True,
+            ),
+        )
+
+    def plan(self, workflow: str) -> Sequence[Stage]:
+        """Return the stages of WORKFLOW (tooling/install.py)."""
+        from .install import Plan  # noqa: PLC0415  # install imports this package's modules: a top-level import is circular
+
+        plan = Plan(self)
+        return {INSTALL: plan.stages, UPGRADE: plan.upgrade_stages, RESTORE: plan.restore_stages}[workflow]()
+
+    def workflow_problem(self, workflow: str) -> str:
+        """Return why WORKFLOW cannot run now: an upgrade needs a system this computer installed, a restore a backup."""
+        from . import devloop  # noqa: PLC0415  # devloop imports this package's modules: a top-level import is circular
+
+        if workflow == UPGRADE and not (devloop.WORK / devloop.INSTALLED).is_file():
+            return "This computer has not installed the system on a headset: install it first."
+        if workflow == RESTORE and not (self.backup_set().folder / "manifest.json").is_file():
+            return "This computer has no backup of your headset: import the one you exported (Import backup)."
+        return ""
+
     def after_install(self) -> AfterInstall:
-        """Return the finished page: sign in to Steam; update, back to PICO OS or a support bundle."""
+        """Return the finished page: sign in to Steam; upgrade, back to PICO OS or a support bundle."""
         return AfterInstall(
             "Unplug it and put it on",
             "Your headset is ready. Unplug the cable, put the headset on and sign in to Steam.",
-            (Action("Update", "install"), Action("Back to PICO OS", "restore"), Action("Get help", "support-bundle")),
+            (
+                Action("Upgrade later", workflow=UPGRADE),
+                Action("Restore to stock", workflow=RESTORE),
+                Action("Get help", "support-bundle"),
+            ),
         )
+
+    def finished_page(self, workflow: str) -> AfterInstall:
+        """Return the finished page of WORKFLOW: the install's, the upgrade's, or the way back's."""
+        if workflow == UPGRADE:
+            return AfterInstall(
+                "Upgraded",
+                "Unplug the cable and put the headset on: your account, games, settings and Wi-Fi are as you left "
+                "them.",
+                (Action("Restore to stock", workflow=RESTORE), Action("Get help", "support-bundle")),
+            )
+        if workflow == RESTORE:
+            return AfterInstall(
+                "Back on PICO OS",
+                "Your headset runs PICO OS with the system and bootloader from your backup; its bootloader stays "
+                "unlocked. Keep the backup: the installer can install the system again from here.",
+                (Action("Install again", workflow=INSTALL),),
+            )
+        return self.after_install()
+
+    def backup_set(self) -> BackupSet:
+        """Return the backup .env names, with what the way back needs on another computer.
+
+        The maintenance system in recovery takes this computer's SSH key only, the installed system's
+        record says a system is installed, and the serials name the headset to adb and fastboot.
+        """
+        from . import devloop, localconfig  # noqa: PLC0415  # they import this package's modules: circular otherwise
+
+        settings = localconfig.load()
+        serials = {
+            localconfig.Settings.key(name): getattr(settings, name)
+            for name in ("adb_serial", "fastboot_serial", "edl_serial")
+            if getattr(settings, name)
+        }
+        files = {"id_ed25519": devloop.WORK / "id_ed25519", "id_ed25519.pub": devloop.WORK / "id_ed25519.pub"}
+        if (devloop.WORK / devloop.INSTALLED).is_file():
+            files[devloop.INSTALLED] = devloop.WORK / devloop.INSTALLED
+        return BackupSet(settings.path("backup"), settings.path("identity"), files, serials)
+
+    def adopt_backup(self, imported: BackupSet) -> None:
+        """Name the imported backup in .env, and the serials it came with where .env has none."""
+        from overpressure import REPO  # noqa: PLC0415  # only here
+        from overpressure import localconfig as base  # noqa: PLC0415  # only here
+
+        from . import localconfig  # noqa: PLC0415  # it imports this package's modules: circular otherwise
+
+        settings = localconfig.load()
+        values = {
+            localconfig.Settings.key("backup"): _relative(imported.folder, REPO),
+            localconfig.Settings.key("identity"): _relative(imported.identity, REPO),
+        }
+        for key, value in imported.settings.items():
+            name = key[len(localconfig.Settings.PREFIX) :].lower()
+            if key.startswith(localconfig.Settings.PREFIX) and hasattr(settings, name) and not getattr(settings, name):
+                values[key] = value
+        base.update(values)
+        print("Saved in .env: " + ", ".join(sorted(values)))
 
 
 HEADSET = Phoenix()

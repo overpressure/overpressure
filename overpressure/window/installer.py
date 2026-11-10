@@ -20,9 +20,10 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 from overpressure import REPO
+from overpressure.headset import INSTALL
 from overpressure.install import STOPPED_BETWEEN, STOPPED_NOTHING
 
 if TYPE_CHECKING:
@@ -96,6 +97,7 @@ class Model:
     def __init__(self) -> None:
         """Start without a plan."""
         self.headset: dict[str, str] = {}
+        self.workflow = INSTALL  # the plan's workflow: install, or another of the headset's
         self.stages: list[Stage] = []
         self.current = ""  # the stage the window shows
         self.ask: dict[str, Any] | None = None  # the ask the engine waits for
@@ -264,6 +266,7 @@ class Model:
         # A new run sends the plan again: what was finished stays so (the engine resends it).
         before = {t.id: t.status for s in self.stages for t in s.tasks}
         self.headset = {k: str(v) for k, v in (event.get("headset") or {}).items()}
+        self.workflow = str(event.get("workflow") or INSTALL)
         self.stages = []
         for raw in event.get("stages", []):
             tasks = []
@@ -368,15 +371,16 @@ class Model:
 class ChildEngine:
     """The install engine as a child process: its output lines into a queue, answers on stdin."""
 
-    def __init__(self, codename: str | None) -> None:
-        """Run the engine for the headset CODENAME (else the engine's own choice)."""
+    def __init__(self, codename: str | None, workflow: str = INSTALL) -> None:
+        """Run the engine's WORKFLOW for the headset CODENAME (else the engine's own choice)."""
         self.device = ["--device", codename] if codename else []
+        self.workflow = ["--workflow", workflow] if workflow != INSTALL else []
         self.items: queue.Queue[Item] = queue.Queue()
         self.proc: subprocess.Popen[str] | None = None
 
     def argv(self, extra: list[str]) -> list[str]:
         """Return the engine's command line."""
-        return [sys.executable, "-m", "overpressure", *self.device, "install", "--json", *extra]
+        return [sys.executable, "-m", "overpressure", *self.device, "install", *self.workflow, "--json", *extra]
 
     def start(self, extra: list[str]) -> None:
         """Start a run with EXTRA arguments (a mode, a restart)."""
@@ -487,19 +491,76 @@ class DemoEngine:
         ),
     )
 
+    #: The other workflows' stages, shorter: what each does in the demo.
+    WORKFLOWS: ClassVar[dict[str, tuple]] = {
+        "upgrade": (
+            (
+                "build",
+                "Build the system",
+                "This version of the system, built on this computer.",
+                (("userspace", "System", "minutes to hours", False),),
+            ),
+            (
+                "install",
+                "Install the upgrade",
+                "The new system goes on; your data stays.",
+                (
+                    ("system", "Install the system", "about 10 min", True),
+                    ("check", "Acceptance check", "about 2 min", False),
+                ),
+            ),
+        ),
+        "restore": (
+            (
+                "backup",
+                "Check the backup",
+                "Every file of the backup, checked.",
+                (("verify-backup", "Check the backup", "about 5 min", False),),
+            ),
+            (
+                "restore",
+                "Restore PICO OS",
+                "PICO OS's system goes back from the backup.",
+                (("system", "PICO OS's system", "about 20 min", True),),
+            ),
+            (
+                "pico-os",
+                "Set PICO OS up",
+                "PICO OS's setup and USB debugging, on the headset.",
+                (("pico-os", "PICO OS's setup", "about 10 min", False),),
+            ),
+            (
+                "bootloader",
+                "Stock bootloader",
+                "PICO OS's own bootloader goes back.",
+                (("restore-abl", "Stock bootloader", "about 10 min", True),),
+            ),
+        ),
+    }
+
     def __init__(
-        self, *, pace: float = 1.0, recorded: bool = False, codename: str = "demo", name: str = "headset"
+        self,
+        *,
+        pace: float = 1.0,
+        recorded: bool = False,
+        codename: str = "demo",
+        name: str = "headset",
+        workflow: str = INSTALL,
     ) -> None:
         """Walk through the plan; PACE scales the pauses (0 in tests); RECORDED: the first four stages done.
 
-        The plan names the headset CODENAME and NAME: the window's chosen one.
+        The plan names the headset CODENAME and NAME: the window's chosen one; WORKFLOW picks the
+        install's stages or another workflow's (never recorded).
         """
         self.headset = {"codename": codename, "name": name}
+        self.workflow = workflow
+        self.stages = self.STAGES if workflow == INSTALL else self.WORKFLOWS[workflow]
         self.pace = pace
         self.items: queue.Queue[Item] = queue.Queue()
         self.answers: queue.Queue[str | None] = queue.Queue()
-        self.done: set[str] = {t[0] for s in self.STAGES[:4] for t in s[3]} if recorded else set()
-        self.writes = {t[0] for s in self.STAGES for t in s[3] if t[3]}
+        recorded = recorded and workflow == INSTALL
+        self.done: set[str] = {t[0] for s in self.stages[:4] for t in s[3]} if recorded else set()
+        self.writes = {t[0] for s in self.stages for t in s[3] if t[3]}
         self.failed_once = False
         self.stopping = threading.Event()
 
@@ -545,18 +606,18 @@ class DemoEngine:
                 "summary": m,
                 "tasks": [{"id": i, "title": n, "estimate": e, "writes": w} for i, n, e, w in tasks],
             }
-            for s, t, m, tasks in self.STAGES
+            for s, t, m, tasks in self.stages
         ]
-        self._emit("plan", headset=self.headset, stages=plan)
+        self._emit("plan", headset=self.headset, workflow=self.workflow, stages=plan)
         if extra == ["--plan"]:
-            for stage, _title, _summary, tasks in self.STAGES:
+            for stage, _title, _summary, tasks in self.stages:
                 for task, *_ in tasks:
                     self._emit("task", stage=stage, task=task, status=DONE if task in self.done else PENDING)
             self.items.put(("exit", 0))
             return
         if extra[:1] == ["--restart"]:
-            ids = [stage[0] for stage in self.STAGES]
-            for stage in self.STAGES[ids.index(extra[1]) :]:
+            ids = [stage[0] for stage in self.stages]
+            for stage in self.stages[ids.index(extra[1]) :]:
                 self.done -= {task[0] for task in stage[3]}
         status, where = self._install(plan)
         if status == DONE:
@@ -644,6 +705,101 @@ class DemoEngine:
 
 
 Engine = Union[ChildEngine, DemoEngine]
+
+
+class BackupJob:
+    """A backup's export or import as a child process (python -m overpressure backup): its lines, then its end.
+
+    The window shows its last line while it runs and its result when it has ended; like the
+    engine, the command line does the same.
+    """
+
+    def __init__(self, codename: str, action: str, path: str) -> None:
+        """Export the headset CODENAME's backup to PATH, or import PATH (ACTION export or import)."""
+        self.action = action
+        self.argv = [sys.executable, "-m", "overpressure", "--device", codename, "backup", action, path]
+        self.items: queue.Queue[Item] = queue.Queue()
+        self.lines: list[str] = []
+        self.code: int | None = None
+        self.started = False
+
+    @property
+    def running(self) -> bool:
+        """Tell whether it has started and not ended."""
+        return self.started and self.code is None
+
+    def start(self) -> None:
+        """Start the child."""
+        self.started = True
+        env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+        proc = subprocess.Popen(  # noqa: S603  # this Python and fixed arguments, no shell
+            self.argv,
+            cwd=REPO,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+        def read() -> None:
+            for line in proc.stdout or ():
+                self.items.put(("line", line))
+            code = proc.wait()
+            if proc.stdout is not None:
+                with contextlib.suppress(OSError):
+                    proc.stdout.close()
+            self.items.put(("exit", code))
+
+        threading.Thread(target=read, daemon=True).start()
+
+    def receive(self) -> bool:
+        """Take what has arrived; return whether anything did."""
+        changed = False
+        for kind, value in drain(self.items):
+            changed = True
+            if kind == "exit":
+                self.code = int(value)
+            elif str(value).strip():
+                self.lines.append(str(value).rstrip())
+        return changed
+
+    def last(self) -> str:
+        """Return its last line, or "" before the first."""
+        return self.lines[-1] if self.lines else ""
+
+    def error(self) -> str:
+        """Return why it failed: its error line, else its last line."""
+        found = next((line for line in reversed(self.lines) if line.startswith("error:")), self.last())
+        return found.removeprefix("error:").strip()
+
+
+class DemoBackupJob(BackupJob):
+    """--demo's backup job: a few lines over a few seconds, nothing read or written."""
+
+    def __init__(self, codename: str, action: str, path: str, *, pace: float = 1.0) -> None:
+        """Pretend to export or import PATH; PACE scales its pauses (0 in tests)."""
+        super().__init__(codename, action, path)
+        self.pace = pace
+
+    def start(self) -> None:
+        """Send the demo's lines on a thread."""
+        self.started = True
+        verb = "Exporting" if self.action == "export" else "Importing"
+        lines = [f"Checking the backup ({self.argv[-1]})"] + [f"{verb} lun{n}/demo.bin ({n} of 3)" for n in (1, 2, 3)]
+
+        def work() -> None:
+            for line in lines:
+                time.sleep(0.4 * self.pace)
+                self.items.put(("line", line))
+            self.items.put(("line", f"{'Exported to' if self.action == 'export' else 'Imported:'} {self.argv[-1]}"))
+            self.items.put(("exit", 0))
+
+        threading.Thread(target=work, daemon=True).start()
 
 
 def drain(items: queue.Queue[Item]) -> Iterator[Item]:

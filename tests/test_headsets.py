@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import time
 import unittest
@@ -15,10 +16,10 @@ from unittest import mock
 
 from overpressure import __main__ as cli
 from overpressure import window
-from overpressure.headset import Action, AfterInstall, Command, Headset, Info, Registry, Step
+from overpressure.headset import Action, AfterInstall, BackupSet, Command, Headset, Info, Registry, Step, Workflow
 from overpressure.install import Stage, Task
 from overpressure.window import advanced, app, headsets, installer
-from tests.test_installer import PLAN, close, feed, panel_texts, task
+from tests.test_installer import PLAN, close, feed, panel_texts, press_panel, task
 
 
 class Planned(Headset):
@@ -454,6 +455,192 @@ class WindowTests(Folder):
         shown.to_headsets()
         shown.choose("planned")
         self.assertEqual(shown.view, app.INSTALLER_VIEW)  # choosing again: its start page
+
+
+class Choosy(Planned):
+    """A headset whose installer also upgrades and goes back: the page of what to do shows first."""
+
+    info = Info("choosy", "Choosy headset", "SoC C", "three workflows")
+    upgrade_problem = ""
+
+    def workflows(self) -> tuple[Workflow, ...]:
+        return (
+            Workflow("install", "Install", "Puts the system on.", erases=True),
+            Workflow("upgrade", "Upgrade", "A new system, the data kept."),
+            Workflow("restore", "Restore to stock", "Back as it came.", erases=True),
+        )
+
+    def plan(self, workflow: str) -> tuple[Stage, ...]:
+        return (Stage(workflow, workflow.title(), "", (Task(f"{workflow}-t", "Task", lambda _ctx: None),)),)
+
+    def workflow_problem(self, workflow: str) -> str:
+        return self.upgrade_problem if workflow == "upgrade" else ""
+
+    def finished_page(self, workflow: str) -> AfterInstall:
+        if workflow == "restore":
+            return AfterInstall("Back on stock", "As it came.", (Action("Install again", workflow="install"),))
+        return super().finished_page(workflow)
+
+    def backup_set(self) -> BackupSet:
+        return BackupSet(Path("/nowhere/backup/stock"), Path("/nowhere/backup/device.json"))
+
+
+class WorkflowModelTests(unittest.TestCase):
+    def test_the_model_takes_the_plan_s_workflow_and_the_engine_passes_it_on(self):
+        model = installer.Model()
+        feed(model, {**PLAN, "workflow": "restore"})
+        self.assertEqual(model.workflow, "restore")
+        feed(model, PLAN)
+        self.assertEqual(model.workflow, "install")
+        self.assertEqual(
+            installer.ChildEngine("x", "restore").argv([])[3:],
+            ["--device", "x", "install", "--workflow", "restore", "--json"],
+        )
+        self.assertNotIn("--workflow", installer.ChildEngine("x").argv([]))
+
+    def test_the_demo_has_the_other_workflows_never_recorded(self):
+        demo = installer.DemoEngine(pace=0, recorded=True, workflow="restore")
+        self.assertEqual([s[0] for s in demo.stages], ["backup", "restore", "pico-os", "bootloader"])
+        self.assertEqual(demo.done, set())
+        demo.start(["--plan"])
+        plan = json.loads(str(demo.items.get(timeout=10)[1]))
+        self.assertEqual(plan["workflow"], "restore")
+
+    def test_a_backup_job_reads_its_lines_and_its_error(self):
+        job = installer.BackupJob("x", "export", "out.tar")
+        self.assertEqual(job.argv[3:], ["--device", "x", "backup", "export", "out.tar"])
+        script = (
+            "import sys; print('Exporting a (1 of 1)'); print('error: the disk is full', file=sys.stderr); sys.exit(1)"
+        )
+        job.argv = [sys.executable, "-c", script]
+        job.start()
+        deadline = time.monotonic() + 20
+        while job.code is None:
+            job.receive()
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.01)
+        self.assertFalse(job.running)
+        self.assertEqual((job.code, job.error()), (1, "the disk is full"))
+        demo = installer.DemoBackupJob("x", "import", "in.tar", pace=0)
+        demo.start()
+        while demo.code is None:
+            demo.receive()
+            time.sleep(0.01)
+        self.assertEqual(demo.last(), "Imported: in.tar")
+
+
+class WhatToDoTests(Folder):
+    """The page of what to do, where a headset's installer has more than the install."""
+
+    open = WindowTests.open
+    links = WindowTests.links
+
+    def setUp(self):
+        super().setUp()
+        self.made: list[installer.DemoEngine] = []
+        self.recorded = False
+
+    def engines(self, headset: Headset, workflow: str = "install") -> installer.DemoEngine:
+        engine = installer.DemoEngine(
+            pace=0, recorded=False, codename=headset.info.codename, name=headset.info.name, workflow=workflow
+        )
+        if workflow == "install":
+            self.made.append(engine)
+        return engine
+
+    def jobs(self, codename: str, action: str, path: str) -> installer.DemoBackupJob:
+        return installer.DemoBackupJob(codename, action, path, pace=0)
+
+    @staticmethod
+    def pump(shown: app.Window, until: Callable[[], bool]) -> None:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            changed, _ = shown.receive()
+            if changed:
+                shown.render()
+            for probe in [*shown.probes.values(), *shown.workflow_probes.values()]:
+                probe.receive()
+            if shown.job is not None and shown.job.receive():
+                shown.job_panel()
+            shown.root.update()
+            if until():
+                return
+            time.sleep(0.01)
+        msg = "the window did not get there"
+        raise AssertionError(msg)
+
+    def open_choosy(self, headset: Choosy | None = None) -> app.Window:
+        headset = headset or Choosy()
+        shown = self.open(Registry({"choosy": headset}), None)
+        shown.jobs = self.jobs
+        return shown
+
+    def test_choosing_the_headset_asks_what_to_do(self):
+        shown = self.open_choosy()
+        self.assertTrue(shown.choose("choosy"))
+        self.assertEqual(shown.view, app.ACTIONS_VIEW)
+        self.assertEqual(list(shown.action_cards), ["install", "upgrade", "restore", "backup"])
+        self.assertIn("erases the headset", texts(shown.action_cards["restore"]))
+        self.assertIn(app.BACKUP_NONE, texts(shown.action_cards["backup"]))
+        self.assertEqual(self.links(shown), ("pack", "pack"))
+        self.assertEqual(shown.back_link.cget("text"), app.BACK)
+        shown.choose_workflow("restore")
+        self.pump(shown, lambda: not shown.probing)
+        self.assertEqual((shown.view, shown.workflow, shown.model.workflow), (app.INSTALLER_VIEW, "restore", "restore"))
+        self.assertIn("Restore to stock", texts(shown.stepper))
+        self.assertTrue(shown.back_link.cget("text").endswith("Choosy headset"))
+        self.assertTrue(shown.back())
+        self.assertEqual(shown.view, app.ACTIONS_VIEW)
+        self.assertTrue(shown.back())
+        self.assertEqual(shown.view, app.CHOOSER_VIEW)
+
+    def test_a_workflow_that_cannot_run_says_why(self):
+        headset = Choosy()
+        headset.upgrade_problem = "install it first"
+        shown = self.open_choosy(headset)
+        shown.choose("choosy")
+        self.assertIn("install it first", texts(shown.action_cards["upgrade"]))
+        button = next(w for w in all_widgets(shown.action_cards["upgrade"]) if type(w).__name__ == "CTkButton")
+        self.assertEqual(button.cget("state"), "disabled")
+        self.assertFalse(shown.choose_workflow("upgrade"))
+        self.assertEqual(panel_texts(shown)[:2], ["Not yet", "install it first"])
+        self.assertEqual(shown.view, app.ACTIONS_VIEW)
+
+    def test_the_finished_page_opens_another_workflow(self):
+        shown = self.open_choosy()
+        shown.choose("choosy")
+        shown.choose_workflow("restore")
+        self.pump(shown, lambda: not shown.probing)
+        shown.press()
+        self.pump(shown, lambda: shown.model.view() == "done")
+        self.assertEqual(shown.title.cget("text"), "Back on stock")
+        next(
+            w for w in all_widgets(shown.quiet) if type(w).__name__ == "CTkButton" and w.cget("text") == "Install again"
+        ).invoke()
+        self.pump(shown, lambda: not shown.probing)
+        self.assertEqual((shown.view, shown.workflow), (app.INSTALLER_VIEW, "install"))
+
+    def test_an_export_shows_its_progress_then_its_result(self):
+        shown = self.open_choosy()
+        shown.choose("choosy")
+        shown.start_job("export", "headset.tar")
+        self.assertTrue(panel_texts(shown)[0].startswith("Exporting your backup"))
+        self.assertTrue(shown.refused())  # nothing else starts while it writes
+        self.pump(shown, lambda: shown.job is None)
+        self.assertEqual(panel_texts(shown)[0], "Exported")
+        self.assertTrue(any("Keep the file private" in t for t in panel_texts(shown)))
+        press_panel(shown, "OK")
+        self.assertEqual(shown.view, app.ACTIONS_VIEW)
+
+
+def all_widgets(widget: Any) -> list[Any]:  # noqa: ANN401  # a Tk widget
+    """Return WIDGET and every widget inside it."""
+    found, todo = [], [widget]
+    while todo:
+        w = todo.pop(0)
+        found.append(w)
+        todo.extend(w.winfo_children())
+    return found
 
 
 if __name__ == "__main__":

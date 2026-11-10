@@ -1,15 +1,18 @@
 # SPDX-License-Identifier: Unlicense
 """The install engine: a headset's plan of stages and tasks, run in order and resumable.
 
-    python -m overpressure install [--json] [--plan] [--restart STAGE]
+    python -m overpressure install [--workflow KEY] [--json] [--plan] [--restart STAGE]
+    python -m overpressure upgrade|restore [--json] [--plan] [--restart STAGE]
 
-A headset's plan (Headset.install_plan) is a sequence of stages, each a sequence of tasks. The
-engine runs the tasks in order and stops at the first failure; a task done in an earlier run is
-skipped unless its own done check says it must run again, and a done check may also skip a task
-on its first run (its output is there already). Each headset has its own folder: the state is
-out/install/<codename>/state.json, the output of each task's child programs
-out/install/<codename>/<task>.log. One engine runs at a time on this computer, whatever the
-headset (out/install/lock: builds share their caches).
+A headset's plan (Headset.plan, for each of its workflows: install, and where it has them an
+upgrade and the way back) is a sequence of stages, each a sequence of tasks. The engine runs the
+tasks in order and stops at the first failure; a task done in an earlier run is skipped unless its
+own done check says it must run again, and a done check may also skip a task on its first run (its
+output is there already). Each headset has its own folder: the install's state is
+out/install/<codename>/state.json and another workflow's out/install/<codename>/<workflow>/state.json,
+the output of each task's child programs <task>.log beside it. A workflow that finishes forgets
+what the others had done: each starts again from the headset as this one left it. One engine runs
+at a time on this computer, whatever the headset (out/install/lock: builds share their caches).
 
 The engine talks in events (docs/tool.md, "The installer"): with --json one JSON object per
 line on stdout, answers to its asks one per line on stdin, for the window; without it
@@ -43,6 +46,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, ClassVar, Protocol, TypeVar
 
 from . import REPO, localconfig, runner
+from .headset import INSTALL
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -434,6 +438,11 @@ Spawn = Callable[[list[str], "bytes | None", bool, Callable[[str], None]], int]
 Capture = Callable[[list[str], float], "tuple[int, str]"]
 
 
+def workflow_folder(root: Path, codename: str, workflow: str) -> Path:
+    """Return where WORKFLOW keeps its state and logs: the install directly in the headset's folder."""
+    return root / codename if workflow == INSTALL else root / codename / workflow
+
+
 def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
@@ -619,17 +628,23 @@ class Engine:
         spawn: Spawn | None = None,
         capture: Capture | None = None,
         clock: Timing = time,
+        workflow: str = INSTALL,
+        others: Sequence[str] = (),
     ) -> None:
         """Run @p stages of the headset @p info through @p ui; tests pass the root folder, .env and fakes.
 
-        The lock is @p root/lock, the state and the logs are in @p root/<codename>.
+        The lock is @p root/lock, the state and the logs are in @p root/<codename> for the install and
+        in @p root/<codename>/<workflow> for another @p workflow; finished, it forgets the state of the
+        @p others.
         """
         check_plan(stages)
         self.info = info
         self.stages = tuple(stages)
         self.ui = ui
         self.root = root
-        self.folder = root / info.codename
+        self.workflow = workflow
+        self.others = tuple(o for o in others if o != workflow)
+        self.folder = workflow_folder(root, info.codename, workflow)
         self.env = env if env is not None else localconfig.ROOT / ".env"
         self.spawn: Spawn = spawn or self._spawn
         self.capture: Capture = capture or _capture
@@ -648,6 +663,7 @@ class Engine:
         return {
             "event": "plan",
             "headset": {"codename": self.info.codename, "name": self.info.name},
+            "workflow": self.workflow,
             "stages": [
                 {
                     "id": stage.id,
@@ -694,6 +710,11 @@ class Engine:
                 }
             self.save_state()
         self.emit({"event": "task", "stage": stage.id, "task": task.id, "status": status})
+
+    def forget_others(self) -> None:
+        """Forget what the other workflows had done: the headset is where this one left it, not where they did."""
+        for other in self.others:
+            workflow_folder(self.root, self.info.codename, other).joinpath(STATE).unlink(missing_ok=True)
 
     def forget(self, stage_id: str) -> None:
         """Forget what was done from stage @p stage_id on (--restart)."""
@@ -896,6 +917,7 @@ class Engine:
                         return self.finish(STOPPED, task, "", STOPPED_BETWEEN)
                     if end is not None:
                         return end
+            self.forget_others()
             return self.finish(DONE, None)
         finally:
             self.close_logs()
@@ -963,6 +985,9 @@ def main(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    ap.add_argument(
+        "--workflow", default=INSTALL, help="what to do: install (the default), or another of the headset's"
+    )
     ap.add_argument("--json", action="store_true", help="events as JSON lines, answers on stdin (the window)")
     ap.add_argument("--plan", action="store_true", help="show the plan and what is done; run nothing")
     ap.add_argument("--restart", metavar="STAGE", help="forget what was done from STAGE on, then run")
@@ -977,14 +1002,31 @@ def main(
             print(f"error: {error}", file=stdout, flush=True)
         return EXIT_USAGE
 
-    stages = tuple(headset.install_plan())
-    if not stages:
+    workflows = [w.key for w in headset.workflows()]
+    if not workflows:
         return refuse(f"The {headset.info.name} has no installer: its steps are in the window's Advanced mode.")
+    if args.workflow not in workflows:
+        known = ", ".join(workflows)
+        return refuse(f"The {headset.info.name}'s installer has no {args.workflow!r} (it has: {known}).")
+    stages = tuple(headset.plan(args.workflow))
     if args.restart and args.restart not in [s.id for s in stages]:
         return refuse(f"No stage {args.restart!r} (stages: {', '.join(s.id for s in stages)}).")
+    problem = "" if args.plan else headset.workflow_problem(args.workflow)
+    if problem:
+        return refuse(problem)
     ui: UI = JsonUI(stdout, stdin if stdin is not None else sys.stdin) if args.json else TextUI(stdout)
-    engine = Engine(headset.info, stages, ui, root=root)
+    engine = Engine(headset.info, stages, ui, root=root, workflow=args.workflow, others=workflows)
     if args.plan:
         engine.show_plan()
         return 0
     return EXIT[engine.run(args.restart)]
+
+
+def upgrade(headset: Headset, argv: list[str]) -> int:
+    """Run python -m overpressure upgrade: the installer's upgrade."""
+    return main(headset, ["--workflow", "upgrade", *argv])
+
+
+def restore(headset: Headset, argv: list[str]) -> int:
+    """Run python -m overpressure restore: the installer's way back to the headset's own system."""
+    return main(headset, ["--workflow", "restore", *argv])

@@ -159,16 +159,29 @@ command line does everything the window does.
   installer whose plan shows an earlier run, where it stopped (*Last time: stopped in Connect your
   headset*; the page reads each plan with `install --json --plan`, which runs nothing). The headset chosen
   last is listed first, marked *Last used* in a pill, with the page's one main button; one click on an entry or its
-  button opens that headset's installer at its start page (or Advanced mode for a headset without one).
+  button opens that headset's page of what to do, where its installer does more than the install, else its
+  installer at its start page (or Advanced mode for a headset without one).
   Only `python -m overpressure --device CODENAME gui` skips the page; `OVERPRESSURE_DEVICE` does not.
+- **What to do.** A headset whose installer has more than the install ([workflows](#the-installer))
+  asks *What would you like to do?* right after the choice: one card per workflow in its order, with its
+  title, an amber *erases the headset* pill where it erases, what it does and keeps, and where it stopped
+  last time (each workflow's plan read with `install --workflow KEY --json --plan`), or, in amber with its
+  button off, why it cannot run now (`Headset.workflow_problem`: the PICO 4's upgrade needs a system this
+  computer installed, its restore a backup on this computer). Choosing one opens its stages, the stepper
+  captioned with its title. Below the cards, *Your backup* says where the headset's backup is on this
+  computer (`Headset.backup_set`) with *Export backup…* (off without one) and *Import backup…*: a file
+  dialog, then `python -m overpressure backup export|import FILE` as a child, its progress line in a panel
+  until it has ended, then its result, which reminds to keep an export private. Nothing else starts while it
+  writes.
 - **The last choice** is a preference of the window, not a setting: `out/window.json`
   (`{"last_headset": CODENAME}`), written when a headset is chosen. A missing or broken file, or a codename
   no longer in `devices/`, marks nothing. The window writes nothing to `.env`; `OVERPRESSURE_DEVICE` there
   stays the command line's.
 - **The way back.** Every page after the headset page (the start page, the installer's stages, its done and
-  failed pages, Advanced mode) has *‹ Headsets* in the header, also with one headset. It keeps nothing
-  running and loses nothing: each headset's recorded progress is its engine's state, its details stay for
-  the window's session, and choosing it again shows its start page.
+  failed pages, Advanced mode) has a back link in the header, also with one headset: *‹ PICO 4* (the
+  headset's name) to its page of what to do where it has one, *‹ Headsets* from that page and for any other
+  headset. It keeps nothing running and loses nothing: each workflow's recorded progress is its engine's
+  state, its details stay for the window's session, and choosing it again shows its start page.
 - **One thing at a time.** A step and the installer never run at once (builds share their caches): starting
   one while the other runs is refused with a message that says which one runs. Going back to the headset
   page while either runs is refused the same way.
@@ -205,12 +218,13 @@ terminal can do all of it too.
   and decline, an action with *Done*, a form with its fields (secret fields masked). The values go to the engine only in the answer
   line, and the fields are emptied when the panel closes. While the engine waits for an answer, the
   header's link in Advanced mode says *Installer (waiting for you)*, shaded in the accent colour.
-- **The end**, under a large check (or, after a failure, a red mark). After the install: the headset's own
-  title and text (`Headset.after_install()`; without them *Installed*, "Your headset is ready.") and its
-  actions in the action bar, each of which opens Advanced mode at one of
-  its steps (the engine has no modes for them; an action whose step the headset lacks is left out); *Done*
-  closes the window. The PICO 4's: *Unplug it and put it on*, signing in to Steam, with *Update*, *Back to
-  PICO OS* and *Get help* (its `install`, `restore` and `support-bundle` steps). After a failure: the error,
+- **The end**, under a large check (or, after a failure, a red mark). After a workflow: the headset's own
+  title and text for it (`Headset.finished_page(workflow)`, the install's `Headset.after_install()`; without
+  them *Installed*, "Your headset is ready.") and its actions in the action bar: one opens another workflow
+  at its start page, another Advanced mode at one of the headset's steps (an action the headset lacks is left
+  out); *Done* closes the window. The PICO 4's after the install: *Unplug it and put it on*, signing in to
+  Steam, with *Upgrade later*, *Restore to stock* and *Get help* (its `support-bundle` step); after the
+  upgrade *Upgraded*; after the restore *Back on PICO OS*, with *Install again*. After a failure: the error,
   where the headset stands and what to do next, with *Retry* and *Show details*.
 - **Stopping.** *Stop*, or closing the window while a run is under way, asks first in the panel: *Stop the
   installer?* For a task that does not write (or one waiting for an answer): it stops now, nothing on the
@@ -284,6 +298,10 @@ python -m overpressure install                  # in a terminal: the stages as t
 python -m overpressure install --json           # the window's engine: events on stdout, answers on stdin
 python -m overpressure install --plan           # the plan and what is done already; runs nothing
 python -m overpressure install --restart STAGE  # forget what was done from STAGE on, then run
+python -m overpressure upgrade                  # install --workflow upgrade: a new system, the data kept
+python -m overpressure restore                  # install --workflow restore: back to the headset's own system
+python -m overpressure backup export FILE       # the headset's backup as one checked file
+python -m overpressure backup import FILE       # such a file onto this computer, checked
 ```
 
 A headset with an installer gives its plan through `Headset.install_plan()`: stages, each a list of
@@ -292,11 +310,18 @@ is the engine, `devices/<codename>/tooling/install.py` the plan). A headset with
 stages, and `install` says so (exit status 2). The engine is standard library only, so a terminal does
 everything the window does.
 
+- **Workflows.** Besides the install, a headset may give other workflows (`Headset.workflows()`, each a
+  `Workflow` with a key, a title, what it does and keeps, and whether it erases the headset) and their
+  plans (`Headset.plan(key)`); `install --workflow KEY` runs one, `upgrade` and `restore` are short for the
+  two the PICO 4 has. Before a run (not for `--plan`), `Headset.workflow_problem(key)` may refuse it with a
+  reason (exit status 2). A headset without others has the install alone.
 - **Order and resume.** Tasks run in order; the first failure ends the run. Each headset has its own
-  state, `out/install/<codename>/state.json` (`{"schema": 1, "tasks": {ID: {"status": ..., "finished":
-  UTC}}}`), written whole after every change. A task done in an earlier run is skipped unless its own done check says its
+  state, `out/install/<codename>/state.json` for the install and `out/install/<codename>/<workflow>/state.json`
+  for another workflow (`{"schema": 1, "tasks": {ID: {"status": ..., "finished": UTC}}}`), written whole
+  after every change, the tasks' logs beside it. A task done in an earlier run is skipped unless its own done check says its
   result is gone; a done check also skips a task on its first run when its output is there already
-  (skipped). `--restart STAGE` forgets that stage's tasks and every later stage's.
+  (skipped). `--restart STAGE` forgets that stage's tasks and every later stage's. A workflow that finishes
+  forgets the other workflows' state: the headset is where it left it, so each of them starts afresh.
 - **Child programs.** A task's programs run from the repository root (Linux-root steps in the
   build container of [Linux-root steps](#linux-root-steps), as the window's steps do); their output goes line by
   line to log events and to `out/install/<codename>/<task>.log`. What a task prints itself becomes log lines
@@ -317,7 +342,19 @@ everything the window does.
 - **Settings.** What the installer finds out (a headset's serials) it writes to `.env` itself
   (`localconfig.update`: the key's line is replaced, every other line and comment kept, a missing `.env`
   starts as a copy of `.env.example`).
-- **Exit status.** 0 finished, 1 failed, 2 a usage error or no installer, 3 stopped.
+- **Exit status.** 0 finished, 1 failed, 2 a usage error, no installer or a refused workflow, 3 stopped.
+- **The backup as one file.** `backup export FILE` writes the headset's backup (`Headset.backup_set()`: the
+  verified backup folder, the identity, the other files and the `.env` settings the way back needs on
+  another computer) into one uncompressed tar ([overpressure/backup.py](../overpressure/backup.py)):
+  `overpressure-backup.json` first (the headset, the folder's name, the identity, the files' names, the
+  settings), then the backup under `backup/`, the other files under `files/`. The backup is verified
+  against its manifest before, and the file read back against it after; the file appears only when both
+  match, never over an existing one. `backup import FILE` refuses another kind of headset, a headset other
+  than the identity this computer has, a damaged file, and any file that would replace a different one; a
+  backup already there with the same manifest is kept, another gets a new folder beside it. The imported
+  backup is verified, then `Headset.adopt_backup` names it in `.env` (the PICO 4: its backup and identity,
+  and the serials `.env` has none of). An export holds what reaches the headset's maintenance system:
+  keep it private.
 
 ### Events
 
@@ -326,7 +363,7 @@ in a log event. Texts are for the owner: plain words, no stack traces (those go 
 
 | Event | Fields | When |
 | --- | --- | --- |
-| `plan` | `headset` {`codename`, `name`}, `stages` [{`id`, `title`, `summary`, `tasks` [{`id`, `title`, `estimate`, `writes`}]}] | first, once |
+| `plan` | `headset` {`codename`, `name`}, `workflow`, `stages` [{`id`, `title`, `summary`, `tasks` [{`id`, `title`, `estimate`, `writes`}]}] | first, once |
 | `task` | `stage`, `task`, `status`: `pending`, `running`, `done`, `skipped` (its output was there) or `failed` | each change; a task done in an earlier run shows `done` when the run reaches it |
 | `progress` | `task`, `fraction` (0 to 1, or null when unknown), `text` | while a task runs |
 | `log` | `task`, `line` | a line of a child program, or of the task itself: the details view |
@@ -356,8 +393,11 @@ python -m overpressure [--device CODENAME] COMMAND [ARGS...]
   run STEP [NAME=VALUE...]
                        a step with parameters, as the window runs it
   ram-boot [IMAGE]     boot an image from RAM with fastboot boot, where the bootloader allows it
-  install [--json] [--plan] [--restart STAGE]
+  install [--workflow KEY] [--json] [--plan] [--restart STAGE]
                        the installer: the headset's stages in order, resumable
+  upgrade | restore    the installer's other workflows, where the headset has them
+  backup export FILE | backup import FILE
+                       the headset's backup as one checked file, and back
   doctor               what this computer has and lacks for the headset, with fixes
   tools [NAME...]      fetch the pinned host tools (platform-tools, edl-ng)
   container build|run -- CMD|shell

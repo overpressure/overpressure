@@ -24,10 +24,11 @@ import sys
 from typing import TYPE_CHECKING
 
 from overpressure import localconfig
+from overpressure.headset import INSTALL
 from overpressure.window.advanced import Advanced, DemoProcess, demo_checks
 from overpressure.window.app import ADVANCED_VIEW, INSTALLER_VIEW, Window
 from overpressure.window.headsets import PREFS, Choice
-from overpressure.window.installer import ChildEngine, DemoEngine, Engine
+from overpressure.window.installer import BackupJob, ChildEngine, DemoBackupJob, DemoEngine, Engine
 
 if TYPE_CHECKING:
     from overpressure.headset import Headset, Registry
@@ -62,13 +63,16 @@ def main(
 
     import customtkinter  # noqa: PLC0415  # the gui extra, only for the window
 
-    def engine_for(chosen: Headset | None) -> Engine:
+    def engine_for(chosen: Headset | None, workflow: str = INSTALL) -> Engine:
         if demo:
             info = chosen.info if chosen is not None else None
             return DemoEngine(
-                recorded=not fresh, codename=info.codename if info else "demo", name=info.name if info else "headset"
+                recorded=not fresh,
+                codename=info.codename if info else "demo",
+                name=info.name if info else "headset",
+                workflow=workflow,
             )
-        return ChildEngine(chosen.info.codename if chosen is not None else None)
+        return ChildEngine(chosen.info.codename if chosen is not None else None, workflow)
 
     side = (
         Advanced(registry, headset, process=DemoProcess(), checks=demo_checks) if demo else Advanced(registry, headset)
@@ -77,7 +81,15 @@ def main(
     choice = Choice(registry, headset, prefs=localconfig.ROOT / PREFS, save=not demo)
     view = ADVANCED_VIEW if advanced else INSTALLER_VIEW
     try:
-        window = Window(customtkinter, engine_for(headset), side, view=view, choice=choice, engines=engine_for)
+        window = Window(
+            customtkinter,
+            engine_for(headset),
+            side,
+            view=view,
+            choice=choice,
+            engines=engine_for,
+            jobs=DemoBackupJob if demo else BackupJob,
+        )
     except tk.TclError as exc:
         print(f"error: no display for the window ({exc}); the command line does everything it does", file=sys.stderr)
         return 2

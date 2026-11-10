@@ -84,10 +84,13 @@ PC, `out/dev/id_ed25519`; it stays on your PC. To use a key of your own, name it
 `PICO4_SSH_PUBLIC_KEY` in `.env` before the install, which writes the keys to the headset's data partition. No account has a password ([docs/security.md](docs/security.md)).
 
 **After the install.** Unplug it and put it on: sign in to Steam, find the controllers and set up your room in the
-headset (and Wi-Fi, if you skipped it). `python -m overpressure dev install` with a new image updates the system and
-keeps your data. **The way back:** `python -m overpressure dev restore`, then
-`python -m overpressure cycle --restore-only`, both from your backup; see
-[docs/install.md](docs/install.md#back-to-stock).
+headset (and Wi-Fi, if you skipped it). Export your backup into one file and keep it somewhere safe: the window's
+*Export backup…*, or `python -m overpressure backup export FILE`; *Import backup…* (`backup import FILE`) brings
+it to another computer. The window asks what to do once the PICO 4 is chosen: **Upgrade**
+(`python -m overpressure upgrade`) builds this version of the system and installs it over yours, keeping your data;
+**Restore to stock** (`python -m overpressure restore`) brings back PICO OS and its bootloader from your backup,
+with a stop on the headset for PICO OS's setup and USB debugging in between; see
+[docs/install.md](docs/install.md#the-upgrade-and-the-way-back).
 
 **If something goes wrong.** `python -m overpressure dev support-bundle` collects the logs for a bug report, with your
 identifiers masked ([docs/hardware-testing.md](docs/hardware-testing.md#support-bundle)); the installer's own logs are

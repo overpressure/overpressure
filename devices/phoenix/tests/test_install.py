@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
-from devices.phoenix.tooling import HEADSET, localconfig
+from devices.phoenix.tooling import HEADSET, devloop, localconfig
 from devices.phoenix.tooling import install as plan
 from overpressure import doctor, tools
 from overpressure.doctor import Check
+from overpressure.headset import BackupSet
 from overpressure.install import Context, Engine, Stage, Task
 
 if TYPE_CHECKING:
@@ -499,16 +500,109 @@ class ParserTests(unittest.TestCase):
 
 
 class AfterInstallTests(unittest.TestCase):
-    def test_the_finished_page_offers_update_pico_os_and_help(self):
+    def test_the_finished_page_offers_the_upgrade_the_way_back_and_help(self):
         after = HEADSET.after_install()
         self.assertEqual(after.title, "Unplug it and put it on")
         self.assertIn("sign in to Steam", after.text)
         self.assertEqual(
-            [(a.label, a.step) for a in after.actions],
-            [("Update", "install"), ("Back to PICO OS", "restore"), ("Get help", "support-bundle")],
+            [(a.label, a.step, a.workflow) for a in after.actions],
+            [("Upgrade later", "", "upgrade"), ("Restore to stock", "", "restore"), ("Get help", "support-bundle", "")],
         )
         keys = {step.key for step in HEADSET.steps()}
-        self.assertTrue(all(a.step in keys for a in after.actions))
+        workflows = {w.key for w in HEADSET.workflows()}
+        for workflow in workflows:
+            for action in HEADSET.finished_page(workflow).actions:
+                self.assertTrue(action.step in keys or action.workflow in workflows, action)
+        self.assertEqual(HEADSET.finished_page("restore").title, "Back on PICO OS")
+        self.assertIn("unlocked", HEADSET.finished_page("restore").text)
+
+
+class BackupSetTests(unittest.TestCase):
+    def test_the_export_carries_what_the_way_back_needs_and_an_import_names_it(self):
+        settings = localconfig.Settings(adb_serial="ADB1", fastboot_serial="", edl_serial="EDL1")
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(localconfig, "load", return_value=settings):
+            work = Path(folder)
+            with mock.patch.object(devloop, "WORK", work):
+                here = HEADSET.backup_set()
+                self.assertEqual(sorted(here.files), ["id_ed25519", "id_ed25519.pub"])
+                (work / devloop.INSTALLED).write_text("{}", encoding="utf-8")
+                self.assertIn(devloop.INSTALLED, HEADSET.backup_set().files)
+            self.assertEqual(here.settings, {"PICO4_ADB_SERIAL": "ADB1", "PICO4_EDL_SERIAL": "EDL1"})
+            self.assertEqual(here.folder, settings.path("backup"))
+            saved = {}
+            imported = BackupSet(
+                settings.path("backup").with_name("stock-2"),
+                settings.path("identity"),
+                {},
+                {"PICO4_ADB_SERIAL": "OTHER", "PICO4_FASTBOOT_SERIAL": "FB1", "PICO4_NOPE": "x"},
+            )
+            with mock.patch("overpressure.localconfig.update", side_effect=saved.update):
+                HEADSET.adopt_backup(imported)
+        self.assertEqual(saved["PICO4_BACKUP"], "backup/stock-2")
+        self.assertEqual(saved["PICO4_FASTBOOT_SERIAL"], "FB1")  # .env had none
+        self.assertNotIn("PICO4_ADB_SERIAL", saved)  # .env's own stays
+        self.assertNotIn("PICO4_NOPE", saved)
+
+
+class WorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.plan = plan.Plan(HEADSET, root=Path("/nowhere"), computer=list)
+
+    def test_three_workflows_in_order_with_their_plans(self):
+        self.assertEqual([w.key for w in HEADSET.workflows()], ["install", "upgrade", "restore"])
+        self.assertEqual([w.erases for w in HEADSET.workflows()], [True, False, True])
+        self.assertEqual([s.id for s in self.plan.upgrade_stages()], ["computer", "build", "install"])
+        self.assertEqual([s.id for s in self.plan.restore_stages()], ["backup", "restore", "pico-os", "bootloader"])
+
+    def test_the_upgrade_rebuilds_the_system_and_keeps_the_data(self):
+        stages = {s.id: s for s in self.plan.upgrade_stages()}
+        self.assertNotIn("unlock-files", [t.id for t in stages["computer"].tasks])
+        build = {t.id: t for t in stages["build"].tasks}
+        self.assertEqual(
+            {k for k, t in build.items() if t.done is None}, {"userspace", "system", "kernel", "boot-image"}
+        )
+        tasks = [t.id for t in stages["install"].tasks]
+        self.assertEqual(tasks, ["plug-in", "recovery", "install", "installed", "check", "ready"])
+        self.assertNotIn("--format-data", " ".join(self.plan.steps["install"].argv))
+
+    def test_the_restore_asks_once_and_writes_only_after_the_backup_is_checked(self):
+        stages = self.plan.restore_stages()
+        tasks = [t for s in stages for t in s.tasks]
+        writes = [t.id for t in tasks if t.writes]
+        self.assertEqual(writes, ["system", "restore-abl"])
+        ids = [t.id for t in tasks]
+        self.assertLess(ids.index("verify-backup"), ids.index("consent"))
+        self.assertLess(ids.index("consent"), ids.index("system"))
+        self.assertEqual(self.plan.steps["restore-abl"].argv, ("cycle", "--restore-only"))
+
+    def test_the_restore_takes_the_installed_path_unless_pico_os_runs(self):
+        ctx = mock.Mock()
+        ctx.settings.return_value = mock.Mock(adb_serial="SERIAL", tool=mock.Mock(return_value="adb"))
+        ctx.output.return_value = "List of devices attached\n"
+        with mock.patch.object(self.plan, "argv", side_effect=lambda _ctx, key: ["python", "dev", key]):
+            self.plan.restore_system(ctx)
+            self.assertEqual(ctx.ask.call_args.args[0].id, "plug-in")
+            self.assertEqual(ctx.run.call_args.args[0][-3:], ["dev", "restore", "--installed"])
+            ctx.reset_mock()
+            ctx.output.return_value = "List of devices attached\nSERIAL\tdevice\n"
+            self.plan.restore_system(ctx)
+        ctx.run.assert_not_called()
+        self.assertIn("only its bootloader", ctx.note.call_args.args[0])
+
+    def test_an_upgrade_needs_an_installed_system_and_a_restore_a_backup(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            with mock.patch.object(devloop, "WORK", work):
+                self.assertIn("install it first", HEADSET.workflow_problem("upgrade"))
+                (work / devloop.INSTALLED).write_text("{}", encoding="utf-8")
+                self.assertEqual(HEADSET.workflow_problem("upgrade"), "")
+            backup = work / "backup"
+            with mock.patch.object(HEADSET, "backup_set", return_value=mock.Mock(folder=backup)):
+                self.assertIn("import", HEADSET.workflow_problem("restore"))
+                backup.mkdir()
+                (backup / "manifest.json").write_text("{}", encoding="utf-8")
+                self.assertEqual(HEADSET.workflow_problem("restore"), "")
+        self.assertEqual(HEADSET.workflow_problem("install"), "")
 
 
 def _tail(word: str) -> str:

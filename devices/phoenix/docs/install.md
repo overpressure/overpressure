@@ -217,6 +217,10 @@ crash-dump mode); whole-partition images therefore go as sparse images
 
 ## The installer
 
+The installer does three things, which the window asks for right after the PICO 4 is chosen: the
+install, the upgrade and the way back to stock ([below](#the-upgrade-and-the-way-back)); its page also exports and
+imports the headset's backup ([below](#the-backup-as-one-file)).
+
 `python -m overpressure install`, and the window's installer on top of it ([README](../README.md#install)), takes a
 headset from PICO OS to the installed system in five stages, with the commands of this document and of
 [device-preparation.md](device-preparation.md) ([`tooling/install.py`](../tooling/install.py); the engine:
@@ -235,10 +239,41 @@ unlock, `dev flash`, `dev install`, the Wi-Fi profile) finishes its write first.
 | Prepare your headset | one consent (it erases the headset; the backup is the way back); `adb reboot edl`, `edl-ng printgpt` for the LUNs (LUN 0 last) and the serial (`PICO4_EDL_SERIAL`), `device backup --execute` without userdata, `device verify-backup` (an unfinished backup folder stays, the new one goes to `backup/stock-TIME`, written to `PICO4_BACKUP`); `dev stage-abl`; `adb reboot bootloader`, exactly one fastboot device (`PICO4_FASTBOOT_SERIAL`), `device unlock --execute --accept-data-loss`; `dev flash`, `dev connect` | EDL, fastboot, maintenance stage 1 |
 | Install | a form for Wi-Fi (both fields optional; the answer stays in memory and is asked again after a restart); `dev install`, `dev installed`; the Wi-Fi profile as a NetworkManager keyfile (WPA-PSK, or open without a password) through SSH's stdin: `install -D -m 600 /dev/stdin /etc/NetworkManager/system-connections/overpressure-wifi.nmconnection && nmcli connection reload`, so neither the network name nor the password is in a command line, a log or `.env`; `dev check`; then "Unplug it and put it on" | on the cable |
 
-From the unlock the installer goes straight to fastboot and `dev flash`, without PICO OS's factory reset of
+After the backup the installer suggests exporting it ([below](#the-backup-as-one-file)). From the unlock the
+installer goes straight to fastboot and `dev flash`, without PICO OS's factory reset of
 [device-preparation.md](device-preparation.md#5-factory-reset-and-stage-1-work): the install formats `userdata`
 anyway. Should PICO OS or the bootloader turn out to need it, it is an action ask with the reset's instructions
 after the unlock (`Plan(factory_reset=True)`), not a failure.
+
+### The upgrade and the way back
+
+`python -m overpressure upgrade` (the window's *Upgrade*) builds this version of the system and installs it over
+the one this computer installed, keeping the data partition; it is offered only when this computer has
+installed the system (`out/dev/installed.json`). `python -m overpressure restore` (the window's *Restore to
+stock*) brings back PICO OS and its bootloader from the backup; it needs a backup on this computer, made by
+the install or imported. A finished workflow forgets the others' recorded progress (the install starts
+afresh after a restore).
+
+| Workflow | Stage | Tasks | Headset |
+| --- | --- | --- | --- |
+| Upgrade | Check this computer | `tools`, the doctor's checks | not needed |
+| Upgrade | Build the system | as the install's, but the userspace archive, the system image, Valve's kernel and the boot image are built on every upgrade (each build reuses what it can) | not needed |
+| Upgrade | Install the upgrade | an action ask (the headset switched on, on the cable); `dev recovery`, `dev install` (the data partition kept), `dev installed`, `dev check` | installed system, maintenance stage 1 |
+| Restore | Check the backup | `tools`; `device verify-backup` of `PICO4_BACKUP`, which must be the headset `PICO4_IDENTITY` describes | not needed |
+| Restore | Restore PICO OS | one consent (it erases the system and its data); an action ask (switched on, on the cable); a headset that answers `adb devices` with its serial runs PICO OS already and is left as it is, any other gets `dev restore --installed` ([back to stock](#back-to-stock)) | maintenance stage 1, fastboot |
+| Restore | Set PICO OS up | an action ask: PICO OS's first-time setup, developer mode and USB debugging again; exactly one `adb devices` entry, written to `PICO4_ADB_SERIAL` | PICO OS |
+| Restore | Stock bootloader | `cycle --restore-only`: the stock boot image verified, the stock ABL written back; then "Back on PICO OS". The bootloader stays unlocked | PICO OS |
+
+### The backup as one file
+
+`python -m overpressure backup export FILE` (the window's *Export backup…*) writes the backup into one checked file
+([docs/tool.md](../../../docs/tool.md#the-installer)): the EDL backup `PICO4_BACKUP` names, the identity, this
+computer's SSH key for the maintenance stage 1 (`out/dev/id_ed25519`, which the dev image in `recovery` trusts
+alone), `out/dev/installed.json` once the system is installed, and the headset's serials. With them another
+computer can restore the headset: `backup import FILE` (*Import backup…*) puts the backup under `backup/`, the
+key and the record into `out/dev` where it has none, and names the backup, the identity and the serials `.env`
+lacks. It refuses another headset's backup and a key different from this computer's own. The file is as private
+as the backup: it reaches the headset's maintenance system.
 
 ## Install and update
 
@@ -303,7 +338,8 @@ system image has them. A new boot image alone goes through `dev recovery`, then
 ## Back to stock
 
 `python -m overpressure dev restore` knows from `out/dev/installed.json` (written by `dev install`)
-that the system is installed. From the maintenance stage 1 it writes the backup's `super` and
+that the system is installed, or from `--installed` where another computer installed it (the restore
+stepper passes it unless PICO OS runs). From the maintenance stage 1 it writes the backup's `super` and
 `boot` (checked against the manifest, read back), wipes the start of `userdata` and `metadata`
 (both `formattable` in PICO OS's fstab, so PICO OS makes new file systems and keys), clears
 `misc`, then writes stock `recovery` through fastboot and starts PICO OS. PICO OS's first-time
@@ -349,7 +385,8 @@ cable has not been pulled in a restore on the headset.
 
 1. **The way back.** `dev restore` for an installed system ran on the headset and ends in PICO OS's
    first-time setup. A restore interrupted part way has its ways out ([above](#an-interrupted-restore)), not tried
-   with a pulled cable.
+   with a pulled cable. The restore stepper, the upgrade and a backup's export and import ran on the host with
+   fakes only; a restore from an imported backup on another computer is not run.
 2. **Integrity.** The system image is checked when written, not at boot (no dm-verity).
 3. **The direct boot on the headset.** Still to run: the power key held 2 s in charger mode, the
    lenses dark there (by eye), a boot without the PC, and `dev check` with both controllers

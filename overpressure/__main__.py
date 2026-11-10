@@ -14,8 +14,14 @@
                        the build container, where every Linux-root step (the builds) runs
   ram-boot [IMAGE]     boot an image from RAM with fastboot boot (writes nothing), where the
                        headset's bootloader allows it
-  install [--json] [--plan] [--restart STAGE]
+  install [--workflow KEY] [--json] [--plan] [--restart STAGE]
                        the installer: the headset's stages in order, resumable (the window's engine)
+  upgrade [--json] [--plan] [--restart STAGE]
+                       the installer's upgrade: a new system, the headset's data kept
+  restore [--json] [--plan] [--restart STAGE]
+                       the installer's way back to the headset's own system, from its backup
+  backup export FILE | backup import FILE
+                       the headset's backup into one checked file, or from one onto this computer
   COMMAND [ARGS...]    a command of the headset (listed below once a headset is known)
 
 The headset is --device, else OVERPRESSURE_DEVICE (environment or .env), else the only one in
@@ -30,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from . import doctor, fastboot, install, linux, localconfig, runner, tools
+from . import backup, doctor, fastboot, install, linux, localconfig, runner, tools
 from .headset import Headset, Registry, discover
 
 
@@ -174,6 +180,9 @@ ON_HEADSET: dict[str, Callable[[Headset, list[str]], int]] = {
     "ram-boot": ram_boot,
     "run": _run,
     "install": install.main,
+    "upgrade": install.upgrade,
+    "restore": install.restore,
+    "backup": backup.main,
 }
 
 

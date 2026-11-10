@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 from overpressure import install, localconfig
-from overpressure.headset import Command, Headset, Info
+from overpressure.headset import Command, Headset, Info, Workflow
 from overpressure.install import Ask, Context, Engine, Failed, Field, Stage, Task
 from overpressure.process import until
 
@@ -635,6 +635,78 @@ class MainTests(unittest.TestCase):
         from overpressure import __main__ as cli  # noqa: PLC0415  # the command line, as the other tests use it
 
         self.assertIs(cli.ON_HEADSET["install"], install.main)
+        self.assertIs(cli.ON_HEADSET["upgrade"], install.upgrade)
+        self.assertIs(cli.ON_HEADSET["restore"], install.restore)
+
+
+class Workflows(Fake):
+    """A headset with an install, an upgrade (refused while it says why) and a restore."""
+
+    problem = ""
+
+    def workflows(self):
+        return (
+            Workflow("install", "Install", "a"),
+            Workflow("upgrade", "Upgrade", "b"),
+            Workflow("restore", "Restore", "c", erases=True),
+        )
+
+    def plan(self, workflow: str) -> tuple[Stage, ...]:
+        return (Stage(workflow, workflow.title(), "", (Task(f"{workflow}-task", "Task", lambda ctx: ctx.log("ran")),)),)
+
+    def workflow_problem(self, workflow: str) -> str:
+        return self.problem if workflow == "upgrade" else ""
+
+
+class WorkflowTests(unittest.TestCase):
+    """Each workflow its own plan and state; one that finishes forgets the others' progress."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.out = Path(temp.name)
+
+    def run_main(self, headset: Headset, argv: list[str]) -> tuple[int, list[dict]]:
+        out = io.StringIO()
+        code = install.main(headset, ["--json", *argv], stdin=io.StringIO(""), stdout=out, root=self.out)
+        return code, [json.loads(line) for line in out.getvalue().splitlines()]
+
+    def test_each_workflow_keeps_its_own_state_and_the_install_stays_where_it_was(self):
+        headset = Workflows()
+        code, events = self.run_main(headset, ["--workflow", "upgrade", "--plan"])
+        self.assertEqual((code, events[0]["workflow"], events[0]["stages"][0]["id"]), (0, "upgrade", "upgrade"))
+        self.assertEqual(install.workflow_folder(self.out, "fake", "install"), self.out / "fake")
+        self.assertEqual(install.workflow_folder(self.out, "fake", "restore"), self.out / "fake" / "restore")
+        engine = Engine(INFO, headset.plan("upgrade"), Recorder(), root=self.out, workflow="upgrade")
+        engine.load_state()
+        engine.state["tasks"]["upgrade-task"] = {"status": "failed"}
+        engine.save_state()
+        self.assertTrue((self.out / "fake" / "upgrade" / "state.json").is_file())
+        self.assertEqual(install.main(headset, ["--workflow", "install"], stdout=io.StringIO(), root=self.out), 0)
+        self.assertTrue((self.out / "fake" / "state.json").is_file())
+        self.assertFalse((self.out / "fake" / "upgrade" / "state.json").exists())  # forgotten: the install finished
+        self.assertEqual(install.main(headset, ["--workflow", "restore"], stdout=io.StringIO(), root=self.out), 0)
+        self.assertFalse((self.out / "fake" / "state.json").exists())  # the way back forgets the install's
+        self.assertTrue((self.out / "fake" / "restore" / "restore-task.log").is_file())
+
+    def test_a_refused_or_unknown_workflow_runs_nothing(self):
+        headset = Workflows()
+        headset.problem = "install it first"
+        code, events = self.run_main(headset, ["--workflow", "upgrade"])
+        self.assertEqual((code, events[-1]["error"]), (2, "install it first"))
+        self.assertEqual(self.run_main(headset, ["--workflow", "upgrade", "--plan"])[0], 0)  # its plan shows
+        code, events = self.run_main(headset, ["--workflow", "nope"])
+        self.assertEqual(code, 2)
+        self.assertIn("install, upgrade, restore", events[-1]["error"])
+        self.assertFalse((self.out / "lock").exists())
+        self.assertEqual(install.upgrade(Workflows(), ["--plan"]), 0)
+
+    def test_a_headset_with_the_install_alone(self):
+        stages = (Stage("s", "Stage", "", (Task("t", "Task", lambda _ctx: None),)),)
+        self.assertEqual([w.key for w in Fake(stages).workflows()], ["install"])
+        self.assertEqual(Fake(stages).plan("install"), stages)
+        self.assertEqual(tuple(Fake().workflows()), ())
+        self.assertEqual(Fake(stages).finished_page("install"), Fake(stages).after_install())
 
 
 if __name__ == "__main__":

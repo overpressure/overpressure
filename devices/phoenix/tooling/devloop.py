@@ -762,13 +762,14 @@ class Dev(Headset):
 
         return self.until("stage 1 or the installed system", 240, which)
 
-    def restore(self) -> None:
+    def restore(self, *, installed: bool = False) -> None:
         """Leave the loop: the backup's stock boot image, then PICO OS. ABL stays engineering.
 
-        With the system installed (dev install), PICO OS's system, recovery and data come back too.
+        With the system installed (dev install, as this computer's record says or @p installed tells
+        for a headset another computer installed), PICO OS's system, recovery and data come back too.
         """
         self.s.require("adb_serial", "fastboot_serial")
-        if (self.work / INSTALLED).exists():
+        if installed or (self.work / INSTALLED).exists():
             self.restore_installed()
             return
         stock, expected = self.stock_boot()
@@ -810,7 +811,7 @@ class Dev(Headset):
             msg = "could not clear the recovery request in misc"
             raise RuntimeError(msg)
         self.restore_partition("recovery")
-        (self.work / INSTALLED).unlink()
+        (self.work / INSTALLED).unlink(missing_ok=True)
         (self.work / "state.json").unlink(missing_ok=True)
         print(
             "PICO OS is starting with fresh data: its first-time setup follows on the headset "
@@ -847,7 +848,6 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901  # one branch per 
         "connect",
         "check",
         "reboot",
-        "restore",
         "normal",
         "recovery",
         "installed",
@@ -862,6 +862,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901  # one branch per 
     inst.add_argument("system", nargs="?", type=Path, default=SYSTEM)
     inst.add_argument("--format-data", action="store_true", help="format userdata even if it holds data")
     inst.add_argument("--boot", type=Path, help="the boot image to install instead of out/kernel/valve-boot.img")
+    restore = sub.add_parser("restore", help="back to PICO OS from the backup: system, boot, recovery, fresh data")
+    restore.add_argument(
+        "--installed", action="store_true", help="the system is installed, also where this computer did not record it"
+    )
     restore_part = sub.add_parser("restore-partition")
     restore_part.add_argument("partition", choices=RESTORABLE)
     restore_part.add_argument("--no-reboot", action="store_true")
@@ -884,6 +888,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901  # one branch per 
             return dev.release_check(attended=args.attended)
         elif args.command == "support-bundle":
             print(dev.support_bundle(args.output))
+        elif args.command == "restore":
+            dev.restore(installed=args.installed)
         elif args.command == "restore-partition":
             dev.restore_partition(args.partition, reboot=not args.no_reboot)
         elif args.command == "ssh":

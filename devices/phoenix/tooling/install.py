@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Unlicense
-"""The PICO 4's installer: five stages from a new computer to the installed system.
+"""The PICO 4's installer: five stages from a new computer to the installed system; the upgrade; the way back.
 
     python -m overpressure install [--json] [--plan] [--restart STAGE]
+    python -m overpressure upgrade|restore [--json] [--plan] [--restart STAGE]
 
 It strings together what the window's steps and the device and dev commands already do; the
 builds and the dev commands run as the steps' command lines (runner.process), so nothing here
@@ -21,6 +22,12 @@ the EDL backup's LUNs, the unlock's fastboot serial and the Wi-Fi profile.
    (device unlock), the maintenance stage 1 (dev flash, dev connect).
 5. install: Wi-Fi (a form, optional), dev install, dev installed, the Wi-Fi profile over SSH
    (the password on stdin only), dev check, then "unplug it and put it on".
+
+The upgrade (upgrade_stages) is the first two stages again, the system rebuilt, then dev recovery,
+dev install, dev installed and dev check: the data partition stays. The way back (restore_stages)
+checks the backup file by file, then with one consent brings back PICO OS's system, boot, recovery
+and fresh data (dev restore --installed, unless PICO OS runs already), waits for PICO OS's setup and
+USB debugging, and returns the stock bootloader (cycle --restore-only).
 """
 
 from __future__ import annotations
@@ -118,8 +125,43 @@ WIFI = Ask(
 )
 READY = (
     "Unplug the headset and put it on. Sign in to Steam, pair the controllers and set up your room in the "
-    "headset. If you skipped Wi-Fi, join a network in its settings first. The installer can update the "
+    "headset. If you skipped Wi-Fi, join a network in its settings first. The installer can upgrade the "
     "system later, take the headset back to PICO OS, or collect the logs for a bug report."
+)
+UPGRADE_PLUG_IN = Ask(
+    "plug-in",
+    "action",
+    "Connect your headset",
+    "Switch the headset on and plug it into this computer with its USB-C data cable. It may be running the "
+    "system or be off in its charger screen; the installer starts its maintenance system from there.",
+)
+UPGRADED = "Upgraded. Unplug the headset and put it on: your account, games, settings and Wi-Fi are as you left them."
+RESTORE_CONSENT = Ask(
+    "consent",
+    "confirm",
+    "Erase the system?",
+    "Restoring erases the SteamOS-compatible system and everything on it: your Steam account on the headset, "
+    "games, settings and Wi-Fi. PICO OS comes back from your backup as it came, with a fresh setup.\n\n"
+    "Keep the cable in until the installer says so; each step can be started again if it stops.",
+    accept="Erase and restore",
+)
+RESTORE_PLUG_IN = Ask(
+    "plug-in",
+    "action",
+    "Connect your headset",
+    "Switch the headset on and plug it into this computer with its USB-C data cable.",
+)
+PICO_OS_SETUP = Ask(
+    "pico-os",
+    "action",
+    "Set PICO OS up",
+    "PICO OS has started with a fresh setup on the headset. Go through it, then turn on developer mode and USB "
+    "debugging again (Settings, General, About: tap the software version seven times; then Developer, USB "
+    "debugging). Plug the headset in, put it on and accept the USB debugging prompt.",
+)
+RESTORED = (
+    "Your headset runs PICO OS again, with the system and the bootloader from your backup. Its bootloader stays "
+    "unlocked, as the install left it. Keep your backup: the installer can install the system again from here."
 )
 
 
@@ -326,9 +368,9 @@ class Plan:
         return outputs[key]
 
     # -- 3. the headset over USB ------------------------------------------------------------------
-    def find(self, ctx: Context) -> None:
-        """Ask the owner to plug in; wait for exactly one adb device and write its serial to .env."""
-        ctx.ask(PLUG_IN)
+    def find(self, ctx: Context, ask: Ask = PLUG_IN) -> None:
+        """Ask the owner to plug in (@p ask); wait for exactly one adb device and write its serial to .env."""
+        ctx.ask(ask)
         adb = ctx.settings(Settings).tool("adb")
         told: set[str] = set()
 
@@ -477,7 +519,10 @@ class Plan:
         )
         ctx.progress(None, "Checking the backup")
         ctx.run(self.command("device", "verify-backup", "--backup", folder))
-        ctx.note(f"Your backup is in {folder}: keep it, and a copy somewhere safe. It is your way back to PICO OS.")
+        ctx.note(
+            f"Your backup is in {folder}: it is your way back to PICO OS. Keep a copy somewhere safe: Export backup "
+            "on the installer's start page writes it into one file (python -m overpressure backup export FILE)."
+        )
 
     def unlock(self, ctx: Context) -> None:
         """Into fastboot, its serial to .env, then the unlock (it wipes PICO OS's data)."""
@@ -555,6 +600,173 @@ class Plan:
         dev = devloop.Dev(ctx.settings(Settings), self.work)
         ctx.run(dev.ssh_argv(WIFI_COMMAND), stdin=keyfile(ssid, password, str(uuid.uuid4())))
         ctx.note("The headset joins your Wi-Fi network when it is in range.")
+
+    # -- the way back -------------------------------------------------------------------------------
+    def check_backup(self, ctx: Context) -> None:
+        """Verify the backup .env names, file by file, and that it is the saved identity's headset."""
+        settings = ctx.settings(Settings)
+        folder = settings.path("backup")
+        if not (folder / "manifest.json").is_file():
+            msg = f"There is no backup in {folder}: import the one you exported (Import backup on the start page)."
+            raise Failed(msg, NOTHING_CHANGED)
+        ctx.progress(None, "Checking every file of the backup")
+        ctx.run(self.command("device", "verify-backup", "--backup", folder))
+        if not self.backup_there(ctx):
+            msg = f"The backup in {folder} is not of the headset {settings.path('identity')} describes."
+            raise Failed(msg, NOTHING_CHANGED)
+
+    def pico_os_running(self, ctx: Context) -> bool:
+        """Tell whether the headset .env names answers adb now: PICO OS runs, its system is stock already."""
+        settings = ctx.settings(Settings)
+        rows = device_rows(ctx.output([settings.tool("adb"), "devices"], 30, check=False), ("device",))
+        return bool(settings.adb_serial) and settings.adb_serial in rows
+
+    def restore_system(self, ctx: Context) -> None:
+        """Bring back PICO OS's system, boot, recovery and fresh data from the backup (dev restore).
+
+        A headset that runs PICO OS already has its stock system; any other is taken to carry the
+        installed system, also where another computer installed it (--installed).
+        """
+        ctx.ask(RESTORE_PLUG_IN)
+        if self.pico_os_running(ctx):
+            ctx.note("PICO OS runs on the headset already: only its bootloader is left.")
+            return
+        ctx.run([*self.argv(ctx, "restore"), "--installed"])
+
+    def restore_stages(self) -> tuple[Stage, ...]:
+        """Return the way back to stock: the backup checked, PICO OS's system, its setup, the stock bootloader."""
+        written = "Keep the cable in and start the installer again: the restore can be repeated."
+        return (
+            Stage(
+                "backup",
+                "Check the backup",
+                "The host tools, then every file of your headset's backup is checked against its manifest. The "
+                "headset is not needed yet.",
+                (
+                    self.step_task("tools", "Host tools", "about 1 min", done=self.tools_there),
+                    Task("verify-backup", "Check the backup", self.check_backup, "about 5 min", where=NOTHING_CHANGED),
+                ),
+            ),
+            Stage(
+                "restore",
+                "Restore PICO OS",
+                "Erases the system: PICO OS's own system, boot and recovery go back from the backup, and its data "
+                "starts fresh. About 20 minutes; keep the cable in.",
+                (
+                    Task(
+                        "consent",
+                        "Your consent",
+                        self.consent_restore,
+                        done=lambda ctx: ctx.completed("system"),
+                        where=NOTHING_CHANGED,
+                    ),
+                    Task(
+                        "system",
+                        "PICO OS's system",
+                        self.restore_system,
+                        "about 20 min",
+                        writes=True,
+                        where="The headset is in its maintenance system or its bootloader, or PICO OS is starting. "
+                        + written,
+                    ),
+                ),
+            ),
+            Stage(
+                "pico-os",
+                "Set PICO OS up",
+                "PICO OS starts with a fresh setup. Go through it on the headset and turn on developer mode and USB "
+                "debugging, so the installer can reach it again.",
+                (
+                    Task(
+                        "pico-os",
+                        "PICO OS's setup",
+                        lambda ctx: self.find(ctx, PICO_OS_SETUP),
+                        "about 10 min",
+                        where="PICO OS runs on the headset with its stock system. " + AGAIN,
+                    ),
+                ),
+            ),
+            Stage(
+                "bootloader",
+                "Stock bootloader",
+                "The stock boot image is checked, then PICO OS's own bootloader goes back from the backup.",
+                (
+                    self.step_task(
+                        "restore-abl",
+                        "Stock bootloader",
+                        "about 10 min",
+                        where="PICO OS runs; its bootloader may still be the engineering one. " + written,
+                    ),
+                    Task("restored", "Back on PICO OS", lambda ctx: ctx.note(RESTORED), ""),
+                ),
+            ),
+        )
+
+    @staticmethod
+    def consent_restore(ctx: Context) -> None:
+        """Ask for the restore's one consent."""
+        ctx.ask(RESTORE_CONSENT)
+
+    # -- the upgrade ----------------------------------------------------------------------------
+    @staticmethod
+    def plug_in_upgrade(ctx: Context) -> None:
+        """Ask the owner to plug in the headset with its installed system."""
+        ctx.ask(UPGRADE_PLUG_IN)
+
+    def upgrade_stages(self) -> tuple[Stage, ...]:
+        """Return the upgrade: this computer, the system built from this version, its install over the old one.
+
+        The system, the kernel and the boot image are built on every upgrade: each build is
+        incremental, and only that tells whether this version changed them. The data partition stays.
+        """
+        computer, build = self.stages()[:2]
+        rebuilt = {"userspace", "system", "kernel", "boot-image"}
+        tasks = tuple(
+            Task(t.id, t.title, t.run, t.estimate, t.writes, None if t.id in rebuilt else t.done, t.where)
+            for t in build.tasks
+        )
+        installed_where = "The new system is installed. Keep the cable in and start the installer again."
+        return (
+            Stage(
+                computer.id,
+                computer.title,
+                "What the upgrade needs on this computer: the host tools are fetched, anything else is explained. "
+                "The headset is not needed.",
+                computer.tasks[:1] + computer.tasks[2:],
+            ),
+            Stage(
+                build.id,
+                build.title,
+                "This version of the system, built on this computer. What the last build left is reused, so it "
+                "takes minutes to hours depending on what changed; the headset is not needed.",
+                tasks,
+            ),
+            Stage(
+                "install",
+                "Install the upgrade",
+                "The headset's maintenance system starts, the new system goes on and is checked. Your data "
+                "stays. About 15 minutes; keep the cable in.",
+                (
+                    Task("plug-in", "Connect the headset", self.plug_in_upgrade, ""),
+                    self.step_task(
+                        "recovery",
+                        "Start the maintenance system",
+                        "about 2 min",
+                        where="The headset may be in its maintenance system: " + AGAIN,
+                    ),
+                    self.step_task(
+                        "install",
+                        "Install the system",
+                        "about 10 min",
+                        where="The headset is in the maintenance system; the old system may be replaced already. "
+                        "Keep the cable in and start the installer again: the install can be repeated.",
+                    ),
+                    self.step_task("installed", "Start the installed system", "about 2 min", where=installed_where),
+                    self.step_task("check", "Acceptance checks", "about 3 min", where=installed_where),
+                    Task("ready", "Unplug it and put it on", lambda ctx: ctx.note(UPGRADED), ""),
+                ),
+            ),
+        )
 
     # -- the plan ---------------------------------------------------------------------------------
     def stages(self) -> tuple[Stage, ...]:

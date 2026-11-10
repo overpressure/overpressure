@@ -7,7 +7,9 @@ instance of a Headset subclass. The command line passes each of its commands on 
 that implements it, and the window shows its steps: each step is a command line with parameters, so
 everything the window does can be repeated in a terminal word for word. A headset may also give an
 installer's plan (install_plan: stages of tasks built on those commands, overpressure/install.py)
-and what the window's finished page says and offers after it (after_install).
+and what the window's finished page says and offers after it (after_install); with more than the
+install (workflows and plan: an upgrade, the way back), the window asks which right after the
+headset. backup_set and adopt_backup let the installer export and import its backup.
 
 A new headset needs: devices/<codename>/tooling/__init__.py with HEADSET, the command modules
 that build its images and talk to it (any transport: fastboot, ADB, EDL, SSH, ...), and the
@@ -108,12 +110,46 @@ class Step:
         return words
 
 
+#: The installer's workflow every headset with an installer has; its state stays where it always was.
+INSTALL = "install"
+
+
+@dataclass(frozen=True)
+class Workflow:
+    """Something the installer does with a headset, chosen right after the headset: install, upgrade, restore.
+
+    Each has its own plan of stages (Headset.plan) and its own resumable state; the window offers
+    them in this order, each with its summary.
+    """
+
+    key: str  #: the plan's name: install --workflow KEY
+    title: str  #: the window's card and the stepper's caption
+    summary: str  #: what it does and what it keeps or erases, in one or two sentences
+    erases: bool = False  #: it erases the headset's data
+
+
 @dataclass(frozen=True)
 class Action:
-    """A choice on the installer's finished page: it opens Advanced mode at one of the headset's steps."""
+    """A choice on the installer's finished page: another workflow, or Advanced mode at one of the headset's steps."""
 
     label: str
-    step: str  #: the key of the step Advanced mode opens at
+    step: str = ""  #: the key of the step Advanced mode opens at
+    workflow: str = ""  #: the workflow it starts instead (its start page)
+
+
+@dataclass(frozen=True)
+class BackupSet:
+    """A headset's backup on this computer: what an export carries and where an import puts it.
+
+    The folder is a verified backup (manifest.json, overpressure/backup.py) whose manifest names the
+    headset's identity; files are the other files the way back needs on another computer, by their
+    name in the archive; settings are the .env values it needs (the headset's serials).
+    """
+
+    folder: Path
+    identity: Path
+    files: dict[str, Path] = field(default_factory=dict)
+    settings: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -185,9 +221,39 @@ class Headset(ABC):
         """Return its installer's stages (python -m overpressure install); empty: it has no installer."""
         return ()
 
+    def workflows(self) -> Sequence[Workflow]:
+        """Return what its installer does, in the window's order: the install alone unless it has more."""
+        if not tuple(self.install_plan()):
+            return ()
+        return (Workflow(INSTALL, "Install", f"Installs overpressure's system on the {self.info.name}."),)
+
+    def plan(self, workflow: str) -> Sequence[Stage]:
+        """Return the stages of WORKFLOW (python -m overpressure install --workflow WORKFLOW)."""
+        return self.install_plan() if workflow == INSTALL else ()
+
+    def workflow_problem(self, workflow: str) -> str:  # noqa: ARG002  # a headset's own rule may use it
+        """Return why WORKFLOW cannot run now, in plain words, or "" when it can."""
+        return ""
+
     def after_install(self) -> AfterInstall:
         """Return what the window's finished page says and offers once its installer has run."""
         return AfterInstall()
+
+    def finished_page(self, workflow: str) -> AfterInstall:
+        """Return what the window's finished page says and offers once WORKFLOW has run (the install: after_install)."""
+        if workflow == INSTALL:
+            return self.after_install()
+        title = next((w.title for w in self.workflows() if w.key == workflow), workflow)
+        return AfterInstall(f"{title}: done", f"The {self.info.name} is ready.")
+
+    def backup_set(self) -> BackupSet | None:
+        """Return its backup on this computer as .env names it (python -m overpressure backup), or None."""
+        return None
+
+    def adopt_backup(self, imported: BackupSet) -> None:  # noqa: ARG002  # a headset's own keeps it
+        """Make an imported backup this computer's: the .env settings that name it and its serials."""
+        msg = f"the {self.info.name} keeps no backup in overpressure"
+        raise ValueError(msg)
 
     def main(self, argv: list[str]) -> int:
         """Run a command of its command line (argv[0] is the command word)."""

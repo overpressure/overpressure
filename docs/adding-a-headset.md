@@ -140,6 +140,15 @@ them again. The PICO 4's plan is the example
 headset's state and logs in `out/install/<codename>/`; one installer runs on a computer at a time, whatever
 the headset.
 
+**More than the install.** `Headset.workflows()` returns what the installer does (`Workflow`: a key, a
+title, what it does and keeps, whether it erases the headset), the install alone by default, and
+`Headset.plan(key)` each one's stages; with more than one, the window asks which right after the headset.
+`Headset.workflow_problem(key)` says why one cannot run now (it is refused, its card says so). The PICO 4
+has an upgrade and the way back to stock. **The backup as one file:** `Headset.backup_set()` returns the
+backup, the identity, the other files and the `.env` settings the way back needs on another computer
+(`BackupSet`), and `Headset.adopt_backup()` names an imported one in `.env`; with them `python -m
+overpressure backup export|import FILE` and the window's backup card work for the headset.
+
 What the window says about the headset comes from the headset; the generic window names no product, OS or
 store:
 
@@ -147,9 +156,10 @@ store:
   *Which headset do you have?*. A headset without an installer is listed too and opens in Advanced mode
   only.
 - **The finished page.** `Headset.after_install()` returns an `overpressure.headset.AfterInstall`: the
-  page's title, its text (what the owner does next) and its `Action`s, each a label and the key of one of
-  the headset's steps, which the button opens in Advanced mode (the engine has no modes for them). By
-  default the page says *Installed*, "Your headset is ready.", and offers nothing. The PICO 4's:
+  page's title, its text (what the owner does next) and its `Action`s, each a label and either a workflow
+  (`workflow=`, which the button opens at its start page) or the key of one of the headset's steps, which
+  the button opens in Advanced mode. By default the page says *Installed*, "Your headset is ready.", and
+  offers nothing; `Headset.finished_page(workflow)` gives another workflow's page. The PICO 4's:
 
 ```python
 from overpressure.headset import Action, AfterInstall
@@ -159,7 +169,11 @@ def after_install(self):
     return AfterInstall(
         "Unplug it and put it on",
         "Your headset is ready. Unplug the cable, put the headset on and sign in to Steam.",
-        (Action("Update", "install"), Action("Back to PICO OS", "restore"), Action("Get help", "support-bundle")),
+        (
+            Action("Upgrade later", workflow="upgrade"),
+            Action("Restore to stock", workflow="restore"),
+            Action("Get help", "support-bundle"),
+        ),
     )
 ```
 

@@ -13,7 +13,8 @@ import contextlib
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from overpressure.headset import AfterInstall
+from overpressure.backup import ARCHIVE_SUFFIX
+from overpressure.headset import INSTALL, AfterInstall
 from overpressure.window.advanced import INSTALLER, busy
 from overpressure.window.advanced_view import AdvancedView
 from overpressure.window.headsets import INTRO, LAST_USED, QUESTION, Choice, Probe
@@ -25,6 +26,7 @@ from overpressure.window.installer import (
     SKIPPED,
     STOP_GRACE,
     STOPPED,
+    BackupJob,
     Model,
     Task,
     drain,
@@ -84,8 +86,18 @@ if TYPE_CHECKING:
 SUBTITLE = "Linux and SteamOS-compatible software for your {name}"
 #: What the details show before the installer has run anything.
 EMPTY_DETAILS = "Nothing has run yet. Each step, and the output of the programs it starts, shows here."
-#: The window's views: the installer, Advanced mode, and the headset page (which headset it works on).
-INSTALLER_VIEW, ADVANCED_VIEW, CHOOSER_VIEW = "installer", "advanced", "chooser"
+#: The window's views: the installer, Advanced mode, the headset page (which headset it works on) and the
+#: headset's page of what to do (its workflows: install, upgrade, back to stock, and its backup).
+INSTALLER_VIEW, ADVANCED_VIEW, CHOOSER_VIEW, ACTIONS_VIEW = "installer", "advanced", "chooser", "actions"
+#: The headset's page of what to do.
+ACTIONS_QUESTION = "What would you like to do?"
+ACTIONS_INTRO = "Each choice opens its own steps, and each can be stopped and started again where it stopped."
+BACKUP_TITLE = "Your backup"
+BACKUP_THERE = "On this computer: {folder}. It is your way back: export a copy and keep it somewhere safe."
+BACKUP_NONE = "No backup on this computer yet: the install makes one, or import the one you exported."
+#: What the backup panel says while a job runs and when it has ended.
+JOB_TITLES = {"export": "Exporting your backup", "import": "Importing a backup"}
+JOB_TEXT = "This reads every file of the backup and checks it; it takes a few minutes."
 #: The header's way back to the headset page, on every other page.
 BACK = "\N{SINGLE LEFT-POINTING ANGLE QUOTATION MARK} Headsets"
 #: The stepper's caption over the stages.
@@ -111,23 +123,30 @@ class Window:
         *,
         view: str = INSTALLER_VIEW,
         choice: Choice | None = None,
-        engines: Callable[[Headset], Engine] | None = None,
+        engines: Callable[..., Engine] | None = None,
+        jobs: Callable[[str, str, str], BackupJob] = BackupJob,
     ) -> None:
         """Build the window with the installer's ENGINE and ADVANCED mode's model, showing VIEW first.
 
         CHOICE is the headset page's model (else Advanced mode's headset, chosen); with its headset
         chosen VIEW shows at once, else after the first choice. ENGINES returns the installer's
-        engine for a headset (else ENGINE serves every one, and the page reads no plans ahead).
+        engine for a headset, and with workflow= for one of its other workflows (else ENGINE serves
+        every one, and the page reads no plans ahead). JOBS makes a backup's export or import
+        (codename, export or import, the file).
         """
         self.ctk: Any = ctk_module
         self.engine, self.advanced = engine, advanced
         self.choice = choice or Choice(advanced.steps.registry, advanced.steps.headset)
         self.engines = engines
-        self.engine_of: dict[str, Engine] = {}  # codename -> its engine, made once
+        self.jobs = jobs
+        self.engine_of: dict[tuple[str, str], Engine] = {}  # (codename, workflow) -> its engine, made once
         if self.choice.headset is not None:
-            self.engine_of[self.choice.headset.info.codename] = engine
-        self.probes: dict[str, Probe] = {}  # codename -> the headset page's read of its plan
-        self.logs: dict[str, list[str]] = {}  # codename -> its details, while another headset is chosen
+            self.engine_of[self.choice.headset.info.codename, INSTALL] = engine
+        self.probes: dict[str, Probe] = {}  # codename -> the headset page's read of its install's plan
+        self.workflow_probes: dict[tuple[str, str], Probe] = {}  # the page of what to do: each workflow's
+        self.logs: dict[tuple[str, str], list[str]] = {}  # its details, while another headset or workflow is chosen
+        self.workflow = INSTALL  # what the installer view runs: the install, or another of the headset's workflows
+        self.job: BackupJob | None = None  # a backup's export or import, while it runs and until its end is shown
         self.model = Model()
         self.view = INSTALLER_VIEW
         self.first_view = view  # the view the first choice opens (gui --advanced)
@@ -180,6 +199,7 @@ class Window:
         self._build_header()
         kit.line(self.root).grid(row=1, column=0, sticky="ew")
         self._build_chooser()
+        self._build_actions()
         self._build_body()
         self._build_drawer()
 
@@ -258,7 +278,7 @@ class Window:
         self.subtitle = kit.label(bar, size=LABEL, colour=TEXT_MUTED)
         self.subtitle.pack(side="left")
         self.mode_link = kit.button(bar, "Advanced mode", self.switch, kind=HEADER)
-        self.back_link = kit.button(bar, BACK, self.to_headsets, kind=HEADER)  # packed by render_link
+        self.back_link = kit.button(bar, BACK, self.back, kind=HEADER)  # packed by render_link
 
     def _build_chooser(self) -> None:
         kit = self.kit
@@ -336,6 +356,120 @@ class Window:
             self.hover_card(card, (*parts, *marks), entry.codename)
             self.headset_cards[entry.codename] = card
 
+    def _build_actions(self) -> None:
+        kit = self.kit
+        self.actions = kit.frame(self.root, PAGE)
+        self.actions.grid_columnconfigure(0, weight=1)
+        self.actions.grid_rowconfigure(0, weight=1)
+        scroll = kit.scroll(self.actions, PAGE)
+        scroll.frame.grid(row=0, column=0, sticky="nsew")
+        scroll.frame.grid_columnconfigure(0, weight=1)
+        column = kit.frame(scroll.frame)
+        column.grid(row=0, column=0, sticky="ew", padx=Space.XXXL, pady=(Space.XXL + Space.S, Space.XXL))
+        column.grid_columnconfigure(0, weight=1)
+        self.actions_title = kit.label(column, ACTIONS_QUESTION, size=TITLE, strong=True)
+        self.actions_title.grid(row=0, column=0, sticky="ew")
+        intro = kit.label(column, ACTIONS_INTRO, size=BODY, colour=TEXT_SECONDARY, wrap=CARDS)
+        intro.grid(row=1, column=0, sticky="ew", pady=(Space.S, Space.XL))
+        self.action_list = kit.frame(column)
+        self.action_list.grid(row=2, column=0, sticky="ew")
+        self.action_list.grid_columnconfigure(0, weight=1)
+        self.action_cards: dict[str, Any] = {}  # workflow -> its card
+        self.actions_flow = Reflow(kit, scroll.canvas, CARDS, sides=(Space.XXXL, Space.XXXL), center=True)
+        self.actions_flow.add(column)
+        self.actions_flow.wrap(intro)
+
+    def render_actions(self) -> None:
+        """List what the chosen headset's installer does: a card per workflow, then its backup.
+
+        Each card says what its workflow does and keeps, where it stopped last time, or why it
+        cannot run now (then its button is off). The backup's card exports it or imports one.
+        """
+        kit = self.kit
+        headset = self.choice.headset
+        for child in self.action_list.winfo_children():
+            child.destroy()
+        self.action_cards.clear()
+        self.actions_flow.labels = [(label, inset) for label, inset in self.actions_flow.labels if label.winfo_exists()]
+        if headset is None:
+            return
+        self.actions_title.configure(text=ACTIONS_QUESTION)
+        codename = headset.info.codename
+        row = 0
+        for workflow in headset.workflows():
+            problem = headset.workflow_problem(workflow.key)
+            probe = self.workflow_probes.get((codename, workflow.key))
+            line = "" if problem or probe is None else probe.line()
+            card = kit.card(self.action_list)
+            card.grid(row=row, column=0, sticky="ew", pady=(0, Space.M))
+            card.grid_columnconfigure(0, weight=1)
+            heading = kit.frame(card)
+            marks = [kit.label(heading, workflow.title, size=HEADING, strong=True)]
+            if workflow.erases:
+                marks.append(kit.pill(heading, "erases the headset", WARNING_TONE))
+            for i, mark in enumerate(marks):
+                mark.pack(side="left", padx=(Space.S if i else 0, 0))
+            about = kit.label(card, workflow.summary, size=LABEL, colour=TEXT_SECONDARY)
+            parts = [heading, about]
+            if problem:
+                parts.append(kit.label(card, problem, size=LABEL, colour=WARNING))
+            elif line:
+                parts.append(kit.label(card, line, size=SMALL, colour=TEXT_MUTED))
+            self.place_parts(parts)
+            self.actions_flow.wrap(about, inset=2 * Space.XL + PRIMARY_WIDTH + 2 * Space.L)
+            if problem:
+                self.actions_flow.wrap(parts[-1], inset=2 * Space.XL + PRIMARY_WIDTH + 2 * Space.L)
+            button = kit.button(
+                card,
+                "Choose",
+                lambda w=workflow.key: self.choose_workflow(w),
+                kind=PRIMARY if row == 0 else SECONDARY,
+            )
+            button.grid(row=0, column=1, rowspan=len(parts), padx=(Space.L, Space.XL))
+            if problem:
+                button.configure(state="disabled")
+            self.action_cards[workflow.key] = card
+            row += 1
+        self.render_backup_card(row)
+
+    def place_parts(self, parts: list[Any]) -> None:
+        """Grid a card's PARTS down its first column, with the cards' spacing."""
+        last = len(parts) - 1
+        for row, part in enumerate(parts):
+            part.grid(
+                row=row,
+                column=0,
+                sticky="ew",
+                padx=(Space.XL, Space.S),
+                pady=(
+                    Space.L + Space.XS if row == 0 else Space.S if row == 1 else Space.XS,
+                    Space.L + Space.XS if row == last else 0,
+                ),
+            )
+
+    def render_backup_card(self, row: int) -> None:
+        """Add the backup's card at ROW: where it is, and its export and import."""
+        kit, headset = self.kit, self.choice.headset
+        here = headset.backup_set() if headset is not None else None
+        if here is None:
+            return
+        card = kit.card(self.action_list)
+        card.grid(row=row, column=0, sticky="ew", pady=(Space.M, Space.M))
+        card.grid_columnconfigure(0, weight=1)
+        there = (here.folder / "manifest.json").is_file()
+        text = BACKUP_THERE.format(folder=here.folder.name) if there else BACKUP_NONE
+        about = kit.label(card, text, size=LABEL, colour=TEXT_SECONDARY)
+        buttons = kit.frame(card)
+        export = kit.button(buttons, "Export backup\N{HORIZONTAL ELLIPSIS}", self.export_backup)
+        export.pack(side="left", padx=(0, Space.S))
+        if not there:
+            export.configure(state="disabled")
+        kit.button(buttons, "Import backup\N{HORIZONTAL ELLIPSIS}", self.import_backup).pack(side="left")
+        self.place_parts([kit.label(card, BACKUP_TITLE, size=HEADING, strong=True), about, buttons])
+        buttons.grid_configure(pady=(Space.M, Space.L + Space.XS))
+        self.actions_flow.wrap(about, inset=2 * Space.XL)
+        self.action_cards["backup"] = card
+
     def hover_card(self, card: Any, parts: tuple[Any, ...], codename: str) -> None:  # noqa: ANN401  # Tk widgets
         """Outline CARD more strongly under the pointer; a click on it (or its PARTS) chooses CODENAME."""
 
@@ -351,12 +485,13 @@ class Window:
 
     # -- the views -----------------------------------------------------------------------
     def show(self, view: str) -> None:
-        """Show VIEW: the installer, Advanced mode, or the headset page (which reads the headsets' plans)."""
+        """Show VIEW: the installer, Advanced mode, the headset page (which reads the headsets' plans) or what to do."""
         self.view = view
         self.body.grid_forget()
         self.drawer.grid_forget()
         self.advanced_view.frame.grid_forget()
         self.chooser.grid_forget()
+        self.actions.grid_forget()
         if view == ADVANCED_VIEW:
             self.advanced_view.frame.grid(row=2, column=0, sticky="nsew")
             self.advanced_view.render()
@@ -364,6 +499,10 @@ class Window:
             self.chooser.grid(row=2, column=0, sticky="nsew")
             self.probe_headsets()
             self.render_chooser()
+        elif view == ACTIONS_VIEW:
+            self.actions.grid(row=2, column=0, sticky="nsew")
+            self.probe_workflows()
+            self.render_actions()
         else:
             self.body.grid(row=2, column=0, sticky="nsew")
             if self.details_shown:
@@ -374,7 +513,9 @@ class Window:
 
     def switch(self) -> None:
         """Switch between the installer and Advanced mode; whatever runs keeps running."""
-        if self.view != CHOOSER_VIEW:
+        if self.view == ACTIONS_VIEW:
+            self.show(ADVANCED_VIEW)
+        elif self.view != CHOOSER_VIEW:
             self.show(INSTALLER_VIEW if self.view == ADVANCED_VIEW else ADVANCED_VIEW)
 
     def render_subtitle(self) -> None:
@@ -385,18 +526,24 @@ class Window:
         self.subtitle.configure(text=SUBTITLE.format(name=name) if name else "")
         self.divider.configure(fg_color=BORDER_SUBTLE if name else "transparent")
 
+    def asks_what(self) -> bool:
+        """Tell whether the chosen headset's installer does more than the install: the page of what to do shows."""
+        headset = self.choice.headset
+        return headset is not None and self.choice.installer(headset) and len(tuple(headset.workflows())) > 1
+
     def render_link(self) -> None:
         """Name the other view in the header (the installer's when it waits for an answer), and the way back.
 
         A headset without an installer has no other view. Every page but the headset page has the
-        back link to it, also with one headset; the headset page has neither.
+        back link: to the page of what to do from the installer and Advanced mode where the headset
+        has one, else (and from that page) to the headset page, also with one headset.
         """
         self.mode_link.pack_forget()
         self.back_link.pack_forget()
         if self.view == CHOOSER_VIEW:
             return
         waiting = self.view != INSTALLER_VIEW and bool(self.model.ask)
-        if self.view == INSTALLER_VIEW:
+        if self.view in (INSTALLER_VIEW, ACTIONS_VIEW):
             text = "Advanced mode"
         else:
             text = "Installer (waiting for you)" if waiting else "Installer"
@@ -404,20 +551,24 @@ class Window:
         self.mode_link.configure(
             fg_color=ACCENT_SOFT if waiting else "transparent", text_color=ACCENT_TEXT if waiting else TEXT_SECONDARY
         )
-        if self.view == INSTALLER_VIEW or self.choice.installer():
+        if self.view in (INSTALLER_VIEW, ACTIONS_VIEW) or self.choice.installer():
             self.mode_link.pack(side="right")
+        back = BACK
+        if self.view != ACTIONS_VIEW and self.asks_what() and self.choice.headset is not None:
+            back = "\N{SINGLE LEFT-POINTING ANGLE QUOTATION MARK} " + self.choice.headset.info.name
+        self.kit.retext(self.back_link, back)
         if self.choice.registry.headsets:
             self.back_link.pack(side="right", padx=(0, Space.XS))
 
     # -- the headset ---------------------------------------------------------------------
-    def engine_for(self, headset: Headset) -> Engine:
-        """Return HEADSET's engine, the same one each time (the window's only one without ENGINES)."""
+    def engine_for(self, headset: Headset, workflow: str = INSTALL) -> Engine:
+        """Return the engine of HEADSET's WORKFLOW, the same one each time (the window's only one without ENGINES)."""
         if self.engines is None:
             return self.engine
-        codename = headset.info.codename
-        if codename not in self.engine_of:
-            self.engine_of[codename] = self.engines(headset)
-        return self.engine_of[codename]
+        key = (headset.info.codename, workflow)
+        if key not in self.engine_of:
+            self.engine_of[key] = self.engines(headset) if workflow == INSTALL else self.engines(headset, workflow)
+        return self.engine_of[key]
 
     def probe_headsets(self) -> None:
         """Read the plan of every headset with an installer that has none read yet: where it stopped last time.
@@ -430,6 +581,47 @@ class Window:
             if codename not in self.probes and self.choice.installer(headset):
                 self.probes[codename] = Probe(self.engine_for(headset)).start()
 
+    def probe_workflows(self) -> None:
+        """Read the plan of each of the chosen headset's workflows that has none read yet, for its card."""
+        headset = self.choice.headset
+        if self.engines is None or headset is None:
+            return
+        codename = headset.info.codename
+        for workflow in headset.workflows():
+            key = (codename, workflow.key)
+            if key in self.workflow_probes:
+                continue
+            if workflow.key == INSTALL and codename in self.probes:
+                self.workflow_probes[key] = self.probes[codename]  # the headset page's read of it
+                continue
+            self.workflow_probes[key] = Probe(self.engine_for(headset, workflow.key)).start()
+
+    def refused(self) -> bool:
+        """Say so and return True while the installer, a step or a backup's export or import runs."""
+        refusal = self.choice.refusal(installer_running=self.model.running, step_running=self.advanced.run.running)
+        if not refusal and self.job is not None and self.job.running:
+            refusal = "The backup is being written. Wait for it to finish, then go on."
+        if not refusal:
+            return False
+        if self.view == ADVANCED_VIEW:
+            self.advanced_view.show_panel(
+                "One thing at a time", refusal, accept="OK", decline="", on_answer=lambda **_answer: None
+            )
+        else:
+            self.notice("One thing at a time", refusal)
+        return True
+
+    def back(self) -> bool:
+        """Go one page back: from the installer and Advanced mode to what to do where the headset has it, else home."""
+        if self.view in (INSTALLER_VIEW, ADVANCED_VIEW) and self.asks_what():
+            if self.refused():
+                return False
+            self.leave()
+            self.model, self.probing = Model(), False
+            self.show(ACTIONS_VIEW)
+            return True
+        return self.to_headsets()
+
     def to_headsets(self) -> bool:
         """Go back to the headset page; refused (and said so) while the installer or a step runs.
 
@@ -438,36 +630,39 @@ class Window:
         """
         if self.view == CHOOSER_VIEW:
             return True
-        refusal = self.choice.refusal(installer_running=self.model.running, step_running=self.advanced.run.running)
-        if refusal:
-            if self.view == ADVANCED_VIEW:
-                self.advanced_view.show_panel(
-                    "One thing at a time", refusal, accept="OK", decline="", on_answer=lambda **_answer: None
-                )
-            else:
-                self.notice("One thing at a time", refusal)
+        if self.refused():
             return False
         self.leave()
         self.show(CHOOSER_VIEW)
         return True
 
     def leave(self) -> None:
-        """Put the chosen headset aside: its details kept, a plan probe under way handed to the headset page."""
+        """Put the chosen workflow aside: its details kept, a plan probe under way handed to its page."""
         self.hide_panel()
         self.advanced_view.hide_panel()
         headset = self.choice.headset
-        if headset is None:
+        if headset is None or not self.model.stages:
             return
         codename = headset.info.codename
-        self.logs[codename] = list(self.model.log)
+        self.logs[codename, self.workflow] = list(self.model.log)
         if self.probing and self.engines is not None:
-            self.probes[codename] = Probe(self.engine, self.model)
+            probe = Probe(self.engine, self.model)
+            if self.workflow == INSTALL:
+                self.probes[codename] = probe
+            self.workflow_probes[codename, self.workflow] = probe
             self.probing = False
+        elif self.engines is not None:
+            # Its card says where it stands now, from a fresh read of its plan.
+            self.workflow_probes.pop((codename, self.workflow), None)
+            if self.workflow == INSTALL:
+                self.probes.pop(codename, None)
 
     def choose(self, codename: str) -> bool:
-        """Work on the headset CODENAME: its start page (its plan, read on the headset page or now), else Advanced mode.
+        """Work on the headset CODENAME: what to do, its start page (its plan, read now or before), else Advanced mode.
 
         Refused while something runs. It becomes the headset used last (out/window.json, not .env).
+        A headset whose installer does more than the install first asks what (the page of what to
+        do); gui --advanced opens Advanced mode first, as before.
         """
         if self.choice.refusal(installer_running=self.model.running, step_running=self.advanced.run.running):
             return False
@@ -476,14 +671,46 @@ class Window:
         headset = self.choice.choose(codename)
         self.advanced.steps.choose(codename)
         self.advanced_view.refill()
-        self.engine = self.engine_for(headset)
         self.hide_panel()
         self.stopped_at = 0.0
+        if self.asks_what() and self.first_view != ADVANCED_VIEW:
+            self.first_view = INSTALLER_VIEW
+            self.workflow = INSTALL
+            self.engine = self.engine_for(headset)
+            self.model, self.probing = Model(), False
+            self.show(ACTIONS_VIEW)
+            return True
+        return self.open_workflow(INSTALL)
+
+    def choose_workflow(self, workflow: str) -> bool:
+        """Open the chosen headset's WORKFLOW from the page of what to do; refused while it cannot run."""
+        headset = self.choice.headset
+        if headset is None:
+            return False
+        problem = headset.workflow_problem(workflow)
+        if problem:
+            self.notice("Not yet", problem)
+            return False
+        if self.refused():
+            return False
+        return self.open_workflow(workflow)
+
+    def open_workflow(self, workflow: str) -> bool:
+        """Show the chosen headset's WORKFLOW: its start page (its plan, read on a page or now), else Advanced mode."""
+        headset = self.choice.headset
+        if headset is None:
+            return False
+        codename = headset.info.codename
+        self.workflow = workflow
+        self.engine = self.engine_for(headset, workflow)
         view, self.first_view = self.first_view, INSTALLER_VIEW
         if self.choice.installer(headset):
-            probe = self.probes.pop(codename, None) or Probe(self.engine).start()
+            probe = self.workflow_probes.pop((codename, workflow), None)
+            if workflow == INSTALL:
+                probe = self.probes.pop(codename, None) or probe
+            probe = probe or Probe(self.engine).start()
             self.model, self.probing = probe.model, not probe.done
-            earlier = self.logs.pop(codename, [])
+            earlier = self.logs.pop((codename, workflow), [])
             if earlier:  # its details from before, then the plan's lines
                 self.model.log = collections.deque([*earlier, *self.model.log], maxlen=self.model.log.maxlen)
             self.show(view)
@@ -495,9 +722,15 @@ class Window:
         return True
 
     def after_install(self) -> AfterInstall:
-        """Return what the finished page says and offers: the chosen headset's own words."""
+        """Return what the finished page says and offers: the chosen headset's own words for this workflow."""
         headset = self.choice.headset
-        return headset.after_install() if headset is not None else AfterInstall()
+        return headset.finished_page(self.workflow) if headset is not None else AfterInstall()
+
+    def workflow_title(self) -> str:
+        """Return the stepper's caption: the workflow's title."""
+        headset = self.choice.headset
+        workflows = {w.key: w.title for w in headset.workflows()} if headset is not None else {}
+        return workflows.get(self.workflow, STAGES)
 
     def open_advanced(self, step: str | None = None) -> None:
         """Show Advanced mode, at STEP when the headset has it."""
@@ -536,7 +769,7 @@ class Window:
         top = kit.frame(self.stepper)
         top.pack(fill="x", padx=Space.M, pady=(Space.XL, 0))
         if stages:
-            kit.label(top, STAGES, size=SMALL, colour=TEXT_MUTED, strong=True).pack(
+            kit.label(top, self.workflow_title(), size=SMALL, colour=TEXT_MUTED, strong=True).pack(
                 fill="x", padx=Space.M, pady=(0, Space.S)
             )
         for n, stage in enumerate(stages):
@@ -723,12 +956,17 @@ class Window:
             after = self.after_install()
             self.title.configure(text=after.title)
             self.summary.configure(text=after.text)
-            # The engine has no modes for these: they open Advanced mode at the headset's steps.
+            # Another workflow opens its own start page; a step opens Advanced mode at it.
+            headset = self.choice.headset
+            workflows = {w.key for w in headset.workflows()} if headset is not None else set()
             for action in after.actions:
-                if self.advanced.steps.has(action.step):
-                    self.kit.button(self.quiet, action.label, lambda s=action.step: self.open_advanced(s)).pack(
-                        side="left", padx=(0, Space.S)
-                    )
+                if action.workflow in workflows:
+                    command = lambda w=action.workflow: self.switch_workflow(w)  # noqa: E731  # one per button
+                elif self.advanced.steps.has(action.step):
+                    command = lambda s=action.step: self.open_advanced(s)  # noqa: E731  # one per button
+                else:
+                    continue
+                self.kit.button(self.quiet, action.label, command).pack(side="left", padx=(0, Space.S))
             self.quiet.pack(side="left", padx=(Space.L, 0))
             self.set_primary("Done")
             return
@@ -739,6 +977,15 @@ class Window:
         if where:
             self.show_note(where, WARNING_TONE)
         self.set_primary("Retry")
+
+    def switch_workflow(self, workflow: str) -> None:
+        """Leave the finished workflow for WORKFLOW's start page (its plan read afresh)."""
+        if self.refused():
+            return
+        self.leave()
+        if self.choice.headset is not None:
+            self.workflow_probes.pop((self.choice.headset.info.codename, workflow), None)
+        self.choose_workflow(workflow)
 
     def set_primary(self, label: str) -> None:
         """Show the one main button with LABEL, or none for an empty label; the Stop button goes to its left."""
@@ -816,7 +1063,10 @@ class Window:
         ask: dict[str, Any] | None = None,
         warning: str = "",
     ) -> None:
-        """Show a panel over the installer view; ASK is the engine's ask it shows, else it is the window's own."""
+        """Show a panel over the view (the installer's, or the page of what to do); ASK is the engine's ask.
+
+        Without ASK it is the window's own question or message.
+        """
         self.hide_panel()
         self.panel_ask = ask
 
@@ -825,7 +1075,7 @@ class Window:
             on_answer(accepted, values)
 
         self.panel, entries = self.build_panel(
-            self.content,
+            self.actions if self.view == ACTIONS_VIEW else self.content,
             title,
             text,
             fields=fields,
@@ -956,9 +1206,102 @@ class Window:
             on_answer=lambda _a, _v: None,
         )
 
+    # -- the backup: its export and import ------------------------------------------------
+    def export_backup(self) -> None:
+        """Ask where to, then export the chosen headset's backup there (python -m overpressure backup export)."""
+        headset = self.choice.headset
+        if headset is None or self.refused():
+            return
+        from tkinter import filedialog  # noqa: PLC0415  # Tk's own dialogs, only here
+
+        name = f"{headset.info.codename}-backup{ARCHIVE_SUFFIX}"
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export the backup",
+            initialfile=name,
+            defaultextension=".tar",
+            filetypes=[("overpressure backup", "*.tar"), ("All files", "*")],
+        )
+        if path:
+            self.start_job("export", path)
+
+    def import_backup(self) -> None:
+        """Ask which file, then import it as the chosen headset's backup (python -m overpressure backup import)."""
+        headset = self.choice.headset
+        if headset is None or self.refused():
+            return
+        from tkinter import filedialog  # noqa: PLC0415  # Tk's own dialogs, only here
+
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Import a backup",
+            filetypes=[("overpressure backup", "*.tar"), ("All files", "*")],
+        )
+        if path:
+            self.start_job("import", path)
+
+    def start_job(self, action: str, path: str) -> None:
+        """Start a backup's ACTION (export or import) with PATH; its panel shows until it has ended."""
+        headset = self.choice.headset
+        if headset is None:
+            return
+        self.job = self.jobs(headset.info.codename, action, path)
+        self.job.start()
+        self.job_panel()
+
+    def job_panel(self) -> None:
+        """Show the backup job's panel: its last line while it runs, its result once it has ended."""
+        job = self.job
+        if job is None:
+            return
+        title = JOB_TITLES.get(job.action, "Your backup")
+        if job.running:
+            line = job.last()
+            self.show_panel(
+                title + "\N{HORIZONTAL ELLIPSIS}",
+                JOB_TEXT + (f"\n\n{line}" if line else ""),
+                fields=[],
+                accept="",
+                decline="",
+                on_answer=lambda _a, _v: None,
+            )
+            return
+        self.job = None
+
+        def done(_accepted: bool, _values: dict[str, str]) -> None:  # noqa: FBT001  # the panel's callback
+            if self.view == ACTIONS_VIEW:
+                self.render_actions()  # the backup's card says where it is now
+
+        if job.code == 0:
+            text = job.last() + (
+                "\n\nKeep the file private: it holds your headset's backup and what reaches its maintenance system."
+                if job.action == "export"
+                else ""
+            )
+            self.show_panel(
+                "Exported" if job.action == "export" else "Imported",
+                text,
+                fields=[],
+                accept="OK",
+                decline="",
+                on_answer=done,
+            )
+        else:
+            self.show_panel(
+                "The backup was not " + ("exported" if job.action == "export" else "imported"),
+                job.error() or "It stopped with an error.",
+                fields=[],
+                accept="OK",
+                decline="",
+                on_answer=done,
+            )
+
     def close(self) -> None:
         """Close the window, asking first while the installer or a step runs."""
         if self.closing:
+            return
+        if self.job is not None and self.job.running:
+            self.job_panel()
             return
         if self.model.running and self.model.stopping:
             self.show(INSTALLER_VIEW)
@@ -1010,6 +1353,11 @@ class Window:
         probed = [codename for codename, probe in self.probes.items() if probe.receive()]
         if probed and self.view == CHOOSER_VIEW:
             self.render_chooser()  # where each headset stopped last time
+        workflows = [key for key, probe in self.workflow_probes.items() if probe.receive()]
+        if workflows and self.view == ACTIONS_VIEW and not (self.job is not None and self.job.running):
+            self.render_actions()  # where each workflow stopped last time
+        if self.job is not None and self.job.receive():
+            self.job_panel()
         self.advanced_view.tick()
         if self.closing and not self.model.running and not self.advanced.run.running:
             self.hide_panel()
