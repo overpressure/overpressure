@@ -172,7 +172,11 @@ def update(values: Mapping[str, str], path: Path | None = None, example: Path | 
 
 # The default is the bound of S: sound, but ty does not accept a default for a type[S] parameter.
 def load(cls: type[S] = Settings, path: Path | None = None, environ: Mapping[str, str] | None = None) -> S:  # ty: ignore[invalid-parameter-default]
-    """Return the settings of class @p cls from .env and the environment."""
+    """Return the settings of class @p cls from .env and the environment.
+
+    An empty value keeps the setting's default, as .env.example's comments say ("Empty: ..."): a
+    .env started from it must not empty a default such as the engineering ABL's known hash.
+    """
     path = ROOT / ".env" if path is None else path
     environ = os.environ if environ is None else environ
     values = parse(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -180,6 +184,6 @@ def load(cls: type[S] = Settings, path: Path | None = None, environ: Mapping[str
     for item in fields(cls):
         key = cls.key(item.name)
         value = environ.get(key, values.get(key))
-        if value is not None:
+        if value:
             setattr(settings, item.name, value)
     return settings
