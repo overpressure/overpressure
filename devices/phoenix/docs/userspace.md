@@ -47,8 +47,15 @@ contains Valve's packages, including proprietary ones.
 [`userspace/packages.lock`](../userspace/packages.lock) names every upstream package of the image by SHA-256.
 A build stops on a package that differs or isn't listed, so an image holds what was tested even though the Frame's
 hotfix repository moves on and neither repository signs anything. SteamVR is one of these packages, so it updates
-only with the image. If Valve removes a locked package, a build from a clean machine fails until the lock moves to
-what Valve then publishes ([docs/releasing.md](../../../docs/releasing.md#moving-to-new-upstream-versions)).
+only with the image.
+
+**Rebuilding a release.** The Holo repositories are a fixed snapshot, but the Frame's hotfix repository keeps only
+each package's current file: a new version deletes the one before. A release therefore rebuilds only while every
+locked package of the hotfix repository is still published, or from a build root whose package cache
+(`BUILD_ROOT/bootstrap/var/cache/pico4-pkgs`) and package databases still hold them. Once one has gone, a clean build fails
+the lock until the lock moves to what Valve then publishes
+([docs/releasing.md](../../../docs/releasing.md#moving-to-new-upstream-versions)). There is no mirror: Valve's
+packages may not be redistributed.
 
 **What updates by itself.** On the headset the system image is read-only and Valve's updater is not installed
 ([session.md](session.md)), so nothing of the image moves; no timer installs packages (the only package-related timer,
