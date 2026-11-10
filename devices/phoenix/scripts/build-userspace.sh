@@ -94,6 +94,12 @@ B=$build_root/bootstrap
 T=$B/target    # the image root, an overlay on $B/base
 log() { printf '>> %s\n' "$*"; }
 phase() { printf '>> [%4ss] %s\n' "$SECONDS" "$*"; }
+# step WORDS: the next of the build's steps begins, a progress line for the installer (overpressure.progress):
+# the environment, each project package, the base root, the image root, its project packages, the
+# ELF check, the adaptation layer and the archive. A step with nothing to do passes at once.
+step_total=$(( $(grep -c '^build_package ' "${BASH_SOURCE[0]}") + 7 ))
+step_done=0
+step() { printf 'progress %d/%d: %s\n' "$step_done" "$step_total" "$*"; step_done=$((step_done + 1)); }
 # assets_modes DIR...: what came from an assets folder as 0644 files and 0755 directories,
 # whatever modes the checkout showed (a Windows checkout through the container's bind mount shows
 # 0777 or 0755); links stay as they are. What must run gets 0755 explicitly afterwards.
@@ -163,6 +169,7 @@ fi
 export SOURCE_DATE_EPOCH
 
 # -- 1. build environment ----------------------------------------------------------------
+step "preparing the build environment"
 mkdir -p "$repo/cache/holo"
 if [[ ! -s "$holo_archive" ]]; then
     log "downloading $holo_url"
@@ -268,6 +275,7 @@ rm -f "$B"/var/cache/pico4-repo/*
 build_package() {
     local name=$1 dir=$B/build/$1 recipe sources built pkgver pkgrel mode=clean extra=""
     shift
+    step "package $name"
     pkgver=$(sed -n 's/^pkgver=//p' "$project/userspace/pkgbuilds/$name/PKGBUILD")
     pkgrel=$(sed -n 's/^pkgrel=//p' "$project/userspace/pkgbuilds/$name/PKGBUILD")
     recipe=$({ cat "$project/userspace/pkgbuilds/$name"/* "$B/etc/makepkg.conf.d/pico4.conf"; echo "$compiler"; } |
@@ -308,6 +316,7 @@ if [[ -n $llvm ]]; then
 fi
 
 # -- 3. base root ------------------------------------------------------------------------
+step "the base root"
 mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^!/d' "$project/userspace/packages.txt")
 # "!name": dependencies on name count as satisfied, name is not installed.
 mapfile -t assumed < <(sed -n 's/^!\([^[:space:]#]*\).*/--assume-installed=\1=0/p' "$project/userspace/packages.txt")
@@ -354,6 +363,7 @@ if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null
 fi
 
 # -- 4. image root -----------------------------------------------------------------------
+step "assembling the image root"
 phase "assembling the image root"
 unmount_below "$T"
 rm -rf "$T" "$build_root/overlay"
@@ -368,6 +378,7 @@ changed=()
 while read -r sum file; do
     grep -qxF "$sum  $file" "$build_root/base.project" || [[ "$file" == *-debug-* ]] || changed+=("/var/cache/pico4-repo/${file#./}")
 done < <(cd "$B/var/cache/pico4-repo" && sha256sum ./*.pkg.tar.zst)
+step "the image's project packages"
 if [[ ${#changed[@]} -gt 0 ]]; then
     phase "installing ${#changed[@]} changed project packages"
     in_b pacman --config /etc/pico4/pacman.conf -r /target --cachedir /var/cache/pico4-pkgs -U --noconfirm "${changed[@]}"
@@ -390,6 +401,7 @@ sed -e '/^\[options\]/a IgnorePkg = systemd systemd-libs systemd-sysvcompat syst
 # the packages that depend on them, which load the Frame's libraries in place of the preview's.
 # A program's every symbol must be defined in what it loads: the library check alone does not see
 # a single function that a newer version of a library has (the Frame's Xwayland and libei).
+step "checking ELF dependencies"
 phase "checking ELF dependencies of Frame and project packages"
 mapfile -t foreign < <(in_b pacman --config /etc/pico4/pacman.conf -r /target -Sl deckard-arch-hotfixes-release-0.3 pico4 |
     awk '/\[installed\]$/ {print $2}')
@@ -415,6 +427,7 @@ log "${#foreign[@]} Frame/project packages and their dependents: all ELF depende
 # PipeWire's ALSA plugin with the capture fix over Valve's, of the version its recipe depends on.
 install -m755 "$T/usr/lib/pico4-spa-alsa/libspa-alsa.so" "$T/usr/lib/spa-0.2/alsa/libspa-alsa.so"
 
+step "applying the PICO 4 adaptation layer"
 phase "applying the PICO 4 adaptation layer"
 # overlay FILE DEST: root-owned; scripts executable, everything else 0644
 # (modes from a Windows checkout are meaningless, as in tooling/image.py).
@@ -686,6 +699,7 @@ in_t ldconfig
 rm -f "$T/var/cache/ldconfig/aux-cache"
 
 # -- manifest and archive --------------------------------------------------------------
+step "writing archive and manifest"
 phase "writing archive and manifest"
 in_t pacman -Q > "$build_root/packages.txt"
 # The package files of exactly the installed versions (the caches keep older ones too).
@@ -748,4 +762,5 @@ print(json.dumps({
     "stock_slam": json.loads(stock),
 }, indent=1, sort_keys=True))
 EOF
+step "done"
 phase "done: $archive ($(du -h "$archive" | cut -f1), installed $((installed_bytes >> 20)) MiB)"

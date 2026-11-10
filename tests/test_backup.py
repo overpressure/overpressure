@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Unlicense
 """overpressure.backup: digests, verified manifests, a partition's image in a backup, backup archives."""
 
+from __future__ import annotations
+
 import json
 import tarfile
 import tempfile
@@ -8,7 +10,7 @@ import unittest
 from pathlib import Path
 from typing import Any, ClassVar
 
-from overpressure import backup
+from overpressure import backup, progress
 from overpressure.headset import BackupSet
 
 
@@ -81,6 +83,15 @@ class ArchiveTests(unittest.TestCase):
             {"PICO4_ADB_SERIAL": "SERIAL1"},
         )
 
+    def shown(self) -> list[tuple[float | None, str]]:
+        """Return the last progress line of each pass: (its fraction, its words), rounded."""
+        found = [progress.parse(line) for line in self.lines]
+        passes: dict[str, float | None] = {}
+        for item in found:
+            if item is not None:
+                passes[item[1]] = item[0]
+        return [(round(f, 3) if f is not None else None, text) for text, f in passes.items()]
+
     def export(self) -> dict:
         return backup.export_archive(self.here, "phoenix", self.archive, self.lines.append)
 
@@ -89,8 +100,19 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual((meta["headset"], meta["folder"], meta["files"]), ("phoenix", "stock-1", ["id_ed25519"]))
         self.assertFalse(self.archive.with_name(self.archive.name + ".part").exists())
         self.assertIn("Reading the export back", self.lines)
+        self.assertEqual(
+            self.shown(),
+            [
+                (round(1 / 3, 3), "Checking the backup in " + str(self.here.folder)),
+                (round(2 / 3, 3), "Writing the backup file"),
+                (1.0, "Reading the export back"),
+            ],
+        )
         other = self.computer("other")
+        self.lines.clear()
         imported = backup.import_archive(self.archive, "phoenix", other, self.lines.append)
+        self.assertEqual([text for _, text in self.shown()][-1], "Checking the imported backup")
+        self.assertEqual(self.shown()[-1][0], 1.0)
         self.assertEqual(imported.folder, other.folder)
         self.assertEqual(backup.verified_backup(other.folder)["identity"], self.IDENTITY)
         self.assertEqual(json.loads(other.identity.read_text()), self.IDENTITY)

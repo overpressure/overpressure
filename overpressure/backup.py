@@ -28,6 +28,8 @@ import tarfile
 from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Callable
 
+from . import progress
+
 if TYPE_CHECKING:
     from .headset import BackupSet, Headset
 
@@ -39,8 +41,11 @@ ARCHIVE_SUFFIX = ".overpressure-backup.tar"
 CHUNK = 1024 * 1024
 
 
-def digest(path: Path) -> dict:
-    """Return a file's size and SHA-256, as a manifest records them; an empty file raises."""
+def digest(path: Path, count: Callable[[int], None] | None = None) -> dict:
+    """Return a file's size and SHA-256, as a manifest records them; an empty file raises.
+
+    @p count is told the bytes as they are read.
+    """
     size = path.stat().st_size
     if not size:
         msg = f"Empty backup/image: {path}"
@@ -49,6 +54,8 @@ def digest(path: Path) -> dict:
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             sha.update(block)
+            if count is not None:
+                count(len(block))
     return {"size": size, "sha256": sha.hexdigest()}
 
 
@@ -60,18 +67,26 @@ def save_new(path: Path, data: dict) -> None:
         stream.write("\n")
 
 
-def verified_backup(folder: Path) -> dict:
-    """Return a backup's manifest once every file in it matches; a mismatch raises."""
+def verified_backup(folder: Path, count: Callable[[int], None] | None = None) -> dict:
+    """Return a backup's manifest once every file in it matches; a mismatch raises (@p count: as digest's)."""
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("schema") != 1 or not manifest.get("files"):
         msg = "Incomplete backup manifest"
         raise ValueError(msg)
     for name, expected in manifest["files"].items():
         path = (folder / name).resolve()
-        if folder.resolve() not in path.parents or digest(path) != expected:
+        if folder.resolve() not in path.parents or digest(path, count) != expected:
             msg = f"Backup integrity check failed: {name}"
             raise ValueError(msg)
     return manifest
+
+
+def verified_backup_shown(folder: Path, out: Callable[[str], None] | None = None) -> dict:
+    """Return verified_backup's manifest, printing progress lines (overpressure.progress) as it reads."""
+    files = _listed(folder / "manifest.json")
+    size = sum(int(e.get("size", 0)) for e in files.values() if isinstance(e, dict)) if isinstance(files, dict) else 0
+    meter = progress.Meter(size, lambda done, total: f"checked {progress.mib(done, total)}", out=out)
+    return verified_backup(folder, meter.add)
 
 
 #: The suffixes of a partition's image in a backup, besides its GPT and rawprogram metadata.
@@ -103,12 +118,60 @@ def _member(name: str, data: bytes) -> tuple[tarfile.TarInfo, IO[bytes]]:
     return info, io.BytesIO(data)
 
 
-def _digest_stream(stream: IO[bytes]) -> dict:
+def _digest_stream(stream: IO[bytes], count: Callable[[int], None] | None = None) -> dict:
     sha, size = hashlib.sha256(), 0
     for block in iter(lambda: stream.read(CHUNK), b""):
         sha.update(block)
         size += len(block)
+        if count is not None:
+            count(len(block))
     return {"size": size, "sha256": sha.hexdigest()}
+
+
+class _Counted(io.RawIOBase):
+    """A file read through, its bytes counted: what tarfile copies into the archive."""
+
+    def __init__(self, stream: IO[bytes], count: Callable[[int], None]) -> None:
+        super().__init__()
+        self._stream, self._count = stream, count
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        data = self._stream.read(size)
+        self._count(len(data))
+        return data
+
+
+class _Passes:
+    """An export's or import's three passes over every file on one meter: check, copy, check again."""
+
+    PASSES = 3
+
+    def __init__(self, files: object, say: Callable[[str], None]) -> None:
+        entries = files.values() if isinstance(files, dict) else ()
+        size = sum(int(entry.get("size", 0)) for entry in entries if isinstance(entry, dict))
+        self.phase = ""
+        self.meter = progress.Meter(self.PASSES * size, lambda _done, _total: self.phase, out=say)
+        self.say = say
+
+    def begin(self, phase: str) -> None:
+        """Start the next pass, @p phase in words (also a line of its own)."""
+        self.phase = phase
+        self.say(phase)
+
+    def count(self, size: int) -> None:
+        """Count @p size more bytes of the pass."""
+        self.meter.add(size)
+
+
+def _listed(manifest: Path) -> object:
+    """Return the files a backup's manifest lists, unchecked: only the meter's sizes come from it."""
+    try:
+        return json.loads(manifest.read_text(encoding="utf-8")).get("files")
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def _extract(tar: tarfile.TarFile, name: str) -> IO[bytes] | None:
@@ -127,8 +190,9 @@ def export_archive(bundle: BackupSet, codename: str, target: Path, say: Callable
     if target.exists():
         msg = f"{target} exists already: choose a new file"
         raise ValueError(msg)
-    say(f"Checking the backup in {bundle.folder}")
-    manifest = verified_backup(bundle.folder)
+    passes = _Passes(_listed(bundle.folder / "manifest.json"), say)
+    passes.begin(f"Checking the backup in {bundle.folder}")
+    manifest = verified_backup(bundle.folder, passes.count)
     identity = json.loads(bundle.identity.read_text(encoding="utf-8"))
     if manifest.get("identity", identity) != identity:
         msg = f"{bundle.identity} describes another headset than the backup's manifest"
@@ -152,13 +216,16 @@ def export_archive(bundle: BackupSet, codename: str, target: Path, say: Callable
         with tarfile.open(part, "w", format=tarfile.PAX_FORMAT) as tar:
             tar.addfile(*_member(ARCHIVE_META, (json.dumps(meta, indent=2) + "\n").encode()))
             tar.add(bundle.folder / "manifest.json", "backup/manifest.json", recursive=False)
+            passes.begin("Writing the backup file")
             for n, name in enumerate(manifest["files"], 1):
                 say(f"Exporting {name} ({n} of {len(manifest['files'])})")
-                tar.add(bundle.folder / name, f"backup/{name}", recursive=False)
+                info = tar.gettarinfo(bundle.folder / name, f"backup/{name}")
+                with (bundle.folder / name).open("rb") as stream:
+                    tar.addfile(info, _Counted(stream, passes.count))
             for name, path in bundle.files.items():
                 tar.add(path, f"files/{name}", recursive=False)
-        say("Reading the export back")
-        check_archive(part, manifest)
+        passes.begin("Reading the export back")
+        check_archive(part, manifest, passes.count)
         part.replace(target)
     finally:
         with contextlib.suppress(OSError):
@@ -180,8 +247,11 @@ def read_meta(tar: tarfile.TarFile) -> dict:
     return meta
 
 
-def check_archive(path: Path, manifest: dict | None = None) -> dict:
-    """Return the manifest an archive holds once every backup file in it matches it; a mismatch raises."""
+def check_archive(path: Path, manifest: dict | None = None, count: Callable[[int], None] | None = None) -> dict:
+    """Return the manifest an archive holds once every backup file in it matches it; a mismatch raises.
+
+    @p count is told the bytes as they are read.
+    """
     with tarfile.open(path, "r") as tar:
         read_meta(tar)
         stream = _extract(tar, "backup/manifest.json")
@@ -197,7 +267,7 @@ def check_archive(path: Path, manifest: dict | None = None) -> dict:
             raise ValueError(msg)
         for name, expected in held["files"].items():
             member = _extract(tar, f"backup/{name}")
-            if member is None or _digest_stream(member) != expected:
+            if member is None or _digest_stream(member, count) != expected:
                 msg = f"the backup file is damaged: {name}"
                 raise ValueError(msg)
     return held
@@ -242,7 +312,12 @@ def import_archive(source: Path, codename: str, here: BackupSet, say: Callable[[
             f"with serial {identity.get('serial')}"
         )
         raise ValueError(msg)
-    manifest = check_archive(source)
+    with tarfile.open(source, "r") as tar:
+        stream = _extract(tar, "backup/manifest.json")
+        listed = json.loads(stream.read().decode("utf-8")).get("files") if stream is not None else None
+    passes = _Passes(listed, say)
+    passes.begin(f"Checking every file in {source.name}")
+    manifest = check_archive(source, count=passes.count)
     if manifest.get("identity", identity) != identity:
         msg = "the backup file's manifest is of another headset than its description"
         raise ValueError(msg)
@@ -250,13 +325,16 @@ def import_archive(source: Path, codename: str, here: BackupSet, say: Callable[[
     present = folder / "manifest.json"
     if present.is_file() and json.loads(present.read_text(encoding="utf-8")) == manifest:
         say(f"The backup is on this computer already: {folder}")
-        verified_backup(folder)
+        passes.count(passes.meter.total // _Passes.PASSES)  # nothing to copy
+        passes.begin("Checking the backup here")
+        verified_backup(folder, passes.count)
     else:
         if folder.exists():
             folder = folder.with_name(f"{folder.name}-imported-{dt.datetime.now(dt.timezone.utc):%Y%m%d-%H%M%S}")
-        _unpack(source, folder, manifest, here, names=meta.get("files", []), say=say)
-        say("Checking the imported backup")
-        verified_backup(folder)
+        passes.begin("Copying the backup onto this computer")
+        _unpack(source, folder, manifest, here, names=meta.get("files", []), say=say, count=passes.count)
+        passes.begin("Checking the imported backup")
+        verified_backup(folder, passes.count)
     if not here.identity.is_file():
         save_new(here.identity, identity)
     settings = {str(k): str(v) for k, v in (meta.get("settings") or {}).items()}
@@ -265,8 +343,25 @@ def import_archive(source: Path, codename: str, here: BackupSet, say: Callable[[
     return type(here)(folder, here.identity, files, settings)
 
 
+def _copy(member: IO[bytes], path: Path, count: Callable[[int], None] | None) -> None:
+    """Write an archive member into the new file PATH, its bytes told to COUNT."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("xb") as out:
+        for block in iter(lambda: member.read(CHUNK), b""):
+            out.write(block)
+            if count is not None:
+                count(len(block))
+
+
 def _unpack(  # noqa: PLR0913  # the archive, where it goes, what it must hold
-    source: Path, folder: Path, manifest: dict, here: BackupSet, *, names: list[str], say: Callable[[str], None]
+    source: Path,
+    folder: Path,
+    manifest: dict,
+    here: BackupSet,
+    *,
+    names: list[str],
+    say: Callable[[str], None],
+    count: Callable[[int], None] | None = None,
 ) -> None:
     """Write the archive's backup into the new FOLDER and its other files NAMES where HERE puts them."""
     with tarfile.open(source, "r") as tar:
@@ -291,11 +386,7 @@ def _unpack(  # noqa: PLR0913  # the archive, where it goes, what it must hold
             if member is None:
                 msg = f"the backup file lacks {name}"
                 raise ValueError(msg)
-            path = _inside(folder, name)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("xb") as out:
-                for block in iter(lambda m=member: m.read(CHUNK), b""):
-                    out.write(block)
+            _copy(member, _inside(folder, name), count)
     for name, data in others.items():
         path = here.files[name]
         if not path.is_file():

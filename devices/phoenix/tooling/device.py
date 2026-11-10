@@ -18,10 +18,11 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from overpressure import android
+from overpressure import android, process
 from overpressure.android import run
-from overpressure.backup import digest, partition_names, save_new, verified_backup
+from overpressure.backup import digest, partition_names, save_new, verified_backup, verified_backup_shown
 from overpressure.qualcomm import (
+    DumpProgress,
     backup_commands,
     capture_backup,
     chip_id,
@@ -231,7 +232,7 @@ def dispatch(args: argparse.Namespace) -> None:  # noqa: C901, PLR0911, PLR0912,
         check_unlock(args.fastboot, serial, critical=args.critical)
         return
     if args.command == "verify-backup":
-        manifest = verified_backup(args.backup)
+        manifest = verified_backup_shown(args.backup)
         print(f"Verified {len(manifest['files'])} files for {manifest['identity']['serial']}")
         return
 
@@ -250,7 +251,7 @@ def dispatch(args: argparse.Namespace) -> None:  # noqa: C901, PLR0911, PLR0912,
             backend=args.edl_backend,
             luns=args.edl_luns,
             include_userdata=args.include_userdata,
-            runner=run,
+            runner=run_dump,
         )
         print("Backup captured. Run verify-backup and retain an independent copy before modifying the device.")
         return
@@ -385,6 +386,19 @@ def parser() -> argparse.ArgumentParser:
             p.add_argument("--image", type=Path, required=True)
             p.add_argument("--sha256", required=True, help="expected engineering image hash from your trusted source")
     return ap
+
+
+def run_dump(command: list[str], timeout: int = 60) -> str:
+    """Run an EDL dump as android.run does, the partition it reads shown as it goes (qualcomm.DumpProgress)."""
+    print(">> " + subprocess.list2cmdline(command), file=sys.stderr)
+    try:
+        output = process.run_streamed(command, timeout, DumpProgress())
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    if re.search(r"\b(?:FAILED|ERROR)\b", output, re.IGNORECASE):
+        msg = f"Command failed: {output[-800:]}"
+        raise ValueError(msg)
+    return output
 
 
 def main(argv: list[str] | None = None) -> int:

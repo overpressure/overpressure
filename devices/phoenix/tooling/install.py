@@ -187,12 +187,6 @@ def edl_luns(output: str) -> list[int]:
     return [n for n in luns if n] + [n for n in luns if not n]
 
 
-def dump_progress(line: str) -> tuple[float | None, str] | None:
-    """Turn edl-ng's "Dumping NAME: P% ..." into a progress text (the share of the whole is unknown)."""
-    found = re.match(r"Dumping (\S+?):", line.strip())
-    return (None, f"Reading {found.group(1)}") if found else None
-
-
 def wifi_problem(ssid: str, password: str) -> str:
     """Return what is wrong with a Wi-Fi answer, in plain words; empty when it can be used."""
     if not ssid:
@@ -514,8 +508,7 @@ class Plan:
                 "--execute",
                 "--confirm-device",
                 settings.adb_serial,
-            ),
-            progress=dump_progress,
+            )
         )
         ctx.progress(None, "Checking the backup")
         ctx.run(self.command("device", "verify-backup", "--backup", folder))

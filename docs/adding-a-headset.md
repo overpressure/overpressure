@@ -122,7 +122,8 @@ rest from the shared checks: `env_check`, `serial_checks`, `backup_check`, `load
 
 `Headset.install_plan()` returns the installer's stages (`overpressure.install.Stage`, each a list of
 `Task`s); empty, the default, means no installer. A task runs in an `overpressure.install.Context`: it runs
-programs with their output streamed, reports progress and notes, asks the owner (`Ask`: a consent, an
+programs with their output streamed, reports progress (`ctx.progress`, or the programs' own
+[progress lines](tool.md#events); a task without them is shown against its `estimate`) and notes, asks the owner (`Ask`: a consent, an
 action, a form; secret fields never leave the engine) and writes settings to `.env`; a `done` check skips
 work whose output is already there. The engine keeps the state in `out/install/<codename>/`, resumes after
 a failure and drives the window through JSON events ([tool.md](tool.md#the-installer)). Reuse the

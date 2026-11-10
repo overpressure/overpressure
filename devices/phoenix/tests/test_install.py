@@ -473,8 +473,6 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(plan.edl_serial(PRINTGPT), EDL)
         self.assertEqual(plan.edl_serial("no device"), "")
         self.assertEqual(plan.edl_luns(PRINTGPT), [1, 2, 0])
-        self.assertEqual(plan.dump_progress("Dumping aop: 6.2% (0.03 / 0.50 MiB) [N/A]   "), (None, "Reading aop"))
-        self.assertIsNone(plan.dump_progress("Saved main GPT"))
 
     def test_device_lists(self):
         adb = "* daemon started successfully\nList of devices attached\nA\tdevice\nB\tunauthorized\n\n"

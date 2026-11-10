@@ -116,6 +116,44 @@ class ModelTests(unittest.TestCase):
             list(m.log), ["tools: fetched", "Traceback (most recent call last):", '["not", "an", "event"]']
         )
 
+    def test_a_running_task_times_itself_from_its_start(self):
+        now = [100.0]
+        m = installer.Model(clock=lambda: now[0])
+        feed(m, PLAN)
+        self.assertEqual(get(m, "system").seconds, 900)  # "about 15 min", read from the words
+        feed(m, task("install", "system", "running"))
+        self.assertEqual(get(m, "system").started, 100.0)
+        now[0] = 160.0
+        feed(m, {"event": "progress", "task": "system", "fraction": None, "text": "writing"})
+        self.assertEqual(get(m, "system").started, 100.0)  # progress does not restart its clock
+        feed(m, task("install", "system", "done"))
+        self.assertIsNone(get(m, "system").started)
+
+    def test_the_bar_reports_progress_or_follows_the_estimate(self):
+        t = installer.Task("system", "System", estimate="about 20 min", seconds=1200, status="running", started=0)
+        # Reported progress: its share, the time, and what is left once that says something.
+        t.fraction = 0.25
+        self.assertEqual(installer.bar_state(t, 10), (0.25, "25% · 0:10"))
+        self.assertEqual(installer.bar_state(t, 300), (0.25, "25% · 5:00 · about 15 min left"))
+        # None reported: the estimate's share up to 90 %, then to and fro, the time against the estimate.
+        t.fraction = None
+        self.assertEqual(installer.bar_state(t, 600), (0.5, "10:00 of about 20 min"))
+        self.assertEqual(installer.bar_state(t, 1079), (1079 / 1200, "17:59 of about 20 min"))
+        self.assertEqual(installer.bar_state(t, 1080), (None, "18:00 of about 20 min"))
+        self.assertEqual(installer.bar_state(t, 4000), (None, "1:06:40 of about 20 min"))
+        # Neither: to and fro, and the time it has run.
+        t.seconds, t.estimate = None, ""
+        self.assertEqual(installer.bar_state(t, 65), (None, "1:05"))
+
+    def test_a_backup_job_reads_its_progress_lines(self):
+        job = installer.BackupJob("phoenix", "export", "x.tar")
+        job.started, job.begun = True, 0.0
+        job.items.put(("line", "Checking the backup in backup/stock\n"))
+        job.items.put(("line", "progress 12.5%: Checking the backup in backup/stock\n"))
+        self.assertTrue(job.receive())
+        self.assertEqual(job.last(), "Checking the backup in backup/stock")  # progress lines are no lines of its own
+        self.assertEqual((job.fraction, job.status(75)), (0.125, "12% · 1:15"))
+
     def test_the_details_tell_every_status_change_note_ask_and_end(self):
         # A run whose steps were all done before, or are skipped, still has details to show.
         m = installer.Model()

@@ -22,12 +22,12 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Union
 
-from overpressure import REPO
+from overpressure import REPO, progress
 from overpressure.headset import INSTALL
 from overpressure.install import STOPPED_BETWEEN, STOPPED_NOTHING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 #: Task states as the engine sends them; skipped means its output was already there.
 PENDING, RUNNING, DONE, SKIPPED, FAILED = "pending", "running", "done", "skipped", "failed"
@@ -56,6 +56,32 @@ class Task:
     status: str = PENDING
     fraction: float | None = None  # the last progress event's fraction; None while unknown
     progress: str = ""  # the last progress event's text
+    seconds: float | None = None  # what the estimate stands for, its upper end; None without one
+    started: float | None = None  # the model's clock when it began running
+
+
+#: Where a bar that follows the estimate stops and moves to and fro: how long is left stays vague.
+ESTIMATE_CAP = 0.9
+
+
+def bar_state(task: Task, now: float) -> tuple[float | None, str]:
+    """Return how a running task's bar stands: its share (None: to and fro) and the status line under it.
+
+    A task that reports its progress shows it, with the time it has run and, once that says
+    something, what is left; another one follows its estimate up to ESTIMATE_CAP; one without
+    either counts its time.
+    """
+    elapsed = 0.0 if task.started is None else max(now - task.started, 0.0)
+    ran = progress.clock(elapsed)
+    if task.fraction is not None:
+        status = f"{task.fraction:.0%} · {ran}"
+        if 0.05 <= task.fraction < 1 and elapsed >= 20:  # noqa: PLR2004  # too early to say before
+            status += f" · about {progress.duration(elapsed * (1 - task.fraction) / task.fraction)} left"
+        return task.fraction, status
+    if task.seconds:
+        share = elapsed / task.seconds
+        return (share if share < ESTIMATE_CAP else None), f"{ran} of {task.estimate}"
+    return None, ran
 
 
 @dataclass
@@ -91,11 +117,20 @@ def joined(words: list[str]) -> str:
     return " and ".join(words) if len(words) < 3 else ", ".join(words[:-1]) + " and " + words[-1]  # noqa: PLR2004  # two need no comma
 
 
+def _seconds(task: dict[str, Any]) -> float | None:
+    """Return the seconds a plan's task is estimated at: the plan's, else read from its estimate's words."""
+    seconds = task.get("seconds")
+    if isinstance(seconds, (int, float)) and seconds > 0:
+        return float(seconds)
+    return progress.estimate_seconds(str(task.get("estimate") or ""))
+
+
 class Model:
     """The installer's state from the engine's events: no widgets, so tests feed it lines."""
 
-    def __init__(self) -> None:
-        """Start without a plan."""
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        """Start without a plan; @p clock times the running tasks (tests pass their own)."""
+        self.clock = clock
         self.headset: dict[str, str] = {}
         self.workflow = INSTALL  # the plan's workflow: install, or another of the headset's
         self.stages: list[Stage] = []
@@ -278,6 +313,7 @@ class Model:
                         title=str(t.get("title", t["id"])),
                         estimate=str(t.get("estimate") or ""),
                         writes=bool(t.get("writes")),
+                        seconds=_seconds(t),
                         status=status if status in FINISHED else PENDING,
                     )
                 )
@@ -296,7 +332,9 @@ class Model:
             earlier = task.status == DONE and before != RUNNING
             self.log.append(f"{task.title}: {'done earlier' if earlier else words}")
         if task.status != RUNNING:
-            task.fraction, task.progress = None, ""
+            task.fraction, task.progress, task.started = None, "", None
+        elif before != RUNNING or task.started is None:
+            task.started = self.clock()
         stage = self.stage_of(task.id)
         if stage is not None and task.status in (RUNNING, FAILED):
             self.current = stage.id
@@ -429,6 +467,10 @@ class ChildEngine:
         """End an engine that has confirmed it stopped (its finished event) but not exited."""
         if self.proc is not None and self.proc.poll() is None:
             self.proc.terminate()
+
+
+#: The demo's estimate of a task that does not report its progress: its bar reaches the cap and moves to and fro.
+DEMO_SECONDS = 1.2
 
 
 class DemoEngine:
@@ -604,7 +646,11 @@ class DemoEngine:
                 "id": s,
                 "title": t,
                 "summary": m,
-                "tasks": [{"id": i, "title": n, "estimate": e, "writes": w} for i, n, e, w in tasks],
+                # A writing task reports its progress; another one follows its estimate, a short one here.
+                "tasks": [
+                    {"id": i, "title": n, "estimate": e, "writes": w, "seconds": None if w else DEMO_SECONDS}
+                    for i, n, e, w in tasks
+                ],
             }
             for s, t, m, tasks in self.stages
         ]
@@ -690,7 +736,10 @@ class DemoEngine:
         for n in range(1, steps + 1):
             if not self._pause(0.3 if writes else 0.15, writes=writes):
                 return self._stopped(stage, task, STOPPED_NOTHING)
-            self._emit("progress", task=task, fraction=n / steps, text=f"{n * 3} of {steps * 3} MB")
+            if writes:
+                self._emit("progress", task=task, fraction=n / steps, text=f"{n * 3} of {steps * 3} MB")
+            else:
+                self._emit("progress", task=task, fraction=None, text=f"part {n} of {steps}")
             self._emit("log", task=task, line=f"demo output {n}")
         if task == "unlock" and not self.failed_once:
             self.failed_once = True
@@ -722,6 +771,9 @@ class BackupJob:
         self.lines: list[str] = []
         self.code: int | None = None
         self.started = False
+        self.begun: float | None = None  # time.monotonic() at its start
+        self.fraction: float | None = None  # its last progress line's share; None before the first
+        self.progress = ""  # its last progress line's text
 
     @property
     def running(self) -> bool:
@@ -730,7 +782,7 @@ class BackupJob:
 
     def start(self) -> None:
         """Start the child."""
-        self.started = True
+        self.started, self.begun = True, time.monotonic()
         env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
         proc = subprocess.Popen(  # noqa: S603  # this Python and fixed arguments, no shell
             self.argv,
@@ -762,11 +814,19 @@ class BackupJob:
         changed = False
         for kind, value in drain(self.items):
             changed = True
+            found = progress.parse(str(value)) if kind == "line" else None
             if kind == "exit":
                 self.code = int(value)
+            elif found is not None:
+                self.fraction, self.progress = found
             elif str(value).strip():
                 self.lines.append(str(value).rstrip())
         return changed
+
+    def status(self, now: float) -> str:
+        """Return its status line: how far it is and how long it has run."""
+        ran = progress.clock(0 if self.begun is None else now - self.begun)
+        return ran if self.fraction is None else f"{self.fraction:.0%} · {ran}"
 
     def last(self) -> str:
         """Return its last line, or "" before the first."""
@@ -788,14 +848,15 @@ class DemoBackupJob(BackupJob):
 
     def start(self) -> None:
         """Send the demo's lines on a thread."""
-        self.started = True
+        self.started, self.begun = True, time.monotonic()
         verb = "Exporting" if self.action == "export" else "Importing"
         lines = [f"Checking the backup ({self.argv[-1]})"] + [f"{verb} lun{n}/demo.bin ({n} of 3)" for n in (1, 2, 3)]
 
         def work() -> None:
-            for line in lines:
+            for n, line in enumerate(lines):
                 time.sleep(0.4 * self.pace)
                 self.items.put(("line", line))
+                self.items.put(("line", progress.line(line, (n + 1) / (len(lines) + 1))))
             self.items.put(("line", f"{'Exported to' if self.action == 'export' else 'Imported:'} {self.argv[-1]}"))
             self.items.put(("exit", 0))
 

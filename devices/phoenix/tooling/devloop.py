@@ -46,6 +46,7 @@ from overpressure import (
     avb,
     bootimg,
     ota,
+    progress,
     qualcomm,
     ssh,
     windows_ncm,
@@ -87,6 +88,8 @@ BOOT_ID = "/proc/sys/kernel/random/boot_id"
 INSTALLED_PROOF = ("/proc/1/comm", INSTALL_ID, "/sys/devices/soc0/serial_number")
 #: The start of an image that tells whether a partition may hold it (write_partition).
 PREFIX_BYTES = 1 << 20
+#: The share of an install's progress its partition writes stand for; the short steps after them have the rest.
+INSTALL_WRITES = 0.9
 #: Seconds without an answer after a reboot before the Windows NCM initialization (the maintenance
 #: stage 1 needs it; it disturbs a working link).
 NCM_RETRY_SECONDS = 60
@@ -186,7 +189,9 @@ class Dev(Headset):
         command = f"cut -d. -f1 /proc/uptime > {CONTACT} 2>/dev/null; {command}"
         return ssh.argv(self.s.ssh, self.work / "id_ed25519", self.work / "known_hosts", f"root@{HOST}", command)
 
-    def ssh(self, command: str, timeout: float = 30, stdin: IO[bytes] | None = None, *, check: bool = True) -> str:
+    def ssh(
+        self, command: str, timeout: float = 30, stdin: int | IO[bytes] | None = None, *, check: bool = True
+    ) -> str:
         """Run @p command on the headset; return its output."""
         return self.run(self.ssh_argv(command), timeout, stdin=stdin, check=check)
 
@@ -403,10 +408,18 @@ class Dev(Headset):
         if not reading.split()[:1] or not reading.split()[0].isdigit():
             print("warning: the battery's charge is unknown; keep the headset connected", flush=True)
 
-    def write_partition(self, name: str, image: Path, timeout: int) -> None:
+    @staticmethod
+    def stream_size(image: Path) -> int:
+        """Return the bytes write_partition sends for @p image: its compressed copy's, when the build made one."""
+        compressed = image.with_name(image.name + ".zst")
+        return (compressed if compressed.is_file() else image).stat().st_size
+
+    def write_partition(self, name: str, image: Path, timeout: int, meter: progress.Meter | None = None) -> None:
         """Stream an image to boot or super through the maintenance stage 1 (pico4-install).
 
         The backup's partition size bounds it; pico4-install checks the stream and reads it back.
+        @p meter counts the bytes sent (an image the partition holds already counts at once);
+        without one, the image's own meter prints the progress lines.
         """
         size = qualcomm.partition_size(self.s.path("backup"), name)
         digest = backups.digest(image)
@@ -420,6 +433,8 @@ class Dev(Headset):
             held = self.ssh(f"pico4-install hash {name} {digest['size']}", timeout).split()
             if held[:1] == [digest["sha256"]]:
                 print(f"{name} holds {image.name} already", flush=True)
+                if meter is not None:
+                    meter.add(self.stream_size(image))
                 return
         # The system image goes compressed when its build made a copy of exactly this image.
         compressed = image.with_name(image.name + ".zst")
@@ -427,12 +442,15 @@ class Dev(Headset):
         zstd = compressed.is_file() and record.is_file() and record.read_text().split()[:1] == [digest["sha256"]]
         source = compressed if zstd else image
         print(f"writing {source.name} ({source.stat().st_size >> 20} MiB) to {name}", flush=True)
-        with source.open("rb") as stream:
+        meter = meter or progress.Meter(
+            source.stat().st_size, lambda done, total: f"writing {name}: {progress.mib(done, total)}"
+        )
+        with source.open("rb") as stream, progress.feed(stream, meter) as pipe:
             output = self.ssh(
                 f"pico4-install write {name} --size {size} --bytes {digest['size']} --sha256 {digest['sha256']}"
                 + (" --zstd" if zstd else ""),
                 timeout,
-                stdin=stream,
+                stdin=pipe,
             )
         if output.splitlines()[-1:] != [f"written {name} {digest['sha256']}"]:
             msg = f"the headset did not confirm {name}"
@@ -469,16 +487,27 @@ class Dev(Headset):
             + "\n",
             encoding="utf-8",
         )
-        self.write_partition("boot", boot, 120)
-        self.write_partition("super", system, 1800)
+        # The writes are most of the install: up to WRITES of its progress, the short steps after them the rest.
+        sizes = {"boot": self.stream_size(boot), "super": self.stream_size(system)}
+        current = {"name": "boot"}
+        meter = progress.Meter(
+            sum(sizes.values()),
+            lambda done, total: f"writing {current['name']}: {progress.mib(done, total)}",
+            end=INSTALL_WRITES,
+        )
+        for name, image, timeout in (("boot", boot, 120), ("super", system, 1800)):
+            current["name"] = name
+            self.write_partition(name, image, timeout, meter)
         status = self.ssh("pico4-install status", 30)
         if format_data or "data: pico4-data" not in status.splitlines():
             size = qualcomm.partition_size(self.s.path("backup"), "userdata")
-            print("formatting userdata", flush=True)
+            progress.say("formatting userdata", INSTALL_WRITES)
             if self.ssh(f"pico4-install format-data --size {size}", 900).splitlines()[-1:] != ["formatted userdata"]:
                 msg = "formatting userdata failed"
                 raise RuntimeError(msg)
+        progress.say("adding this computer's key", INSTALL_WRITES + 0.03)
         self.write_keys()
+        progress.say("starting the installed system", INSTALL_WRITES + 0.05)
         self.normal()
 
     def normal(self) -> None:

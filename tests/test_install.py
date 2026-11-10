@@ -121,7 +121,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(ui.kinds()[0], "plan")
         self.assertEqual(ui.events[0]["headset"], {"codename": "fake", "name": "Fake headset"})
         self.assertEqual(
-            ui.events[0]["stages"][0]["tasks"][0], {"id": "one", "title": "One", "estimate": "", "writes": False}
+            ui.events[0]["stages"][0]["tasks"][0],
+            {"id": "one", "title": "One", "estimate": "", "seconds": None, "writes": False},
         )
         self.assertEqual(
             ui.statuses(),
@@ -209,6 +210,29 @@ class EngineTests(unittest.TestCase):
         self.assertIn("Traceback", (self.folder / "one.log").read_text(encoding="utf-8"))
         self.assertEqual(self.engine(stages, Recorder()).run(), "done")
         self.assertEqual(len(calls), 2)
+
+    def test_progress_lines_of_a_child_and_of_in_process_code_become_progress_events(self):
+        def spawn(_argv: list[str], _stdin: bytes | None, _writes: bool, line: Callable[[str], None]) -> int:  # noqa: FBT001  # the Spawn signature
+            for text in ("starting", "progress 25%: writing super", "progress 3/4: checking", "progress: waiting"):
+                line(text)
+            return 0
+
+        def child(ctx: Context) -> None:
+            ctx.run(["prog"])
+            print("progress 1/1: in process")  # noqa: T201  # what in-process code prints is read the same way
+
+        ui = Recorder()
+        stages = (Stage("a", "A", "", (Task("one", "One", child, "about 2 min"),)),)
+        engine = Engine(INFO, stages, ui, root=self.out, env=self.env, spawn=spawn, capture=self.capture)
+        self.assertEqual(engine.run(), "done")
+        self.assertEqual(ui.events[0]["stages"][0]["tasks"][0]["seconds"], 120)
+        self.assertEqual(
+            [(e["fraction"], e["text"]) for e in ui.events if e["event"] == "progress"],
+            [(0.25, "writing super"), (0.75, "checking"), (None, "waiting"), (1.0, "in process")],
+        )
+        # The details show the program's own lines; its progress lines go to the log file only.
+        self.assertEqual([e["line"] for e in ui.events if e["event"] == "log"], ["$ prog", "starting"])
+        self.assertIn("progress 25%: writing super", (self.folder / "one.log").read_text(encoding="utf-8"))
 
     def test_a_child_program_streams_its_lines_and_fails_with_its_error_line(self):
         def child(ctx: Context) -> None:

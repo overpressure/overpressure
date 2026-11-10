@@ -150,6 +150,10 @@ the answers to its stdin; it does nothing itself.
   estimates and progress, and the engine's notes. The action bar holds *Show details* (the child programs'
   output) and one main button: *Start*, *Continue* after a stop, *Retry* after a failure, *Stop* while it
   runs.
+- **Progress.** A running task has a bar and a status line under it. A task that reports its progress
+  fills the bar ("45% · 2:10 · about 3 min left"); one that does not follows its estimate up to 90%, then
+  the bar moves to and fro ("2:10 of about 20 min"); one without an estimate counts its time. The backup's
+  export and import show the same in their card.
 - **Before the first run** the window reads the plan (`install --json --plan`). After an earlier run the
   first page is *Welcome back*: *Continue where you left off*, *Start over from…* (a stage; it says what is
   forgotten and warns when a stage writes to the headset; runs `--restart STAGE`) and *Advanced mode*.
@@ -276,13 +280,20 @@ event. Texts are plain words for the owner; stack traces go to the task's log fi
 
 | Event | Fields | When |
 | --- | --- | --- |
-| `plan` | `headset` {`codename`, `name`}, `workflow`, `stages` [{`id`, `title`, `summary`, `tasks` [{`id`, `title`, `estimate`, `writes`}]}] | first, once |
+| `plan` | `headset` {`codename`, `name`}, `workflow`, `stages` [{`id`, `title`, `summary`, `tasks` [{`id`, `title`, `estimate`, `seconds` (the estimate's upper end, or null), `writes`}]}] | first, once |
 | `task` | `stage`, `task`, `status`: `pending`, `running`, `done`, `skipped` (its output was there) or `failed` | each change; a task done in an earlier run shows `done` when the run reaches it |
-| `progress` | `task`, `fraction` (0 to 1, or null when unknown), `text` | while a task runs |
+| `progress` | `task`, `fraction` (0 to 1, or null when unknown), `text` | while a task runs: `ctx.progress`, or a progress line of its program |
 | `log` | `task`, `line` | a line of a child program, or of the task itself: the details view |
 | `note` | `task`, `level` (`info` or `warning`), `text` | something the owner should know |
 | `ask` | `id`, `kind`, `title`, `text`, `fields` [{`name`, `label`, `secret`, `optional`}], `accept`, `decline` | the engine waits for the answer |
 | `finished` | `status` (`done`, `failed`, `stopped`), `task` (null when done), `error`, `where` | last, once |
+
+**Progress lines.** A program a task runs reports how far it is with lines of its own on stdout
+(`overpressure.progress`): `progress 42%: writing super`, `progress 3/8: package pico4-monado` (three of
+eight done) or `progress: reading aop` (how far is unknown). The engine turns them into `progress` events
+and writes them to the task's log file, not to the details. `progress.Meter` prints them for a byte count,
+`progress.feed` counts what a child reads from a pipe, `progress.estimate_seconds` reads an estimate
+("about 20 min", "1 to 3 h": its upper end).
 
 `ask` kinds: `confirm` (accept or decline), `action` (the owner does something, such as plugging in;
 accept is "Done") and `form` (fields; secret ones masked). The answer is one line on stdin:

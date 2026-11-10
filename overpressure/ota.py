@@ -28,13 +28,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Callable, TypeVar, cast
 
-from . import payload
+from . import payload, progress
 
 if TYPE_CHECKING:
     import os
     from collections.abc import Generator, Iterable, Mapping
 
 CHUNK = 8 * 1024 * 1024
+#: The share of an extraction's progress its downloads stand for; rebuilding the block images has the rest.
+DOWNLOADS = 0.85
 BLOCK = 4096
 #: The transfer list versions AOSP's block OTAs write.
 TRANSFER_LIST_VERSIONS = range(1, 5)
@@ -61,9 +63,13 @@ def _member_start(src: payload.Source, info: zipfile.ZipInfo) -> int:
 
 
 def stream_member(
-    src: payload.Source, info: zipfile.ZipInfo, out: IO[bytes], log: Callable[[str], None] = print
+    src: payload.Source,
+    info: zipfile.ZipInfo,
+    out: IO[bytes],
+    log: Callable[[str], None] = print,
+    meter: progress.Meter | None = None,
 ) -> None:
-    """Write a zip member's data into @p out, checked against its CRC-32."""
+    """Write a zip member's data into @p out, checked against its CRC-32; @p meter counts what is downloaded."""
     start = _member_start(src, info)
     inflater = zlib.decompressobj(-15) if info.compress_type == zipfile.ZIP_DEFLATED else None
     crc, done, written = 0, 0, 0
@@ -74,7 +80,9 @@ def stream_member(
         crc = zlib.crc32(data, crc)
         out.write(data)
         written += len(data)
-        if done % (256 * 1024 * 1024) < CHUNK or done == info.compress_size:
+        if meter is not None:
+            meter.add(len(chunk))
+        elif done % (256 * 1024 * 1024) < CHUNK or done == info.compress_size:
             log(f"  {info.filename}: {done * 100 // max(info.compress_size, 1):3d}% ({done / 1e6:.0f} MB)")
     if inflater:
         tail = inflater.flush()
@@ -247,16 +255,24 @@ def member_ok(path: Path, info: zipfile.ZipInfo) -> bool:
     return crc == info.CRC
 
 
-def download_member(src: payload.Source, info: zipfile.ZipInfo, path: Path, log: Callable[[str], None] = print) -> None:
+def download_member(
+    src: payload.Source,
+    info: zipfile.ZipInfo,
+    path: Path,
+    log: Callable[[str], None] = print,
+    meter: progress.Meter | None = None,
+) -> None:
     """Download one zip member into @p path, checked against its CRC-32; keep it if it is there."""
     if member_ok(path, info):
         log(f"  {info.filename}: already downloaded")
+        if meter is not None:
+            meter.add(info.compress_size)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".part")
     try:
         with tmp.open("wb") as out:
-            stream_member(src, info, out, log)
+            stream_member(src, info, out, log, meter)
     except ValueError:
         tmp.unlink(missing_ok=True)
         raise
@@ -435,8 +451,17 @@ def extract(  # noqa: PLR0913  # the build, its OTA, the output and what to take
     everything = zip_infos(src)
     infos = {name: everything[name] for name in members_needed(copied, block_images)}
     log(f">> {label}: {sum(i.compress_size for i in infos.values()) / 1e9:.1f} GB of OTA members")
+    # The downloads are most of it, up to DOWNLOADS of the progress; the rebuilt images have the rest.
+    current = {"name": ""}
+    meter = progress.Meter(
+        sum(i.compress_size for i in infos.values()),
+        lambda done, total: f"downloading {current['name']}: {progress.mib(done, total)}",
+        end=DOWNLOADS,
+        out=log,
+    )
     for name, info in infos.items():
-        download_member(src, info, download / name, log)
+        current["name"] = name
+        download_member(src, info, download / name, log, meter)
     for out_name, member in copied.items():
         shutil.copyfile(download / member, output / out_name)
     previous = {}
@@ -444,7 +469,8 @@ def extract(  # noqa: PLR0913  # the build, its OTA, the output and what to take
         old = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
         previous = old["files"] if old.get("firmware") == label and old.get("source") == location else {}
     files = {name: sha256(output / name) for name in copied}
-    for out_name, base in block_images.items():
+    for n, (out_name, base) in enumerate(block_images.items()):
+        log(progress.line(f"rebuilding {out_name}", DOWNLOADS + (1 - DOWNLOADS) * n / max(len(block_images), 1)))
         path = output / out_name
         digest = sha256(path) if path.exists() else ""
         if previous.get(out_name) != digest or not digest:

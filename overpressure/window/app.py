@@ -33,6 +33,7 @@ from overpressure.window.installer import (
     BackupJob,
     Model,
     Task,
+    bar_state,
     drain,
 )
 from overpressure.window.kit import HEADER, PRIMARY, PRIMARY_WIDTH, QUIET, SECONDARY, Code, Icon, Kit, Note, Reflow
@@ -128,6 +129,11 @@ class Window:
     page, and the header's back link returns there from every other page. Each headset keeps its
     engine and its details while another one is chosen; its recorded progress is the engine's.
     """
+
+    #: The panel's text, bar and status line while it has a bar (a backup job's); None otherwise.
+    panel_progress: dict[str, Any] | None = None
+    #: When the clock last updated the running rows (time.monotonic()).
+    ticked = 0.0
 
     def __init__(  # noqa: PLR0913  # the engine and the models; the view, the choice and the engine factory by name
         self,
@@ -983,7 +989,9 @@ class Window:
         right.configure(anchor="e")
         right.grid(row=0, column=2, sticky="e", padx=(Space.M, 0))
         bar = kit.progress(row)
-        self.task_rows[task.id] = {"icon": icon, "title": title, "right": right, "bar": bar, "row": 1}
+        status = kit.label(row, "", size=LABEL, colour=TEXT_MUTED)
+        status.configure(anchor="w")
+        self.task_rows[task.id] = {"icon": icon, "title": title, "right": right, "bar": bar, "status": status, "row": 1}
         self.update_task(task)
 
     def update_task(self, task: Task) -> None:
@@ -999,23 +1007,61 @@ class Window:
         if row.get("strong") != running:
             row["strong"] = running
             row["title"].configure(font=self.kit.font(BODY, strong=running))
-        bar = row["bar"]
+        bar, status = row["bar"], row["status"]
         if not running:
             if row.get("shown"):
                 bar.stop()
                 bar.grid_forget()
-                row["shown"] = False
+                status.grid_forget()
+                row["shown"], row["mode"] = False, None
             return
         if not row.get("shown"):
             row["shown"] = True
             bar.grid(row=row["row"], column=1, columnspan=2, sticky="ew", pady=(Space.S, 0))
-            if task.fraction is None:
+            status.grid(row=row["row"] + 1, column=1, columnspan=2, sticky="ew", pady=(Space.XS, 0))
+        fraction, line = bar_state(task, self.model.clock())
+        status.configure(text=line)
+        # A share fills the bar; without one it moves to and fro (the estimate's last stretch, or none).
+        mode = "indeterminate" if fraction is None else "determinate"
+        if row.get("mode") != mode:
+            row["mode"] = mode
+            bar.stop()
+            bar.configure(mode=mode)
+            if fraction is None:
                 bar.start()
-        if task.fraction is not None:
-            if bar.cget("mode") != "determinate":
+        if fraction is not None:
+            bar.set(fraction)
+
+    def update_job_panel(self, job: BackupJob, text: str | None = None) -> None:
+        """Update the running backup job's panel in place: its line, its bar and its status line."""
+        shown = self.panel_progress
+        if shown is None:
+            return
+        if text is not None:
+            shown["text"].configure(text=text)
+        shown["status"].configure(text=job.status(time.monotonic()))
+        if job.fraction is not None:
+            bar = shown["bar"]
+            if shown["mode"] != "determinate":
+                shown["mode"] = "determinate"
                 bar.stop()
                 bar.configure(mode="determinate")
-            bar.set(task.fraction)
+            bar.set(job.fraction)
+
+    def tick_clock(self) -> None:
+        """Count the time on: the running tasks' rows, the bars that follow their estimates, a backup job's panel."""
+        self.ticked = time.monotonic()
+        if self.view == INSTALLER_VIEW:
+            self.tick_tasks()
+        if self.job is not None and self.job.running:
+            self.update_job_panel(self.job)
+
+    def tick_tasks(self) -> None:
+        """Update the running tasks' rows: their time counts on between the engine's events."""
+        for stage in self.model.stages:
+            for task in stage.tasks:
+                if task.status == RUNNING and task.id in self.task_rows:
+                    self.update_task(task)
 
     def render_end(self, status: str) -> None:
         """Show the end of a run: the finished headset and what comes next, or the failure."""
@@ -1076,12 +1122,14 @@ class Window:
         decline: str,
         on_answer: Callable[[bool, dict[str, str]], None],
         warning: str = "",
+        progress: bool = False,
     ) -> tuple[Any, dict[str, Any]]:
         """Return a panel over PARENT, and its entries: TITLE, TEXT, a WARNING box, the form's FIELDS, the buttons.
 
         The panel dims the view behind it and holds a centred card. Answering calls ON_ANSWER with
         whether it was accepted and the entries' values; the caller removes the panel there.
-        Without ACCEPT it is a notice with no buttons.
+        Without ACCEPT it is a notice with no buttons. PROGRESS adds a bar and a status line under
+        the text, in self.panel_progress for their updates.
         """
         kit = self.kit
         panel = kit.frame(parent, BACKDROP)
@@ -1092,7 +1140,16 @@ class Window:
         room = parent.winfo_width() / kit.scaling(parent) - 2 * Space.XL - 2 * pad  # a narrow view: a narrower card
         wrap = round(min(PANEL, room)) if room > PANEL / 2 else PANEL
         kit.label(card, title, size=TITLE, strong=True, wrap=wrap).pack(fill="x", padx=pad, pady=(pad - 4, Space.S))
-        kit.label(card, text, size=BODY, colour=TEXT_SECONDARY, wrap=wrap).pack(fill="x", padx=pad)
+        body = kit.label(card, text, size=BODY, colour=TEXT_SECONDARY, wrap=wrap)
+        body.pack(fill="x", padx=pad)
+        if progress:
+            bar = kit.progress(card)
+            bar.pack(fill="x", padx=pad, pady=(Space.L, 0))
+            bar.start()
+            status = kit.label(card, "", size=LABEL, colour=TEXT_MUTED)
+            status.configure(anchor="w")
+            status.pack(fill="x", padx=pad, pady=(Space.XS, 0))
+            self.panel_progress = {"text": body, "bar": bar, "status": status, "mode": "indeterminate"}
         if warning:
             Note(kit, card, wrap=wrap - 2 * Space.L - 2 * Space.M).set(warning, WARNING_TONE).frame.pack(
                 fill="x", padx=pad, pady=(Space.L, 0)
@@ -1132,10 +1189,11 @@ class Window:
         on_answer: Callable[[bool, dict[str, str]], None],
         ask: dict[str, Any] | None = None,
         warning: str = "",
+        progress: bool = False,
     ) -> None:
         """Show a panel over the view (the installer's, or the page of what to do); ASK is the engine's ask.
 
-        Without ASK it is the window's own question or message.
+        Without ASK it is the window's own question or message; PROGRESS: as build_panel's.
         """
         self.hide_panel()
         self.panel_ask = ask
@@ -1153,6 +1211,7 @@ class Window:
             decline=decline,
             on_answer=answered,
             warning=warning,
+            progress=progress,
         )
         self.secrets = list(entries.values())
 
@@ -1172,7 +1231,7 @@ class Window:
         self.secrets = []
         if self.panel is not None:
             self.panel.destroy()
-        self.panel = self.panel_ask = None
+        self.panel = self.panel_ask = self.panel_progress = None
 
     def show_ask(self) -> None:
         """Show the engine's pending ask as a panel; the answer goes to the engine's stdin."""
@@ -1327,14 +1386,18 @@ class Window:
         title = JOB_TITLES.get(job.action, "Your backup")
         if job.running:
             line = job.last()
-            self.show_panel(
-                title + "\N{HORIZONTAL ELLIPSIS}",
-                JOB_TEXT + (f"\n\n{line}" if line else ""),
-                fields=[],
-                accept="",
-                decline="",
-                on_answer=lambda _a, _v: None,
-            )
+            text = JOB_TEXT + (f"\n\n{line}" if line else "")
+            if self.panel_progress is None:
+                self.show_panel(
+                    title + "\N{HORIZONTAL ELLIPSIS}",
+                    text,
+                    fields=[],
+                    accept="",
+                    decline="",
+                    on_answer=lambda _a, _v: None,
+                    progress=True,
+                )
+            self.update_job_panel(job, text)
             return
         self.job = None
 
@@ -1437,6 +1500,8 @@ class Window:
             self.engine.end()  # it has said it stopped: nothing of it is running any more
         if changed and not self.closing:
             self.render()
+        elif time.monotonic() - self.ticked >= 1:
+            self.tick_clock()
         if logged and self.details_shown and self.view == INSTALLER_VIEW:
             self.fill_details()
         self.root.after(100, self._tick)

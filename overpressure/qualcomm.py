@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from . import progress
 from .android import executable
 from .backup import digest, save_new
 from .process import run, until
@@ -195,6 +196,28 @@ def validate_native_dump(folder: Path, luns: list[int], *, include_userdata: boo
 
 #: Partitions a backup must hold an image of (a slot suffix allowed), or no manifest is written.
 REQUIRED_PARTITIONS = ("abl", "boot", "devinfo")
+
+
+class DumpProgress:
+    """Turn edl-ng's "Dumping NAME: P% ..." display into progress lines: the partition and each tenth of it.
+
+    How far the whole backup is stays unknown: a LUN's partitions are listed only once its dump begins.
+    """
+
+    def __init__(self, out: Callable[[str], None] = progress.say) -> None:
+        """Print each progress line through @p out."""
+        self.out = out
+        self.shown: tuple[str, int] | None = None
+
+    def __call__(self, line: str) -> None:
+        """Take one line of edl-ng's output."""
+        found = re.match(r"Dumping (\S+?):\s*(\d+(?:\.\d+)?)%", line.strip())
+        if found is None:
+            return
+        name, tenth = found.group(1), int(float(found.group(2)) // 10)
+        if self.shown != (name, tenth):
+            self.shown = (name, tenth)
+            self.out(f"reading {name}" + (f" ({tenth * 10}%)" if tenth else ""))
 
 
 def capture_backup(  # noqa: PLR0913  # the backup's folder, commands and identity; how it was taken keyword-only

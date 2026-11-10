@@ -7,7 +7,10 @@ awaited, never with a hang.
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +19,6 @@ from typing import IO, TYPE_CHECKING, Callable, Protocol, TypeVar
 from . import REPO
 
 if TYPE_CHECKING:
-    import os
     from collections.abc import Sequence
 
 T = TypeVar("T")
@@ -49,6 +51,51 @@ def run(
     if check and process.returncode:
         where = f"; see {Path(log).name}" if log is not None else f": {output[-800:]}"
         msg = f"{Path(str(argv[0])).name} failed ({process.returncode}){where}"
+        raise RuntimeError(msg)
+    return output
+
+
+def run_streamed(
+    argv: Sequence[str | os.PathLike[str]], timeout: float, on_line: Callable[[str], None], *, check: bool = True
+) -> str:
+    """Run a program as run() does, handing each line to @p on_line as it comes; return its output.
+
+    A carriage return ends a line too: a progress display redraws its line with one.
+    """
+    proc = subprocess.Popen(  # noqa: S603  # the host tools' fixed command lines, no shell
+        [str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=REPO
+    )
+    chunks: list[bytes] = []
+
+    def read() -> None:
+        pending = b""
+        if proc.stdout is None:
+            return
+        pipe = proc.stdout.fileno()
+        for block in iter(lambda: os.read(pipe, 1 << 16), b""):
+            chunks.append(block)
+            pending += block
+            *done, pending = re.split(rb"[\r\n]", pending)
+            for raw in done:
+                if raw.strip():
+                    on_line(raw.decode("utf-8", "replace").rstrip())
+        if pending.strip():
+            on_line(pending.decode("utf-8", "replace").rstrip())
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    with proc:  # closes its pipe
+        try:
+            proc.wait(timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise
+        finally:
+            reader.join(10)
+    output = b"".join(chunks).decode("utf-8", "replace").strip()
+    if check and proc.returncode:
+        msg = f"{Path(str(argv[0])).name} failed ({proc.returncode}): {output[-800:]}"
         raise RuntimeError(msg)
     return output
 

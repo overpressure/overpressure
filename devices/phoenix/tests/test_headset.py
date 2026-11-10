@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,11 +15,20 @@ from typing import IO, TYPE_CHECKING
 from unittest.mock import patch
 
 from devices.phoenix.tooling import cycle, devloop, localconfig
-from overpressure import REPO
+from overpressure import REPO, progress
 from overpressure.localconfig import parse
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+
+def drain(stdin: int | IO[bytes] | None) -> bytes:
+    """Read a fake child's stdin to its end, as the real one would: a file, or a pipe's read end."""
+    if stdin is None:
+        return b""
+    if isinstance(stdin, int):
+        return b"".join(iter(lambda: os.read(stdin, 1 << 20), b""))
+    return stdin.read()
 
 
 class FakeClock:
@@ -129,10 +139,11 @@ class HeadsetFixture(unittest.TestCase):
         argv: Sequence[object],
         _timeout: float = 60,
         *,
-        stdin: IO[bytes] | None = None,  # noqa: ARG002  # process.run's keyword
+        stdin: int | IO[bytes] | None = None,
         check: bool = True,  # noqa: ARG002  # process.run's keyword
         log: Path | None = None,
     ) -> str:
+        drain(stdin)  # a writer feeding the child waits for it to read
         words = [str(a) for a in argv]
         self.calls.append(words)
         text = " ".join(words)
@@ -267,7 +278,7 @@ class CycleTests(HeadsetFixture):
             argv: Sequence[object],
             timeout: float = 60,
             *,
-            stdin: IO[bytes] | None = None,
+            stdin: int | IO[bytes] | None = None,
             check: bool = True,
             log: Path | None = None,
         ) -> str:
@@ -309,8 +320,7 @@ class DevTests(HeadsetFixture):
             text = " ".join(str(a) for a in argv)
             for marker, reply in responses.items():
                 if marker in text:
-                    if stdin is not None:
-                        stdin.read()
+                    drain(stdin)
                     self.calls.append([str(a) for a in argv])
                     return reply if isinstance(reply, str) else reply()
             return self.fake(argv, timeout, stdin=stdin, check=check, log=log)
@@ -477,6 +487,20 @@ class DevTests(HeadsetFixture):
         self.assertIn(f"--size {27804115 * 4096}", steps[3])
         # The keys and the install ID go to the data partition, never into an image.
         self.assertIn(f"pico4-install keys --size {27804115 * 4096} --id dev-loop", steps[4])
+
+    def test_install_reports_its_progress_the_writes_first(self):
+        dev, system = self.install_setup()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            dev.install(system)
+        shown = [found for found in map(progress.parse, out.getvalue().splitlines()) if found is not None]
+        writes = [f for f, text in shown if text.startswith("writing ") and f is not None]
+        self.assertEqual(writes, sorted(writes))  # boot, then super, on one meter
+        self.assertAlmostEqual(writes[-1], devloop.INSTALL_WRITES)
+        self.assertEqual(
+            [text for _, text in shown if not text.startswith("writing ")],
+            ["formatting userdata", "adding this computer's key", "starting the installed system"],
+        )
 
     def test_install_refuses_keys_the_headset_did_not_confirm(self):
         dev, system = self.install_setup()

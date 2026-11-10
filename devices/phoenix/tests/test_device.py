@@ -4,6 +4,7 @@
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -96,25 +97,34 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(device.edl_command(args, "r", "abl", "read.bin")[5:], ["read-part", "abl", "read.bin"])
         self.assertEqual(device.edl_command(args, "w", "abl", "write.bin")[5:], ["write-part", "abl", "write.bin"])
 
+    def test_the_dump_shows_its_partitions_and_fails_on_an_error(self):
+        script = "import sys; sys.stdout.write('Dumping aop: 50.0% (1 / 2 MiB)\\rDumping aop: 100.0%\\n')"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.assertIn("Dumping aop: 100.0%", device.run_dump([sys.executable, "-c", script]))
+        self.assertEqual(out.getvalue().splitlines(), ["progress: reading aop (50%)", "progress: reading aop (100%)"])
+        with self.assertRaisesRegex(ValueError, "failed"), contextlib.redirect_stderr(io.StringIO()):
+            device.run_dump([sys.executable, "-c", "print('ERROR: no answer')"])
+
     def test_backup_requires_recovery_files_and_does_not_overwrite(self):
         args = [*self.args("backup"), "--execute", "--confirm-device", "ABC"]
-        with patch.object(device, "run") as run:
+        with patch.object(device, "run_dump") as run:
             self.assertEqual(self.call(args), 1)
             run.assert_not_called()
         fresh = self.root / "fresh"
         args[args.index("--backup") + 1] = str(fresh)
 
-        def fake(command: list[str], timeout: float = 60) -> str:  # noqa: ARG001  # device.run's signature
+        def fake(command: list[str], timeout: float = 60) -> str:  # noqa: ARG001  # device.run_dump's signature
             for name in ("abl.bin", "boot.bin", "devinfo.bin", "gpt_main0.bin", "rawprogram0.xml"):
                 (fresh / name).write_bytes(b"test recovery data")
             return "OK"
 
-        with patch.object(device, "run", side_effect=fake):
+        with patch.object(device, "run_dump", side_effect=fake):
             self.assertEqual(self.call(args), 0)
         self.assertEqual(len(device.verified_backup(fresh)["files"]), 5)
         incomplete = self.root / "incomplete"
         args[args.index("--backup") + 1] = str(incomplete)
-        with patch.object(device, "run", return_value="OK"):
+        with patch.object(device, "run_dump", return_value="OK"):
             self.assertEqual(self.call(args), 1)
         self.assertFalse((incomplete / "manifest.json").exists())
 

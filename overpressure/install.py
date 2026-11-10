@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, ClassVar, Protocol, TypeVar
 
 from . import REPO, localconfig, power, runner
+from . import progress as progress_lines
 from .headset import INSTALL
 
 if TYPE_CHECKING:
@@ -509,6 +510,20 @@ class Context:
             {"event": "progress", "task": self.task.id, "fraction": fraction, "text": self.engine.redact(text)}
         )
 
+    def output_line(self, text: str, progress: Callable[[str], tuple[float | None, str] | None] | None = None) -> None:
+        """Log a line a program printed; a progress line, or one @p progress reads, shows how far.
+
+        Progress lines (overpressure.progress) go to the log file only: they come often.
+        """
+        found = progress_lines.parse(text)
+        if found is not None:
+            self.engine.write_log(self.task, self.engine.redact(text))
+        else:
+            self.log(text)
+            found = progress(text) if progress is not None else None
+        if found is not None:
+            self.progress(*found)
+
     def note(self, text: str, level: str = "info") -> None:
         """Tell the owner something in plain words: info, or a warning."""
         text = self.engine.redact(text)
@@ -561,10 +576,7 @@ class Context:
 
         def line(text: str) -> None:
             lines.append(text)
-            self.log(text)
-            found = progress(text) if progress is not None else None
-            if found is not None:
-                self.progress(*found)
+            self.output_line(text, progress)
 
         code = self.engine.spawn(words, stdin, self.task.writes, line)
         if self.task.writes:
@@ -672,7 +684,14 @@ class Engine:
                     "title": stage.title,
                     "summary": stage.summary,
                     "tasks": [
-                        {"id": t.id, "title": t.title, "estimate": t.estimate, "writes": t.writes} for t in stage.tasks
+                        {
+                            "id": t.id,
+                            "title": t.title,
+                            "estimate": t.estimate,
+                            "seconds": progress_lines.estimate_seconds(t.estimate),
+                            "writes": t.writes,
+                        }
+                        for t in stage.tasks
                     ],
                 }
                 for stage in self.stages
@@ -842,7 +861,7 @@ class Engine:
     @contextlib.contextmanager
     def _output_as_log(self, ctx: Context) -> Generator[None, None, None]:
         """Turn what in-process code prints into the task's log lines, so stdout carries only events."""
-        out, err = _Lines(ctx.log), _Lines(ctx.log)
+        out, err = _Lines(ctx.output_line), _Lines(ctx.log)
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 yield
