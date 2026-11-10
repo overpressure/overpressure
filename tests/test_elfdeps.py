@@ -14,9 +14,47 @@ from typing import TYPE_CHECKING
 from overpressure import elfdeps
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 AARCH64, X86_64 = 183, 62
+
+
+def symbol_tables(
+    add: Callable[[str], int], defines: Sequence[str], uses: Sequence[str], weak_uses: Sequence[str], *, gnu: bool
+) -> tuple[bytes, bytes]:
+    """Return a dynamic symbol table and its hash table (DT_GNU_HASH if gnu, else DT_HASH).
+
+    The table holds the null symbol, the undefined symbols, then the defined ones, which a GNU hash
+    table keeps last.
+    """
+    symbols = [(add(s), elfdeps.STB_GLOBAL, 0) for s in uses] + [(add(s), elfdeps.STB_WEAK, 0) for s in weak_uses]
+    unhashed = 1 + len(symbols)
+    symbols += [(add(s), elfdeps.STB_GLOBAL, 1) for s in defines]
+    symtab = bytes(24) + b"".join(
+        struct.pack("<IBBHQQ", name, bind << 4 | 2, 0, shndx, 0, 0) for name, bind, shndx in symbols
+    )
+    count = len(symbols) + 1
+    if not gnu:
+        return symtab, struct.pack(f"<II{count + 1}I", 1, count, *([0] * (count + 1)))
+    chains = [0] * len(defines)
+    if chains:
+        chains[-1] = 1  # the end of the bucket's chain
+    return symtab, struct.pack(f"<IIIIQI{len(chains)}I", 1, unhashed, 1, 6, 0, unhashed if defines else 0, *chains)
+
+
+def symbol_places(symbol_count: str, hash_offset: int, symtab_offset: int, symtab_size: int) -> tuple[list, bytes]:
+    """Return the dynamic tags that place the symbol table and, for "section", a section header table."""
+    tags = [(elfdeps.DT_SYMTAB, symtab_offset)]
+    if symbol_count == "sysv":
+        tags.append((elfdeps.DT_HASH, hash_offset))
+    elif symbol_count == "gnu":
+        tags.append((elfdeps.DT_GNU_HASH, hash_offset))
+    sections = b""
+    if symbol_count == "section":
+        sections = bytes(64) + struct.pack(
+            "<IIQQQQIIQQ", 0, elfdeps.SHT_DYNSYM, 2, symtab_offset, symtab_offset, symtab_size, 0, 1, 8, 24
+        )
+    return tags, sections
 
 
 def make_elf(  # noqa: PLR0913  # one keyword per dynamic linking fact
@@ -29,10 +67,16 @@ def make_elf(  # noqa: PLR0913  # one keyword per dynamic linking fact
     interp: str = "",
     verdef: Sequence[str] = (),
     verneed: dict[str, list[tuple[str, bool]]] | None = None,
+    defines: Sequence[str] = (),
+    uses: Sequence[str] = (),
+    weak_uses: Sequence[str] = (),
+    symbol_count: str = "sysv",
 ) -> bytes:
     """Build a minimal 64-bit little-endian ELF object with the given dynamic linking facts.
 
-    verneed maps a library name to [(version, weak)], like elfdeps.Elf.verneed.
+    verneed maps a library name to [(version, weak)], like elfdeps.Elf.verneed. defines, uses and
+    weak_uses are its dynamic symbols; symbol_count says where their number is: "sysv" (DT_HASH),
+    "gnu" (DT_GNU_HASH), "section" (the .dynsym section header) or "none" (only the tables' layout).
     """
     verneed = verneed or {}
     strtab = bytearray(b"\0")
@@ -41,6 +85,8 @@ def make_elf(  # noqa: PLR0913  # one keyword per dynamic linking fact
         offset = len(strtab)
         strtab.extend(text.encode() + b"\0")
         return offset
+
+    symtab_bytes, hash_bytes = symbol_tables(add, defines, uses, weak_uses, gnu=symbol_count == "gnu")
 
     tags = [(elfdeps.DT_NEEDED, add(name)) for name in needed]
     for tag, text in ((elfdeps.DT_SONAME, soname), (elfdeps.DT_RPATH, rpath), (elfdeps.DT_RUNPATH, runpath)):
@@ -53,7 +99,9 @@ def make_elf(  # noqa: PLR0913  # one keyword per dynamic linking fact
     layout = 64 + 56 * phnum
     interp_offset = layout
     interp_bytes = interp.encode() + b"\0" if interp else b""
-    strtab_offset = interp_offset + len(interp_bytes)
+    hash_offset = interp_offset + len(interp_bytes)
+    symtab_offset = hash_offset + len(hash_bytes)
+    strtab_offset = symtab_offset + len(symtab_bytes)
     verdef_offset = strtab_offset + len(strtab)
     verdef_bytes = bytearray()
     for i, (flags, name) in enumerate(definitions):
@@ -78,11 +126,15 @@ def make_elf(  # noqa: PLR0913  # one keyword per dynamic linking fact
     ]
     if requirements:
         tags += [(elfdeps.DT_VERNEED, verneed_offset), (elfdeps.DT_VERNEEDNUM, len(requirements))]
-    dynamic = b"".join(struct.pack("<qQ", tag, value) for tag, value in [*tags, (0, 0)])
-    total = dynamic_offset + len(dynamic)
+    symbol_tags, sections = symbol_places(symbol_count, hash_offset, symtab_offset, len(symtab_bytes))
+    dynamic = b"".join(struct.pack("<qQ", tag, value) for tag, value in [*tags, *symbol_tags, (0, 0)])
+    shoff = dynamic_offset + len(dynamic)
+    total = shoff + len(sections)
 
     header = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(8)
-    header += struct.pack("<HHIQQQIHHHHHH", 3, machine, 1, 0, 64, 0, 0, 64, 56, phnum, 64, 0, 0)
+    header += struct.pack(
+        "<HHIQQQIHHHHHH", 3, machine, 1, 0, 64, shoff if sections else 0, 0, 64, 56, phnum, 64, len(sections) // 64, 0
+    )
     phdrs = struct.pack("<IIQQQQQQ", elfdeps.PT_LOAD, 5, 0, 0, 0, total, total, 0x1000)
     phdrs += struct.pack(
         "<IIQQQQQQ",
@@ -107,7 +159,18 @@ def make_elf(  # noqa: PLR0913  # one keyword per dynamic linking fact
             len(interp_bytes),
             1,
         )
-    return header + phdrs + interp_bytes + bytes(strtab) + bytes(verdef_bytes) + bytes(verneed_bytes) + dynamic
+    return (
+        header
+        + phdrs
+        + interp_bytes
+        + hash_bytes
+        + symtab_bytes
+        + bytes(strtab)
+        + bytes(verdef_bytes)
+        + bytes(verneed_bytes)
+        + dynamic
+        + sections
+    )
 
 
 class ElfDepsTests(unittest.TestCase):
@@ -180,6 +243,68 @@ class ElfDepsTests(unittest.TestCase):
             self.check("/usr/bin/new"), ["/usr/lib/libv.so.1: version `V_2' not found (required by /usr/bin/new)"]
         )
         self.assertEqual(self.check("/usr/bin/weak"), [])
+
+    def test_dynamic_symbols_from_each_place_their_number_is(self):
+        for where in ("sysv", "gnu", "section", "none"):
+            with self.subTest(where):
+                elf = elfdeps.parse(
+                    make_elf(defines=["foo", "bar"], uses=["puts"], weak_uses=["__gmon_start__"], symbol_count=where),
+                    "/usr/lib/libfoo.so.1",
+                )
+                assert elf is not None
+                self.assertEqual((elf.defined, elf.undefined), ({"foo", "bar"}, {"puts"}))
+        # A GNU hash table that hashes nothing (a program that exports nothing) does not count its symbols.
+        elf = elfdeps.parse(make_elf(uses=["puts", "ei_device_text_keysym"], symbol_count="gnu"), "/usr/bin/prog")
+        assert elf is not None
+        self.assertEqual(elf.undefined, {"puts", "ei_device_text_keysym"})
+
+    def test_undefined_symbols_of_a_program_and_its_libraries(self):
+        self.put(
+            "/usr/lib/ld-linux-aarch64.so.1", make_elf(soname="ld-linux-aarch64.so.1", defines=["_dl_find_object"])
+        )
+        self.put("/usr/lib/libei.so.1", make_elf(soname="libei.so.1", defines=["ei_device_keyboard_key"]))
+        self.put(
+            "/usr/lib/libx.so.1", make_elf(soname="libx.so.1", needed=["libei.so.1"], uses=["ei_device_keyboard_key"])
+        )
+        interp = "/usr/lib/ld-linux-aarch64.so.1"
+        self.put("/usr/bin/old", make_elf(interp=interp, needed=["libx.so.1"], uses=["ei_device_keyboard_key"]))
+        self.put(
+            "/usr/bin/new",
+            make_elf(interp=interp, needed=["libx.so.1"], uses=["ei_device_text_keysym", "_dl_find_object"]),
+        )
+        self.put("/usr/bin/weak", make_elf(interp=interp, needed=["libx.so.1"], weak_uses=["ei_device_text_keysym"]))
+        self.assertEqual(self.check("/usr/bin/old"), [])
+        self.assertEqual(
+            self.check("/usr/bin/new"), ["undefined symbol: ei_device_text_keysym (required by /usr/bin/new)"]
+        )
+        self.assertEqual(self.check("/usr/bin/weak"), [])
+        # A library of the program misses one too.
+        self.put("/usr/lib/libei.so.1", make_elf(soname="libei.so.1"))
+        self.assertEqual(
+            elfdeps.Loader(str(self.root)).check("/usr/bin/old"),
+            [
+                "undefined symbol: ei_device_keyboard_key (required by /usr/bin/old)",
+                "undefined symbol: ei_device_keyboard_key (required by /usr/lib/libx.so.1)",
+            ],
+        )
+        # A library alone: whichever program loads it may define what it needs.
+        self.assertEqual(elfdeps.Loader(str(self.root)).check("/usr/lib/libx.so.1"), [])
+
+    def test_dependents_by_name_and_provision(self):
+        def package(name: str, provides: Sequence[str] = (), depends: Sequence[str] = ()) -> None:
+            desc = f"%NAME%\n{name}\n\n%VERSION%\n1-1\n\n"
+            if provides:
+                desc += "%PROVIDES%\n" + "\n".join(provides) + "\n\n"
+            if depends:
+                desc += "%DEPENDS%\n" + "\n".join(depends) + "\n\n"
+            self.put(f"/var/lib/pacman/local/{name}-1-1/desc", desc)
+
+        package("libei", provides=["libei.so=1-64"])
+        package("xorg-xwayland", depends=["libei.so=1-64", "glibc"])
+        package("gamescope", depends=["libei>=1.4"])
+        package("bash", depends=["glibc"])
+        package("glibc")
+        self.assertEqual(elfdeps.dependents(str(self.root), ["libei"]), ["gamescope", "xorg-xwayland"])
 
     def test_other_architectures_are_skipped_like_the_loader_does(self):
         self.put("/etc/ld.so.conf", "include /etc/ld.so.conf.d/*.conf\n")

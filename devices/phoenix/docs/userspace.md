@@ -48,7 +48,7 @@ Frame's build is the same version or newer, the image takes it; where it is olde
 | `ffmpeg` 8.0 (Frame: 7.0) | extra | the Frame's needs libraries that only its private base has (`libjxl` 0.10, `libplacebo` 338, x264, x265, `libvpx` 9, `rav1e` 0.7, `rubberband` 2) |
 | `podman` 5.6 (5.5) | extra | the Frame's needs `libgpgme` 11 |
 | `glib2` 2.86 and the `gsettings` schemas 49 (2.84, 47) | core | older; the Frame's `glib2` also holds the tools of Holo's `glib2-devel`, which it conflicts with |
-| `gcc`, `gcc-libs` 15.2 (15.1), `qt6-base`, `qt6-translations` 6.10 (6.8), `protobuf`, `python-protobuf` 33 (25.3), `libinput` 1.29 (1.26), `libei` 1.5 (1.4), `wpa_supplicant` 2.11 (2.10), `openxr` 1.1.53 (1.1.47), `vulkan-icd-loader`, `vulkan-tools`, `spirv-tools` 1.4.328 (1.4.309), `libtool` 2.6 (2.5), `mkinitcpio` 40 (39) | core, extra | older; core and extra's packages are built against the newer versions, and the build's library check does not see a single missing function |
+| `gcc`, `gcc-libs` 15.2 (15.1), `qt6-base`, `qt6-translations` 6.10 (6.8), `protobuf`, `python-protobuf` 33 (25.3), `libinput` 1.29 (1.26), `libei` 1.5 (1.4), `wpa_supplicant` 2.11 (2.10), `openxr` 1.1.53 (1.1.47), `vulkan-icd-loader`, `vulkan-tools`, `spirv-tools` 1.4.328 (1.4.309), `libtool` 2.6 (2.5), `mkinitcpio` 40 (39) | core, extra | older; core and extra's packages are built against the newer versions |
 | `e2fsprogs`, `zram-generator` | core, extra | the same version, Holo's rebuild newer |
 
 Valve also publishes the Frame's complete OS image as a RAUC bundle with a casync chunk store
@@ -249,7 +249,12 @@ base root ([packages.txt](../userspace/packages.txt)) is kept between builds; ea
 assembles the image root as an overlay on it with the changed project packages and the
 adaptation layer ([userspace/rootfs/](../userspace/rootfs/), users, units, the session
 configuration). [overpressure/elfdeps.py](../../../overpressure/elfdeps.py) checks natively that the programs and
-libraries of the Frame and project packages find their libraries, including symbol versions.
+libraries of the Frame and project packages, and of the packages that depend on them, find their libraries,
+including symbol versions, and that every symbol a program and its libraries need is defined in what the
+program loads, as `ldd -r` would report: a build against a newer version of a library can call a function that
+the installed one lacks (the Frame's Xwayland and `libei`). Libraries are checked through the programs that load
+them: on their own, their symbols can come from the program (bash's loadable builtins, `libthread_db`, speech
+dispatcher's modules).
 
 The outputs are `pico4-userspace.tar.zst` and `pico4-userspace.manifest.json`, which records the
 version, the Git commit and its date, the bootstrap rootfs, the SHA-256 of every upstream repository

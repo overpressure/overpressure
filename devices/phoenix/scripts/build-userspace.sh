@@ -386,7 +386,10 @@ sed -e '/^\[options\]/a IgnorePkg = systemd systemd-libs systemd-sysvcompat syst
     -e '/^\[pico4\]/,/^$/d' "$project/userspace/pacman.conf" > "$T/etc/pacman.conf"
 
 # Packages from the Frame repository and our own were built against other library
-# versions than the preview base: their programs and public libraries must resolve.
+# versions than the preview base: their programs and public libraries must resolve, and so must
+# the packages that depend on them, which load the Frame's libraries in place of the preview's.
+# A program's every symbol must be defined in what it loads: the library check alone does not see
+# a single function that a newer version of a library has (the Frame's Xwayland and libei).
 phase "checking ELF dependencies of Frame and project packages"
 mapfile -t foreign < <(in_b pacman --config /etc/pico4/pacman.conf -r /target -Sl deckard-arch-hotfixes-release-0.3 pico4 |
     awk '/\[installed\]$/ {print $2}')
@@ -403,9 +406,12 @@ optional+='|^deckard-steamvr-rel /opt/steamvr/[^:]*:\s*(\./)?lib(openvr_api|stea
 # Android Mesa and Vulkan layers.
 optional+='|^deckard-steamvr-rel /opt/steamvr/bin/androidarm64/'
 optional+='|^deckard-(mesa|vulkan-layers)-android-aarch64 '
-PYTHONPATH=$project python3 -m overpressure.elfdeps "$T" "${foreign[@]}" --ignore "$optional" >&2 ||
+# The preview's optional parts that depend on a Frame package: glibc's memusagestat (libgd),
+# lm_sensors' sensord (librrd), OpenCV's HDF5 and VTK modules.
+optional+='|^(glibc /usr/bin/memusagestat|lm_sensors /usr/bin/sensord|opencv /usr/lib/libopencv_(hdf|viz)\.so[.0-9]*):'
+PYTHONPATH=$project python3 -m overpressure.elfdeps "$T" "${foreign[@]}" --dependents --ignore "$optional" >&2 ||
     { echo "unresolved ELF dependencies (above)" >&2; exit 1; }
-log "${#foreign[@]} Frame/project packages: all ELF dependencies resolve"
+log "${#foreign[@]} Frame/project packages and their dependents: all ELF dependencies and symbols resolve"
 # PipeWire's ALSA plugin with the capture fix over Valve's, of the version its recipe depends on.
 install -m755 "$T/usr/lib/pico4-spa-alsa/libspa-alsa.so" "$T/usr/lib/spa-0.2/alsa/libspa-alsa.so"
 

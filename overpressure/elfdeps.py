@@ -5,13 +5,17 @@ The userspace root is aarch64. Running ldd in it means one QEMU process per file
 this reads the ELF dynamic sections directly and follows the dynamic loader's search
 rules: DT_RPATH of the loading chain (unless the object has DT_RUNPATH), DT_RUNPATH,
 the ld.so.conf directories and the default directory. Unlike ldd it also reports
-symbol versions that no loaded library defines.
+symbol versions that no loaded library defines, and, as ldd -r does, symbols that no
+loaded object defines: a library built against a newer version of another can call a
+function the installed one lacks, which only fails when the program starts or calls it.
 
-    python3 -m overpressure.elfdeps ROOT PACKAGE... [--ignore REGEX]
+    python3 -m overpressure.elfdeps ROOT PACKAGE... [--dependents] [--ignore REGEX]
 
-Prints one line per problem, "PACKAGE FILE:<TAB>NEEDED => not found" or
-"PACKAGE FILE:<TAB>LIBRARY: version `NAME' not found (required by OBJECT)", and exits 1
-if any line does not match --ignore.
+--dependents also checks the packages that depend on PACKAGE..., which load their
+libraries. Prints one line per problem, "PACKAGE FILE:<TAB>NEEDED => not found",
+"PACKAGE FILE:<TAB>LIBRARY: version `NAME' not found (required by OBJECT)" or
+"PACKAGE FILE:<TAB>undefined symbol: NAME (required by OBJECT)", and exits 1 if any line
+does not match --ignore.
 """
 
 from __future__ import annotations
@@ -28,9 +32,13 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 PT_LOAD, PT_DYNAMIC, PT_INTERP = 1, 2, 3
-DT_NEEDED, DT_STRTAB, DT_SONAME, DT_RPATH, DT_RUNPATH = 1, 5, 14, 15, 29
+DT_NEEDED, DT_HASH, DT_STRTAB, DT_SYMTAB, DT_SONAME, DT_RPATH, DT_RUNPATH = 1, 4, 5, 6, 14, 15, 29
+DT_GNU_HASH = 0x6FFFFEF5
 DT_VERDEF, DT_VERDEFNUM, DT_VERNEED, DT_VERNEEDNUM = 0x6FFFFFFC, 0x6FFFFFFD, 0x6FFFFFFE, 0x6FFFFFFF
 VER_FLG_BASE, VER_FLG_WEAK = 0x1, 0x2
+STB_GLOBAL, STB_WEAK, STB_GNU_UNIQUE = 1, 2, 10
+SHN_UNDEF = 0
+SHT_DYNSYM = 11
 DEFAULT_DIRS = ("/usr/lib", "/lib", "/usr/lib64", "/lib64")
 ELF_HEADER_MIN = 52  # an ELF32 header: a shorter file is no ELF file
 ELFCLASS64 = 2
@@ -52,6 +60,8 @@ class Elf:
     interp: str = ""
     verneed: dict[str, list[tuple[str, bool]]] = field(default_factory=dict)  # library name -> [(version, weak)]
     verdef: set[str] = field(default_factory=set)
+    defined: frozenset[str] = frozenset()  # the dynamic symbols it exports
+    undefined: frozenset[str] = frozenset()  # the global symbols another object must define (weak ones may stay)
 
 
 @dataclass
@@ -127,6 +137,58 @@ def _versions_defined(image: _Image, offset: int, count: int) -> set[str]:
     return verdef
 
 
+def _dynsym_count(data: bytes | mmap.mmap, *, wide: bool) -> int | None:
+    """Return the number of dynamic symbols from the .dynsym section header, None without one."""
+    if wide:
+        shoff, shentsize, shnum = struct.unpack_from("<Q", data, 40)[0], *struct.unpack_from("<HH", data, 58)
+    else:
+        shoff, shentsize, shnum = struct.unpack_from("<I", data, 32)[0], *struct.unpack_from("<HH", data, 46)
+    if not shoff or shoff + shnum * shentsize > len(data):
+        return None
+    for i in range(shnum):
+        header = shoff + i * shentsize
+        if wide:
+            _, sh_type, _, _, _, size, _, _, _, entsize = struct.unpack_from("<IIQQQQIIQQ", data, header)
+        else:
+            _, sh_type, _, _, _, size, _, _, _, entsize = struct.unpack_from("<IIIIIIIIII", data, header)
+        if sh_type == SHT_DYNSYM and entsize:
+            return size // entsize
+    return None
+
+
+def _gnu_hash_count(data: bytes | mmap.mmap, offset: int, *, wide: bool) -> int | None:
+    """Return the number of dynamic symbols from a DT_GNU_HASH table: past the last chain's end.
+
+    None when the table hashes no symbol: then it does not tell how many there are.
+    """
+    nbuckets, symoffset, bloom_size, _ = struct.unpack_from("<IIII", data, offset)
+    buckets = offset + 16 + bloom_size * (8 if wide else 4)
+    last = max(struct.unpack_from(f"<{nbuckets}I", data, buckets), default=0)
+    if last < symoffset:
+        return None
+    chains = buckets + 4 * nbuckets
+    while not struct.unpack_from("<I", data, chains + 4 * (last - symoffset))[0] & 1:
+        last += 1
+    return last + 1
+
+
+def _symbols(image: _Image, offset: int, count: int, *, wide: bool) -> tuple[frozenset[str], frozenset[str]]:
+    """Return the dynamic symbols an object defines and the global ones it needs defined."""
+    layout = "<IBBHQQ" if wide else "<IIIBBH"
+    size = struct.calcsize(layout)
+    defined, undefined = set(), set()
+    for i in range(1, count):  # symbol 0 is the null symbol
+        fields = struct.unpack_from(layout, image.data, offset + i * size)
+        name, info, shndx = (fields[0], fields[1], fields[3]) if wide else (fields[0], fields[3], fields[5])
+        bind = info >> 4
+        if shndx == SHN_UNDEF:
+            if bind == STB_GLOBAL and name:
+                undefined.add(image.string(name))
+        elif bind in (STB_GLOBAL, STB_WEAK, STB_GNU_UNIQUE):
+            defined.add(image.string(name))
+    return frozenset(defined), frozenset(undefined)
+
+
 def _dynamic_tags(data: bytes | mmap.mmap, dynamic: tuple[int, int], *, wide: bool) -> list[tuple[int, int]]:
     """Return the dynamic section's (tag, value) entries up to its DT_NULL."""
     tags = []
@@ -161,11 +223,35 @@ def parse(data: bytes | mmap.mmap, path: str) -> Elf | None:
             elf.rpath = [d for d in image.string(value).split(":") if d]
         elif tag == DT_RUNPATH:
             elf.runpath = [d for d in image.string(value).split(":") if d]
+    _read_symbols(elf, image, values, wide=wide)
+    return elf
+
+
+def _read_symbols(elf: Elf, image: _Image, values: dict[int, int], *, wide: bool) -> None:
+    """Note an object's symbol versions and dynamic symbols in ELF."""
     if DT_VERNEED in values:
         elf.verneed = _versions_needed(image, image.at(values[DT_VERNEED]), values.get(DT_VERNEEDNUM, 0))
     if DT_VERDEF in values:
         elf.verdef = _versions_defined(image, image.at(values[DT_VERDEF]), values.get(DT_VERDEFNUM, 0))
-    return elf
+    if DT_SYMTAB in values:
+        count = _symbol_count(image, values, wide=wide)
+        elf.defined, elf.undefined = _symbols(image, image.at(values[DT_SYMTAB]), count, wide=wide)
+
+
+def _symbol_count(image: _Image, values: dict[int, int], *, wide: bool) -> int:
+    """Return the number of dynamic symbols, which the dynamic section does not hold.
+
+    The section header has it, else the hash tables, else the string table that the linkers put right
+    after the symbol table.
+    """
+    count = _dynsym_count(image.data, wide=wide)
+    if count is None and DT_HASH in values:
+        count = struct.unpack_from("<II", image.data, image.at(values[DT_HASH]))[1]
+    if count is None and DT_GNU_HASH in values:
+        count = _gnu_hash_count(image.data, image.at(values[DT_GNU_HASH]), wide=wide)
+    if count is None and values[DT_STRTAB] > values[DT_SYMTAB]:
+        count = (values[DT_STRTAB] - values[DT_SYMTAB]) // (24 if wide else 16)
+    return count or 0
 
 
 def resolve(root: str, path: str) -> str | None:
@@ -277,8 +363,11 @@ class Loader:
         problems: list[str] = []
         if top is None:
             return problems
-        if top.interp and resolve(self.root, top.interp) is None:
-            problems.append(f"{top.interp} => not found")
+        interp = None
+        if top.interp:
+            interp = self.load(top.interp)
+            if resolve(self.root, top.interp) is None:
+                problems.append(f"{top.interp} => not found")
         loaded, names = self._load_all(top, problems)
         for obj in loaded:
             for library, versions in obj.verneed.items():
@@ -290,6 +379,13 @@ class Loader:
                     for version, weak in versions
                     if not weak and version not in dep.verdef
                 ]
+        if top.interp and not any(p.endswith(" => not found") for p in problems):
+            # A program's symbols resolve in its whole load set, the interpreter's included. A library's
+            # can also come from whichever program loads it, so libraries are checked through programs.
+            scope = [*loaded, interp] if interp else loaded
+            for obj in loaded:
+                missing = sorted(s for s in obj.undefined if not any(s in o.defined for o in scope))
+                problems += [f"undefined symbol: {s} (required by {obj.path})" for s in missing]
         return problems
 
     def _load_all(self, top: Elf, problems: list[str]) -> tuple[list[Elf], dict[str, Elf | None]]:
@@ -335,6 +431,29 @@ def package_files(root: str) -> dict[str, list[str]]:
     return packages
 
 
+def _desc_fields(text: str) -> dict[str, list[str]]:
+    """Return the sections of a pacman desc file: %NAME%, %DEPENDS%, %PROVIDES%, ..."""
+    fields = {}
+    for block in text.split("\n\n"):
+        lines = [line for line in block.split("\n") if line]
+        if lines and lines[0].startswith("%"):
+            fields[lines[0]] = lines[1:]
+    return fields
+
+
+def dependents(root: str, names: list[str]) -> list[str]:
+    """Return the installed packages other than NAMES that depend on one of NAMES (by name or provision)."""
+    provider, depends = {}, {}
+    for entry in sorted(Path(root).glob("var/lib/pacman/local/*/desc")):
+        fields = _desc_fields(entry.read_text(encoding="utf-8"))
+        name = fields["%NAME%"][0]
+        for provided in [name, *fields.get("%PROVIDES%", [])]:
+            provider.setdefault(re.split(r"[<>=]", provided, maxsplit=1)[0], name)
+        depends[name] = [re.split(r"[<>=]", d, maxsplit=1)[0] for d in fields.get("%DEPENDS%", [])]
+    wanted = set(names)
+    return [n for n, deps in depends.items() if n not in wanted and any(provider.get(d) in wanted for d in deps)]
+
+
 def checked(root: str, path: str) -> bool:
     """Tell whether PATH is checked: programs, public libraries and SteamVR drivers.
 
@@ -377,10 +496,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("root")
     ap.add_argument("packages", nargs="+")
+    ap.add_argument("--dependents", action="store_true", help="also check the packages that depend on these")
     ap.add_argument("--ignore", default="", help="regular expression for accepted problem lines")
     args = ap.parse_args(argv)
     ignore: re.Pattern[str] | None = re.compile(args.ignore) if args.ignore else None
-    lines = [line for line in problems(args.root, args.packages) if not (ignore and ignore.search(line))]
+    names = list(args.packages)
+    if args.dependents:
+        names += dependents(args.root, names)
+    lines = [line for line in problems(args.root, names) if not (ignore and ignore.search(line))]
     for line in lines:
         print(line)
     return 1 if lines else 0

@@ -210,8 +210,9 @@ Each step is skipped when its inputs did not change:
 5. **Image root.** An overlay on the base root: the project packages that differ from the
    base root's, the adaptation layer (`userspace/rootfs`, shared stage-1 scripts, users, units)
    and the session configuration. [overpressure/elfdeps.py](../../../overpressure/elfdeps.py) checks natively that
-   the programs and libraries of the Frame's and the project's packages find their libraries and
-   symbol versions; a few optional programs are excluded by name in the script.
+   the programs and libraries of the Frame's and the project's packages, and of the packages that
+   depend on them, find their libraries and symbol versions, and that the programs' symbols are all
+   defined; a few optional programs are excluded by name in the script.
 6. **Archive.** `pico4-userspace.tar.zst` (zstd level 12, multithreaded) and
    `pico4-userspace.manifest.json` with the sources, hashes and installed package versions.
 
