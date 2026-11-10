@@ -1,11 +1,19 @@
 # Contributing
 
-Reports from other headsets are the most useful thing right now: everything has run on one.
+Welcome. Two things help most right now: a new headset, and reports from other units of a supported one (so far
+everything has run on one PICO 4).
+
+## A new headset
+
+overpressure is built for more than one headset: the installer, the window, the build container and the formats
+Android-based headsets share are generic, and a headset adds a folder under `devices/` with its plan, images and
+drivers. [docs/adding-a-headset.md](docs/adding-a-headset.md) walks through it; open an issue early, so the
+generic parts can grow where your headset needs them.
 
 ## A bug
 
-Open an issue with the template and attach `python -m overpressure dev support-bundle`'s archive. Its identifiers
-are masked, and it is plain text: read it first.
+Open an issue with the template and attach the headset's support bundle (the PICO 4's:
+`python -m overpressure dev support-bundle`). Its identifiers are masked, and it is plain text: read it first.
 
 ## A change
 
