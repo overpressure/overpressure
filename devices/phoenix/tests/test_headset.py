@@ -530,6 +530,7 @@ class DevTests(HeadsetFixture):
                 "cat /proc/1/comm /etc/pico4/install-id": "systemd\ndev-loop\n1234567",
             }
         )
+        self.fastboot_listed = False  # stage 1 runs: the headset is not in fastboot
         return dev, system
 
     def test_install_writes_boot_and_super_formats_new_data_and_starts_it(self):
@@ -604,6 +605,16 @@ class DevTests(HeadsetFixture):
         dev.install(system)
         self.assertEqual(order, ["probe", "recovery"])
         self.assertTrue(any("pico4-install write boot" in t for t in self.texts()))
+
+    def test_a_repeated_install_from_fastboot_goes_into_stage_1_first(self):
+        # A repeat that stopped in fastboot on its way to stage 1.
+        dev, system = self.install_setup()
+        self.fastboot_listed = True
+        order: list[str] = []
+        dev.installed_running = lambda: order.append("probe") is None
+        dev.recovery = lambda: order.append("recovery")
+        dev.install(system)
+        self.assertEqual(order, ["recovery"])  # no SSH probe of a headset in fastboot
 
     def test_which_system_runs_by_its_first_process(self):
         self.assertTrue(self.make({"cat /proc/1/comm": "systemd\n"}).installed_running())
@@ -844,6 +855,7 @@ class DevTests(HeadsetFixture):
     def test_restore_after_an_install_brings_back_system_boot_recovery_and_fresh_data(self):
         backup = Path(self.settings.backup)
         dev, _ = self.install_setup()
+        self.fastboot_listed = True  # the restore's way into stage 1 passes through fastboot
         manifest = json.loads((backup / "manifest.json").read_text())
         for name in ("super", "recovery"):
             data = f"stock {name}".encode().ljust(8192, b"\0")

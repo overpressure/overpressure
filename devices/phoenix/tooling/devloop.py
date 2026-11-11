@@ -214,6 +214,12 @@ class Dev(Headset):
             return False
         return output.strip().splitlines()[-1:] == ["systemd"]
 
+    def in_fastboot(self) -> bool:
+        """Tell whether fastboot lists the configured headset now."""
+        if not self.s.fastboot_serial:
+            return False
+        return self.s.fastboot_serial in self.run([self.s.tool("fastboot"), "devices"], 30, check=False)
+
     def fastboot(self, *words: str | Path, timeout: float = 60) -> str:
         """Run fastboot on the configured headset; return its output."""
         return self.run([self.s.tool("fastboot"), "-s", self.s.fastboot_serial, *words], timeout)
@@ -489,7 +495,10 @@ class Dev(Headset):
                 msg = f"missing {path}: run {hint}"
                 raise ValueError(msg)
         # A repeat after an install that got as far as starting the system: back into stage 1 first.
-        if self.installed_running():
+        if self.in_fastboot():
+            print("the headset is in fastboot: into the maintenance system to repeat the install", flush=True)
+            self.recovery()
+        elif self.installed_running():
             print("the installed system runs: into the maintenance system to repeat the install", flush=True)
             self.recovery()
         if self.connect() != "recovery":
