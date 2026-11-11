@@ -461,6 +461,27 @@ class PlanTests(unittest.TestCase):
         self.assertIn("power button", finished["where"])
         self.assertNotIn("device backup", self.commands())
 
+    def test_a_loader_left_running_is_restarted_into_a_fresh_session_for_the_serial(self):
+        original, replies = (
+            self.capture,
+            iter(["[INFO]  Detected device mode: Firehose\n" + PRINTGPT.split("Serial", maxsplit=1)[0]]),
+        )
+
+        def capture(argv: list[str], timeout: float) -> tuple[int, str]:
+            if "printgpt" in argv:
+                self.captured.append(argv)
+                return 0, next(replies, PRINTGPT)
+            return original(argv, timeout)
+
+        self.capture = capture  # ty: ignore[invalid-assignment]  # the test's own capture in the method's place
+        ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
+        self.assertEqual(ui.finished()["status"], "done", ui.finished())
+        texts = [" ".join(map(str, c)) for c in self.captured]
+        fresh = [n for n, t in enumerate(texts) if "reset --mode Edl" in t]
+        self.assertEqual(len(fresh), 1)
+        self.assertIn("printgpt", texts[fresh[0] + 1])  # identified again in the fresh session
+        self.assertEqual(self.settings().edl_serial, EDL)
+
     def test_a_stale_edl_session_in_the_dump_says_the_same(self):
         original = self.spawn
 

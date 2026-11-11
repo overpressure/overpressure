@@ -10,6 +10,7 @@ from Android, and edl-ng's serial says it is the configured one.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -358,6 +359,43 @@ NO_ANSWER = (
 def unanswered(output: str) -> bool:
     """Tell whether edl-ng's @p output says the device in EDL mode did not answer (a stale EDL session)."""
     return _UNANSWERED.search(output) is not None
+
+
+def serial_shown(output: str) -> bool:
+    """Tell whether edl-ng's @p output names the device's serial.
+
+    It does when its session starts with the device's Sahara handshake. A device still running the
+    Firehose loader of an earlier session (on Linux the loader keeps running between sessions;
+    Windows' driver starts each afresh) names none: a reset into EDL (fresh_edl_argv) brings the
+    handshake back.
+    """
+    return re.search(r"Serial Number:\s*\S+", output) is not None
+
+
+def fresh_edl_argv(program: str | Path, loader: str | Path) -> list[str | Path]:
+    """Return the edl-ng command that restarts the device into a fresh EDL session (Firehose's reset_to_edl).
+
+    It restarts the chip; no storage is written.
+    """
+    return edl_ng(program, loader, "reset", "--mode", "Edl")
+
+
+def wait_fresh_edl(edl_count: Callable[[], int], clock: Timing, *, seconds: float = 60) -> None:
+    """Wait until the device restarted by fresh_edl_argv is back as the one EDL device."""
+
+    def gone() -> None:
+        if edl_count():
+            msg = "the EDL device is still there"
+            raise RuntimeError(msg)
+
+    def one() -> None:
+        if edl_count() != 1:
+            msg = "expected exactly one EDL device"
+            raise RuntimeError(msg)
+
+    with contextlib.suppress(RuntimeError):  # it restarted faster than a poll: it is back already
+        until("the headset to restart", 10, gone, clock, interval=0.5)
+    until("a fresh EDL session", seconds, one, clock, interval=1)
 
 
 def check_edl_serial(output: str, serial: str) -> None:

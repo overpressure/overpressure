@@ -511,9 +511,15 @@ class Plan:
         ctx.progress(None, "Starting EDL mode")
         self.enter_edl(ctx, settings)
         ctx.progress(None, "Reading the partition table")
-        table = ctx.output(
-            qualcomm.edl_ng(settings.edl_program(), settings.path("loader"), "printgpt"), 180, check=False
-        )
+        printgpt = qualcomm.edl_ng(settings.edl_program(), settings.path("loader"), "printgpt")
+        table = ctx.output(printgpt, 180, check=False)
+        if not qualcomm.serial_shown(table) and not qualcomm.unanswered(table):
+            # An earlier session's loader still runs (a resumed backup on Linux): a fresh EDL session names the serial.
+            ctx.progress(None, "Restarting the headset into a fresh EDL session")
+            ctx.output(qualcomm.fresh_edl_argv(settings.edl_program(), settings.path("loader")), 60)
+            qualcomm.wait_fresh_edl(self.edl_count, ctx.clock)
+            ctx.progress(None, "Reading the partition table")
+            table = ctx.output(printgpt, 180, check=False)
         if qualcomm.unanswered(table):
             raise Failed(qualcomm.NO_ANSWER, STALE_EDL_WHERE)
         serial, luns = edl_serial(table), edl_luns(table)

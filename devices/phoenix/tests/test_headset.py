@@ -122,6 +122,7 @@ class HeadsetFixture(unittest.TestCase):
         self.edl = 0
         self.readback = self.boot
         self.edl_output = "Serial Number: EDL1"
+        self.edl_outputs: list[str] = []  # the next printgpt sessions' outputs, before edl_output
         self.run_result = {"status": "passed", "boot_restore_required": False}
         self.fastboot_listed = True
         self.unlocked = "true"
@@ -160,7 +161,7 @@ class HeadsetFixture(unittest.TestCase):
             Path(words[words.index("boot") + 1]).write_bytes(self.readback)
             output = self.edl_output
         elif "printgpt" in text:
-            output = self.edl_output
+            output = self.edl_outputs.pop(0) if self.edl_outputs else self.edl_output
         elif "oem device-info" in text:
             output = f"(bootloader) Device unlocked: {self.unlocked}"
         elif "getvar all" in text:
@@ -218,6 +219,7 @@ class CycleTests(HeadsetFixture):
                 "flash-run",
                 "pico-os",
                 "adb-edl",
+                "identify",
                 "readback",
                 "restore-abl",
                 "edl-reset",
@@ -234,6 +236,25 @@ class CycleTests(HeadsetFixture):
         with self.assertRaisesRegex(RuntimeError, "differs from boot.bin"):
             self.run_cycle(self.make())
         self.assertNotIn("restore-abl", self.steps())
+
+    def test_a_loader_left_running_is_restarted_into_a_fresh_edl_session_to_identify_it(self):
+        # Linux: the backup's Firehose loader still runs; edl-ng's session then names no serial.
+        self.edl_outputs = ["[INFO]  Detected device mode: Firehose\n--- Partitions LUN 0 ---"]
+        c = self.make()
+        self.edl = 1  # in EDL already, from the backup
+        c.stage_abl()
+        self.assertEqual(self.steps()[:4], ["identify", "edl-reset", "identify", "stage"])
+        fresh = next(w for w in self.calls if "reset" in w)
+        self.assertEqual(fresh[fresh.index("--mode") + 1], "Edl")
+
+    def test_a_fresh_session_of_another_headset_is_still_refused(self):
+        self.edl_outputs = ["[INFO]  Detected device mode: Firehose"]
+        self.edl_output = "Serial Number: OTHER"
+        c = self.make()
+        self.edl = 1
+        with self.assertRaisesRegex(RuntimeError, "not the configured headset"):
+            c.stage_abl()
+        self.assertNotIn("stage", self.steps())
 
     def test_another_edl_device_is_never_written(self):
         self.edl_output = "Serial Number: OTHER"

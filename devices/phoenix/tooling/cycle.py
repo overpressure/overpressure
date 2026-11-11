@@ -118,6 +118,28 @@ class Headset:
         """edl-ng reports the device serial when it connects: only the configured headset may be written."""
         qualcomm.check_edl_serial(output, self.s.edl_serial)
 
+    def identify(self) -> None:
+        """Identify the EDL device in a read-only session before anything is written: only the configured headset.
+
+        A headset that still runs the Firehose loader of an earlier session names no serial: it is
+        restarted into a fresh EDL session (no storage written) and identified again. The sessions
+        that follow in the same step need no check: on Linux they would name no serial either.
+        """
+        output = self.edl("printgpt", log="edl-identify", timeout=120)
+        if not qualcomm.serial_shown(output) and not qualcomm.unanswered(output):
+            print(
+                "   the EDL device runs an earlier session's loader: restarting it into a fresh EDL session", flush=True
+            )
+            self.run(
+                qualcomm.fresh_edl_argv(self.s.edl_program(), self.s.path("loader")),
+                60,
+                log=self.folder / "edl-fresh.log",
+            )
+            qualcomm.wait_fresh_edl(self.edl_count, self.clock)
+            usbaccess.require(qualcomm.EDL_MODE, USB_MODES, self.clock)
+            output = self.edl("printgpt", log="edl-identify-fresh", timeout=120)
+        self.check_edl_serial(output)
+
     def device_args(self) -> list[str | Path]:
         """Return the device command's arguments for the ABL with this headset's backup and loader."""
         return [
@@ -141,7 +163,7 @@ class Headset:
         print(">> engineering ABL", flush=True)
         self.enter_edl()
         # A read-only first session identifies the device before anything is written.
-        self.check_edl_serial(self.edl("printgpt", log="edl-identify", timeout=120))
+        self.identify()
         self.run(
             [
                 sys.executable,
@@ -253,7 +275,8 @@ class Cycle(Headset):
         print(">> verify stock boot, restore stock ABL", flush=True)
         stock, expected = self.stock_boot()
         self.enter_edl()
-        self.check_edl_serial(self.edl("read-part", "boot", self.folder / "boot-readback.bin", log="boot-readback"))
+        self.identify()
+        self.edl("read-part", "boot", self.folder / "boot-readback.bin", log="boot-readback")
         if backups.digest(self.folder / "boot-readback.bin")["sha256"] != expected["sha256"]:
             msg = f"boot differs from {stock.name} in the backup (headset in EDL)"
             raise RuntimeError(msg)
