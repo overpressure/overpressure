@@ -26,9 +26,18 @@ thing for a fan that does not cool, for which PICO OS has no reaction: where PIC
 shows its overheating notice (a hottest mean of 95.1 °C for 2 minutes), a silent MCU
 or a stalled fan powers the headset off.
 
+Asleep: PICO OS's shutdown sets the backlight to 0 (gd32ipdservice's
+ScreenOffForShutDown, SetBrightness 0x05 with level 0). The MCU, on an always-on
+supply, then answers every request with a single F1 until it is woken, also after
+a power-off. gd32ipdservice wakes it as the screen comes on (wakeUp): SetBrightness
+with the configured level (sys_brt_level; 63 below 30 or without a configuration),
+every 10 ms, up to 50 times, until it answers 79. This tool does the same, with 63,
+when an answer is only F1, and then repeats its request once.
+
 Safety: the MCU also takes lens-motor moves, calibration writes and firmware
-updates. This tool builds only the queries in QUERIES and SetFanSpeed with a
-duty of 0-100; it has no way to build any other frame.
+updates. This tool builds only the queries in QUERIES, SetFanSpeed with a duty of
+0-100 and PICO OS's wake (SetBrightness with level 63); it has no way to build any
+other frame.
 """
 
 from __future__ import annotations
@@ -59,10 +68,22 @@ DEFAULT_PROFILE = "early"
 # GD32 frames.
 REQUEST, REPLY = 0xA0, 0x79
 SET_FAN_SPEED = 0x0E
+#: PICO OS's wake: SetBrightness with gd32ipdservice's level without a configuration.
+SET_BRIGHTNESS, WAKE_LEVEL = 0x05, 63
+#: An asleep MCU's whole answer; gd32ipdservice's wake: its tries and the pause between them.
+ASLEEP = 0xF1
+WAKE_TRIES, WAKE_PAUSE = 50, 0.01  # s
 GET_FAN_SPEED, GET_FAN_RPM, GET_MCU_VERSION, GET_FAN_INFO = 0x0F, 0x10, 0x26, 0x30
 QUERIES = (GET_FAN_SPEED, GET_FAN_RPM, GET_MCU_VERSION, GET_FAN_INFO)
 # Reply lengths, as gd32ipdservice reads them.
-REPLY_LENGTH = {SET_FAN_SPEED: 1, GET_FAN_SPEED: 4, GET_FAN_RPM: 4, GET_MCU_VERSION: 8, GET_FAN_INFO: 10}
+REPLY_LENGTH = {
+    SET_FAN_SPEED: 1,
+    SET_BRIGHTNESS: 1,
+    GET_FAN_SPEED: 4,
+    GET_FAN_RPM: 4,
+    GET_MCU_VERSION: 8,
+    GET_FAN_INFO: 10,
+}
 REPLY_TIMEOUT = 0.1  # s
 LOCK_TIMEOUT = 2.0  # s
 
@@ -282,11 +303,17 @@ def xor(data: bytes) -> int:
 
 
 def request(command: int, duty: int | None = None) -> bytes:
-    """Build a request frame. Only the queries and SetFanSpeed with a duty of 0-100 can be built."""
+    """Build a request frame.
+
+    Only the queries, SetFanSpeed with a duty of 0-100 and PICO OS's wake (SetBrightness with
+    WAKE_LEVEL, its level little-endian in p2 and p3) can be built.
+    """
     if command in QUERIES and duty is None:
         body = bytes((REQUEST, command, 0, 0, 0))
     elif command == SET_FAN_SPEED and type(duty) is int and 0 <= duty <= DUTY_MAX:
         body = bytes((REQUEST, command, 0, duty, 0))
+    elif command == SET_BRIGHTNESS and type(duty) is int and duty == WAKE_LEVEL:
+        body = bytes((REQUEST, command, 0, WAKE_LEVEL & 0xFF, WAKE_LEVEL >> 8))
     else:
         msg = f"command {command:#04x} ({duty!r}) is not allowed"
         raise ValueError(msg)
@@ -325,6 +352,10 @@ def fan_info(frame: bytes) -> dict:
         "running": data[6] != 0,
         "other": (data[3:6] + data[7:8]).hex(),
     }
+
+
+class AsleepError(TimeoutError):
+    """The MCU answered only F1: asleep since PICO OS's shutdown, until it is woken (Fan.wake)."""
 
 
 class Uart:
@@ -387,6 +418,8 @@ class Uart:
                     return frame
                 if time.monotonic() > deadline:
                     msg = f"no reply to {command:#04x} ({data.hex() or 'nothing'})"
+                    if data and set(data) == {ASLEEP}:
+                        raise AsleepError(msg)
                     raise TimeoutError(msg)
         except termios.error as e:  # not an OSError: the daemon handles OSError only
             raise OSError(*e.args) from None
@@ -397,17 +430,43 @@ class Uart:
 class Fan:
     """The fan's commands on the MCU, over a transport (Uart, or a fake in the tests)."""
 
-    def __init__(self, transact: Callable[[bytes, int], bytes]) -> None:
-        """Send the fan's frames through this transport."""
-        self.transact = transact
+    def __init__(
+        self,
+        transact: Callable[[bytes, int], bytes],
+        log: Callable[[str], None] = lambda _message: None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        """Send the fan's frames through this transport; say when the MCU had to be woken."""
+        self.transact, self.log, self.sleep = transact, log, sleep
+
+    def send(self, tx: bytes, command: int) -> bytes:
+        """Send one request; an asleep MCU is woken first and the request sent again."""
+        try:
+            return self.transact(tx, command)
+        except AsleepError:
+            self.wake()
+            return self.transact(tx, command)
+
+    def wake(self) -> None:
+        """Wake the MCU as gd32ipdservice's wakeUp does; raise TimeoutError when it stays asleep."""
+        for attempt in range(1, WAKE_TRIES + 1):
+            try:
+                self.transact(request(SET_BRIGHTNESS, WAKE_LEVEL), SET_BRIGHTNESS)
+            except TimeoutError:
+                self.sleep(WAKE_PAUSE)
+                continue
+            self.log(f"MCU was asleep (F1 since PICO OS's shutdown): woken by PICO OS's wake, try {attempt}")
+            return
+        msg = f"the MCU stays asleep after {WAKE_TRIES} wakes"
+        raise TimeoutError(msg)
 
     def set_duty(self, duty: int) -> None:
         """Send SetFanSpeed; the MCU acknowledges it."""
-        self.transact(request(SET_FAN_SPEED, duty), SET_FAN_SPEED)
+        self.send(request(SET_FAN_SPEED, duty), SET_FAN_SPEED)
 
     def query(self, command: int) -> bytes:
         """Send one of the queries and return its reply."""
-        return self.transact(request(command), command)
+        return self.send(request(command), command)
 
     def duty(self) -> int:
         """Return the duty the MCU runs the fan at, in %."""
@@ -688,7 +747,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     controller = Controller(table, on, off, duty)
     zones = Zones(args.thermal)
     sensors = zones.sensors()
-    fan = None if args.dry_run else Fan(Uart(args.device))
+    fan = None if args.dry_run else Fan(Uart(args.device), log_stderr)
     state = None if args.no_state else STATE
     daemon = Daemon(controller, sensors, fan, zones.read, state_path=state, profile=name)
     boost = (
@@ -726,7 +785,7 @@ def cmd_set(args: argparse.Namespace) -> int:
     """Send one SetFanSpeed and print the readback."""
     if busy(args):
         return 1
-    fan = Fan(Uart(args.device))
+    fan = Fan(Uart(args.device), log_stderr)
     fan.set_duty(args.duty)
     time.sleep(args.settle)
     print(json.dumps({"duty": args.duty, "readback": fan.duty(), "rpm": fan.rpm()}))
@@ -737,7 +796,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     """Run each duty and print its RPM; the duty from before comes back at the end."""
     if busy(args):
         return 1
-    fan = Fan(Uart(args.device))
+    fan = Fan(Uart(args.device), log_stderr)
     zones = Zones(args.thermal)
     start = fan.duty()
     try:
@@ -782,7 +841,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     if daemon_pid():
         with contextlib.suppress(OSError, ValueError):
             out["daemon"] = json.loads(STATE.read_text())
-    fan = Fan(Uart(args.device))
+    fan = Fan(Uart(args.device), log_stderr)
     for key, call in (
         ("duty", fan.duty),
         ("rpm", fan.rpm),

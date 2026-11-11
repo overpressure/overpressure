@@ -160,6 +160,14 @@ class FrameTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             fan.request(fan.GET_FAN_SPEED, 5)
 
+    def test_the_wake_is_pico_os_and_nothing_else_of_the_backlight(self):
+        # gd32ipdservice's wakeUp: SetBrightness A0 05 00 lo hi xor with level 63 (no configuration).
+        self.assertEqual(fan.request(fan.SET_BRIGHTNESS, fan.WAKE_LEVEL).hex(), "a005003f009a")
+        # No other level: in particular not ScreenOffForShutDown's 0, which puts the MCU to sleep.
+        for level in (0, 1, 62, 64, 255, None, 63.0, True):
+            with self.assertRaises(ValueError):
+                fan.request(fan.SET_BRIGHTNESS, level)
+
     @staticmethod
     def _builds(cmd: int, duty: int | None) -> bool:
         try:
@@ -182,6 +190,53 @@ class FrameTest(unittest.TestCase):
         mcu = FakeMcu()
         mcu.duty = 0x1779 // mcu.rpm_per_percent
         self.assertEqual(fan.Fan(mcu).rpm(), mcu.duty * mcu.rpm_per_percent)
+
+
+class AsleepMcu:
+    """An MCU asleep since PICO OS's shutdown: F1 to every request until PICO OS's wake gets through."""
+
+    def __init__(self, refusals: int = 1) -> None:
+        self.refusals = refusals  # wakes it answers F1 to before it wakes
+        self.awake = False
+        self.sent: list[bytes] = []
+
+    def __call__(self, tx: bytes, command: int) -> bytes:
+        self.sent.append(tx)
+        if not self.awake:
+            if command == fan.SET_BRIGHTNESS and self.refusals == 0:
+                self.awake = True
+                return b"\x79"
+            if command == fan.SET_BRIGHTNESS:
+                self.refusals -= 1
+            msg = f"no reply to {command:#04x} (f1)"
+            raise fan.AsleepError(msg)
+        return reply(0x2D, 0x00) if command == fan.GET_FAN_SPEED else b"\x79"
+
+
+class AsleepTest(unittest.TestCase):
+    def test_an_asleep_mcu_is_woken_as_pico_os_does_then_asked_again(self):
+        mcu, logged, pauses = AsleepMcu(refusals=1), [], []
+        duty = fan.Fan(mcu, logged.append, pauses.append).duty()
+        self.assertEqual(duty, 0x2D)
+        wake, ask = fan.request(fan.SET_BRIGHTNESS, fan.WAKE_LEVEL), fan.request(fan.GET_FAN_SPEED)
+        self.assertEqual(mcu.sent, [ask, wake, wake, ask])  # refused, two wakes (the first refused), asked again
+        self.assertEqual(pauses, [fan.WAKE_PAUSE])
+        self.assertEqual(len(logged), 1)
+        self.assertIn("woken", logged[0])
+
+    def test_an_mcu_that_stays_asleep_is_an_error_after_pico_os_s_tries(self):
+        mcu, pauses = AsleepMcu(refusals=10**6), []
+        with self.assertRaisesRegex(TimeoutError, "stays asleep"):
+            fan.Fan(mcu, sleep=pauses.append).set_duty(45)
+        self.assertEqual(len(pauses), fan.WAKE_TRIES)
+        # Still a TimeoutError, an OSError: the daemon's failsafe and power-off handle it as before.
+        self.assertTrue(issubclass(fan.AsleepError, OSError))
+
+    def test_an_awake_mcu_is_never_woken(self):
+        mcu = AsleepMcu()
+        mcu.awake = True
+        fan.Fan(mcu).set_duty(45)
+        self.assertEqual(mcu.sent, [fan.request(fan.SET_FAN_SPEED, 45)])
 
 
 class TableTest(unittest.TestCase):
@@ -724,6 +779,27 @@ class UartTest(unittest.TestCase):
             os.close(slave)
         self.assertEqual(received, [fan.request(fan.GET_FAN_RPM)])
         self.assertEqual(rpm, 5700)
+
+    def test_only_f1_is_asleep(self):
+        master, slave = os.openpty()
+
+        def mcu(answer: bytes) -> None:
+            buf = b""
+            while len(buf) < 6:
+                buf += os.read(master, 6 - len(buf))
+            os.write(master, answer)
+
+        try:
+            for answer, error in ((b"\xf1", fan.AsleepError), (b"\xf1\x00", TimeoutError), (b"", TimeoutError)):
+                thread = threading.Thread(target=mcu, args=(answer,))
+                thread.start()
+                with self.assertRaises(error) as caught:
+                    fan.Uart(os.ttyname(slave), timeout=0.3)(fan.request(fan.GET_FAN_RPM), fan.GET_FAN_RPM)
+                thread.join(5)
+                self.assertIs(type(caught.exception), error)
+        finally:
+            os.close(master)
+            os.close(slave)
 
 
 if __name__ == "__main__":

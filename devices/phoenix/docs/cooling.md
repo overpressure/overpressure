@@ -62,9 +62,16 @@ Frames as `gd32ipdservice` builds them (requests `A0 cmd p1 p2 p3 xor`, replies 
 | `A0 26 00 00 00 86` | 8 bytes | one of GetGD32MCUVersion's three queries |
 | `A0 30 00 00 00 90` | `79 dd lo hi 00 00 00 rr 00 xx` | GetFanInfo (`fan_info_t`): duty `dd`, RPM `hi lo`, `rr` 1 while the fan runs |
 | `A0 29 …` | | SetFanRPM, for the RPM tables below |
+| `A0 05 00 lo hi xx` | `79` | SetBrightness, the backlight level; `wakeUp` and `ScreenOffForShutDown` send it too |
 
 Each transaction votes the port's clocks (`ioctl 0x544D`), flushes both queues, writes the 6 bytes and polls up to ten
 times at 1 ms for a reply starting with `79`.
+
+**An asleep MCU.** PICO OS's shutdown sets the backlight to 0 (`ScreenOffForShutDown`: `A0 05 00 00 00 A5`). The MCU,
+on an always-on supply, then answers every request with a single `F1`, also after a power-off, until it is woken.
+`gd32ipdservice` wakes it as the screen comes on (`wakeUp`): SetBrightness with the configured level (`sys_brt_level`
+in `com.pvr.configuration`; 63 below 30 or without one), every 10 ms, up to 50 times, until it answers `79`. A
+headset installed after PICO OS was shut down (rather than restarted) starts with an asleep MCU: no fan, no IPD.
 
 ### PICO OS's policy
 
@@ -109,8 +116,10 @@ The development headset is a standard PICO 4 of the late batch: control type 1, 
 - **A fan that does not cool** (not in PICO OS): at PICO OS's overheating point (hottest mean at or above 95.1 °C for
   two minutes, then every 30 s), a failed last transaction or a stalled fan logs the reason and runs
   `systemctl poweroff`. The kernel throttles meanwhile.
-- **The MCU.** Frames come only from an allowlist: SetFanSpeed with a duty of 0–100 and the four queries. Nothing can
-  build a lens move, calibration write or firmware frame. Each transaction holds an exclusive `flock` on
+- **The MCU.** Frames come only from an allowlist: SetFanSpeed with a duty of 0–100, the four queries and PICO OS's
+  wake (SetBrightness with level 63, `A0 05 00 3F 00 9A`). Nothing can build a lens move, calibration write, firmware
+  frame or another backlight level, so nothing puts the MCU to sleep. An answer of only `F1` (asleep) is followed by
+  PICO OS's wake, as `wakeUp` sends it, and the request once more; the journal says so. Each transaction holds an exclusive `flock` on
   `/dev/ttyHS1`; Monado's PICO 4 driver takes the same lock for its IPD read ([pico4_ipd.c](../src/monado/pico4_ipd.c))
   and uses Monado's default IPD after waiting a second for it.
 - **The table.** PICO OS's early table on every headset by default: Valve's GPU-bound session heats the headset more
