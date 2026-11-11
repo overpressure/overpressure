@@ -67,11 +67,15 @@ Frames as `gd32ipdservice` builds them (requests `A0 cmd p1 p2 p3 xor`, replies 
 Each transaction votes the port's clocks (`ioctl 0x544D`), flushes both queues, writes the 6 bytes and polls up to ten
 times at 1 ms for a reply starting with `79`.
 
-**An asleep MCU.** PICO OS's shutdown sets the backlight to 0 (`ScreenOffForShutDown`: `A0 05 00 00 00 A5`). The MCU,
-on an always-on supply, then answers every request with a single `F1`, also after a power-off, until it is woken.
-`gd32ipdservice` wakes it as the screen comes on (`wakeUp`): SetBrightness with the configured level (`sys_brt_level`
-in `com.pvr.configuration`; 63 below 30 or without one), every 10 ms, up to 50 times, until it answers `79`. A
-headset installed after PICO OS was shut down (rather than restarted) starts with an asleep MCU: no fan, no IPD.
+**An MCU that answers `F1`.** `gd32ipdservice` wakes the MCU as the screen comes on (`wakeUp`): SetBrightness with
+the configured level (`sys_brt_level` in `com.pvr.configuration`; 63 below 30 or without one), every 10 ms, up to 50
+times, until it answers `79`; PICO OS's shutdown sets the backlight to 0 (`ScreenOffForShutDown`: `A0 05 00 00 00 A5`).
+Its `ResetMCU` sets the boot line high, the reset line high for 10 ms, then wakes it. On one headset after a restore to
+stock and PICO OS's first-run setup, the MCU answered every request, these included, with a single `F1`, through cold
+starts and the reset: no fan control, no IPD. PICO OS updates the MCU on its first boot (`libpxrinit.so`,
+`check_GD_MCU_Update`, from `/system/etc/mcubin/`), and an update that a suspend interrupts fails ("FW/OTA FAILED
+BECAUSE OF SYSTEM SUSPEND"). Only PICO OS's update repairs it: a restore to stock, a first boot kept awake until the
+setup is through, then the install from the running PICO OS.
 
 ### PICO OS's policy
 

@@ -226,7 +226,7 @@ class AsleepTest(unittest.TestCase):
 
     def test_an_mcu_that_stays_asleep_is_an_error_after_pico_os_s_tries(self):
         mcu, pauses = AsleepMcu(refusals=10**6), []
-        with self.assertRaisesRegex(TimeoutError, "stays asleep"):
+        with self.assertRaisesRegex(TimeoutError, "still answers F1"):
             fan.Fan(mcu, sleep=pauses.append).set_duty(45)
         self.assertEqual(len(pauses), fan.WAKE_TRIES)
         # Still a TimeoutError, an OSError: the daemon's failsafe and power-off handle it as before.

@@ -811,8 +811,7 @@
 	 * The GD32 MCU's control lines, set as the stock serial driver sets them when it probes
 	 * the MCU's UART (boot-gpio, reset-gpio and sync-gpio of the stock tree's
 	 * qcom,qup_uart@984000): boot 13 high, reset 12 low, sync 14 low. The bootloader leaves 12
-	 * and 13 so; 14 only the stock driver drives. An MCU that PICO OS's shutdown put to sleep
-	 * refused PICO OS's wake on a kernel that left 14 alone (docs/cooling.md).
+	 * and 13 so; 14 only the stock driver drives.
 	 */
 	gd32-boot-hog {
 		gpio-hog;

@@ -26,13 +26,11 @@ thing for a fan that does not cool, for which PICO OS has no reaction: where PIC
 shows its overheating notice (a hottest mean of 95.1 °C for 2 minutes), a silent MCU
 or a stalled fan powers the headset off.
 
-Asleep: PICO OS's shutdown sets the backlight to 0 (gd32ipdservice's
-ScreenOffForShutDown, SetBrightness 0x05 with level 0). The MCU, on an always-on
-supply, then answers every request with a single F1 until it is woken, also after
-a power-off. gd32ipdservice wakes it as the screen comes on (wakeUp): SetBrightness
+F1: gd32ipdservice wakes the MCU as the screen comes on (wakeUp): SetBrightness
 with the configured level (sys_brt_level; 63 below 30 or without a configuration),
 every 10 ms, up to 50 times, until it answers 79. This tool does the same, with 63,
-when an answer is only F1, and then repeats its request once.
+when an answer is only F1, and then repeats its request once. An MCU whose update by
+PICO OS failed answers F1 to everything, the wake included (docs/cooling.md).
 
 Safety: the MCU also takes lens-motor moves, calibration writes and firmware
 updates. This tool builds only the queries in QUERIES, SetFanSpeed with a duty of
@@ -355,7 +353,7 @@ def fan_info(frame: bytes) -> dict:
 
 
 class AsleepError(TimeoutError):
-    """The MCU answered only F1: asleep since PICO OS's shutdown, until it is woken (Fan.wake)."""
+    """The MCU answered only F1: not awake, or without its application (Fan.wake tries PICO OS's wake)."""
 
 
 class Uart:
@@ -448,16 +446,16 @@ class Fan:
             return self.transact(tx, command)
 
     def wake(self) -> None:
-        """Wake the MCU as gd32ipdservice's wakeUp does; raise TimeoutError when it stays asleep."""
+        """Wake the MCU as gd32ipdservice's wakeUp does; raise TimeoutError when it keeps answering F1."""
         for attempt in range(1, WAKE_TRIES + 1):
             try:
                 self.transact(request(SET_BRIGHTNESS, WAKE_LEVEL), SET_BRIGHTNESS)
             except TimeoutError:
                 self.sleep(WAKE_PAUSE)
                 continue
-            self.log(f"MCU was asleep (F1 since PICO OS's shutdown): woken by PICO OS's wake, try {attempt}")
+            self.log(f"MCU answered F1: woken by PICO OS's wake, try {attempt}")
             return
-        msg = f"the MCU stays asleep after {WAKE_TRIES} wakes"
+        msg = f"the MCU still answers F1 after {WAKE_TRIES} wakes (docs/cooling.md)"
         raise TimeoutError(msg)
 
     def set_duty(self, duty: int) -> None:
