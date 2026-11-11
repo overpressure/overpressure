@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: A security problem
-    url: https://github.com/xenolphthalein/overpressure/security/advisories/new
+    url: https://github.com/overpressure/overpressure/security/advisories/new
     about: Please report vulnerabilities privately.

@@ -3,7 +3,7 @@
 ## Reporting a problem
 
 Please report a vulnerability privately, through GitHub's
-[private reporting](https://github.com/xenolphthalein/overpressure/security/advisories/new) for this repository, not
+[private reporting](https://github.com/overpressure/overpressure/security/advisories/new) for this repository, not
 in a public issue.
 
 ## What is in scope
