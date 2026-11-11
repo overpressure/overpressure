@@ -184,16 +184,26 @@ def linked_mounts(root: Path = REPO) -> list[str]:
     mounts = []
     for name in PRIVATE:
         path = root / name
-        target = Path(os.path.realpath(path))
-        if target != path.absolute():
+        target = _link_target(path)
+        if target is not None:
             if target.is_dir():
                 mounts += ["-v", f"{target}:/work/{name}"]
         elif path.is_dir():
             for child in sorted(path.iterdir()):
-                child_target = Path(os.path.realpath(child))
-                if child_target != child.absolute() and child_target.is_dir():
+                child_target = _link_target(child)
+                if child_target is not None and child_target.is_dir():
                     mounts += ["-v", f"{child_target}:/work/{name}/{child.name}"]
     return mounts
+
+
+def _link_target(path: Path) -> Path | None:
+    """Return where PATH leads if it is a link itself, None otherwise.
+
+    Its real path is compared with its real parent's: a link above it (macOS's /var) or a short
+    8.3 name in it (Windows' temporary folder) changes both alike and makes no link of PATH.
+    """
+    target = Path(os.path.realpath(path))
+    return None if target == Path(os.path.realpath(path.parent)) / path.name else target
 
 
 #: Where a worktree's repository (its common git folder) is bound in the container.
