@@ -116,6 +116,15 @@ class Headset:
             )
             raise RuntimeError(msg) from exc
 
+    def release_adb(self) -> None:
+        """Stop the adb server (not on Windows), so that fastboot reaches the headset.
+
+        It starts with the first adb command and keeps running; on Linux it can keep hold of the
+        headset when it comes back in fastboot mode, and fastboot then does not list it (root's
+        fastboot does). The next adb command starts it again; Windows' drivers keep the two apart.
+        """
+        android.release_usb(self.s.tool("adb"), lambda argv: self.run(argv, 15, check=False))
+
     def drain(self) -> None:
         """After a power command, read the headset's USB pipe until it leaves (qualcomm.drain_until_gone)."""
         qualcomm.drain_until_gone(self.clock, reader=self.usb_reader)
@@ -264,6 +273,7 @@ class Cycle(Headset):
         print("   boot restore pending: waiting for fastboot", flush=True)
 
         def in_fastboot() -> None:
+            self.release_adb()
             if self.s.fastboot_serial not in self.run([self.s.tool("fastboot"), "devices"], 30, check=False):
                 raise RuntimeError(NOT_IN_FASTBOOT)
 

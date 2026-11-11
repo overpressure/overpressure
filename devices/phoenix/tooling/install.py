@@ -39,7 +39,7 @@ import sys
 import uuid
 from typing import TYPE_CHECKING, Callable
 
-from overpressure import REPO, doctor, linux, qualcomm, runner, tools, usbaccess
+from overpressure import REPO, android, doctor, linux, qualcomm, runner, tools, usbaccess
 from overpressure.install import Ask, Context, Failed, Field, Stage, Task
 from overpressure.process import until
 
@@ -609,8 +609,14 @@ class Plan:
 
     def wait_fastboot(self, ctx: Context, settings: localconfig.Settings, listed: Callable[[], dict[str, str]]) -> None:
         """Bring the headset into fastboot unless it is there; write its serial to .env."""
+
+        def release() -> None:  # Linux: the adb server can keep hold of the headset in fastboot
+            android.release_usb(settings.tool("adb"), lambda argv: ctx.output(argv, 15, check=False))
+
+        release()
         if not listed():
             ctx.output([settings.tool("adb"), "-s", settings.adb_serial, "reboot", "bootloader"], 30)
+            release()  # that command started the server again
         ctx.note("The headset restarts into its bootloader. Keep the cable in.")
 
         def one() -> str:

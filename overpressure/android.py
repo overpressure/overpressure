@@ -9,6 +9,7 @@ prints FAILED or ERROR, so a bootloader's refusal is never mistaken for success.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 import sys
@@ -35,6 +36,20 @@ def run(command: list[str], timeout: int = 60) -> str:
         msg = f"Command failed ({result.returncode}): {output.strip()}"
         raise ValueError(msg)
     return output.strip()
+
+
+def release_usb(adb: str, runner: Callable[[list[str]], object], platform: str | None = None) -> None:
+    """Stop the adb server (not on Windows), so that fastboot reaches the device.
+
+    It starts with the first adb command and keeps running; on Linux it can keep hold of the
+    headset when it comes back in fastboot mode, and fastboot then does not list it (root's
+    fastboot does). The next adb command starts it again; Windows' drivers keep the two apart.
+    """
+    if (platform or sys.platform) == "win32":
+        return
+    # No server, or none that answers: nothing holds the device.
+    with contextlib.suppress(RuntimeError, ValueError, OSError, subprocess.TimeoutExpired):
+        runner([adb, "kill-server"])
 
 
 def select_device(tool: str, serial: str | None, runner: Callable[[list[str]], str] | None = None) -> str:

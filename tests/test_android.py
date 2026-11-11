@@ -107,3 +107,19 @@ class FakeClock:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReleaseUsbTests(unittest.TestCase):
+    def test_the_adb_server_is_stopped_except_on_windows(self):
+        sent: list[list[str]] = []
+        android.release_usb("adb", sent.append, platform="linux")
+        self.assertEqual(sent, [["adb", "kill-server"]])
+        android.release_usb("adb", sent.append, platform="win32")
+        self.assertEqual(len(sent), 1)  # Windows' drivers keep adb and fastboot apart
+
+    def test_no_server_is_no_problem(self):
+        def refused(_argv: list[str]) -> str:
+            msg = "cannot connect to daemon"
+            raise RuntimeError(msg)
+
+        android.release_usb("adb", refused, platform="linux")

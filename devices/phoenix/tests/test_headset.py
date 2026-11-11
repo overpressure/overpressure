@@ -9,6 +9,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -615,6 +616,14 @@ class DevTests(HeadsetFixture):
         dev.recovery = lambda: order.append("recovery")
         dev.install(system)
         self.assertEqual(order, ["recovery"])  # no SSH probe of a headset in fastboot
+
+    def test_linux_stops_the_adb_server_before_it_looks_for_fastboot(self):
+        # The adb server can keep hold of the headset in fastboot: fastboot then does not list it.
+        dev = self.make()
+        with patch.object(sys, "platform", "linux"):
+            dev.to_fastboot()
+        texts = [t for t in self.texts() if "kill-server" in t or t.endswith("fastboot devices")]
+        self.assertTrue(texts[0].endswith("adb kill-server"), texts)
 
     def test_which_system_runs_by_its_first_process(self):
         self.assertTrue(self.make({"cat /proc/1/comm": "systemd\n"}).installed_running())

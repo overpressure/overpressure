@@ -218,6 +218,7 @@ class Dev(Headset):
         """Tell whether fastboot lists the configured headset now."""
         if not self.s.fastboot_serial:
             return False
+        self.release_adb()
         return self.s.fastboot_serial in self.run([self.s.tool("fastboot"), "devices"], 30, check=False)
 
     def fastboot(self, *words: str | Path, timeout: float = 60) -> str:
@@ -307,10 +308,12 @@ class Dev(Headset):
     def to_fastboot(self) -> None:
         """From PICO OS (ADB), stage 1 or stage 2 (SSH) into the bootloader."""
         fastboot = self.s.tool("fastboot")
+        self.release_adb()
         if self.s.fastboot_serial in self.run([fastboot, "devices"], 30, check=False):
             return
         if f"{self.s.adb_serial}\tdevice" in self.run([self.s.tool("adb"), "devices"], 30, check=False):
             self.run([self.s.tool("adb"), "-s", self.s.adb_serial, "reboot", "bootloader"], 30)
+            self.release_adb()  # that command started the server again
         else:
             self.ssh_reboot("systemctl reboot --reboot-argument=bootloader 2>/dev/null || pico4-reboot bootloader")
 
@@ -763,6 +766,7 @@ class Dev(Headset):
         (self.work / "state.json").unlink(missing_ok=True)
         fastboot = self.s.tool("fastboot")
         previous = ""
+        self.release_adb()
         if self.s.fastboot_serial and self.s.fastboot_serial in self.run([fastboot, "devices"], 30, check=False):
             self.fastboot("reboot")
         else:
