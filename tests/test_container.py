@@ -156,6 +156,23 @@ class LinkedFolderTests(unittest.TestCase):
         # The worktree's own cache stays inside the repository's mount; a link to nothing is left.
         self.assertEqual(mounts, ["-v", f"{other / 'assets'}:/work/assets", "-v", f"{other / 'out'}:/work/out"])
 
+    def test_links_inside_a_worktrees_own_private_folder_are_bound_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, other = Path(tmp, "worktree"), Path(tmp, "checkout")
+            for folder in (root / "cache" / "stock", root / "cache" / "kernel", other / "cache" / "stock"):
+                folder.mkdir(parents=True)
+            (root / "cache" / "notes.txt").write_text("", encoding="utf-8")
+            links = {str(root / "cache" / "stock"): str(other / "cache" / "stock")}
+            real = os.path.realpath
+
+            def realpath(path: os.PathLike[str] | str) -> str:
+                return links.get(str(path), real(path))
+
+            with mock.patch.object(linux.os.path, "realpath", realpath):
+                mounts = linux.linked_mounts(root)
+        # The worktree's own cache/kernel and its files stay inside the repository's mount.
+        self.assertEqual(mounts, ["-v", f"{other / 'cache' / 'stock'}:/work/cache/stock"])
+
 
 if __name__ == "__main__":
     unittest.main()

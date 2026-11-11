@@ -79,7 +79,8 @@ python -m overpressure container run -- make test  # the host tests and every he
 - **What it sees.** It runs privileged. The repository is at `/work`; `/var/tmp` (the build roots) is the
   named volume `overpressure-var`, kept between runs. Nothing else of the host is visible: a step's paths
   lie in the repository (relative) or under `/var/tmp`. Private folders linked to another checkout
-  (symlink or junction) are bound at their place under `/work`. In a git worktree the common `.git` is
+  (symlink or junction) are bound at their place under `/work`, and so are links one level inside a
+  private folder of the worktree's own (`cache/stock`). In a git worktree the common `.git` is
   bound at `/git` and `OVERPRESSURE_GIT_DIR` names the worktree's folder, which the scripts that ask git
   pass as `--git-dir`.
 - **One build at a time.** `container run` names its container `overpressure-build`, labelled with its

@@ -177,14 +177,22 @@ def linked_mounts(root: Path = REPO) -> list[str]:
     """Return mounts for the private folders that are links (a worktree's junctions or symlinks).
 
     The engine binds the repository as it is, and a link to a folder outside it leads nowhere in
-    the container: each such folder is bound at its place under /work.
+    the container: each such folder is bound at its place under /work. A worktree's own private
+    folder may hold such links one level down (cache/stock into the main checkout's cache): those
+    are bound too.
     """
     mounts = []
     for name in PRIVATE:
         path = root / name
         target = Path(os.path.realpath(path))
-        if target != path.absolute() and target.is_dir():
-            mounts += ["-v", f"{target}:/work/{name}"]
+        if target != path.absolute():
+            if target.is_dir():
+                mounts += ["-v", f"{target}:/work/{name}"]
+        elif path.is_dir():
+            for child in sorted(path.iterdir()):
+                child_target = Path(os.path.realpath(child))
+                if child_target != child.absolute() and child_target.is_dir():
+                    mounts += ["-v", f"{child_target}:/work/{name}/{child.name}"]
     return mounts
 
 
