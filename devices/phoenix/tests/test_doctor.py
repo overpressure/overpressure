@@ -137,7 +137,16 @@ class PicoDoctorTests(unittest.TestCase):
         self.assertEqual(doctor.failed(checks.asset_checks(FakeHost(), self.root)), [])
 
     def test_the_pico_4_registers_its_checks(self):
-        self.assertEqual(len(HEADSET.dependencies()), 4)
+        self.assertEqual(
+            HEADSET.dependencies(),
+            (checks.settings_checks, checks.tool_checks, checks.ncm_checks, checks.usb_checks, checks.asset_checks),
+        )
+
+    def test_linux_checks_usb_access_to_its_three_modes(self):
+        self.assertEqual(checks.usb_checks(FakeHost("win32")), [])  # only Linux needs a rule
+        self.assertEqual(
+            [m.name for m in HEADSET.usb_modes()], ["PICO OS with USB debugging", "fastboot mode", "EDL mode"]
+        )
 
 
 if __name__ == "__main__":

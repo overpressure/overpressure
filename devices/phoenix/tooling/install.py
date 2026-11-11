@@ -39,11 +39,11 @@ import sys
 import uuid
 from typing import TYPE_CHECKING, Callable
 
-from overpressure import REPO, doctor, linux, qualcomm, runner, tools
+from overpressure import REPO, doctor, linux, qualcomm, runner, tools, usbaccess
 from overpressure.install import Ask, Context, Failed, Field, Stage, Task
 from overpressure.process import until
 
-from . import device, devloop, localconfig, unlockfiles
+from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, device, devloop, localconfig, unlockfiles
 from . import doctor as checks
 
 if TYPE_CHECKING:
@@ -76,6 +76,15 @@ PSK_HEX = 64
 #: How long the owner has to plug in and accept the prompt, and the headset to reach fastboot.
 PLUG_IN_SECONDS = 600
 FASTBOOT_SECONDS = 180
+#: Where the headset is when this computer may not use it in EDL or fastboot mode.
+EDL_WHERE = (
+    "Your headset is in EDL mode (its lenses stay dark); nothing was written to it. Run the command above, keep "
+    "the cable in and start the installer again: it goes on from there."
+)
+FASTBOOT_WHERE = (
+    "Your headset is in fastboot mode; nothing was written to it. Run the command above, keep the cable in and "
+    "start the installer again: it goes on from there."
+)
 
 NOTHING_CHANGED = "Nothing was changed on your headset."
 AGAIN = "Start the installer again to go on where it stopped."
@@ -258,8 +267,12 @@ class Plan:
         edl_count: Callable[[], int] = qualcomm.edl_devices,
         image_present: Callable[[], bool] = linux.image_present,
         factory_reset: bool = False,
+        edl_denied: Callable[[], bool] | None = None,
     ) -> None:
-        """Install through @p headset's steps; @p factory_reset adds the owner's reset after the unlock."""
+        """Install through @p headset's steps; @p factory_reset adds the owner's reset after the unlock.
+
+        @p edl_denied tells whether this user may not open the EDL device (tests; Linux's device files otherwise).
+        """
         self.headset = headset
         self.root = root
         self.work = work
@@ -267,6 +280,7 @@ class Plan:
         self.edl_count = edl_count
         self.image_present = image_present
         self.factory_reset = factory_reset
+        self.edl_denied = edl_denied
         self.steps: dict[str, Step] = {step.key: step for step in headset.steps()}
 
     # -- helpers ------------------------------------------------------------------------------
@@ -367,9 +381,15 @@ class Plan:
         ctx.ask(ask)
         adb = ctx.settings(Settings).tool("adb")
         told: set[str] = set()
+        denial = usbaccess.Denial(ctx.clock)
 
         def one() -> str:
-            rows = device_rows(ctx.output([adb, "devices"], 30, check=False))
+            output = ctx.output([adb, "devices"], 30, check=False)
+            denial.see(usbaccess.listing_denied(output), lambda: usbaccess.message(ADB_MODE, USB_MODES))
+            if usbaccess.listing_denied(output):
+                msg = "the headset is there, but not usable yet"  # udev grants it a moment late
+                raise RuntimeError(msg)
+            rows = device_rows(output)
             ready = [serial for serial, state in rows.items() if state == "device"]
             if len(rows) > 1:
                 problem = "More than one Android device is connected: unplug the others."
@@ -386,6 +406,8 @@ class Plan:
 
         try:
             serial = until("the headset on USB", PLUG_IN_SECONDS, one, ctx.clock)
+        except usbaccess.NoAccessError as exc:
+            raise Failed(str(exc), NOTHING_CHANGED + " " + AGAIN) from exc
         except RuntimeError as exc:
             raise Failed(str(exc).split(": ", 1)[-1], NOTHING_CHANGED + " " + AGAIN) from exc
         ctx.set_setting(KEY("adb_serial"), serial)
@@ -445,13 +467,18 @@ class Plan:
 
     def enter_edl(self, ctx: Context, settings: localconfig.Settings) -> None:
         """Bring the headset from PICO OS to EDL, unless it is the one EDL device already."""
-        qualcomm.enter_edl(
-            settings.tool("adb"),
-            settings.adb_serial,
-            lambda argv, timeout=60: ctx.output(argv, timeout),
-            ctx.clock,
-            edl_count=self.edl_count,
-        )
+        try:
+            qualcomm.enter_edl(
+                settings.tool("adb"),
+                settings.adb_serial,
+                lambda argv, timeout=60: ctx.output(argv, timeout),
+                ctx.clock,
+                edl_count=self.edl_count,
+                modes=USB_MODES,
+                denied=self.edl_denied,
+            )
+        except usbaccess.NoAccessError as exc:
+            raise Failed(str(exc), EDL_WHERE) from exc
 
     @staticmethod
     def backup_there(ctx: Context) -> bool:
@@ -522,22 +549,18 @@ class Plan:
         settings = ctx.settings(Settings)
         fastboot = settings.tool("fastboot")
 
+        denial = usbaccess.Denial(ctx.clock)
+
         def listed() -> dict[str, str]:
-            return device_rows(ctx.output([fastboot, "devices"], 30, check=False), ("fastboot",))
+            output = ctx.output([fastboot, "devices"], 30, check=False)
+            denial.see(usbaccess.listing_denied(output), lambda: usbaccess.message(FASTBOOT_MODE, USB_MODES))
+            # "SERIAL no permissions ...": in fastboot, but not usable yet (udev grants it a moment late).
+            return device_rows(output, ("fastboot", "no"))
 
-        if not listed():
-            ctx.output([settings.tool("adb"), "-s", settings.adb_serial, "reboot", "bootloader"], 30)
-        ctx.note("The headset restarts into its bootloader. Keep the cable in.")
-
-        def one() -> str:
-            rows = listed()
-            if len(rows) != 1:
-                msg = "expected exactly one device in fastboot"
-                raise RuntimeError(msg)
-            return next(iter(rows))
-
-        serial = until("the headset in fastboot", FASTBOOT_SECONDS, one, ctx.clock)
-        ctx.set_setting(KEY("fastboot_serial"), serial)
+        try:
+            self.wait_fastboot(ctx, settings, listed)
+        except usbaccess.NoAccessError as exc:
+            raise Failed(str(exc), FASTBOOT_WHERE) from exc
         ctx.run(
             self.command(
                 "device",
@@ -549,13 +572,29 @@ class Plan:
                 "--fastboot",
                 fastboot,
                 "--serial",
-                serial,
+                ctx.settings(Settings).fastboot_serial,
                 "--execute",
                 "--confirm-device",
                 settings.adb_serial,
                 "--accept-data-loss",
             )
         )
+
+    def wait_fastboot(self, ctx: Context, settings: localconfig.Settings, listed: Callable[[], dict[str, str]]) -> None:
+        """Bring the headset into fastboot unless it is there; write its serial to .env."""
+        if not listed():
+            ctx.output([settings.tool("adb"), "-s", settings.adb_serial, "reboot", "bootloader"], 30)
+        ctx.note("The headset restarts into its bootloader. Keep the cable in.")
+
+        def one() -> str:
+            rows = listed()
+            if len(rows) != 1 or set(rows.values()) != {"fastboot"}:
+                msg = "expected exactly one device in fastboot"
+                raise RuntimeError(msg)
+            return next(iter(rows))
+
+        serial = until("the headset in fastboot", FASTBOOT_SECONDS, one, ctx.clock)
+        ctx.set_setting(KEY("fastboot_serial"), serial)
 
     @staticmethod
     def consent(ctx: Context) -> None:

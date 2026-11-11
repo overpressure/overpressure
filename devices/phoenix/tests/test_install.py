@@ -388,6 +388,56 @@ class PlanTests(unittest.TestCase):
         self.assertEqual((ui.finished()["task"], ui.finished()["where"]), ("find", plan.NOTHING_CHANGED))
         self.assertNotIn("PICO4_ADB_SERIAL", self.env.read_text(encoding="utf-8"))
 
+    # -- Linux: a headset this user may not open (no udev rule) ----------------------------------
+    def listing(self, tool: str, reply: Callable[[], str]) -> None:
+        """Answer TOOL devices with REPLY from now on."""
+        original = self.capture
+
+        def capture(argv: list[str], timeout: float) -> tuple[int, str]:
+            if Path(argv[0]).stem == tool and argv[1:] == ["devices"]:
+                self.captured.append(argv)
+                return 0, reply()
+            return original(argv, timeout)
+
+        self.capture = capture  # ty: ignore[invalid-assignment]  # the test's own capture in the method's place
+
+    def test_adb_without_access_stops_the_search_with_the_fix(self):
+        self.listing("adb", lambda: f"List of devices attached\n{ADB}\tno permissions (missing udev rules?); see [x]\n")
+        ui = self.run_stages(("connect",), self.yes("plug-in"))
+        finished = ui.finished()
+        self.assertEqual((finished["status"], finished["task"]), ("failed", "find"))
+        self.assertIn("may not use the headset in PICO OS with USB debugging", finished["error"])
+        self.assertIn(plan.NOTHING_CHANGED, finished["where"])
+        self.assertNotIn("PICO4_ADB_SERIAL", self.env.read_text(encoding="utf-8"))
+
+    def test_access_that_udev_grants_a_moment_late_is_waited_for(self):
+        replies = iter([f"List of devices attached\n{ADB}\tno permissions; see [x]\n"])
+        self.listing("adb", lambda: next(replies, f"List of devices attached\n{ADB}\tdevice\n"))
+        ui = self.run_stages(("connect",), self.yes("plug-in"))
+        self.assertEqual(ui.finished()["status"], "done", ui.finished())
+        self.assertEqual(self.settings().adb_serial, ADB)
+
+    def test_fastboot_without_access_stops_the_unlock_before_anything_else(self):
+        self.listing("fastboot", lambda: f"{FASTBOOT}\tno permissions; see [x]\n")
+        ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
+        finished = ui.finished()
+        self.assertEqual((finished["status"], finished["task"]), ("failed", "unlock"))
+        self.assertIn("may not use the headset in fastboot mode", finished["error"])
+        self.assertEqual(finished["where"], plan.FASTBOOT_WHERE)
+        self.assertNotIn("device unlock", self.commands())
+        # It is in fastboot already: no restart into the bootloader that adb could not send anyway.
+        self.assertFalse(any(" ".join(c).endswith("reboot bootloader") for c in self.captured))
+
+    def test_edl_without_access_stops_the_backup_before_edl_ng_runs(self):
+        self.plan.edl_denied = lambda: True
+        ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
+        finished = ui.finished()
+        self.assertEqual((finished["status"], finished["task"]), ("failed", "backup"))
+        self.assertIn("may not use the headset in EDL mode", finished["error"])
+        self.assertEqual(finished["where"], plan.EDL_WHERE)
+        self.assertFalse(any("printgpt" in " ".join(map(str, c)) for c in self.captured))
+        self.assertNotIn("device backup", self.commands())
+
     def test_an_unfinished_backup_folder_stays_and_the_new_one_goes_elsewhere(self):
         self.backup.mkdir(parents=True)
         (self.backup / "edl.log").write_text("half a dump")

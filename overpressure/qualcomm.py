@@ -16,10 +16,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from . import progress
+from . import progress, usbaccess
 from .android import executable
 from .backup import digest, save_new
 from .process import run, until
+from .usbaccess import UsbMode
 
 if TYPE_CHECKING:
     import argparse
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from .process import Timing
 
 EDL_USB = ("05c6", "9008")  # Qualcomm HS-USB QDLoader 9008
+#: EDL as a USB mode: the device edl-ng opens, which Linux grants through a udev rule.
+EDL_MODE = UsbMode("EDL mode", *EDL_USB)
 U32_MAX = 0xFFFFFFFF
 
 
@@ -317,21 +320,25 @@ def enter_edl(  # noqa: PLR0913  # adb and the serial, the runner and the clock,
     *,
     edl_count: Callable[[], int] = edl_devices,
     seconds: float = 30,
+    modes: Sequence[UsbMode] = (EDL_MODE,),
+    denied: Callable[[], bool] | None = None,
 ) -> None:
     """Bring the headset @p serial from Android to EDL (adb reboot edl), unless it is the one EDL device already.
 
-    Exactly one EDL device must appear within @p seconds.
+    Exactly one EDL device must appear within @p seconds, and this user must be allowed to open it
+    (Linux: a udev rule; usbaccess.NoAccessError names the fix from the headset's @p modes). @p denied
+    tells whether it is not, for tests.
     """
-    if edl_count() == 1:
-        return
-    runner([adb, "-s", serial, "reboot", "edl"], 30)
+    if edl_count() != 1:
+        runner([adb, "-s", serial, "reboot", "edl"], 30)
 
-    def one() -> None:
-        if edl_count() != 1:
-            msg = "expected exactly one EDL device"
-            raise RuntimeError(msg)
+        def one() -> None:
+            if edl_count() != 1:
+                msg = "expected exactly one EDL device"
+                raise RuntimeError(msg)
 
-    until("EDL", seconds, one, clock)
+        until("EDL", seconds, one, clock)
+    usbaccess.require(EDL_MODE, modes, clock, denied_now=denied)
 
 
 def edl_ng(program: str | Path, loader: str | Path, *words: str | Path, memory: str = "Ufs") -> list[str | Path]:

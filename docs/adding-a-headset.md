@@ -115,7 +115,9 @@ was found, the fix). `doctor.version_check` covers programs that answer a versio
 `Host.linux(script)` runs a probe in the build container. The build container itself is checked for every
 headset, and its image holds every Linux tool of the builds. A headset with `DeviceSettings` builds the
 rest from the shared checks: `env_check`, `serial_checks`, `backup_check`, `loader_check`,
-`edl_tool_check`, `tool_checks` (adb, fastboot) and `ncm_checks` (Windows' USB link). Example:
+`edl_tool_check`, `tool_checks` (adb, fastboot), `ncm_checks` (Windows' USB link) and `usb_check`
+(Linux's USB access to each of `Headset.usb_modes()`: the `UsbMode`s, vendor and product ID, its tools open,
+such as adb, fastboot and EDL; a USB network needs none). Example:
 [devices/phoenix/tooling/doctor.py](../devices/phoenix/tooling/doctor.py).
 
 ## The installer

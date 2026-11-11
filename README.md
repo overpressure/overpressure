@@ -51,7 +51,8 @@ publishes no image and no vendor file: you build your own from the makers' publi
 **You need** the headset and a USB-C data cable, a computer with Windows, macOS or Linux, and
 [Docker](https://docs.docker.com/get-docker/) or [Podman](https://podman.io) running (the build's Linux side runs in
 a container). On Linux also your distribution's Tk for Python (`python3-tk`; Fedora `python3-tkinter`, Arch
-`tk`), or the window looks rough. The disk space and time the first build takes are in the headset's README.
+`tk`), or the window looks rough, and its Android udev rules (Arch `android-udev`, Debian `android-udev-rules`)
+for USB access to the headset; the installer's first stage checks both and says what to install. The disk space and time the first build takes are in the headset's README.
 
 1. Download the release zip and unpack it.
 2. Start the installer: double-click `Install.cmd` (Windows) or `Install.command` (macOS; the first time

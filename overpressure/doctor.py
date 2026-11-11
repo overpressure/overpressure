@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from . import REPO, linux, windows_ncm
+from . import REPO, linux, usbaccess, windows_ncm
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -235,6 +235,30 @@ def ncm_checks(host: Host, settings: DeviceSettings) -> list[Check]:
         versions = ", ".join(f"{k} {v}" for k, v in (state.get("dependencies") or {}).items())
         return [Check("NCM Python and UsbDk", needed_for, OK, versions)]
     return [Check("NCM Python and UsbDk", needed_for, MISSING, (out.splitlines() or ["no answer"])[-1][:120], fix)]
+
+
+def usb_check(  # noqa: PLR0913  # the host and the modes; where the rules and the distribution are keyword-only
+    host: Host,
+    modes: Sequence[usbaccess.UsbMode],
+    needed_for: str = HEADSET,
+    *,
+    dirs: Sequence[Path] = usbaccess.RULE_DIRS,
+    release: Path = usbaccess.OS_RELEASE,
+    groups: Iterable[str] | None = None,
+) -> list[Check]:
+    """Linux only: check that the installed udev rules let this user open each of the headset's USB @p modes.
+
+    The fix installs the distribution's Android udev rules, or names the rules to add where none cover
+    a mode; overpressure installs nothing itself.
+    """
+    if host.platform != "linux" or not modes:
+        return []
+    missing, files = usbaccess.missing_modes(modes, dirs=dirs, groups=groups)
+    name = "USB access to the headset"
+    if not missing:
+        return [Check(name, needed_for, OK, "udev rules let you use it in " + ", ".join(m.name for m in modes))]
+    detail = "no udev rule lets you use it in " + ", ".join(m.name for m in missing)
+    return [Check(name, needed_for, MISSING, detail, usbaccess.fix(missing, release=release, files=files))]
 
 
 def window_check() -> Check:

@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+class Final(Exception):  # noqa: N818  # a marker mixed into the errors it applies to
+    """An error that waiting does not cure: until() raises it at once instead of retrying."""
+
+
 def run(
     argv: Sequence[str | os.PathLike[str]],
     timeout: float = 60,
@@ -123,13 +127,16 @@ class Clock:
 def until(what: str, seconds: float, operation: Callable[[], T], clock: Timing, interval: float = 3) -> T:
     """Return @p operation's result once it returns.
 
-    It is retried every @p interval s while it raises, for at most @p seconds.
+    It is retried every @p interval s while it raises, for at most @p seconds; a Final error ends
+    the wait at once.
     """
     end = clock.monotonic() + seconds
     while True:
         try:
             return operation()
         except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:  # noqa: PERF203  # a retry loop
+            if isinstance(exc, Final):
+                raise
             if clock.monotonic() > end:
                 msg = f"timed out waiting for {what}: {exc}"
                 raise RuntimeError(msg) from exc

@@ -29,7 +29,8 @@ You build your own system; the project publishes no image and no vendor file ([d
 
 **You need** the headset, a USB-C data cable, a computer with Windows, macOS or Linux, about 40 GB free, a few
 hours for the first build (it downloads about 15 GB), and Docker or Podman running; on Linux also `python3-tk`
-(or your distribution's equivalent), for a smooth window.
+(or your distribution's equivalent), for a smooth window, and the Android udev rules (Arch `android-udev`, Debian
+`android-udev-rules`), for USB access to the headset ([how it is checked](../../docs/tool.md#usb-access-on-linux)).
 
 **The installer.** Double-click `Install.cmd` (Windows) or `Install.command` (macOS), or run `sh install.sh`
 (Linux). Accept the disclaimer, choose the PICO 4, then **Install**, **Upgrade** or **Restore to stock**. Each

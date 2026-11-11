@@ -216,6 +216,18 @@ draws with Xft (Tk 9 names its font system; a Tk 8.6 with Xft has `libXft` loade
 `python3-tk` (Debian, Ubuntu, openSUSE), `python3-tkinter` (Fedora) or `tk` (Arch). The window prints the same
 note when its Tk draws without Xft.
 
+### USB access on Linux
+
+adb, fastboot and edl-ng open the headset's USB device, which Linux lets a user
+open only through a udev rule. overpressure runs nothing as root: the doctor, and with it the installer's
+first stage, reads the installed rules (`overpressure/usbaccess.py` follows their matches, jumps and
+grants) for each of the headset's USB modes (`Headset.usb_modes()`). When one is missing it names the
+distribution's Android udev rules, which grant the logged-in user their devices: `android-udev` (Arch),
+`android-udev-rules` (Debian 13), `android-sdk-platform-tools-common` (Ubuntu), then `sudo udevadm trigger`.
+Where the package is there but lacks a mode (Ubuntu 24.04's lacks PICO OS), or no package is known, it gives
+the rule to add. Before adb, fastboot or EDL uses a connected headset, the installer checks the device itself
+and stops with the same fix, before anything is sent to it.
+
 ## The installer
 
 ```sh
@@ -356,7 +368,7 @@ be read, they go on.
 
 | Module | Role |
 | --- | --- |
-| [overpressure/headset.py](../overpressure/headset.py) | `Headset` (`Info`, `commands()`, `steps()`, `dependencies()`, `ram_boot()`, `install_plan()`, `workflows()`, `plan()`, `workflow_problem()`, `after_install()`, `finished_page()`, `backup_set()`, `adopt_backup()`, `touches()`), `Command`, `Step`, `Param`, `Workflow`, `BackupSet`, `AfterInstall`, `Action`, the registry |
+| [overpressure/headset.py](../overpressure/headset.py) | `Headset` (`Info`, `commands()`, `steps()`, `dependencies()`, `usb_modes()`, `ram_boot()`, `install_plan()`, `workflows()`, `plan()`, `workflow_problem()`, `after_install()`, `finished_page()`, `backup_set()`, `adopt_backup()`, `touches()`), `Command`, `Step`, `Param`, `Workflow`, `BackupSet`, `AfterInstall`, `Action`, the registry |
 | [overpressure/install.py](../overpressure/install.py) | the install engine: `Stage`, `Task`, `Ask`, the `Context` a task gets, the state, the lock, the events, `install`, `upgrade` and `restore` |
 | [overpressure/disclaimer.py](../overpressure/disclaimer.py), [power.py](../overpressure/power.py) | the disclaimer and the gate before a command that touches the headset (`--accept-disclaimer`, `OVERPRESSURE_ACCEPT_DISCLAIMER`); this computer's power: a battery below 30 % refuses those commands (Windows, Linux and macOS readers) |
 | [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (a Linux-root step's in the build container), its display, running and stopping it |
@@ -364,7 +376,8 @@ be read, they go on.
 | [overpressure/window/](../overpressure/window/__init__.py) | the window (CustomTkinter). Models without widgets: `installer.py` (the engine's events as stages and asks; the child and demo engines), `advanced.py` (the steps, their values and command lines, the checks), `headsets.py` (the headset page, its plan probes, `out/window.json`, the demo's second headset). Widgets: `app.py` (the header, the installer view, the panels), `advanced_view.py`; `theme.py` the design tokens and fonts, `kit.py` the components, `logo.py` the logo's renderings (`icons/`) |
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix; `DeviceSettings`, what every Qualcomm Android headset names |
 | [overpressure/fastboot.py](../overpressure/fastboot.py) | flashing an image sparse above a size, raw below; the RAM boot: `fastboot boot` with the headset's checks, never a write |
-| [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, the build container's, then the headset's (`Headset.dependencies()`) from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link) |
+| [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, the build container's, then the headset's (`Headset.dependencies()`) from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link, Linux's USB access) |
+| [overpressure/usbaccess.py](../overpressure/usbaccess.py) | Linux's USB access: what the installed udev rules grant for each USB mode, the fix per distribution, a connected device's access |
 | [overpressure/tools.py](../overpressure/tools.py) | the pinned host tools in `cache/tools` |
 | [overpressure/linux.py](../overpressure/linux.py), [container/](../overpressure/container) | the build container: its image, one named build at a time, stopping it, the aarch64 handler, ownership |
 | [overpressure/stage1.py](../overpressure/stage1.py) | a stage 1: an Alpine ramdisk in the stock Android boot image, from a headset's `Spec` |

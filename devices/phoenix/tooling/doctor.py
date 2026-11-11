@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Callable
 from overpressure import REPO, backup, doctor
 from overpressure.doctor import HEADSET, MISSING, OK, WARNING, Check, Host
 
-from . import FIRMWARE, assets, device, localconfig
+from . import FIRMWARE, USB_MODES, assets, device, localconfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -99,6 +99,11 @@ def ncm_checks(host: Host, settings: Settings | None = None) -> list[Check]:
     return doctor.ncm_checks(host, settings or localconfig.load())
 
 
+def usb_checks(host: Host) -> list[Check]:
+    """Linux only: udev rules that let this user use the headset in PICO OS, fastboot and EDL mode."""
+    return doctor.usb_check(host, USB_MODES)
+
+
 def asset_checks(_host: Host, root: Path = REPO, version: str = FIRMWARE_VERSION) -> list[Check]:
     """Check that every kind of assets is there (they need no host: plain files)."""
     checks = []
@@ -122,4 +127,4 @@ def asset_checks(_host: Host, root: Path = REPO, version: str = FIRMWARE_VERSION
 
 def probes() -> tuple[Callable[[Host], list[Check]], ...]:
     """Return the PICO 4's checks, each called with the host."""
-    return (settings_checks, tool_checks, ncm_checks, asset_checks)
+    return (settings_checks, tool_checks, ncm_checks, usb_checks, asset_checks)

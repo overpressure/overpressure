@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from .fastboot import RamBootTarget
     from .install import Stage
+    from .usbaccess import UsbMode
 
 
 @dataclass(frozen=True)
@@ -213,6 +214,14 @@ class Headset(ABC):
 
         They are callables that take an overpressure.doctor.Host and return overpressure.doctor.Check
         objects.
+        """
+        return ()
+
+    def usb_modes(self) -> Sequence[UsbMode]:
+        """Return the ways it appears on USB that the host's tools open (adb, fastboot, EDL).
+
+        On Linux each needs a udev rule that grants the user its device: the doctor checks the
+        installed rules for them (overpressure.usbaccess). A USB network needs none.
         """
         return ()
 

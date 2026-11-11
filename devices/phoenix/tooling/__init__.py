@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
+from overpressure import qualcomm
 from overpressure.headset import (
     INSTALL,
     Action,
@@ -25,6 +26,7 @@ from overpressure.headset import (
     Workflow,
     tools_step,
 )
+from overpressure.usbaccess import UsbMode
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -33,6 +35,11 @@ if TYPE_CHECKING:
     from overpressure.doctor import Check, Host
     from overpressure.install import Stage
 
+#: The PICO 4 on USB, as the host's tools open it (checked on this unit): PICO OS with USB debugging,
+#: the bootloader's fastboot and EDL. Its maintenance system and the installed system are a USB network.
+ADB_MODE = UsbMode("PICO OS with USB debugging", "2d40", "00b7")
+FASTBOOT_MODE = UsbMode("fastboot mode", "18d1", "d00d")
+USB_MODES = (ADB_MODE, FASTBOOT_MODE, qualcomm.EDL_MODE)
 #: The installer's other workflows (overpressure/headset.py, Workflow).
 UPGRADE, RESTORE = "upgrade", "restore"
 #: The dev loop's subcommands that touch the headset: all but its two builds (image, boot-image).
@@ -338,6 +345,10 @@ class Phoenix(Headset):
         from .doctor import probes  # noqa: PLC0415  # doctor imports this package: a top-level import is circular
 
         return probes()
+
+    def usb_modes(self) -> Sequence[UsbMode]:
+        """Return the PICO 4's USB modes: adb in PICO OS, fastboot, EDL."""
+        return USB_MODES
 
     def install_plan(self) -> Sequence[Stage]:
         """Return the installer's five stages (tooling/install.py)."""

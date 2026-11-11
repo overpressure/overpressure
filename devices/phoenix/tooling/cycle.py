@@ -28,13 +28,13 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, TypeVar
 
-from overpressure import REPO, android, qualcomm
+from overpressure import REPO, android, qualcomm, usbaccess
 from overpressure import backup as backups
 from overpressure.fastboot import NOT_IN_FASTBOOT
 from overpressure.process import run, until
 from overpressure.qualcomm import edl_devices
 
-from . import localconfig
+from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, localconfig
 
 if TYPE_CHECKING:
     from overpressure.process import Timing
@@ -57,7 +57,8 @@ class Headset:
         """Work on the headset @p settings name, with evidence in @p folder; tests pass fakes."""
         self.s = settings
         self.folder = folder
-        self.run = runner
+        # adb and fastboot meeting a device Linux does not let this user open: NoAccessError with the fix.
+        self.run = usbaccess.guard(runner, USB_MODES, {"adb": ADB_MODE, "fastboot": FASTBOOT_MODE}, clock)
         self.clock = clock
         self.edl_count = edl_count
 
@@ -73,7 +74,9 @@ class Headset:
 
     def enter_edl(self) -> None:
         """Bring the headset from PICO OS to EDL, unless it is the one EDL device already."""
-        qualcomm.enter_edl(self.s.tool("adb"), self.s.adb_serial, self.run, self.clock, edl_count=self.edl_count)
+        qualcomm.enter_edl(
+            self.s.tool("adb"), self.s.adb_serial, self.run, self.clock, edl_count=self.edl_count, modes=USB_MODES
+        )
 
     def edl(self, *words: str | Path, log: str, timeout: float = 600) -> str:
         """Run edl-ng with the headset's loader; its output goes to @p log.log in the evidence folder."""
