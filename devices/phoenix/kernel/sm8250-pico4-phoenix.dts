@@ -804,8 +804,36 @@
 	 * Every GPIO the stock tree leaves unused (no pin configuration, no consumer) stays
 	 * untouched, which covers the secure ones whose registers fault when read.
 	 */
-	gpio-reserved-ranges = <14 1>, <24 2>, <27 2>, <30 2>, <64 1>, <66 1>, <73 1>,
+	gpio-reserved-ranges = <24 2>, <27 2>, <30 2>, <64 1>, <66 1>, <73 1>,
 			       <88 3>, <112 2>, <120 5>, <146 34>;
+
+	/*
+	 * The GD32 MCU's control lines, set as the stock serial driver sets them when it probes
+	 * the MCU's UART (boot-gpio, reset-gpio and sync-gpio of the stock tree's
+	 * qcom,qup_uart@984000): boot 13 high, reset 12 low, sync 14 low. The bootloader leaves 12
+	 * and 13 so; 14 only the stock driver drives. An MCU that PICO OS's shutdown put to sleep
+	 * refused PICO OS's wake on a kernel that left 14 alone (docs/cooling.md).
+	 */
+	gd32-boot-hog {
+		gpio-hog;
+		gpios = <13 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "gd32-boot";
+	};
+
+	gd32-reset-hog {
+		gpio-hog;
+		gpios = <12 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "gd32-reset";
+	};
+
+	gd32-sync-hog {
+		gpio-hog;
+		gpios = <14 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "gd32-sync";
+	};
 
 	/*
 	 * GPIO 71 switches a 5.5 V supply that the bootloader leaves on. The stock display does
@@ -818,7 +846,7 @@
 		line-name = "display-avdd-off";
 	};
 
-	/* The GD32 MCU's UART, two wires as in the stock tree (its reset and boot lines stay unused). */
+	/* The GD32 MCU's UART, two wires as in the stock tree (its control lines are the hogs above). */
 	qup_uart1_default: qup-uart1-default-state {
 		pins = "gpio6", "gpio7";
 		function = "qup1";

@@ -74,7 +74,7 @@ check` takes the record whose kernel release runs.
 
 | MCU, DSPs, IMU and keys | Result on the headset |
 | --- | --- |
-| GD32 MCU | QUP0 SE1 as `ttyHS1` (its stock name); `pico4-fan status` reads duty, RPM, version ("BOOT02", as on the stock kernel) and fan info; reset and boot lines stay as the bootloader set them |
+| GD32 MCU | QUP0 SE1 as `ttyHS1` (its stock name); `pico4-fan status` reads duty, RPM, version ("BOOT02", as on the stock kernel) and fan info; its control lines as the stock serial driver sets them (boot 13 high, reset 12 low, sync 14 low) |
 | DSPs | SLPI, CDSP and ADSP run under remoteproc with PICO's signed images (modem partition of PICO's public package); each brings up its IPC router, FastRPC (`/dev/fastrpc-sdsp`, `-cdsp`, `-cdsp-secure`, `-adsp`) and channels (`apr_audio_svc`, `cvp-glink-apps-dsp`, `cdsprmglink-apps-dsp`) |
 | Head IMU | the SLPI's sensors process attaches to `hexagonrpcd` over `/dev/fastrpc-sdsp`, reads the registry from `persist` and lists the sensors over QRTR; `pico4-imu stream --rate 1000 --check` passes: TDK ICM-4x6xx accelerometer and gyroscope at 1023.89 Hz each, no gaps, monotonic, gravity 9.805 m/s², gyro bias 0.006 rad/s |
 | Keys | PM8150's power key (`pm8941_pwrkey`) and RESIN key, the GPIO keys (volume, confirm, home, app) with the stock codes; `pico4-powerkey` runs |
