@@ -122,6 +122,19 @@ class FakeClock:
         self.now += seconds
 
 
+class UnansweredTests(unittest.TestCase):
+    def test_edl_ngs_words_for_a_device_that_does_not_answer(self):
+        for mode in ("Unknown", "Error"):
+            with self.subTest(mode=mode):
+                line = (
+                    "[ERROR] An unexpected error occurred in 'printgpt': "
+                    f"Cannot proceed: Device mode is {mode} or could not be determined."
+                )
+                self.assertTrue(qualcomm.unanswered("Passive read timed out\n" + line))
+        self.assertFalse(qualcomm.unanswered("Serial Number: 0A1B2C3D\n--- Partitions LUN 0 ---"))
+        self.assertIn("only right after it enters EDL mode", qualcomm.NO_ANSWER)
+
+
 class EdlTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()

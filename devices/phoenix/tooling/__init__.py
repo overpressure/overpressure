@@ -40,6 +40,11 @@ if TYPE_CHECKING:
 ADB_MODE = UsbMode("PICO OS with USB debugging", "2d40", "00b7")
 FASTBOOT_MODE = UsbMode("fastboot mode", "18d1", "d00d")
 USB_MODES = (ADB_MODE, FASTBOOT_MODE, qualcomm.EDL_MODE)
+#: The way out of a stale EDL session: the power button ends EDL mode, and the next attempt enters it afresh.
+EDL_RESTART = (
+    "Hold the power button for about 10 s until the headset restarts, keep the cable in, then run the step "
+    "again: the headset enters EDL mode afresh."
+)
 #: The installer's other workflows (overpressure/headset.py, Workflow).
 UPGRADE, RESTORE = "upgrade", "restore"
 #: The dev loop's subcommands that touch the headset: all but its two builds (image, boot-image).

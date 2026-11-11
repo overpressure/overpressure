@@ -76,6 +76,11 @@ PSK_HEX = 64
 #: How long the owner has to plug in and accept the prompt, and the headset to reach fastboot.
 PLUG_IN_SECONDS = 600
 FASTBOOT_SECONDS = 180
+#: Where the headset is when it does not answer in EDL mode: nothing written, the way to a fresh session.
+STALE_EDL_WHERE = (
+    "Nothing was written to your headset. Hold the power button for about 10 s until it restarts into PICO OS, "
+    "keep the cable in, then start the installer again: it puts the headset into EDL mode afresh."
+)
 #: Where the headset is when this computer may not use it in EDL or fastboot mode.
 EDL_WHERE = (
     "Your headset is in EDL mode (its lenses stay dark); nothing was written to it. Run the command above, keep "
@@ -506,16 +511,36 @@ class Plan:
         ctx.progress(None, "Starting EDL mode")
         self.enter_edl(ctx, settings)
         ctx.progress(None, "Reading the partition table")
-        table = ctx.output(qualcomm.edl_ng(settings.edl_program(), settings.path("loader"), "printgpt"), 180)
+        table = ctx.output(
+            qualcomm.edl_ng(settings.edl_program(), settings.path("loader"), "printgpt"), 180, check=False
+        )
+        if qualcomm.unanswered(table):
+            raise Failed(qualcomm.NO_ANSWER, STALE_EDL_WHERE)
         serial, luns = edl_serial(table), edl_luns(table)
         if not serial or not luns:
-            msg = "EDL did not show the headset's serial number and partition table."
+            last = next((line.strip() for line in reversed(table.splitlines()) if line.strip()), "")
+            msg = "EDL did not show the headset's serial number and partition table" + (f": {last}" if last else ".")
             raise Failed(msg)
         if settings.edl_serial and settings.edl_serial != serial:
             msg = f"The headset in EDL mode is not the one {KEY('edl_serial')} in .env names."
             raise Failed(msg)
         ctx.set_setting(KEY("edl_serial"), serial)
         folder = settings.path("backup")
+        try:
+            self.capture_backup(ctx, settings, folder, luns)
+        except Failed as exc:
+            if qualcomm.unanswered(str(exc)):
+                raise Failed(qualcomm.NO_ANSWER, STALE_EDL_WHERE) from exc
+            raise
+        ctx.progress(None, "Checking the backup")
+        ctx.run(self.command("device", "verify-backup", "--backup", folder))
+        ctx.note(
+            f"Your backup is in {folder}: it is your way back to PICO OS. Keep a copy somewhere safe: Export backup "
+            "on the installer's start page writes it into one file (python -m overpressure backup export FILE)."
+        )
+
+    def capture_backup(self, ctx: Context, settings: localconfig.Settings, folder: Path, luns: list[int]) -> None:
+        """Read every partition but userdata into the new @p folder (device backup, edl-ng's dumps)."""
         ctx.run(
             self.command(
                 "device",
@@ -536,12 +561,6 @@ class Plan:
                 "--confirm-device",
                 settings.adb_serial,
             )
-        )
-        ctx.progress(None, "Checking the backup")
-        ctx.run(self.command("device", "verify-backup", "--backup", folder))
-        ctx.note(
-            f"Your backup is in {folder}: it is your way back to PICO OS. Keep a copy somewhere safe: Export backup "
-            "on the installer's start page writes it into one file (python -m overpressure backup export FILE)."
         )
 
     def unlock(self, ctx: Context) -> None:

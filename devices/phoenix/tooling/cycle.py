@@ -34,7 +34,7 @@ from overpressure.fastboot import NOT_IN_FASTBOOT
 from overpressure.process import run, until
 from overpressure.qualcomm import edl_devices
 
-from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, localconfig
+from . import ADB_MODE, EDL_RESTART, FASTBOOT_MODE, USB_MODES, localconfig
 
 if TYPE_CHECKING:
     from overpressure.process import Timing
@@ -79,12 +79,22 @@ class Headset:
         )
 
     def edl(self, *words: str | Path, log: str, timeout: float = 600) -> str:
-        """Run edl-ng with the headset's loader; its output goes to @p log.log in the evidence folder."""
-        return self.run(
-            qualcomm.edl_ng(self.s.edl_program(), self.s.path("loader"), *words),
-            timeout,
-            log=self.folder / f"{log}.log",
-        )
+        """Run edl-ng with the headset's loader; its output goes to @p log.log in the evidence folder.
+
+        A device that does not answer (a stale EDL session) fails in plain words, with the way out.
+        """
+        path = self.folder / f"{log}.log"
+        try:
+            return self.run(qualcomm.edl_ng(self.s.edl_program(), self.s.path("loader"), *words), timeout, log=path)
+        except RuntimeError as exc:
+            try:
+                output = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                output = ""
+            if qualcomm.unanswered(output + str(exc)):
+                msg = f"{qualcomm.NO_ANSWER} Nothing was written to it. {EDL_RESTART}"
+                raise RuntimeError(msg) from exc
+            raise
 
     def reset_to_pico_os(self, log: str) -> str:
         """Reset from EDL (edl-ng's plain reset mode), then wait for PICO OS.

@@ -13,7 +13,7 @@ from unittest import mock
 
 from devices.phoenix.tooling import HEADSET, devloop, localconfig
 from devices.phoenix.tooling import install as plan
-from overpressure import doctor, tools
+from overpressure import doctor, qualcomm, tools
 from overpressure.doctor import Check
 from overpressure.headset import BackupSet
 from overpressure.install import Context, Engine, Stage, Task
@@ -437,6 +437,46 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(finished["where"], plan.EDL_WHERE)
         self.assertFalse(any("printgpt" in " ".join(map(str, c)) for c in self.captured))
         self.assertNotIn("device backup", self.commands())
+
+    # -- a stale EDL session: the headset in EDL mode no longer answers ------------------------------
+    UNANSWERED = (
+        "[ERROR] An unexpected error occurred in 'printgpt': "
+        "Cannot proceed: Device mode is Unknown or could not be determined."
+    )
+
+    def test_a_stale_edl_session_at_the_partition_table_says_how_to_start_afresh(self):
+        original = self.capture
+
+        def capture(argv: list[str], timeout: float) -> tuple[int, str]:
+            if "printgpt" in argv:
+                self.captured.append(argv)
+                return 1, "Passive read timed out (no initial data from device).\n" + self.UNANSWERED
+            return original(argv, timeout)
+
+        self.capture = capture  # ty: ignore[invalid-assignment]  # the test's own capture in the method's place
+        ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
+        finished = ui.finished()
+        self.assertEqual((finished["status"], finished["task"]), ("failed", "backup"))
+        self.assertEqual((finished["error"], finished["where"]), (qualcomm.NO_ANSWER, plan.STALE_EDL_WHERE))
+        self.assertIn("power button", finished["where"])
+        self.assertNotIn("device backup", self.commands())
+
+    def test_a_stale_edl_session_in_the_dump_says_the_same(self):
+        original = self.spawn
+
+        def spawn(argv: list[str], stdin: bytes | None, writes: bool, line: Callable[[str], None]) -> int:  # noqa: FBT001  # the Spawn signature
+            if "backup" in argv and "--execute" in argv:
+                self.spawned.append((argv, stdin, writes))
+                line("error: Command failed: " + self.UNANSWERED)
+                return 1
+            return original(argv, stdin, writes, line)
+
+        self.spawn = spawn  # the test's own spawn in the method's place
+        ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
+        finished = ui.finished()
+        self.assertEqual((finished["task"], finished["error"]), ("backup", qualcomm.NO_ANSWER))
+        self.assertEqual(finished["where"], plan.STALE_EDL_WHERE)
+        self.assertNotIn("device verify-backup", self.commands())
 
     def test_an_unfinished_backup_folder_stays_and_the_new_one_goes_elsewhere(self):
         self.backup.mkdir(parents=True)

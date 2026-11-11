@@ -15,7 +15,7 @@ from typing import IO, TYPE_CHECKING
 from unittest.mock import patch
 
 from devices.phoenix.tooling import cycle, devloop, localconfig
-from overpressure import REPO, progress
+from overpressure import REPO, progress, qualcomm
 from overpressure.localconfig import parse
 
 if TYPE_CHECKING:
@@ -303,6 +303,31 @@ class CycleTests(HeadsetFixture):
         c = cycle.Cycle(self.settings, self.folder, self.fake, self.clock, lambda: 0)
         with self.assertRaisesRegex(RuntimeError, "EDL"):
             c.enter_edl()
+
+    def test_a_stale_edl_session_fails_in_plain_words(self):
+        def stale(argv: Sequence[object], _timeout: float = 60, *, log: Path | None = None, **_kwargs: object) -> str:
+            # edl-ng's output goes to its log; process.run's error then only names the log.
+            assert log is not None
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(
+                "Passive read timed out\nCannot proceed: Device mode is Unknown or could not be determined.\n"
+            )
+            msg = f"{Path(str(argv[0])).name} failed (1); see {log.name}"
+            raise RuntimeError(msg)
+
+        c = cycle.Cycle(self.settings, self.folder, stale, self.clock, lambda: 1)
+        with self.assertRaises(RuntimeError) as caught:
+            c.edl("read-part", "boot", "boot.bin", log="boot-readback")
+        self.assertIn(qualcomm.NO_ANSWER, str(caught.exception))
+        self.assertIn("power button", str(caught.exception))
+
+        def broken(_argv: Sequence[object], _timeout: float = 60, **_kwargs: object) -> str:
+            msg = "edl-ng failed (2); see other.log"
+            raise RuntimeError(msg)
+
+        c = cycle.Cycle(self.settings, self.folder, broken, self.clock, lambda: 1)
+        with self.assertRaisesRegex(RuntimeError, r"failed \(2\)"):  # any other failure stays as it was
+            c.edl("read-part", "boot", "boot.bin", log="other")
 
 
 class DevTests(HeadsetFixture):

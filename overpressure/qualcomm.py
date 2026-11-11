@@ -346,6 +346,20 @@ def edl_ng(program: str | Path, loader: str | Path, *words: str | Path, memory: 
     return [program, "--loader", loader, "--memory", memory, *words]
 
 
+#: edl-ng's words when the device in EDL mode gives it no answer it can place (its mode stays Unknown or Error).
+_UNANSWERED = re.compile(r"Device mode is \w+ or could not be determined")
+#: What that means, in plain words: a device in EDL mode opens the conversation once, right after it appears.
+NO_ANSWER = (
+    "The headset is in EDL mode but does not answer: it opens the conversation only right after it enters "
+    "EDL mode, and that moment has passed (it waited too long, or an earlier attempt failed)."
+)
+
+
+def unanswered(output: str) -> bool:
+    """Tell whether edl-ng's @p output says the device in EDL mode did not answer (a stale EDL session)."""
+    return _UNANSWERED.search(output) is not None
+
+
 def check_edl_serial(output: str, serial: str) -> None:
     """Raise unless edl-ng's @p output names @p serial: only the configured headset may be written.
 

@@ -62,7 +62,9 @@ your own named as `PICO4_SSH_PUBLIC_KEY` in `.env` before the install. No accoun
 **If something goes wrong.** `python -m overpressure dev support-bundle` collects the logs for a bug report, your
 identifiers masked ([docs/hardware-testing.md](docs/hardware-testing.md#support-bundle)); the installer's logs are in
 `out/install/phoenix/`. A step that says the headset is "not in fastboot yet" while it shows its fastboot screen:
-unplug the cable, plug it in again and start the step again.
+unplug the cable, plug it in again and start the step again. One that says the headset is in EDL mode but does not
+answer (it answers only right after entering EDL mode): hold the power button for about 10 s until PICO OS starts,
+then start the installer again; it enters EDL mode afresh.
 
 ## Documentation
 
