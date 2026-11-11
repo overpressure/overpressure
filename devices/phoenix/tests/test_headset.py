@@ -123,6 +123,7 @@ class HeadsetFixture(unittest.TestCase):
         self.readback = self.boot
         self.edl_output = "Serial Number: EDL1"
         self.edl_outputs: list[str] = []  # the next printgpt sessions' outputs, before edl_output
+        self.restarting: list[int] = []  # the EDL count's next answers while a restart into EDL runs
         self.run_result = {"status": "passed", "boot_restore_required": False}
         self.fastboot_listed = True
         self.unlocked = "true"
@@ -132,10 +133,13 @@ class HeadsetFixture(unittest.TestCase):
         quiet.__enter__()
         self.addCleanup(quiet.__exit__, None, None, None)
 
+    def edl_count(self) -> int:
+        return self.restarting.pop(0) if self.restarting else self.edl
+
     def texts(self):
         return [" ".join(c) for c in self.calls]
 
-    def fake(
+    def fake(  # noqa: C901  # one answer per command the steps run
         self,
         argv: Sequence[object],
         _timeout: float = 60,
@@ -151,6 +155,8 @@ class HeadsetFixture(unittest.TestCase):
         output = ""
         if "reboot edl" in text:
             self.edl = 1
+        elif "reset --mode Edl" in text:
+            self.restarting = [1, 1, 1, 0, 0]  # still there a while, then gone, then back (as the PICO 4)
         elif "getprop sys.boot_completed" in text:
             output = "1\nPico/Phoenix_ovs/PICOA8110:10/5.13.7/test:user/dev-keys"
         elif "hwtest flash-run" in text:
@@ -194,7 +200,7 @@ class HeadsetFixture(unittest.TestCase):
 
 class CycleTests(HeadsetFixture):
     def make(self):
-        return cycle.Cycle(self.settings, self.folder, self.fake, self.clock, lambda: self.edl)
+        return cycle.Cycle(self.settings, self.folder, self.fake, self.clock, self.edl_count)
 
     def run_cycle(self, c: cycle.Cycle) -> int:
         with patch.object(cycle, "ROOT", self.root):
@@ -246,6 +252,14 @@ class CycleTests(HeadsetFixture):
         self.assertEqual(self.steps()[:4], ["identify", "edl-reset", "identify", "stage"])
         fresh = next(w for w in self.calls if "reset" in w)
         self.assertEqual(fresh[fresh.index("--mode") + 1], "Edl")
+
+    def test_a_headset_that_does_not_restart_is_not_identified_in_its_old_session(self):
+        self.edl_outputs = ["[INFO]  Detected device mode: Firehose"]
+        c = self.make()
+        c.edl_count = lambda: 1  # the restart command is sent, but the device never leaves USB
+        with self.assertRaisesRegex(RuntimeError, "did not restart"):
+            c.stage_abl()
+        self.assertEqual(self.steps(), ["identify", "edl-reset"])  # no second session with the old loader
 
     def test_a_fresh_session_of_another_headset_is_still_refused(self):
         self.edl_outputs = ["[INFO]  Detected device mode: Firehose"]

@@ -98,6 +98,7 @@ class PlanTests(unittest.TestCase):
         self.model = "PICO 4"
         self.cmdline = SHARP
         self.edl = 0
+        self.restarting: list[int] = []  # the EDL count's next answers while a restart into EDL runs
         self.fastboot = False
         self.spawned: list[tuple[list[str], bytes | None, bool]] = []
         self.captured: list[list[str]] = []
@@ -108,7 +109,7 @@ class PlanTests(unittest.TestCase):
             root=self.root,
             work=self.root / "out" / "dev",
             computer=lambda: self.checks,
-            edl_count=lambda: self.edl,
+            edl_count=lambda: self.restarting.pop(0) if self.restarting else self.edl,
             image_present=lambda: self.image,
         )
 
@@ -140,6 +141,9 @@ class PlanTests(unittest.TestCase):
             return 0, self.cmdline
         if text.endswith("reboot edl"):
             self.edl = 1
+            return 0, ""
+        if "reset --mode Edl" in text:
+            self.restarting = [1, 1, 1, 0, 0]  # still there a while, then gone, then back (as the PICO 4)
             return 0, ""
         if "printgpt" in text:
             return 0, PRINTGPT

@@ -10,7 +10,6 @@ from Android, and edl-ng's serial says it is the configured one.
 
 from __future__ import annotations
 
-import contextlib
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -380,8 +379,16 @@ def fresh_edl_argv(program: str | Path, loader: str | Path) -> list[str | Path]:
     return edl_ng(program, loader, "reset", "--mode", "Edl")
 
 
-def wait_fresh_edl(edl_count: Callable[[], int], clock: Timing, *, seconds: float = 60) -> None:
-    """Wait until the device restarted by fresh_edl_argv is back as the one EDL device."""
+#: Seconds a loader may take to carry out fresh_edl_argv's restart (the PICO 4's: about 12 s, whatever the delay asked).
+RESTART_SECONDS = 60
+
+
+def wait_fresh_edl(edl_count: Callable[[], int], clock: Timing, *, seconds: float = RESTART_SECONDS) -> None:
+    """Wait until the device restarted by fresh_edl_argv has left USB, then is back as the one EDL device.
+
+    Its leaving must be seen: a device still there may still run the old loader, which a session
+    would meet just before it disappears. Raises RuntimeError when it does not leave in @p seconds.
+    """
 
     def gone() -> None:
         if edl_count():
@@ -393,8 +400,11 @@ def wait_fresh_edl(edl_count: Callable[[], int], clock: Timing, *, seconds: floa
             msg = "expected exactly one EDL device"
             raise RuntimeError(msg)
 
-    with contextlib.suppress(RuntimeError):  # it restarted faster than a poll: it is back already
-        until("the headset to restart", 10, gone, clock, interval=0.5)
+    try:
+        until("the headset to restart", seconds, gone, clock, interval=0.5)
+    except RuntimeError as exc:
+        msg = f"the headset did not restart into a fresh EDL session within {seconds:.0f} s (still in EDL)"
+        raise RuntimeError(msg) from exc
     until("a fresh EDL session", seconds, one, clock, interval=1)
 
 
