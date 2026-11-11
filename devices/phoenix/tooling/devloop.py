@@ -311,7 +311,10 @@ class Dev(Headset):
         self.release_adb()
         if self.s.fastboot_serial in self.run([fastboot, "devices"], 30, check=False):
             return
-        if f"{self.s.adb_serial}\tdevice" in self.run([self.s.tool("adb"), "devices"], 30, check=False):
+        pico_os = f"{self.s.adb_serial}\tdevice" in self.run([self.s.tool("adb"), "devices"], 30, check=False)
+        # That look started the adb server again, which on Linux holds the headset in fastboot.
+        self.release_adb()
+        if pico_os:
             self.run([self.s.tool("adb"), "-s", self.s.adb_serial, "reboot", "bootloader"], 30)
             self.release_adb()  # that command started the server again
         else:

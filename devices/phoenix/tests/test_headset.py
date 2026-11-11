@@ -625,6 +625,28 @@ class DevTests(HeadsetFixture):
         texts = [t for t in self.texts() if "kill-server" in t or t.endswith("fastboot devices")]
         self.assertTrue(texts[0].endswith("adb kill-server"), texts)
 
+    def test_from_the_installed_system_fastboot_looks_only_without_an_adb_server(self):
+        # Looking for PICO OS (adb devices) starts the server again; on Linux it then holds the
+        # headset in fastboot, and the wait for fastboot never sees it.
+        self.fastboot_listed = False
+
+        def into_fastboot() -> str:
+            self.fastboot_listed = True
+            return ""
+
+        dev = self.make({"--reboot-argument=bootloader": into_fastboot})
+        with patch.object(sys, "platform", "linux"):
+            dev.to_fastboot()
+        server = False
+        for text in self.texts():
+            if text.endswith("adb kill-server"):
+                server = False
+            elif text.split(" ")[0].endswith("adb"):
+                server = True
+            elif text.endswith("fastboot devices"):
+                self.assertFalse(server, self.texts())
+        self.assertTrue(self.fastboot_listed)
+
     def test_which_system_runs_by_its_first_process(self):
         self.assertTrue(self.make({"cat /proc/1/comm": "systemd\n"}).installed_running())
         self.assertFalse(self.make({"cat /proc/1/comm": "pico4-init\n"}).installed_running())
