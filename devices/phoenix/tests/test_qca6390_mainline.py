@@ -11,6 +11,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from devices.phoenix.tests.userland import needs_gnu_userland
+
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 UNITS = ROOTFS / "usr/lib/systemd/system"
@@ -68,6 +70,7 @@ class WifiTests(unittest.TestCase):
                 ["link set dev wlan0 down", "link set dev wlan0 address 00:aa:11:bb:22:cc"],
             )
 
+    @needs_gnu_userland
     def test_profiles_lose_the_chips_changing_address(self):
         # The chip's own address differs at each boot; a profile naming it never matches again.
         with tempfile.TemporaryDirectory() as tmp:

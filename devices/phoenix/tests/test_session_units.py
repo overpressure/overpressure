@@ -11,6 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from devices.phoenix.tests.userland import needs_gnu_userland
+
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 
@@ -162,6 +164,7 @@ class KthreadPrioritiesTest(unittest.TestCase):
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         self.assertIn("pico4-kthread-priorities.service", build)
 
+    @needs_gnu_userland
     def test_valve_kernel_gets_the_frames_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp, "bin")

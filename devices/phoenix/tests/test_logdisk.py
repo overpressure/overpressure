@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Unlicense
 """The installed system's log drive: a journal larger than the drive keeps its newest whole lines."""
 
-import shutil
 import subprocess
-import sys
 import unittest
 from pathlib import Path
+
+from devices.phoenix.tests.userland import needs_gnu_userland
 
 ROOTFS = Path(__file__).resolve().parents[1] / "userspace/rootfs"
 SCRIPT = ROOTFS / "usr/libexec/pico4/userspace-logdisk"
@@ -24,11 +24,8 @@ def tail(text: str, room: int) -> str:
     ).stdout
 
 
+@needs_gnu_userland
 class LogdiskTests(unittest.TestCase):
-    def setUp(self) -> None:
-        if shutil.which("bash") is None or sys.platform == "win32":
-            self.skipTest("needs bash")
-
     def test_a_journal_that_fits_stays_whole(self) -> None:
         journal = "".join(f"[{i:6d}.000000] line {i}\n" for i in range(100))
         self.assertEqual(tail(journal, len(journal)), journal)

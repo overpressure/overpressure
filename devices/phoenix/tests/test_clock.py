@@ -9,12 +9,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from devices.phoenix.tests.userland import needs_gnu_userland
+
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 SCRIPT = ROOTFS / "usr/libexec/pico4/clock"
 
 
-@unittest.skipIf(shutil.which("sh") is None or shutil.which("od") is None, "needs sh and od")
+@needs_gnu_userland
 class ClockTests(unittest.TestCase):
     def run_clock(self, offset_ms: int, rtc: int, now: int):
         with tempfile.TemporaryDirectory() as tmp:

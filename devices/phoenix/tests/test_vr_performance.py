@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from devices.phoenix.tests.userland import needs_gnu_userland
+
 ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 SCRIPT = ROOTFS / "usr/libexec/pico4/vr-performance"
@@ -16,7 +18,7 @@ BASH = shutil.which("bash")
 # The kernel's defaults: no limit, and core_ctl's own minimum.
 
 
-@unittest.skipIf(BASH is None, "needs bash")
+@needs_gnu_userland
 class VrPerformanceMainlineTests(unittest.TestCase):
     """A mainline kernel: the same limits on the cpufreq policies, no core_ctl."""
 
