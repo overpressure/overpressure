@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -583,14 +584,45 @@ class DevTests(HeadsetFixture):
 
     def test_install_refuses_another_panel_before_any_write(self):
         dev, system = self.install_setup()
+        reads = {
+            "cat /proc/cmdline": "console=x msm_drm.dsi_display0=qcom,mdss_dsi_innolux_nt57900_90_video:",
+            "cat /proc/1/comm": "pico4-init",  # which system runs: stage 1
+        }
         dev.ssh = lambda command, *_, **__: (
-            "console=x msm_drm.dsi_display0=qcom,mdss_dsi_innolux_nt57900_90_video:"
-            if command == "cat /proc/cmdline"
-            else self.fail("wrote before reading the panel: " + command)
+            reads[command] if command in reads else self.fail("wrote before reading the panel: " + command)
         )
         _real_connect, dev.connect = dev.connect, lambda: "recovery"
         with self.assertRaisesRegex(ValueError, "nt57900.*not verified"):
             dev.install(system)
+
+    def test_a_repeated_install_on_the_running_system_goes_back_to_stage_1_first(self):
+        # The last install got as far as starting the system; repeating it needs stage 1 again.
+        dev, system = self.install_setup()
+        order: list[str] = []
+        dev.installed_running = lambda: order.append("probe") is None  # the installed system answers
+        dev.recovery = lambda: order.append("recovery")
+        dev.install(system)
+        self.assertEqual(order, ["probe", "recovery"])
+        self.assertTrue(any("pico4-install write boot" in t for t in self.texts()))
+
+    def test_which_system_runs_by_its_first_process(self):
+        self.assertTrue(self.make({"cat /proc/1/comm": "systemd\n"}).installed_running())
+        self.assertFalse(self.make({"cat /proc/1/comm": "pico4-init\n"}).installed_running())
+
+        def silent() -> str:
+            msg = "ssh"
+            raise subprocess.TimeoutExpired(msg, 10)
+
+        self.assertFalse(self.make({"cat /proc/1/comm": silent}).installed_running())
+
+    def test_a_restart_command_that_outlives_its_link_is_its_end(self):
+        def vanished() -> str:
+            msg = "ssh"
+            raise subprocess.TimeoutExpired(msg, 15)  # Linux: the USB link went down with the restart
+
+        dev = self.make({"pico4-reboot": vanished})
+        dev.ssh_reboot("pico4-reboot")
+        self.assertTrue(any("pico4-reboot" in t for t in self.texts()))
 
     def test_enrolled_keys_are_this_pcs_and_the_owners(self):
         dev, _ = self.install_setup()

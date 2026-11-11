@@ -26,6 +26,12 @@ def argv(  # noqa: PLR0913  # the ssh setup, the target and the command; the tim
         "IdentitiesOnly=yes",
         "-o",
         f"ConnectTimeout={connect_timeout}",
+        # A USB link that vanishes (the headset restarts) ends no TCP connection on Linux: the
+        # keepalives notice it within seconds. A busy command still answers them.
+        "-o",
+        "ServerAliveInterval=3",
+        "-o",
+        "ServerAliveCountMax=3",
         "-o",
         "StrictHostKeyChecking=accept-new",
         "-o",

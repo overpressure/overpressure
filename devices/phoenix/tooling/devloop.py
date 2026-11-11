@@ -28,6 +28,7 @@ results live in out/dev/.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -195,6 +196,24 @@ class Dev(Headset):
         """Run @p command on the headset; return its output."""
         return self.run(self.ssh_argv(command), timeout, stdin=stdin, check=check)
 
+    def ssh_reboot(self, command: str) -> None:
+        """Run @p command, which restarts the headset; the USB link goes down with it.
+
+        Whether ssh returns or runs out of time (a vanished link ends no connection on Linux) is
+        the restart's own end: what comes next waits for the system that starts.
+        """
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            self.ssh(command, 15, check=False)
+
+    def installed_running(self) -> bool:
+        """Tell whether the installed system answers over SSH now: its first process is systemd (stage 1's is not)."""
+        (self.work / "known_hosts").unlink(missing_ok=True)  # each system has its own host key
+        try:
+            output = self.ssh("cat /proc/1/comm", 10, check=False)
+        except subprocess.TimeoutExpired:
+            return False
+        return output.strip().splitlines()[-1:] == ["systemd"]
+
     def fastboot(self, *words: str | Path, timeout: float = 60) -> str:
         """Run fastboot on the configured headset; return its output."""
         return self.run([self.s.tool("fastboot"), "-s", self.s.fastboot_serial, *words], timeout)
@@ -287,9 +306,7 @@ class Dev(Headset):
         if f"{self.s.adb_serial}\tdevice" in self.run([self.s.tool("adb"), "devices"], 30, check=False):
             self.run([self.s.tool("adb"), "-s", self.s.adb_serial, "reboot", "bootloader"], 30)
         else:
-            self.ssh(
-                "systemctl reboot --reboot-argument=bootloader 2>/dev/null || pico4-reboot bootloader", 15, check=False
-            )
+            self.ssh_reboot("systemctl reboot --reboot-argument=bootloader 2>/dev/null || pico4-reboot bootloader")
 
         def ready() -> None:
             if self.s.fastboot_serial not in self.run([fastboot, "devices"], 30, check=False):
@@ -471,6 +488,10 @@ class Dev(Headset):
             if not path.exists():
                 msg = f"missing {path}: run {hint}"
                 raise ValueError(msg)
+        # A repeat after an install that got as far as starting the system: back into stage 1 first.
+        if self.installed_running():
+            print("the installed system runs: into the maintenance system to repeat the install", flush=True)
+            self.recovery()
         if self.connect() != "recovery":
             msg = "install runs from the maintenance stage 1 in recovery (python -m overpressure dev recovery)"
             raise RuntimeError(msg)
@@ -516,7 +537,7 @@ class Dev(Headset):
             msg = "could not clear the recovery request in misc"
             raise RuntimeError(msg)
         (self.work / "state.json").unlink(missing_ok=True)
-        self.ssh("pico4-reboot", 15, check=False)
+        self.ssh_reboot("pico4-reboot")
         # Only the installed system's systemd passes wait_installed: no fixed wait for the reboot.
         self.clock.sleep(3)
         self.wait_installed()
@@ -740,7 +761,7 @@ class Dev(Headset):
                 previous = self.boot_id()
             except RuntimeError:
                 previous = ""
-            self.ssh("systemctl reboot 2>/dev/null || pico4-reboot", 15, check=False)
+            self.ssh_reboot("systemctl reboot 2>/dev/null || pico4-reboot")
         # The boot that answers next must be another one; no fixed wait for the reboot.
         self.clock.sleep(3)
         if (self.work / INSTALLED).exists() and self.started(previous) == "installed":
