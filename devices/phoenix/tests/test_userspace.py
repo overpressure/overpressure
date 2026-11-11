@@ -202,6 +202,22 @@ class CheckValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 userspace.validate_check(value)
 
+    def test_first_run_setup_holds_the_target_back(self):
+        # Before the setup is through, Steam waits for it: the setup's session counts.
+        value = copy.deepcopy(PASSING)
+        value["session"].update(target_state="inactive", first_run="pending", setup=["active"] * 3)
+        userspace.validate_check(value)
+        for change in (
+            {"setup": ["active", "active", "inactive"]},
+            {"setup": []},
+            {"first_run": "done"},
+            {"first_run": None},
+        ):
+            broken = copy.deepcopy(value)
+            broken["session"].update(change)
+            with self.subTest(change), self.assertRaises(ValueError):
+                userspace.validate_check(broken)
+
     def test_vulkan_readback_must_be_complete(self):
         value = copy.deepcopy(PASSING)
         value["vulkan"]["result"]["bad_pixels"] = 3
@@ -294,6 +310,13 @@ class ValveSessionTests(unittest.TestCase):
         userspace.validate_valve_session(VALVE_SESSION_PASSING)
         # Without the fan daemon both states are null.
         userspace.validate_valve_session({**VALVE_SESSION_PASSING, "fan": {"before": None, "after_run": None}})
+
+    def test_first_run_setup_holds_the_target_back(self):
+        held = {**VALVE_SESSION_PASSING["session"], "target_state": "inactive", "first_run": "pending"}
+        userspace.validate_valve_session({**VALVE_SESSION_PASSING, "session": {**held, "setup": "active"}})
+        for session in ({**held, "setup": "failed"}, {**held, "first_run": "done", "setup": "active"}):
+            with self.subTest(session), self.assertRaises(ValueError):
+                userspace.validate_valve_session({**VALVE_SESSION_PASSING, "session": session})
 
     def test_failures_are_rejected(self):
         devices = VALVE_SESSION_PASSING["devices"]

@@ -114,6 +114,14 @@ fi
 target_state=$(user_systemctl is-active gamescope-session.target 2>/dev/null)
 steamvr_state=$(user_systemctl is-active steamvr.service 2>/dev/null)
 gamescope_state=$(user_systemctl is-active gamescope-session.service 2>/dev/null)
+# Before the first-run setup is finished or skipped, steam.service waits for it and the
+# target cannot become active; the setup's panel runs in its place (docs/session.md#first-run-setup).
+first_run="done"
+setup_state=""
+if [ "$target_state" != active ] && HOME=$home /usr/libexec/pico4/wait-first-run --pending; then
+	first_run=pending
+	setup_state=$(user_systemctl is-active pico4-onboarding.service 2>/dev/null)
+fi
 failed=$(user_systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
 started=false
 grep -qs "Startup Complete" "$logs/vrcompositor.txt" && started=true
@@ -139,7 +147,11 @@ fan_after=$(fan_state)
 performance=$(/usr/libexec/pico4/session-performance "$work/frames.json" "${temp_after:-nan}" 2>/dev/null)
 grep -q '^{' <<<"$performance" || performance='{"status":"failed","failures":["no performance verdict"]}'
 
-[ "$target_state" = active ] || errors+=("gamescope-session.target is $target_state")
+if [ "$first_run" = pending ]; then
+	[ "$setup_state" = active ] || errors+=("the first-run setup's panel is $setup_state")
+else
+	[ "$target_state" = active ] || errors+=("gamescope-session.target is $target_state")
+fi
 [ "$steamvr_state" = active ] || errors+=("steamvr.service is $steamvr_state")
 [ "$gamescope_state" = active ] || errors+=("gamescope-session.service is $gamescope_state")
 [ "$started" = true ] || errors+=("SteamVR's compositor did not complete its startup")
@@ -162,9 +174,10 @@ status=passed
 printf '{"schema":1,"status":%s' "$(json_str "$status")"
 printf ',"errors":%s' "$(printf '%s\n' "${errors[@]+"${errors[@]}"}" | json_list)"
 printf ',"seconds":%s,"startup_seconds":%s,"settle_seconds":%s' "$seconds" "$startup" "$settle"
-printf ',"session":{"target":"gamescope-session.target","target_state":%s,"steamvr":%s,"gamescope":%s,"failed_units":%s,"restored":%s}' \
+printf ',"session":{"target":"gamescope-session.target","target_state":%s,"steamvr":%s,"gamescope":%s,"failed_units":%s,"restored":%s' \
 	"$(json_str "$target_state")" "$(json_str "$steamvr_state")" "$(json_str "$gamescope_state")" \
 	"$(json_list <<<"$failed")" "$(json_str "$restored")"
+printf ',"first_run":%s,"setup":%s}' "$(json_str "$first_run")" "$(json_str "$setup_state")"
 printf ',"compositor":{"started":%s,"gamescope_client":%s,"asserts":%s,"present_wait_errors":%s}' \
 	"$started" "$gamescope_client" "${asserts:-0}" "${present_wait_errors:-0}"
 printf ',"frames":%s,"devices":%s,"max_temp_c":{"before":%s,"after_run":%s}' "$stats" "$devices" \

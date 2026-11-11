@@ -270,7 +270,9 @@ Before the first sign-in the panel replaces the client's own setup. The client u
 panel shows its texts and fonts), then waits in
 [`wait-first-run`](../userspace/rootfs/usr/libexec/pico4/wait-first-run) (`ExecStartPre` of
 `steam.service`) until the setup is finished or skipped, someone signed in before, or the panel's service
-failed for good. During the setup:
+failed for good. Until then `gamescope-session.target` stays in its start job, and the checks
+(`pico4-userspace-check`, `pico4-valve-session-check`) take SteamVR, gamescope and the setup's panel for
+the session (`wait-first-run --pending`). During the setup:
 
 - **Scene application.** It submits a frame to both eyes at every SteamVR frame, an even dark room, which
   the room view covers.

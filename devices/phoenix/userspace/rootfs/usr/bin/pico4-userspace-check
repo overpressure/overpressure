@@ -142,12 +142,33 @@ user_systemctl() { # the session user's own manager
 	runuser -u "$session_user" -- env "XDG_RUNTIME_DIR=/run/user/$session_uid" 		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$session_uid/bus" systemctl --user "$@"
 }
 session_service=$(systemctl is-active pico4-session.service 2>/dev/null)
+# Before the first-run setup is finished or skipped, steam.service waits for it
+# (wait-first-run) and the target cannot become active: the setup's session is
+# SteamVR, gamescope and the setup's panel (docs/session.md#first-run-setup).
+session_home=$(getent passwd "$session_user" | cut -d: -f6)
+first_run_pending() { [ -n "$session_home" ] && HOME=$session_home /usr/libexec/pico4/wait-first-run --pending; }
+setup_session() { # the setup's units, active or not, one per line
+	for unit in steamvr.service gamescope-session.service pico4-onboarding.service; do
+		user_systemctl is-active "$unit" 2>/dev/null
+	done
+}
 session_target_state=unknown
+first_run="done"
+setup_states=""
 for _ in $(seq 60); do
 	session_target_state=$(user_systemctl is-active "$session_target" 2>/dev/null)
 	[ "$session_target_state" != active ] || break
+	if [ "$session_target" = gamescope-session.target ] && first_run_pending; then
+		first_run=pending
+		setup_states=$(setup_session)
+		[ "$(grep -cx active <<<"$setup_states")" != 3 ] || break
+	else
+		first_run="done"
+	fi
 	sleep 1
 done
+# The target came up during the wait: the setup is over.
+[ "$session_target_state" != active ] || first_run="done"
 session_user_state=$(loginctl show-user "$session_user" -p State --value 2>/dev/null)
 session_failed=$(user_systemctl list-units --failed --plain --no-legend 2>/dev/null | awk '{print $1}')
 # Device nodes the session user needs in Valve's session (SteamVR's
@@ -164,7 +185,12 @@ monado_service=$(systemctl is-active pico4-monado.service 2>/dev/null)
 if [ -e /dev/dri/renderD128 ]; then
 	need "session service active (is: $session_service)" [ "$session_service" = active ]
 	need "session user logged in (is: $session_user_state)" [ "$session_user_state" = active ]
-	need "session target $session_target active (is: $session_target_state)" [ "$session_target_state" = active ]
+	if [ "$first_run" = pending ]; then
+		need "first-run setup's session active (steamvr, gamescope, setup panel: $(paste -sd' ' <<<"$setup_states"))" \
+			[ "$(grep -cx active <<<"$setup_states")" = 3 ]
+	else
+		need "session target $session_target active (is: $session_target_state)" [ "$session_target_state" = active ]
+	fi
 fi
 
 # -- the fan (docs/cooling.md) ---------------------------------------------------
@@ -263,6 +289,7 @@ printf ',"seats":%s,"packages":%s' "$(json_list <<<"$seats")" "${packages:-0}"
 printf ',"session":{"user":%s,"user_state":%s,"service":%s,"target":%s,"target_state":%s,"failed_units":%s' \
 	"$(json_str "$session_user")" "$(json_str "$session_user_state")" "$(json_str "$session_service")" \
 	"$(json_str "$session_target")" "$(json_str "$session_target_state")" "$(json_list <<<"$session_failed")"
+printf ',"first_run":%s,"setup":%s' "$(json_str "$first_run")" "$(json_list <<<"$setup_states")"
 printf ',"monado_socket":%s,"monado_service":%s,"access_denied":%s}' "$(json_str "$monado_socket")" \
 	"$(json_str "$monado_service")" "$(json_list <<<"$access_denied")"
 printf ',"fan":{"service":%s,"state":%s}' "$(json_str "$fan_service")" "$fan_state"

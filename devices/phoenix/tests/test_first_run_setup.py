@@ -167,9 +167,9 @@ class WaitTests(unittest.TestCase):
         for released_by in ("setup-done", '"CompletedOOBE"', "is-failed --quiet pico4-onboarding.service"):
             self.assertIn(released_by, script)
 
-    def run_script(self, home: str) -> int:
+    def run_script(self, home: str, *args: str) -> int:
         return subprocess.run(  # noqa: S603  # bash from PATH runs the script under test
-            ["bash", str(self.SCRIPT)],  # noqa: S607  # bash from PATH
+            ["bash", str(self.SCRIPT), *args],  # noqa: S607  # bash from PATH
             env={"HOME": home, "PATH": "/usr/bin:/bin"},
             capture_output=True,
             timeout=10,
@@ -189,6 +189,26 @@ class WaitTests(unittest.TestCase):
             registry.parent.mkdir()
             registry.write_text(REGISTRY.replace('"AutoLoginUser"\t\t""', '"CompletedOOBE"\t\t"1"'), encoding="utf-8")
             self.assertEqual(self.run_script(home), 0)
+
+    def test_the_checks_ask_whether_it_is_pending(self):
+        if shutil.which("bash") is None or sys.platform == "win32":
+            self.skipTest("needs bash")
+        with tempfile.TemporaryDirectory() as home:
+            self.assertEqual(self.run_script(home, "--pending"), 0)
+            mark = Path(home) / ".local/share/pico4/setup-done"
+            mark.parent.mkdir(parents=True)
+            mark.write_text("1\n", encoding="utf-8")
+            self.assertEqual(self.run_script(home, "--pending"), 1)
+            mark.unlink()
+            registry = Path(home) / ".steam/registry.vdf"
+            registry.parent.mkdir()
+            registry.write_text(REGISTRY, encoding="utf-8")
+            self.assertEqual(self.run_script(home, "--pending"), 0)
+            registry.write_text(REGISTRY.replace('"AutoLoginUser"\t\t""', '"CompletedOOBE"\t\t"1"'), encoding="utf-8")
+            self.assertEqual(self.run_script(home, "--pending"), 1)
+            self.assertEqual(self.run_script(home, "--other"), 2)
+        for check in ("usr/bin/pico4-userspace-check", "usr/bin/pico4-valve-session-check"):
+            self.assertIn("/usr/libexec/pico4/wait-first-run --pending", (ROOTFS / check).read_text(encoding="utf-8"))
 
 
 class TimezoneTests(unittest.TestCase):

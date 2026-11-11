@@ -72,13 +72,28 @@ def _validate_system(value: dict) -> None:
         raise ValueError(msg)
 
 
+#: The first-run setup's session, in pico4-userspace-check's order: SteamVR, gamescope, the panel.
+SETUP_UNITS = ("steamvr.service", "gamescope-session.service", "pico4-onboarding.service")
+
+
+def _session_up(session: dict) -> bool:
+    """Tell whether Valve's session target runs, or the first-run setup's session in its place.
+
+    Until the setup is finished or skipped, the Steam client waits for it and the target cannot
+    become active; SteamVR, gamescope and the setup's panel run (docs/session.md#first-run-setup).
+    """
+    if session.get("target_state") == "active":
+        return True
+    return session.get("first_run") == "pending" and session.get("setup") == ["active"] * len(SETUP_UNITS)
+
+
 def _validate_session(session: dict) -> None:
     """Refuse a session user that is not logged in with Valve's session, or cannot open a device."""
     if (
         session.get("user") != SESSION_USER
         or session.get("user_state") != "active"
         or session.get("service") != "active"
-        or session.get("target_state") != "active"
+        or not _session_up(session)
     ):
         msg = f"The {SESSION_USER} session is not running: {session}"
         raise ValueError(msg)
@@ -198,7 +213,9 @@ def validate_valve_session(value: object) -> None:
     if value.get("status") != "passed":
         raise ValueError("Valve session check failed: " + "; ".join(value.get("errors") or ["no reason"]))
     session = value.get("session") or {}
-    states = {k: session.get(k) for k in ("target_state", "steamvr", "gamescope", "restored")}
+    # Before the first-run setup is through, its panel runs in place of the held-back client.
+    target = "setup" if session.get("first_run") == "pending" else "target_state"
+    states = {k: session.get(k) for k in (target, "steamvr", "gamescope", "restored")}
     if any(state != "active" for state in states.values()):
         msg = f"Valve's session did not run or return: {states}"
         raise ValueError(msg)
