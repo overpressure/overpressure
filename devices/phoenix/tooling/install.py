@@ -286,6 +286,7 @@ class Plan:
         self.image_present = image_present
         self.factory_reset = factory_reset
         self.edl_denied = edl_denied
+        self.usb_reader: Callable[[], bool] | None = None  #: tests: what reads the EDL device's pipe
         self.steps: dict[str, Step] = {step.key: step for step in headset.steps()}
 
     # -- helpers ------------------------------------------------------------------------------
@@ -517,6 +518,7 @@ class Plan:
             # An earlier session's loader still runs (a resumed backup on Linux): a fresh EDL session names the serial.
             ctx.progress(None, "Restarting the headset into a fresh EDL session")
             ctx.output(qualcomm.fresh_edl_argv(settings.edl_program(), settings.path("loader")), 60)
+            qualcomm.drain_until_gone(ctx.clock, reader=self.usb_reader)  # Linux: read its last message
             qualcomm.wait_fresh_edl(self.edl_count, ctx.clock)
             ctx.progress(None, "Reading the partition table")
             table = ctx.output(printgpt, 180, check=False)

@@ -122,6 +122,23 @@ class FakeClock:
         self.now += seconds
 
 
+class DrainTests(unittest.TestCase):
+    def test_reads_until_the_device_leaves(self):
+        clock, answers = FakeClock(), iter([False, False, True])
+        self.assertTrue(qualcomm.drain_until_gone(clock, reader=lambda: next(answers), platform="linux"))
+        self.assertLess(clock.now, 1)
+
+    def test_a_device_that_stays_is_reported_after_the_time(self):
+        clock = FakeClock()
+        self.assertFalse(qualcomm.drain_until_gone(clock, seconds=5, reader=lambda: False, platform="linux"))
+        self.assertGreaterEqual(clock.now, 5)
+
+    def test_windows_driver_reads_by_itself(self):
+        clock = FakeClock()
+        self.assertTrue(qualcomm.drain_until_gone(clock, platform="win32"))
+        self.assertEqual(clock.now, 0)
+
+
 class UnansweredTests(unittest.TestCase):
     def test_edl_ngs_words_for_a_device_that_does_not_answer(self):
         for mode in ("Unknown", "Error"):

@@ -61,6 +61,7 @@ class Headset:
         self.run = usbaccess.guard(runner, USB_MODES, {"adb": ADB_MODE, "fastboot": FASTBOOT_MODE}, clock)
         self.clock = clock
         self.edl_count = edl_count
+        self.usb_reader: Callable[[], bool] | None = None  #: tests: what reads the EDL device's pipe
 
     def until(self, name: str, seconds: float, operation: Callable[[], T]) -> T:
         """Retry @p operation until it succeeds, for at most @p seconds."""
@@ -104,6 +105,7 @@ class Headset:
         retrying anything.
         """
         self.edl("reset", "--mode", "Reset", log=log)
+        self.drain()  # Linux: the loader resets only once its last message is read
         try:
             return self.wait_pico_os()
         except RuntimeError as exc:
@@ -113,6 +115,10 @@ class Headset:
                 "hold the power button until the headset restarts, nothing is retried"
             )
             raise RuntimeError(msg) from exc
+
+    def drain(self) -> None:
+        """After a power command, read the headset's USB pipe until it leaves (qualcomm.drain_until_gone)."""
+        qualcomm.drain_until_gone(self.clock, reader=self.usb_reader)
 
     def check_edl_serial(self, output: str) -> None:
         """edl-ng reports the device serial when it connects: only the configured headset may be written."""
@@ -135,6 +141,7 @@ class Headset:
                 60,
                 log=self.folder / "edl-fresh.log",
             )
+            self.drain()
             qualcomm.wait_fresh_edl(self.edl_count, self.clock)
             usbaccess.require(qualcomm.EDL_MODE, USB_MODES, self.clock)
             output = self.edl("printgpt", log="edl-identify-fresh", timeout=120)

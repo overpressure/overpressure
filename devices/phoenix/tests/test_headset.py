@@ -253,6 +253,17 @@ class CycleTests(HeadsetFixture):
         fresh = next(w for w in self.calls if "reset" in w)
         self.assertEqual(fresh[fresh.index("--mode") + 1], "Edl")
 
+    def test_the_pipe_is_read_after_each_power_command(self):
+        # Linux: the loader carries out a reset only once its last message is read.
+        self.edl_outputs = ["[INFO]  Detected device mode: Firehose"]
+        c = self.make()
+        self.edl = 1
+        reads: list[str] = []
+        c.usb_reader = lambda: reads.append(self.steps()[-1]) is None  # read once; the device then left
+        c.stage_abl()
+        self.assertEqual(reads, ["edl-reset", "edl-reset"])  # after the fresh-session restart and the final reset
+        self.assertEqual(self.steps(), ["identify", "edl-reset", "identify", "stage", "edl-reset", "pico-os"])
+
     def test_a_headset_that_does_not_restart_is_not_identified_in_its_old_session(self):
         self.edl_outputs = ["[INFO]  Detected device mode: Firehose"]
         c = self.make()

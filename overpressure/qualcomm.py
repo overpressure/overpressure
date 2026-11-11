@@ -10,6 +10,7 @@ from Android, and edl-ng's serial says it is the configured one.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -381,6 +382,85 @@ def fresh_edl_argv(program: str | Path, loader: str | Path) -> list[str | Path]:
 
 #: Seconds a loader may take to carry out fresh_edl_argv's restart (the PICO 4's: about 12 s, whatever the delay asked).
 RESTART_SECONDS = 60
+
+
+class UsbReader:
+    """Read what a device's loader still sends on its USB pipe: a computer's reading lets it carry out a reset.
+
+    After acknowledging a power command, the loader sends a last message and waits until it is read.
+    Windows' Qualcomm driver reads the pipe all the time; on Linux and macOS nothing does once edl-ng
+    has exited, and the loader would wait forever. Only reads: nothing is sent to the device.
+    """
+
+    def __init__(self, vendor: int = int(EDL_USB[0], 16), product: int = int(EDL_USB[1], 16)) -> None:
+        """Read from the device with @p vendor and @p product (EDL's by default)."""
+        self.vendor = vendor
+        self.product = product
+        self.seen: tuple[int, int] | None = None  # the device's bus and address when first read
+
+    def __call__(self) -> bool:
+        """Read the device's pipe until it is empty; return True once the device has left USB.
+
+        A device back at another address is the restarted one: it is never read, so that a fresh
+        EDL session keeps its greeting for edl-ng.
+        """
+        try:
+            import libusb_package  # noqa: PLC0415  # pinned in pyproject.toml; imported where used
+            import usb.core  # noqa: PLC0415  # pinned in pyproject.toml; imported where used
+            import usb.util  # noqa: PLC0415  # pinned in pyproject.toml; imported where used
+        except ImportError:
+            return False
+        backend = libusb_package.get_libusb1_backend()
+        device = usb.core.find(idVendor=self.vendor, idProduct=self.product, backend=backend)
+        if device is None:
+            return True
+        where = (int(device.bus or 0), int(device.address or 0))
+        if self.seen is None:
+            self.seen = where
+        elif where != self.seen:
+            usb.util.dispose_resources(device)
+            return True  # the restarted device: left alone
+        try:
+            with contextlib.suppress(NotImplementedError, usb.core.USBError):
+                if device.is_kernel_driver_active(0):
+                    device.detach_kernel_driver(0)
+            interface = device.get_active_configuration()[(0, 0)]
+            endpoint = usb.util.find_descriptor(
+                interface,
+                custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN,
+            )
+            if endpoint is None:
+                return False
+            usb.util.claim_interface(device, 0)
+            for _ in range(64):  # what is queued, a packet at a time, until a read times out
+                device.read(endpoint.bEndpointAddress, 16384, timeout=250)
+        except usb.core.USBError:  # a timeout (nothing more queued), or the device left while reading
+            pass
+        finally:
+            usb.util.dispose_resources(device)
+        return False
+
+
+def drain_until_gone(
+    clock: Timing,
+    *,
+    seconds: float = 60,
+    reader: Callable[[], bool] | None = None,
+    platform: str = sys.platform,
+) -> bool:
+    """After a power command, read the device's pipe until it leaves USB; return whether it left in @p seconds.
+
+    Windows' driver does the reading itself: there it only returns True.
+    """
+    if platform == "win32" and reader is None:
+        return True
+    read = reader or UsbReader()
+    end = clock.monotonic() + seconds
+    while clock.monotonic() < end:
+        if read():
+            return True
+        clock.sleep(0.2)
+    return False
 
 
 def wait_fresh_edl(edl_count: Callable[[], int], clock: Timing, *, seconds: float = RESTART_SECONDS) -> None:
