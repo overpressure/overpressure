@@ -118,5 +118,65 @@ class MsmFrameStatsTests(unittest.TestCase):
         self.assertEqual(stats.parse([], set())["commits"], 0)
 
 
+def full_trace(frames: int, late: int) -> list[str]:
+    """Return a trace command's lines: one compositor job a refresh, the one of refresh LATE submitted late.
+
+    The compositor's RenderThread (700) wakes 1 ms after each vblank on core 5, submits 0.2 ms later,
+    and its job runs 6 ms on the GPU after a 0.1 ms flush. In refresh LATE a web helper (800) holds
+    core 5 for 6 ms first, so the job ends after the vblank; a web helper job (801) retires in it too.
+    """
+    lines = ["# compositor: 700 701", "# helpers: 800 801"]
+    idle, render = ("<idle>", 0), ("RenderThread", 700)
+
+    def at(t: float, who: tuple[str, int], cpu: int, event: str, fields: str) -> None:
+        lines.append(f"{who[0]:>16}-{who[1]:<7} [{cpu:03d}] d..2.  {t:.6f}: {event}: {fields}")
+
+    def switch(t: float, out: tuple[str, int], into: tuple[str, int]) -> None:
+        fields = f"prev_comm={out[0]} prev_pid={out[1]} prev_prio=120 prev_state=R"
+        at(t, out, 5, "sched_switch", f"{fields} ==> next_comm={into[0]} next_pid={into[1]} next_prio=0")
+
+    def retired(t: float, ident: int, pid: int, ns: int) -> None:
+        at(t, idle, 0, "msm_gpu_submit_retired", f"id={ident} pid={pid} ring=0:1 elapsed={ns} ns mhz=587 start=1 end=2")
+
+    for n in range(frames + 1):
+        at(100 + n * REFRESH, idle, 0, "drm_vblank_event", f"crtc=0, seq={n}, time={n}, high-prec=true")
+    for n in range(frames):
+        v = 100 + n * REFRESH
+        wake = v + 0.001
+        held = 0.006 if n == late else 0.0
+        at(wake, idle, 5, "sched_wakeup", "comm=RenderThread pid=700 prio=0 target_cpu=005")
+        helper = ("steamwebhelper", 800)
+        if held:
+            switch(wake, ("swapper/5", 0), helper)
+        switch(wake + held, helper if held else ("swapper/5", 0), render)
+        sub = wake + held + 0.0002
+        at(sub, render, 5, "msm_gpu_submit", f"id={n} pid=700 ring=0 bos=3 cmds=1")
+        at(sub + 0.0001, ("kworker/u50:0", 41), 6, "msm_gpu_submit_flush", f"id={n} pid=700 ring=0:{n} ticks=1")
+        retired(sub + 0.0001 + 0.006, n, 700, 6000000)
+        if n == late:
+            retired(v + 0.004, 9999, 801, 2000000)
+    return lines
+
+
+class MissesTests(unittest.TestCase):
+    def test_a_late_submit_names_who_held_the_core(self):
+        result = stats.misses(full_trace(60, 30))
+        self.assertEqual(result["misses"], 1)
+        self.assertEqual(result["refreshes"], 60)  # the vblanks after the first job's
+        miss = result["miss_list"][0]
+        self.assertGreater(miss["late_ms"], 0)
+        self.assertAlmostEqual(miss["submit_after_vblank_ms"], 7.2, places=2)
+        self.assertAlmostEqual(miss["submit_wait_ms"], 0.1, places=2)
+        self.assertAlmostEqual(miss["gpu_ms"], 6.0, places=2)
+        self.assertAlmostEqual(miss["cpu_held_by_ms"]["steamwebhelper"], 6.0, places=2)
+        self.assertEqual(miss["other_gpu_ms"], {"801": 2.0})
+        self.assertAlmostEqual(result["good_medians"]["submit_after_vblank_ms"], 1.2, places=2)
+        self.assertAlmostEqual(result["cpu_held_by_ms_total"]["steamwebhelper"], 6.0, places=2)
+        json.dumps(result)
+
+    def test_no_compositor_jobs_no_misses(self):
+        self.assertEqual(stats.misses(["# compositor: 1"])["misses"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

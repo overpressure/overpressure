@@ -355,6 +355,11 @@ display in direct mode with three swapchain images.
   table the share varies (23–24 % with a margin of 1.4–5.3 ms shortly after a boot, 0 % with 6.2–6.5 ms
   after a standby) for unknown reasons, so a table run does not reliably test a panel in view; below 1 %
   the check warns that no Steam panel was tested. A game that saturates the GPU gives 0 ms and fails.
+- **Where a frame without a job lost its time.** `msm-frame-stats trace SECONDS PID OUT` records the same
+  events with the GPU's submits and flushes and the scheduler's switches; `msm-frame-stats misses OUT`
+  splits each late job into the time from the vblank before to its submit, the submit's wait to its flush,
+  the GPU's wait and the GPU's own time, against the medians of the frames on time, and names the threads
+  that held the submitting thread's core and the other processes' GPU time in that refresh.
 - **The compositor crashes at a stop.** About 40 ms after `Cleaning up`, with the render thread and every
   client gone, `vrcompositor` calls a virtual method of a freed object (`vrcompositor+0x106a10`, the
   function with "Unable to release resource of unknown type") and ends with SIGSEGV. Any client overlay
