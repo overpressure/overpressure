@@ -294,6 +294,4 @@ def format_valve_performance(performance: object) -> str:
     if margin is not None:
         text += f"; job margin p99 {margin} ms, web helpers {performance.get('web_helper_gpu_percent')} % of the GPU"
     failures = performance.get("failures") or []
-    text += "; " + "; ".join(failures) if failures else ""
-    warnings = performance.get("warnings") or []
-    return text + "".join(f"; warning: {w}" for w in warnings)
+    return text + ("; " + "; ".join(failures) if failures else "")

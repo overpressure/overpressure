@@ -351,10 +351,16 @@ display in direct mode with three swapchain images.
   (`PICO4_FRAMES_AHEAD`), vblanks signalled 5 ms early (`PICO4_VSYNC_LEAD_US`). It publishes the lead in
   `$XDG_RUNTIME_DIR/pico4-display-lead-us`, and `driver_monado` predicts that much further.
 - **What the check sees.** `msm-frame-stats` reports the web helpers' share of the GPU and how long
-  before its vblank each frame's last compositor job ended; a vblank without a job counts as 0. On a
-  table the share varies (23–24 % with a margin of 1.4–5.3 ms shortly after a boot, 0 % with 6.2–6.5 ms
-  after a standby) for unknown reasons, so a table run does not reliably test a panel in view; below 1 %
-  the check warns that no Steam panel was tested. A game that saturates the GPU gives 0 ms and fails.
+  before its vblank each frame's last compositor job ended; a vblank without a job counts as 0. The share
+  depends on the client's library home: for a minute or two after the client starts it zooms its art and
+  redraws its blur filters (about 12 backdrop blurs of 100 px over a blurred, zooming image, at
+  device pixel ratio 1.5) every frame, 55 web frames/s at about 4 ms of GPU each, 22–24 % of the GPU; the
+  compositor and the web helpers then fill the 11.1 ms of a refresh, and the margin varies from 0.1 to
+  5.3 ms between session starts. Afterwards the panels stay visible and the share is 0 %. The check
+  measures after that phase (`msm-frame-stats quiet`). Turnip's tile mode and ANGLE's backend change
+  that cost by less than 15 %; the client's own Low Performance Mode (`library_low_perf_mode`, also set
+  by Reduce Motion) turns those effects off, and is off as on the Frame. A game that saturates the GPU
+  gives 0 ms and fails.
 - **Where a frame without a job lost its time.** `msm-frame-stats trace SECONDS PID OUT` records the same
   events with the GPU's submits and flushes and the scheduler's switches; `msm-frame-stats misses OUT`
   splits each late job into the time from the vblank before to its submit, the submit's wait to its flush,
@@ -543,8 +549,12 @@ runs Valve's session for a bounded time and returns to the configured one:
    removes SteamVR's old logs, selects `gamescope-session.target` and restarts `pico4-session.service`.
 2. It waits up to 180 s for the compositor's "Startup Complete". Once `vrserver` answers it sets
    `power.turnOffScreensTimeout` to an hour, since a still headset off the head would enter standby
-   after 5 s and pause the compositor. It waits 20 s (`settle_seconds`) for the dashboard's startup
-   stalls, then `msm-frame-stats` records SECONDS (default 30) of flip, vblank and GPU job events.
+   after 5 s and pause the compositor. It waits 20 s for the dashboard's startup stalls, then until the
+   Steam client's web helpers take less than 2 % of the GPU over 5 s, at most 180 s more (`msm-frame-stats
+   quiet`; `settle_seconds` is the whole wait, `web_helpers_quiet` its result): after the client starts,
+   its library home zooms its art for a minute or two and redraws its blur filters every frame, about
+   4 ms of GPU per frame on the A650, and then draws nothing. Then `msm-frame-stats` records SECONDS
+   (default 30) of flip, vblank and GPU job events.
 3. It checks that `gamescope-session.target`, `steamvr.service` and `gamescope-session.service` are
    active, that the compositor started without an assertion and gamescope connected to it, that frames
    were recorded, and that SteamVR reports the headset and both controllers (`vrcmd --pollposes`).

@@ -614,11 +614,12 @@ class Runner(evidence.Runner):
             time.sleep(5)
         state["valve_session_cooldown"] = {"seconds": round(time.monotonic() - started), "hottest_c": hottest}
         self.save()
-        # Its stderr (systemctl's notes among it) stays out of the JSON.
+        # Its stderr (systemctl's notes among it) stays out of the JSON. The check takes up to 180 s for the
+        # startup, 20 s and up to 180 s more until Steam's web helpers are quiet, then the measured seconds.
         output = self.ssh(
             f"pico4-valve-session-check --seconds {userspace.VALVE_SESSION_SECONDS} "
             "2>/run/pico4/valve-session.log; echo EXIT=$?",
-            400,
+            600,
         )
         report, _, code = output.rpartition("EXIT=")
         (self.folder / "userspace-valve-session.json").write_text(report.strip() + "\n", encoding="utf-8")
