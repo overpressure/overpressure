@@ -22,12 +22,13 @@
 #   --stock-slam DIR    PICO OS's head tracker, its Compute DSP firmware and bionic root
 #                       (python -m overpressure assets, docs/xr.md). Without it head tracking
 #                       falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
-#   --packages DIR      a checkout of overpressure/packages instead of the commit that
-#                       userspace/packages.json pins (trying a change to a package)
-#   --packages-release  the pinned release's packages, downloaded and checked against its
-#                       SHA256SUMS (whose hash the pin holds), instead of building them here
+#   --packages DIR      build a checkout of overpressure/packages instead of taking the
+#                       pinned release's packages (trying a change to a package)
+#   --build-packages    build the pinned commit's recipes here instead of taking its release's
+#                       packages
 #   --refresh           download the current package databases and reinstall the base
-#                       root; without it every build installs the same package versions
+#                       root; without it every build installs the same package versions.
+#                       Builds the project's packages here against them.
 #   --update-lock       write OUTPUT_DIR/packages.lock instead of checking the pinned one
 #
 # The image's definition (pacman.conf, packages.txt, packages.lock) and the project's packages
@@ -35,10 +36,13 @@
 # userspace/packages.json pins; the build fetches it into cache/packages. Each step is skipped
 # when its inputs did not change:
 # 1. Build environment and project packages: overpressure/packages' build/packages.sh, in
-#    Valve/Collabora's Holo Core aarch64 preview rootfs (sha256-pinned), entered with chroot;
-#    on other hosts than arm64 its programs run under QEMU and the host's clang and lld compile
-#    natively in it. A package is rebuilt when its recipe folder changes. Each layer is a local
-#    pacman repository, overpressure-LAYER.
+#    Valve/Collabora's Holo Core aarch64 preview rootfs (sha256-pinned), entered with chroot.
+#    The project's packages are the pinned release's (built on arm64 in that repository's CI),
+#    downloaded into cache/packages-release/TAG and checked against its SHA256SUMS, whose hash
+#    the pin holds. With --packages, --build-packages or --refresh they are built here instead:
+#    on other hosts than arm64 the programs run under QEMU and the host's clang and lld compile
+#    natively; a package is rebuilt when its recipe folder changes. Each layer is a local pacman
+#    repository, overpressure-LAYER.
 # 2. Base root: packages.txt installed with pacman from the project's layers, the Steam Frame
 #    hotfix repository and the Holo Core preview (pacman.conf). Reinstalled when the list or
 #    pacman.conf changes, and with --refresh.
@@ -59,7 +63,7 @@ repo=$(cd "$source_dir/../.." && pwd)            # overpressure (its package, ca
 build_root=${1:?specify an isolated Linux-filesystem build directory}
 output=${2:?specify an output directory}
 shift 2
-firmware="" sensor_data="" wlan="" audio="" stock_slam="" packages_dir="" packages_release=0 refresh=0
+firmware="" sensor_data="" wlan="" audio="" stock_slam="" packages_dir="" build_packages=0 refresh=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --gpu-firmware) firmware=$(realpath "${2:?}"); shift 2 ;;
@@ -68,14 +72,16 @@ while [[ $# -gt 0 ]]; do
     --audio) audio=$(realpath "${2:?}"); shift 2 ;;
     --stock-slam) stock_slam=$(realpath "${2:?}"); shift 2 ;;
     --packages) packages_dir=$(realpath "${2:?}"); shift 2 ;;
-    --packages-release) packages_release=1; shift ;;
+    --build-packages) build_packages=1; shift ;;
     --refresh) refresh=1; shift ;;
     --update-lock) update_lock=1; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
     esac
 done
 [[ $EUID == 0 && "$build_root" = /* && "$build_root" != / ]] || { echo 'Root and an absolute isolated build directory are required' >&2; exit 2; }
-[[ $packages_release == 0 || -z $packages_dir ]] || { echo '--packages and --packages-release exclude each other' >&2; exit 2; }
+# The pinned release's packages, unless they are to be built here.
+packages_release=1
+[[ $build_packages == 0 && $refresh == 0 && -z $packages_dir ]] || packages_release=0
 host_arch=$(uname -m)
 if [[ $host_arch != aarch64 ]]; then
     # The handler by its ELF magic (aarch64 executables), whatever it is named: qemu-aarch64 from

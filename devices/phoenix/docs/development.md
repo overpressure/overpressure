@@ -167,10 +167,10 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 | `--wlan DIR` | Wi-Fi firmware and board data, `assets/wlan-VERSION` |
 | `--audio DIR` | ADSP firmware and the audio process's files, `assets/audio-VERSION` |
 | `--stock-slam DIR` | PICO OS's head tracker, the Compute DSP's firmware and the tracker's bionic root, `assets/stock-slam-VERSION` ([xr.md](xr.md#head-tracking)); needs the host's clang |
-| `--refresh` | download current package databases and reinstall the base root |
+| `--refresh` | download current package databases and reinstall the base root; builds the project's packages here against them |
 | `--update-lock` | write `OUTPUT_DIR/packages.lock` for review instead of checking the build against the pinned lock ([userspace.md](userspace.md#package-lock)) |
-| `--packages DIR` | build a checkout of [overpressure/packages](https://github.com/overpressure/packages) instead of the commit `userspace/packages.json` pins: a change to a package, tried in the image |
-| `--packages-release` | take the pinned release's packages (built on arm64 with GCC) instead of building them: downloaded into `cache/packages-release/TAG`, each checked against the release's `SHA256SUMS`, whose hash the pin holds |
+| `--packages DIR` | build a checkout of [overpressure/packages](https://github.com/overpressure/packages) instead of taking the pinned release's packages: a change to a package, tried in the image |
+| `--build-packages` | build the pinned commit's recipes here instead of taking its release's packages |
 
 Each step is skipped when its inputs did not change:
 
@@ -180,8 +180,11 @@ Each step is skipped when its inputs did not change:
 2. **Build environment and project packages.** overpressure/packages' `build/packages.sh`: Valve's Holo Core
    aarch64 preview root file system, pinned by SHA-256, unpacked once, with the packages the recipes build
    against, each pinned by the lock or the Holo snapshot. Package databases are downloaded by the first build
-   and with `--refresh` only. makepkg builds each recipe of the PICO 4's layers when its folder or the compiler
-   changes; each layer becomes a local pacman repository `overpressure-LAYER`.
+   and with `--refresh` only. The project's packages are the pinned release's, built on arm64 in that
+   repository's CI, downloaded once into `cache/packages-release/TAG` and each checked against the release's
+   `SHA256SUMS`, whose hash the pin holds. With `--packages`, `--build-packages` or `--refresh` makepkg builds
+   each recipe of the PICO 4's layers here instead, when its folder or the compiler changes. Each layer becomes
+   a local pacman repository `overpressure-LAYER`.
 3. **Base root.** The definition's `packages.txt` installed by pacman from the project's layers, the Steam Frame
    hotfix repository and the Holo Core preview; reinstalled when the package list or `pacman.conf` changes, and
    with `--refresh`.

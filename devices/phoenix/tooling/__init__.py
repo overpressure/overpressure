@@ -175,8 +175,10 @@ class Phoenix(Headset):
                     "--stock-slam",
                     "assets/stock-slam-{version}",
                     "{refresh}",
+                    "{build_packages}",
                 ),
-                "Holo Core and the Frame's packages with this headset's adaptation; incremental.",
+                "Holo Core and the Frame's packages, the project's from the pinned release, with this headset's "
+                "adaptation; incremental.",
                 (
                     Param("build_root", "Build folder (container volume)", build, "path"),
                     Param("output", "Output folder", "out/userspace", "path"),
@@ -187,6 +189,14 @@ class Phoenix(Headset):
                         help="the assets/*-VERSION folders",
                     ),
                     Param("refresh", "Refresh package databases", "0", "flag", option="--refresh"),
+                    Param(
+                        "build_packages",
+                        "Build the project's packages here",
+                        "0",
+                        "flag",
+                        option="--build-packages",
+                        help="instead of the pinned release's; slow on x86-64",
+                    ),
                 ),
                 script=True,
                 linux_root=True,

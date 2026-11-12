@@ -92,8 +92,9 @@ python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> 
 # Any system, no Linux needed: the stock firmware from PICO's public OTA, then the assets
 # (docs/development.md#stock-firmware; about 11 GB of OTA members and images in cache/pico4-stock):
 python -m overpressure assets --firmware 5.13.7-global-seko
-# In the build container, as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages;
-# --packages DIR builds a checkout of overpressure/packages instead of the pinned commit):
+# In the build container, as root (incremental; the project's packages from the pinned release of
+# overpressure/packages; --refresh for new Valve packages; --packages DIR builds a checkout of
+# overpressure/packages, --build-packages the pinned commit, both with native clang/lld on x86-64):
 python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
     /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
@@ -112,8 +113,8 @@ python -m overpressure cycle --restore-only              # verified stock boot a
 ```
 
 - The userspace build snapshots its inputs at the start: the tree can be edited during a build.
-- Project packages rebuild only when their recipe folder changes. Package databases change only with
-  `--refresh`. Details and timings: docs/development.md.
+- Project packages come from the pinned release; built here, they rebuild only when their recipe folder
+  changes. Package databases change only with `--refresh`. Details and timings: docs/development.md.
 - Test on the headset. `tests/qemu/` covers stage 1 only; don't run it unless the user asks.
 
 ## Hard rules

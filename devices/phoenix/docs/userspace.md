@@ -97,9 +97,9 @@ OpenGL through zink.
 
 The packages are [overpressure/packages](https://github.com/overpressure/packages)': each recipe there holds its
 code, patches and installed files, and a code package's tests run in its build. `userspace/packages.json` pins a
-release of that repository by tag, commit and the hash of its `SHA256SUMS`; the build fetches the commit and
-builds its recipes, or takes the release's packages (`--packages-release`); `--packages DIR` builds a checkout
-instead. A change to a package is a change there, a new tag and a new pin
+release of that repository by tag, commit and the hash of its `SHA256SUMS`. The build takes the release's
+packages, built on arm64 in that repository's CI and each checked against its `SHA256SUMS`; `--build-packages`
+builds the pinned commit's recipes here, `--packages DIR` a checkout. A change to a package is a change there, a new tag and a new pin
 here.
 
 | Package | Content | Details |
@@ -210,10 +210,10 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 | `--wlan DIR` | Wi-Fi firmware and board data; without it Wi-Fi stays off |
 | `--audio DIR` | ADSP firmware and the audio process's files; without it there is no sound card |
 | `--stock-slam DIR` | PICO OS's head tracker, its Compute DSP firmware and bionic root ([xr.md](xr.md)); without it head tracking falls back to 3DoF unless `PICO4_SLAM_BACKEND=basalt` |
-| `--refresh` | downloads current package databases and reinstalls the base root |
+| `--refresh` | downloads current package databases and reinstalls the base root; builds the project's packages here against them |
 | `--update-lock` | writes `OUTPUT_DIR/packages.lock` instead of checking [the lock](#package-lock) |
-| `--packages DIR` | builds a checkout of overpressure/packages instead of the pinned commit |
-| `--packages-release` | takes the pinned release's packages instead of building them, each checked against the release's `SHA256SUMS`, whose hash the pin holds |
+| `--packages DIR` | builds a checkout of overpressure/packages instead of taking the pinned release's packages |
+| `--build-packages` | builds the pinned commit's recipes here instead of taking its release's packages |
 
 How it works:
 
@@ -225,8 +225,10 @@ How it works:
   lock or the Holo snapshot. On non-arm64 hosts its programs run under QEMU through the aarch64 binfmt handler, which
   the build container registers when the engine has none; on x86-64 the container's clang and lld (LLVM 20) compile
   natively with the build environment as sysroot (no LTO).
-- Project packages rebuild only when their recipe folder changes; each layer becomes a local pacman repository
-  `overpressure-LAYER`. Package databases are downloaded only by the first build and with `--refresh`.
+- The project packages are the pinned release's, downloaded once into `cache/packages-release/TAG`. Built here
+  (`--packages`, `--build-packages`, `--refresh`), they rebuild only when their recipe folder changes. Each layer
+  becomes a local pacman repository `overpressure-LAYER`. Package databases are downloaded only by the first
+  build and with `--refresh`.
 - The base root ([packages.txt](https://github.com/overpressure/packages/blob/main/headsets/phoenix/packages.txt)) is kept between builds; each build assembles the image
   root as an overlay on it with the project packages and the adaptation layer ([userspace/rootfs/](../userspace/rootfs/),
   users, units, the session configuration).
