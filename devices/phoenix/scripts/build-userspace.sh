@@ -610,13 +610,9 @@ rm -f "$T/var/cache/ldconfig/aux-cache"
 step "writing archive and manifest"
 phase "writing archive and manifest"
 in_t pacman -Q > "$build_root/packages.txt"
-# The package files of exactly the installed versions (the caches keep older ones too): the upstream
-# ones, which the lock pins, and the project's.
-while read -r name version; do
-    for f in "$B/var/cache/pico4-pkgs/$name-$version"-{aarch64,any}.pkg.tar.zst; do
-        [[ ! -f "$f" ]] || sha256sum "$f" | sed 's|  .*/|  ./|'
-    done
-done < "$build_root/packages.txt" | sort -u -k2 > "$build_root/upstream-hashes.txt"
+# The package files of exactly the installed versions (the caches keep older ones too): the project's,
+# from its repositories, and the upstream ones, which the lock pins (pacman's cache holds copies of the
+# project's too).
 while read -r name version; do
     for layer in "${layers[@]}"; do
         for f in "$B/var/cache/overpressure/$layer/$name-$version"-{aarch64,any}.pkg.tar.zst; do
@@ -624,6 +620,13 @@ while read -r name version; do
         done
     done
 done < "$build_root/packages.txt" | sort -u -k2 > "$build_root/project-hashes.txt"
+while read -r name version; do
+    for f in "$B/var/cache/pico4-pkgs/$name-$version"-{aarch64,any}.pkg.tar.zst; do
+        [[ ! -f "$f" ]] || sha256sum "$f" | sed 's|  .*/|  ./|'
+    done
+done < "$build_root/packages.txt" | sort -u -k2 |
+    awk 'NR == FNR {project[$2] = 1; next} !($2 in project)' "$build_root/project-hashes.txt" - \
+    > "$build_root/upstream-hashes.txt"
 sort -u -k2 "$build_root/upstream-hashes.txt" "$build_root/project-hashes.txt" > "$build_root/package-hashes.txt"
 # The project repositories' databases are the build's own (repo-add records the time it ran), and the
 # headset's pacman.conf has none of them: the image keeps only the upstream databases.
