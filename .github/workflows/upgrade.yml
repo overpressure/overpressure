@@ -1,4 +1,5 @@
-# Weekly: would the image still build on Valve's newest packages and kernel (docs/development.md#upgrade-check)?
+# Weekly: would the image still build on Valve's newest packages (docs/development.md#upgrade-check)? Valve's kernel
+# is followed in overpressure/linux.
 # The run fails when a build fails; its summary lists what Valve moved. It needs no vendor file and no headset:
 # whether the session still runs on the result is checked on the headset before a release.
 name: Upgrade check

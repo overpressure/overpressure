@@ -35,7 +35,8 @@ userspace/        stage 2: the SteamOS-compatible userspace
   session/          the session user's SteamVR configuration
   pkgbuilds/        the project's packages: pico4-sensors, pico4-basalt, pico4-monado, pico4-gamescope,
                     pico4-vrlink, pico4-swapchain-usage, pico4-gtk2 and others
-kernel/           Valve's kernel: build-kernel.sh, patches/, the PICO's drivers, the device tree
+kernel/           the pinned release of overpressure/linux (release.json), build-tree.sh, imx471_mode.py,
+                  recovery_image.py
 src/              C sources: graphics/ (the Vulkan test), monado/ (Monado's PICO 4 driver),
                   stockslam/ (pico4-slamd), vrlink/ (Steam Link), xr/ (OpenXR test clients), swapchain/ (frame pacing),
                   reboot/ (pico4-reboot), splash/ (pico4-splash)
@@ -209,7 +210,7 @@ about a minute for Monado.
 
 ## Upgrade check
 
-The image pins every package and the kernel, which move only with a release
+The image pins every package, which move only with a release
 ([docs/releasing.md](../../../docs/releasing.md)). Whether the image would still build on what Valve publishes
 meanwhile is checked weekly in CI on GitHub's ARM64 runner ([upgrade.yml](../../../.github/workflows/upgrade.yml),
 Mondays, or by hand), and on any computer with the build container:
@@ -224,7 +225,6 @@ python -m overpressure container run -- bash devices/phoenix/scripts/upgrade-che
 | Part | What it does | Fails when |
 | --- | --- | --- |
 | Userspace | `build-userspace.sh --refresh --update-lock` in its own build root, without the asset folders; [`upstream.py lock-diff`](../scripts/upstream.py) lists every package that moved since `userspace/packages.lock`, the session's packages first | a project package does not build, a patch does not apply, or a dependency stays unresolved |
-| Kernel | reads Valve's current `linux-72-deckard` from the Frame repository's database; a newer one whose source package is published is built by `kernel/build-kernel.sh` with `-` for the stock images: our patches, configuration and drivers, an empty camera table and no device tree (those come from PICO OS's files) | a patch does not apply, an option of `pico4.config` does not survive, or the kernel does not compile |
 
 `out/upgrade-check/upgrade-check.md` is the summary; the CI run's page shows it. A moved package that still
 builds fails nothing: whether the session runs on it is the headset's check before a release.

@@ -4,7 +4,7 @@
 | --- | --- |
 | What | The fan, the thermal policy, the VR CPU limits and the hardware limits of the system on Valve's kernel, following PICO OS |
 | How | The fan hangs off the GD32 MCU that also moves the lenses and drives the backlight ([xr.md](xr.md#lens-distortion-and-ipd)); `pico4-fan` sends it PICO OS's duty frames over `/dev/ttyHS1`, from PICO OS's policy on the CPU and GPU zones. The kernel throttles at the stock trips; `pico4-battery-guard` takes PICO OS's battery decisions |
-| Code | [`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan) and its unit, [`battery-guard`](../userspace/rootfs/usr/libexec/pico4/battery-guard), [`vr-performance`](../userspace/rootfs/usr/libexec/pico4/vr-performance), the trips in [the device tree](../kernel/sm8250-pico4-phoenix.dts) |
+| Code | [`pico4-fan`](../userspace/rootfs/usr/bin/pico4-fan) and its unit, [`battery-guard`](../userspace/rootfs/usr/libexec/pico4/battery-guard), [`vr-performance`](../userspace/rootfs/usr/libexec/pico4/vr-performance), the trips in [the device tree](https://github.com/overpressure/linux/blob/phoenix/7.2/arch/arm64/boot/dts/qcom/sm8250-pico4-phoenix.dts) |
 | State | The MCU acknowledges duties and reports the fan's speed; Valve's 30 s session check peaks at 65.5 °C, about 10 minutes of a worn game at 75.6 °C ([kernel.md](kernel.md#results)). The limit for the hottest zone is 90 °C |
 
 Without fan control the 30 s session check went from 47 °C to 86 °C. PICO OS's early table is the default; that it
@@ -223,7 +223,7 @@ The risk is the same as on PICO OS, which runs the speakers without active prote
 - **Volume.** PICO OS's media speaker curve ends at 0 dB (`audio_policy_volumes.xml`: −29.7 dB at 0, −20.1 at 33,
   −10.2 at 66, 0 at 100), and `config_safe_media_volume_enabled` is false.
 - **Here.** `WSA_RXn Digital Volume` 84 as in `mixer_paths.xml`, compander and boost on, the amplifier registers of the
-  stock kernel during playback (patch 0024), PICO's calibration with its processing blocks
+  stock kernel during playback (the kernel commit “ASoC: the speakers' amplifiers and codec path as the stock kernel runs them”), PICO's calibration with its processing blocks
   ([userspace.md](userspace.md#audio)). `VISENSE` stays off. A path whose topology the DSP refuses has none of PICO's
   processing.
 

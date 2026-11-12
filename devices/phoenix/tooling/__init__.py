@@ -3,7 +3,8 @@
 
 Its host tooling: the stage-1 boot image (the maintenance stage 1, on the stock kernel), the stock
 firmware from PICO's public OTA, EDL, fastboot and ADB, the acceptance runner, the development
-loop and the acceptance cycle; the system itself runs on Valve's kernel (kernel/). Python 3.9+
+loop and the acceptance cycle; the system itself runs on Valve's kernel, overpressure/linux's
+release that kernel/release.json pins. Python 3.9+
 with the standard library and overpressure's pinned packages (pyproject.toml); the formats it
 shares with other headsets come from the overpressure package.
 """
@@ -86,12 +87,12 @@ _firmware = Param(
     "the PICO OS build in firmware.json whose stock kernel the image takes",
 )
 #: The stock firmware folder of python -m overpressure stock and assets, relative to the repository:
-#: the assets step reads it on this computer, the kernel step in the build container (at /work).
+#: the assets step reads it on this computer.
 STOCK_FOLDER = "cache/pico4-stock/" + FIRMWARE
 # The Linux build folders live in /var/tmp on purpose: the build container's volume, on a Linux file system and kept.
 #: The userspace build's root, on the Linux side.
 USERSPACE_BUILD = "/var/tmp/pico4-userspace-build"  # noqa: S108  # a root-owned build folder, not a temporary file
-#: The kernel build's folder, on the Linux side.
+#: The kernel build's folder (kernel-build), on the Linux side.
 KERNEL_BUILD = "/var/tmp/pico4-kernel-build"  # noqa: S108  # a root-owned build folder, not a temporary file
 
 
@@ -128,6 +129,7 @@ class Phoenix(Headset):
                 headset=DEV_ON_HEADSET,
             ),
             "cycle": Command("cycle", "unattended acceptance cycle that ends on stock boot and ABL", headset=True),
+            "kernel": Command("kernel", "the pinned release of overpressure/linux: download, check, contracts"),
         }
 
     def steps(self) -> Sequence[Step]:
@@ -213,16 +215,18 @@ class Phoenix(Headset):
                 "kernel",
                 "Valve's kernel",
                 "Image",
-                ("scripts/build-kernel-step.sh", "{recovery}", "{stock}", "{work}"),
-                "Valve's public source package (2.5 GB), the PICO 4's patches and drivers, into out/kernel. "
-                "Needs the dev image's step first: it caches the stock recovery.",
-                (
-                    Param("recovery", "Stock recovery image (or its folder)", "cache/stock", "path"),
-                    Param("stock", "Stock folder", STOCK_FOLDER, "path"),
-                    Param("work", "Build folder (container volume)", KERNEL_BUILD, "path"),
-                ),
-                script=True,
-                linux_root=True,
+                ("kernel", "fetch"),
+                "The release of overpressure/linux that kernel/release.json pins (about 30 MB), checked by "
+                "hash, into out/kernel.",
+            ),
+            Step(
+                "kernel-build",
+                "Valve's kernel, built here",
+                "Image",
+                ("kernel", "build", "{work}"),
+                "Instead of the download: the pinned commit of overpressure/linux (280 MB) built in the build "
+                "image the release was built with and checked against the release's hashes, into out/kernel.",
+                (Param("work", "Build folder (container volume)", KERNEL_BUILD, "path"),),
             ),
             Step(
                 "boot-image",

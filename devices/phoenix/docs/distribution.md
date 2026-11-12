@@ -1,21 +1,22 @@
 # What is distributed
 
-The project publishes source: its own code, recipes, patches and pins. It publishes no image, no vendor file
-and no binary of anyone else's. Each owner builds their own image on their own computer, from files each of
-them downloads from where the vendors publish them. This is a description of how the project works, not
-legal advice.
+The project publishes source: its own code, recipes, patches and pins, and one binary, Valve's kernel with the
+project's changes, which is GPL-2.0 and published with its source ([overpressure/linux](https://github.com/overpressure/linux)). It publishes
+no image, no vendor file and no other binary of anyone else's. Each owner builds their own image on their own
+computer, from files each of them downloads from where the vendors publish them. This is a description of how the
+project works, not legal advice.
 
 | Input | Publisher | In this repository | How an owner gets it | Used for |
 | --- | --- | --- | --- | --- |
 | PICO OS OTA of the headset's firmware | PICO, public download | URL and hashes (`tooling/firmware.json`) | `python -m overpressure stock`, on their PC | stock kernel, device-tree overlays, GPU, Wi-Fi, audio and DSP firmware, sensor data |
 | PICO OS's head tracker (`libSlam` and its libraries) | PICO, in that OTA | no | `python -m overpressure assets`, on their PC | 6DoF head tracking |
-| Panel commands | PICO, in that OTA | no: generated at each build (`kernel/panel_sequence.py`) | the kernel build, from their OTA | both panels |
+| Panel commands, the ABL overlay's labels | PICO, in that OTA's board overlay (part of its kernel's device tree) | no: in overpressure/linux's device tree, as GPL source | the kernel release | both panels, the ABL's overlay |
 | Camera sensor settings | PICO, in that OTA | no: written by the assets step (`kernel/imx471_mode.py`) | `python -m overpressure assets`, on their PC; the system image carries them, the kernel loads them | the RGB camera |
 | Engineering ABL | PICO, in a public PICO Neo 3 OTA | URL and hash (`tooling/unlockfiles.py`) | `python -m overpressure device fetch-unlock-files` | unlocking, development mode |
 | Firehose loader | PICO, in a public PICO Neo 3 package | URL and hash (`tooling/unlockfiles.py`) | the same command | EDL backups and restores |
 | The headset's calibration | the owner's headset | no | read from `persist`, on the headset, at run time | tracking, displays |
 | Holo Core and the Frame's packages, Steam's client, SteamVR | Valve, public package repositories without signatures | names and hashes (`userspace/packages.lock`) | the userspace build, on their PC | the userspace, Valve's session |
-| Valve's kernel | Valve, its public GPL source package | hash and commit (`kernel/build-kernel.sh`), patches | the kernel build, on their PC | the kernel |
+| Valve's kernel | Valve, its public GPL source package; the project's changes in [overpressure/linux](https://github.com/overpressure/linux) | the pinned release (`kernel/release.json`) | the release's `Image.gz` and device tree, checked by hash, or built from its commit (`kernel build`) | the kernel |
 | The Steam client's updates, games | Valve, with the owner's own Steam account | no | Steam, on the headset | Steam |
 | Open source projects | their upstreams | recipes, pins and patches (`userspace/pkgbuilds/`) | the userspace build | Monado, gamescope and others |
 | `prebuilt/aarch64/pico4-reboot`, `pico4-splash` | this project | yes, with their sources in `src/` | the repository | stage 1 and the userspace build without a cross compiler for them |

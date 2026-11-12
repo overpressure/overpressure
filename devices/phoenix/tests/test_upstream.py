@@ -35,30 +35,6 @@ def lock(*files: str) -> str:
     return "".join(f"{'0' * 64}  {f}\n" for f in files)
 
 
-class RepositoryTests(unittest.TestCase):
-    def test_the_frame_repository_from_the_images_pacman_conf(self):
-        conf = (ROOT / "userspace" / "pacman.conf").read_text(encoding="utf-8")
-        self.assertEqual(
-            upstream.repo_server(conf),
-            "https://steamdeck-packages.steamos.cloud/archlinux-deckard-hotfixes/release/0.3.x",
-        )
-        with self.assertRaises(ValueError):
-            upstream.repo_server("[core]\nServer = x\n")
-
-    def test_versions_from_the_database(self):
-        db = database({"linux-72-deckard": "7.2.0+gd5320b89e661-3", "deckard-steamvr-rel": "r1+abc-1"})
-        self.assertEqual(
-            upstream.db_versions(db), {"linux-72-deckard": "7.2.0+gd5320b89e661-3", "deckard-steamvr-rel": "r1+abc-1"}
-        )
-
-    def test_the_pinned_kernel_and_its_source(self):
-        step = (ROOT / "scripts" / "build-kernel-step.sh").read_text(encoding="utf-8")
-        pinned = upstream.pinned_kernel(step)
-        self.assertRegex(pinned, r"^7\.2\.0\+g[0-9a-f]{12}-\d+$")
-        # The step's own URL is the one the check would build: the same spelling of the version.
-        self.assertIn(upstream.source_url(pinned), step)
-
-
 class LockTests(unittest.TestCase):
     def test_versions_keep_epochs_and_any(self):
         versions = upstream.lock_versions(

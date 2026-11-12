@@ -83,13 +83,11 @@ class DevImageTests(unittest.TestCase):
 
 
 class StockLibTests(unittest.TestCase):
-    def test_the_kernel_build_dumps_through_overpressures_ext4_reader(self):
+    def test_the_build_scripts_dump_through_overpressures_ext4_reader(self):
         lib = read(ROOT.parent.parent / "scripts/stock-lib.sh")
         self.assertTrue(re.search(r"dump\(\) \{", lib))
         self.assertIn("python3 -m overpressure.ext4 cat", lib)
-        kernel = read(ROOT / "kernel/build-kernel.sh")
-        self.assertIn('. "$here/../../../scripts/stock-lib.sh"', kernel)
-        self.assertNotIn("debugfs", lib + kernel)
+        self.assertNotIn("debugfs", lib)
 
 
 if __name__ == "__main__":

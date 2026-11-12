@@ -154,8 +154,6 @@ class AudioCalLookupTests(unittest.TestCase):
             paths[0], (0xB000, 1, 0x11000003, speaker["afe_topology"], speaker["audproc"] + speaker["audvol"])
         )
         self.assertEqual(paths[1], (0xB037, 2, 0x10010315, mic["afe_topology"], mic["audproc"]))
-        driver = (ROOT / "kernel/src/sound/soc/qcom/qdsp6/q6calibration-pico4.c").read_text(encoding="utf-8")
-        self.assertIn('#define CAL_FIRMWARE\t"qcom/sm8250/pico4/audio-calibration.bin"', driver)
         self.assertTrue(audiocal.MAINLINE_FILE.endswith("/firmware/qcom/sm8250/pico4/audio-calibration.bin"))
 
     def test_missing_device_is_an_error(self):

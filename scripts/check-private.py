@@ -38,7 +38,7 @@ PATTERNS = {
     ),
     "private key": re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----(?!\\n)"),
 }
-#: A table of many {register, value} pairs is a vendor part's settings, not code (kernel/panel_sequence.py).
+#: A table of many {register, value} pairs is a vendor part's settings, not code (a camera sensor's mode).
 REGISTER_PAIR = re.compile(rb"\{\s*0x[0-9a-fA-F]{4},\s*0x[0-9a-fA-F]{2}\s*\}")
 REGISTER_TABLE = 16
 #: Shorter .env values would match by chance.

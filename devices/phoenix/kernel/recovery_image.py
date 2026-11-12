@@ -3,9 +3,10 @@
 
 The installed system's (--direct --boot), and a recovery image for a one-shot test boot. It
 takes the dev loop's recovery image (out/dev/dev-recovery.img: stage 1's ramdisk, its command
-line, the stock recovery_dtbo) and replaces the kernel and the device tree with the ones
-build-kernel.sh made. The recovery image is a whole recovery partition with the stock vbmeta
-behind it, as "dev image" builds it, because recovery is a chained AVB partition.
+line, the stock recovery_dtbo) and replaces the kernel and the device tree with the ones in
+out/kernel (the pinned release, kernel fetch or kernel build). The recovery image is a whole
+recovery partition with the stock vbmeta behind it, as "dev image" builds it, because recovery is a
+chained AVB partition.
 
 Started by a reboot with reason "recovery", the ABL boots a recovery image once; any reboot after
 that (a panic, a deadline, a hard reset) starts the installed system from boot again.

@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: Unlicense
 # The upgrade check (docs/development.md#upgrade-check): would the image still build on Valve's newest
-# packages and kernel? It needs none of PICO OS's files, so it runs anywhere the build container does
+# packages? It needs none of PICO OS's files, so it runs anywhere the build container does
 # (weekly in CI, .github/workflows/upgrade.yml):
 #
 #   python -m overpressure container run -- bash devices/phoenix/scripts/upgrade-check.sh WORKDIR OUTPUT_DIR
@@ -10,9 +10,8 @@
 #    --refresh --update-lock) in WORKDIR/userspace: our packages build against Valve's newest, our
 #    patches apply, nothing is left unresolved. What moved since userspace/packages.lock goes into the
 #    summary.
-# 2. Valve's current linux-72-deckard against the pinned one. A newer one whose source package is
-#    published is built with our patches, configuration and drivers (build-kernel.sh with - for the
-#    stock images: no camera table, no device tree).
+# Valve's kernel is followed in overpressure/linux: its layers are rebased onto Valve's new commits there,
+# where its CI builds them.
 #
 # OUTPUT_DIR/upgrade-check.md is the summary. The exit status is 1 when a build failed. That the
 # session still runs on the result is the headset's check, before a release (docs/releasing.md).
@@ -48,38 +47,5 @@ if [ -f "$out/userspace/packages.lock" ]; then
 	python3 "$here/upstream.py" lock-diff "$phoenix/userspace/packages.lock" "$out/userspace/packages.lock" >> "$summary"
 fi
 
-{
-	echo
-	echo "## Kernel"
-	echo
-} >> "$summary"
-kernel_pinned="" kernel_current="" kernel_source=""
-if versions=$(python3 "$here/upstream.py" kernel "$phoenix/userspace/pacman.conf" "$here/build-kernel-step.sh"); then
-	eval "$versions"
-fi
-if [ -z "$kernel_current" ]; then
-	failed=1
-	echo "**Valve's repository could not be read.**" >> "$summary"
-elif [ "$kernel_current" = "$kernel_pinned" ]; then
-	echo "linux-72-deckard $kernel_pinned, as pinned." >> "$summary"
-elif [ -z "$kernel_source" ]; then
-	echo "linux-72-deckard $kernel_current is out (pinned: $kernel_pinned); Valve has not published its source package yet." >> "$summary"
-else
-	package=$work/kernel-source/$(basename "${kernel_source//%2B/+}")
-	mkdir -p "$work/kernel-source"
-	if { [ -f "$package" ] || curl -fsSL --retry 3 -o "$package" "$kernel_source"; } &&
-		bash "$phoenix/kernel/build-kernel.sh" "$package" - - "$work/kernel" "$out/kernel" > "$out/kernel.log" 2>&1; then
-		echo "linux-72-deckard $kernel_current (pinned: $kernel_pinned) builds with our patches, configuration and drivers." >> "$summary"
-	else
-		failed=1
-		{
-			echo "**linux-72-deckard $kernel_current (pinned: $kernel_pinned) does not build** with our patches; the log's end:"
-			echo
-			echo '```'
-			tail -n 30 "$out/kernel.log" 2>/dev/null
-			echo '```'
-		} >> "$summary"
-	fi
-fi
 cat "$summary"
 exit "$failed"

@@ -110,26 +110,6 @@ class WifiTests(unittest.TestCase):
         conf = text(ROOTFS / "etc/NetworkManager/conf.d/50-pico4-wifi-autoconnect.conf")
         self.assertRegex(conf, r"(?m)^\[device\]\nwifi\.iwd\.autoconnect=false$")
 
-    def test_kernel_builds_ath11k_in(self):
-        config = text(ROOT / "kernel/pico4.config")
-        for option in ("CONFIG_ATH11K=y", "CONFIG_ATH11K_PCI=y", "CONFIG_PCI_PWRCTRL_PWRSEQ=y"):
-            self.assertIn(option + "\n", config)
-
-    def test_tree_powers_the_chip_from_the_stock_supplies(self):
-        tree = text(ROOT / "kernel/sm8250-pico4-phoenix.dts")
-        pmu = tree[tree.index("qca6390-pmu {") : tree.index("regulators {", tree.index("qca6390-pmu {"))]
-        for supply in (
-            "vddaon-supply = <&vreg_s6a_0p95>",
-            "vddrfa1p3-supply = <&vreg_s8c_1p3>",
-            "vddrfa1p9-supply = <&vreg_s5a_1p9>",
-            "vddio-supply = <&vreg_s4a_1p8>",
-            "wlan-enable-gpios = <&tlmm 20 GPIO_ACTIVE_HIGH>",
-            "bt-enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>",
-        ):
-            self.assertIn(supply, pmu)
-        self.assertIn('compatible = "pci17cb,1101"', tree)
-        self.assertIn('compatible = "qcom,qca6390-bt"', tree)
-
 
 class BluetoothTests(unittest.TestCase):
     def test_firmware_is_in_the_image_and_the_controller_probes_again(self):
@@ -197,10 +177,6 @@ class BluetoothTests(unittest.TestCase):
         enabled = build[build.index("in_t systemctl enable") :]
         for name in ("pico4-bt-firmware.service", "pico4-bt-address.service", "bluetooth.service"):
             self.assertIn(name, enabled)
-
-    def test_kernel_waits_for_the_wcn7850_firmware_only(self):
-        patch = text(ROOT / "kernel/patches/0006-bluetooth-hci_qca-wait-for-the-wcn7850-firmware-only.patch")
-        self.assertIn("+	if (qcadev->btsoc_type == QCA_WCN7850) {", patch)
 
 
 if __name__ == "__main__":

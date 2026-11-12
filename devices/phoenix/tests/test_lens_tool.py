@@ -128,16 +128,6 @@ class SessionTests(unittest.TestCase):
         self.assertIn("VREvent_LeaveStandbyMode", patch)
         hmd = self.read("src/monado/pico4_hmd.c")
         self.assertIn("/sys/class/backlight/pico4-panel/bl_power", hmd)
-        panel = self.read("kernel/src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c")
-        self.assertIn('"pico4-panel"', panel)
-        # Raising the enable line alone leaves the lenses dark.
-        self.assertIn("ret = pico4_send(ctx, ctx->on_cmds, ctx->on_len, true);\n\t\tif (ret)\n\t\t\tdev_err", panel)
-
-    def test_a_boots_panels_get_their_first_light(self):
-        # They stay dark after their first power-on, and the boot's spinner with them.
-        panel = self.read("kernel/src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c")
-        self.assertIn("schedule_delayed_work(&ctx->first_light, msecs_to_jiffies(300));", panel)
-        self.assertIn("cancel_delayed_work_sync(&ctx->first_light);", panel)
 
     def test_the_driver_logs_the_battery_level_raw(self):
         controller = self.read("src/monado/pico4_controller.c")

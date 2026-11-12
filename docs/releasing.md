@@ -63,5 +63,5 @@ says what Valve has moved and whether the image still builds on it
 | --- | --- | --- |
 | Holo and Frame packages, SteamVR, Mesa | `build-userspace.sh --refresh --update-lock`, review `OUTPUT_DIR/packages.lock` and copy it to `userspace/packages.lock` | the whole checklist: `driver_monado`, the patches and masks depend on SteamVR's behaviour |
 | PipeWire | `pkgver` of `pico4-spa-alsa` to the new version, its patch rebased; the build stops otherwise | suspend with the microphone capturing |
-| Valve's kernel | the source package's name, SHA-256 and commit in `kernel/build-kernel.sh`, its name and URL in `scripts/build-kernel-step.sh`, the patches rebased | the whole checklist |
+| Valve's kernel | in overpressure/linux: the layers rebased onto Valve's new commit, its CI green, a new tag `phoenix/7.2-N` released; then `devices/phoenix/kernel/release.json` pinned to it (the kernel workflow rebuilds it and the contracts check the names both sides share) | the whole checklist |
 | PICO OS firmware | a new entry in `VERIFIED_FIRMWARES`, only after the whole path has run on it | the whole checklist |

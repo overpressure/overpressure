@@ -74,7 +74,7 @@ then start the installer again; it enters EDL mode afresh.
 | [docs/install.md](docs/install.md) | the installed system: layout, boot modes, install, upgrade, the way back |
 | [docs/device-preparation.md](docs/device-preparation.md) | identity, EDL backups, engineering bootloader, unlock, verified hardware |
 | [docs/stage1.md](docs/stage1.md) | the maintenance system |
-| [docs/kernel.md](docs/kernel.md) | Valve's kernel on the PICO 4: patches, drivers, device tree |
+| [docs/kernel.md](docs/kernel.md) | Valve's kernel on the PICO 4: its release, the changes in overpressure/linux, building it, the contracts |
 | [docs/graphics.md](docs/graphics.md) | graphics stack and panels |
 | [docs/userspace.md](docs/userspace.md) | the system: packages, build, audio |
 | [docs/xr.md](docs/xr.md) | IMU, Monado driver, lenses, cameras, tracking, controllers |
@@ -91,7 +91,7 @@ then start the installer again; it enters EDL mode afresh.
 
 ```text
 tooling/     host tooling (Python): its commands, the window's steps, the installer's plans
-kernel/      Valve's kernel: build script, patches, the PICO's drivers and device tree
+kernel/      Valve's kernel: the pinned release of overpressure/linux, its build script, boot images
 initramfs/   the maintenance system's files in the Alpine ramdisk
 userspace/   the system: package list, pacman.conf, adaptation layer, SteamVR configuration, PKGBUILDs
 src/         C sources: Monado's PICO 4 driver, the tracker's host, OpenXR clients, SteamVR helpers, graphics tests

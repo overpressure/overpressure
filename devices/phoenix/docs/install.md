@@ -85,7 +85,7 @@ A boot that started systemd can still fail: a kernel panic reboots after 5 s (`p
 panics on soft lockups and hung tasks (120 s). systemd arms the SoC's watchdog (`qcom_wdt`,
 `RuntimeWatchdogSec=30s` in `system.conf.d/50-pico4.conf`). Its bite alone does not reset the headset on this
 firmware (it locks one CPU up), so the bark, 1 s before it, panics (pretimeout governor `panic` in
-`pico4.config`):
+the kernel's `pico4.config`):
 
 | A stopped PID 1 (ptrace, no pings) | After |
 | --- | --- |
@@ -250,10 +250,9 @@ reaches the headset's maintenance system.
 ## Install and update
 
 ```sh
-# In the build container: Valve's kernel from its source package linux-72-deckard and the stock recovery and
-# vendor images, into out/kernel (the window's "Valve's kernel" step; the dev image step caches the recovery)
-python -m overpressure container run -- bash devices/phoenix/scripts/build-kernel-step.sh \
-    cache/stock cache/pico4-stock/5.13.7-global-seko /var/tmp/pico4-kernel-build
+# Valve's kernel: the pinned release of overpressure/linux into out/kernel, checked by hash (the window's
+# "Valve's kernel" step); kernel build builds the same commit here instead
+python -m overpressure --device phoenix kernel fetch
 python -m overpressure dev image
 python -m overpressure dev boot-image         # out/kernel/valve-boot.img
 python -m overpressure container run -- bash devices/phoenix/scripts/build-system-image.sh \

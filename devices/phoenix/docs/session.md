@@ -467,11 +467,11 @@ decoder and shows it through the local SteamVR. The PC's `driver_vrlink` knows t
 - **The decoder** is mainline's Venus (`qcom-venus-decoder`). `vrlink` picks `QC10C` for `P010` (the PC
   sends Main10), `QC08C` otherwise, builds a `DRM_FORMAT_MOD_QCOM_COMPRESSED` image from the reported
   pitch and its own second-plane offset, and queues its dma-buf with the reported size, so both must be
-  as iris reports them: kernel patch 0020. Otherwise videobuf2 refuses the dma-buf (`EFAULT`) and nothing
+  as iris reports them: the kernel commit “media: venus: compressed capture formats as iris reports them”. Otherwise videobuf2 refuses the dma-buf (`EFAULT`) and nothing
   is decoded.
 - **The stream's start.** `vrlink` restarts the decoder after 800 ms without progress, also on the PC's
   first frame, so the stream resumes mid group of pictures. The firmware starts only on a stream's
-  headers and otherwise holds every buffer; patch 0028 returns data before the headers to the client
+  headers and otherwise holds every buffer; the kernel commit “media: venus: a decoder without pictures skips what comes before the headers” returns data before the headers to the client
   while no capture queue streams.
 - **Buffers.** `vrlink` asks for 16 capture buffers; Venus would raise that to the firmware's 18. Patch
   0027 keeps a client's 16.
@@ -491,7 +491,7 @@ decoder and shows it through the local SteamVR. The PC's `driver_vrlink` knows t
 | Check | Result |
 | --- | --- |
 | `vrlink`'s path without the PC (Venus decodes into images built as `vrlink` builds them, a compute shader samples them through a YCbCr sampler) | 8-bit and Main10 at 1280×5120: image and reported size match (9,891,840 and 13,885,440 bytes), the picture is identical to FFmpeg's decode; 8-bit 1536×6144: sizes match (14,229,504 bytes) |
-| Frames before the first key frame (4, 12 and 40, Main10 at 1280×5120) | first picture 160, 261 and 438 ms after the decoder's start, no errors; without patch 0028 none within 5 s |
+| Frames before the first key frame (4, 12 and 40, Main10 at 1280×5120) | first picture 160, 261 and 438 ms after the decoder's start, no errors; without the kernel commit “media: venus: a decoder without pictures skips what comes before the headers” none within 5 s |
 | Steam Link from a PC (POOLS on an NVIDIA GPU, 1280×5120 Main10 over Wi-Fi), worn | picture, audio, head tracking and controllers work; about 22 minutes at 90 frames/s in one run |
 | The picture's start | about 12 s after `vrlink`'s start, with a decoder reset at the first video |
 | Frame times, POOLS | game frame start to illumination 73 ms median (67–78 ms, 5th–95th percentile): encode 11–22 ms, network 4 ms, decode 6 ms, decode end to illumination 30 ms. At 22 ms encode the stream runs at about 67 frames/s, at 11 ms at 90 |

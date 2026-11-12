@@ -14,16 +14,14 @@ REPO = Path(__file__).resolve().parents[1]
 #: Path prefix (a folder or one file) -> the SPDX identifiers allowed there; the longest prefix decides.
 LICENSES = {
     "": {"Unlicense"},
-    "devices/phoenix/kernel/src/": {"GPL-2.0", "GPL-2.0-only"},
-    "devices/phoenix/kernel/sm8250-pico4-phoenix.dts": {"BSD-3-Clause"},
     "devices/phoenix/src/monado/": {"BSL-1.0"},
     "devices/phoenix/src/splash/": {"BSL-1.0"},
     "devices/phoenix/src/vrlink/": {"BSL-1.0"},
     "devices/phoenix/src/xr/": {"BSL-1.0"},
 }
 
-#: Out of the rule: the kernel patches apply as they are, a recipe's files are pinned by its checksums.
-EXEMPT = ("devices/phoenix/kernel/patches/", "devices/phoenix/userspace/pkgbuilds/")
+#: Out of the rule: a recipe's files are pinned by its checksums.
+EXEMPT = ("devices/phoenix/userspace/pkgbuilds/",)
 
 SOURCE_SUFFIXES = {".c", ".cpp", ".dts", ".frag", ".h", ".hpp", ".ps1", ".py", ".sh", ".vert"}
 
@@ -89,7 +87,7 @@ class RuleTests(unittest.TestCase):
         self.assertTrue(is_source("devices/phoenix/initramfs/init", b"#!/bin/sh\n"))
         self.assertFalse(is_source("README.md", b"# overpressure\n"))
         self.assertFalse(is_source("devices/phoenix/prebuilt/aarch64/pico4-reboot", b"\x7fELF"))
-        self.assertFalse(is_source("devices/phoenix/kernel/patches/0001-a.patch", b"From: a\n"))
+        self.assertFalse(is_source("devices/phoenix/userspace/pkgbuilds/pico4-monado/a.patch", b"From: a\n"))
         self.assertFalse(is_source("devices/phoenix/userspace/pkgbuilds/pico4-sensors/PKGBUILD", b"#!/bin/bash\n"))
 
 
@@ -117,7 +115,7 @@ class RepositoryTests(unittest.TestCase):
 
 #: What THIRD-PARTY.md pins, read from where the build pins it: (file, pattern of the pin).
 PINS = (
-    ("devices/phoenix/kernel/build-kernel.sh", r"^COMMIT=([0-9a-f]{12})"),
+    ("devices/phoenix/kernel/release.json", r'^ "tag": "([^"]+)"'),
     ("devices/phoenix/userspace/pkgbuilds/pico4-basalt/PKGBUILD", r"commit=([0-9a-f]{12})"),
     ("devices/phoenix/userspace/pkgbuilds/pico4-gamescope/PKGBUILD", r"commit=([0-9a-f]{12})"),
     ("devices/phoenix/userspace/pkgbuilds/pico4-monado/PKGBUILD", r"^_commit=([0-9a-f]{12})"),

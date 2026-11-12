@@ -318,8 +318,10 @@ class WiringTests(unittest.TestCase):
                 "cache/pico4-stock/5.13.7-global-seko",
             ],
         )
+        # The kernel is a download of the pinned release: no stock folder, no Linux.
         kernel = next(s for s in HEADSET.steps() if s.key == "kernel")
-        self.assertIn("{stock}", kernel.argv)  # the kernel reads the same stock folder's vendor.img
+        self.assertEqual(kernel.argv, ("kernel", "fetch"))
+        self.assertFalse(kernel.linux_root)
 
     def test_no_extraction_reads_the_backup(self):
         source = (ROOT / "tooling/assets.py").read_text(encoding="utf-8")

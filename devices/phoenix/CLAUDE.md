@@ -2,8 +2,9 @@
 
 Guidance for working on the PICO 4 in overpressure (the repository's [CLAUDE.md](../../CLAUDE.md)
 has the general rules): Linux and a SteamOS-compatible userspace on the original PICO 4 (2022,
-codename *phoenix*, Snapdragon XR2), on **Valve's kernel** (the Steam Frame's 7.2, built by
-`kernel/build-kernel.sh`, [docs/kernel.md](docs/kernel.md)) with Valve's Mesa.
+codename *phoenix*, Snapdragon XR2), on **Valve's kernel** (the Steam Frame's 7.2 with the project's
+changes in [overpressure/linux](https://github.com/overpressure/linux), pinned by `kernel/release.json`,
+[docs/kernel.md](docs/kernel.md)) with Valve's Mesa.
 The stock Android kernel (4.19.81-perf+, PICO OS 5.13.7/5.13.8) no longer runs the system, and the
 image no longer drives the GPU there; it stays under the maintenance stage 1 in `recovery` and on the
 way back to PICO OS. Paths are relative to this folder (`devices/phoenix/`); commands run
@@ -52,10 +53,11 @@ README.md current.
 - `initramfs/`: stage 1, the maintenance environment in `recovery` and the base of test images;
   `pico4-install` is the installer's only writer. `pico4-init` is PID 1, not busybox init: busybox's
   `kill(-1)` killed the f_mass_storage kernel thread and with it the USB link.
-- `kernel/`: Valve's kernel: `build-kernel.sh`, `pico4.config`, `patches/`, the PICO's drivers in
-  `src/`, the device tree `sm8250-pico4-phoenix.dts` (with `dtbo_sink.py` and `panel_sequence.py`),
-  `recovery_image.py` for its boot images (`--direct --boot`: the installed system's, from `dev boot-image`),
-  `tests/` (the battery driver on a fake PMIC against stub kernel headers, run by `scripts/c-tests.sh`).
+- `kernel/`: Valve's kernel: `release.json` (the pinned release of overpressure/linux: tag, commit,
+  build image, file hashes), `build-tree.sh` (builds a checkout of it), `imx471_mode.py` (the RGB
+  camera's table for the assets), `recovery_image.py` for its boot images (`--direct --boot`: the
+  installed system's, from `dev boot-image`). `tooling/kernel.py`: `kernel fetch|build|check|contracts`.
+  The kernel's source, its drivers, device tree, `pico4.config` and driver tests are in overpressure/linux.
 - `userspace/`: stage 2. `packages.txt` and `pacman.conf` (the Holo preview first; Frame
   packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
   layer, with `preinit`, the first process, and the system's own USB gadget, `usb-gadget`), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,
@@ -122,9 +124,11 @@ python -m overpressure cycle --restore-only              # verified stock boot a
   `assets/` (engineering ABL, firehose, GPU firmware, sensor data), `out/`, `cache/` and `.env`
   are ignored on purpose. Valve's packages and the built userspace archives are private too.
   Docs and code must not contain device serials or similar identifiers; they belong in `.env`.
-- **Valve's kernel.** The kernel and device tree are ours to change, as patches and sources under
-  `kernel/`, following the stock kernel's behaviour where it is the reference. A new boot image goes
-  through `dev recovery` and `dev install --boot`.
+- **Valve's kernel.** The kernel and device tree are ours to change, as commits on overpressure/linux's
+  layer branches (`common/7.2`, `sm8250/7.2`, `phoenix/7.2`), following the stock kernel's behaviour
+  where it is the reference. Its tags never move; this repository pins one in `kernel/release.json`,
+  and `kernel contracts` checks the names both sides share. A new boot image goes through
+  `dev recovery` and `dev install --boot`.
   - systemd stays at 257.x, pinned with `IgnorePkg` on the device (the Frame's version).
 - **Storage stays read-only, except the installed system's data.** Every physical block device
   is switched read-only in both stages; only the installed system's data partition (userdata,

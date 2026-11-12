@@ -60,7 +60,7 @@ and `pico4-userspace-check` fails on anything unexpected.
 | Installed system | Steam's ports (discovery on 27036, mDNS) | steam, steamwebhelper, vrlink, vrserver | Wi-Fi | Steam's local discovery, Remote Play and Steam Link |
 
 Valve's kernel configuration builds RDS in, whose TCP transport listens on tcp 16385 in the kernel
-itself; `pico4.config` turns RDS off.
+itself; the kernel's `pico4.config` (overpressure/linux) turns RDS off.
 
 There are no firewall rules: nothing listens that one would have to hide. The headset forwards nothing;
 the USB link serves one PC and gives it no route.

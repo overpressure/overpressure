@@ -31,10 +31,7 @@ test_c test_pico4_setup -std=gnu11 test_pico4_setup.c
 cd ../splash
 test_c test_pico4_splash -std=gnu11 test_pico4_splash.c
 
-# The PICO's battery driver on a fake PMIC, against stub kernel headers.
-cd ../../kernel/tests
-test_c test_pico4_battery -std=gnu11 -Istubs test_pico4_battery.c
-cd ../../src/xr
+cd ../xr
 
 # The controller tracker.
 cd ../monado

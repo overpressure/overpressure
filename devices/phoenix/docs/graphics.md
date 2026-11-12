@@ -6,7 +6,7 @@ Roadmap step 3 ([roadmap.md](roadmap.md)), on Valve's kernel ([kernel.md](kernel
 | --- | --- |
 | Works | Vulkan through Valve's Turnip on msm, OpenGL through zink, both panels through mainline's DPU and DSI drivers with compressed scanout, 90 Hz and 72 Hz |
 | Test | `pico4-vulkan-test` (package `pico4-graphics-tests`, [src/graphics](../src/graphics)): an offscreen render with pixel readback, run by `dev check` |
-| Panel driver | [panel-pico4-ls026b3sa.c](../kernel/src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c) |
+| Panel driver | [panel-pico4-ls026b3sa.c](https://github.com/overpressure/linux/blob/phoenix/7.2/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c) |
 | Presentation in VR | SteamVR's compositor through Turnip's display WSI ([session.md](session.md)) |
 | Results | [kernel.md](kernel.md#results) |
 
@@ -60,7 +60,7 @@ and starts apps at 72 Hz, the Frame's default ([session.md](session.md#steamvr-c
 the stock tree's dynamic fps by vertical front porch (`dfps_immediate_porch_mode_vfp`): the same pixel
 clock and lines, vtotal 2781 instead of 2225, no panel commands. PICO's `post-72-nt57900-on-command` is
 not sent: with it both lenses show a white, blueish, inverted-looking picture. A change of rate is a full
-mode set (kernel patch 0030).
+mode set (the kernel commit “drm/msm/dpu: a refresh change is a mode set on DPU 6.0”).
 
 | Fact | Result |
 | --- | --- |

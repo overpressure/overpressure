@@ -91,3 +91,5 @@ jobs:
         run: python3 scripts/check-docs.py
       - name: Private data, in every commit
         run: python3 scripts/check-private.py --history
+      - name: What the pinned kernel and this repository share (contracts)
+        run: python3 -m overpressure --device phoenix kernel contracts

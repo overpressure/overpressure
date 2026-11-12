@@ -451,7 +451,7 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   INIT_ATTRS become INIT_ATTACH, INIT_CREATE or INIT_CREATE_STATIC, INVOKE becomes the upstream INVOKE,
   MMAP and MUNMAP keep their layouts, CONTROL says the kernel allocates (`FASTRPC_CONTROL_KALLOC`), and
   ION allocations come from `/dev/dma_heap/system`. The DSP's memory requests (`apps_mem`) are mapped
-  by descriptor through kernel patch 0012. Its translations have native tests.
+  by descriptor through the kernel commit “misc: fastrpc: map a client's buffer through mmap”. Its translations have native tests.
 - **pico4-slamd.** [`pico4-slamd`](../src/stockslam/pico4-slamd.c)
   ([unit](../userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service), wanted by Valve's session
   and Monado) creates `/dev/shm/pico4-slam` (group video, 0660) and drives the tracker as PICO OS's
@@ -549,7 +549,7 @@ files hold `vertexcount` and points `(a, b, c)`, b up; the world point is (b, �
 ### Frame times
 
 The tracker, Basalt and the controller tracker take each frame's time from its buffer: the CSID's
-hardware start of frame (kernel patch 0016) on `CLOCK_MONOTONIC`, carried in QTimer ns onto the
+hardware start of frame (the kernel commit “media: camss: the hardware start of frame as a buffer's time”) on `CLOCK_MONOTONIC`, carried in QTimer ns onto the
 IMU's clock. The frame's time is the middle of its exposure: start of frame minus 52 µs, seven lines
 (133.5 µs) and half the exposure in lines of 19.07 µs, from its metadata line, as PICO OS computes it.
 

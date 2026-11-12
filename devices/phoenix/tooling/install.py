@@ -45,6 +45,7 @@ from overpressure.process import until
 
 from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, assets, device, devloop, localconfig, unlockfiles
 from . import doctor as checks
+from . import kernel as pinned_kernel
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -374,7 +375,7 @@ class Plan:
             "dev-image": lambda ctx: (
                 self.newer(dev / "dev-image.json", self.stage1(ctx)) and (dev / "dev-recovery.img").is_file()
             ),
-            "kernel": lambda _ctx: kernel.is_file() and self.out("kernel", "sm8250-pico4-phoenix.dtb").is_file(),
+            "kernel": lambda _ctx: pinned_kernel.current(self.out("kernel")),
             "boot-image": lambda _ctx: self.newer(
                 self.out("kernel", "valve-boot.img"), kernel, dev / "dev-recovery.img"
             ),
@@ -919,7 +920,9 @@ class Plan:
             self.step_task(
                 "dev-image", "Boot images", "about 3 min", where=built_where, done=self.build_done("dev-image")
             ),
-            self.step_task("kernel", "Valve's kernel", "about 1 h", where=built_where, done=self.build_done("kernel")),
+            self.step_task(
+                "kernel", "Valve's kernel", "about 1 min", where=built_where, done=self.build_done("kernel")
+            ),
             self.step_task(
                 "boot-image",
                 "Boot image with Valve's kernel",

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Unlicense
 """The IMX471 RGB camera: PICO OS's settings in the kernel's driver, and its V4L2 path in pico4_cam."""
 
-import importlib.util
 import unittest
 from pathlib import Path
 
@@ -9,7 +8,6 @@ ROOT = Path(__file__).resolve().parents[1]
 CAM = ROOT / "src/monado/pico4_cam.c"
 HEADER = ROOT / "src/monado/pico4_cam.h"
 SLAM = ROOT / "src/monado/pico4_slam.c"
-DRIVER = ROOT / "kernel/src/drivers/media/i2c/pico4-imx471.c"
 
 
 def read(path: Path) -> str:
@@ -31,29 +29,10 @@ class RgbCameraTests(unittest.TestCase):
         self.assertIn("#define PICO4_CAM_RGB_HEIGHT 1748", header)
         self.assertIn("#define PICO4_CAM_SLOTS 5", header)
 
-    def test_the_50_fps_mode_fits_the_driver(self):
-        # The table is generated at the build (kernel/imx471_mode.py) for this mode.
-        spec = importlib.util.spec_from_file_location("imx471_mode", ROOT / "kernel/imx471_mode.py")
-        assert spec is not None
-        assert spec.loader is not None
-        mode = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mode)
-        source = read(DRIVER)
-        self.assertRegex(source, rf"#define IMX471_WIDTH\s+{mode.WIDTH}")
-        self.assertRegex(source, rf"#define IMX471_HEIGHT\s+{mode.HEIGHT}")
-        self.assertRegex(source, rf"#define IMX471_MAX_LINES\s+{mode.FRAME_LENGTH - 10}")
-        # 50 fps at this frame length: 4425 ns a line, as the header says.
+    def test_the_line_time_is_the_50_fps_modes(self):
+        # 50 fps at the mode's frame length of 4520 lines: 4425 ns a line, as the header says.
         self.assertAlmostEqual(1e9 / (4520 * 50), 4424.8, places=1)
         self.assertIn("#define PICO4_CAM_RGB_LINE_NS 4425", read(HEADER))
-
-    def test_identity_and_link(self):
-        source = read(DRIVER)
-        self.assertRegex(source, r"#define IMX471_REG_CHIP_ID\s+0x0016")
-        self.assertRegex(source, r"#define IMX471_CHIP_ID\s+0x0471")
-        # The data rate per lane: the output pixel clock x 10 bits / 4 lanes, on a double data rate.
-        self.assertRegex(source, r"#define IMX471_PIXEL_RATE\s+825939200LL")
-        self.assertRegex(source, r"#define IMX471_LINK_FREQ\s+1032424000LL")
-        self.assertEqual(825939200 * 10 // 4, 2 * 1032424000)
 
     def test_gain_register(self):
         # Analog gain = 1024 / (1024 - register), at most 16x (960): 2x is 512.

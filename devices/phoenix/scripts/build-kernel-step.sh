@@ -1,35 +1,36 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Unlicense
-# Valve's kernel for the PICO 4, from a clean checkout: the window's and the guide's kernel step.
+# Valve's kernel for the PICO 4, built here from the commit kernel/release.json pins: the window's
+# "build the kernel yourself" step, and how anyone checks a release.
 #
-#   build-kernel-step.sh STOCK_RECOVERY|ITS_FOLDER STOCK_FOLDER [WORKDIR]
+#   build-kernel-step.sh [WORKDIR]
 #
-# Fetches Valve's public source package (checked against the hash build-kernel.sh pins) into cache/,
-# builds in WORKDIR on a Linux file system, and leaves the results in out/kernel.
+# Fetches the pinned commit of overpressure/linux (its tree without history, about 280 MB) into
+# WORKDIR/tree on a Linux file system, builds it with kernel/build-tree.sh, checks every file against
+# the pin's SHA-256 (python -m overpressure --device phoenix kernel check) and only then puts them in
+# out/kernel. A file that differs fails the step: the build image or the tree is not the release's.
+# Runs in the build container (python -m overpressure container run).
 set -euo pipefail
-PACKAGE=linux-72-deckard-7.2.0+g509b71a1bdcd-1.src.tar.gz
-URL=https://steamdeck-packages.steamos.cloud/archlinux-deckard-hotfixes/source/linux-72-deckard-7.2.0%2Bg509b71a1bdcd-1.src.tar.gz
-
-[ $# -ge 2 ] || { sed -n '3,9p' "$0" >&2; exit 2; }
-recovery=$1 stock=$2 work=${3:-/var/tmp/pico4-kernel-build}
-[ -f "$stock/vendor.img" ] || { echo "no $stock/vendor.img: run the Stock firmware and assets step first" >&2; exit 1; }
+[ $# -le 1 ] || { sed -n '3,12p' "$0" >&2; exit 2; }
+work=${1:-/var/tmp/pico4-kernel-build}
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
-if [ -d "$recovery" ]; then
-	set -- "$recovery"/*.recovery.img
-	[ $# -eq 1 ] && [ -f "$1" ] || { echo "$recovery holds $# stock recovery images, name one (the Dev image step makes it)" >&2; exit 1; }
-	recovery=$1
+read -r repository commit < <(python3 -c \
+	'import json, sys; d = json.load(open(sys.argv[1])); print(d["repository"], d["commit"])' \
+	"$here/../kernel/release.json")
+tree=$work/tree
+if [ "$(git -C "$tree" rev-parse HEAD 2>/dev/null)" != "$commit" ]; then
+	echo "fetching $repository at $commit" >&2
+	rm -rf "$tree"
+	mkdir -p "$tree"
+	git -C "$tree" init -q
+	git -C "$tree" fetch -q --depth 1 "https://github.com/$repository.git" "$commit"
+	git -C "$tree" checkout -q --detach FETCH_HEAD
 fi
-[ -f "$recovery" ] || { echo "no stock recovery image at $recovery: run the Dev image step first" >&2; exit 1; }
-mkdir -p "$repo/cache/kernel"
-if [ ! -f "$repo/cache/kernel/$PACKAGE" ]; then
-	echo "downloading $PACKAGE (2.5 GB)" >&2
-	curl -fL --retry 3 -o "$repo/cache/kernel/$PACKAGE.part" "$URL"
-	mv "$repo/cache/kernel/$PACKAGE.part" "$repo/cache/kernel/$PACKAGE"
-fi
-bash "$here/../kernel/build-kernel.sh" "$repo/cache/kernel/$PACKAGE" "$recovery" "$stock/vendor.img" "$work" "$work/out"
+bash "$here/../kernel/build-tree.sh" "$tree" "$work" "$work/out"
+(cd "$repo" && python3 -m overpressure --device phoenix kernel check "$work/out")
 mkdir -p "$repo/out/kernel"
-for f in Image.gz sm8250-pico4-phoenix.dtb version config; do
+for f in Image.gz sm8250-pico4-phoenix.dtb version config build.json; do
 	install -m 0644 "$work/out/$f" "$repo/out/kernel/$f"
 done
-echo "out/kernel: Image.gz, sm8250-pico4-phoenix.dtb, version, config" >&2
+echo "out/kernel: the pinned release's files, built here" >&2

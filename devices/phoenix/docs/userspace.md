@@ -359,7 +359,7 @@ PICO OS's speaker protection is off too (`speaker.prot.enable=false`), and PICO 
 ([cooling.md](cooling.md#hardware-limits)).
 
 **Calibration.** PICO OS's calibration reaches the ADSP through the PICO's q6 calibration driver
-([`q6calibration-pico4.c`](../kernel/src/sound/soc/qcom/qdsp6/q6calibration-pico4.c), patch 0013), which does what the
+([`q6calibration-pico4.c`](https://github.com/overpressure/linux/blob/phoenix/7.2/sound/soc/qcom/qdsp6/q6calibration-pico4.c), the kernel commit “ASoC: qcom: q6: PICO OS's audio calibration”), which does what the
 stock kernel does with the blocks PICO OS's HAL hands it:
 
 1. At image build, `pico4-audiocal export` reads PICO OS's calibration database and writes
@@ -373,13 +373,13 @@ stock kernel does with the blocks PICO OS's HAL hands it:
 3. q6routing opens each calibrated path with its topology and sends its parameters in band after the open. A path
    without calibration, or whose topology the ADSP refuses, keeps the null topology.
 
-**The card as the stock kernel runs it.** Every device path, with PICO's processing, runs at 16 bits (patch 0025; the
+**The card as the stock kernel runs it.** Every device path, with PICO's processing, runs at 16 bits (the kernel commit “ASoC: qcom: the DSP's stream and port as the stock kernel runs them”; the
 stock back end reads S16_LE although PICO OS's platform configuration names 24 for the speakers). The ADSP's 24-bit
-PCM has its samples in the top 24 bits of a 32-bit word, so the front end offers it as S32_LE (patch 0023), which
+PCM has its samples in the top 24 bits of a 32-bit word, so the front end offers it as S32_LE (the kernel commit “ASoC: qcom: the DSP's 24-bit PCM by its name”), which
 PipeWire picks for both directions. The amplifiers and the WSA macro run with the registers the stock kernel has
-during playback (patch 0024): the compander sets the amplifier's gain over its COMP port, with its boost, over-current
-and path settings. The DSP's stream and port get the stock topologies (patch 0025), the speakers' SoundWire bus its
-synchronization period and port offsets (patch 0026).
+during playback (the kernel commit “ASoC: the speakers' amplifiers and codec path as the stock kernel runs them”): the compander sets the amplifier's gain over its COMP port, with its boost, over-current
+and path settings. The DSP's stream and port get the stock topologies (the kernel commit “ASoC: qcom: the DSP's stream and port as the stock kernel runs them”), the speakers' SoundWire bus its
+synchronization period and port offsets (the kernel commit “soundwire: qcom: the frame's sync points and the port offsets as the stock kernel programs them”).
 
 **Levels.** The profile's verb sets PICO OS's levels (`WSA_RXn Digital Volume` 84, 0 dB; `TX_DEC0 Volume` 84;
 `ADC1 Volume` 12), the boost level and the routes each time the card opens; ALSA's saved state, restored at boot after

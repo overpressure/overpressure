@@ -2,9 +2,9 @@
 
 | | |
 | --- | --- |
-| What | The Steam Frame's kernel, `linux-valve` 7.2.0, close to mainline, with the PICO 4's patches, drivers and device tree; `boot` carries it and it runs the installed system. The maintenance stage 1 in `recovery` stays on the stock Android kernel |
-| How | Valve's GPL source package (pinned by hash and commit), the patches in name order, the own sources copied in, `gabe_defconfig` with `pico4.config` merged over it; reproducible `Image.gz` and device tree |
-| Code | [kernel/](../kernel/): `build-kernel.sh`, `pico4.config`, `patches/`, `src/`, `sm8250-pico4-phoenix.dts`, `recovery_image.py` |
+| What | The Steam Frame's kernel, `linux-valve` 7.2.0, close to mainline, with the PICO 4's changes, drivers and device tree; `boot` carries it and it runs the installed system. The maintenance stage 1 in `recovery` stays on the stock Android kernel |
+| How | Its source is [overpressure/linux](https://github.com/overpressure/linux): Valve's commit and the project's commits on it, in layers (`common/7.2`, `sm8250/7.2`, `phoenix/7.2`). [kernel/release.json](../kernel/release.json) pins one of its releases; the installer downloads it, checked by hash, or builds the same commit, with the same result |
+| Code | [kernel/](../kernel/): `release.json`, `build-tree.sh`, `imx471_mode.py`, `recovery_image.py`; [tooling/kernel.py](../tooling/kernel.py) |
 | State | [Results](#results): boot, display, GPU, DSPs, sensors, cameras, audio, Wi-Fi, Bluetooth, video codec, battery and Valve's VR session verified on the headset |
 
 ## The two kernels
@@ -29,17 +29,11 @@ As shipped:
 
 | File | Purpose |
 | --- | --- |
-| [sm8250-pico4-phoenix.dts](../kernel/sm8250-pico4-phoenix.dts) | the device tree on mainline's `sm8250.dtsi`: the stock supplies for UFS, USB and the panels, memory carve-outs, unused GPIOs reserved, reboot modes, a RAM console, both DSI links and panels, the GPU with its DDR vote, the GD32 MCU's UART, the three DSPs, the head IMU's supplies and clock, the keys, thermal trips |
-| [pico4.config](../kernel/pico4.config) | merged over `gabe_defconfig`: the SM8250 drivers (display and GPU clock controllers, QFPROM, REFGEN), the panel driver, the USB gadget functions (NCM, mass storage, ACM), PON reboot modes, pstore, QRTR over GLINK, the watchdog's panic at its bark; without Valve's RDS |
-| [patches/](../kernel/patches/) | fixes to Valve's tree ([Patches](#patches)) |
-| [src/](../kernel/src/) | the PICO 4's own sources at their paths in the tree: panel, battery, `pico4-ov7251` and `pico4-imx471` sensors, q6 calibration |
-| [build-kernel.sh](../kernel/build-kernel.sh) | source package, patches and sources to `Image.gz`, the device tree, `config` and `version` |
-| [build-tree.sh](../kernel/build-tree.sh) | a checkout of [overpressure/linux](https://github.com/overpressure/linux)'s `phoenix/7.2` to the same files and `build.json` (release, commit, banner, camera table, the tooling's commit, the build image, hashes); `uname -v` names the commit. That repository's CI builds each branch with it once, each tag twice on two machines, and releases a tag whose builds agree |
-| [dtbo_sink.py](../kernel/dtbo_sink.py) | the include that absorbs the ABL's board overlay ([below](#the-abls-board-overlay)) |
-| [panel_sequence.py](../kernel/panel_sequence.py) | the include with the panels' command sequences, from the stock board overlay |
-| [imx471_mode.py](../kernel/imx471_mode.py) | the RGB camera's register table, from the camera module in the stock vendor image: the file the driver loads, or the header `build-kernel.sh` compiles in |
+| [release.json](../kernel/release.json) | the pin: overpressure/linux's tag (`phoenix/7.2-1`), its commit, the build image it was built with, and the SHA-256 of `Image.gz`, the device tree, `config` and `version` |
+| [tooling/kernel.py](../tooling/kernel.py) | `kernel fetch` (the installer's step: the release's files into `out/kernel`), `kernel build` (the pinned commit built here in the release's build image, [below](#building-it-yourself)), `kernel check DIR`, `kernel contracts` ([below](#contracts)) |
+| [build-tree.sh](../kernel/build-tree.sh) | a checkout of overpressure/linux's `phoenix/7.2` to `Image.gz`, the device tree, `config`, `version` and `build.json` (release, commit, banner, camera table, the tooling's commit, the build image, hashes); `uname -v` names the commit. That repository's CI builds each branch with it once, each tag twice on two machines, and releases a tag whose builds agree |
+| [imx471_mode.py](../kernel/imx471_mode.py) | the RGB camera's register table, from the camera module in the stock vendor image: the file the driver loads |
 | [recovery_image.py](../kernel/recovery_image.py) | boot images with Valve's kernel ([A one-shot test boot](#a-one-shot-test-boot)) |
-| [tests/](../kernel/tests/) | the battery driver on a fake PMIC against stub kernel headers (`scripts/c-tests.sh`) |
 
 `recovery_image.py KERNEL_OUT STOCK_RECOVERY [DEV_RECOVERY] OUT` builds on the dev image's recovery image:
 
@@ -63,7 +57,7 @@ check` takes the record whose kernel release runs.
 | Storage | UFS with all six LUNs and their partitions; every block device read-only |
 | USB NCM | Windows 11's in-box driver works without the NCM initialization the stock kernel needs |
 | SoC | 8 CPUs, 7.4 GB RAM; `cpufreq-hw` (three policies, up to 2.84 GHz); TSENS zones; RPMh regulators at the stock voltages; SPMI, PMIC RTC, watchdog, `socinfo` |
-| Reboots | `pico4-reboot bootloader` reaches fastboot. The firmware refuses the warm reset a panic asks for (`reboot=panic_warm`; `SYSTEM_RESET2` answers -2); the tree's PS_HOLD reset restarts the headset, about 40 s from a forced panic to SSH, with the RAM console kept. PSCI's ordinary reset (patch 0031) stands behind it, not yet needed |
+| Reboots | `pico4-reboot bootloader` reaches fastboot. The firmware refuses the warm reset a panic asks for (`reboot=panic_warm`; `SYSTEM_RESET2` answers -2); the tree's PS_HOLD reset restarts the headset, about 40 s from a forced panic to SSH, with the RAM console kept. PSCI's ordinary reset (the kernel commit “firmware: psci: a refused reset ends in a cold reset”) stands behind it, not yet needed |
 
 | Display and GPU | Result on the headset |
 | --- | --- |
@@ -87,27 +81,27 @@ check` takes the record whose kernel release runs.
 | SteamVR | `gamescope-session.target` with `driver_monado`; `vrcompositor` in direct mode through Turnip's display WSI, 4320×2160 at 90 Hz, compressed scanout; 89.7 fps over 10 s with the CPUs' own governor (894 of 896 frames in one refresh), 5.9 ms compositor GPU time per frame, hottest zone 42 °C |
 | Worn | fluid; Wi-Fi, Steam Store, game launches and Beat Saber work. From a boot, nothing pressed, the picture is there when the headset is picked up. Tracking, floor height, controllers and the colour room view work. Steam Link: picture, sound, tracking and controllers, and its end returns to the local session. Microphone at PICO OS's gain of 12: normal voice peaks at -12.4 dBFS, no clipping. Quitting games keeps the session |
 | A worn game (Beat Saber through Proton and FEX, about 10 minutes) | the game submits a median 44.8 frames/s, half the panels' rate, the compositor presents 89.6/s; hottest zone 75.6 °C, GPU at 587 MHz, no tracker reset |
-| Compositor beside Steam's panel | Steam's dashboard panel (1920x1080) costs the web helper about 60 jobs of 4.05 ms a second while it is in use or in view and for 50 s after a session start; the compositor's job grows from 5.8 to 7.4–9.3 ms. With the web helper rendering, GPU 96 % busy: 90.0 commits/s, 0–1 late of 3,600, worn no visible stutter. It takes four parts: preemption (patch 0019), the Frame's kernel thread priorities (the submitting kworker real-time on cores 4–7), the big cores on `performance` (no frequency ramp per frame), and the stock path's pacing in `pico4-swapchain-usage` (four images, one frame ahead, 5 ms lead: a job starts 7.3 ms after a vblank and ends about 6 ms before its deadline). On one ring it reaches only 60–67 commits/s. The GPU stays at 587 MHz; a floor changes nothing |
+| Compositor beside Steam's panel | Steam's dashboard panel (1920x1080) costs the web helper about 60 jobs of 4.05 ms a second while it is in use or in view and for 50 s after a session start; the compositor's job grows from 5.8 to 7.4–9.3 ms. With the web helper rendering, GPU 96 % busy: 90.0 commits/s, 0–1 late of 3,600, worn no visible stutter. It takes four parts: preemption (the kernel commit “drm/msm/a6xx: ringbuffer preemption on the A650”), the Frame's kernel thread priorities (the submitting kworker real-time on cores 4–7), the big cores on `performance` (no frequency ramp per frame), and the stock path's pacing in `pico4-swapchain-usage` (four images, one frame ahead, 5 ms lead: a job starts 7.3 ms after a vblank and ends about 6 ms before its deadline). On one ring it reaches only 60–67 commits/s. The GPU stays at 587 MHz; a floor changes nothing |
 | Preemption on the A650 | four rings, the compositor on the first, a client on the third; in 40 s of Steam's panel redrawing 7,000 preemptions, no faults or recoveries; a switch to the compositor's ring takes 0.25 ms median, at most 2 ms |
 | Preempted jobs' pixels | 3,000 multisampled, blended, textured draws and a second pass, preempted about 5 times per job: the same hash in 60 of 60 frames as unpreempted, in GMEM, sysmem and Turnip's own choice |
 | GPU faults under preemption | a client's protected register read, illegal packet or endless job: only that client's queue takes the fault; the compositor keeps its frame rate. A job in a CP wait cannot be preempted: the compositor stands still for 2 s until the hang check recovers, as on one ring |
-| GPU page fault (`vkfault`, the first of a boot) | the job completes in 0.3 ms and reads 0; no recovery, no device lost, the compositor stays (patch 0022). A real hang still recovers and stays with its process |
+| GPU page fault (`vkfault`, the first of a boot) | the job completes in 0.3 ms and reads 0; no recovery, no device lost, the compositor stays (the kernel commit “drm/msm: a GPU page fault does not stall the GPU, as on KGSL”). A real hang still recovers and stays with its process |
 | Pose to panels | latency probe at 90 flips/s, one frame ahead, 5 ms lead: a pose reaches the vblank that shows it after 17–28 ms, 24 ms median; SteamVR adds 11 ms of its own, the driver predicts 17 ms (12 ms and the lead) |
 | GPU bus vote | each GPU level votes its stock `bus-freq` on DDR (fixed; KGSL scaled between `bus-min` and `bus-max`). On the USB input with the battery full and the session idle, against every level at its `bus-min`: 0.8 % difference, within the 4 % spread. The fixed vote costs no measurable power |
 | Fan | `pico4-fan` runs PICO OS's policy on the same 14 TSENS channels under mainline's names; 30 % at 30–53 °C |
 | Heat | 10 minutes of Valve's session out of standby, head tracker on, no game, on a table: hottest zone 53 °C at 30 % fan, tracker at 40 % of a core, 88.7 fps, 6.9 ms GPU time |
 | DSPs, head IMU | `pico4-slpi` and `pico4-cdsp` start the DSPs; `pico4-sensors.target` is reached once the IMU is listed, about 1 s after the sensors process starts (`hexagonrpcd` takes and drops its registry writes); the 1 kHz check passes |
-| CDSP root listener | PICO OS's `cdsprpcd` in the tracker's root ([xr.md](xr.md#head-tracking)) attaches to the CDSP's guest OS, maps the DSP's memory request (patch 0012), opens its listener and event handles; no measurable CPU, the 1 kHz IMU check passes beside it |
+| CDSP root listener | PICO OS's `cdsprpcd` in the tracker's root ([xr.md](xr.md#head-tracking)) attaches to the CDSP's guest OS, maps the DSP's memory request (the kernel commit “misc: fastrpc: map a client's buffer through mmap”), opens its listener and event handles; no measurable CPU, the 1 kHz IMU check passes beside it |
 | CVP | no driver: PICO OS's pipeline opens a CVP session but takes its depth from a network on the CDSP; stand-ins in the tracker's root answer the session |
 | Head tracker | PICO OS's `libSlam` on the CDSP, fed through CAMSS. The compute context banks are coherent, as in the stock tree (`dma-coherent`; without it the DSP sees stale frames); the bridge answers `FASTRPC_CONTROL_KALLOC`. Still on a table, 60 s: 61,384 poses, none lost, within 0.4 mm and 0.03°, 47 % of a core. Worn it tracks |
 | Still headset, 60 s, room view | tracker 0 poses lost, 0.61 mm and 0.05° from its start with the room view off, 0.54 mm and 0.05° with the colour room view and mesh on; `pico4-slamd` 56 % of a core; hottest zone 61 °C |
-| Tracking cameras | the OV7251s' control port belongs to the station: the SoC powers and clocks the modules and receives their frames, as PICO's stock kernel does without reading their chip ID. `pico4-ov7251` (patch 0014) is a sensor subdevice without an I2C client: the stock power sequence (standby, 18 ms, MCLK, 1 ms, reset, 18 ms; TITAN_TOP GDSC held), 640×481 Y10 on one lane at 480 Mbit/s. Slot 0: PHY 5, CSID 0; slot 1: PHY 3 lane 0, CSID 1; slot 2: PHY 3 lane 2 (lane 3 its clock), CSID 2; slot 3: PHY 4, CSID 3, each to a VFE RDI. Patch 0016 dates each buffer with the CSID's hardware start of frame. `pico4-cam capture`: 1,500 frames per camera at 49.997 fps, none with an error, timestamps from the hardware and monotonic. Against the IMU, worn, up to 186°/s: within 1 ms, the method's resolution |
+| Tracking cameras | the OV7251s' control port belongs to the station: the SoC powers and clocks the modules and receives their frames, as PICO's stock kernel does without reading their chip ID. `pico4-ov7251` (the kernel commit “media: i2c: add the PICO 4's OV7251 tracking camera driver”) is a sensor subdevice without an I2C client: the stock power sequence (standby, 18 ms, MCLK, 1 ms, reset, 18 ms; TITAN_TOP GDSC held), 640×481 Y10 on one lane at 480 Mbit/s. Slot 0: PHY 5, CSID 0; slot 1: PHY 3 lane 0, CSID 1; slot 2: PHY 3 lane 2 (lane 3 its clock), CSID 2; slot 3: PHY 4, CSID 3, each to a VFE RDI. the kernel commit “media: camss: the hardware start of frame as a buffer's time” dates each buffer with the CSID's hardware start of frame. `pico4-cam capture`: 1,500 frames per camera at 49.997 fps, none with an error, timestamps from the hardware and monotonic. Against the IMU, worn, up to 186°/s: within 1 ms, the method's resolution |
 | RGB camera | `pico4-imx471` on CCI 0, four lanes of CSIPHY 1 at 2064.8 Mbit/s, CSID 4 and the third IFE-lite: 150 frames, 0 errors, 50.01 fps beside the tracking cameras. CAMSS never sets the camera NoC's clock (19.2 MHz): the tree assigns 300 MHz, else the sensor's 1.7 GB/s overflow the IFE-lite. A missing sensor fails only its stream |
 | Colour room view on the depth mesh | both eyes in colour, the compositor on its RGB NV12 shader, 251 meshes in 10 s with 14,841 vertices, 64–72 ms after their pair. The scanout is black above the RGB camera's field of view; worn none of it shows |
 | Controller station | QUP SE19's SPI as the stock board overlay describes it, a spidev at 6 MHz (`/dev/spidev0.0`), its supply L5C as `station-power` (`/sys/devices/platform/station-power/state`) in place of the vendor power ioctl. The station announces itself 24 ms after a power cycle and answers the version and wake-up queries; a controller connects |
 | Controller tracker | both controllers on a table, motors running: in a replay of 1,500 frames per camera both acquired within 5.4 s and stayed tracked, 16–18 LEDs per frame, 0.66 px median residual, spread about 2 mm; in Valve's session both reach SteamVR; worn both follow the hands |
-| Video codec | Venus (patch 0009; Valve's iris knows only SM8550 and is left out, since Venus leaves SM8250 to iris whenever iris is built) with PICO's `venus.mdt` in the stock carve-out; `pico4-venus-probe` probes it once the firmware is in `/usr/lib/firmware` (the kernel's own probe comes before the root file system and fails for good). `hevc_v4l2m2m` and `h264_v4l2m2m` decode 60 frames of 1080p60, `vp9_v4l2m2m` and `vp8_v4l2m2m` 60 frames of 720p30 |
-| Battery | `pico4-pm8150b-battery` (patch 0008) reads PM8150B as the stock kernel reports it: the fuel gauge's monotonic state of charge (`0x4009`, 255 at full, scaled as the stock driver does), the charger's state (`0x1006`) and USB input (`0x1310`), as the `battery` and `usb` supplies, every 30 s. `temp` is word 328 of the gauge's memory (10 bits, signed, 0.25 °C), read every 30 s through the direct window (`0x4858`) as the stock driver does on PM8150B; `health` is the charger's thermistor view (`0x100d`). At probe it writes the stock temperature window (`qcom,jeita-hard-thresholds`, `qcom,jeita-soft-thresholds`) to `0x1094`–`0x109b`, reads it back, and turns the charger's soft-zone compensation off. Each poll it does the stock soft-zone handling (`smblib_soft_jeita_arb_wa`) and software JEITA's float voltage (`qcom,jeita-fv-ranges`), capped by `pico,float-voltage-max-uv` (the boot loader's 4.35 V), each write read back; the charge current stays the boot loader's. On USB: 100 %, charging, as PICO OS reported; 24.0 °C on the table, matching the gauge's own whole-degree reading (`0x4288`); UPower shows battery and line power ([cooling.md](cooling.md#hardware-limits)) |
+| Video codec | Venus (the kernel commit “media: venus: build on its own again”; Valve's iris knows only SM8550 and is left out, since Venus leaves SM8250 to iris whenever iris is built) with PICO's `venus.mdt` in the stock carve-out; `pico4-venus-probe` probes it once the firmware is in `/usr/lib/firmware` (the kernel's own probe comes before the root file system and fails for good). `hevc_v4l2m2m` and `h264_v4l2m2m` decode 60 frames of 1080p60, `vp9_v4l2m2m` and `vp8_v4l2m2m` 60 frames of 720p30 |
+| Battery | `pico4-pm8150b-battery` (the kernel commit “power: supply: add the PICO 4's PM8150B battery driver”) reads PM8150B as the stock kernel reports it: the fuel gauge's monotonic state of charge (`0x4009`, 255 at full, scaled as the stock driver does), the charger's state (`0x1006`) and USB input (`0x1310`), as the `battery` and `usb` supplies, every 30 s. `temp` is word 328 of the gauge's memory (10 bits, signed, 0.25 °C), read every 30 s through the direct window (`0x4858`) as the stock driver does on PM8150B; `health` is the charger's thermistor view (`0x100d`). At probe it writes the stock temperature window (`qcom,jeita-hard-thresholds`, `qcom,jeita-soft-thresholds`) to `0x1094`–`0x109b`, reads it back, and turns the charger's soft-zone compensation off. Each poll it does the stock soft-zone handling (`smblib_soft_jeita_arb_wa`) and software JEITA's float voltage (`qcom,jeita-fv-ranges`), capped by `pico,float-voltage-max-uv` (the boot loader's 4.35 V), each write read back; the charge current stays the boot loader's. On USB: 100 %, charging, as PICO OS reported; 24.0 °C on the table, matching the gauge's own whole-degree reading (`0x4288`); UPower shows battery and line power ([cooling.md](cooling.md#hardware-limits)) |
 | Suspend | s2idle only; the RTC alarm, the power key and the GPIO keys wake. After a resume the session goes on: display, sensors, controllers and sound come back, and USB answers with the cable in. Steam can suspend again about 4 s after a wake; it kept the headset awake through 80 idle minutes in SteamVR's standby, so this is no plain idle timer. Drain is only known from charge rates on a 0.49 A port: +7.7 %/h over 3 h asleep, +3.9 %/h over the next 5.4 h, −14 %/h awake in standby, so 0.2–0.6 W or 1.1–1.4 W asleep (unresolved) and about 5 W awake; a drain on battery is not measured |
 | Backlight in standby | SteamVR's standby keeps the panels on with black frames, so `driver_monado` writes the `pico4-panel` backlight's `bl_power` (the panels' enable line, GPIO 29) on `VREvent_EnterStandbyMode` and `VREvent_LeaveStandbyMode`; raising it, the driver resends the panels' power-on commands over the running video. A boot's panels stay dark after their first power-on until such a resend (why is not known), so the driver resends once 300 ms after it: the boot indication shows from about 5 s after the kernel starts. The GD32's `SetBrightness` is acked but changes nothing. Worn: dark without glow in standby, back at once without flicker |
 | Wi-Fi after a reboot | a saved network reconnects by itself within a minute. A DHCP attempt can run its 45 s without a lease; NetworkManager then retries 0.1 s later and connects (iwd's own autoconnect stays offline) |
@@ -120,7 +114,7 @@ controllers and PHYs, 2160x2160 per link, with DSC (four 540x16 slices per line,
 pixel, two slices per packet). The Frame does the same (`sm8650-mp.dts`): one panel node on the first, master DSI
 link, a second port to the second link, and a mode twice as wide, which msm splits.
 
-The PICO 4 follows that model with its own panel driver (`src/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c`):
+The PICO 4 follows that model with its own panel driver ([`panel-pico4-ls026b3sa.c`](https://github.com/overpressure/linux/blob/phoenix/7.2/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c)):
 4320x2160 at 90 Hz from the stock timings, VDDIO from L7A, reset (GPIO 75, stock 20/20/30 ms), VIO enable (GPIO 133)
 and backlight enable (GPIO 29).
 
@@ -131,9 +125,8 @@ and backlight enable (GPIO 29).
 - L10C (3.0 V) supplies the GD32 MCU, which drives the backlight; it is always on.
 - L7A: the stock range is 1.8–1.9 V and the stock driver asks for 1.9 V, which is no RPMh step. 1.904 V stalls CPU 0
   (hard lockup); the tree uses 1.896 V. One invalid regulator node fails the whole PMIC's set.
-- The panels' command sequences are PICO's data: the build copies them from the stock board overlay
-  (`panel_sequence.py`, as `pico4,on-command` and `pico4,off-command`); the driver sends each with its stock data type
-  to both links.
+- The panels' command sequences come from the stock board overlay, as `pico4,on-command` and `pico4,off-command`
+  in the tree's `sm8250-pico4-phoenix-panel.dtsi`; the driver sends each with its stock data type to both links.
 
 The RGB camera's mode is PICO's data too, and not part of the kernel: `imx471_mode.py` takes it from
 `/lib64/camera/com.qti.sensormodule.sunny_imx471.bin` in the stock vendor image: the `regSetting` list of 2328x1748 at
@@ -141,9 +134,8 @@ The RGB camera's mode is PICO's data too, and not part of the kernel: `imx471_mo
 driver writes as controls. The tool accepts only the module files it knows by SHA-256 (the sunny and liteon modules of
 firmware 5.13.7, with the same tables) and refuses an unexpected structure. The assets' sensor data hold it as
 `camera/imx471-mode.bin`, the system image as `/usr/lib/firmware/qcom/sm8250/pico4/imx471-mode.bin`, and
-overpressure/linux's driver loads it at its first stream: `IMX471M1`, the number of writes (32-bit little endian), then
-each write as its register (16-bit big endian) and its value. `build-kernel.sh` still compiles it in, as
-`pico4-imx471-mode.h`.
+the driver loads it at its first stream: `IMX471M1`, the number of writes (32-bit little endian), then each write as
+its register (16-bit big endian) and its value.
 
 ## DSPs and the GD32 MCU
 
@@ -229,44 +221,19 @@ events (`msm-frame-stats`: flips, vblanks, the compositor's GPU time), with the 
 10 s recording: 897 flips at 89.7/s, 3 late, vblanks at 90.0 Hz, 5.9 ms GPU time per frame (p90 6.0 ms). The scanout
 is compressed and readable only by the DRM master, so the check has no image.
 
-## Patches
+## Changes to Valve's tree
 
-| Patch | Why |
+The project's commits on Valve's `509b71a1bdcd` are in [overpressure/linux](https://github.com/overpressure/linux), one
+branch per layer, each on the one before; each commit says why it is there:
+
+| Layer | What |
 | --- | --- |
-| 0001 `smem_dram` | SM8250's DDR information is the 14-frequency variant of the v3 layout, which the 7.2 parser reads as entry 13 of a 13-entry table; GCC drops the loop's exit for that undefined behaviour, the `qcom-smem` probe never returns and the boot stalls in `deferred_probe_initcall`. The patch indexes the table from the raw data |
-| 0002 panel | the panel driver's option and object |
-| 0003 root identity | the ABL's board overlay sets the root's compatible and model to "qcom,kona-mtp"; drivers matching on "qcom,sm8250" (msm's UBWC configuration, cpufreq-dt's blocklist) then miss and the display fails. The kernel restores them from `pico4,compatible` and `pico4,model` after unflattening |
-| 0004 GPU BCL | Valve's BCL request fails the GPU when SM8250's secure world refuses it, and the display with it. BCL runs only where the secure world enabled it |
-| 0005 writeback | Valve's writeback pairing assumes two blocks when the DSI links are bonded; SM8250 has one, KMS fails and its error path oopses in `dpu_kms_destroy()`, a hang without watchdog reset. The pair forms only where a second block exists |
-| 0006 Bluetooth firmware wait | Valve defers every `hci_qca` probe until the WCN7850's `qca/hmtbtfw20.tlv` loads; the QCA6390 has no such file. The wait applies to the WCN7850 only |
-| 0008 battery | the battery driver's option and object (mainline has no PM8150B charger or fuel gauge driver) |
-| 0009 Venus | Valve's squashed iris series leaves Venus uncompilable; Venus gets back its own files |
-| 0010 repeated handover | PICO's SLPI firmware raises its handover bit about five times a second; the handover is issued once, a repeat logged at debug level, as the vendor kernel ignores repeats |
-| 0011 interrupted FastRPC call | the freezer ends `hexagonrpcd`'s wait with `-ERESTARTSYS`, and upstream sent the restarted call again under a new context while the DSP replied to the first: the reverse call was lost, and the SLPI's sensors process died or the ADSP's audio process stalled in a suspend. As in the vendor driver, the interrupted context is kept and the restarted call waits on it |
-| 0012 client buffer mmap | PICO OS's FastRPC library has the DSP map a buffer the client allocated (`apps_mem`), which upstream refused ("flag not supported 0x0"); mmap now maps the client's DMA-BUF at its address with its flags, and munmap finds it |
-| 0013 audio calibration | q6core gains the core service's memory map and unmap and the topology registration (opcodes as PICO's `audio_q6.ko`), q6adm an in-band set-parameter command (v6), and q6routing asks `q6calibration-pico4.c` for a path's topology and parameters ([userspace.md](userspace.md#audio)) |
-| 0014 tracking camera driver | the option and object of `pico4-ov7251` |
-| 0015 CAMSS on SM8250 | Valve's combo mode work programs every PHY with SM8650's tables. SM8250 gets its own lane table back (equal to the stock PHY 1.2.1 table), the 2-phase common setting and a combo table with the stock values; the second endpoint's sensor links to the PHY's second sink pad |
-| 0016 hardware start of frame | buffers were stamped when written, a readout and an interrupt after the frame's start. The CSID's start-of-frame stamp on the system counter (RDI offsets 0x390 and 0x394, 0x290 and 0x294 on the lite CSIDs) dates each buffer on `CLOCK_MONOTONIC`, as the tracker needs against the IMU |
-| 0017 the RGB camera's path | the XR variant has three more CSID-lite/IFE-lite pairs than mainline describes, and the tracking cameras take the four it knows; the RGB camera takes the next (0x0acdd400, its CSID 0x200 above, interrupts 449 and 266, as in PICO's tree), with the option and object of `pico4-imx471` |
-| 0018 16-bit samples from an RDI | packed RAW10 lines (2910 bytes for 2328 pixels) do not fit the bus's 16-byte bursts; as PICO's stack, the client asks the CSID for 16-bit samples, 4656 bytes a line |
-| 0019 preemption on the A650 | msm preempts only on 7xx. As PICO's KGSL does on the same GPU and firmware, the submit path says where each ring is saved, yields after each submit and checks for a higher ring. `CP_ME_INIT` hands the firmware KGSL's register list, read from PICO's kernel, so a ring switch restores each block's 64-bit addressing. `msm.enable_preemption=0` turns it off |
-| 0020 compressed capture formats | Venus reported the 8-bit pitch for `QC10C` and sizes with an unused extradata margin, so Steam Link's client had every picture buffer refused; it reports them as iris does ([session.md](session.md#steam-link)) |
-| 0021 the unaligned atomic fixup | Valve's fixup for FEX's unaligned atomics had an exception table entry only for its 128-bit load, not the store back: on a readable but not yet writable page the store oopsed and killed the thread (POOLS hung in its first load). With the entry the fault resolves and the instruction runs again |
-| 0022 GPU page faults | stall-on-fault made the first fault of a boot stall the GPU, the hang recovery lost the context, and a compositor job reading an unmapped address took the session down. As PICO's KGSL's initial policy, HUPCF is set: the read terminates and the job runs on. `msm.stall_on_fault=1` stalls, for debugging |
-| 0023 sound formats | the ADSP's 24-bit PCM is in the top 24 bits of a 32-bit word; q6asm-dai offered S24_LE, 48 dB off both ways. It offers S32_LE |
-| 0024 speakers' amplifiers and codec path | the WSA881x's gain set by the compander over the COMP port, the boost preset, zero-cross, over-current hold, the macro's top, boost, compander and path configuration and the full -1.5 dB gain offset, as read from the stock kernel during playback; everything but the voltage and current sense, temperature readings and the unused battery limiter matches it |
-| 0025 DSP stream and port | as the stock q6 modules send: a stream's post-processing topology is the DSP's default, a port starts with its calibrated topology (`AFE_PARAM_ID_SET_TOPOLOGY`), every device path runs at 16 bits, periods have no 480-frame step |
-| 0026 SoundWire frame | as on the stock WSA and TX masters: a synchronization period of 6 frames (4 kHz at 50 rows, 16 columns, 19.2 Mbit/s) and offset 0 instead of the tree's 0xff; the active frame control reads 0x5000f |
-| 0027 a decoder client's capture buffers | Venus raised Steam Link's 16 capture buffers to the firmware's minimum of 18, so the client queued buffers without an image and stuck; the client's 16 stand ([session.md](session.md#steam-link)) |
-| 0028 data before the headers | the firmware holds every buffer and answers no flush when data precedes a stream's headers, so each mid-stream restart of Steam Link's decoder took a second; such data goes back to the client, as in a stateful decoder ([session.md](session.md#steam-link)) |
-| 0029 the deferred split shrinker | with `cgroup.memory=nokmem` only `SHRINKER_NONSLAB` shrinkers may be memcg-aware; the deferred split shrinker lacked the flag, warned at a game's first huge page and did not split a cgroup's partly mapped huge pages |
-| 0030 a refresh change is a mode set on DPU 6.0 | Valve's seamless refresh change, written for DPU 10.0, leaves DPU 6.0 at the old rate (state 72 Hz, vblanks 11.11 ms apart); the change is a full mode set, and the panels power-cycle on a switch |
-| 0031 a refused reset ends in a cold reset | the firmware refuses the warm reset the stock command line asks for on a panic; the patch logs the answer and, after the other restart handlers, tries the ordinary reset |
-| 0032 a failed recovery masks the interrupt | Venus's recovery enabled the core's interrupt before HFI's init and, when that failed, powered the core down before disabling it; an interrupt in that window read registers of a core in reset, an external abort and a panic. A failed attempt masks it first. Derived from the abort's stack and the source, not yet exercised |
-| 0033 H.264's end of stream | on firmware VIDEO.VPU.1.0-00093 a stop on H.264 with the 0xdeadb000 address takes a firmware exception; with a NULL address (otherwise used up to 1.0.87) it ends cleanly. HEVC, VP9 and VP8 keep the old address |
-| 0034 the codec's interrupt loop | a cable replug during a suspend raises a codec alert at the wake before the codec can resume; `wcd_interrupt_callback` ignored its failed reads and spun, USB stayed `not attached`, and a hung task panic followed. The loop ends on a failed read |
-| 0035 the codec's alert during sleep | a replug trips the codec's jack detect switch (`WCD938X_IRQ_MBHC_SW_DET`, status 0x10), though no jack is fitted (why is not known). Runtime PM is off during system sleep, so the codec's system resume handles the interrupt: no errors, USB back, sound passes `pico4-suspend-check`. Audio stays on the built-in speakers and microphone; the codec's SoundWire status reads `Alert` until a status change |
+| `common/7.2` | fixes any headset on Valve's tree can meet: DDR information, the root's identity after the ABL's overlay, BCL, writebacks, Bluetooth's firmware wait, the DSPs' handover, FastRPC, the unaligned atomic fixup, GPU page faults, the DSP's PCM format, the deferred split shrinker, PSCI's reset, the WCD codec's interrupts; and the CI |
+| `sm8250/7.2` | the SM8250's blocks: Venus, CAMSS (PHY settings, start of frame, the RGB camera's path, 16-bit samples), preemption on the A650, refresh changes on DPU 6.0 |
+| `phoenix/7.2` | the PICO 4: its panel, battery, tracking and RGB camera drivers, audio as the stock kernel runs it, the device tree, `pico4.config` and its driver tests (`tools/testing/overpressure/phoenix/`) |
+
+A new Valve commit means rebasing the layers onto it there, reviewed with `git range-diff`; that repository's CI builds
+the result. A release is a tag `phoenix/7.2-N` that never moves; this repository pins one.
 
 ## Valve's Mesa
 
@@ -296,30 +263,30 @@ pacing, from `PICO4_FRAMES_AHEAD=1` and `PICO4_VSYNC_LEAD_US=5000` (`steamvr.ser
 
 0.37–0.75 % of frames come late across session checks.
 
-## Source
+## Building it yourself
 
-Valve's `linux-valve` repository needs a login, but Valve publishes each kernel package's GPL source package, which
-carries the repository: `linux-72-deckard-7.2.0+g509b71a1bdcd-1.src.tar.gz` (2.5 GiB) from
-`steamdeck-packages.steamos.cloud/archlinux-deckard-hotfixes/source/`, branch `sm8650-7.2`, built with
-`gabe_defconfig`.
+The installer downloads the pinned release. `kernel build` builds its commit instead, in the build image the release
+names, and accepts the result only if every file equals the release's:
 
 ```sh
-# In the build container. The window's "Valve's kernel" step runs scripts/build-kernel-step.sh, which fetches the
-# source package into cache/kernel and leaves the results in out/kernel. By hand: the source package, the stock
-# recovery and vendor images (python -m overpressure stock), work and output folders
-python -m overpressure container run -- bash devices/phoenix/kernel/build-kernel.sh \
-    cache/kernel/linux-72-deckard-7.2.0+g509b71a1bdcd-1.src.tar.gz \
-    cache/stock/<firmware>.recovery.img STOCK_DIR/vendor.img /var/tmp/pico4-kernel/work out/kernel
-python devices/phoenix/kernel/recovery_image.py out/kernel \
-    cache/stock/<firmware>.recovery.img out/dev/dev-recovery.img out/kernel/test-recovery.img
-python -m overpressure dev boot-image    # out/kernel/valve-boot.img, the installed system's boot image
+python -m overpressure --device phoenix kernel build   # the commit's tree (280 MB, no history), built, checked
+python -m overpressure dev boot-image                   # out/kernel/valve-boot.img, the installed system's boot image
 ```
 
-The same inputs give the same `Image.gz`, incremental or clean, in any work folder. The version string names the
-inputs, not the build: `#` and the first 12 hex digits of a SHA-256 over the patches, the own sources, the tree with
-its generated parts and the configuration fragment, and the pinned commit's date (such as `#96c54d774412 SMP PREEMPT
-Fri Oct 23 16:59:23 UTC 2026`). `pahole` encodes BTF in one thread (its threads order the type names differently each
-time), and `-ffile-prefix-map` maps the work folder away in the debug information, which the build ID hashes.
+The same commit gives the same `Image.gz` in any work folder and on any host: `uname -v` names the commit and carries
+its time (such as `#e05939d36466 SMP PREEMPT Thu Nov 12 08:35:14 UTC 2026`), `pahole` encodes BTF in one thread (its
+threads order the type names differently each time), and `-ffile-prefix-map` maps the folders away in the debug
+information, which the build ID hashes. The main repository's [kernel workflow](../../../.github/workflows/kernel.yml)
+rebuilds the pinned release whenever the pin changes, and weekly.
+
+## Contracts
+
+Names and paths the kernel and this repository share, which no build checks: the RGB camera's table and the audio
+calibration (where the driver loads them, where the image installs them, their format), the camera's size, exposure
+limit and paused control, the CAMSS entities Monado links, the GPU workqueues `kthread-priorities` raises, the power
+supplies and their attributes, the USB gadget functions, the panels' backlight, Venus's firmware name and the device
+tree's name. `kernel contracts` reads the pinned commit's files and fails with both sides' values when one side
+changed; CI runs it on every push.
 
 ## The ABL's board overlay
 
@@ -327,7 +294,8 @@ At boot the ABL lays a board overlay over the kernel's tree: from `dtbo`, or for
 `recovery_dtbo`. The PICO 4's is Qualcomm's "kona MTP" overlay (board-id 0x10008), 635 fragments through 222
 downstream labels. Some labels (`spmi_bus`, `tlmm`, `soc`, `pdc`, `intc`) exist in mainline's tree too, where the
 overlay would add downstream nodes to live ones. The tree is therefore built without dtc's symbol table and gets its
-own from `dtbo_sink.py`: every label of the stock overlays resolves to an empty node below `/pico4-dtbo-sink`, which
+own from `sm8250-pico4-phoenix-dtbo-sink.dtsi`: every label of the stock overlays resolves to an empty node below
+`/pico4-dtbo-sink`, which
 has no compatible, so no driver sees what the overlay puts there. None of the overlays' nodes carries a compatible that
 mainline searches the whole tree for (`ramoops`, `qcom,cmd-db`, `qcom,smem`, ...). `dtbo` stays untouched. The ABL
 picks the tree by its `qcom,msm-id` and `qcom,board-id`.

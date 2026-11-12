@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: Unlicense
-"""Valve's kernel's host tools: the overlay sink and the one-shot recovery image."""
+"""Valve's kernel's host tools: the RGB camera's table and the boot and recovery images."""
 
 from __future__ import annotations
 
 import gzip
 import hashlib
 import json
-import re
 import struct
 import tempfile
 import unittest
@@ -14,183 +13,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
-from devices.phoenix.kernel import dtbo_sink, imx471_mode, panel_sequence, recovery_image
+from devices.phoenix.kernel import imx471_mode, recovery_image
 from overpressure import avb, bootimg, cpio
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-
-def fdt(nodes: dict) -> bytes:
-    """Build a minimal flattened device tree: {node name: {property: value}} below the root."""
-    strings, structure = b"", b""
-
-    def name_offset(name: str) -> int:
-        nonlocal strings
-        raw = name.encode() + b"\0"
-        if raw not in strings:
-            strings += raw
-        return strings.index(raw)
-
-    def begin(name: str) -> bytes:
-        raw = name.encode() + b"\0"
-        return struct.pack(">I", 1) + raw + b"\0" * (-len(raw) % 4)
-
-    structure += begin("")
-    for node, props in nodes.items():
-        structure += begin(node)
-        for prop, value in props.items():
-            raw = value.encode() + b"\0"
-            structure += struct.pack(">III", 3, len(raw), name_offset(prop)) + raw + b"\0" * (-len(raw) % 4)
-        structure += struct.pack(">I", 2)
-    structure += struct.pack(">II", 2, 9)
-    off_struct = 40 + 16  # header, then an empty memory reservation map
-    off_strings = off_struct + len(structure)
-    total = off_strings + len(strings)
-    header = struct.pack(
-        ">IIIIIIIIII", 0xD00DFEED, total, off_struct, off_strings, 40, 17, 16, 0, len(strings), len(structure)
-    )
-    return header + b"\0" * 16 + structure + strings
-
-
-def fdt_tree(tree: dict) -> bytes:
-    """Build a flattened device tree from {name: bytes (a property) or dict (a child node)}."""
-    strings, structure = b"", b""
-
-    def begin(name: str) -> bytes:
-        raw = name.encode() + b"\0"
-        return struct.pack(">I", 1) + raw + b"\0" * (-len(raw) % 4)
-
-    def node(name: str, content: dict) -> bytes:
-        nonlocal strings
-        out = begin(name)
-        for key, value in content.items():
-            if isinstance(value, bytes):
-                raw = key.encode() + b"\0"
-                if raw not in strings:
-                    strings += raw
-                out += struct.pack(">III", 3, len(value), strings.index(raw)) + value + b"\0" * (-len(value) % 4)
-        for key, value in content.items():
-            if isinstance(value, dict):
-                out += node(key, value)
-        return out + struct.pack(">I", 2)
-
-    structure = node("", tree) + struct.pack(">I", 9)
-    off_struct = 40 + 16
-    off_strings = off_struct + len(structure)
-    header = struct.pack(
-        ">IIIIIIIIII",
-        0xD00DFEED,
-        off_strings + len(strings),
-        off_struct,
-        off_strings,
-        40,
-        17,
-        16,
-        0,
-        len(strings),
-        len(structure),
-    )
-    return header + b"\0" * 16 + structure + strings
-
-
-ON = bytes.fromhex("29 01 00 00 00 00 02 b0 00 05 01 00 00 78 00 01 11")
-OFF = bytes.fromhex("05 01 00 00 32 00 01 28")
-
-
-def panel_overlay(on: bytes = ON, off: bytes = OFF) -> bytes:
-    """Build an overlay with a panel's on and off command sequences, as PICO OS's dtbo has them."""
-    timing = {"qcom,mdss-dsi-on-command": on, "qcom,mdss-dsi-off-command": off, "qcom,other": b"x"}
-    return fdt_tree(
-        {
-            "fragment@0": {
-                "__overlay__": {
-                    "qcom,mdss_dsi_sharp_ls026b3sa_90_video": {
-                        "qcom,mdss-dsi-panel-name": b"sharp\0",
-                        "qcom,mdss-dsi-display-timings": {"timing@0": timing},
-                    }
-                }
-            }
-        }
-    )
-
-
-def dtbo(overlays: list) -> bytes:
-    """Build an Android dtbo image holding the given overlays."""
-    header, entry = 32, 32
-    offset = header + entry * len(overlays)
-    entries, blobs = b"", b""
-    for blob in overlays:
-        entries += struct.pack(">IIII", len(blob), offset + len(blobs), 0, 0) + b"\0" * 16
-        blobs += blob
-    total = offset + len(blobs)
-    return struct.pack(">IIIIIIII", 0xD7B7AB1E, total, header, entry, len(overlays), header, 4096, 0) + entries + blobs
-
-
-class DtboSinkTests(unittest.TestCase):
-    def test_labels_of_every_overlay_resolve_into_the_sink(self):
-        image = dtbo(
-            [
-                fdt(
-                    {
-                        "fragment@0": {"target": "x"},
-                        "__fixups__": {"spmi_bus": "/fragment@0:target:0", "tlmm": "/a:b:0"},
-                    }
-                ),
-                fdt({"__fixups__": {"tlmm": "/c:d:0", "CPU4": "/e:f:0"}}),
-            ]
-        )
-        labels = set()
-        for overlay in dtbo_sink.overlays(image):
-            labels |= dtbo_sink.fixup_labels(overlay)
-        self.assertEqual(labels, {"spmi_bus", "tlmm", "CPU4"})
-        text = dtbo_sink.sink(labels)
-        # Own labels for the nodes, the overlay's names only in the symbol table.
-        self.assertIn("pico4,refs = <&dtbo_CPU4 &dtbo_spmi_bus &dtbo_tlmm>;", text)
-        self.assertIn("dtbo_tlmm: tlmm {", text)
-        self.assertIn('tlmm = "/pico4-dtbo-sink/tlmm";', text)
-        self.assertNotIn("compatible", text)
-
-    def test_property_names_elsewhere_are_not_labels(self):
-        self.assertEqual(dtbo_sink.fixup_labels(fdt({"node": {"__fixups__": "x"}})), set())
-
-    def test_a_recovery_image_supplies_its_recovery_dtbo(self):
-        image = dtbo([fdt({"__fixups__": {"soc": "/x:y:0"}})])
-        boot = bootimg.BootImage(
-            header_version=2, page_size=4096, kernel=b"k", ramdisk=b"r", recovery_dtbo=image, dtb=b"d"
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "recovery.img"
-            path.write_bytes(boot.pack())
-            self.assertEqual(dtbo_sink.dtbo_of(path), image)
-
-    def test_odd_labels_and_other_data_are_refused(self):
-        with self.assertRaises(ValueError):
-            dtbo_sink.sink({"bad label"})
-        with self.assertRaises(ValueError):
-            dtbo_sink.overlays(b"\0" * 64)
-
-
-class PanelSequenceTests(unittest.TestCase):
-    def test_the_stock_sequences_become_the_drivers_properties(self):
-        image = dtbo([fdt_tree({"other": {"x": b"y"}}), panel_overlay(), panel_overlay()])
-        seqs = panel_sequence.sequences(image)
-        self.assertEqual(seqs, {"qcom,mdss-dsi-on-command": ON, "qcom,mdss-dsi-off-command": OFF})
-        self.assertEqual(panel_sequence.commands(ON), [(0x29, 0, b"\xb0\x00"), (0x05, 120, b"\x11")])
-        text = panel_sequence.include(seqs)
-        self.assertIn("&display_panel {", text)
-        self.assertIn("pico4,on-command = [29 01 00 00 00 00 02 b0 00 05 01 00 00 78 00 01 11];", text)
-        self.assertIn("pico4,off-command = [05 01 00 00 32 00 01 28];", text)
-
-    def test_disagreeing_or_odd_sequences_are_refused(self):
-        with self.assertRaises(ValueError):
-            panel_sequence.sequences(dtbo([panel_overlay(), panel_overlay(off=ON)]))
-        with self.assertRaises(ValueError):
-            panel_sequence.sequences(dtbo([fdt_tree({"other": {"x": b"y"}})]))
-        # A read (0x06) or a payload longer than the data are not a power-on sequence.
-        for bad in (bytes.fromhex("06 01 00 00 00 00 01 0a"), bytes.fromhex("29 01 00 00 00 00 05 b0 00")):
-            with self.assertRaises(ValueError):
-                panel_sequence.commands(bad)
 
 
 #: The driver's mode, as imx471_mode.py selects it: line length, frame length, frame rate, size.
@@ -267,8 +94,6 @@ def camera_module(
 
 
 class Imx471ModeTests(unittest.TestCase):
-    DRIVER = Path(__file__).resolve().parents[1] / "kernel/src/drivers/media/i2c/pico4-imx471.c"
-
     def test_the_modes_settings_without_the_drivers_controls(self):
         other = (2560, 3776, 60.0, 2328, 1748, 10)
         pairs = imx471_mode.mode(camera_module([other, MODE, other]))
@@ -325,14 +150,6 @@ class Imx471ModeTests(unittest.TestCase):
             with mock.patch.object(imx471_mode, "MODULES", {hashlib.sha256(data).hexdigest()}):
                 self.assertEqual(imx471_mode.main([str(module), str(out)]), 0)
             self.assertEqual(out.read_bytes(), imx471_mode.table([(0x1000, 0x11), (0x1001, 0x66)]))
-
-    def test_the_driver_holds_no_registers_and_includes_the_table(self):
-        driver = self.DRIVER.read_text(encoding="utf-8")
-        self.assertIsNone(re.search(r"\{\s*0x[0-9a-fA-F]+\s*,", driver))
-        self.assertIn('#include "pico4-imx471-mode.h"', driver)
-        script = (self.DRIVER.parents[4] / "build-kernel.sh").read_text(encoding="utf-8")
-        self.assertIn('imx471_mode.py" "$work/imx471-module.bin" "$work/pico4-imx471-mode.h"', script)
-        self.assertIn('"$src/drivers/media/i2c/pico4-imx471-mode.h"', script)
 
 
 def stock_partition(total: int = 64 * 4096) -> bytes:

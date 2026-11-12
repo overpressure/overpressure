@@ -113,8 +113,6 @@ convention = "pep257"
 python-version = "3.9"
 # The tooling runs on Windows, Linux and macOS, the headset's programs on Linux: check every branch.
 python-platform = "all"
-# panel_sequence.py imports its neighbour dtbo_sink.py as a script does.
-extra-paths = ["devices/phoenix/kernel"]
 
 [tool.ty.src]
 # The Python files, and the headset's Python programs without a suffix (as in [tool.ruff]).
