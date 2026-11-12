@@ -16,7 +16,9 @@ manifest.json with its sources and every file's SHA-256, which scripts/build-use
                      (vendor /etc/sensors); calibration/pxrconfig/SDK_Lens_ConfigFile.txt (system);
                      calibration/controllers/led-models.json, aim-to-grip.json, lever-arm.json,
                      read from PICO OS's tracking libraries (system); rendermodels/: SteamVR's
-                     models of both controllers (system /system/pre_resource)
+                     models of both controllers (system /system/pre_resource); camera/imx471-mode.bin:
+                     the RGB camera's register table, read from PICO OS's camera module (vendor
+                     /lib64/camera), which the kernel's driver loads
   wlan               the QCA6390: firmware/qca6390/amss20.bin, m3.bin, bdwlanq.elf, its Wi-Fi
                      (modem /image/qca6390); firmware/qca/htbtfw20.tlv, htnv20.bin, its Bluetooth
                      (bluetooth /image)
@@ -46,6 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from devices.phoenix.kernel import imx471_mode
 from overpressure import REPO
 from overpressure.assets import AssetError, StockFolder, copy_matching, dump, widen_modes, write_manifest
 from overpressure.ext4 import Ext4Error
@@ -65,6 +68,8 @@ LED_LIBRARY = "/system/lib64/libpico_controller_tracking.pxr.so"
 AIM_GRIP_LIBRARY = "/system/lib64/libpvrtrackingservice.so"
 LEVER_ARM_LIBRARY = "/system/lib64/libpico_controller_tracking.client.so"
 CONTROLLER_MODELS = "/system/pre_resource/data/misc/user/controller/Neo3Phx"
+#: The RGB camera's module, whose register table the kernel's IMX471 driver loads.
+CAMERA_MODULE = "/lib64/camera/com.qti.sensormodule.sunny_imx471.bin"
 WLAN_FIRMWARE = ("amss20.bin", "m3.bin", "bdwlanq.elf")
 #: The QCA6390's Bluetooth firmware and NV data, under the names hci_qca asks for.
 BT_FIRMWARE = ("htbtfw20.tlv", "htnv20.bin")
@@ -142,13 +147,19 @@ def graphics_firmware(s: StockFolder, out: Path, log: Log) -> None:
 
 
 def sensor_data(s: StockFolder, out: Path, log: Log) -> None:
-    """Extract the head-IMU sensor stack and the lens and controller data (docs/xr.md)."""
+    """Extract the head-IMU sensor stack, the lens and controller data (docs/xr.md) and the RGB camera's table."""
     vendor, system = s.ext4("vendor.img"), s.ext4("system.img")
-    for folder in ("firmware", "sensors", "calibration/pxrconfig", "calibration/controllers"):
+    for folder in ("firmware", "sensors", "calibration/pxrconfig", "calibration/controllers", "camera"):
         (out / folder).mkdir(parents=True, exist_ok=True)
     log(">> vendor: sensor config")
     dump(vendor, "/etc/sensors/config", out / "sensors")
     dump(vendor, "/etc/sensors/sns_reg_config", out / "sensors/sns_reg.conf")
+    log(">> vendor: the RGB camera's register table")
+    try:
+        pairs = imx471_mode.known_mode(vendor.read(CAMERA_MODULE), CAMERA_MODULE)
+    except ValueError as exc:
+        raise AssetError(str(exc)) from exc
+    (out / "camera/imx471-mode.bin").write_bytes(imx471_mode.table(pairs))
 
     log(">> system: lens configuration, controller LED models, aim-to-grip transforms, lever arms, controller models")
     dump(system, LENS_CONFIG, out / "calibration/pxrconfig/SDK_Lens_ConfigFile.txt")
@@ -294,6 +305,7 @@ KINDS = {
             "sensors/": "vendor /etc/sensors",
             "calibration/": "system",
             "rendermodels/": "system /system/pre_resource",
+            "camera/": "vendor /lib64/camera",
         },
         sensor_data,
     ),
@@ -340,6 +352,15 @@ def extract(name: str, folder: StockFolder, output: Path, log: Log = print) -> i
     count = write_manifest(output, folder.firmware, kind.sources)
     log(f">> {count} files in {output}")
     return count
+
+
+def current(folder: Path, name: str) -> bool:
+    """Tell whether @p folder holds kind @p name's assets as today's recipe extracts them (its sources)."""
+    try:
+        manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(manifest, dict) and manifest.get("sources") == KINDS[name].sources
 
 
 def version_of(firmware: str) -> str:

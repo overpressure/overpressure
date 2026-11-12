@@ -9,7 +9,8 @@ legal advice.
 | --- | --- | --- | --- | --- |
 | PICO OS OTA of the headset's firmware | PICO, public download | URL and hashes (`tooling/firmware.json`) | `python -m overpressure stock`, on their PC | stock kernel, device-tree overlays, GPU, Wi-Fi, audio and DSP firmware, sensor data |
 | PICO OS's head tracker (`libSlam` and its libraries) | PICO, in that OTA | no | `python -m overpressure assets`, on their PC | 6DoF head tracking |
-| Panel commands, camera sensor settings | PICO, in that OTA | no: generated at each build (`kernel/panel_sequence.py`, `kernel/imx471_mode.py`) | the kernel build, from their OTA | both panels, the RGB camera |
+| Panel commands | PICO, in that OTA | no: generated at each build (`kernel/panel_sequence.py`) | the kernel build, from their OTA | both panels |
+| Camera sensor settings | PICO, in that OTA | no: written by the assets step (`kernel/imx471_mode.py`) | `python -m overpressure assets`, on their PC; the system image carries them, the kernel loads them | the RGB camera |
 | Engineering ABL | PICO, in a public PICO Neo 3 OTA | URL and hash (`tooling/unlockfiles.py`) | `python -m overpressure device fetch-unlock-files` | unlocking, development mode |
 | Firehose loader | PICO, in a public PICO Neo 3 package | URL and hash (`tooling/unlockfiles.py`) | the same command | EDL backups and restores |
 | The headset's calibration | the owner's headset | no | read from `persist`, on the headset, at run time | tracking, displays |

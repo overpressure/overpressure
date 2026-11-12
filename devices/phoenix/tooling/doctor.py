@@ -105,23 +105,17 @@ def usb_checks(host: Host) -> list[Check]:
 
 
 def asset_checks(_host: Host, root: Path = REPO, version: str = FIRMWARE_VERSION) -> list[Check]:
-    """Check that every kind of assets is there (they need no host: plain files)."""
+    """Check that every kind of assets is there as today's recipe extracts it (they need no host: plain files)."""
     checks = []
     for kind in ASSET_KINDS:
         folder = root / "assets" / f"{kind}-{version}"
-        manifest = folder / "manifest.json"
-        if manifest.is_file():
-            checks.append(Check(f"assets/{kind}-{version}", ASSETS, OK, "manifest.json present"))
+        name = f"assets/{kind}-{version}"
+        if assets.current(folder, kind):
+            checks.append(Check(name, ASSETS, OK, "manifest.json present"))
         else:
-            checks.append(
-                Check(
-                    f"assets/{kind}-{version}",
-                    ASSETS,
-                    MISSING,
-                    "not extracted",
-                    f"python -m overpressure assets {kind} (docs/development.md#stock-firmware)",
-                )
-            )
+            detail = "extracted by an older recipe" if (folder / "manifest.json").is_file() else "not extracted"
+            fix = f"python -m overpressure assets {kind} (docs/development.md#stock-firmware)"
+            checks.append(Check(name, ASSETS, MISSING, detail, fix))
     return checks
 
 

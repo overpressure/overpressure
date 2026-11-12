@@ -37,7 +37,7 @@ As shipped:
 | [build-tree.sh](../kernel/build-tree.sh) | a checkout of [overpressure/linux](https://github.com/overpressure/linux)'s `phoenix/7.2` to the same files and `build.json` (release, commit, banner, camera table, the tooling's commit, the build image, hashes); `uname -v` names the commit. That repository's CI builds each branch with it once, each tag twice on two machines, and releases a tag whose builds agree |
 | [dtbo_sink.py](../kernel/dtbo_sink.py) | the include that absorbs the ABL's board overlay ([below](#the-abls-board-overlay)) |
 | [panel_sequence.py](../kernel/panel_sequence.py) | the include with the panels' command sequences, from the stock board overlay |
-| [imx471_mode.py](../kernel/imx471_mode.py) | the RGB camera's register table, from the camera module in the stock vendor image |
+| [imx471_mode.py](../kernel/imx471_mode.py) | the RGB camera's register table, from the camera module in the stock vendor image: the file the driver loads, or the header `build-kernel.sh` compiles in |
 | [recovery_image.py](../kernel/recovery_image.py) | boot images with Valve's kernel ([A one-shot test boot](#a-one-shot-test-boot)) |
 | [tests/](../kernel/tests/) | the battery driver on a fake PMIC against stub kernel headers (`scripts/c-tests.sh`) |
 
@@ -135,11 +135,15 @@ and backlight enable (GPIO 29).
   (`panel_sequence.py`, as `pico4,on-command` and `pico4,off-command`); the driver sends each with its stock data type
   to both links.
 
-The RGB camera's mode is PICO's data too: the build generates `pico4-imx471-mode.h` (`imx471_mode.py`) from
+The RGB camera's mode is PICO's data too, and not part of the kernel: `imx471_mode.py` takes it from
 `/lib64/camera/com.qti.sensormodule.sunny_imx471.bin` in the stock vendor image: the `regSetting` list of 2328x1748 at
 50 fps (frame length 4520, line length 2560) in the file's order, without exposure and gain (0x0202–0x0205), which the
 driver writes as controls. The tool accepts only the module files it knows by SHA-256 (the sunny and liteon modules of
-firmware 5.13.7, with the same tables) and refuses an unexpected structure.
+firmware 5.13.7, with the same tables) and refuses an unexpected structure. The assets' sensor data hold it as
+`camera/imx471-mode.bin`, the system image as `/usr/lib/firmware/qcom/sm8250/pico4/imx471-mode.bin`, and
+overpressure/linux's driver loads it at its first stream: `IMX471M1`, the number of writes (32-bit little endian), then
+each write as its register (16-bit big endian) and its value. `build-kernel.sh` still compiles it in, as
+`pico4-imx471-mode.h`.
 
 ## DSPs and the GD32 MCU
 

@@ -1,18 +1,22 @@
 # SPDX-License-Identifier: Unlicense
 """The RGB camera's register table, taken from PICO OS's camera module at build time.
 
-The sensor's mode is PICO's data, so it stays out of the repository: this generates the C header
-that `pico4-imx471.c` includes, from `com.qti.sensormodule.*_imx471.bin` in the stock vendor image
-(`/lib64/camera`). The file is Qualcomm's parameter data: 72-byte named nodes, each with the offset
-and size of its data, and C structs whose pointers hold a node's id. The table is the
-`regSetting` list of the resolution the driver runs, in the file's order. Only one thing is the
-project's: exposure and gain are left out, since the driver writes them as controls, under group
-hold as PICO OS's module does.
+The sensor's mode is PICO's data, so it stays out of the repository and out of the kernel: this
+takes it from `com.qti.sensormodule.*_imx471.bin` in the stock vendor image (`/lib64/camera`) and
+writes the file the driver loads at its first stream (`qcom/sm8250/pico4/imx471-mode.bin` in the
+system image, from the assets' sensor data), or the C header an older driver compiles in. The
+module is Qualcomm's parameter data: 72-byte named nodes, each with the offset and size of its
+data, and C structs whose pointers hold a node's id. The table is the `regSetting` list of the
+resolution the driver runs, in the file's order. Only one thing is the project's: exposure and gain
+are left out, since the driver writes them as controls, under group hold as PICO OS's module does.
 
-    python imx471_mode.py MODULE.bin OUT.h
+    python imx471_mode.py MODULE.bin OUT.bin    (the driver's file)
+    python imx471_mode.py MODULE.bin OUT.h      (the header)
 
-Only the files in MODULES are taken: the driver's table was compared with theirs. Anything in the
-structure this does not expect is refused as well.
+The file: TABLE_MAGIC, the number of writes (32-bit little endian), then each write as its
+register (16-bit big endian) and its value (one byte). Only the modules in MODULES are taken: the
+driver's table was compared with theirs. Anything in the structure this does not expect is refused
+as well.
 """
 
 from __future__ import annotations
@@ -40,7 +44,9 @@ HEADER_SIZE = 160  # the file's header, up to its section table's offset and cou
 SECTIONS = 2  # the symbols and the data they point into
 NODE_SIZE, RESOLUTION_SIZE, RECORD_SIZE, STREAM_SIZE = 72, 304, 80, 64
 MAX_REGISTER, MAX_VALUE = 0xFFFF, 0xFF  # 16-bit addresses, 8-bit data
-ARGC = 2  # MODULE.bin OUT.h
+ARGC = 2  # MODULE.bin OUT
+#: The driver's file: its magic (the driver's IMX471_MODE_MAGIC), then the count and the writes.
+TABLE_MAGIC = b"IMX471M1"
 ADDRESS_16_BITS, DATA_8_BITS, OPERATION_WRITE = 2, 1, 0
 
 
@@ -139,20 +145,30 @@ def header(pairs: list[tuple[int, int]]) -> str:
     return "\n".join([*lines, "};", ""])
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Write the header for a known MODULE.bin to OUT.h."""
-    argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != ARGC:
-        print("usage: python imx471_mode.py MODULE.bin OUT.h", file=sys.stderr)
-        return 2
-    data = Path(argv[0]).read_bytes()
+def table(pairs: list[tuple[int, int]]) -> bytes:
+    """Generate the file the driver loads with the register table."""
+    return TABLE_MAGIC + struct.pack("<I", len(pairs)) + b"".join(struct.pack(">HB", r, v) for r, v in pairs)
+
+
+def known_mode(data: bytes, name: str) -> list[tuple[int, int]]:
+    """Return the mode of the camera module @p data (from @p name), which must be one of MODULES."""
     digest = hashlib.sha256(data).hexdigest()
     if digest not in MODULES:
-        msg = f"{argv[0]}: unknown camera module, sha256 {digest}"
+        msg = f"{name}: unknown camera module, sha256 {digest}"
         raise ValueError(msg)
-    pairs = mode(data)
-    Path(argv[1]).write_bytes(header(pairs).encode("utf-8"))
-    print(f"RGB camera mode ({len(pairs)} registers) -> {argv[1]}")
+    return mode(data)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Write the driver's file (OUT.bin) or the header (OUT.h) for a known MODULE.bin."""
+    argv = sys.argv[1:] if argv is None else argv
+    if len(argv) != ARGC:
+        print("usage: python imx471_mode.py MODULE.bin OUT.bin|OUT.h", file=sys.stderr)
+        return 2
+    pairs = known_mode(Path(argv[0]).read_bytes(), argv[0])
+    out = Path(argv[1])
+    out.write_bytes(header(pairs).encode("utf-8") if out.suffix == ".h" else table(pairs))
+    print(f"RGB camera mode ({len(pairs)} registers) -> {out}")
     return 0
 
 

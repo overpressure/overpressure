@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
-from devices.phoenix.tooling import HEADSET, devloop, localconfig
+from devices.phoenix.tooling import HEADSET, assets, devloop, localconfig
 from devices.phoenix.tooling import install as plan
 from overpressure import doctor, qualcomm, tools
 from overpressure.doctor import Check
@@ -241,7 +241,9 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(done["container"](ctx))  # ty: ignore[call-non-callable]  # every build has one
         for kind in ("graphics-firmware", "sensor-data", "wlan", "audio", "stock-slam"):
             (self.root / "assets" / f"{kind}-5.13.7").mkdir(parents=True)
-            (self.root / "assets" / f"{kind}-5.13.7" / "manifest.json").write_text("{}")
+            (self.root / "assets" / f"{kind}-5.13.7" / "manifest.json").write_text(
+                json.dumps({"sources": assets.KINDS[kind].sources})
+            )
         for name in ("pico4-stage1-5.13.7-global-seko.img", "userspace/pico4-userspace.tar.zst"):
             (out / name).parent.mkdir(parents=True, exist_ok=True)
             (out / name).write_text("x")

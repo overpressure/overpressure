@@ -43,7 +43,7 @@ from overpressure import REPO, android, doctor, linux, qualcomm, runner, tools, 
 from overpressure.install import Ask, Context, Failed, Field, Stage, Task
 from overpressure.process import until
 
-from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, device, devloop, localconfig, unlockfiles
+from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, assets, device, devloop, localconfig, unlockfiles
 from . import doctor as checks
 
 if TYPE_CHECKING:
@@ -355,9 +355,9 @@ class Plan:
 
     # -- 2. the build ---------------------------------------------------------------------------
     def assets_there(self, _ctx: Context) -> bool:
-        """Tell whether every extraction's assets are there."""
+        """Tell whether every extraction's assets are there, as today's recipe extracts them."""
         version = checks.FIRMWARE_VERSION
-        return all((self.root / "assets" / f"{k}-{version}" / "manifest.json").is_file() for k in checks.ASSET_KINDS)
+        return all(assets.current(self.root / "assets" / f"{k}-{version}", k) for k in checks.ASSET_KINDS)
 
     def build_done(self, key: str) -> Callable[[Context], bool]:
         """Return the done check of the build step @p key: its outputs are there, not older than their inputs."""

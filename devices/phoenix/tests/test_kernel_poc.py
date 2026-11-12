@@ -315,6 +315,17 @@ class Imx471ModeTests(unittest.TestCase):
                 self.assertEqual(imx471_mode.main([str(module), str(out)]), 0)
             self.assertIn("{ 0x1000, 0x11 },", out.read_text())
 
+    def test_the_drivers_file_is_the_magic_the_count_and_the_writes(self):
+        table = imx471_mode.table([(0x1000, 0x11), (0x0301, 0x0A)])
+        self.assertEqual(table, b"IMX471M1" + b"\x02\0\0\0" + b"\x10\x00\x11" + b"\x03\x01\x0a")
+        data = camera_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            module, out = Path(tmp) / "module.bin", Path(tmp) / "imx471-mode.bin"
+            module.write_bytes(data)
+            with mock.patch.object(imx471_mode, "MODULES", {hashlib.sha256(data).hexdigest()}):
+                self.assertEqual(imx471_mode.main([str(module), str(out)]), 0)
+            self.assertEqual(out.read_bytes(), imx471_mode.table([(0x1000, 0x11), (0x1001, 0x66)]))
+
     def test_the_driver_holds_no_registers_and_includes_the_table(self):
         driver = self.DRIVER.read_text(encoding="utf-8")
         self.assertIsNone(re.search(r"\{\s*0x[0-9a-fA-F]+\s*,", driver))

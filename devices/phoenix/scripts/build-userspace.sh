@@ -11,9 +11,9 @@
 # not in the image: it links to persist, mounted read-only at boot (pico4-persist.service).
 #   --gpu-firmware DIR  a650_* GPU firmware (python -m overpressure assets,
 #                       docs/graphics.md). Without it the userspace boots, but Vulkan cannot start.
-#   --sensor-data DIR   sensor DSP firmware and config, lens and controller data
-#                       (python -m overpressure assets, docs/xr.md). Without it the head IMU
-#                       stack stays inactive.
+#   --sensor-data DIR   sensor DSP firmware and config, lens and controller data, the RGB camera's
+#                       register table (python -m overpressure assets, docs/xr.md). Without it the
+#                       head IMU stack stays inactive and the RGB camera dark.
 #   --wlan DIR          Wi-Fi firmware and board data (python -m overpressure assets,
 #                       docs/userspace.md). Without it Wi-Fi stays off.
 #   --audio DIR         ADSP firmware and the audio process's files
@@ -521,7 +521,7 @@ if [[ -n "$audio" ]]; then
         "$T/usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin"
     chown -R 0:0 "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio" "$T/usr/lib/firmware/qcom/sm8250/pico4"
     assets_modes "$T/usr/share/qcom/pico4-audio"
-    audio_json=$(cd "$T" && find usr/lib/firmware/adsp* usr/lib/firmware/qcom/sm8250/pico4 usr/lib/pico4-audio \
+    audio_json=$(cd "$T" && find usr/lib/firmware/adsp* usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin usr/lib/pico4-audio \
         usr/share/qcom/pico4-audio -type f -print0 |
         sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
@@ -532,8 +532,12 @@ sensor_json="[]"
 if [[ -n "$sensor_data" ]]; then
     [[ -s "$sensor_data/firmware/slpi.mdt" && -d "$sensor_data/sensors/config" ]] ||
         { echo "incomplete sensor data in $sensor_data (see python -m overpressure assets)" >&2; exit 1; }
+    [[ -s "$sensor_data/camera/imx471-mode.bin" ]] ||
+        { echo "no RGB camera table in $sensor_data: extract it again (python -m overpressure assets sensor-data)" >&2; exit 1; }
     mkdir -p "$T/usr/lib/firmware"
     install -m 0644 "$sensor_data"/firmware/slpi* "$T/usr/lib/firmware/"
+    # The RGB camera's register table, which the kernel's IMX471 driver loads at its first stream.
+    install -D -m 0644 "$sensor_data/camera/imx471-mode.bin" "$T/usr/lib/firmware/qcom/sm8250/pico4/imx471-mode.bin"
     qcom=$T/usr/share/qcom/pico4
     mkdir -p "$qcom"
     cp -r --no-preserve=ownership "$sensor_data/sensors" "$qcom/"
@@ -557,7 +561,8 @@ if [[ -n "$sensor_data" ]]; then
     fi
     rendermodels=()
     [[ ! -d $models ]] || rendermodels=(usr/share/steamvr-monado/resources/rendermodels)
-    sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/share/qcom/pico4 "${rendermodels[@]}" \
+    sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/lib/firmware/qcom/sm8250/pico4/imx471-mode.bin \
+        usr/share/qcom/pico4 "${rendermodels[@]}" \
         -type f -print0 | sort -z | xargs -0 sha256sum |
         python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
 fi

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 from unittest import mock
 
+from devices.phoenix.tests.test_kernel_poc import camera_module
 from devices.phoenix.tooling import HEADSET, assets, doctor
 from overpressure import runner
 from overpressure.assets import AssetError, StockFolder
@@ -39,6 +41,11 @@ def bluetooth() -> bytes:
     return img.build()
 
 
+#: The RGB camera's module in the vendor image, taken as a known one (imx471_mode.MODULES).
+CAMERA = camera_module()
+KNOWN_CAMERA = mock.patch.object(assets.imx471_mode, "MODULES", {hashlib.sha256(CAMERA).hexdigest()})
+
+
 def vendor() -> bytes:
     """Return a vendor partition with what the kinds take, and a DSP library none takes."""
     img = Ext4Image(inodes_per_group=64)
@@ -47,6 +54,7 @@ def vendor() -> bytes:
     img.file("/etc/sensors/config/kona_irq.json", b"{}")
     img.file("/etc/sensors/config/sns_amd.json", b"{}")
     img.file("/etc/sensors/sns_reg_config", b"registry layout")
+    img.file(assets.CAMERA_MODULE, CAMERA)
     img.file("/etc/acdbdata/adsp_avs_config.acdb", b"avs")
     for name in assets.AUDIO_CALIBRATION:
         img.file(f"/etc/acdbdata/wsa8810/base/MTP/{name}", name.encode())
@@ -218,6 +226,7 @@ class AssetsTests(unittest.TestCase):
             mock.patch.multiple(assets.aimgrip, transforms=read("aim"), to_json=lambda *_a: '{"aim": 1}\n'),
             mock.patch.multiple(assets.leverarm, lever_arms=read("lever"), to_json=lambda *_a: '{"left": [1.0]}\n'),
             mock.patch.object(assets.controllermodel, "convert", convert),
+            KNOWN_CAMERA,
         ):
             out = self.extract("sensor-data")
         self.assertEqual([n for n, _elf in libraries], ["leds", "aim", "lever"])
@@ -233,9 +242,24 @@ class AssetsTests(unittest.TestCase):
             "calibration/controllers/aim-to-grip.json",
             "calibration/controllers/lever-arm.json",
             "rendermodels/pico4_controller_left/pico4_controller_left.obj",
+            "camera/imx471-mode.bin",
         ):
             self.assertIn(path, found)
+        # The camera module's mode, without the driver's controls, as the driver loads it.
+        table = assets.imx471_mode.table([(0x1000, 0x11), (0x1001, 0x66)])
+        self.assertEqual((out / "camera/imx471-mode.bin").read_bytes(), table)
         self.assertNotIn(b"\r", (out / "calibration/controllers/aim-to-grip.json").read_bytes())
+
+    def test_an_unknown_camera_module_is_refused(self):
+        with (
+            mock.patch.multiple(
+                assets.ledmodel, models=lambda _e: {}, normals=lambda _e, _r: {}, to_json=lambda *_a: "{}\n"
+            ),
+            mock.patch.multiple(assets.aimgrip, transforms=lambda _e: {}, to_json=lambda *_a: "{}\n"),
+            mock.patch.multiple(assets.leverarm, lever_arms=lambda _e: {}, to_json=lambda *_a: "{}\n"),
+            self.assertRaisesRegex(AssetError, "unknown camera module"),
+        ):
+            self.extract("sensor-data")
 
     def test_a_changed_image_and_an_existing_output_are_refused(self):
         (self.stock / "dsp.bin").write_bytes(b"changed")

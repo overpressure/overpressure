@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
-from devices.phoenix.tooling import HEADSET, localconfig
+from devices.phoenix.tooling import HEADSET, assets, localconfig
 from devices.phoenix.tooling import doctor as checks
 from overpressure import backup, doctor, tools
 
@@ -133,8 +133,20 @@ class PicoDoctorTests(unittest.TestCase):
         for kind in checks.ASSET_KINDS:
             folder = self.root / "assets" / f"{kind}-{checks.FIRMWARE_VERSION}"
             folder.mkdir(parents=True)
-            (folder / "manifest.json").write_text("{}")
+            (folder / "manifest.json").write_text(json.dumps({"sources": assets.KINDS[kind].sources}))
         self.assertEqual(doctor.failed(checks.asset_checks(FakeHost(), self.root)), [])
+
+    def test_assets_of_an_older_recipe_are_extracted_again(self):
+        # The sensor data before the RGB camera's table: its manifest lacks the camera's source.
+        for kind in checks.ASSET_KINDS:
+            folder = self.root / "assets" / f"{kind}-{checks.FIRMWARE_VERSION}"
+            folder.mkdir(parents=True)
+            sources = {k: v for k, v in assets.KINDS[kind].sources.items() if k != "camera/"}
+            (folder / "manifest.json").write_text(json.dumps({"sources": sources}))
+        failed = doctor.failed(checks.asset_checks(FakeHost(), self.root))
+        self.assertEqual([c.name for c in failed], [f"assets/sensor-data-{checks.FIRMWARE_VERSION}"])
+        self.assertEqual(failed[0].detail, "extracted by an older recipe")
+        self.assertIn("assets sensor-data", failed[0].fix)
 
     def test_the_pico_4_registers_its_checks(self):
         self.assertEqual(
