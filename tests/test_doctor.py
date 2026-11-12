@@ -146,10 +146,10 @@ class DoctorTests(unittest.TestCase):
             found(linux={"arch": "x86_64", "binfmt": "qemu-aarch64 OC"})["aarch64 handler"].status, doctor.OPTIONAL
         )
         self.assertEqual(found(linux={"arch": "aarch64"})["aarch64 handler"].status, doctor.OK)
-        # The image: the installer builds it itself; the checks only name the command.
+        # The image: the installer pulls it itself; the checks only name the command.
         unbuilt = found(image=False)
         self.assertEqual(unbuilt["build container image"].status, doctor.MISSING)
-        self.assertIn("python -m overpressure container build", unbuilt["build container image"].fix)
+        self.assertIn("python -m overpressure container pull", unbuilt["build container image"].fix)
         self.assertNotIn("aarch64 handler", unbuilt)
 
     def test_a_missing_or_silent_engine_has_one_fix_on_every_host(self):

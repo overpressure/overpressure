@@ -66,7 +66,7 @@ uv run --extra gui python -m unittest tests.test_headsets tests.test_installer t
 make lint                                         # uv run: ruff format --check, ruff check, ty check
 make format                                       # uv run: ruff format, ruff check --fix
 python -m overpressure doctor                     # what this host lacks for the headset, with fixes
-python -m overpressure container build            # the build container, where the builds' Linux side runs
+python -m overpressure container pull             # the build image (overpressure/builder), where the builds' Linux side runs
 python -m overpressure gui [--advanced] [--demo]  # the window (demo: nothing runs)
 python -m overpressure [--device CODENAME] steps  # a headset's steps and their command lines
 python -m overpressure container run -- make test # also each headset's shell tests, on any host

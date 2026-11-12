@@ -105,6 +105,7 @@ cat > "$out/build.json" <<EOF
   "banner": "$banner",
   "camera_table": "$camera",
   "tooling": "$tooling",
+  "image": "${OVERPRESSURE_IMAGE:-unknown}",
   "files": {
     "Image.gz": "$(sum Image.gz)",
     "$DTB.dtb": "$(sum "$DTB.dtb")",

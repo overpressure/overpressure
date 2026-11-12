@@ -131,7 +131,7 @@ class ContainerTests(unittest.TestCase):
         self.assertIn(f"{REPO}:/work", argv)
         self.assertIn(f"{linux.VOLUME}:/var/tmp", argv)
         self.assertEqual(argv[-3:], [linux.image(), "bash", "x.sh"])
-        self.assertTrue(linux.image().startswith("overpressure-builder:"))
+        self.assertIn(f"OVERPRESSURE_IMAGE={linux.image()}", argv)  # what build.json records
         probe = linux.run_argv(["true"], tool="podman")
         self.assertNotIn("--name", probe)
         self.assertFalse(any(w.startswith(("OVERPRESSURE_BINFMT", "OVERPRESSURE_UID")) for w in probe))

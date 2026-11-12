@@ -219,12 +219,12 @@ class PlanTests(unittest.TestCase):
         for key in linux_root:
             self.assertEqual(self.plan.argv(self.ctx(), key)[1:6], ["-m", "overpressure", "container", "run", "--"])
         task = build.tasks[ids.index("container")]
-        self.assertEqual((task.title, task.estimate), ("Build environment", "a few minutes the first time"))
+        self.assertEqual((task.title, task.estimate), ("Build environment", "a minute the first time"))
 
-    def test_the_build_environment_is_built_unless_its_image_is_there(self):
+    def test_the_build_environment_is_pulled_unless_its_image_is_there(self):
         ui = self.run_stages(("build",), {})
         self.assertEqual(ui.finished()["status"], "done", ui.finished())
-        built = [argv for argv, _, _ in self.spawned if argv[1:5] == ["-m", "overpressure", "container", "build"]]
+        built = [argv for argv, _, _ in self.spawned if argv[1:5] == ["-m", "overpressure", "container", "pull"]]
         self.assertEqual(len(built), 1)
         self.spawned.clear()
         self.image = True
@@ -553,8 +553,8 @@ class PlanTests(unittest.TestCase):
                 "build container image",
                 doctor.BUILDS,
                 doctor.MISSING,
-                "not built",
-                "python -m overpressure container build",
+                "not pulled",
+                "python -m overpressure container pull",
             ),
             Check("git config", "build", doctor.WARNING, "none", "git config"),
         ]

@@ -22,7 +22,7 @@ jobs:
           version: "0.9.26"
       - run: uv sync --locked
       - name: The build container
-        run: uv run python -m overpressure container build
+        run: uv run python -m overpressure container pull
       - name: The check
         run: >-
           uv run python -m overpressure container run --

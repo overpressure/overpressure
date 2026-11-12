@@ -10,7 +10,7 @@
                        run a step as the window does, with parameters
   doctor               what this host has and lacks for the headset's workflow, with fixes
   tools [NAME...]      fetch the pinned host tools: platform-tools, edl-ng
-  container build|run -- CMD|shell|binfmt
+  container pull|run -- CMD|shell|binfmt
                        the build container, where every Linux-root step (the builds) runs
   ram-boot [IMAGE]     boot an image from RAM with fastboot boot (writes nothing), where the
                        headset's bootloader allows it

@@ -101,7 +101,7 @@ class Host:
     def linux(self, script: str, timeout: float = 90) -> dict[str, str]:
         """Return the KEY=VALUE lines that @p script prints in the build container (a probe: unnamed).
 
-        {} when the image is not built (the checks name it); cached per script.
+        {} when the image is not pulled (the checks name it); cached per script.
         """
         if script not in self.linux_cache:
             if not self.container_ready():
@@ -431,8 +431,8 @@ def container_checks(host: Host) -> list[Check]:
             )
         )
     if not host.container_ready():
-        fix = "python -m overpressure container build (the installer builds it itself)"
-        checks.append(Check("build container image", BUILDS, MISSING, f"{linux.image()} not built", fix))
+        fix = "python -m overpressure container pull (the installer pulls it itself)"
+        checks.append(Check("build container image", BUILDS, MISSING, f"{linux.image()} not pulled", fix))
         return checks
     checks.append(Check("build container image", BUILDS, OK, linux.image()))
     state = host.linux(BINFMT_PROBE)

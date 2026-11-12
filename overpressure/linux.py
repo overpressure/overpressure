@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: Unlicense
 """Where a step that needs Linux as root runs: overpressure's build container, on every host.
 
-    python -m overpressure container build       the image, overpressure-builder:HASH
+    python -m overpressure container pull        the pinned build image (IMAGE)
     python -m overpressure container run -- CMD   CMD in the container, from the repository root
     python -m overpressure container shell        an interactive shell there
     python -m overpressure container binfmt       the aarch64 handler, registered when the engine has none
 
-The container (overpressure/container) holds every tool of the builds (the userspace, the system
-image, Valve's kernel), so a host needs only Docker, else Podman (OVERPRESSURE_CONTAINER_ENGINE
-chooses). It runs privileged (the builds mount and chroot); the repository is mounted at /work and
-/var/tmp (build roots) is the named volume overpressure-var.
+The container is overpressure/builder's image (IMAGE, pinned by digest), which holds every tool of
+the builds (the userspace, the system image, Valve's kernel, packages), so a host needs only Docker,
+else Podman (OVERPRESSURE_CONTAINER_ENGINE chooses). OVERPRESSURE_BUILDER names another image, such
+as one built from the builder's recipe while working on it; every run tells the command which image
+it runs in (OVERPRESSURE_IMAGE). It runs privileged (the builds mount and chroot); the repository is
+mounted at /work and /var/tmp (build roots) is the named volume overpressure-var.
 
 One build at a time: `container run` names its container overpressure-build, with labels for its
 client (host, process and parent process) and its command. A second run finds it and refuses with
@@ -26,7 +28,6 @@ aarch64 handler the userspace build's chroot needs when the engine has none (bin
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import os
 import shutil
 import signal
@@ -42,7 +43,12 @@ from . import REPO
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-CONTAINER = Path(__file__).resolve().parent / "container"
+#: The build image: overpressure/builder's release, its tag for people and its digest for the engine.
+IMAGE = (
+    "ghcr.io/overpressure/builder:2026.11.12@sha256:ba4a5ec8adb886b60b873b28d7d6454abd40c1a58d08a6f6fd7d5efc65d8e4b2"
+)
+#: The environment variable that names another image instead.
+IMAGE_OVERRIDE = "OVERPRESSURE_BUILDER"
 VOLUME = "overpressure-var"  # /var/tmp in the container: build roots, on a Linux disk
 NAME = "overpressure-build"  #: the one build's container
 OWNER = "overpressure.owner"  #: label: host:pid:ppid of the client that started it
@@ -96,11 +102,8 @@ def answers(tool: str) -> bool:
 
 
 def image() -> str:
-    """Return the image's tag: its recipe's hash, so a changed recipe is a new image."""
-    h = hashlib.sha256()
-    for name in sorted(p.name for p in CONTAINER.iterdir() if p.is_file()):
-        h.update(name.encode() + b"\0" + (CONTAINER / name).read_bytes().replace(b"\r\n", b"\n"))
-    return f"overpressure-builder:{h.hexdigest()[:12]}"
+    """Return the build image: the pinned release, or the one OVERPRESSURE_BUILDER names."""
+    return os.environ.get(IMAGE_OVERRIDE) or IMAGE
 
 
 def host_ids() -> tuple[int, int] | None:
@@ -140,7 +143,7 @@ def run_argv(  # noqa: PLR0913  # the command, and how its container runs keywor
     options = ["--name", name] if name else []
     for key, value in (labels or {}).items():
         options += ["--label", f"{key}={value}"]
-    env = {"PYTHONUNBUFFERED": "1"}
+    env = {"PYTHONUNBUFFERED": "1", "OVERPRESSURE_IMAGE": image()}
     if binfmt:
         env["OVERPRESSURE_BINFMT"] = "1"
     if ids is not None:
@@ -254,10 +257,10 @@ def image_present(run: Callable[[list[str]], tuple[int, str]] = _query) -> bool:
     return run([engine(), "image", "inspect", image()])[0] == 0
 
 
-def build() -> int:
-    """Build the image; return the engine's exit status."""
-    print(f">> {image()} from {CONTAINER}", flush=True)
-    return subprocess.call([engine(), "build", "-t", image(), str(CONTAINER)])  # noqa: S603  # the container engine, no shell
+def pull() -> int:
+    """Pull the build image; return the engine's exit status."""
+    print(f">> {image()}", flush=True)
+    return subprocess.call([engine(), "pull", image()])  # noqa: S603  # the container engine, no shell
 
 
 class Build(NamedTuple):
@@ -423,10 +426,10 @@ def run_build(command: list[str]) -> int:
 
 
 def main(argv: list[str]) -> int:
-    """Run the container command line: build, run, shell or binfmt."""
+    """Run the container command line: pull, run, shell or binfmt."""
     word = argv[0] if argv else ""
-    if word == "build":
-        return build()
+    if word in ("pull", "build"):  # build: the command's earlier name
+        return pull()
     if word not in ("run", "shell", "binfmt"):
         print(__doc__.strip())
         return 0 if word in ("-h", "--help") else 2
@@ -434,7 +437,7 @@ def main(argv: list[str]) -> int:
     if word == "run" and not command:
         print("usage: python -m overpressure container run -- COMMAND...", file=sys.stderr)
         return 2
-    code = 0 if image_present() else build()
+    code = 0 if image_present() else pull()
     if code:
         return code
     if word == "run":

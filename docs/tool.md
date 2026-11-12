@@ -39,7 +39,7 @@ The builds' checks are the build container's ([Linux-root steps](#linux-root-ste
 | Check | Fix when it is not there |
 | --- | --- |
 | Docker or Podman answers (`ENGINE info`) | install Docker or Podman and have it running (how it runs its containers is the owner's choice) |
-| the image is built | `python -m overpressure container build` (the installer builds it itself) |
+| the image is pulled | `python -m overpressure container pull` (the installer pulls it itself) |
 | the engine has 8 GiB of memory or more | give the engine more (Docker Desktop: Settings, Resources, Memory limit; Podman: `podman machine set --memory`); below it a warning: the build runs fewer jobs and takes much longer |
 | the aarch64 handler (an x86-64 engine) | none: each build registers it; after a failure, `python -m overpressure container binfmt` |
 
@@ -65,17 +65,21 @@ whichever answers first (`OVERPRESSURE_CONTAINER_ENGINE` chooses). A step's comm
 `python -m overpressure container run -- COMMAND`, from the repository root.
 
 ```sh
-python -m overpressure container build          # the image, overpressure-builder:HASH
+python -m overpressure container pull           # the pinned build image, ghcr.io/overpressure/builder
 python -m overpressure container run -- CMD      # CMD as root in the container (the image built first if missing)
 python -m overpressure container shell           # an interactive shell there
 python -m overpressure container binfmt          # register the aarch64 handler when the engine has none
 python -m overpressure container run -- make test  # the host tests and every headset's shell tests, on Linux
 ```
 
-- **The image.** [overpressure/container/Dockerfile](../overpressure/container/Dockerfile): Ubuntu 24.04
-  pinned by digest, its amd64 packages from `snapshot.ubuntu.com` at one fixed moment (`SNAPSHOT`); an
-  arm64 engine takes `ports.ubuntu.com` as it is. It holds every tool of the builds, LLVM 20's clang and
-  lld, the kernel's cross compiler and qemu-user-static. Its tag is the hash of the recipe's folder.
+- **The image.** [overpressure/builder](https://github.com/overpressure/builder)'s release, which
+  `overpressure/linux.py` pins by tag and digest (`IMAGE`): Ubuntu 24.04 with every tool of the builds,
+  LLVM 20's clang and lld, the kernel's cross compiler, pahole and qemu-user-static, for amd64 and arm64.
+  The pin, not a package mirror, keeps a build's tools the same on every computer and later; the release
+  lists every package's version. `container pull` gets it (the installer and `container run` do when it
+  is missing); `OVERPRESSURE_BUILDER` names another image, such as one built from the builder's recipe.
+  Every run passes the image to the command as `OVERPRESSURE_IMAGE`. Its contract (entrypoint, ownership
+  hand-back, the aarch64 handler) is in that repository's README.
 - **What it sees.** It runs privileged. The repository is at `/work`; `/var/tmp` (the build roots) is the
   named volume `overpressure-var`, kept between runs. Nothing else of the host is visible: a step's paths
   lie in the repository (relative) or under `/var/tmp`. Private folders linked to another checkout
@@ -335,7 +339,7 @@ python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS..
                        the headset's backup as one checked file, and back
   doctor               what this computer has and lacks for the headset, with fixes
   tools [NAME...]      fetch the pinned host tools (platform-tools, edl-ng)
-  container build|run -- CMD|shell|binfmt
+  container pull|run -- CMD|shell|binfmt
                        the build container
   COMMAND [ARGS...]    a command of the headset
 ```
@@ -380,7 +384,7 @@ be read, they go on.
 | [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, the build container's, then the headset's (`Headset.dependencies()`) from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link, Linux's USB access) |
 | [overpressure/usbaccess.py](../overpressure/usbaccess.py) | Linux's USB access: what the installed udev rules grant for each USB mode, the fix per distribution, a connected device's access |
 | [overpressure/tools.py](../overpressure/tools.py) | the pinned host tools in `cache/tools` |
-| [overpressure/linux.py](../overpressure/linux.py), [container/](../overpressure/container) | the build container: its image, one named build at a time, stopping it, the aarch64 handler, ownership |
+| [overpressure/linux.py](../overpressure/linux.py) | the build container: its pinned image ([overpressure/builder](https://github.com/overpressure/builder)), one named build at a time, stopping it, the aarch64 handler, ownership |
 | [overpressure/stage1.py](../overpressure/stage1.py) | a stage 1: an Alpine ramdisk in the stock Android boot image, from a headset's `Spec` |
 | [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), checked against the zip, brotli by the package or the command; a pinned file out of a remote zip, checked by its hash |
 | [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed, the wait for Android's boot, a partition's size from `getvar all`; the SoC ID, EDL devices counted through pyusb (PowerShell, ioreg or sysfs without it), EDL (edl-ng, bkerler/edl), partition maps, a full backup and a write verified by readback |

@@ -312,8 +312,8 @@ class Plan:
 
     @staticmethod
     def build_environment(ctx: Context) -> None:
-        """Build the build container's image, where the builds' Linux side runs."""
-        ctx.run([sys.executable, "-m", "overpressure", "container", "build"])
+        """Pull the build image, where the builds' Linux side runs."""
+        ctx.run([sys.executable, "-m", "overpressure", "container", "pull"])
 
     def out(self, *parts: str) -> Path:
         """Return a path under the repository's out/."""
@@ -904,7 +904,7 @@ class Plan:
                 "container",
                 "Build environment",
                 self.build_environment,
-                "a few minutes the first time",
+                "a minute the first time",
                 done=lambda _ctx: self.image_present(),
                 where=built_where,
             ),

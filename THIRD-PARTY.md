@@ -36,5 +36,5 @@ The build downloads and builds other projects (Valve's kernel and packages, Mona
 packages and others) and the host tools fetch adb, fastboot and edl-ng. None of them is in the repository or
 published by the project. Each recipe names its upstream, pinned version and license: the PKGBUILDs in
 `devices/phoenix/userspace/pkgbuilds/` (`license=`), `devices/phoenix/kernel/build-kernel.sh`,
-`overpressure/tools.py` and `overpressure/container/Dockerfile`. Where each vendor file comes from is in
+`overpressure/tools.py` and the build image's recipe ([overpressure/builder](https://github.com/overpressure/builder)). Where each vendor file comes from is in
 [devices/phoenix/docs/distribution.md](devices/phoenix/docs/distribution.md).
