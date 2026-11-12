@@ -11,7 +11,8 @@ The kernel's source is overpressure/linux (phoenix/7.2 and its layers); kernel/r
 of its tags: the commit, the build image it was built with and every file's SHA-256. The installer
 downloads those files from the tag's release and checks them. `kernel build` builds the same commit
 here instead (scripts/build-kernel-step.sh, in the build image the release was built with) and checks
-the result against the same hashes: the release is reproducible.
+the result against the same hashes: how an owner verifies a release. Only overpressure/linux's CI
+builds; this repository's CI downloads the pinned release and checks it.
 
 The contracts are what no build checks: a name or a path one side uses and the other provides (a
 firmware file, a V4L2 control, a sysfs name). Each reads the pinned commit's files from GitHub, without

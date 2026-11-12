@@ -276,8 +276,8 @@ python -m overpressure dev boot-image                   # out/kernel/valve-boot.
 The same commit gives the same `Image.gz` in any work folder and on any host: `uname -v` names the commit and carries
 its time (such as `#e05939d36466 SMP PREEMPT Thu Nov 12 08:35:14 UTC 2026`), `pahole` encodes BTF in one thread (its
 threads order the type names differently each time), and `-ffile-prefix-map` maps the folders away in the debug
-information, which the build ID hashes. The main repository's [kernel workflow](../../../.github/workflows/kernel.yml)
-rebuilds the pinned release whenever the pin changes, and weekly.
+information, which the build ID hashes. Only overpressure/linux's CI builds: every tag twice on two machines, released
+only when both agree. This repository's CI downloads the pinned release on every push and checks it against the pin.
 
 ## Contracts
 
