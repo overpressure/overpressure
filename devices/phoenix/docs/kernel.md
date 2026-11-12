@@ -34,6 +34,7 @@ As shipped:
 | [patches/](../kernel/patches/) | fixes to Valve's tree ([Patches](#patches)) |
 | [src/](../kernel/src/) | the PICO 4's own sources at their paths in the tree: panel, battery, `pico4-ov7251` and `pico4-imx471` sensors, q6 calibration |
 | [build-kernel.sh](../kernel/build-kernel.sh) | source package, patches and sources to `Image.gz`, the device tree, `config` and `version` |
+| [build-tree.sh](../kernel/build-tree.sh) | a checkout of [overpressure/linux](https://github.com/overpressure/linux)'s `phoenix/7.2` to the same files and `build.json` (release, commit, banner, camera table, hashes); `uname -v` names the commit. That repository's CI builds each branch and tag with it twice and compares |
 | [dtbo_sink.py](../kernel/dtbo_sink.py) | the include that absorbs the ABL's board overlay ([below](#the-abls-board-overlay)) |
 | [panel_sequence.py](../kernel/panel_sequence.py) | the include with the panels' command sequences, from the stock board overlay |
 | [imx471_mode.py](../kernel/imx471_mode.py) | the RGB camera's register table, from the camera module in the stock vendor image |
