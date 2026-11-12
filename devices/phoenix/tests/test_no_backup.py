@@ -52,10 +52,6 @@ class PersistTests(unittest.TestCase):
         self.assertIn("After=pico4-storage-ro.service", unit)
         self.assertIn("Before=local-fs.target", unit)
 
-    def test_fan_batch_from_the_serial_at_run_time(self):
-        fan = read(ROOT / "userspace/rootfs/usr/bin/pico4-fan")
-        self.assertIn('SERIAL_FILE = Path("/mnt/vendor/persist/falcon/sn")', fan)
-
 
 class DevImageTests(unittest.TestCase):
     def test_recovery_from_the_ota(self):

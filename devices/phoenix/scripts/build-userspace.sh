@@ -22,10 +22,10 @@
 #   --stock-slam DIR    PICO OS's head tracker, its Compute DSP firmware and bionic root
 #                       (python -m overpressure assets, docs/xr.md). Without it head tracking
 #                       falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
-#   --packages DIR      build a checkout of overpressure/packages instead of taking the
-#                       pinned release's packages (trying a change to a package)
-#   --build-packages    build the pinned commit's recipes here instead of taking its release's
-#                       packages
+#   --packages DIR      a checkout of overpressure/packages instead of the pinned commit (trying a
+#                       change to a package): its recipes that differ from the pinned commit's are
+#                       built here, the others come from the pinned release
+#   --build-packages    build every recipe here instead of taking the release's packages
 #   --refresh           download the current package databases and reinstall the base
 #                       root; without it every build installs the same package versions.
 #                       Builds the project's packages here against them.
@@ -39,7 +39,8 @@
 #    Valve/Collabora's Holo Core aarch64 preview rootfs (sha256-pinned), entered with chroot.
 #    The project's packages are the pinned release's (built on arm64 in that repository's CI),
 #    downloaded into cache/packages-release/TAG and checked against its SHA256SUMS, whose hash
-#    the pin holds. With --packages, --build-packages or --refresh they are built here instead:
+#    the pin holds; a --packages checkout's recipes that differ from the pinned commit's are
+#    built here. With --build-packages or --refresh every recipe is built here instead. Built here,
 #    on other hosts than arm64 the programs run under QEMU and the host's clang and lld compile
 #    natively; a package is rebuilt when its recipe folder changes. Each layer is a local pacman
 #    repository, overpressure-LAYER.
@@ -81,7 +82,7 @@ done
 [[ $EUID == 0 && "$build_root" = /* && "$build_root" != / ]] || { echo 'Root and an absolute isolated build directory are required' >&2; exit 2; }
 # The pinned release's packages, unless they are to be built here.
 packages_release=1
-[[ $build_packages == 0 && $refresh == 0 && -z $packages_dir ]] || packages_release=0
+[[ $build_packages == 0 && $refresh == 0 ]] || packages_release=0
 host_arch=$(uname -m)
 if [[ $host_arch != aarch64 ]]; then
     # The handler by its ELF magic (aarch64 executables), whatever it is named: qemu-aarch64 from
@@ -143,23 +144,24 @@ mount_api() {
 
 # -- 0. a snapshot of the inputs ------------------------------------------------------
 # overpressure/packages at the pinned commit, fetched once into cache/packages (git checks that the
-# files are the commit's), or the checkout --packages names.
+# files are the commit's), and the checkout --packages names.
 read -r packages_repository packages_tag packages_commit packages_sums < <(python3 -c \
     'import json,sys; d=json.load(open(sys.argv[1])); print(d["repository"], d["tag"], d["commit"], d["sha256sums"])' \
     "$source_dir/userspace/packages.json")
+pinned=$repo/cache/packages/$packages_commit
+if [[ ! -f $pinned/.overpressure-commit ]]; then
+    log "fetching $packages_repository $packages_tag ($packages_commit)"
+    rm -rf "$pinned.new"
+    git init -q "$pinned.new"
+    git -C "$pinned.new" fetch -q --depth 1 "https://github.com/$packages_repository.git" "$packages_commit"
+    git -C "$pinned.new" -c advice.detachedHead=false checkout -q FETCH_HEAD
+    [[ $(git -C "$pinned.new" rev-parse HEAD) == "$packages_commit" ]]
+    rm -rf "$pinned.new/.git" "$pinned"
+    echo "$packages_commit" > "$pinned.new/.overpressure-commit"
+    mv "$pinned.new" "$pinned"
+fi
 if [[ -z $packages_dir ]]; then
-    packages_dir=$repo/cache/packages/$packages_commit
-    if [[ ! -f $packages_dir/.overpressure-commit ]]; then
-        log "fetching $packages_repository $packages_tag ($packages_commit)"
-        rm -rf "$packages_dir.new"
-        git init -q "$packages_dir.new"
-        git -C "$packages_dir.new" fetch -q --depth 1 "https://github.com/$packages_repository.git" "$packages_commit"
-        git -C "$packages_dir.new" -c advice.detachedHead=false checkout -q FETCH_HEAD
-        [[ $(git -C "$packages_dir.new" rev-parse HEAD) == "$packages_commit" ]]
-        rm -rf "$packages_dir.new/.git" "$packages_dir"
-        echo "$packages_commit" > "$packages_dir.new/.overpressure-commit"
-        mv "$packages_dir.new" "$packages_dir"
-    fi
+    packages_dir=$pinned
     packages_source="$packages_repository $packages_tag $packages_commit"
 else
     packages_source="local $(git -c safe.directory='*' -C "$packages_dir" describe --always --dirty --abbrev=12 2>/dev/null || echo checkout)"
@@ -224,8 +226,23 @@ if [[ $packages_release == 1 ]]; then
             cp "$release/$name" "$repos/$layer/"
         done < <(tar -xzOf "$release/overpressure-$layer.db" --wildcards '*/desc' | awk '/^%FILENAME%$/ {getline; print}')
     done
+    # A --packages checkout's recipes that differ from the pinned commit's, built here in place of the
+    # release's.
+    changed=()
+    for layer in "${layers[@]}"; do
+        for recipe in "$project/packages/$layer"/*/PKGBUILD; do
+            [[ -f $recipe ]] || continue
+            name=$(basename "$(dirname "$recipe")")
+            diff -rq --exclude='.*' --exclude=__pycache__ "$(dirname "$recipe")" "$pinned/$layer/$name" >/dev/null 2>&1 ||
+                changed+=("$name")
+        done
+    done
+    if [[ ${#changed[@]} -gt 0 ]]; then
+        log "built here: ${changed[*]}"
+        bash "$project/packages/build/packages.sh" phoenix "$build_root/packages" "$repos" "${changed[@]}"
+    fi
     bash "$project/packages/build/packages.sh" --databases phoenix "$build_root/packages" "$repos"
-    packages_source="$packages_source release"
+    packages_source="$packages_source release${changed[*]:+, built here: ${changed[*]}}"
 else
     OVERPRESSURE_REFRESH=$([[ $refresh == 1 ]] && echo 1) bash "$project/packages/build/packages.sh" phoenix \
         "$build_root/packages" "$repos"
@@ -565,12 +582,16 @@ mkdir -p "$T/mnt/vendor/persist"
 in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
     pico4-recovery-watch.service pico4-storage-ro.service \
     pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service \
-    pico4-monado.socket pico4-session.service pico4-fan.service \
+    pico4-monado.socket pico4-session.service \
     pico4-usb-internet.service systemd-timesyncd.service pico4-audio.target \
-    pico4-splash.service pico4-powerkey.service pico4-battery-guard.service pico4-persist.service pico4-zram-swap.service \
+    pico4-splash.service pico4-persist.service pico4-zram-swap.service \
     pico4-venus-probe.service steam-video-codec-setup.service pico4-bt-firmware.service pico4-bt-address.service \
     bluetooth.service pico4-wlan-probe.service pico4-wlan-address.service pico4-panel-probe.service pico4-clock.service \
     pico4-usb-gadget.service pico4-boot-ok.service
+# The project packages' units, as their presets (usr/lib/systemd/system-preset/50-pico4-*.preset) enable them.
+mapfile -t preset_units < <(cat "$T"/usr/lib/systemd/system-preset/50-pico4-*.preset 2>/dev/null |
+    sed -n 's/^enable[[:space:]]\+\([^[:space:]]\+\).*/\1/p')
+[[ ${#preset_units[@]} == 0 ]] || in_t systemctl preset "${preset_units[@]}"
 # Units that would wait for console input, erase the previous boot's evidence from pstore,
 # or manage boot partitions the system never touches.
 # steamos-dump-info reads the Frame's EEPROM and EFI boot configuration

@@ -145,7 +145,7 @@ starts the system (a plain reboot); 10 s without USB power turn the headset off,
 
 ### Power key
 
-[`pico4-powerkey.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-powerkey.service) does what PICO
+[`pico4-powerkey.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-power/pico4-powerkey.service) (overpressure/packages' `pico4-power`) does what PICO
 OS's window manager does with the PMIC's key (`pm8941_pwrkey`): a press released within 2 s runs
 `systemctl suspend` (s2idle, the only sleep state this kernel offers; the key wakes the headset, and the waking
 press is ignored); held 2 s, `systemctl poweroff`, off in about 7 s. logind ignores the key. Held 8.7 s, the PMIC

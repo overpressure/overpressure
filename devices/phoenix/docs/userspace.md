@@ -98,8 +98,9 @@ OpenGL through zink.
 The packages are [overpressure/packages](https://github.com/overpressure/packages)': each recipe there holds its
 code, patches and installed files, and a code package's tests run in its build. `userspace/packages.json` pins a
 release of that repository by tag, commit and the hash of its `SHA256SUMS`. The build takes the release's
-packages, built on arm64 in that repository's CI and each checked against its `SHA256SUMS`; `--build-packages`
-builds the pinned commit's recipes here, `--packages DIR` a checkout. A change to a package is a change there, a new tag and a new pin
+packages, built on arm64 in that repository's CI and each checked against its `SHA256SUMS`; `--packages DIR`
+takes a checkout and builds here the recipes that differ from the pinned commit's, `--build-packages` builds
+every recipe here. A change to a package is a change there, a new tag and a new pin
 here.
 
 | Package | Content | Details |
@@ -111,6 +112,7 @@ here.
 | `pico4-swapchain-usage` | the stock path's frame pacing and compressed scanout in SteamVR's compositor | [session.md](session.md) |
 | `overpressure-gamescope` | the Frame's gamescope 3.16.28 with a fix for a crash when a game starts | [session.md](session.md) |
 | `pico4-vrlink` | `vrlink` support for Steam Link | [session.md](session.md) |
+| `pico4-power` | fan control, the battery guard and the power key, as on PICO OS; its preset enables their services | [cooling.md](cooling.md), [install.md](install.md#power-key) |
 | `overpressure-spa-alsa` | PipeWire's ALSA plugin at Valve's 1.6.8 with the capture fix of [Audio](#audio), installed over `pipewire-audio`'s by its pacman hook | this document |
 | `overpressure-gtk2` | GTK 2 for the Steam client | [session.md](session.md) |
 | `overpressure-mangohud` | MangoHud's mangoapp, the client's performance overlay | [session.md](session.md) |
@@ -212,8 +214,8 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 | `--stock-slam DIR` | PICO OS's head tracker, its Compute DSP firmware and bionic root ([xr.md](xr.md)); without it head tracking falls back to 3DoF unless `PICO4_SLAM_BACKEND=basalt` |
 | `--refresh` | downloads current package databases and reinstalls the base root; builds the project's packages here against them |
 | `--update-lock` | writes `OUTPUT_DIR/packages.lock` instead of checking [the lock](#package-lock) |
-| `--packages DIR` | builds a checkout of overpressure/packages instead of taking the pinned release's packages |
-| `--build-packages` | builds the pinned commit's recipes here instead of taking its release's packages |
+| `--packages DIR` | takes a checkout of overpressure/packages instead of the pinned commit: its recipes that differ from the pinned commit's are built here, the others come from the release |
+| `--build-packages` | builds every recipe here instead of taking the release's packages |
 
 How it works:
 
@@ -225,8 +227,9 @@ How it works:
   lock or the Holo snapshot. On non-arm64 hosts its programs run under QEMU through the aarch64 binfmt handler, which
   the build container registers when the engine has none; on x86-64 the container's clang and lld (LLVM 20) compile
   natively with the build environment as sysroot (no LTO).
-- The project packages are the pinned release's, downloaded once into `cache/packages-release/TAG`. Built here
-  (`--packages`, `--build-packages`, `--refresh`), they rebuild only when their recipe folder changes. Each layer
+- The project packages are the pinned release's, downloaded once into `cache/packages-release/TAG`, with a
+  `--packages` checkout's changed recipes built here. Built here (those, or all with `--build-packages` and
+  `--refresh`), they rebuild only when their recipe folder changes. Each layer
   becomes a local pacman repository `overpressure-LAYER`. Package databases are downloaded only by the first
   build and with `--refresh`.
 - The base root ([packages.txt](https://github.com/overpressure/packages/blob/main/headsets/phoenix/packages.txt)) is kept between builds; each build assembles the image

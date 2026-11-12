@@ -195,7 +195,7 @@ class Phoenix(Headset):
                         "0",
                         "flag",
                         option="--build-packages",
-                        help="instead of the pinned release's; slow on x86-64",
+                        help="every recipe, instead of the pinned release's packages; slow on x86-64",
                     ),
                 ),
                 script=True,

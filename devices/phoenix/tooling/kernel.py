@@ -173,6 +173,7 @@ _LIBEXEC = f"{_ROOTFS}/usr/libexec/pico4"
 _BUILD = "devices/phoenix/scripts/build-userspace.sh"
 _MONADO = f"{IN_PACKAGES}phoenix/pico4-monado"
 _CAM = f"{_MONADO}/pico4_cam.c"
+_BATTERY_GUARD = f"{IN_PACKAGES}phoenix/pico4-power/battery-guard"
 CONTRACTS = (
     Contract(
         "the RGB camera's register table: where the driver loads it, where the image installs it",
@@ -261,12 +262,12 @@ CONTRACTS = (
     Contract(
         "the power supplies the scripts read",
         (("drivers/power/supply/pico4-pm8150b-battery.c", r'^\t\.name = "([^"]+)"'),),
-        ((_ROOTFS, r"power_supply/(\w+)/"),),
+        ((_ROOTFS, r"power_supply/(\w+)/"), (_BATTERY_GUARD, r"power_supply/(\w+)/")),
     ),
     Contract(
         "the power supplies' attributes the scripts read",
         (("drivers/power/supply/pico4-pm8150b-battery.c", r"^\tPOWER_SUPPLY_PROP_(\w+),$"),),
-        ((_ROOTFS, r"power_supply/\w+/(\w+)"),),
+        ((_ROOTFS, r"power_supply/\w+/(\w+)"), (_BATTERY_GUARD, r"power_supply/\w+/(\w+)")),
         kernel_value=str.lower,
     ),
     Contract(

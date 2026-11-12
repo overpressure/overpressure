@@ -93,8 +93,9 @@ python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> 
 # (docs/development.md#stock-firmware; about 11 GB of OTA members and images in cache/pico4-stock):
 python -m overpressure assets --firmware 5.13.7-global-seko
 # In the build container, as root (incremental; the project's packages from the pinned release of
-# overpressure/packages; --refresh for new Valve packages; --packages DIR builds a checkout of
-# overpressure/packages, --build-packages the pinned commit, both with native clang/lld on x86-64):
+# overpressure/packages; --refresh for new Valve packages; --packages DIR takes a checkout of it and
+# builds the recipes that differ from the pinned commit's, --build-packages every recipe, with native
+# clang/lld on x86-64):
 python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
     /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
