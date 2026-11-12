@@ -128,7 +128,7 @@ python -m overpressure cycle --restore-only              # verified stock boot a
   layer branches (`common/7.2`, `sm8250/7.2`, `phoenix/7.2`), following the stock kernel's behaviour
   where it is the reference. Its tags never move; this repository pins one in `kernel/release.json`,
   and `kernel contracts` checks the names both sides share. A new boot image goes through
-  `dev recovery` and `dev install --boot`.
+  `dev boot-image` and `dev install`.
   - systemd stays at 257.x, pinned with `IgnorePkg` on the device (the Frame's version).
 - **Storage stays read-only, except the installed system's data.** Every physical block device
   is switched read-only in both stages; only the installed system's data partition (userdata,
@@ -176,8 +176,10 @@ passed.
   stage-abl`). The stock ABL reports `DeviceUnlocked=true`, and the runner refuses it. Writing
   boot also needs the per-session `fastboot oem <token> unlock` authorization, which the tools
   derive from the identity.
-- **Iterate on the installed system.** A new system image goes through `dev recovery` and
-  `dev install`, a new kernel through `dev boot-image`, `dev recovery` and `dev install --boot`;
+- **Iterate on the installed system.** `dev install SYSTEM_IMAGE` writes the boot image
+  (`out/kernel/valve-boot.img`, or `--boot PATH`) and the system image from the maintenance stage 1,
+  which it enters by itself from a running installed system, skipping what is there by hash; a new
+  kernel comes from `kernel fetch` (or `kernel build`) and `dev boot-image`;
   `dev installed` reconnects after a reboot, `dev check` runs the acceptance runner's stage-2 checks,
   `dev ssh CMD` a command. The session runs only on Valve's kernel, not in the maintenance stage 1. A
   changed stage-1 image needs `dev image` and `dev flash`; the installed system's boot image holds no
