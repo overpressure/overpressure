@@ -142,7 +142,8 @@ class BuildTests(unittest.TestCase):
         self.assertIn('--stock-slam) stock_slam=$(realpath "${2:?}"); shift 2 ;;', build)
         self.assertIn('install -m 0644 "$stock_slam"/firmware/cdsp* "$T/usr/lib/firmware/"', build)
         self.assertIn(
-            'bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" "$project/packages/phoenix/pico4-monado" "$llvm"',
+            'bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" '
+            '"$project/packages/phoenix/pico4-monado" "$llvm"',
             build,
         )
         self.assertIn('mv "$island/pico4/libandroid.so" "$island/system/lib64/libandroid.so"', build)
