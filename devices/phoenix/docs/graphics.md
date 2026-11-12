@@ -5,7 +5,7 @@ Roadmap step 3 ([roadmap.md](roadmap.md)), on Valve's kernel ([kernel.md](kernel
 | | |
 | --- | --- |
 | Works | Vulkan through Valve's Turnip on msm, OpenGL through zink, both panels through mainline's DPU and DSI drivers with compressed scanout, 90 Hz and 72 Hz |
-| Test | `pico4-vulkan-test` (package `pico4-graphics-tests`, [src/graphics](../src/graphics)): an offscreen render with pixel readback, run by `dev check` |
+| Test | `pico4-vulkan-test` (package `pico4-graphics-tests`, [pico4-graphics-tests](https://github.com/overpressure/packages/tree/main/phoenix/pico4-graphics-tests)): an offscreen render with pixel readback, run by `dev check` |
 | Panel driver | [panel-pico4-ls026b3sa.c](https://github.com/overpressure/linux/blob/phoenix/7.2/drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c) |
 | Presentation in VR | SteamVR's compositor through Turnip's display WSI ([session.md](session.md)) |
 | Results | [kernel.md](kernel.md#results) |

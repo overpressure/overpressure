@@ -80,16 +80,6 @@ class WiringTests(unittest.TestCase):
         self.assertIn("steamvr-proxmicmute.service", mask)
         self.assertNotIn(b"\r", PATH.read_bytes())
 
-    def test_driver_publishes_the_wear_state(self):
-        hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
-        self.assertIn('/pico4-worn"', hmd)
-        self.assertIn("pico4_hmd_get_presence", hmd)
-        patch = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-presence.patch").read_text(encoding="utf-8")
-        self.assertIn("Prop_ContainsProximitySensor_Bool", patch)
-        self.assertIn('"/proximity"', patch)
-        pkgbuild = (ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD").read_text(encoding="utf-8")
-        self.assertIn("monado-steamvr-presence.patch", pkgbuild)
-
 
 if __name__ == "__main__":
     unittest.main()

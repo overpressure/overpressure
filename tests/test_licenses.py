@@ -14,14 +14,8 @@ REPO = Path(__file__).resolve().parents[1]
 #: Path prefix (a folder or one file) -> the SPDX identifiers allowed there; the longest prefix decides.
 LICENSES = {
     "": {"Unlicense"},
-    "devices/phoenix/src/monado/": {"BSL-1.0"},
     "devices/phoenix/src/splash/": {"BSL-1.0"},
-    "devices/phoenix/src/vrlink/": {"BSL-1.0"},
-    "devices/phoenix/src/xr/": {"BSL-1.0"},
 }
-
-#: Out of the rule: a recipe's files are pinned by its checksums.
-EXEMPT = ("devices/phoenix/userspace/pkgbuilds/",)
 
 SOURCE_SUFFIXES = {".c", ".cpp", ".dts", ".frag", ".h", ".hpp", ".ps1", ".py", ".sh", ".vert"}
 
@@ -47,8 +41,6 @@ def allowed(path: str) -> set[str]:
 
 def is_source(path: str, data: bytes) -> bool:
     """Whether the rule covers @p path. Scripts in the images often have no suffix, only a shebang."""
-    if path.startswith(EXEMPT):
-        return False
     return Path(path).suffix in SOURCE_SUFFIXES or data.startswith(b"#!")
 
 
@@ -87,8 +79,6 @@ class RuleTests(unittest.TestCase):
         self.assertTrue(is_source("devices/phoenix/initramfs/init", b"#!/bin/sh\n"))
         self.assertFalse(is_source("README.md", b"# overpressure\n"))
         self.assertFalse(is_source("devices/phoenix/prebuilt/aarch64/pico4-reboot", b"\x7fELF"))
-        self.assertFalse(is_source("devices/phoenix/userspace/pkgbuilds/pico4-monado/a.patch", b"From: a\n"))
-        self.assertFalse(is_source("devices/phoenix/userspace/pkgbuilds/pico4-sensors/PKGBUILD", b"#!/bin/bash\n"))
 
 
 class RepositoryTests(unittest.TestCase):
@@ -116,11 +106,7 @@ class RepositoryTests(unittest.TestCase):
 #: What THIRD-PARTY.md pins, read from where the build pins it: (file, pattern of the pin).
 PINS = (
     ("devices/phoenix/kernel/release.json", r'^ "tag": "([^"]+)"'),
-    ("devices/phoenix/userspace/pkgbuilds/pico4-basalt/PKGBUILD", r"commit=([0-9a-f]{12})"),
-    ("devices/phoenix/userspace/pkgbuilds/pico4-gamescope/PKGBUILD", r"commit=([0-9a-f]{12})"),
-    ("devices/phoenix/userspace/pkgbuilds/pico4-monado/PKGBUILD", r"^_commit=([0-9a-f]{12})"),
-    ("devices/phoenix/userspace/pkgbuilds/pico4-sensors/PKGBUILD", r"^_hexagonrpc=([0-9a-f]{12})"),
-    ("devices/phoenix/userspace/pkgbuilds/pico4-spa-alsa/PKGBUILD", r"^pkgver=(\S+)"),
+    ("devices/phoenix/userspace/packages.json", r'^ "tag": "([^"]+)"'),
 )
 
 

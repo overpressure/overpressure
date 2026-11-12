@@ -124,7 +124,7 @@ The development headset is a standard PICO 4 of the late batch: control type 1, 
   wake (SetBrightness with level 63, `A0 05 00 3F 00 9A`). Nothing can build a lens move, calibration write, firmware
   frame or another backlight level, so nothing puts the MCU to sleep. An answer of only `F1` (asleep) is followed by
   PICO OS's wake, as `wakeUp` sends it, and the request once more; the journal says so. Each transaction holds an exclusive `flock` on
-  `/dev/ttyHS1`; Monado's PICO 4 driver takes the same lock for its IPD read ([pico4_ipd.c](../src/monado/pico4_ipd.c))
+  `/dev/ttyHS1`; Monado's PICO 4 driver takes the same lock for its IPD read ([pico4_ipd.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ipd.c))
   and uses Monado's default IPD after waiting a second for it.
 - **The table.** PICO OS's early table on every headset by default: Valve's GPU-bound session heats the headset more
   than PICO OS's apps, and the early table runs the fan at least as fast at every temperature
@@ -292,4 +292,4 @@ daemon's hottest CPU/GPU mean.
 | Host: [tests/test_fan.py](../tests/test_fan.py) | frames against the stock bytes and the allowlist, replies, both tables and their hysteresis, boost and failsafe, means and timing, retries, the state file, zone selection, profile choice, the batch rule on synthetic serial numbers, the unit; a UART transaction over a pty on Linux; the power-off with a silent MCU or stalled fan, and none with a cooling fan, below the limit or after the MCU answers again |
 | Host: [tests/test_battery_guard.py](../tests/test_battery_guard.py) | PICO OS's levels and delay, screen on and off, charging, an unreadable battery, the unit and its place in the build |
 | Host: [tests/test_userspace.py](../tests/test_userspace.py), [tests/test_hardware.py](../tests/test_hardware.py) | the userspace check's `fan` object and the session check's `fan.before`/`fan.after_run`, through the runner into `result.json` |
-| Build: [test_pico4_lens.c](../src/monado/test_pico4_lens.c) | the IPD reader gives up with `-EBUSY` after a second while another descriptor holds the port lock, and goes on once it is free |
+| Build: [test_pico4_lens.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/test_pico4_lens.c) | the IPD reader gives up with `-EBUSY` after a second while another descriptor holds the port lock, and goes on once it is free |

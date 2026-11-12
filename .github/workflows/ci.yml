@@ -71,7 +71,7 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends shellcheck libeigen3-dev
+          sudo apt-get install -y --no-install-recommends shellcheck
       - name: Shell tests
         run: |
           bash devices/phoenix/tests/test_recovery_policy.sh
@@ -79,7 +79,7 @@ jobs:
           bash devices/phoenix/tests/test_boot_attempts.sh
       - name: Shellcheck
         run: python3 scripts/run-shellcheck.py
-      - name: C and C++ tests
+      - name: C tests
         run: bash scripts/c-tests.sh
 
   repository:

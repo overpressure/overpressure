@@ -245,7 +245,7 @@ this repository pins one.
 
 The system's Mesa is Valve's `deckard-mesa-linux-aarch64`, unchanged, the same commit as the Android driver Lepton
 uses: Vulkan through Turnip, OpenGL through zink, as on the Frame. It links two libraries outside Valve's set:
-`libdisplay-info.so.1` (Turnip's display code), from the project's `pico4-libdisplay-info`, and `libsensors.so.5`
+`libdisplay-info.so.1` (Turnip's display code), from the project's `overpressure-libdisplay-info`, and `libsensors.so.5`
 (gallium's HUD), from Arch's `lm_sensors`.
 
 `libVkLayer_PICO4_swapchain_usage` (`pico4-swapchain-usage`) removes the storage usage from `vrcompositor`'s

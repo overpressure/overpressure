@@ -61,10 +61,6 @@ class LockTests(unittest.TestCase):
         self.assertIn("- gone: gone (was 1-1)", text)
         self.assertEqual(upstream.lock_diff(old, old), "No package moved since packages.lock.\n")
 
-    def test_the_key_packages_are_in_the_lock(self):
-        names = upstream.lock_versions((ROOT / "userspace" / "packages.lock").read_text(encoding="utf-8"))
-        self.assertFalse(set(upstream.KEY_PACKAGES) - set(names))
-
 
 if __name__ == "__main__":
     unittest.main()

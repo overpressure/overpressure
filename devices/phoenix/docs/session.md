@@ -7,7 +7,7 @@ Steam Frame 7.2 kernel.
 | --- | --- |
 | Works (worn) | 90 frames/s on both panels; the Steam client signs in and runs its library: x86 games through Proton and FEX, Android apps through Lepton; Steam Link from a PC |
 | How | Valve's `gamescope-session.target`: gamescope (OpenVR backend) and SteamVR 2.17.10, whose compositor drives the panels in direct mode through Turnip's display WSI on msm; `driver_monado` supplies the headset and both controllers in 6DoF from the PICO 4 driver of [xr.md](xr.md) |
-| Code | units, drop-ins and scripts in [userspace/rootfs](../userspace/rootfs); SteamVR files in [userspace/session](../userspace/session); `pico4-monado`, `pico4-gamescope`, `pico4-mangohud`, `pico4-swapchain-usage` in [userspace/pkgbuilds](../userspace/pkgbuilds); setup panel in [src/xr](../src/xr) |
+| Code | units, drop-ins and scripts in [userspace/rootfs](../userspace/rootfs); SteamVR files in [userspace/session](../userspace/session); `pico4-monado`, `overpressure-gamescope`, `overpressure-mangohud`, `pico4-swapchain-usage` in [overpressure/packages](https://github.com/overpressure/packages); setup panel in [pico4-monado's tools](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado) |
 | Results | [kernel.md](kernel.md#results) |
 
 Valve's packages come from the Frame's public repository ([userspace.md](userspace.md)); the build
@@ -92,9 +92,9 @@ UART (`ttyHS1`), the cameras' V4L2 and media nodes, the DRM card nodes and the d
 The build installs `deckard-steamvr-rel` (SteamVR), `deckard-steamvr-session`, `jq` (its `steamvr`
 script), `at-spi2-core` (the dashboard's `vrwebhelper` links ATK and AT-SPI), `xorg-xhost` and
 `xorg-xrdb` (`gamescope-onready` runs them) and the Steam client ([below](#the-steam-client)). `sddm`
-counts as installed for dependency resolution only (`!sddm` in [packages.txt](../userspace/packages.txt)).
+counts as installed for dependency resolution only (`!sddm` in [packages.txt](https://github.com/overpressure/packages/blob/main/headsets/phoenix/packages.txt)).
 
-Not extracted (`NoExtract` in [pacman.conf](../userspace/pacman.conf)): the Frame's tracking driver
+Not extracted (`NoExtract` in [pacman.conf](https://github.com/overpressure/packages/blob/main/headsets/phoenix/pacman.conf)): the Frame's tracking driver
 (`drivers/cv`), the firmware of the Frame's headset, its controller radio and other controllers, the
 Windows binaries, and the eye-tracking and calibration tools. The Index, Vive, Touch and Frame controller
 resources stay: SteamVR's remapping for the PICO 4's controllers needs their types, and the Frame's
@@ -118,14 +118,14 @@ off the head (`$XDG_RUNTIME_DIR/pico4-worn`, written by the driver). The input m
 image's Python.
 
 **gamescope** is the Frame's version, upstream commit `ea3579ed` (Valve's 3.16.28-1), built as
-`pico4-gamescope` with one fix: its window manager added a window again on ReparentNotify to the root,
+`overpressure-gamescope` with one fix: its window manager added a window again on ReparentNotify to the root,
 and the duplicate entries read a freed Vulkan override surface every vblank, which crashed gamescope
 and the session. The patch makes `add_win()` skip a window it already lists (upstream's master still
 has the bug). The build bundles libliftoff, vkroots, wlroots, libdisplay-info and wayland-protocols
 1.47 statically, as Valve's binary does, with SDL2, AVIF screenshots, libei, PipeWire, DRM and OpenVR.
 
 **MangoHud.** gamescope's session starts `mangoapp`, the Steam client's performance overlay. The Frame's
-MangoHud links libraries of its private base, so `pico4-mangohud` builds upstream's 0.8.4 from its
+MangoHud links libraries of its private base, so `overpressure-mangohud` builds upstream's 0.8.4 from its
 release archive with bundled subprojects, without NVIDIA support. The build fails if
 `gamescope-session` does not start `mangoapp` or the program is missing: gamescope's reaper restarts a
 `mangoapp` that cannot start without end. In VR mode each layer of an app's frame is a subview of its
@@ -189,7 +189,7 @@ Further adaptations:
   `localconfig.vdf`.
 - **Undeclared libraries.** The current client needs GTK 2 (`libgtk-x11-2.0.so.0` for `steamui.so` and
   `vgui2_s.so`; without it it exits 255 at once) and IBus (`libibus-1.0.so.5` for `steamwebhelper`). No
-  aarch64 repository has GTK 2, so the build makes `pico4-gtk2` from GTK 2.24.33 (libraries and modules
+  aarch64 repository has GTK 2, so the build makes `overpressure-gtk2` from GTK 2.24.33 (libraries and modules
   only); the Frame's repository has `libibus`. The client polls processes with `lsof`. Its `libvideo.so`
   links the FFmpeg 8 and libvpx 6 it brings in `steamrtarm64`, resolving with the image's libva.
 - **Repair loop.** The client's health check counts a start that ends within 5 s, or with an error within
@@ -246,7 +246,7 @@ What a new owner meets, from an empty data partition:
 | SteamVR | playspace setup for a new room ([xr.md](xr.md#room-setup)) | when a game starts in a new room, or from Space Setup |
 | Introduction | the PICO 4's controllers, health and safety, laser and PICO button, the playspace setup | after the first sign-in, once |
 
-The setup and the introduction are [`pico4-onboarding`](../src/xr/pico4-onboarding.cpp)
+The setup and the introduction are [`pico4-onboarding`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-onboarding.cpp)
 ([`pico4-onboarding.service`](../userspace/rootfs/usr/lib/systemd/user/pico4-onboarding.service), part of
 `steamvr.service`): a SteamVR overlay 1.3 m in front of the wearer, level, over other overlays. It comes
 back in front when the headset is put on and a second after it left the view (more than 30 degrees
@@ -291,7 +291,7 @@ the session (`wait-first-run --pending`). During the setup:
   setup waits for its overlay (`system.systemui`) and 5 s more for its mailboxes.
 
 SteamVR refuses most settings and messages from a scene application, so a short background application,
-[`pico4-steamvr-switch`](../src/xr/pico4-steamvr-switch.cpp), throws these switches. Messages go through
+[`pico4-steamvr-switch`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-steamvr-switch.cpp), throws these switches. Messages go through
 vrclient's `IVRMailbox_002`: its `open` takes a third string after the name and the handle, which must be
 `nullptr`; any other value crashes the caller. A settings file written before SteamVR starts does not
 work: on a first start SteamVR writes its own copy back. Steam's own path property `/steam/oobe` is not
@@ -301,7 +301,7 @@ application for the introduction, and the client starts.
 
 The client's own words come from its files at runtime (localization files and language-screen module in
 `~/.local/share/Steam/steamui`): its welcome, language and zone names, the network page's texts and the
-buttons. The panel's other texts are [pico4-onboarding.strings](../src/xr/pico4-onboarding.strings), in
+buttons. The panel's other texts are [pico4-onboarding.strings](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-onboarding.strings), in
 all 31 of the client's languages; English is the reference, the others are machine-assisted translations
 awaiting a native speaker's review. Pango lays them out; the image's fonts cover Latin, Greek and
 Cyrillic, the client's Noto font (`clientui/fonts`) every other script.
@@ -324,7 +324,7 @@ Done on the last page, or Skip on the first, writes `~/.local/share/pico4/setup-
 starts; the introduction follows the first sign-in.
 
 The pages' logic, zones, languages and the readers of the client's files and nmcli's output are in
-[pico4_setup.h](../src/xr/pico4_setup.h) and [pico4_onboarding.h](../src/xr/pico4_onboarding.h), tested
+[pico4_setup.h](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_setup.h) and [pico4_onboarding.h](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_onboarding.h), tested
 on the host. `pico4-onboarding --render DIR [LANGUAGE]` draws every page as PNG without SteamVR.
 
 | Check | Result |
@@ -345,7 +345,7 @@ display in direct mode with three swapchain images.
 
 `vrcompositor` presents through `VK_KHR_display` on Turnip's display WSI: one 4320×2160 display at 90 Hz.
 
-- **Pacing and compressed scanout.** [`pico4-swapchain-usage`](../src/swapchain/pico4-swapchain-usage.c),
+- **Pacing and compressed scanout.** [`pico4-swapchain-usage`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-swapchain-usage/pico4-swapchain-usage.c),
   an implicit Vulkan layer active only in `vrcompositor`, removes the storage usage the compositor never
   uses, so its swapchain images can be compressed, and paces it: four images, one frame ahead
   (`PICO4_FRAMES_AHEAD`), vblanks signalled 5 ms early (`PICO4_VSYNC_LEAD_US`). It publishes the lead in
@@ -400,7 +400,7 @@ logs under `~/.local/share/Steam`; `steamvr_first_init.sh` keeps both files. `pi
 `driver_monado.so` in `bin/linuxarm64`, where SteamVR for linuxarm64 looks (Monado's install says
 `linux64`).
 
-[`monado-steamvr-pico4.patch`](../userspace/pkgbuilds/pico4-monado/monado-steamvr-pico4.patch) adapts
+[`monado-steamvr-pico4.patch`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/monado-steamvr-pico4.patch) adapts
 `driver_monado`:
 
 - the render target is one eye (2160×2160): OpenVR asks per eye, Monado's screen spans both;
@@ -415,7 +415,7 @@ logs under `~/.local/share/Steam`; `steamvr_first_init.sh` keeps both files. `pi
   the border of the view, where stretched triangles flicker magenta during head turns.
 
 SteamVR's dashboard has default bindings only for some controller types, so
-[`pico4-vrcompositor-bindings.json`](../userspace/pkgbuilds/pico4-monado/pico4-vrcompositor-bindings.json)
+[`pico4-vrcompositor-bindings.json`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-vrcompositor-bindings.json)
 is the profile's `default_bindings` for `openvr.component.vrcompositor`: a press of `/input/system` (PICO
 button right, menu button left) toggles the dashboard, a double press the room view
 ([xr.md](xr.md#passthrough)), holding the PICO button recenters; the aim pose is the laser, the trigger
@@ -434,7 +434,7 @@ generated type, `monado_bytedance_pico4_controller`, has no game bindings and no
 games no input.
 
 The driver therefore reports `pico_controller` with
-[`pico4-controller-profile.json`](../userspace/pkgbuilds/pico4-monado/pico4-controller-profile.json)
+[`pico4-controller-profile.json`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-controller-profile.json)
 (installed as `pico4_controller_profile.json`), whose `remapping` is SteamVR's own file.
 `monado-steamvr-pico-controller.patch` names the inputs as SteamVR's profile does: trigger (value, click,
 touch), grip (value, click), joystick (x, y, click, touch), A/B or X/Y (click, touch), `/input/system`
@@ -478,7 +478,7 @@ decoder and shows it through the local SteamVR. The PC's `driver_vrlink` knows t
 - **Controllers.** `vrlink` sends input only for `Prop_ControllerType_String` `frame_controller`, and the
   PC activates a controller only with a serial, a manufacturer and a type. `vrlink` reads poses and
   haptics through legacy actions
-  ([pico4-vrlink-bindings.json](../userspace/pkgbuilds/pico4-monado/pico4-vrlink-bindings.json)) and inputs
+  ([pico4-vrlink-bindings.json](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-vrlink-bindings.json)) and inputs
   by the Frame's paths. `libpico4-vrlink-compat.so`, in `vrlink`'s process only, reports
   `frame_controller` and a manufacturer, and maps the Frame's `thumbstick`, `dpad_down` and `dpad_up` to
   `joystick`, `x` and `y`. SteamVR on the headset keeps `pico_controller`.
@@ -503,10 +503,10 @@ The session's parts are packages of the userspace archive (`scripts/build-usersp
 
 | Package | Sources | Installs |
 | --- | --- | --- |
-| `pico4-swapchain-usage` | [src/swapchain](../src/swapchain), [PKGBUILD](../userspace/pkgbuilds/pico4-swapchain-usage/PKGBUILD) | `libVkLayer_PICO4_swapchain_usage.so` |
-| `pico4-mangohud` | MangoHud 0.8.4 release archive, [PKGBUILD](../userspace/pkgbuilds/pico4-mangohud/PKGBUILD) | `mangoapp`, `mangohud`, `mangohudctl`, the MangoHud layer |
-| `pico4-monado` | [PKGBUILD](../userspace/pkgbuilds/pico4-monado/PKGBUILD) and patches, [src/monado](../src/monado) | `monado-service`, the OpenXR runtime, `driver_monado` |
-| `pico4-gamescope` | upstream gamescope at `ea3579ed` and one patch | gamescope |
+| `pico4-swapchain-usage` | [pico4-swapchain-usage](https://github.com/overpressure/packages/tree/main/phoenix/pico4-swapchain-usage), [PKGBUILD](https://github.com/overpressure/packages/blob/main/phoenix/pico4-swapchain-usage/PKGBUILD) | `libVkLayer_PICO4_swapchain_usage.so` |
+| `overpressure-mangohud` | MangoHud 0.8.4 release archive, [PKGBUILD](https://github.com/overpressure/packages/blob/main/common/overpressure-mangohud/PKGBUILD) | `mangoapp`, `mangohud`, `mangohudctl`, the MangoHud layer |
+| `pico4-monado` | [PKGBUILD](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/PKGBUILD) and patches, [pico4-monado](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado) | `monado-service`, the OpenXR runtime, `driver_monado` |
+| `overpressure-gamescope` | upstream gamescope at `ea3579ed` and one patch | gamescope |
 | `deckard-steamvr-rel`, `deckard-steamvr-session` | the Frame's repository | SteamVR in `/opt/steamvr`; the session's scripts and user units |
 
 [userspace/rootfs](../userspace/rootfs) adds the units, drop-ins, PAM stack, udev rules, session script

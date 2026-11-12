@@ -8,16 +8,15 @@
 #
 # 1. The userspace build with the newest package databases and a new lock (build-userspace.sh
 #    --refresh --update-lock) in WORKDIR/userspace: our packages build against Valve's newest, our
-#    patches apply, nothing is left unresolved. What moved since userspace/packages.lock goes into the
+#    patches apply, nothing is left unresolved. What moved since the pinned packages.lock goes into the
 #    summary.
-# Valve's kernel is followed in overpressure/linux: its layers are rebased onto Valve's new commits there,
-# where its CI builds them.
+# Valve's kernel is followed in overpressure/linux: Valve's new commits move up its layers by pull
+# request, where its CI builds them.
 #
 # OUTPUT_DIR/upgrade-check.md is the summary. The exit status is 1 when a build failed. That the
 # session still runs on the result is the headset's check, before a release (docs/releasing.md).
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)    # devices/phoenix/scripts
-phoenix=$(cd "$here/.." && pwd)
 work=${1:?specify a work directory on a Linux file system}
 out=${2:?specify an output directory}
 mkdir -p "$work" "$out"
@@ -44,7 +43,9 @@ else
 fi
 echo >> "$summary"
 if [ -f "$out/userspace/packages.lock" ]; then
-	python3 "$here/upstream.py" lock-diff "$phoenix/userspace/packages.lock" "$out/userspace/packages.lock" >> "$summary"
+	# The lock of the overpressure/packages commit the build took (userspace/packages.json).
+	python3 "$here/upstream.py" lock-diff "$work/userspace/project/packages/headsets/phoenix/packages.lock" \
+		"$out/userspace/packages.lock" >> "$summary"
 fi
 
 cat "$summary"

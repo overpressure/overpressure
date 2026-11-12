@@ -18,9 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ROOTFS = ROOT / "userspace/rootfs"
 LANGUAGE = ROOTFS / "usr/libexec/pico4/steam-language"
 TIMEZONE = ROOTFS / "usr/bin/steamos-polkit-helpers/steamos-set-timezone"
-STRINGS = ROOT / "src/xr/pico4-onboarding.strings"
-SETUP_H = ROOT / "src/xr/pico4_setup.h"
-ONBOARDING = ROOT / "src/xr/pico4-onboarding.cpp"
 
 _loader = importlib.machinery.SourceFileLoader("steam_language", str(LANGUAGE))
 _spec = importlib.util.spec_from_loader("steam_language", _loader)
@@ -66,25 +63,6 @@ REGISTRY = """"Registry"
 \t}
 }
 """
-
-
-def sections(text: str) -> dict[str, dict[str, str]]:
-    """Read the strings file as {language: {key: value}}."""
-    out: dict[str, dict[str, str]] = {}
-    current: dict[str, str] | None = None
-    for line in text.splitlines():
-        if not line.strip() or line.startswith("#"):
-            continue
-        m = re.fullmatch(r"\[([a-z]+)\]", line)
-        if m:
-            current = out.setdefault(m.group(1), {})
-            continue
-        key, sep, value = line.partition(" = ")
-        assert current is not None, line
-        assert sep, line
-        assert key not in current, f"{key} twice"
-        current[key] = value
-    return out
 
 
 class LanguageTests(unittest.TestCase):
@@ -146,12 +124,6 @@ class LanguageTests(unittest.TestCase):
             self.assertEqual(tool.main(["steam-language", "klingon"]), 2)
             self.assertEqual(tool.main(["steam-language"]), 2)
         systemctl.assert_not_called()
-
-    def test_the_same_languages_as_the_panel(self):
-        header = SETUP_H.read_text(encoding="utf-8")
-        table = re.findall(r'\{"([a-z]+)", "[^"]+"\},', header[header.index("pico4_setup_languages[") :])
-        self.assertEqual(sorted(table[: len(tool.LANGUAGES)]), sorted(tool.LANGUAGES))
-        self.assertEqual(len(tool.LANGUAGES), 31)
 
 
 class WaitTests(unittest.TestCase):
@@ -231,47 +203,6 @@ class TimezoneTests(unittest.TestCase):
         rule = (ROOTFS / "usr/share/polkit-1/rules.d/50-pico4-timezone.rules").read_text(encoding="utf-8")
         self.assertEqual(re.findall(r'action\.id === "([^"]+)"', rule), ["org.freedesktop.timedate1.set-timezone"])
         self.assertIn('subject.user === "steamos"', rule)
-
-    def test_the_panel_calls_steams_helper(self):
-        # Steam's own time-zone setting runs the same path (steamui.so, on SteamOS).
-        self.assertIn('"/usr/bin/steamos-polkit-helpers/steamos-set-timezone"', ONBOARDING.read_text(encoding="utf-8"))
-
-    def test_every_zone_is_a_name_the_helper_takes(self):
-        zones = re.findall(r'\{-?\d+, "([^"]+)", "', SETUP_H.read_text(encoding="utf-8"))
-        self.assertEqual(len(zones), 62)
-        for zone in zones:
-            self.assertRegex(zone, r"^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)+$")
-
-
-class StringsTests(unittest.TestCase):
-    def setUp(self):
-        self.text = STRINGS.read_text(encoding="utf-8")
-        self.languages = sections(self.text)
-
-    def test_every_key_the_panel_uses_is_in_english(self):
-        source = ONBOARDING.read_text(encoding="utf-8")
-        english = self.languages["english"]
-        asked = set(re.findall(r'our\("([a-z_]+)"\)', source))
-        self.assertFalse(asked - set(english), "keys without English text")
-        # Each text is named in the source, also where a condition picks one of two.
-        self.assertFalse({key for key in english if f'"{key}"' not in source}, "texts nothing uses")
-
-    def test_every_language_has_every_text_with_its_placeholders(self):
-        english = self.languages["english"]
-        self.assertEqual(sorted(self.languages), sorted(tool.LANGUAGES))
-        for language, texts in self.languages.items():
-            self.assertEqual(sorted(texts), sorted(english), language)
-            for key, value in texts.items():
-                self.assertEqual(value.count("%s"), english[key].count("%s"), f"{language} {key}")
-                self.assertTrue(value.strip(), f"{language} {key}")
-
-    def test_the_pico_4_not_the_frame(self):
-        self.assertNotIn("Frame", self.text)
-
-    def test_lf_and_utf8(self):
-        data = STRINGS.read_bytes()
-        self.assertNotIn(b"\r", data)
-        data.decode("utf-8")
 
 
 if __name__ == "__main__":

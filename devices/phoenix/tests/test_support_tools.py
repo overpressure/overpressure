@@ -114,13 +114,6 @@ class PackageLockTests(unittest.TestCase):
         )
         self.assertEqual(self.lock.differences(self.lock.read("aa  ./a-2.pkg\n"), lock), ["a-2.pkg: not in the lock"])
 
-    def test_the_lock_names_no_project_package_and_is_well_formed(self):
-        entries = self.lock.read((ROOT / "userspace/packages.lock").read_text(encoding="utf-8"))
-        self.assertGreater(len(entries), 400)
-        for name, sha in entries.items():
-            self.assertRegex(sha, r"^[0-9a-f]{64}$")
-            self.assertTrue(name.endswith(".pkg.tar.zst"), name)
-
 
 class SupportBundleTests(unittest.TestCase):
     SECRETS = ("FAKESERIAL123", "MyHomeNetwork", "fake_account", "Fake Persona", "fake-machine-id-0123")

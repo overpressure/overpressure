@@ -169,15 +169,6 @@ class BluetoothTests(unittest.TestCase):
                 self.assertEqual(bt_address.main(["bt-address", str(mac), "0"]), 0)
         self.assertEqual(len(sent), 2)
 
-    def test_bluez_is_the_frames(self):
-        packages = text(ROOT / "userspace/packages.txt").split()
-        self.assertIn("deckard-arch-hotfixes-release-0.3/bluez", packages)
-        self.assertIn("deckard-arch-hotfixes-release-0.3/bluez-utils", packages)
-        build = text(ROOT / "scripts/build-userspace.sh")
-        enabled = build[build.index("in_t systemctl enable") :]
-        for name in ("pico4-bt-firmware.service", "pico4-bt-address.service", "bluetooth.service"):
-            self.assertIn(name, enabled)
-
 
 if __name__ == "__main__":
     unittest.main()

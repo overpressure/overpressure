@@ -2,7 +2,6 @@
 """The session's units: SteamVR's restart limit and the fallback to Monado's session."""
 
 import configparser
-import json
 import os
 import re
 import shutil
@@ -96,66 +95,6 @@ class OpenGLTest(unittest.TestCase):
         self.assertRegex(dropin, r"(?m)^Environment=STEAM_DESKTOP_APP_AFFINITY_LIST=0xf0$")
 
 
-class VsyncLeadTest(unittest.TestCase):
-    def test_steamvr_runs_with_the_lead(self):
-        # SteamVR starts its compositor about 4 ms before the vblank it sees.
-        dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=PICO4_VSYNC_LEAD_US=5000$")
-        # Only the layer reads the variable; it publishes the lead it applies, and
-        # the driver predicts that much further from the published value.
-        hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
-        self.assertNotIn('"PICO4_VSYNC_LEAD_US"', hmd)
-        layer = (ROOT / "src/swapchain/pico4-swapchain-usage.c").read_text(encoding="utf-8")
-        self.assertIn('"PICO4_VSYNC_LEAD_US"', layer)
-        for source in (hmd, layer):
-            self.assertIn('"%s/pico4-display-lead-us"', source)
-
-
-class CompressedScanoutTest(unittest.TestCase):
-    def test_steamvr_keeps_one_frame_ahead(self):
-        # SteamVR waits for each present to be shown before it starts the next
-        # frame; without a frame ahead the GPU idles a third of the time (about 58 fps).
-        dropin = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertRegex(dropin, r"(?m)^Environment=PICO4_FRAMES_AHEAD=1$")
-        layer = (ROOT / "src/swapchain/pico4-swapchain-usage.c").read_text(encoding="utf-8")
-        self.assertIn('"PICO4_FRAMES_AHEAD"', layer)
-
-
-class FrameSettingsTest(unittest.TestCase):
-    def test_session_takes_the_frames_compositor_path(self):
-        # The Steam Frame's compositor settings are the baseline; they live in its
-        # driver's frame_hmd_additional.vrsettings, which SteamVR loads only with that driver.
-        settings = json.loads((ROOT / "userspace/session/steamvr.vrsettings").read_text(encoding="utf-8"))
-        steamvr = settings["steamvr"]
-        for key in (
-            "useFacetRenderer",
-            "renderSystemLayerInDistortPass",
-            "enableSimplifiedShaders",
-            "enableAchromaticDistortion",
-            "enableScanoutScaling",
-            "enableLinuxVulkanAsync",
-        ):
-            self.assertIs(steamvr[key], True, key)  # noqa: FBT003  # a JSON true, not only a truthy value
-        self.assertEqual(steamvr["systemLayerWidth"], 1400)
-        self.assertEqual(steamvr["overlayRenderQuality_2"], 1)
-        self.assertEqual(steamvr["forcedDriver"], "monado")
-        self.assertIs(settings["driver_frame_hmd"]["enable"], False)  # noqa: FBT003  # a JSON false, not only falsy
-        # Standby follows the wear sensor and pauses the compositor, as on the Frame.
-        self.assertIs(settings["power"]["pauseCompositorOnStandby"], True)  # noqa: FBT003  # a JSON true, not only truthy
-        # The dashboard's room setup in the headset needs the HMD to say it supports it,
-        # and its steps past the recenter need 11004 too.
-        room = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch").read_text(encoding="utf-8")
-        for prop in (11003, 11004):
-            self.assertIn(
-                f"SetBoolProperty(m_ulPropertyContainer, static_cast<vr::ETrackedDeviceProperty>({prop}), true)", room
-            )
-        self.assertNotIn("inHMDRoomSetupDebug", json.dumps(settings))
-        # Facet builds its mesh from the driver's exact inverse distortion.
-        patch = (ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-pico4.patch").read_text(encoding="utf-8")
-        self.assertIn("IVRDisplayComponent_Version3", patch)
-        self.assertIn("pico4_hmd_compute_inverse_distortion", patch)
-
-
 class KthreadPrioritiesTest(unittest.TestCase):
     def test_unit_raises_the_gpu_workqueues(self):
         service = unit("usr/lib/systemd/system/pico4-kthread-priorities.service")
@@ -225,34 +164,6 @@ class SoundCardFormatTest(unittest.TestCase):
         conf = (ROOTFS / "etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf").read_text(encoding="utf-8")
         self.assertNotIn("audio.format", conf)
         self.assertIn("alsa_output.platform-sound", conf)
-
-
-class CompositorPacingTest(unittest.TestCase):
-    LAYER = ROOT / "src/swapchain/pico4-swapchain-usage.c"
-
-    def test_the_session_asks_for_stocks_pacing(self):
-        unit_text = (ROOTFS / "usr/lib/systemd/user/steamvr.service.d/50-pico4.conf").read_text(encoding="utf-8")
-        self.assertIn("Environment=PICO4_FRAMES_AHEAD=1\n", unit_text)
-        self.assertIn("Environment=PICO4_VSYNC_LEAD_US=5000\n", unit_text)
-
-    def test_the_layer_gives_it_the_images_it_needs(self):
-        # With the two images SteamVR asks for, its acquire waits for a flip whatever the rest does.
-        layer = self.LAYER.read_text(encoding="utf-8")
-        self.assertIn("frames_ahead() > 0 && info.minImageCount < 4", layer)
-
-    def test_a_present_counts_as_shown_with_the_one_before_it(self):
-        layer = self.LAYER.read_text(encoding="utf-8")
-        self.assertIn("next(device, swapchain, present_id - ahead, 0)", layer)
-        self.assertIn("earlier.presentId = info->presentId - ahead;", layer)
-
-    def test_a_queue_drains_and_a_late_job_keeps_its_slot(self):
-        layer = self.LAYER.read_text(encoding="utf-8")
-        self.assertIn("passed = blocked && value[0] > read_count ? value[0] : read_count;", layer)
-
-    def test_the_driver_learns_the_lead(self):
-        layer = self.LAYER.read_text(encoding="utf-8")
-        self.assertIn('"%s/pico4-display-lead-us"', layer)
-        self.assertIn('"%s/pico4-display-lead-us"', (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8"))
 
 
 class StoragePolicyRuleTest(unittest.TestCase):

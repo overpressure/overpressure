@@ -108,108 +108,12 @@ class MoveTests(unittest.TestCase):
             lens.move(FakePort([0] + [1] * 50, 6350), 6350, sleep=lambda _: None, now=lambda: next(clock))
 
 
-class SessionTests(unittest.TestCase):
-    def read(self, path: str) -> str:
-        return (ROOT / path).read_text(encoding="utf-8")
-
-    def test_driver_follows_the_lenses_and_steamvr_gets_them(self):
-        hmd = self.read("src/monado/pico4_hmd.c")
-        self.assertIn("ipd_thread", hmd)
-        self.assertIn("fabs(now - known) > 0.0002", hmd)
-        patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-lenses-standby.patch")
-        self.assertIn("SetDisplayEyeToHead", patch)
-        self.assertIn("Prop_UserIpdMeters_Float", patch)
-        recipe = self.read("userspace/pkgbuilds/pico4-monado/PKGBUILD")
-        self.assertIn("patch -d monado -p1 < monado-steamvr-lenses-standby.patch", recipe)
-
-    def test_standby_switches_the_panels_backlight(self):
-        patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-lenses-standby.patch")
-        self.assertIn("VREvent_EnterStandbyMode", patch)
-        self.assertIn("VREvent_LeaveStandbyMode", patch)
-        hmd = self.read("src/monado/pico4_hmd.c")
-        self.assertIn("/sys/class/backlight/pico4-panel/bl_power", hmd)
-
-    def test_the_driver_logs_the_battery_level_raw(self):
-        controller = self.read("src/monado/pico4_controller.c")
-        self.assertIn('"Battery level %d (raw)"', controller)
-        self.assertIn("c->base.get_battery_status = pico4_controller_get_battery_status;", controller)
-        self.assertIn("(float)level / BATTERY_FULL", controller)
-
-    def test_steamvr_gets_the_controllers_battery_too(self):
-        patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-battery.patch")
-        self.assertIn("+\t\t\t\tupdate_battery(m_xdev, m_ulPropertyContainer, &battery_at);", patch)
-        self.assertIn("+\t\tupdate_battery(m_xdev, m_ulPropertyContainer, &battery_at);", patch)
-
-
 class ValveMesaTests(unittest.TestCase):
     def read(self, path: str) -> str:
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_the_systems_mesa_is_valves(self):
-        packages = self.read("userspace/packages.txt").splitlines()
-        self.assertIn("deckard-arch-hotfixes-release-0.3/deckard-mesa-linux-aarch64", packages)
-        self.assertNotIn("mesa", packages)
-        self.assertIn("pico4/pico4-libdisplay-info", packages)
-
-    def test_steams_wifi_connections_are_understood(self):
-        packages = self.read("userspace/packages.txt").splitlines()
-        for package in ("networkmanager", "libnm"):
-            self.assertIn(f"deckard-arch-hotfixes-release-0.3/{package}", packages)
-            self.assertNotIn(package, packages)
-
     def test_iwd_keeps_the_interface_with_its_address(self):
         self.assertIn("DefaultInterface=ath11k_pci", self.read("userspace/rootfs/etc/iwd/main.conf"))
-
-    def test_no_depth_projection_without_a_mesh(self):
-        patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-roomview-mesh.patch")
-        self.assertIn(
-            "return pico4_hmd_depth_mesh != NULL && "
-            '::access("/usr/lib/pico4-stock-slam/system/lib64/libphotoid.so", F_OK) == 0;',
-            patch,
-        )
-
-    def test_only_the_compositor_loses_storage_usage(self):
-        layer = self.read("src/swapchain/pico4-swapchain-usage.c")
-        self.assertIn('"vrcompositor"', layer)
-        self.assertIn("info.imageUsage &= ~VK_IMAGE_USAGE_STORAGE_BIT;", layer)
-
-
-class LensPanelTests(unittest.TestCase):
-    def read(self, path: str) -> str:
-        return (ROOT / path).read_text(encoding="utf-8")
-
-    def test_it_moves_through_the_tool_and_runs_with_steamvr(self):
-        panel = self.read("src/xr/pico4-lens-panel.cpp")
-        self.assertIn('execlp("pico4-lens", "pico4-lens", "set", value', panel)
-        self.assertIn("y = PICO4_PANEL_H - e.data.mouse.y", panel)
-        # The overlays' images go through the shared header as textures: with an image through
-        # SetOverlayRaw or SetOverlayFromFile, the compositor crashes at every stop (docs/session.md).
-        shared = self.read("src/xr/pico4_overlay.hpp")
-        self.assertIn("overlay->SetOverlayTexture(handle, &texture)", shared)
-        for path in ("src/xr/pico4-lens-panel.cpp", "src/xr/pico4-onboarding.cpp", "src/xr/pico4_overlay.hpp"):
-            source = self.read(path)
-            self.assertNotIn("SetOverlayRaw(", source)
-            self.assertNotIn("SetOverlayFromFile(", source)
-        self.assertIn('#include "pico4_overlay.hpp"', panel)
-        conf = self.read("userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/53-pico4-lens-panel.conf")
-        self.assertIn("Wants=pico4-lens-panel.service", conf)
-        self.assertIn("pico4-lens-panel pico4-lens-panel.cpp", self.read("userspace/pkgbuilds/pico4-monado/PKGBUILD"))
-
-    def test_the_onboarding_runs_with_steamvr(self):
-        recipe = self.read("userspace/pkgbuilds/pico4-monado/PKGBUILD")
-        self.assertIn("-o pico4-onboarding pico4-onboarding.cpp", recipe)
-        self.assertIn("./test_pico4_onboarding", recipe)
-        self.assertIn("install -Dm755 pico4-lens-panel pico4-onboarding", recipe)
-        conf = self.read("userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/54-pico4-onboarding.conf")
-        self.assertIn("Wants=pico4-onboarding.service", conf)
-        unit = self.read("userspace/rootfs/usr/lib/systemd/user/pico4-onboarding.service")
-        self.assertIn("PartOf=steamvr.service", unit)
-        self.assertIn("ExecStart=/usr/bin/pico4-onboarding", unit)
-
-    def test_steamvrs_display_covers_the_motors_range(self):
-        patch = self.read("userspace/pkgbuilds/pico4-monado/monado-steamvr-lenses-standby.patch")
-        self.assertIn("Prop_IpdUIRangeMinMeters_Float, 0.062f", patch)
-        self.assertIn("Prop_IpdUIRangeMaxMeters_Float, 0.072f", patch)
 
 
 if __name__ == "__main__":

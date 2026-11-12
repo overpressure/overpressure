@@ -22,23 +22,25 @@
 #   --stock-slam DIR    PICO OS's head tracker, its Compute DSP firmware and bionic root
 #                       (python -m overpressure assets, docs/xr.md). Without it head tracking
 #                       falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
+#   --packages DIR      a checkout of overpressure/packages instead of the commit that
+#                       userspace/packages.json pins (trying a change to a package)
 #   --refresh           download the current package databases and reinstall the base
-#   --update-lock       write OUTPUT_DIR/packages.lock instead of checking userspace/packages.lock
 #                       root; without it every build installs the same package versions
-#   --clean             rebuild the project packages from scratch
-#   --emulated-cc       compile with the build environment's own GCC under QEMU
+#   --update-lock       write OUTPUT_DIR/packages.lock instead of checking the pinned one
 #
-# Each step is skipped when its inputs did not change:
-# 1. Build environment: Valve/Collabora's Holo Core aarch64 preview rootfs (sha256-pinned),
-#    entered with chroot; on other hosts than arm64 its programs run under QEMU.
-# 2. Project packages (userspace/pkgbuilds) with makepkg. A package is rebuilt when its
-#    recipe changes; when only the project's own sources (src/) changed, it is rebuilt
-#    incrementally in its last build tree (makepkg -e). On x86-64 hosts the host's clang
-#    and lld compile natively inside the build environment, which is their sysroot.
-# 3. Base root: userspace/packages.txt installed with pacman from the Steam Frame hotfix
-#    repository and the Holo Core preview (userspace/pacman.conf). Reinstalled when the
-#    list or pacman.conf changes, and with --refresh.
-# 4. Image root: an overlay on the base root with the current project packages and the
+# The image's definition (pacman.conf, packages.txt, packages.lock) and the project's packages
+# are overpressure/packages' (headsets/phoenix and its layers), at the commit
+# userspace/packages.json pins; the build fetches it into cache/packages. Each step is skipped
+# when its inputs did not change:
+# 1. Build environment and project packages: overpressure/packages' build/packages.sh, in
+#    Valve/Collabora's Holo Core aarch64 preview rootfs (sha256-pinned), entered with chroot;
+#    on other hosts than arm64 its programs run under QEMU and the host's clang and lld compile
+#    natively in it. A package is rebuilt when its recipe folder changes. Each layer is a local
+#    pacman repository, overpressure-LAYER.
+# 2. Base root: packages.txt installed with pacman from the project's layers, the Steam Frame
+#    hotfix repository and the Holo Core preview (pacman.conf). Reinstalled when the list or
+#    pacman.conf changes, and with --refresh.
+# 3. Image root: an overlay on the base root with the current project packages and the
 #    PICO 4 adaptation layer (userspace/rootfs, shared stage-1 scripts, users, units),
 #    checked natively for unresolved ELF dependencies (overpressure/elfdeps.py), written as:
 #      OUTPUT_DIR/pico4-userspace.tar.zst        root filesystem for scripts/build-system-image.sh
@@ -55,7 +57,7 @@ repo=$(cd "$source_dir/../.." && pwd)            # overpressure (its package, ca
 build_root=${1:?specify an isolated Linux-filesystem build directory}
 output=${2:?specify an output directory}
 shift 2
-firmware="" sensor_data="" wlan="" audio="" stock_slam="" refresh=0 clean=0 emulated_cc=0
+firmware="" sensor_data="" wlan="" audio="" stock_slam="" packages_dir="" refresh=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --gpu-firmware) firmware=$(realpath "${2:?}"); shift 2 ;;
@@ -63,10 +65,9 @@ while [[ $# -gt 0 ]]; do
     --wlan) wlan=$(realpath "${2:?}"); shift 2 ;;
     --audio) audio=$(realpath "${2:?}"); shift 2 ;;
     --stock-slam) stock_slam=$(realpath "${2:?}"); shift 2 ;;
+    --packages) packages_dir=$(realpath "${2:?}"); shift 2 ;;
     --refresh) refresh=1; shift ;;
     --update-lock) update_lock=1; shift ;;
-    --clean) clean=1; shift ;;
-    --emulated-cc) emulated_cc=1; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
     esac
 done
@@ -86,18 +87,15 @@ build_root=$(realpath "$build_root")
 output=$(realpath "$output")
 [[ "$build_root" != / ]] || { echo 'The build root must not resolve to /' >&2; exit 2; }
 
-holo_snapshot=mash-20251118.3
-holo_url=https://holo-packages.steamos.cloud/holo-core-aarch64-preview/$holo_snapshot/system.rootfs.zst
-holo_sha256=7e3fb88454e1ac633b7488abb72d3ca0cc7d2578a38146fdd7d58b50fcbd60bf
-holo_archive=$repo/cache/holo/$holo_snapshot-system.rootfs.zst
-B=$build_root/bootstrap
+# The build environment is overpressure/packages' (build/packages.sh), kept in the build root.
+B=$build_root/packages/environment
 T=$B/target    # the image root, an overlay on $B/base
 log() { printf '>> %s\n' "$*"; }
 phase() { printf '>> [%4ss] %s\n' "$SECONDS" "$*"; }
 # step WORDS: the next of the build's steps begins, a progress line for the installer (overpressure.progress):
-# the environment, each project package, the base root, the image root, its project packages, the
-# ELF check, the adaptation layer and the archive. A step with nothing to do passes at once.
-step_total=$(( $(grep -c '^build_package ' "${BASH_SOURCE[0]}") + 7 ))
+# the environment with the project packages, the base root, the image root, its project packages,
+# the ELF check, the adaptation layer and the archive. A step with nothing to do passes at once.
+step_total=8
 step_done=0
 step() { printf 'progress %d/%d: %s\n' "$step_done" "$step_total" "$*"; step_done=$((step_done + 1)); }
 # assets_modes DIR...: what came from an assets folder as 0644 files and 0755 directories,
@@ -107,17 +105,6 @@ assets_modes() {
     find "$@" -type d -exec chmod 0755 {} +
     find "$@" -type f -exec chmod 0644 {} +
 }
-# build_jobs: parallel compile jobs, one per CPU but at most one per 1.5 GiB of memory: a C++ unit
-# of Basalt or Monado takes about that much, and more jobs than memory swap the build to a crawl.
-# make takes MAKEFLAGS, CMake's ninja builds CMAKE_BUILD_PARALLEL_LEVEL, meson's PICO4_BUILD_JOBS.
-build_jobs() {
-    local cpus by_memory
-    cpus=$(nproc)
-    by_memory=$(awk '/^MemTotal:/ {print int($2 / 1572864)}' /proc/meminfo)
-    ((by_memory >= 1)) || by_memory=1
-    echo $((cpus < by_memory ? cpus : by_memory))
-}
-
 mounted=()
 mnt() { mount "$@"; mounted+=("${!#}"); }
 cleanup() { for ((i=${#mounted[@]}-1;i>=0;i--)); do umount -l "${mounted[$i]}" 2>/dev/null || true; done; mounted=(); }
@@ -145,10 +132,35 @@ mount_api() {
 }
 
 # -- 0. a snapshot of the inputs ------------------------------------------------------
+# overpressure/packages at the pinned commit, fetched once into cache/packages (git checks that the
+# files are the commit's), or the checkout --packages names.
+read -r packages_repository packages_tag packages_commit < <(python3 -c \
+    'import json,sys; d=json.load(open(sys.argv[1])); print(d["repository"], d["tag"], d["commit"])' \
+    "$source_dir/userspace/packages.json")
+if [[ -z $packages_dir ]]; then
+    packages_dir=$repo/cache/packages/$packages_commit
+    if [[ ! -f $packages_dir/.overpressure-commit ]]; then
+        log "fetching $packages_repository $packages_tag ($packages_commit)"
+        rm -rf "$packages_dir.new"
+        git init -q "$packages_dir.new"
+        git -C "$packages_dir.new" fetch -q --depth 1 "https://github.com/$packages_repository.git" "$packages_commit"
+        git -C "$packages_dir.new" -c advice.detachedHead=false checkout -q FETCH_HEAD
+        [[ $(git -C "$packages_dir.new" rev-parse HEAD) == "$packages_commit" ]]
+        rm -rf "$packages_dir.new/.git" "$packages_dir"
+        echo "$packages_commit" > "$packages_dir.new/.overpressure-commit"
+        mv "$packages_dir.new" "$packages_dir"
+    fi
+    packages_source="$packages_repository $packages_tag $packages_commit"
+else
+    packages_source="local $(git -c safe.directory='*' -C "$packages_dir" describe --always --dirty --abbrev=12 2>/dev/null || echo checkout)"
+fi
+[[ -f $packages_dir/headsets/phoenix/layers && -f $packages_dir/build/packages.sh ]] ||
+    { echo "$packages_dir is no checkout of overpressure/packages" >&2; exit 2; }
 project=$build_root/project
 rm -rf "$project.new"
-mkdir -p "$project.new/initramfs/usr/libexec/pico4" "$project.new/prebuilt/aarch64"
+mkdir -p "$project.new/initramfs/usr/libexec/pico4" "$project.new/prebuilt/aarch64" "$project.new/packages"
 cp -r "$repo/overpressure" "$source_dir/src" "$source_dir/userspace" "$project.new/"
+(cd "$packages_dir" && tar --exclude=.git --exclude=./out -cf - .) | tar -xf - -C "$project.new/packages"
 for f in lib.sh recovery-policy.sh recovery-watch; do
     cp "$source_dir/initramfs/usr/libexec/pico4/$f" "$project.new/initramfs/usr/libexec/pico4/"
 done
@@ -171,168 +183,53 @@ if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
 fi
 export SOURCE_DATE_EPOCH
 
-# -- 1. build environment ----------------------------------------------------------------
-step "preparing the build environment"
-mkdir -p "$repo/cache/holo"
-if [[ ! -s "$holo_archive" ]]; then
-    log "downloading $holo_url"
-    curl --fail --location --output "$holo_archive.part" "$holo_url"
-    mv "$holo_archive.part" "$holo_archive"
-fi
-printf '%s  %s\n' "$holo_sha256" "$holo_archive" | sha256sum --check --quiet
-if [[ ! -f "$B/.pico4-bootstrap" ]]; then
-    phase "unpacking Holo Core aarch64 $holo_snapshot"
-    unmount_below "$B"
-    rm -rf "$B"
-    mkdir -p "$B"
-    zstd -qdc "$holo_archive" | tar -x --numeric-owner -C "$B"
-    touch "$B/.pico4-bootstrap"
-fi
-unmount_below "$B"
-cp -L /etc/resolv.conf "$B/etc/resolv.conf"
-mkdir -p "$B"/{proc,sys,dev,run,tmp} "$B/etc/pico4" "$B/var/cache/pico4-repo" "$B/var/cache/pico4-pkgs" "$B/build"
-cp "$project/userspace/pacman.conf" "$B/etc/pico4/pacman.conf"
-# The project's packages build against the image's versions: what packages.txt takes from the Frame's
-# repository, the build environment takes from there too (after its core and extra, as the image does).
-frame_repo=deckard-arch-hotfixes-release-0.3
-if ! grep -q "^\[$frame_repo\]" "$B/etc/pacman.conf"; then
-    printf '\n[%s]\nSigLevel = Never\n%s\n' "$frame_repo" \
-        "$(sed -n "/^\[$frame_repo\]/,/^\$/s/^Server.*/&/p" "$project/userspace/pacman.conf")" >> "$B/etc/pacman.conf"
-fi
-mapfile -t frame_packages < <(sed -n "s|^$frame_repo/\([^[:space:]#]*\).*|\1|p" "$project/userspace/packages.txt")
-mount_api "$B"
+# -- 1. build environment and project packages --------------------------------------------
+# The image's definition and its layers, from the snapshot of overpressure/packages.
+definition=$project/packages/headsets/phoenix
+mapfile -t layers < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$definition/layers")
+repos=$build_root/packages/repositories
+step "the build environment and the project packages"
+OVERPRESSURE_REFRESH=$([[ $refresh == 1 ]] && echo 1) bash "$project/packages/build/packages.sh" phoenix \
+    "$build_root/packages" "$repos"
 in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root \
     SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$@"; }
-
-# Package databases are downloaded by the first build and with --refresh only, so that
-# repeated builds install the same versions.
-sync=""
-[[ $refresh == 1 || ! -s "$B/var/lib/pacman/sync/$frame_repo.db" ]] && sync=y
-builder_packages=(base-devel git meson ninja cmake eigen openxr python-mako python-yaml
-    alsa-lib pipewire-audio
-    python-packaging glslang libdrm vulkan-icd-loader vulkan-headers spirv-tools zlib zstd expat libelf wayland
-    wayland-protocols libx11 libxcb libxshmfence libxrandr xcb-util-keysyms opencv onetbb fmt boost ccache
-    glib2-devel at-spi2-core pango cairo gdk-pixbuf2 libxcursor libxinerama libxi libxcomposite libxdamage
-    shared-mime-info gtk-update-icon-cache hicolor-icon-theme glfw dbus libxkbcommon libnl pcsclite
-    hwdata libavif libcap libdecor libei libinput libxmu libxres libxtst libxxf86vm luajit pipewire pixman
-    sdl2 seatd xcb-util-errors xcb-util-wm xorg-xwayland libbsd libxml2-legacy)
-for i in "${!builder_packages[@]}"; do
-    for f in "${frame_packages[@]}"; do
-        [[ ${builder_packages[i]} == "$f" ]] && builder_packages[i]=$frame_repo/$f
-    done
+mkdir -p "$B/etc/pico4" "$B/var/cache/pico4-pkgs"
+cp "$definition/pacman.conf" "$B/etc/pico4/pacman.conf"
+# Each layer's repository where pacman.conf's file:// servers name it.
+rm -rf "$B/var/cache/overpressure"
+for layer in "${layers[@]}"; do
+    install -d "$B/var/cache/overpressure/$layer"
+    cp "$repos/$layer"/* "$B/var/cache/overpressure/$layer/"
 done
-in_b pacman "-S$sync" --noconfirm --needed "${builder_packages[@]}"
-# Dependencies the list does not name (libpipewire, filesystem, ...), installed from the first repository.
-mapfile -t frame_here < <(in_b pacman -Qq "${frame_packages[@]}" 2>/dev/null)
-[[ ${#frame_here[@]} == 0 ]] || in_b pacman -S --noconfirm --needed "${frame_here[@]/#/$frame_repo/}"
-in_b id builder >/dev/null 2>&1 || in_b useradd -m builder
-builder=$(in_b id -u builder):$(in_b id -g builder)
-# Emulated compilers: ccache (in the builder's home, kept between builds) saves repeats.
-sed -i -E 's/^(BUILDENV=\(.*)!ccache/\1ccache/' "$B/etc/makepkg.conf"
-
-# Native compilers: the kernel runs the host's x86-64 clang and lld directly inside the
-# build environment, where they compile for aarch64 with the environment as sysroot (its
-# glibc, GCC runtime and libraries). The target comes from the program names.
+cp -L /etc/resolv.conf "$B/etc/resolv.conf"
+mount_api "$B"
+# The host's clang and lld, for PICO OS's tracker (--stock-slam).
 llvm=""
-if [[ $host_arch == x86_64 && $emulated_cc == 0 ]]; then
+if [[ $host_arch == x86_64 ]]; then
     for v in 21 20 19; do
         if [[ -x /usr/lib/llvm-$v/bin/clang && -x /usr/lib/llvm-$v/bin/ld.lld ]]; then llvm=/usr/lib/llvm-$v; break; fi
     done
-    [[ -n $llvm ]] || log "WARNING: no host clang and lld (LLVM 20, in the build container): compiling under QEMU, about ten times slower"
 fi
-compiler="GCC under QEMU"
-ccenv=""
-if [[ -n $llvm ]]; then
-    multiarch=/usr/lib/x86_64-linux-gnu
-    for d in "$llvm" "$multiarch"; do
-        mkdir -p "$B$d"
-        mnt --bind "$d" "$B$d"
-        mount -o remount,bind,ro "$B$d"
-    done
-    # The x86-64 dynamic loader where x86-64 programs look for it: /lib64, which is usr/lib in Holo's
-    # filesystem package and missing from the Frame's.
-    ln -sfn "$multiarch/ld-linux-x86-64.so.2" "$B/usr/lib/ld-linux-x86-64.so.2"
-    [[ -e "$B/lib64" || -L "$B/lib64" ]] || ln -s usr/lib "$B/lib64"
-    mkdir -p "$B/usr/local/bin"
-    ln -sfn "$llvm/bin/clang" "$B/usr/local/bin/aarch64-unknown-linux-gnu-clang"
-    ln -sfn "$llvm/bin/clang++" "$B/usr/local/bin/aarch64-unknown-linux-gnu-clang++"
-    compiler=$("$llvm/bin/clang" --version | head -n 1)
-    ccenv="PICO4_CC=1"
-fi
-# lld links; no LTO, whose bitcode objects would need LLVM's archiver in every build system.
-cat > "$B/etc/makepkg.conf.d/pico4.conf" <<'EOF'
-# Written by scripts/build-userspace.sh: the host's clang and lld when PICO4_CC is set.
-if [[ -n ${PICO4_CC:-} ]]; then
-    export CC=/usr/local/bin/aarch64-unknown-linux-gnu-clang CXX=/usr/local/bin/aarch64-unknown-linux-gnu-clang++
-    LDFLAGS+=" -fuse-ld=lld"
-    OPTIONS+=(!lto)
-fi
-EOF
-
-# -- 2. project packages -------------------------------------------------------------------
-# build_package NAME [SOURCE...]: makepkg userspace/pkgbuilds/NAME with the project's
-# SOURCE files next to the PKGBUILD. Packages of the same recipe (PKGBUILD directory,
-# compiler and makepkg settings) and sources are reused; new sources alone rebuild in the
-# last build tree.
-rm -f "$B"/var/cache/pico4-repo/*
-build_package() {
-    local name=$1 dir=$B/build/$1 recipe sources built pkgver pkgrel mode=clean extra=""
-    shift
-    step "package $name"
-    pkgver=$(sed -n 's/^pkgver=//p' "$project/userspace/pkgbuilds/$name/PKGBUILD")
-    pkgrel=$(sed -n 's/^pkgrel=//p' "$project/userspace/pkgbuilds/$name/PKGBUILD")
-    recipe=$({ cat "$project/userspace/pkgbuilds/$name"/* "$B/etc/makepkg.conf.d/pico4.conf"; echo "$compiler"; } |
-        sha256sum | cut -d' ' -f1)
-    sources=$(cat /dev/null "$@" | sha256sum | cut -d' ' -f1)
-    built=$(cat "$dir/.recipe" 2>/dev/null || true)
-    if [[ "$built" != "$recipe $sources" ]] || ! ls "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst >/dev/null 2>&1; then
-        if [[ $clean == 0 && "${built%% *}" == "$recipe" && -d "$dir/src" ]]; then
-            mode=incremental extra=-e
-        else
-            rm -rf "$dir"
-        fi
-        jobs=$(build_jobs)
-        phase "building $name $pkgver-$pkgrel ($mode, $compiler, $jobs jobs)"
-        mkdir -p "$dir"
-        rm -f "$dir/.recipe"
-        cp "$project/userspace/pkgbuilds/$name"/* "$@" "$dir/"
-        chown -R "$builder" "$dir"
-        in_b su builder -c "cd /build/$name && MAKEFLAGS=-j$jobs CMAKE_BUILD_PARALLEL_LEVEL=$jobs PICO4_BUILD_JOBS=$jobs SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH $ccenv makepkg --noconfirm --nocheck -f $extra"
-        echo "$recipe $sources" > "$dir/.recipe"
-    fi
-    cp "$dir"/*-"$pkgver-$pkgrel"-aarch64.pkg.tar.zst "$B/var/cache/pico4-repo/"
+# project_packages: every project package file, as /var/cache/overpressure/LAYER/FILE.
+project_packages() {
+    (cd "$B" && find var/cache/overpressure -name '*.pkg.tar.zst' ! -name '*-debug-*' | sort | sed 's|^|/|')
 }
-build_package pico4-graphics-tests "$project"/src/graphics/*
-build_package pico4-libdisplay-info
-build_package pico4-spa-alsa
-build_package pico4-sensors
-build_package pico4-basalt
-build_package pico4-swapchain-usage "$project"/src/swapchain/*
-build_package pico4-vrlink "$project"/src/vrlink/*
-build_package pico4-gtk2
-build_package pico4-mangohud
-build_package pico4-gamescope
-build_package pico4-monado "$project"/src/monado/* "$project"/src/xr/*
-in_b sh -c 'repo-add -q /var/cache/pico4-repo/pico4.db.tar.gz /var/cache/pico4-repo/*.pkg.tar.zst'
-if [[ -n $llvm ]]; then
-    umount "$B$multiarch" "$B$llvm"
-fi
 
-# -- 3. base root ------------------------------------------------------------------------
+# -- 2. base root ------------------------------------------------------------------------
 step "the base root"
-mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^!/d' "$project/userspace/packages.txt")
+mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^!/d' "$definition/packages.txt")
 # "!name": dependencies on name count as satisfied, name is not installed.
-mapfile -t assumed < <(sed -n 's/^!\([^[:space:]#]*\).*/--assume-installed=\1=0/p' "$project/userspace/packages.txt")
+mapfile -t assumed < <(sed -n 's/^!\([^[:space:]#]*\).*/--assume-installed=\1=0/p' "$definition/packages.txt")
 base=$B/base
-# pacman copies the project repository's packages into its cache. A package rebuilt from
+# pacman copies the project repositories' packages into its cache. A package rebuilt from
 # changed sources keeps its version, so a copy there would no longer match the repository
-# (a corrupt package for pacman, the wrong file for the manifest): only the repository has them.
-rm -f "$B"/var/cache/pico4-pkgs/pico4-*.pkg.tar.zst
+# (a corrupt package for pacman, the wrong file for the manifest): only the repositories have them.
+while read -r file; do rm -f "$B/var/cache/pico4-pkgs/${file##*/}"; done < <(project_packages)
 steamos_user=userspace/rootfs/usr/lib/sysusers.d/pico4-steamos.conf
-base_key=$(cat "$project/userspace/packages.txt" "$project/userspace/pacman.conf" "$project/$steamos_user" |
+base_key=$(cat "$definition/packages.txt" "$definition/pacman.conf" "$project/$steamos_user" |
     sha256sum | cut -d' ' -f1)
 if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null)" != "$base_key" ]]; then
-    phase "installing userspace/packages.txt into a new base root"
+    phase "installing packages.txt into a new base root"
     rm -f "$build_root/base.key"
     # Without --refresh the new base root keeps the package databases of the last one.
     dbs=$build_root/base-databases
@@ -348,7 +245,9 @@ if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null
     sync=y
     if [[ $refresh == 0 && -d "$dbs" ]]; then
         cp -a "$dbs"/. "$base/var/lib/pacman/sync/"
-        cp "$B/var/cache/pico4-repo/pico4.db.tar.gz" "$base/var/lib/pacman/sync/pico4.db"
+        for layer in "${layers[@]}"; do
+            cp "$B/var/cache/overpressure/$layer/overpressure-$layer.db" "$base/var/lib/pacman/sync/"
+        done
         sync=""
     fi
     mount_api "$base"
@@ -361,11 +260,11 @@ if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null
     systemd_version=$(chroot "$base" /usr/bin/pacman -Q systemd | cut -d' ' -f2)
     [[ "$systemd_version" == 257.* ]] || { echo "systemd $systemd_version was selected; the image stays on the Frame's 257.x" >&2; exit 1; }
     # The project packages in the base root, by package file hash.
-    (cd "$B/var/cache/pico4-repo" && sha256sum ./*.pkg.tar.zst) > "$build_root/base.project"
+    project_packages | (cd "$B" && sed 's|^/||' | xargs -r sha256sum) > "$build_root/base.project"
     echo "$base_key" > "$build_root/base.key"
 fi
 
-# -- 4. image root -----------------------------------------------------------------------
+# -- 3. image root -----------------------------------------------------------------------
 step "assembling the image root"
 phase "assembling the image root"
 unmount_below "$T"
@@ -375,12 +274,14 @@ mnt -t overlay overlay -o "lowerdir=$base,upperdir=$build_root/overlay/upper,wor
 mount_api "$T"
 in_t() { chroot "$T" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root \
     SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$@"; }
-cp "$B/var/cache/pico4-repo/pico4.db.tar.gz" "$T/var/lib/pacman/sync/pico4.db"
+for layer in "${layers[@]}"; do
+    cp "$B/var/cache/overpressure/$layer/overpressure-$layer.db" "$T/var/lib/pacman/sync/"
+done
 # This build's project packages where they differ from the base root's.
 changed=()
 while read -r sum file; do
-    grep -qxF "$sum  $file" "$build_root/base.project" || [[ "$file" == *-debug-* ]] || changed+=("/var/cache/pico4-repo/${file#./}")
-done < <(cd "$B/var/cache/pico4-repo" && sha256sum ./*.pkg.tar.zst)
+    grep -qxF "$sum  $file" "$build_root/base.project" || changed+=("/$file")
+done < <(project_packages | (cd "$B" && sed 's|^/||' | xargs -r sha256sum))
 step "the image's project packages"
 if [[ ${#changed[@]} -gt 0 ]]; then
     phase "installing ${#changed[@]} changed project packages"
@@ -397,7 +298,7 @@ in_b bsdtar -xf "/var/cache/pico4-pkgs/$protobuf" -C /target/usr/lib/aarch64/and
     --strip-components 2 'usr/lib/libprotobuf.so.25*'
 # Same repositories on the headset, but an upgrade must never pull systemd 258+.
 sed -e '/^\[options\]/a IgnorePkg = systemd systemd-libs systemd-sysvcompat systemd-resolvconf' \
-    -e '/^\[pico4\]/,/^$/d' "$project/userspace/pacman.conf" > "$T/etc/pacman.conf"
+    -e '/^\[overpressure-/,/^$/d' "$definition/pacman.conf" > "$T/etc/pacman.conf"
 
 # Packages from the Frame repository and our own were built against other library
 # versions than the preview base: their programs and public libraries must resolve, and so must
@@ -406,7 +307,8 @@ sed -e '/^\[options\]/a IgnorePkg = systemd systemd-libs systemd-sysvcompat syst
 # a single function that a newer version of a library has (the Frame's Xwayland and libei).
 step "checking ELF dependencies"
 phase "checking ELF dependencies of Frame and project packages"
-mapfile -t foreign < <(in_b pacman --config /etc/pico4/pacman.conf -r /target -Sl deckard-arch-hotfixes-release-0.3 pico4 |
+mapfile -t foreign < <(in_b pacman --config /etc/pico4/pacman.conf -r /target -Sl deckard-arch-hotfixes-release-0.3 \
+    "${layers[@]/#/overpressure-}" |
     awk '/\[installed\]$/ {print $2}')
 # Optional programs whose libraries are deliberately not installed. SteamVR's desktop
 # tools need Qt5 or GLEW; its launcher puts libopenvr_api and libsteam_api on
@@ -427,8 +329,6 @@ optional+='|^(glibc /usr/bin/memusagestat|lm_sensors /usr/bin/sensord|opencv /us
 PYTHONPATH=$project python3 -m overpressure.elfdeps "$T" "${foreign[@]}" --dependents --ignore "$optional" >&2 ||
     { echo "unresolved ELF dependencies (above)" >&2; exit 1; }
 log "${#foreign[@]} Frame/project packages and their dependents: all ELF dependencies and symbols resolve"
-# PipeWire's ALSA plugin with the capture fix over Valve's, of the version its recipe depends on.
-install -m755 "$T/usr/lib/pico4-spa-alsa/libspa-alsa.so" "$T/usr/lib/spa-0.2/alsa/libspa-alsa.so"
 
 step "applying the PICO 4 adaptation layer"
 phase "applying the PICO 4 adaptation layer"
@@ -710,20 +610,28 @@ rm -f "$T/var/cache/ldconfig/aux-cache"
 step "writing archive and manifest"
 phase "writing archive and manifest"
 in_t pacman -Q > "$build_root/packages.txt"
-# The package files of exactly the installed versions (the caches keep older ones too).
+# The package files of exactly the installed versions (the caches keep older ones too): the upstream
+# ones, which the lock pins, and the project's.
 while read -r name version; do
-    for f in "$B/var/cache/pico4-pkgs/$name-$version"-{aarch64,any}.pkg.tar.zst \
-             "$B/var/cache/pico4-repo/$name-$version"-{aarch64,any}.pkg.tar.zst; do
+    for f in "$B/var/cache/pico4-pkgs/$name-$version"-{aarch64,any}.pkg.tar.zst; do
         [[ ! -f "$f" ]] || sha256sum "$f" | sed 's|  .*/|  ./|'
     done
-done < "$build_root/packages.txt" | sort -u -k2 > "$build_root/package-hashes.txt"
-# The project repository's database is the build's own (repo-add records the time it ran), and the
-# headset's pacman.conf has no [pico4]: the image keeps only the upstream databases.
-rm -f "$T/var/lib/pacman/sync/pico4.db"
+done < "$build_root/packages.txt" | sort -u -k2 > "$build_root/upstream-hashes.txt"
+while read -r name version; do
+    for layer in "${layers[@]}"; do
+        for f in "$B/var/cache/overpressure/$layer/$name-$version"-{aarch64,any}.pkg.tar.zst; do
+            [[ ! -f "$f" ]] || sha256sum "$f" | sed 's|  .*/|  ./|'
+        done
+    done
+done < "$build_root/packages.txt" | sort -u -k2 > "$build_root/project-hashes.txt"
+sort -u -k2 "$build_root/upstream-hashes.txt" "$build_root/project-hashes.txt" > "$build_root/package-hashes.txt"
+# The project repositories' databases are the build's own (repo-add records the time it ran), and the
+# headset's pacman.conf has none of them: the image keeps only the upstream databases.
+rm -f "$T"/var/lib/pacman/sync/overpressure-*.db
 (cd "$T/var/lib/pacman/sync" && sha256sum ./*.db) > "$build_root/db-hashes.txt"
 # Every upstream package is the tested one, or the build stops: Valve's repositories publish no
 # signatures, and the Frame's hotfix repository moves on (docs/userspace.md#package-lock).
-python3 "$source_dir/scripts/check-package-lock.py" "$build_root/package-hashes.txt" "$project/userspace/packages.lock" \
+python3 "$source_dir/scripts/check-package-lock.py" "$build_root/upstream-hashes.txt" "$definition/packages.lock" \
     ${update_lock:+--write "$output/packages.lock"}
 install -d -m 0755 "$T/usr/share/pico4"
 printf 'version=%s\ncommit=%s\n' "$version" "$commit" > "$T/usr/share/pico4/version"
@@ -740,10 +648,10 @@ tar --numeric-owner --xattrs --xattrs-include=security.capability --sort=name \
 mv "$archive.part" "$archive"
 installed_bytes=$(du -sb --apparent-size "$T" | cut -f1)
 cleanup
-python3 - "$archive" "$build_root" "$holo_url" "$holo_sha256" "$installed_bytes" "$firmware_json" "$sensor_json" \
+python3 - "$archive" "$build_root" "$packages_source" "$installed_bytes" "$firmware_json" "$sensor_json" \
     "$wlan_json" "$audio_json" "$stock_json" "$version" "$commit" > "$output/pico4-userspace.manifest.json" <<'EOF'
 import hashlib, json, os, sys, datetime
-archive, root, holo_url, holo_sha, installed, firmware, sensors, wlan, audio, stock, version, commit = sys.argv[1:13]
+archive, root, packages, installed, firmware, sensors, wlan, audio, stock, version, commit = sys.argv[1:12]
 def lines(name):
     with open(os.path.join(root, name)) as f:
         return [l.split() for l in f if l.strip()]
@@ -759,7 +667,8 @@ print(json.dumps({
                                                    datetime.timezone.utc).isoformat(timespec="seconds"),
     "archive": {"file": os.path.basename(archive), "sha256": h.hexdigest(),
                 "bytes": os.path.getsize(archive), "installed_bytes": int(installed)},
-    "bootstrap": {"url": holo_url, "sha256": holo_sha},
+    "project_packages": dict(zip(("repository", "tag", "commit"), packages.split())) if not packages.startswith("local ")
+        else {"local": packages.split(" ", 1)[1]},
     "repository_databases": {n.lstrip("./"): s for s, n in lines("db-hashes.txt")},
     "packages": {n: v for n, v in lines("packages.txt")},
     "package_files": {n.lstrip("./"): s for s, n in lines("package-hashes.txt")},

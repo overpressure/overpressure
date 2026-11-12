@@ -15,10 +15,10 @@ project works, not legal advice.
 | Engineering ABL | PICO, in a public PICO Neo 3 OTA | URL and hash (`tooling/unlockfiles.py`) | `python -m overpressure device fetch-unlock-files` | unlocking, development mode |
 | Firehose loader | PICO, in a public PICO Neo 3 package | URL and hash (`tooling/unlockfiles.py`) | the same command | EDL backups and restores |
 | The headset's calibration | the owner's headset | no | read from `persist`, on the headset, at run time | tracking, displays |
-| Holo Core and the Frame's packages, Steam's client, SteamVR | Valve, public package repositories without signatures | names and hashes (`userspace/packages.lock`) | the userspace build, on their PC | the userspace, Valve's session |
+| Holo Core and the Frame's packages, Steam's client, SteamVR | Valve, public package repositories without signatures | names and hashes (overpressure/packages' `headsets/phoenix/packages.lock`) | the userspace build, on their PC | the userspace, Valve's session |
 | Valve's kernel | Valve, its public GPL source package; the project's changes in [overpressure/linux](https://github.com/overpressure/linux) | the pinned release (`kernel/release.json`) | the release's `Image.gz` and device tree, checked by hash, or built from its commit (`kernel build`) | the kernel |
 | The Steam client's updates, games | Valve, with the owner's own Steam account | no | Steam, on the headset | Steam |
-| Open source projects | their upstreams | recipes, pins and patches (`userspace/pkgbuilds/`) | the userspace build | Monado, gamescope and others |
+| Open source projects | their upstreams | recipes, pins and patches ([overpressure/packages](https://github.com/overpressure/packages)) | the userspace build | Monado, gamescope and others |
 | `prebuilt/aarch64/pico4-reboot`, `pico4-splash` | this project | yes, with their sources in `src/` | the repository | stage 1 and the userspace build without a cross compiler for them |
 
 ## What this means for an owner

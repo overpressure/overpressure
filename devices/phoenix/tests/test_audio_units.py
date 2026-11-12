@@ -40,17 +40,6 @@ class AudioUnitTests(unittest.TestCase):
 
 
 class AudioTimingTests(unittest.TestCase):
-    def test_rtkit_runs_with_the_frames_limits(self):
-        # Same name as the Frame's vendor drop-in, so that it replaces it (docs/userspace.md#audio).
-        dropin = (ROOTFS / "etc/systemd/system/rtkit-daemon.service.d/rtkit-limits.conf").read_text(encoding="utf-8")
-        self.assertIn("ExecStart=\n", dropin)
-        command = dropin[dropin.rindex("ExecStart=/usr/lib/rtkit-daemon") :]
-        self.assertNotIn("--no-polkit", command)
-        for option in ("--max-realtime-priority=80", "--our-realtime-priority=81", "--no-chroot"):
-            self.assertIn(option, command)
-        packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
-        self.assertIn("deckard-arch-hotfixes-release-0.3/rtkit", packages)
-
     def test_sound_card_keeps_two_periods_of_headroom(self):
         rule = (ROOTFS / "etc/wireplumber/wireplumber.conf.d/51-pico4-sound-card.conf").read_text(encoding="utf-8")
         self.assertIn('node.name = "~alsa_output.platform-sound.*"', rule)
@@ -74,29 +63,6 @@ class AudioTimingTests(unittest.TestCase):
         match = re.search(r"default\.clock\.min-quantum = (\d+)", conf)
         assert match is not None
         self.assertEqual(int(match.group(1)), 1024)
-
-
-class CaptureThroughSuspendTests(unittest.TestCase):
-    RECIPE = ROOT / "userspace/pkgbuilds/pico4-spa-alsa"
-
-    def test_the_plugin_is_built_from_the_version_valve_ships_with_the_fix(self):
-        recipe = (self.RECIPE / "PKGBUILD").read_text(encoding="utf-8")
-        lock = (ROOT / "userspace/packages.lock").read_text(encoding="utf-8")
-        locked = re.search(r" pipewire-audio-1:([0-9.]+)-[^-]+-aarch64\.pkg\.tar\.zst$", lock, re.MULTILINE)
-        if locked is None:
-            self.fail("packages.lock has no pipewire-audio")
-        self.assertIn(f"pkgver={locked[1]}\n", recipe)
-        self.assertIn('"pipewire-audio=1:$pkgver"', recipe)
-        patch = (self.RECIPE / "early-wakeup-from-the-clock.patch").read_text(encoding="utf-8")
-        self.assertIn("+\t\tstate->next_time = SPA_MAX(current_time, get_time_ns(state)) +", patch)
-        self.assertIn("-\t\tstate->next_time = current_time + (state->read_size - avail)", patch)
-
-    def test_the_build_installs_it_over_valves(self):
-        packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8")
-        self.assertIn("pico4/pico4-spa-alsa", packages)
-        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertIn("build_package pico4-spa-alsa", build)
-        self.assertIn('"$T/usr/lib/spa-0.2/alsa/libspa-alsa.so"', build)
 
 
 class MainlineAudioTests(unittest.TestCase):

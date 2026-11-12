@@ -123,7 +123,7 @@ no NCM driver.
 **Status.**
 
 - **Packages.** Valve's public Holo Core aarch64 preview resolves the system; the Frame's own builds come from its
-  public hotfix repository, named in [packages.txt](../userspace/packages.txt): systemd 257.7 (pinned with
+  public hotfix repository, named in [packages.txt](https://github.com/overpressure/packages/blob/main/headsets/phoenix/packages.txt): systemd 257.7 (pinned with
   `IgnorePkg`), `steamos-customizations-deckard`, `steamos-manager`, gamescope, Valve's Mesa and SteamVR. Every
   upstream package is pinned by hash in `packages.lock`; a weekly upgrade check builds against Valve's newest
   ([development.md](development.md#upgrade-check)).
@@ -137,7 +137,7 @@ no NCM driver.
 
 **Goal.** IMU, cameras, 6DoF tracking, controllers and lens calibration, with Monado as the foundation.
 
-**Status.** Monado with the project's `pico4` driver ([src/monado/](../src/monado/)) runs inside SteamVR as
+**Status.** Monado with the project's `pico4` driver ([pico4-monado](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado)) runs inside SteamVR as
 `driver_monado`, with the factory calibration from the headset's own `persist`.
 
 - **Head IMU.** The ICM-42688 behind the sensor DSP (SLPI), over upstream FastRPC and QRTR: 1023.89 Hz, no gaps.

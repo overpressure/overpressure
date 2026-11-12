@@ -402,37 +402,9 @@ class StationLockTests(unittest.TestCase):
                 first.close()
             station.Station(f.name).close()  # free again once the owner closed it
 
-    def test_driver_locks_before_any_reset(self):
-        source = (ROOT / "src/monado/pico4_station.c").read_text(encoding="utf-8")
-        opened = source.index("pico4_station_open(struct pico4_station **out")
-        self.assertIn("flock(st->fd, LOCK_EX | LOCK_NB)", source[opened : source.index("\n}\n", opened)])
-        hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
-        setup = hmd.index("setup_station(struct pico4_hmd *h)")
-        self.assertLess(
-            hmd.index("pico4_station_open(&h->station, NULL)", setup),
-            hmd.index("pico4_station_reset(h->station)", setup),
-        )
-
 
 class StationRateTests(unittest.TestCase):
     """The cameras' rate: 50 Hz as stock, or PICO OS's 60 Hz for a faster room view."""
-
-    def test_rate_reaches_the_announcement_and_the_exposure_commands(self):
-        source = (ROOT / "src/monado/pico4_station.c").read_text(encoding="utf-8")
-        self.assertIn("st->camera_hz = 50;", source)
-        self.assertIn("{st->camera_hz == 60 ? FPS_60 : FPS_50, DEVICE_TYPE, 1}", source)
-        para = source[source.index("\nsend_camera_para(") :]
-        para = para[: para.index("\n}\n")]
-        self.assertIn("p[13] = (uint8_t)(PICO4_STATION_PARA_SYNC_OTHER & 0xff);", para)
-        header = (ROOT / "src/monado/pico4_station.h").read_text(encoding="utf-8")
-        self.assertIn("#define PICO4_STATION_PARA_SYNC_OTHER 160", header)
-        hmd = (ROOT / "src/monado/pico4_hmd.c").read_text(encoding="utf-8")
-        setup = hmd.index("setup_station(struct pico4_hmd *h)")
-        self.assertLess(
-            hmd.index("pico4_station_set_camera_hz(h->station", setup),
-            hmd.index("pico4_station_reset(h->station)", setup),
-        )
-        self.assertIn('DEBUG_GET_ONCE_NUM_OPTION(pico4_camera_hz, "PICO4_CAMERA_HZ", 50)', hmd)
 
     def test_auto_exposure_takes_the_measured_rate(self):
         slamd = (ROOT / "src/stockslam/pico4-slamd.c").read_text(encoding="utf-8")

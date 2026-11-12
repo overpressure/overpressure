@@ -120,9 +120,11 @@ class ContractTests(unittest.TestCase):
         self.assertIn("this repository's side found nothing", self.broken('#define FW "pico4/a.bin"\n')[0])
 
     def test_every_contract_finds_this_repositorys_side(self):
-        # The kernel's side needs the pinned commit's files (CI fetches them); this side is here.
+        # The kernel's side and Monado's need the pinned commits' files (CI fetches them); this side is here.
         for contract in kernel.CONTRACTS:
             for path, pattern in contract.here:
+                if path.startswith(kernel.IN_PACKAGES):
+                    continue
                 values = kernel._values(kernel._here_text(path, REPO), pattern)  # noqa: SLF001  # the checker's own reader
                 self.assertTrue(values, f"{contract.name}: nothing in {path}")
 

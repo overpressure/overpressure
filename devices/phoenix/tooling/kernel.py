@@ -16,7 +16,8 @@ builds; this repository's CI downloads the pinned release and checks it.
 
 The contracts are what no build checks: a name or a path one side uses and the other provides (a
 firmware file, a V4L2 control, a sysfs name). Each reads the pinned commit's files from GitHub, without
-its history, and this repository's own; a renamed side fails before anything is installed.
+its history, and this repository's own or, for Monado's side, those of the overpressure/packages commit
+that userspace/packages.json pins; a renamed side fails before anything is installed.
 """
 
 from __future__ import annotations
@@ -45,6 +46,10 @@ RELEASE = Path(__file__).resolve().parents[1] / "kernel" / "release.json"
 OUT = REPO / "out" / "kernel"
 #: The pinned commit's files the contracts read, kept per commit.
 CACHE = REPO / "cache" / "kernel"
+#: The overpressure/packages pin: Monado's side of the camera and panel contracts.
+PACKAGES = Path(__file__).resolve().parents[1] / "userspace" / "packages.json"
+#: A contract path in overpressure/packages, at the pinned commit.
+IN_PACKAGES = "packages:"
 #: The self-build's folder, on the Linux side (the build container's volume).
 WORK = "/var/tmp/pico4-kernel-build"  # noqa: S108  # a root-owned build folder, not a temporary file
 
@@ -73,6 +78,12 @@ def release(path: Path = RELEASE) -> Release:
     """Return the pin in @p path."""
     data = json.loads(path.read_text(encoding="utf-8"))
     return Release(data["repository"], data["tag"], data["commit"], data["image"], dict(data["files"]))
+
+
+def packages_release(path: Path = PACKAGES) -> Release:
+    """Return the overpressure/packages pin in @p path, for its files' URLs."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return Release(data["repository"], data["tag"], data["commit"], "", {})
 
 
 def sha256(path: Path) -> str:
@@ -156,11 +167,12 @@ def _numbered(name: str) -> str:
     return re.sub(r"\d+$", "%d", name)
 
 
-#: Where this repository uses the kernel's names: the image's files, its build, Monado's cameras.
+#: Where the kernel's names are used: the image's files, its build, Monado's cameras and panels.
 _ROOTFS = "devices/phoenix/userspace/rootfs"
 _LIBEXEC = f"{_ROOTFS}/usr/libexec/pico4"
 _BUILD = "devices/phoenix/scripts/build-userspace.sh"
-_CAM = "devices/phoenix/src/monado/pico4_cam.c"
+_MONADO = f"{IN_PACKAGES}phoenix/pico4-monado"
+_CAM = f"{_MONADO}/pico4_cam.c"
 CONTRACTS = (
     Contract(
         "the RGB camera's register table: where the driver loads it, where the image installs it",
@@ -188,7 +200,7 @@ CONTRACTS = (
         (("drivers/media/i2c/pico4-imx471.c", r"#define IMX471_WIDTH\s+(\d+)"),),
         (
             ("devices/phoenix/kernel/imx471_mode.py", r"^WIDTH, HEIGHT, \w+, \w+, \w+, \w+ = (\d+),"),
-            ("devices/phoenix/src/monado/pico4_cam.h", r"#define PICO4_CAM_RGB_WIDTH (\d+)"),
+            (f"{_MONADO}/pico4_cam.h", r"#define PICO4_CAM_RGB_WIDTH (\d+)"),
         ),
     ),
     Contract(
@@ -196,7 +208,7 @@ CONTRACTS = (
         (("drivers/media/i2c/pico4-imx471.c", r"#define IMX471_HEIGHT\s+(\d+)"),),
         (
             ("devices/phoenix/kernel/imx471_mode.py", r"^WIDTH, HEIGHT, \w+, \w+, \w+, \w+ = \d+, (\d+),"),
-            ("devices/phoenix/src/monado/pico4_cam.h", r"#define PICO4_CAM_RGB_HEIGHT (\d+)"),
+            (f"{_MONADO}/pico4_cam.h", r"#define PICO4_CAM_RGB_HEIGHT (\d+)"),
         ),
     ),
     Contract(
@@ -213,7 +225,7 @@ CONTRACTS = (
     Contract(
         "the panels' backlight Monado switches for standby",
         (("drivers/gpu/drm/panel/panel-pico4-ls026b3sa.c", r'devm_backlight_device_register\(dev, "([^"]+)"'),),
-        (("devices/phoenix/src/monado/pico4_hmd.c", r"/sys/class/backlight/([\w-]+)/"),),
+        ((f"{_MONADO}/pico4_hmd.c", r"/sys/class/backlight/([\w-]+)/"),),
     ),
     Contract(
         "the RGB camera's paused control: its id in the driver and in Monado",
@@ -305,16 +317,26 @@ def kernel_file(
     return kept.read_text(encoding="utf-8", errors="replace")
 
 
+def packages_file(path: str, *, cache: Path = CACHE, opener: Opener = urllib.request.urlopen) -> str:
+    """Return the pinned overpressure/packages commit's file @p path, kept in @p cache per commit."""
+    return kernel_file(path, packages_release(), cache=cache, opener=opener)
+
+
 def check(
-    contracts: tuple[Contract, ...] = CONTRACTS, read: Callable[[str], str] = kernel_file, root: Path = REPO
+    contracts: tuple[Contract, ...] = CONTRACTS,
+    read: Callable[[str], str] = kernel_file,
+    root: Path = REPO,
+    packages: Callable[[str], str] = packages_file,
 ) -> list[str]:
     """Return the broken contracts, each as one line that names both sides."""
+
+    def here_text(path: str) -> str:
+        return packages(path.removeprefix(IN_PACKAGES)) if path.startswith(IN_PACKAGES) else _here_text(path, root)
+
     broken = []
     for contract in contracts:
         kernel = {contract.kernel_value(v) for path, pattern in contract.kernel for v in _values(read(path), pattern)}
-        here = {
-            contract.here_value(v) for path, pattern in contract.here for v in _values(_here_text(path, root), pattern)
-        }
+        here = {contract.here_value(v) for path, pattern in contract.here for v in _values(here_text(path), pattern)}
         if not here:
             broken.append(f"{contract.name}: this repository's side found nothing ({contract.here[0][0]})")
         elif not kernel:

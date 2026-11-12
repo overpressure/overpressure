@@ -30,16 +30,13 @@ tooling/          the PICO 4's host tooling (Python): python -m overpressure COM
   ledmodel.py, aimgrip.py, leverarm.py, controllermodel.py   controller data from PICO OS's libraries
 initramfs/        stage 1: files added to the Alpine ramdisk (pico4-init, services, pico4-install)
 userspace/        stage 2: the SteamOS-compatible userspace
-  packages.txt, packages.lock, pacman.conf   package list, pinned packages, repositories
+  packages.json     the release of overpressure/packages the image is built from (its definition and packages)
   rootfs/           the adaptation layer (preinit, units, udev rules, PAM, session, device tools, checks)
   session/          the session user's SteamVR configuration
-  pkgbuilds/        the project's packages: pico4-sensors, pico4-basalt, pico4-monado, pico4-gamescope,
-                    pico4-vrlink, pico4-swapchain-usage, pico4-gtk2 and others
 kernel/           the pinned release of overpressure/linux (release.json), build-tree.sh, imx471_mode.py,
                   recovery_image.py
-src/              C sources: graphics/ (the Vulkan test), monado/ (Monado's PICO 4 driver),
-                  stockslam/ (pico4-slamd), vrlink/ (Steam Link), xr/ (OpenXR test clients), swapchain/ (frame pacing),
-                  reboot/ (pico4-reboot), splash/ (pico4-splash)
+src/              C sources outside the packages: stockslam/ (pico4-slamd), reboot/ (pico4-reboot),
+                  splash/ (pico4-splash), gd32/
 prebuilt/         static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-system-image.sh, build-kernel-step.sh, upgrade-check.sh (with
                   upstream.py), check-package-lock.py and the on-headset preflight
@@ -81,16 +78,17 @@ roughly ten times slower than natively, except the compilers: the host's x86-64 
 compile for `aarch64-unknown-linux-gnu` with the environment as sysroot (its glibc, GCC 15 runtime and
 libraries). makepkg, CMake and Meson configuration, code generators, pacman and its hooks still run emulated.
 Packages built by clang use lld and no LTO (LTO's bitcode objects would need LLVM's archiver in every build
-system); `--emulated-cc` builds with the environment's GCC under QEMU instead.
+system). overpressure/packages' releases are built natively on arm64 with the environment's GCC, so a local
+build on x86-64 is for trying a change, not the release's bytes.
 
-Clean package builds on a 12-core i7-12700KF (20 threads) under WSL2:
+Clean package builds with the host's clang on a 12-core i7-12700KF (20 threads) under WSL2:
 
-| Package | GCC under QEMU | host clang |
-| --- | --- | --- |
-| pico4-basalt | 8.7 min (ccache warm) | 2.9 min |
-| pico4-monado | 4.6–8.3 min | 2.8 min |
-| pico4-sensors | 1.6 min | 1.0 min |
-| pico4-gtk2 (GTK 2.24.33, libraries and modules; Autotools under QEMU) | – | 14 min |
+| Package | Build time |
+| --- | --- |
+| pico4-basalt | 2.9 min |
+| pico4-monado | 2.8 min |
+| sm8250-hexagonrpc | 1.0 min |
+| overpressure-gtk2 (GTK 2.24.33, libraries and modules; Autotools under QEMU) | 14 min |
 
 A Raspberry Pi 5 compiles at about the speed of this host's emulation. Faster arm64 hosts: Apple silicon,
 Snapdragon X, Ampere and Graviton cloud instances. Mind the private data rules before building on someone else's
@@ -170,29 +168,28 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 | `--audio DIR` | ADSP firmware and the audio process's files, `assets/audio-VERSION` |
 | `--stock-slam DIR` | PICO OS's head tracker, the Compute DSP's firmware and the tracker's bionic root, `assets/stock-slam-VERSION` ([xr.md](xr.md#head-tracking)); needs the host's clang |
 | `--refresh` | download current package databases and reinstall the base root |
-| `--update-lock` | write `OUTPUT_DIR/packages.lock` for review instead of checking the build against `userspace/packages.lock` ([userspace.md](userspace.md#package-lock)) |
-| `--clean` | rebuild the project packages from scratch |
-| `--emulated-cc` | compile under QEMU with the environment's GCC |
+| `--update-lock` | write `OUTPUT_DIR/packages.lock` for review instead of checking the build against the pinned lock ([userspace.md](userspace.md#package-lock)) |
+| `--packages DIR` | build a checkout of [overpressure/packages](https://github.com/overpressure/packages) instead of the commit `userspace/packages.json` pins: a change to a package, tried in the image |
 
 Each step is skipped when its inputs did not change:
 
-1. **Snapshot.** The inputs (`overpressure/`, `src/`, `userspace/`, the shared stage-1 scripts, `prebuilt/`) are
-   copied into the build root first, so the tree can be edited during a build.
-2. **Build environment.** Valve's Holo Core aarch64 preview root file system, pinned by SHA-256, unpacked once.
-   Package databases are downloaded by the first build and with `--refresh` only.
-3. **Project packages.** makepkg builds each recipe in `userspace/pkgbuilds/` when the recipe (its directory and
-   the compiler) changes. When only `src/` changes, the package is rebuilt incrementally in its last build tree
-   (`makepkg -e`): the recipes copy the sources with `install -C`, which leaves unchanged files and their
-   timestamps alone.
-4. **Base root.** `userspace/packages.txt` installed by pacman from the Steam Frame hotfix repository and the
-   Holo Core preview; reinstalled when the package list or `userspace/pacman.conf` changes, and with
-   `--refresh`.
-5. **Image root.** An overlay on the base root: the project packages that differ from the base root's, the
+1. **Snapshot.** The inputs (`overpressure/`, `src/`, `userspace/`, the shared stage-1 scripts, `prebuilt/`) and
+   overpressure/packages at the pinned commit (fetched once with git into `cache/packages/COMMIT`, or the
+   `--packages` checkout) are copied into the build root first, so the trees can be edited during a build.
+2. **Build environment and project packages.** overpressure/packages' `build/packages.sh`: Valve's Holo Core
+   aarch64 preview root file system, pinned by SHA-256, unpacked once, with the packages the recipes build
+   against, each pinned by the lock or the Holo snapshot. Package databases are downloaded by the first build
+   and with `--refresh` only. makepkg builds each recipe of the PICO 4's layers when its folder or the compiler
+   changes; each layer becomes a local pacman repository `overpressure-LAYER`.
+3. **Base root.** The definition's `packages.txt` installed by pacman from the project's layers, the Steam Frame
+   hotfix repository and the Holo Core preview; reinstalled when the package list or `pacman.conf` changes, and
+   with `--refresh`.
+4. **Image root.** An overlay on the base root: the project packages that differ from the base root's, the
    adaptation layer (`userspace/rootfs`, shared stage-1 scripts, users, units) and the session configuration.
    [overpressure/elfdeps.py](../../../overpressure/elfdeps.py) checks natively that the programs and libraries of
    the Frame's and the project's packages, and of those depending on them, find their libraries and symbol
    versions and that the programs' symbols are all defined; the script excludes a few optional programs by name.
-6. **Archive.** The upstream packages are checked against `userspace/packages.lock`, then
+5. **Archive.** The upstream packages are checked against the definition's `packages.lock`, then
    `pico4-userspace.tar.zst` (zstd level 12, multithreaded) and `pico4-userspace.manifest.json` with the
    sources, hashes and installed package versions.
 
@@ -201,12 +198,11 @@ Times on the same host, with an archive of about 800 MB:
 | Change | Build time |
 | --- | --- |
 | nothing, or only the adaptation layer (`userspace/rootfs`, `userspace/session`) | 45 s |
-| one source file of a project package (a Monado driver file, incremental) | 2.3 min |
 | the package list or `pacman.conf` (new base root, packages reused) | 2 min |
-| everything: `--clean` packages and a new base root | about 16 min |
+| everything: a new build root | about 16 min |
 
-Writing the archive takes about 25 s of each. makepkg's stripping, debug packages and compression run emulated:
-about a minute for Monado.
+Writing the archive takes about 25 s of each. A changed package rebuilds in full; makepkg's stripping, debug
+packages and compression run emulated: about a minute for Monado.
 
 ## Upgrade check
 
@@ -224,7 +220,7 @@ python -m overpressure container run -- bash devices/phoenix/scripts/upgrade-che
 
 | Part | What it does | Fails when |
 | --- | --- | --- |
-| Userspace | `build-userspace.sh --refresh --update-lock` in its own build root, without the asset folders; [`upstream.py lock-diff`](../scripts/upstream.py) lists every package that moved since `userspace/packages.lock`, the session's packages first | a project package does not build, a patch does not apply, or a dependency stays unresolved |
+| Userspace | `build-userspace.sh --refresh --update-lock` in its own build root, without the asset folders; [`upstream.py lock-diff`](../scripts/upstream.py) lists every package that moved since the pinned `packages.lock`, the session's packages first | a project package does not build, a patch does not apply, or a dependency stays unresolved |
 
 `out/upgrade-check/upgrade-check.md` is the summary; the CI run's page shows it. A moved package that still
 builds fails nothing: whether the session runs on it is the headset's check before a release.
@@ -239,14 +235,13 @@ builds fails nothing: whether the session runs on it is the headset's check befo
 | Count of unfinished boots | `bash devices/phoenix/tests/test_boot_attempts.sh` | seconds |
 | The host tests and every shell test above | `make test` (on Linux) | seconds |
 | The same on any host, in the build container, as root | `python -m overpressure container run -- make test` (`make container-test`) | as `make test`, once the image is built |
-| C and C++ tests that build without Monado (CI runs them) | `bash scripts/c-tests.sh` (a C and C++ compiler, Eigen 3) | seconds |
+| C tests of this repository's own sources (CI runs them) | `bash scripts/c-tests.sh` (a C compiler) | seconds |
 | Shellcheck over every tracked shell script, down to warnings (CI runs it) | `python -m overpressure container run -- python3 scripts/run-shellcheck.py` | seconds |
 | On the headset: the integration test | `python -m overpressure dev install` and `dev check`, on the installed system | minutes; [hardware-testing.md](hardware-testing.md) |
 | Optional: stage 1 on a QEMU test kernel (from `tests/qemu/build-test-kernel.sh`) | `devices/phoenix/tests/qemu/run-selftest.sh` (`make qemu-stage1`) | about 3 min |
 
-New behaviour gets host tests with fakes for hardware and golden data for protocols. The remaining C protocol
-tests and the controller tracker's C++ tests (`test_pico4_ctrack_*`: solvers, acquisition, blobs, IMU fusion, the
-engine and its thread on synthetic data) run inside the package builds, because makepkg runs with `--nocheck`.
+New behaviour gets host tests with fakes for hardware and golden data for protocols. The packages' tests (the
+driver's C protocol tests, the controller tracker's C++ tests) run inside their builds in overpressure/packages.
 
 ## From a change to the headset
 
@@ -255,7 +250,9 @@ the installed system on Valve's kernel ([hardware-testing.md](hardware-testing.m
 [install.md](install.md)). Commands that touch the headset ask the disclaimer first; `--accept-disclaimer` (or
 `OVERPRESSURE_ACCEPT_DISCLAIMER=1`) accepts it for an unattended run.
 
-1. Change the code, then build: `make userspace` (or the script above), incremental.
+1. Change the code, then build: `make userspace` (or the script above), incremental. A change to a package is
+   made in a checkout of overpressure/packages and built into the image with `--packages DIR`; once it is
+   released there, `userspace/packages.json` pins the new tag.
 2. The system image: the window's *System image for super*, or `build-system-image.sh` in the build container
    ([install.md](install.md#install-and-update)).
 3. `python -m overpressure dev recovery` (it stays until `dev normal`), then `python -m overpressure dev install`,

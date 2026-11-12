@@ -10,17 +10,17 @@ the measurements are under [Verified results](#verified-results).
 
 | Part | How it works | Code |
 | --- | --- | --- |
-| Head IMU | ICM-42688 on the sensor DSP (SLPI), read over QMI/QRTR; 1 kHz | `pico4-sensors` (hexagonrpcd), [pico4_ssc.c](../src/monado/pico4_ssc.c), [`pico4-imu`](../userspace/rootfs/usr/bin/pico4-imu) |
-| Head 6DoF | PICO OS's `libSlam.so` on the Compute DSP, in a bionic root, fed by `pico4-slamd`; Basalt selectable | [src/stockslam/](../src/stockslam), [pico4_slam.c](../src/monado/pico4_slam.c) |
-| Display, lenses, IPD | 2 × 2160×2160 at 90 Hz; PICO OS's lens model; IPD from the lens motor's MCU, set by `pico4-lens` | [pico4_lens.c](../src/monado/pico4_lens.c), [pico4_ipd.c](../src/monado/pico4_ipd.c) |
-| Cameras | 4 × OV7251 and the IMX471 RGB camera on V4L2/CAMSS, frame sync from the station | [pico4_cam.c](../src/monado/pico4_cam.c), [`pico4-cam`](../src/xr/pico4-cam.c) |
-| Controllers | station (nRF52832) on SPI for control, inputs and IMU through the sensor DSP; LED tracking reimplemented from PICO OS; PICO OS's render models; vibration | [pico4_station.c](../src/monado/pico4_station.c), [pico4_controller.c](../src/monado/pico4_controller.c), `pico4_ctrack_*` |
-| Room view | colour from the RGB camera on PICO OS's depth mesh, through SteamVR's private passthrough interface | [pico4_passthrough.c](../src/monado/pico4_passthrough.c), [`pico4-roomview`](../src/xr/pico4-roomview.c), [vst.c](../src/stockslam/vst.c) |
+| Head IMU | ICM-42688 on the sensor DSP (SLPI), read over QMI/QRTR; 1 kHz | `sm8250-hexagonrpc` (hexagonrpcd), [pico4_ssc.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ssc.c), [`pico4-imu`](../userspace/rootfs/usr/bin/pico4-imu) |
+| Head 6DoF | PICO OS's `libSlam.so` on the Compute DSP, in a bionic root, fed by `pico4-slamd`; Basalt selectable | [src/stockslam/](../src/stockslam), [pico4_slam.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_slam.c) |
+| Display, lenses, IPD | 2 × 2160×2160 at 90 Hz; PICO OS's lens model; IPD from the lens motor's MCU, set by `pico4-lens` | [pico4_lens.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_lens.c), [pico4_ipd.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ipd.c) |
+| Cameras | 4 × OV7251 and the IMX471 RGB camera on V4L2/CAMSS, frame sync from the station | [pico4_cam.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_cam.c), [`pico4-cam`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-cam.c) |
+| Controllers | station (nRF52832) on SPI for control, inputs and IMU through the sensor DSP; LED tracking reimplemented from PICO OS; PICO OS's render models; vibration | [pico4_station.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_station.c), [pico4_controller.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_controller.c), `pico4_ctrack_*` |
+| Room view | colour from the RGB camera on PICO OS's depth mesh, through SteamVR's private passthrough interface | [pico4_passthrough.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_passthrough.c), [`pico4-roomview`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-roomview.c), [vst.c](../src/stockslam/vst.c) |
 | Rooms | the tracker's maps kept on the data partition; each room is a SteamVR universe | [room.h](../src/stockslam/room.h), [pico4-slamd.c](../src/stockslam/pico4-slamd.c) |
 
-Packages: the driver in [src/monado/](../src/monado) and its Monado recipe and patches in
-[pico4-monado](../userspace/pkgbuilds/pico4-monado); the sensor daemons in
-[pico4-sensors](../userspace/pkgbuilds/pico4-sensors); OpenXR test clients and tools in [src/xr/](../src/xr).
+Packages: the driver in [pico4-monado](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado) and its Monado recipe and patches in
+[pico4-monado](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado); the sensor daemons in
+[sm8250-hexagonrpc](https://github.com/overpressure/packages/tree/main/sm8250/sm8250-hexagonrpc); OpenXR test clients and tools in [pico4-monado's tools](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado).
 
 > **Rules for this hardware**
 >
@@ -75,14 +75,14 @@ The IMU hangs off the SLPI, a Hexagon DSP running Qualcomm's Sensor Core:
 1. **Firmware.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4/remoteproc-boot) starts
    `slpi.mdt` (from the modem partition of PICO's public package) through remoteproc. The kernel
    provides QRTR's name service and the PD mapper.
-2. **File server.** `hexagonrpcd` (linux-msm/hexagonrpc, [`pico4-sensors`](../userspace/pkgbuilds/pico4-sensors/PKGBUILD))
+2. **File server.** `hexagonrpcd` (linux-msm/hexagonrpc, [`sm8250-hexagonrpc`](https://github.com/overpressure/packages/blob/main/sm8250/sm8250-hexagonrpc/PKGBUILD))
    attaches to the sensors process (`sensorspd`) and serves it the sensor configuration and this
    headset's registry over FastRPC. This project's patches: it serves `sns_reg_version`; `-P NAME`
    starts a static process (the ADSP's audio process, [userspace.md](userspace.md#audio)); it answers
    `ftell`; and it takes the DSP's registry rewrites (`temp.json`, renamed over each group) and drops
    them, so `persist` stays read-only and the factory calibration stays in effect.
 3. **Client.** `pico4-imu` is a dependency-free Python client of the SNS client service (QMI
-   service 0x190, protobuf inside QMI). The driver's [pico4_ssc.c](../src/monado/pico4_ssc.c) is a C
+   service 0x190, protobuf inside QMI). The driver's [pico4_ssc.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ssc.c) is a C
    port of it; its unit test checks the encoder against the Python client's messages byte for byte.
 
 Behaviour of the DSP:
@@ -111,10 +111,10 @@ the restarted DSP lists the IMU again.
 ## Monado driver
 
 `pico4-monado` builds Monado 25.1.0 (pinned by commit) with only the `pico4` driver and the simulated
-HMD. [monado-pico4-driver.patch](../userspace/pkgbuilds/pico4-monado/monado-pico4-driver.patch)
+HMD. [monado-pico4-driver.patch](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/monado-pico4-driver.patch)
 registers the driver and drops the storage usage from scratch images unless the compute path runs.
 The package makes Monado the active OpenXR runtime as a service (`monado-service` owns the hardware;
-clients are its IPC clients). The HMD ([pico4_hmd.c](../src/monado/pico4_hmd.c)):
+clients are its IPC clients). The HMD ([pico4_hmd.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_hmd.c)):
 
 - **Probing.** Only where a remoteproc named `slpi` exists and the SNS service answers; sensor
   lookups are retried (five attempts of 3 s). Elsewhere Monado runs without the driver.
@@ -142,7 +142,7 @@ clients are its IPC clients). The HMD ([pico4_hmd.c](../src/monado/pico4_hmd.c))
   lying still) turns the handed-out pose by 5° at known times, to read the delay off the scanned-out
   image. A 10 ms error is 2° at 200°/s.
 
-[`pico4-openxr-pose`](../src/xr/pico4-openxr-pose.c) `[SECONDS] [INTERVAL_MS]` (defaults 5 and 10) is
+[`pico4-openxr-pose`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-openxr-pose.c) `[SECONDS] [INTERVAL_MS]` (defaults 5 and 10) is
 the pose acceptance client: headless (`XR_MND_headless`), it locates VIEW and prints JSON (tracked
 counts, rotation, heading rate, tilt in STAGE, and with position tracking the path length and
 largest distance). Exit 0 means every location after the first second had a valid orientation.
@@ -162,13 +162,13 @@ The lens model is the stock compositor's (`libpxrcompositor.so`), like the Oculu
   (`sdk_chromaticStaus = 0`); `PICO4_LENS_CA=1` turns it on, and then the two-layer test scene drops
   to 83–87 commits per second (87–88 without).
 
-[pico4_lens.c](../src/monado/pico4_lens.c) feeds Monado's distortion mesh (one UV per channel). The
+[pico4_lens.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_lens.c) feeds Monado's distortion mesh (one UV per channel). The
 polynomial is fitted only inside the panel's inscribed circle (2% beyond allowed); outside it the
 driver evaluates it at the circle and lets the tan-angle grow steeply, so the image ends cleanly.
 The field of view, from the panel edges (2160 px at 21.3 µm) through the green channel, is about
 ±53.3° per eye.
 
-**IPD read.** The GD32 MCU on `/dev/ttyHS1` (115200 8N1, raw). [pico4_ipd.c](../src/monado/pico4_ipd.c)
+**IPD read.** The GD32 MCU on `/dev/ttyHS1` (115200 8N1, raw). [pico4_ipd.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ipd.c)
 sends `A0 08 00 00 00 A8` (get position; the last byte is the XOR of the others) and waits up to
 200 ms for `79 a_lo a_hi b_lo b_hi xor`: the lens separation in 0.01 mm (57.00–73.00 mm) and the Hall
 reading, told apart by range. `pico4-fan` shares the port: both hold an exclusive `flock` per
@@ -182,7 +182,7 @@ reports), `A0 07 00 lo hi xor` (the target in 0.01 mm, 62.00–72.00), then `A0 
 50 ms until the reply `79 state xor` says 0 (1 while moving, 2 at the near end). 0.9 mm take 0.17 s
 and end within 0.05 mm. The range is the PICO 4's specified 62–72 mm; PICO OS allows 58–72 mm with a
 risk warning below 62, and the motor stops by itself at 59.4–59.9 mm.
-[`pico4-lens-panel`](../src/xr/pico4-lens-panel.cpp) adds a SteamVR dashboard control for it: a
+[`pico4-lens-panel`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-lens-panel.cpp) adds a SteamVR dashboard control for it: a
 slider, ±0.5 mm buttons and four presets (press moves, hold 1 s stores, in `~/.config/pico4-lens/presets`).
 
 ## Controller radio ("station")
@@ -272,7 +272,7 @@ hangs up stops it. The onboarding ([session.md](session.md#onboarding)) pairs th
 ## Tracking cameras
 
 The four OV7251s (640×480 mono, global shutter, RAW10) run on V4L2 through CAMSS
-([pico4_cam.c](../src/monado/pico4_cam.c), [kernel.md](kernel.md#results)): per slot CSIPHY, CSID,
+([pico4_cam.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_cam.c), [kernel.md](kernel.md#results)): per slot CSIPHY, CSID,
 VFE RDI at 640×481 Y10, multi-planar buffers in a ring, Y10P unpacked to 16 bits. A frame's time is
 the CSID's hardware start of frame from its buffer. The sensors' control port belongs to the
 station, which configures them over its own I2C:
@@ -291,7 +291,7 @@ station, which configures them over its own I2C:
   `PICO4_CAPTURE_RESTART_TEST_S=N` restarts every N s (test only). PICO OS restarts its cameras the
   same way on finer triggers (a frame over 500 ms old, under 80% of the expected frames in 2 s).
 
-[`pico4-cam`](../src/xr/pico4-cam.c) `capture` tests the cameras alone: it resets the station, streams
+[`pico4-cam`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-cam.c) `capture` tests the cameras alone: it resets the station, streams
 until each camera delivered N frames, saves a scene frame per camera (8-bit PGM and 16-bit raw) and
 prints per-camera JSON (frames, rate, monotonicity, statistics, exposure phases). `--stats-log FILE`
 logs every frame; `--exposure LINES --gain G` sets the station exposure; `--record-leds`,
@@ -307,11 +307,11 @@ a fixed sphere, `RoomView2D`). The Steam client's VR sign-in does not use the ca
 `steamvr-v4l2cam` (a virtual webcam) and `steamvr-v4l2loopback` stay masked.
 
 On the PICO 4 `driver_monado`'s HMD provides the camera component
-([monado-steamvr-camera.patch](../userspace/pkgbuilds/pico4-monado/monado-steamvr-camera.patch)) from
+([monado-steamvr-camera.patch](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/monado-steamvr-camera.patch)) from
 the frames the driver already captures in `vrserver`, so cameras and station keep one owner:
 
 - **Cameras.** The lower pair looks forward, about 40° down, 11 cm apart: cam3 (left), cam2 (right).
-  [pico4_passthrough.c](../src/monado/pico4_passthrough.c) turns each image upright
+  [pico4_passthrough.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_passthrough.c) turns each image upright
   (`pico4_tcam_upright`, 480×640), with the KB4 fit of the factory model (OpenVR's FTheta) and the
   camera-to-head transforms turned alike.
 - **Component.** NV12, left above right (480×1280, `Stereo|VerticalLayout`), 25 Hz, with exposure
@@ -349,7 +349,7 @@ the frames the driver already captures in `vrserver`, so cameras and station kee
   set's time and its map points. The stand-ins ([stubs.c](../src/stockslam/stubs.c)) answer the CVP
   session, so neither `/dev/cvp` nor CVP firmware is needed (a call of `cvpDfs_Sync` would fail
   loudly). SNPE's DSP module lies in `/system/lib64`, the path SNPE gives the DSP. Meshes go into the
-  feed's two mesh slots ([pico4_slam_feed.h](../src/monado/pico4_slam_feed.h)).
+  feed's two mesh slots ([pico4_slam_feed.h](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_slam_feed.h)).
 - **Axes trap.** `libphotoid` takes the head and map points, and returns the mesh, in `libSlam`'s
   world turned a quarter turn about z, (−y, x, z); `pico4-slamd` turns both inputs (fed unchanged,
   a head turned 39° right put the hemisphere 39° below the horizon). The mesh's floor lies along −y;
@@ -358,13 +358,13 @@ the frames the driver already captures in `vrserver`, so cameras and station kee
   mesh; `pico4-slamd` feeds the pipeline only within a second of the driver's stamp, so it idles
   otherwise. Vertices come in the head pose's world (with a saved room's turn and shift) with their
   place in SteamVR's raw space.
-  [monado-steamvr-roomview-mesh.patch](../userspace/pkgbuilds/pico4-monado/monado-steamvr-roomview-mesh.patch)
+  [monado-steamvr-roomview-mesh.patch](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/monado-steamvr-roomview-mesh.patch)
   publishes each mesh once, as the Frame's XR service does: the layout block when it changes, the data
   block (`posePredictionBaseTime` = mid-exposure on `CLOCK_MONOTONIC_RAW`), then `meshIsUpToDate`;
   both queues use 512-byte headers, 4 data and 2 layout blocks. `IVRServerInternal` slots 41 (plane
   anchors) and 42 (tracking world jumps) are not needed.
 
-The producer [`pico4-roomview`](../src/xr/pico4-roomview.c) is a user unit that runs with SteamVR
+The producer [`pico4-roomview`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-roomview.c) is a user unit that runs with SteamVR
 ([pico4-roomview.service](../userspace/rootfs/usr/lib/systemd/user/pico4-roomview.service)):
 
 ```text
@@ -373,7 +373,7 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
            head pose at exposure                                  per-frame metadata
 ```
 
-- **Shared memory.** [pico4_roomview.h](../src/monado/pico4_roomview.h) (version 2): camera size, KB4
+- **Shared memory.** [pico4_roomview.h](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_roomview.h) (version 2): camera size, KB4
   intrinsics, camera-to-head transforms, a ring of four frames, format (two grey cameras or one NV12
   image). The driver fills it only while the producer's heartbeat says the compositor wants frames,
   with the head pose at mid-exposure in the space it reports to SteamVR (tracking origin included)
@@ -403,7 +403,7 @@ cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pi
     18% grey: 1/100 s (flicker-free), then gain up to 16×, then up to 20 ms.
   - The sensor streams only while the room view shows it: 5 s after it closes the driver pauses it
     (`pico4-imx471`'s paused control).
-  - The lens is PICO's omni model with "fisheye62" distortion; [pico4_tcam.c](../src/monado/pico4_tcam.c)
+  - The lens is PICO's omni model with "fisheye62" distortion; [pico4_tcam.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_tcam.c)
     projects it and fits KB4 for the metadata.
   - `pico4-roomview` publishes the NV12 frame (one linear dma-buf) to both camera slots.
     `--test-pattern` shows colour bars.
@@ -541,7 +541,7 @@ files hold `vertexcount` and points `(a, b, c)`, b up; the world point is (b, �
   head if none). The first height depends on what the cameras see (a bed or table gives 1.2 m
   instead of 1.6 m), so each of these steps restarts the detection (`pico4_hmd_detect_floor`, the
   feed's `floor_requests`;
-  [monado-steamvr-floor.patch](../userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch)).
+  [monado-steamvr-floor.patch](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/monado-steamvr-floor.patch)).
   **Slot 40 belongs to this `vrserver` build: check it again with every new SteamVR.**
 - **Recenter.** Holding the PICO button runs room-setup step 1: SteamVR resets only its seated zero
   pose; the standing pose and play area stay, and the recenter is gone after a SteamVR restart.
@@ -561,7 +561,7 @@ overshoots and springs back.
 ### Basalt
 
 Deprecated: selectable (`PICO4_SLAM_BACKEND=basalt`) as it is, without further work. Monado loads
-Basalt through its VIT interface (`libbasalt.so` from [`pico4-basalt`](../userspace/pkgbuilds/pico4-basalt/PKGBUILD),
+Basalt through its VIT interface (`libbasalt.so` from [`pico4-basalt`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-basalt/PKGBUILD),
 Monado's fork, pinned; built for `armv8.2-a`, since `-march=native` under QEMU emits SVE). Arch's
 OpenCV highgui links Qt, so `qt6-base` is in the image.
 
@@ -578,7 +578,7 @@ OpenCV highgui links Qt, so `qt6-base` is in the image.
 - **IMU.** Raw body-frame samples, every second one (`PICO4_SLAM_IMU_DIVISOR`), with the delivered
   rate declared (1024 Hz for 1 kHz) and noise `PICO4_SLAM_IMU_NOISE` (about five times the measured
   Allan deviation; PICO OS's tracker's values made Basalt jiggle and run away).
-- **VIO settings.** [pico4-vio.json](../userspace/pkgbuilds/pico4-basalt/pico4-vio.json)
+- **VIO settings.** [pico4-vio.json](https://github.com/overpressure/packages/blob/main/phoenix/pico4-basalt/pico4-vio.json)
   (`basalt-vio-config.patch`): `optical_flow_image_safe_radius` 300 px, outside which the fisheyes are
   black. Basalt logs "Using VIO config" when it loads it.
 - **Decoupling.** Two feeder threads (the newest frame set; a 2,048-sample IMU ring) keep the cameras
@@ -588,7 +588,7 @@ OpenCV highgui links Qt, so `qt6-base` is in the image.
   stops the frames and gives Basalt a second before stopping it, or its optical flow aborts.
 - **Priority.** Basalt, its TBB workers and feeders run at nice 19 on cores 0–5 (`PICO4_SLAM_CPUS`),
   leaving the two fastest cores to the compositor and the app.
-- **Fusion.** Basalt's 25 Hz poses arrive about 100 ms late. [pico4_fusion.c](../src/monado/pico4_fusion.c)
+- **Fusion.** Basalt's 25 Hz poses arrive about 100 ms late. [pico4_fusion.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_fusion.c)
   keeps the pose at the IMU rate: the 3DoF orientation turned towards Basalt's (0.5 s), the
   accelerometer integrated for position, pulled to Basalt's position and velocity at the images'
   time (`PICO4_FUSION_POSITION_MS`), corrections faded in over `PICO4_FUSION_SMOOTHING_MS`. Without a
@@ -603,7 +603,7 @@ OpenCV highgui links Qt, so `qt6-base` is in the image.
 
 ## Controllers
 
-[pico4_blemcu.c](../src/monado/pico4_blemcu.c) parses the `ble_mcu` events as PICO OS's
+[pico4_blemcu.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_blemcu.c) parses the `ble_mcu` events as PICO OS's
 `SlpiDataParserV2` does. Each is a 200-byte radio packet: `5A`, format version, station time in µs
 (bytes 4–11, LE), the records' length (byte 12), then records `[length][type][id][time offset][data]`.
 The id's low six bits name the device (1 left, 2 right, 3–5 trackers); bit 7 adds a time offset (2
@@ -617,7 +617,7 @@ bytes, 4 with bit 6) in µs before the packet's time.
 - **Battery** (type 2): one byte, a fifth of a charge per level (0–5), reported to SteamVR as a
   percentage; level 1 is low.
 
-[pico4_controller.c](../src/monado/pico4_controller.c) makes each controller a Monado device
+[pico4_controller.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_controller.c) makes each controller a Monado device
 (`PICO 4 left/right controller`) with Monado's profile `/interaction_profiles/bytedance/pico4_controller`.
 
 - **Timing.** IMU samples are timed by the SSC event time (the packet's station time) minus the
@@ -654,7 +654,7 @@ positions (replacing the nominal ones) and its gyro bias table `pvr/<serial>.txt
 `pico4-persist` copies the root-only files to `/run/pico4-controllers/` for SteamVR's driver). The
 serial is not logged.
 
-The tracker (`src/monado/pico4_ctrack_*`, C++17 with Eigen) reimplements that library's approach:
+The tracker (`pico4_ctrack_*` in `pico4-monado`, C++17 with Eigen) reimplements that library's approach:
 
 - **Frames.** World +x up (the headset body frame), the LED-model frame equal to the controller IMU's
   after the remap (x, y, z) → (−z, −x, y).
@@ -738,9 +738,9 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 ([src/stockslam/build.sh](../src/stockslam/build.sh)) with the host's clang after running `test_isp`
 natively. The extracted data and the archive are proprietary: keep them private.
 
-- **`pico4-sensors`**: hexagonrpcd from a pinned linux-msm commit plus this project's patches.
+- **`sm8250-hexagonrpc`**: hexagonrpcd from a pinned linux-msm commit plus this project's patches.
 - **`pico4-basalt`**: Basalt and its submodules at pinned commits.
-- **`pico4-monado`**: Monado plus `src/monado` and `src/xr`; its build runs the driver's C tests
+- **`pico4-monado`**: Monado plus the PICO 4 driver and its tools, beside the recipe; its build runs the driver's C tests
   (the userspace build uses `--nocheck`).
 
 The host tests (`python -m unittest`) cover `pico4-imu`'s encoding against a simulated DSP, the IMU

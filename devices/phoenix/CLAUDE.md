@@ -58,15 +58,18 @@ README.md current.
   camera's table for the assets), `recovery_image.py` for its boot images (`--direct --boot`: the
   installed system's, from `dev boot-image`). `tooling/kernel.py`: `kernel fetch|build|check|contracts`.
   The kernel's source, its drivers, device tree, `pico4.config` and driver tests are in overpressure/linux.
-- `userspace/`: stage 2. `packages.txt` and `pacman.conf` (the Holo preview first; Frame
-  packages named explicitly from `deckard-arch-hotfixes-release-0.3`), `rootfs/` (the adaptation
-  layer, with `preinit`, the first process, and the system's own USB gadget, `usb-gadget`), `session/` (SteamVR configuration), `pkgbuilds/` (pico4-sensors, pico4-basalt, pico4-monado,
-  pico4-gamescope, pico4-spa-alsa, pico4-vrlink, pico4-gtk2 for the Steam client, pico4-mangohud, and others;
-  `pico4-swapchain-usage`).
-- `src/`: the project's C sources (`graphics/`, `monado/` driver, `xr/` OpenXR clients, `vrlink/`,
-  `swapchain/`, `reboot/`, `splash/`). Recipes list them as `SKIP`; the build copies
-  them in. `stockslam/` is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a
-  bionic root; `build-userspace.sh` builds it with clang for Android, without an NDK.
+- `userspace/`: stage 2. `packages.json` pins the release of
+  [overpressure/packages](https://github.com/overpressure/packages) the image is built from: its
+  `headsets/phoenix/` is the image's definition (`packages.txt`, `pacman.conf` with the Holo preview
+  first and Frame packages named explicitly from `deckard-arch-hotfixes-release-0.3`, `packages.lock`),
+  its layers the project's packages (Monado with the PICO 4 driver and its tools, Basalt, gamescope,
+  hexagonrpc, the swapchain layer, GTK 2, MangoHud and others), each with its code and patches.
+  Here: `rootfs/` (the adaptation layer, with `preinit`, the first process, and the system's own USB
+  gadget, `usb-gadget`) and `session/` (SteamVR configuration). A change to a package goes to
+  overpressure/packages, then a new tag there and the pin here.
+- `src/`: the project's C sources outside the packages (`reboot/`, `splash/`, `gd32/`). `stockslam/`
+  is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a bionic root; `build-userspace.sh`
+  builds it with clang for Android, without an NDK.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-kernel-step.sh`,
   `windows-share-internet.ps1` and the on-headset preflight. The assets come from `python -m overpressure
   assets` (`tooling/assets.py`, PICO's public OTA, Python on any system). The headset's own factory data is not extracted: the image links to persist, mounted read-only at
@@ -89,7 +92,8 @@ python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> 
 # Any system, no Linux needed: the stock firmware from PICO's public OTA, then the assets
 # (docs/development.md#stock-firmware; about 11 GB of OTA members and images in cache/pico4-stock):
 python -m overpressure assets --firmware 5.13.7-global-seko
-# In the build container, as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages):
+# In the build container, as root (incremental; native clang/lld on x86-64; --refresh for new Valve packages;
+# --packages DIR builds a checkout of overpressure/packages instead of the pinned commit):
 python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
     /var/tmp/pico4-userspace-build out/userspace \
     --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
@@ -108,8 +112,7 @@ python -m overpressure cycle --restore-only              # verified stock boot a
 ```
 
 - The userspace build snapshots its inputs at the start: the tree can be edited during a build.
-- Project packages rebuild only when their recipe changes, and incrementally when only `src/`
-  changed; `--clean` forces a clean package build. Package databases change only with
+- Project packages rebuild only when their recipe folder changes. Package databases change only with
   `--refresh`. Details and timings: docs/development.md.
 - Test on the headset. `tests/qemu/` covers stage 1 only; don't run it unless the user asks.
 

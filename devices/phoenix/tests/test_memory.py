@@ -16,10 +16,6 @@ class ZramSwapTests(unittest.TestCase):
         self.unit = (UNITS / "pico4-zram-swap.service").read_text(encoding="utf-8")
         self.build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
 
-    def test_the_frames_zram_swap_is_installed(self):
-        packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
-        self.assertIn("deckard-arch-hotfixes-release-0.3/holo-zram-swap", packages)
-
     def test_the_frames_setup_without_device_units(self):
         # zram-generator's swap unit has no PICO OS priority.
         self.assertIn('ln -sfn /dev/null "$T/etc/systemd/system-generators/zram-generator"', self.build)

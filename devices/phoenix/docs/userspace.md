@@ -4,7 +4,7 @@
 | --- | --- |
 | What | The Steam Frame's ARM64 SteamOS userspace (systemd 257.7, SteamOS services, gamescope, PipeWire, NetworkManager, the Steam client, SteamVR) with the PICO 4's adaptations, on Valve's kernel ([kernel.md](kernel.md)) |
 | How | Packages from Valve's Holo Core aarch64 preview and the Frame's hotfix repository plus the project's own, locked by SHA-256, installed into a reproducible archive; that becomes a read-only system image in `super`, with data in `userdata` ([install.md](install.md)) |
-| Code | [userspace/](../userspace/) (`packages.txt`, `packages.lock`, `pacman.conf`, `rootfs/`, `pkgbuilds/`), [scripts/build-userspace.sh](../scripts/build-userspace.sh), [scripts/build-system-image.sh](../scripts/build-system-image.sh) |
+| Code | [userspace/](../userspace/) (`packages.json`, `rootfs/`, `session/`), [scripts/build-userspace.sh](../scripts/build-userspace.sh), [scripts/build-system-image.sh](../scripts/build-system-image.sh); the image's definition (`packages.txt`, `pacman.conf`, `packages.lock`) and the project's packages in [overpressure/packages](https://github.com/overpressure/packages), at the release `userspace/packages.json` pins |
 | State | Reaches `running` with no failed units on the headset; the XR stack ([xr.md](xr.md)) and Valve's VR session ([session.md](session.md)) run in it |
 
 The stage-1 initramfs ([stage1.md](stage1.md)) is the maintenance environment in `recovery`, where the system is
@@ -18,12 +18,12 @@ project builds the rest:
 | Source | Content | Used for |
 | --- | --- | --- |
 | [Holo Core aarch64 preview](https://holo-packages.steamos.cloud/holo-core-aarch64-preview/), snapshot `mash-20251118.3` | Valve and Collabora's ARM64 Arch port: `core`, `extra` and a base `system.rootfs.zst` | the build environment; resolves every dependency by default (glibc 2.42, pacman 7) |
-| [Steam Frame hotfix repository](https://steamdeck-packages.steamos.cloud/archlinux-deckard-hotfixes/release/0.3.x/) `deckard-arch-hotfixes-release-0.3` | about 400 of the Frame's own builds: systemd 257.7, gamescope 3.16.28, Mesa 26.3 (development), `steamos-customizations-deckard`, `steamos-manager`, the Steam client and SteamVR | the Frame packages named in [packages.txt](../userspace/packages.txt) |
-| [userspace/pkgbuilds/](../userspace/pkgbuilds/) | the project's packages ([below](#project-packages)) | the XR stack, frame pacing, patched gamescope and `vrlink` |
+| [Steam Frame hotfix repository](https://steamdeck-packages.steamos.cloud/archlinux-deckard-hotfixes/release/0.3.x/) `deckard-arch-hotfixes-release-0.3` | about 400 of the Frame's own builds: systemd 257.7, gamescope 3.16.28, Mesa 26.3 (development), `steamos-customizations-deckard`, `steamos-manager`, the Steam client and SteamVR | the Frame packages named in [packages.txt](https://github.com/overpressure/packages/blob/main/headsets/phoenix/packages.txt) |
+| [overpressure/packages](https://github.com/overpressure/packages) | the project's packages ([below](#project-packages)), in layers: `common` (any headset on the Frame's userspace), `sm8250` (the XR2), `phoenix` (the PICO 4) | the XR stack, frame pacing, patched gamescope and `vrlink` |
 
 The Frame repository holds only the Frame's hotfixes; its base is not public, and several of its libraries (ffmpeg,
 freerdp) need older libraries than the preview has. So the preview resolves everything, and
-[packages.txt](../userspace/packages.txt) names each Frame package explicitly
+[packages.txt](https://github.com/overpressure/packages/blob/main/headsets/phoenix/packages.txt) names each Frame package explicitly
 (`deckard-arch-hotfixes-release-0.3/<name>`). A line `!name` makes dependencies on `name` count as satisfied without
 installing it: `sddm`, which `pico4-session.service` replaces ([session.md](session.md)). The Steam client gets the
 libraries it needs but does not declare ([session.md](session.md#the-steam-client)). The build environment takes the
@@ -36,7 +36,7 @@ is older, core and extra's:
 | Package | From | Why |
 | --- | --- | --- |
 | `filesystem` | Frame | SteamOS's: `/etc/os-release` says `ID=steamos`, `/etc/steamos-release` exists; no `/lib64` |
-| `pipewire`, `pipewire-audio`, `pipewire-pulse`, `libpipewire`, `alsa-card-profiles` 1.6.8; `wireplumber`, `libwireplumber` 0.5.14 | Frame | the Frame's audio stack; `pico4-spa-alsa` is built from the same version |
+| `pipewire`, `pipewire-audio`, `pipewire-pulse`, `libpipewire`, `alsa-card-profiles` 1.6.8; `wireplumber`, `libwireplumber` 0.5.14 | Frame | the Frame's audio stack; `overpressure-spa-alsa` is built from the same version |
 | `bluez-libs` 5.79 | Frame | the version of the Frame's `bluez` |
 | `wayland`, `libdrm`, `libxkbcommon`, `libxkbcommon-x11`, `rtkit`, `v4l-utils`, `linux-api-headers` | Frame | newer; the Frame's `wayland` and `libxkbcommon` link `libxml2.so.2`, which extra's `libxml2-legacy` provides next to core's `libxml2` 2.15; `v4l-utils`' Qt tools (`qv4l2`, `qvidcap`) need the Frame's Qt and are not used |
 | `bash`, `gptfdisk`, `mkinitcpio-busybox` | Frame | the Frame's rebuild of the same version |
@@ -57,14 +57,14 @@ proprietary ones.
 
 ### Package lock
 
-[`userspace/packages.lock`](../userspace/packages.lock) names every upstream package of the image by SHA-256. A build
+[`packages.lock`](https://github.com/overpressure/packages/blob/main/headsets/phoenix/packages.lock) names every upstream package of the image by SHA-256. A build
 stops on a package that differs or is not listed, so an image holds what was tested, although the Frame's hotfix
 repository moves on and nothing is signed. SteamVR is one of these packages, so it updates only with the image.
 `build-userspace.sh --update-lock` writes a new lock to `OUTPUT_DIR/packages.lock` instead of checking it.
 
 **Rebuilding a release.** The Holo repositories are a fixed snapshot, but the hotfix repository keeps only each
 package's current file. A release rebuilds only while every locked hotfix package is still published, or from a build
-root whose package cache (`BUILD_ROOT/bootstrap/var/cache/pico4-pkgs`) and databases still hold them. Otherwise a clean
+root whose package cache (`BUILD_ROOT/packages/environment/var/cache/pico4-pkgs`) and databases still hold them. Otherwise a clean
 build fails the lock until the lock moves to what Valve publishes
 ([docs/releasing.md](../../../docs/releasing.md#moving-to-new-upstream-versions)). There is no mirror: Valve's packages
 may not be redistributed.
@@ -85,8 +85,8 @@ known. The image reports its version and commit in `/usr/share/pico4/version`.
 ### systemd stays at 257.x
 
 The build takes `systemd`, `systemd-libs` and `systemd-sysvcompat` 257.7 from the Frame repository and fails if the
-installed systemd is not 257.x. The headset's `/etc/pacman.conf` is the build's without the local `pico4` repository
-and with `IgnorePkg = systemd systemd-libs systemd-sysvcompat systemd-resolvconf`, so an upgrade cannot pull 258.
+installed systemd is not 257.x. The headset's `/etc/pacman.conf` is the build's without the project's local
+repositories and with `IgnorePkg = systemd systemd-libs systemd-sysvcompat systemd-resolvconf`, so an upgrade cannot pull 258.
 
 ### Valve's Mesa
 
@@ -95,19 +95,25 @@ OpenGL through zink.
 
 ### Project packages
 
+The packages are [overpressure/packages](https://github.com/overpressure/packages)': each recipe there holds its
+code, patches and installed files, and a code package's tests run in its build. `userspace/packages.json` pins a
+release of that repository by tag and commit; the build fetches the commit and builds its recipes
+(`--packages DIR` builds a checkout instead). A change to a package is a change there, a new tag and a new pin
+here.
+
 | Package | Content | Details |
 | --- | --- | --- |
 | `pico4-graphics-tests` | the native Vulkan test | [graphics.md](graphics.md) |
-| `pico4-sensors` | hexagonrpcd with the project's patches, for the DSPs | [xr.md](xr.md) |
+| `sm8250-hexagonrpc` | hexagonrpcd with the project's patches, for the DSPs | [xr.md](xr.md) |
 | `pico4-monado` | Monado 25.1.0 with the PICO 4 driver and `pico4-cam` | [xr.md](xr.md) |
 | `pico4-basalt` | Basalt for Monado's VIT interface, built for `armv8.2-a` | [xr.md](xr.md) |
 | `pico4-swapchain-usage` | the stock path's frame pacing and compressed scanout in SteamVR's compositor | [session.md](session.md) |
-| `pico4-gamescope` | the Frame's gamescope 3.16.28 with a fix for a crash when a game starts | [session.md](session.md) |
+| `overpressure-gamescope` | the Frame's gamescope 3.16.28 with a fix for a crash when a game starts | [session.md](session.md) |
 | `pico4-vrlink` | `vrlink` support for Steam Link | [session.md](session.md) |
-| `pico4-spa-alsa` | PipeWire's ALSA plugin at Valve's 1.6.8 with the capture fix of [Audio](#audio), installed over `pipewire-audio`'s | this document |
-| `pico4-gtk2` | GTK 2 for the Steam client | [session.md](session.md) |
-| `pico4-mangohud` | MangoHud's mangoapp, the client's performance overlay | [session.md](session.md) |
-| `pico4-libdisplay-info` | libdisplay-info 0.1 for Valve's Mesa | [kernel.md](kernel.md#valves-mesa) |
+| `overpressure-spa-alsa` | PipeWire's ALSA plugin at Valve's 1.6.8 with the capture fix of [Audio](#audio), installed over `pipewire-audio`'s by its pacman hook | this document |
+| `overpressure-gtk2` | GTK 2 for the Steam client | [session.md](session.md) |
+| `overpressure-mangohud` | MangoHud's mangoapp, the client's performance overlay | [session.md](session.md) |
+| `overpressure-libdisplay-info` | libdisplay-info 0.1 for Valve's Mesa | [kernel.md](kernel.md#valves-mesa) |
 
 External sources are pinned by commit or hash; patches lie next to each PKGBUILD, the project's own sources in
 [src/](../src/).
@@ -205,20 +211,21 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 | `--stock-slam DIR` | PICO OS's head tracker, its Compute DSP firmware and bionic root ([xr.md](xr.md)); without it head tracking falls back to 3DoF unless `PICO4_SLAM_BACKEND=basalt` |
 | `--refresh` | downloads current package databases and reinstalls the base root |
 | `--update-lock` | writes `OUTPUT_DIR/packages.lock` instead of checking [the lock](#package-lock) |
-| `--clean` | rebuilds the project packages from scratch |
-| `--emulated-cc` | compiles with the build environment's GCC under QEMU instead of the host's clang |
+| `--packages DIR` | builds a checkout of overpressure/packages instead of the pinned commit |
 
 How it works:
 
-- The script snapshots its inputs into `BUILD_ROOT` (absolute, on a Linux file system), so the tree can be edited
-  during a build.
-- The build environment is the Holo preview's SHA-256-pinned base rootfs, entered with chroot; on non-arm64 hosts its
-  programs run under QEMU through the aarch64 binfmt handler, which the build container registers when the engine has
-  none. On x86-64 the container's clang and lld (LLVM 20) compile natively with the build environment as sysroot (no
-  LTO).
-- Project packages rebuild only when their recipe changes, and incrementally (`makepkg -e` in the previous build
-  tree) when only `src/` changes. Package databases are downloaded only by the first build and with `--refresh`.
-- The base root ([packages.txt](../userspace/packages.txt)) is kept between builds; each build assembles the image
+- The script snapshots its inputs and overpressure/packages at the pinned commit (fetched once into
+  `cache/packages/COMMIT`) into `BUILD_ROOT` (absolute, on a Linux file system), so the trees can be edited during a
+  build.
+- The build environment and the project packages are overpressure/packages' `build/packages.sh`: the Holo preview's
+  SHA-256-pinned base rootfs, entered with chroot, with what the recipes build against, each package pinned by the
+  lock or the Holo snapshot. On non-arm64 hosts its programs run under QEMU through the aarch64 binfmt handler, which
+  the build container registers when the engine has none; on x86-64 the container's clang and lld (LLVM 20) compile
+  natively with the build environment as sysroot (no LTO).
+- Project packages rebuild only when their recipe folder changes; each layer becomes a local pacman repository
+  `overpressure-LAYER`. Package databases are downloaded only by the first build and with `--refresh`.
+- The base root ([packages.txt](https://github.com/overpressure/packages/blob/main/headsets/phoenix/packages.txt)) is kept between builds; each build assembles the image
   root as an overlay on it with the project packages and the adaptation layer ([userspace/rootfs/](../userspace/rootfs/),
   users, units, the session configuration).
 - [overpressure/elfdeps.py](../../../overpressure/elfdeps.py) checks natively, as `ldd -r` would, that the programs and
@@ -229,8 +236,8 @@ How it works:
   `libthread_db`, speech-dispatcher's modules).
 
 The outputs are `pico4-userspace.tar.zst` and `pico4-userspace.manifest.json`: version, Git commit and date, the
-bootstrap rootfs, the SHA-256 of every repository database, package, GPU firmware and sensor-data file, and the
-installed package versions; the hardware runner selects its checks from it. Keep the output private. Build hosts and
+overpressure/packages release (tag and commit) or local checkout it was built from, the SHA-256 of every repository
+database, package, GPU firmware and sensor-data file, and the installed package versions; the hardware runner selects its checks from it. Keep the output private. Build hosts and
 timings are in [development.md](development.md).
 
 ### Reproducible builds
@@ -244,13 +251,13 @@ it to override):
 | project packages' build dates and file times | makepkg takes `SOURCE_DATE_EPOCH`; with the same compiler the packages are identical |
 | fontconfig caches, the Java keystore of `ca-certificates` | the chroots and pacman's hooks get `SOURCE_DATE_EPOCH`, which fc-cache and p11-kit's `trust` take |
 | pacman's install dates | written as `SOURCE_DATE_EPOCH` into `/var/lib/pacman/local/*/desc` |
-| the project repository's database (`repo-add` records when it ran) | not in the image: the headset's `pacman.conf` has no `[pico4]` |
+| the project repositories' databases (`repo-add` records when it ran) | not in the image: the headset's `pacman.conf` has none of them |
 | ldconfig's `aux-cache` (inode numbers, change times) | removed; it only speeds up the next ldconfig run |
 | file times, access and change times | the archive clamps every time to `SOURCE_DATE_EPOCH` and keeps no access or change times |
 | the ext4 image's UUID, hash seed and times | [build-system-image.sh](../scripts/build-system-image.sh) derives UUID and hash seed from the archive's SHA-256 and takes every time from the archive's `/usr` |
 
-A build that reuses project packages from an earlier commit (no `--clean`, an old `BUILD_ROOT`) keeps those packages'
-build dates, so its archive differs from a clean build's in them.
+A build that reuses project packages from an earlier commit (an old `BUILD_ROOT`) keeps those packages' build dates,
+so its archive differs from a clean build's in them.
 
 ## Run
 
@@ -303,7 +310,7 @@ the image links to it instead of shipping a copy:
 
 The files belong to Android's `system` user, uid 1000, which is `steamos` here, so the driver in `vrserver` reads
 them. Nothing is written: the sensors process rewrites its registry at every start (each group to `temp.json`,
-renamed over the group), and `pico4-sensors`' `hexagonrpcd` takes those writes and drops them, so the IMU comes in
+renamed over the group), and `sm8250-hexagonrpc`' `hexagonrpcd` takes those writes and drops them, so the IMU comes in
 about 1 s and the DSP runs from the registry in persist.
 
 ## Internet over USB
@@ -407,7 +414,7 @@ suppression to voice calls only, no gain).
 PipeWire restarts a capture stream that runs through a suspend at the wake. Upstream, its timer path takes the time
 from the planned wakeup, not the clock, so before data comes its next timeout is already over: the real-time thread
 spins until the kernel's RT watchdog kills it at 200 ms (`RT Watchdog Timeout (hard): data-loop.0`). The recording
-ends, and Steam's interface keeps a dead connection and stays silent until a restart. `pico4-spa-alsa` takes that
+ends, and Steam's interface keeps a dead connection and stays silent until a restart. `overpressure-spa-alsa` takes that
 timeout from the clock: PipeWire survives, the burst is 0 or 1 tick of 10 ms, and the recording goes on. Interrupt
 scheduling (`api.alsa.disable-tsched`) is no alternative: its recordings stay empty.
 

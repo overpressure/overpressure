@@ -61,7 +61,8 @@ says what Valve has moved and whether the image still builds on it
 
 | What | Change | Then |
 | --- | --- | --- |
-| Holo and Frame packages, SteamVR, Mesa | `build-userspace.sh --refresh --update-lock`, review `OUTPUT_DIR/packages.lock` and copy it to `userspace/packages.lock` | the whole checklist: `driver_monado`, the patches and masks depend on SteamVR's behaviour |
-| PipeWire | `pkgver` of `pico4-spa-alsa` to the new version, its patch rebased; the build stops otherwise | suspend with the microphone capturing |
+| Holo and Frame packages, SteamVR, Mesa | `build-userspace.sh --refresh --update-lock`, review `OUTPUT_DIR/packages.lock`, copy it to overpressure/packages' `headsets/phoenix/packages.lock`, tag a release there and pin it in `devices/phoenix/userspace/packages.json` | the whole checklist: `driver_monado`, the patches and masks depend on SteamVR's behaviour |
+| PipeWire | in overpressure/packages: `pkgver` of `overpressure-spa-alsa` to the new version, its patch rebased (the build stops otherwise), a new tag; then `devices/phoenix/userspace/packages.json` pinned to it | suspend with the microphone capturing |
+| A project package | in overpressure/packages: the change, CI green, a new tag `YYYY.MM.DD`, whose release CI builds; then `devices/phoenix/userspace/packages.json` pinned to its tag and commit | the parts of the checklist the package touches |
 | Valve's kernel | in overpressure/linux: the Valve workflow's weekly pull request reviewed and merged, and those up the layers after it, a new tag `phoenix/7.2-N` released; then `devices/phoenix/kernel/release.json` pinned to it (CI downloads it against the pin, and the contracts check the names both sides share) | the whole checklist |
 | PICO OS firmware | a new entry in `VERIFIED_FIRMWARES`, only after the whole path has run on it | the whole checklist |

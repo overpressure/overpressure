@@ -2,9 +2,7 @@
 """PICO OS's head tracker on the Compute DSP: its units, the driver's camera path, rooms, depth mesh and floor."""
 
 import math
-import re
 import unittest
-from collections.abc import Sequence
 from pathlib import Path
 
 from devices.phoenix.tooling import assets
@@ -151,45 +149,7 @@ class BuildTests(unittest.TestCase):
         self.assertIn('"stock_slam": json.loads(stock)', build)
         # The manifest's script gets the list after the other assets, before the version and commit.
         self.assertIn('"$wlan_json" "$audio_json" "$stock_json" "$version" "$commit" >', build)
-        self.assertIn("audio, stock, version, commit = sys.argv[1:13]", build)
-
-    def test_monado_recipe_ships_the_feed_header(self):
-        recipe = read(ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD")
-        self.assertEqual(recipe.count("pico4_slam_feed.h"), 2)
-
-
-class DriverAttachTests(unittest.TestCase):
-    def test_only_a_driver_with_frames_starts_a_generation(self):
-        # A second driver whose cameras fail (another one has them) must not restart the
-        # working driver's tracker: the generation is bumped from the first frame only.
-        source = read(ROOT / "src/monado/pico4_slam.c")
-        calls = [m.start() for m in re.finditer(r"\bstock_attach\(s\);", source)]
-        self.assertEqual(len(calls), 1)
-        copy = source.index("stock_copy_frame(struct pico4_slam *s")
-        self.assertLess(copy, calls[0])
-        self.assertLess(calls[0], source.index("\n}\n", copy))
-
-
-class ClockTests(unittest.TestCase):
-    """timesyncd steers CLOCK_MONOTONIC against the QTimer: both mappings are taken again each second."""
-
-    def test_offsets_follow_the_clock(self):
-        hmd = read(ROOT / "src/monado/pico4_hmd.c")
-        thread = hmd.index("imu_thread(void *ptr)")
-        refresh = hmd.index("calibrate_clock(h);", thread)
-        self.assertLess(refresh, hmd.index("\n}\n", thread))
-        self.assertIn("if (now - clock_ns >= U_TIME_1S_IN_NS) {", hmd[thread:refresh])
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        sof = slam.index("frame_sof_ns(struct pico4_slam *s")
-        body = slam[sof : slam.index("\n}\n", sof)]
-        self.assertIn("if (now - s->qtimer_measured_ns >= U_TIME_1S_IN_NS ||", body)
-        self.assertIn("s->qtimer_offset_ns = qtimer_offset();", body)
-
-    def test_controller_tracker_gets_the_head_pose_of_its_exposure(self):
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        head = slam.index("pico4_slam_get_head_pose(struct pico4_slam *s")
-        self.assertIn("if (at_ns < p.ts_ns) {", slam[head : head + 900])
-        self.assertIn("stock_pose_at(s, at_ns, &then)", slam[head : head + 900])
+        self.assertIn("audio, stock, version, commit = sys.argv[1:12]", build)
 
 
 class SlamdThreadTests(unittest.TestCase):
@@ -207,24 +167,6 @@ class SlamdThreadTests(unittest.TestCase):
 
 class TemperatureTests(unittest.TestCase):
     """The IMU's die temperature with every sample, as PICO OS's sensor DSP inserts it."""
-
-    def test_driver_streams_it_into_the_feed(self):
-        hmd = read(ROOT / "src/monado/pico4_hmd.c")
-        # Looked up before the IMU thread owns the client, enabled with the other streams.
-        lookup = hmd.index('pico4_ssc_find(h->ssc, "sensor_temperature", &h->temperature_suid, 3000)')
-        self.assertLess(lookup, hmd.index("os_thread_helper_start(&h->oth, imu_thread, h)"))
-        self.assertIn("pico4_ssc_enable(h->ssc, &h->temperature_suid, PICO4_TEMPERATURE_HZ)", hmd)
-        # Single-value samples are taken before the three-axis check drops them.
-        handle = hmd.index("handle_sample(struct pico4_hmd *h")
-        self.assertLess(
-            hmd.index("suid_equal(&s->suid, &h->temperature_suid)", handle), hmd.index("if (s->count < 3)", handle)
-        )
-        self.assertIn("pico4_slam_push_imu(h->slam, ts, h->last_accel_raw, s->values, h->temperature_c);", hmd)
-        # Found again after a sensor DSP restart.
-        recover = hmd.index("recover_imu(struct pico4_hmd *h")
-        self.assertGreater(hmd.index("setup_temperature(h, 1000);", recover), recover)
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        self.assertIn("e->temperature = temperature_c;", slam)
 
     def test_slamd_passes_only_what_libslam_accepts(self):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
@@ -251,15 +193,6 @@ class CameraOtpTests(unittest.TestCase):
         )
         self.assertIn("isp_lsc_file(vendor)", slamd)
 
-    def test_driver_reads_the_otp_only_without_valid_saved_ids(self):
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        attach = slam[slam.index("stock_attach(struct pico4_slam *s)") :]
-        self.assertLess(
-            attach.index("stock_camera_otp(s, feed);"), attach.index("__atomic_add_fetch(&feed->generation")
-        )
-        body = slam[slam.index("stock_camera_otp(struct pico4_slam *s") :]
-        self.assertLess(body.index("if (otp_valid(saved))"), body.index("pico4_station_camera_otp(s->station, ids)"))
-
 
 class AutoExposureTests(unittest.TestCase):
     """PICO OS's auto exposure in pico4-slamd, the station commands in the driver."""
@@ -281,110 +214,6 @@ class AutoExposureTests(unittest.TestCase):
         android = read(ROOT / "src/stockslam/android.c")
         for name in ("allocate", "lock", "unlock", "release", "sendHandleToUnixSocket", "recvHandleFromUnixSocket"):
             self.assertIn(f"AHardwareBuffer_{name}(", android)
-
-    def test_driver_sends_it_per_camera(self):
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        self.assertIn("pico4_station_camera_set_each(s->station, scene)", slam)
-        self.assertIn("s->identity.per_camera_exposure = stock_ae;", slam)
-        apply = slam.index("if (stock_ae) {\n\t\t\tstock_ae_apply(s);\n\t\t} else {\n\t\t\tauto_exposure(")
-        self.assertGreater(apply, 0)
-
-
-class SetAssemblyTests(unittest.TestCase):
-    """The frames of one pulse form a set whatever exposure each camera has."""
-
-    LINE_NS = 19069
-    WINDOW_NS = 4_000_000
-
-    def complete(self, sofs: Sequence[int], keys: Sequence[int]) -> bool:
-        """Run the driver's assembly (pico4_cam_assembly_add) over one pulse's frames, in SOF order."""
-        first = None
-        have = 0
-        for _, key in sorted(zip(sofs, keys)):
-            if first is not None and key > first + self.WINDOW_NS:
-                first, have = None, 0  # the set before is dropped
-            if first is None:
-                first = key
-            have += 1
-        return have == len(sofs)
-
-    def test_measured_spread_forms_a_set(self):
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        self.assertIn("return sof_ns - (((int64_t)LINE_NS * m->exposure_lines) >> 1);", slam)
-        lines = [308, 737, 510, 510]
-        # Measured on the headset: the sensors centre their exposures on the pulse, so each start
-        # of frame comes half its exposure after it (camera 1 +4.14 ms, cameras 2 and 3 +1.95 ms).
-        sofs = [n * self.LINE_NS // 2 for n in lines]
-        self.assertFalse(self.complete(sofs, sofs))  # by start of frame: never a set (the stall)
-        keys = [sof - (self.LINE_NS * n >> 1) for sof, n in zip(sofs, lines)]
-        self.assertTrue(self.complete(sofs, keys))
-
-    def test_both_assemblies_group_by_the_pulse(self):
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        self.assertIn("pico4_cam_assembly_add(&s->group.assembly, index, pulse_key(ts, &meta),", slam)
-        self.assertIn("pico4_cam_assembly_add(&s->leds.assembly, k, pulse_key(sof, meta),", slam)
-
-
-class CaptureRecoveryTests(unittest.TestCase):
-    """A stall is logged, cannot lock the exposure, and a stuck capture restarts."""
-
-    def test_stall_is_logged_per_camera(self):
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        stall = slam[slam.index("\nscene_stall(struct pico4_slam *s)") :]
-        stall = stall[: stall.index("\n}\n")]
-        self.assertIn('"no complete scene set for %.1f s (%llu started): %s"', stall)
-        # A camera without frames while the others deliver: its link is stuck.
-        self.assertIn('s->restart_why = "a camera delivers no frames";', stall)
-        self.assertIn('s->restart_why = "no complete scene set for 3 s";', stall)
-        # Otherwise PICO OS's per-camera exposure gives way to one for all cameras.
-        self.assertIn("stock_ae_active(s)", stall)
-        self.assertIn("pico4_station_camera_set_exposure(s->station, lines[n_cams / 2], gains[n_cams / 2])", stall)
-
-    def test_camera_thread_restarts_the_capture(self):
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        thread = slam[slam.index("\ncamera_thread(void *ptr)") :]
-        thread = thread[: thread.index("\n}\n")]
-        self.assertIn('why = timeouts >= 5 ? "no camera frames for 1 s" : why;', thread)
-        self.assertIn("now - restarted_ns >= (int64_t)5 * U_TIME_1S_IN_NS", thread)
-        self.assertIn("restart_capture(s, why);", thread)
-        restart = slam[slam.index("\nrestart_capture(struct pico4_slam *s, const char *why)") :]
-        restart = restart[: restart.index("\n}\n")]
-        # As the start: sync off, sessions again, sync on (a second stop when it refuses), exposure.
-        order = [
-            "pico4_station_camera_stop(s->station);",
-            "pico4_cam_close(s->cam);",
-            "pico4_cam_open(&s->cam, &s->cam_config)",
-            "pico4_cam_start(s->cam)",
-            "pico4_station_camera_start(s->station)",
-            "pico4_station_camera_set_exposure(",
-        ]
-        at = [restart.index(o) for o in order]
-        self.assertEqual(at, sorted(at))
-        self.assertIn("s->cam_config = cc;", slam)
-
-    def test_a_new_rooms_universe_waits_for_a_wearer(self):
-        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
-        self.assertLess(
-            patch.index("+					if (!known && m_worn != 1) {"),
-            patch.index("+						((create_fn)vtable[0])(m_chaperone_server, universe, true);"),
-        )
-
-    def test_a_refused_camera_sync_at_the_start_is_tried_again(self):
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        start = slam[slam.index("A timeout here would leave the head in 3DoF") :]
-        start = start[: start.index("goto fail;")]
-        self.assertIn("(r = pico4_station_camera_start(s->station)) < 0 && tries < 3", start)
-        # After a timeout the radio refuses further starts: only its reset helps, as measured.
-        self.assertLess(
-            start.index('SLAM_WARN(s, "The controller radio refused camera sync (%s): resetting it"'),
-            start.index("pico4_station_reset(s->station);"),
-        )
-        self.assertNotIn("pico4_station_camera_stop(", start)
-
-    def test_overflow_free_durations(self):
-        # 3 and 5 s in ns do not fit an int: the build warned and the comparisons were wrong.
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        self.assertNotRegex(slam, r"[^)]\b[2-9] \* U_TIME_1S_IN_NS")
 
 
 class RoomTests(unittest.TestCase):
@@ -456,33 +285,6 @@ class RoomTests(unittest.TestCase):
         for reset in ("relocalised = false;", "sets_at_start = __atomic_load_n(&frames.sets_fed", "input_since = 0;"):
             self.assertLess(restart, slamd.index(reset, restart))
         self.assertIn("PICO4_SLAMD_RELOCALISE_S", read(LIBEXEC / "stock-slam"))
-
-    def test_steamvr_gets_a_universe_per_map(self):
-        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
-        self.assertIn(
-            "pico4_hmd_get_universe(struct xrt_device *xdev, uint64_t *out_universe) __attribute__((weak));", patch
-        )
-        self.assertIn("vr::Prop_CurrentUniverseId_Uint64", patch)
-        recipe = read(ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD")
-        self.assertLess(recipe.index("< monado-steamvr-camera.patch"), recipe.index("< monado-steamvr-room.patch"))
-        hmd = read(ROOT / "src/monado/pico4_hmd.c")
-        # 0 and 1 are OpenVR's; 424242 is the Frame's universe without a map, which is never saved.
-        self.assertIn("*out_universe = h > 1 && h != 424242 ? h : h + 2;", hmd)
-
-    def test_universes_through_vrserver_chaperone_server(self):
-        # As driver_cv, vrserver's chaperone server restores a known universe (slot 1) or
-        # creates a new one with its room setup to do (slot 0); without it a new universe never
-        # exists in vrserver and the playspace setup has no floor.
-        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-room.patch")
-        self.assertIn('GetGenericInterface("IVRChaperoneServerDriver_XXX", &err)', patch)
-        self.assertIn("using create_fn = void (*)(void *self, uint64_t universe, bool keep_origins);", patch)
-        self.assertIn("const vr::HmdMatrix34_t *persistent_map_from_map, bool refine);", patch)
-        switch = patch[patch.index("void **vtable = *(void ***)m_chaperone_server;") :]
-        switch = switch[: switch.index("} else {")]
-        self.assertIn("((restore_fn)vtable[1])(m_chaperone_server, universe, &identity, false);", switch)
-        self.assertIn("if (!known) {\n+\t\t\t\t\t\t((create_fn)vtable[0])(m_chaperone_server, universe, true);", switch)
-        # vrserver reports the universe itself: the property only without its chaperone server.
-        self.assertNotIn("Prop_CurrentUniverseId_Uint64", switch)
 
 
 class DepthMeshTests(unittest.TestCase):
@@ -587,18 +389,6 @@ class DepthMeshTests(unittest.TestCase):
         self.assertLess(vst.index("mesh_buffer(g_vst.vertices"), vst.index("int ok = start();"))
         self.assertIn('"$src/crt.c" "$src/pico4-slamd.c" "$src/vst.c"', read(ROOT / "src/stockslam/build.sh"))
 
-    def test_feed_mesh_matches_the_drivers_limits(self):
-        header = read(ROOT / "src/monado/pico4_slam_feed.h")
-        passthrough = read(ROOT / "src/monado/pico4_passthrough.h")
-        self.assertIn("#define PICO4_SLAM_FEED_MESH_VERTICES 16384", header)
-        self.assertIn("#define PICO4_DEPTH_MESH_VERTICES 16384", passthrough)
-        self.assertIn("#define PICO4_SLAM_FEED_MESH_INDICES (6 * 127 * 127)", header)
-        self.assertIn("#define PICO4_DEPTH_MESH_INDICES (6 * 127 * 127)", passthrough)
-        # After the rings: the mesh slots are the largest part of the feed.
-        self.assertGreater(
-            header.index("struct pico4_slam_feed_mesh meshes["), header.index("struct pico4_slam_feed_set sets[")
-        )
-
 
 class FloorTests(unittest.TestCase):
     """The floor libSlam detects, to SteamVR's room setup as the Frame's driver_cv sends its own."""
@@ -611,67 +401,6 @@ class FloorTests(unittest.TestCase):
             slamd.index("p->floor_height = plane_height;"),
             slamd.index("__atomic_store_n(&feed->poses_written, w + 1, __ATOMIC_RELEASE);"),
         )
-
-    def test_driver_takes_only_a_detected_floor_below_the_origin(self):
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        floor = slam[slam.index("\npico4_slam_floor(struct pico4_slam *s, float *out_y)\n{\n\tstruct") :]
-        floor = floor[: floor.index("\n}\n")]
-        self.assertIn("p.floor_status != 1", floor)  # 2 and 3: the height a saved map carries
-        self.assertIn("double y = -p.floor_height;", floor)
-        self.assertIn("y += feed->room_t[0];", floor)
-        hmd = read(ROOT / "src/monado/pico4_hmd.c")
-        self.assertIn("math_pose_transform_point(&offset, &floor, &point);", hmd)
-
-    def test_room_setup_steps_as_driver_cv(self):
-        recipe = read(ROOT / "userspace/pkgbuilds/pico4-monado/PKGBUILD")
-        self.assertLess(
-            recipe.index("< monado-steamvr-roomview-mesh.patch"), recipe.index("< monado-steamvr-floor.patch")
-        )
-        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch")
-        self.assertIn("static_cast<vr::EVREventType>(809)", patch)
-        self.assertIn("SetFloorDetection(step == 3 || step == 6 || step == 7);", patch)
-        self.assertIn('GetGenericInterface("IVRServerInternal_XXX", &err)', patch)
-        self.assertIn("kFloorDetectionSlot = 40;", patch)
-        self.assertIn("ReadPathBatch(kChaperoneRoot, &read, 1)", patch)
-        mesh = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-roomview-mesh.patch")
-        self.assertIn("kChaperoneRoot = 0x0000000600000003ull;", mesh)
-        self.assertIn('"/chaperone/room_setup/transform"', patch)
-        self.assertIn("read.tag != vr::k_unHmdMatrix34PropertyTag", patch)
-        self.assertIn("m.m[1][1] * y + m.m[1][3]", patch)
-        # Off: NaN clears the compositor's value.
-        off = patch[patch.index('ovrd_log("Room setup: floor detection %s\\n"') :]
-        self.assertIn("SendFloor(NAN);", off[: off.index("m_floor_sent = NAN;")])
-
-    def test_room_setup_detects_the_floor_again(self):
-        # libSlam's ground is fitted once, in the first second after a start; a step that
-        # detects the floor starts its ground detection again (setPlaneDetect, "plane" 1).
-        patch = read(ROOT / "userspace/pkgbuilds/pico4-monado/monado-steamvr-floor.patch")
-        self.assertIn("pico4_hmd_detect_floor(struct xrt_device *xdev) __attribute__((weak));", patch)
-        on = patch[patch.index('ovrd_log("Room setup: floor detection %s\\n"') :]
-        on = on[: on.index("m_floor_sent = NAN;")]
-        self.assertIn("if (on && pico4_hmd_detect_floor != NULL && m_xhmd != NULL)", on)
-        hmd = read(ROOT / "src/monado/pico4_hmd.c")
-        self.assertIn("pico4_slam_detect_floor(pico4_hmd(xdev)->slam);", hmd)
-        slam = read(ROOT / "src/monado/pico4_slam.c")
-        self.assertIn("__atomic_fetch_add(&feed->floor_requests, 1, __ATOMIC_ACQ_REL);", slam)
-        slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
-        loop = slamd[slamd.index("uint64_t floor_requests = __atomic_load_n(&feed->floor_requests") :]
-        request = loop[loop.index("if (fr != floor_requests) {") :]
-        self.assertIn('t.set(h, "plane", "1");', request[: request.index("}")])
-        # A new field: a new feed layout, which the driver and pico4-slamd check by the magic.
-        header = read(ROOT / "src/monado/pico4_slam_feed.h")
-        self.assertIn('0x37444546344f4350ull //!< "PCO4FED7"', header)
-        self.assertGreater(header.index("uint64_t floor_requests;"), header.index("meshes[PICO4_SLAM_FEED_MESHES];"))
-
-
-class FeedHeaderTests(unittest.TestCase):
-    def test_layout_is_libc_neutral(self):
-        # The same header builds against glibc (the driver) and bionic (pico4-slamd).
-        header = read(ROOT / "src/monado/pico4_slam_feed.h")
-        includes = re.findall(r"(?m)^#include <([^>]+)>", header)
-        self.assertEqual(includes, ["stdint.h"])
-        self.assertNotRegex(header, r"\b(size_t|long|int|unsigned)\b(?![0-9_])")
-        self.assertIn('#define PICO4_SLAM_FEED_PATH "/dev/shm/pico4-slam"', header)
 
 
 if __name__ == "__main__":

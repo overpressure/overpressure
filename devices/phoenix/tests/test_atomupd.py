@@ -39,11 +39,6 @@ class AtomupdManagerTests(unittest.TestCase):
             self.assertEqual(self.arms[command], "refuse", command)
         self.assertRegex(self.script, r"refuse\(\) \{\n\techo [^\n]*installing a new image[^\n]* >&2\n\texit 1")
 
-    def test_the_updater_itself_is_not_installed(self):
-        packages = (ROOT / "userspace/packages.txt").read_text(encoding="utf-8").split()
-        self.assertNotIn("atomupd-daemon", packages)
-        self.assertNotIn("steamos-atomupd-client", packages)
-
     def test_the_clients_update_check_finds_steamos_update(self):
         # The client runs /usr/bin/steamos-polkit-helpers/steamos-update check; SteamOS's updater
         # client brings that wrapper, so without this one the check ends in 127.

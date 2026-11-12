@@ -52,14 +52,6 @@ class PersistTests(unittest.TestCase):
         self.assertIn("After=pico4-storage-ro.service", unit)
         self.assertIn("Before=local-fs.target", unit)
 
-    def test_session_user_reads_a_copy_of_the_controller_bias_tables(self):
-        script = read(ROOT / "userspace/rootfs/usr/libexec/pico4/persist")
-        self.assertIn('"$dir"/pvr/?????????????????.txt', script)
-        self.assertIn("install -m 644", script)
-        self.assertIn("/run/pico4-controllers/", script)
-        driver = read(ROOT / "src/monado/pico4_ctrack.cpp")
-        self.assertIn('"/run/pico4-controllers/" + sn + ".txt"', driver)
-
     def test_fan_batch_from_the_serial_at_run_time(self):
         fan = read(ROOT / "userspace/rootfs/usr/bin/pico4-fan")
         self.assertIn('SERIAL_FILE = Path("/mnt/vendor/persist/falcon/sn")', fan)
