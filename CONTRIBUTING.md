@@ -17,8 +17,9 @@ Open an issue with the template and attach the headset's support bundle (the PIC
 
 ## A change
 
-- Work on a branch and open a pull request against `main`. CI has to pass: the host tests on Python 3.9 and 3.13
-  (Linux, and on GitHub also Windows and macOS), `make lint` (ruff and ty through uv:
+- Work on a branch and open a pull request against `main`. CI has to pass: the host tests on Linux with Python 3.9
+  and 3.13 (a system Python may be either) and on Windows and macOS with 3.12 (what the start scripts install),
+  `make lint` (ruff and ty through uv:
   [docs/tool.md](docs/tool.md#development)), the shell tests, shellcheck, the C tests, the link check and the
   private-data scan.
 - [CLAUDE.md](CLAUDE.md) and each headset's CLAUDE.md hold the project's rules, for people and agents alike: hard
