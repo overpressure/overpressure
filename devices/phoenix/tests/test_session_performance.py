@@ -1,103 +1,63 @@
 # SPDX-License-Identifier: Unlicense
-"""session-performance: the verdict on a session's frame recording."""
+"""The runner's line for session-performance's verdict, on golden verdicts."""
 
-import importlib.machinery
-import importlib.util
-import json
-import subprocess
-import sys
-import tempfile
 import unittest
-from pathlib import Path
-from typing import Any
 
 from devices.phoenix.tooling import userspace
 
-ROOT = Path(__file__).resolve().parents[1]
-PATH = ROOT / "userspace/rootfs/usr/libexec/pico4/session-performance"
-_loader = importlib.machinery.SourceFileLoader("session_performance", str(PATH))
-_spec = importlib.util.spec_from_loader("session_performance", _loader)
-assert _spec is not None
-perf = importlib.util.module_from_spec(_spec)
-_loader.exec_module(perf)
+LIMITS = {
+    "commit_hz_min": 85.5,
+    "late_percent_max": 1.0,
+    "stalls_max": 0,
+    "hottest_c_max": 90.0,
+    "job_margin_p99_ms_min": 1.0,
+    "web_helper_gpu_percent_tested": 1.0,
+}
+
+# session-performance's verdict on 30 s of Valve's session at 90 commits per second, 61.5 °C.
+PASSED = {
+    "status": "passed",
+    "failures": [],
+    "warnings": [],
+    "window_seconds": 30.0,
+    "commit_hz": 90.0,
+    "late_percent": 0.07,
+    "stalls": 0,
+    "gpu_ms": {"mean": 3.1, "p90": 4.0, "max": 9.8},
+    "job_margin_ms": None,
+    "web_helper_gpu_percent": None,
+    "hottest_c": 61.5,
+    "max_interval_ms": 20.4,
+    "limits": LIMITS,
+}
+
+# The same window at 90.5 °C.
+HOT = {**PASSED, "status": "failed", "failures": ["hottest zone 90.5 °C, above 90.0 °C"], "hottest_c": 90.5}
+
+# A window with the job margins measured and no Steam panel drawn.
+NO_PANEL = {
+    **PASSED,
+    "warnings": ["no Steam panel was tested: the web helpers drew nothing in this window"],
+    "job_margin_ms": {"p50": 7.1, "p99": 6.3, "frames": 900, "without_a_job": 0},
+    "web_helper_gpu_percent": 0.0,
+    "hottest_c": 60.0,
+}
 
 
-def stats(commits: int, seconds: float, late: int, stalls: int, max_interval: float = 20.4) -> dict[str, Any]:
-    """msm-frame-stats' recording of the window (only the fields the verdict reads, and some)."""
-    return {
-        "target": "msm",
-        "commits": commits,
-        "commit_hz": round((commits - 1) / seconds, 4),
-        "max_interval_ms": max_interval,
-        "late": late,
-        "stalls": stalls,
-        "vblank_hz": 89.9982,
-        "gpu_jobs": commits,
-        "gpu_ms": {"mean": 3.1, "p90": 4.0, "max": 9.8},
-    }
-
-
-# Valve's session on the Frame's compositor path: 90 commits per second over 30 s.
-FRAMES = stats(commits=2700, seconds=30.0, late=2, stalls=0)
-
-
-class VerdictTests(unittest.TestCase):
-    def test_the_window_passes(self):
-        v = perf.verdict(FRAMES, 61.5)
-        self.assertEqual(v["status"], "passed", v["failures"])
-        self.assertAlmostEqual(v["commit_hz"], 90.0, delta=0.05)
-        self.assertEqual(v["stalls"], 0)
-        self.assertAlmostEqual(v["late_percent"], 100 * 2 / 2700, places=2)
-        self.assertEqual(v["gpu_ms"]["mean"], 3.1)
-        self.assertEqual(v["limits"]["commit_hz_min"], 85.5)
-
-    def test_each_limit_fails_on_its_own(self):
-        cases = [
-            ("rate", stats(commits=1500, seconds=30.0, late=2, stalls=0), 61.5, "commits/s"),
-            ("late", stats(commits=2700, seconds=30.0, late=60, stalls=0), 61.5, "late"),
-            ("stall", stats(commits=2700, seconds=30.0, late=2, stalls=1), 61.5, "above 100 ms"),
-            ("heat", FRAMES, 90.5, "hottest zone"),
-            ("no temperature", FRAMES, None, "temperature"),
-        ]
-        for name, frames, hottest, words in cases:
-            with self.subTest(name):
-                v = perf.verdict(frames, hottest)
-                self.assertEqual(v["status"], "failed")
-                self.assertEqual(len(v["failures"]), 1, v["failures"])
-                self.assertIn(words, v["failures"][0])
-
-    def test_missing_or_empty_statistics_fail(self):
-        self.assertEqual(perf.verdict(None, 60.0)["status"], "failed")
-        self.assertIn("no commits", perf.verdict({"target": "msm", "commits": 0}, 60.0)["failures"][0])
-
-    def test_command_line(self):
-        with tempfile.TemporaryDirectory() as temp:
-            frames = Path(temp) / "frames.json"
-            frames.write_text(json.dumps(FRAMES))
-            out = subprocess.run(  # noqa: S603  # this Python on the repository's program
-                [sys.executable, str(PATH), str(frames), "61.5"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                check=True,
-            ).stdout
-            self.assertEqual(json.loads(out)["status"], "passed")
-            out = subprocess.run(  # noqa: S603  # this Python on the repository's program
-                [sys.executable, str(PATH), str(Path(temp) / "missing"), "nan"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                check=True,
-            ).stdout
-            self.assertEqual(json.loads(out)["status"], "failed")
-
-    def test_runner_line_names_both_numbers_and_failures(self):
-        line = userspace.format_valve_performance(perf.verdict(FRAMES, 61.5))
+class RunnerLineTests(unittest.TestCase):
+    def test_the_line_names_both_numbers(self):
+        line = userspace.format_valve_performance(PASSED)
         self.assertTrue(line.startswith("performance: passed (90.0 commits/s"), line)
-        failed = userspace.format_valve_performance(perf.verdict(FRAMES, 90.5))
-        self.assertIn("hottest zone 90.5", failed)
-        # The agreed limit: up to 90 °C passes.
-        self.assertEqual(perf.verdict(FRAMES, 90.0)["status"], "passed")
+
+    def test_the_line_names_the_failures(self):
+        self.assertIn("hottest zone 90.5", userspace.format_valve_performance(HOT))
+
+    def test_the_line_names_the_job_margin_and_the_warnings(self):
+        line = userspace.format_valve_performance(NO_PANEL)
+        self.assertIn("job margin p99 6.3 ms, web helpers 0.0 % of the GPU", line)
+        self.assertIn("warning: no Steam panel was tested", line)
+
+    def test_no_verdict(self):
         self.assertEqual(userspace.format_valve_performance(None), "performance: no verdict")
 
 

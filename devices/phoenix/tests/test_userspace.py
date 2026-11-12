@@ -58,37 +58,9 @@ PASSING: dict[str, Any] = {
 
 
 class SshAccessTests(unittest.TestCase):
-    """Keys only, on USB and Wi-Fi (docs/security.md), and no key in anything the build shares."""
+    """The keys only on the data partition (docs/security.md), never in anything the build shares."""
 
     ROOT = Path(__file__).resolve().parents[1]
-
-    def test_sshd_takes_keys_only(self):
-        config = (self.ROOT / "userspace/rootfs/etc/ssh/sshd_config.d/50-pico4.conf").read_text(encoding="utf-8")
-        settings = dict(
-            line.split(None, 1)
-            for line in config.splitlines()
-            if line and not line.startswith("#") and not line.startswith("HostKey")
-        )
-        self.assertEqual(settings["PermitRootLogin"], "prohibit-password")
-        self.assertEqual(settings["PermitEmptyPasswords"], "no")
-        self.assertEqual(settings["PasswordAuthentication"], "no")
-        self.assertEqual(settings["KbdInteractiveAuthentication"], "no")
-        self.assertEqual(settings["AuthenticationMethods"], "publickey")
-
-    def test_no_account_has_a_usable_password(self):
-        build = (self.ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertNotIn("passwd -d", build)
-        self.assertIn("in_t usermod -p '*' root", build)
-        self.assertIn("in_t usermod -p '*' \"$user\"", build)
-
-    def test_no_key_in_the_image_sources(self):
-        tree = self.ROOT / "userspace/rootfs"
-        names = [
-            p
-            for p in tree.rglob("*")
-            if p.name in ("authorized_keys", "id_ed25519", "id_rsa") or p.name.startswith("ssh_host_")
-        ]
-        self.assertEqual(names, [])
 
     def test_the_keys_reach_the_system_only_on_its_data_partition(self):
         # The boot image has no ramdisk to carry them; the maintenance stage 1 writes them onto the
@@ -99,6 +71,12 @@ class SshAccessTests(unittest.TestCase):
         self.assertIn('"$mnt/root/.ssh/authorized_keys"', keys)
         self.assertIn("readonly_again", keys)
         self.assertNotIn("dropbear-convert", (self.ROOT / "tooling/image.py").read_text(encoding="utf-8"))
+
+    def test_no_account_has_a_usable_password(self):
+        build = (self.ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
+        self.assertNotIn("passwd -d", build)
+        self.assertIn("in_t usermod -p '*' root", build)
+        self.assertIn("in_t usermod -p '*' \"$user\"", build)
 
 
 class PowerWarningTests(unittest.TestCase):

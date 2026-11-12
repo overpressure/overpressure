@@ -136,13 +136,7 @@ class ReleaseTests(unittest.TestCase):
 
 
 class LintScopeTests(unittest.TestCase):
-    """ruff and ty find Python files by their suffix: the headset's programs without one are listed by name."""
-
-    @staticmethod
-    def listed(text: str, table: str) -> set[str]:
-        section = text[text.index(f"[{table}]") :]
-        block = section[section.index(" = [") : section.index("\n]")]
-        return {line.strip().strip('",') for line in block.splitlines()[1:] if line.strip().startswith('"devices/')}
+    """Python files and the programs without a suffix: executable exactly when they have a shebang."""
 
     @staticmethod
     def python_program(path: Path) -> bool:
@@ -151,17 +145,6 @@ class LintScopeTests(unittest.TestCase):
         with path.open("rb") as file:
             first = file.readline(128)
         return first.startswith(b"#!") and b"python" in first
-
-    def test_every_python_program_without_a_suffix_is_linted_and_type_checked(self):
-        programs = {
-            path.relative_to(REPO).as_posix()
-            for path in REPO.glob("devices/*/userspace/rootfs/**/*")
-            if self.python_program(path)
-        }
-        self.assertTrue(programs)
-        text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertEqual(self.listed(text, "tool.ruff"), programs)
-        self.assertEqual(self.listed(text, "tool.ty.src"), programs)
 
     def test_python_files_are_executable_exactly_when_they_have_a_shebang(self):
         # ruff's EXE001/EXE002 on Linux; Windows checkouts can't see the bit, so Git's index decides here.
@@ -193,7 +176,7 @@ if __name__ == "__main__":
 
 class ScriptModeTests(unittest.TestCase):
     #: Where the image builds set each file's mode themselves.
-    IMAGE_TREES = ("/userspace/rootfs/", "/initramfs/")
+    IMAGE_TREES = ("/initramfs/",)
 
     def test_every_script_is_executable_in_git(self):
         # A Windows checkout, and Docker's view of it, show every file as executable; Linux and macOS

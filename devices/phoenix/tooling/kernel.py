@@ -168,12 +168,15 @@ def _numbered(name: str) -> str:
 
 
 #: Where the kernel's names are used: the image's files, its build, Monado's cameras and panels.
-_ROOTFS = "devices/phoenix/userspace/rootfs"
-_LIBEXEC = f"{_ROOTFS}/usr/libexec/pico4"
+_PHOENIX = f"{IN_PACKAGES}phoenix"
 _BUILD = "devices/phoenix/scripts/build-userspace.sh"
 _MONADO = f"{IN_PACKAGES}phoenix/pico4-monado"
 _CAM = f"{_MONADO}/pico4_cam.c"
-_BATTERY_GUARD = f"{IN_PACKAGES}phoenix/pico4-power/battery-guard"
+#: The scripts that read the power supplies.
+_POWER_READERS = tuple(
+    f"{_PHOENIX}/{name}"
+    for name in ("pico4-power/battery-guard", "pico4-base/charger", "pico4-checks/pico4-userspace-check")
+)
 CONTRACTS = (
     Contract(
         "the RGB camera's register table: where the driver loads it, where the image installs it",
@@ -188,13 +191,13 @@ CONTRACTS = (
     Contract(
         "the audio calibration file's magic: what pico4-audiocal writes, what the driver takes",
         (("sound/soc/qcom/qdsp6/q6calibration-pico4.c", r"#define CAL_MAGIC\s+(0x[0-9a-fA-F]+)"),),
-        ((f"{_ROOTFS}/usr/bin/pico4-audiocal", r'^MAINLINE_MAGIC = b"(\w+)"'),),
+        ((f"{_PHOENIX}/pico4-audio/pico4-audiocal", r'^MAINLINE_MAGIC = b"(\w+)"'),),
         kernel_value=lambda value: int(value, 16).to_bytes(4, "little").decode("ascii"),
     ),
     Contract(
         "the audio calibration file's version",
         (("sound/soc/qcom/qdsp6/q6calibration-pico4.c", r"#define CAL_VERSION\s+(\d+)"),),
-        ((f"{_ROOTFS}/usr/bin/pico4-audiocal", r"^MAINLINE_VERSION = (\d+)"),),
+        ((f"{_PHOENIX}/pico4-audio/pico4-audiocal", r"^MAINLINE_VERSION = (\d+)"),),
     ),
     Contract(
         "the RGB camera's width: the mode imx471_mode.py takes and Monado's frames, the size the driver gives",
@@ -256,30 +259,30 @@ CONTRACTS = (
             ("drivers/gpu/drm/msm/dsi/dsi_host.c", r'alloc_ordered_workqueue\("([^"]+)", WQ_SYSFS'),
             ("drivers/gpu/drm/msm/msm_ringbuffer.c", r'msm_gem_object_set_name\(ring->bo, "([^"]+)"'),
         ),
-        ((f"{_LIBEXEC}/kthread-priorities", r"^for wq in ([^;]+);"),),
+        ((f"{_PHOENIX}/pico4-session/kthread-priorities", r"^for wq in ([^;]+);"),),
         here_value=_numbered,
     ),
     Contract(
         "the power supplies the scripts read",
         (("drivers/power/supply/pico4-pm8150b-battery.c", r'^\t\.name = "([^"]+)"'),),
-        ((_ROOTFS, r"power_supply/(\w+)/"), (_BATTERY_GUARD, r"power_supply/(\w+)/")),
+        tuple((path, r"power_supply/(\w+)/") for path in _POWER_READERS),
     ),
     Contract(
         "the power supplies' attributes the scripts read",
         (("drivers/power/supply/pico4-pm8150b-battery.c", r"^\tPOWER_SUPPLY_PROP_(\w+),$"),),
-        ((_ROOTFS, r"power_supply/\w+/(\w+)"), (_BATTERY_GUARD, r"power_supply/\w+/(\w+)")),
+        tuple((path, r"power_supply/\w+/(\w+)") for path in _POWER_READERS),
         kernel_value=str.lower,
     ),
     Contract(
         "the USB gadget functions the system's gadget creates",
         (("arch/arm64/configs/pico4.config", r"^CONFIG_USB_CONFIGFS_(\w+)=y$"),),
-        ((f"{_LIBEXEC}/usb-gadget", r"functions/(\w+)\."),),
+        ((f"{_PHOENIX}/pico4-base/usb-gadget", r"functions/(\w+)\."),),
         kernel_value=str.lower,
     ),
     Contract(
         "the video codec's firmware: the name the device tree gives, the file the image's probe waits for",
         (("arch/arm64/boot/dts/qcom/sm8250-pico4-phoenix.dts", r'firmware-name = "(venus\.mdt)";'),),
-        ((f"{_ROOTFS}/usr/lib/systemd/system/pico4-venus-probe.service", r"/usr/lib/firmware/(venus\.mdt)$"),),
+        ((f"{_PHOENIX}/pico4-base/pico4-venus-probe.service", r"/usr/lib/firmware/(venus\.mdt)$"),),
     ),
     Contract(
         "the device tree the boot image takes",

@@ -6,7 +6,6 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ROOTFS = ROOT / "userspace/rootfs"
 BINARY = ROOT / "prebuilt/aarch64/pico4-splash"
 
 
@@ -52,27 +51,11 @@ class SplashTests(unittest.TestCase):
         self.assertIn("find_primary();", source)
         self.assertIn("DRM_PLANE_TYPE_PRIMARY", source)
 
-    def test_preinit_starts_it_outside_charger_mode(self):
-        preinit = (ROOTFS / "usr/libexec/pico4/preinit").read_text(encoding="utf-8")
-        branch = preinit[preinit.index("= charger ]; then") : preinit.index("# Every disk and partition")]
-        self.assertRegex(branch, r"(?m)^else$")
-        self.assertRegex(branch.split("else", 1)[1], r"(?m)^\t/usr/bin/pico4-splash \d+ [^\n]*&$")
-        self.assertEqual(preinit.count("pico4-splash "), 1)
-        # Stage 1 no longer shows it: it is the maintenance environment.
+    def test_stage_one_does_not_show_it(self):
+        # The installed system's preinit starts it; stage 1 is the maintenance environment.
         self.assertNotIn("pico4-splash", (ROOT / "initramfs/init").read_text(encoding="utf-8"))
         image = (ROOT / "tooling/image.py").read_text(encoding="utf-8")
         self.assertNotIn("pico4-splash", image)
-
-    def test_stage_two_unit(self):
-        unit = (ROOTFS / "usr/lib/systemd/system/pico4-splash.service").read_text(encoding="utf-8")
-        self.assertIn("ConditionKernelCommandLine=pico4.root=installed", unit)
-        self.assertIn("DefaultDependencies=no", unit)
-        self.assertIn("Conflicts=shutdown.target", unit)
-        self.assertRegex(unit, r"(?m)^ExecStart=/usr/bin/pico4-splash \d+$")
-        self.assertIn("WantedBy=sysinit.target", unit)
-        build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
-        self.assertRegex(build, r"systemctl enable [^\n]*(\\\n[^\n]*)*pico4-splash\.service")
-        self.assertIn("for f in pico4-reboot pico4-splash; do", build)
 
 
 if __name__ == "__main__":

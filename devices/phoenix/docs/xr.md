@@ -10,7 +10,7 @@ the measurements are under [Verified results](#verified-results).
 
 | Part | How it works | Code |
 | --- | --- | --- |
-| Head IMU | ICM-42688 on the sensor DSP (SLPI), read over QMI/QRTR; 1 kHz | `sm8250-hexagonrpc` (hexagonrpcd), [pico4_ssc.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ssc.c), [`pico4-imu`](../userspace/rootfs/usr/bin/pico4-imu) |
+| Head IMU | ICM-42688 on the sensor DSP (SLPI), read over QMI/QRTR; 1 kHz | `sm8250-hexagonrpc` (hexagonrpcd), [pico4_ssc.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ssc.c), [`pico4-imu`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-xr/pico4-imu) |
 | Head 6DoF | PICO OS's `libSlam.so` on the Compute DSP, in a bionic root, fed by `pico4-slamd`; Basalt selectable | [src/stockslam/](../src/stockslam), [pico4_slam.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_slam.c) |
 | Display, lenses, IPD | 2 × 2160×2160 at 90 Hz; PICO OS's lens model; IPD from the lens motor's MCU, set by `pico4-lens` | [pico4_lens.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_lens.c), [pico4_ipd.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ipd.c) |
 | Cameras | 4 × OV7251 and the IMX471 RGB camera on V4L2/CAMSS, frame sync from the station | [pico4_cam.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_cam.c), [`pico4-cam`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-cam.c) |
@@ -24,7 +24,7 @@ Packages: the driver in [pico4-monado](https://github.com/overpressure/packages/
 
 > **Rules for this hardware**
 >
-> - **DSP recovery.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4/remoteproc-boot)
+> - **DSP recovery.** [`remoteproc-boot`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/remoteproc-boot)
 >   starts a DSP only with remoteproc's crash recovery on: a crash then restarts only that DSP; with
 >   recovery off it would stay down.
 > - **No firmware commands.** The station link (`/dev/spidev0.0`) also carries station and
@@ -72,7 +72,7 @@ The image does not carry it: `persist` is mounted read-only at `/mnt/vendor/pers
 
 The IMU hangs off the SLPI, a Hexagon DSP running Qualcomm's Sensor Core:
 
-1. **Firmware.** [`remoteproc-boot`](../userspace/rootfs/usr/libexec/pico4/remoteproc-boot) starts
+1. **Firmware.** [`remoteproc-boot`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/remoteproc-boot) starts
    `slpi.mdt` (from the modem partition of PICO's public package) through remoteproc. The kernel
    provides QRTR's name service and the PD mapper.
 2. **File server.** `hexagonrpcd` (linux-msm/hexagonrpc, [`sm8250-hexagonrpc`](https://github.com/overpressure/packages/blob/main/sm8250/sm8250-hexagonrpc/PKGBUILD))
@@ -176,7 +176,7 @@ transaction, and the IPD read gives up after a second. The driver re-reads every
 SteamVR gets the new eye positions and `Prop_UserIpdMeters_Float`. Without an answer it uses Monado's
 default.
 
-**IPD set.** The motor moves the lenses (no wheel). [`pico4-lens`](../userspace/rootfs/usr/bin/pico4-lens)
+**IPD set.** The motor moves the lenses (no wheel). [`pico4-lens`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-xr/pico4-lens)
 `set MM` does what `gd32ipdservice`'s `SetIPDPosition` does: `A0 22 00 00 00 82` (no timestamp
 reports), `A0 07 00 lo hi xor` (the target in 0.01 mm, 62.00–72.00), then `A0 11 00 00 00 B1` every
 50 ms until the reply `79 state xor` says 0 (1 while moving, 2 at the near end). 0.9 mm take 0.17 s
@@ -365,7 +365,7 @@ the frames the driver already captures in `vrserver`, so cameras and station kee
   anchors) and 42 (tracking world jumps) are not needed.
 
 The producer [`pico4-roomview`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-roomview.c) is a user unit that runs with SteamVR
-([pico4-roomview.service](../userspace/rootfs/usr/lib/systemd/user/pico4-roomview.service)):
+([pico4-roomview.service](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/pico4-roomview.service)):
 
 ```text
 cameras ─▶ driver_monado (vrserver) ─▶ /dev/shm/pico4-roomview ─▶ pico4-roomview ─▶ vrcompositor
@@ -436,10 +436,10 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   trace calls and the hardware-buffer calls, which fail) and `libpico4-slam-stubs.so` (preloaded:
   Android logging to the journal, empty property lookups). Programs in the root are built with the
   host's clang for `aarch64-linux-android29`, without an NDK ([src/stockslam](../src/stockslam)).
-- **Its runner.** [`stock-slam`](../userspace/rootfs/usr/libexec/pico4/stock-slam) chroots a program
+- **Its runner.** [`stock-slam`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-xr/stock-slam) chroots a program
   of the root in a private mount namespace with `/dev`, `/proc`, `/sys`, persist's `pvr/` at
   `/mnt/vendor/persist/pvr` and `/mnt/vendor/pvr`, and tmpfs `/data` and `/tmp`.
-- **The CDSP.** [`pico4-cdsp.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-cdsp.service)
+- **The CDSP.** [`pico4-cdsp.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-xr/pico4-cdsp.service)
   boots it with `remoteproc-boot cdsp` (`cdsp.mdt`, `cdspr.jsn`). `pico4-cdsprpcd.service` runs
   `cdsprpcd` in the root; without it the DSP's loader stalls on the tracker's first module. The
   tracker opens a signed user PD (`fastrpc_shell_3`) and loads its modules itself. The DSP's context
@@ -453,7 +453,7 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   ION allocations come from `/dev/dma_heap/system`. The DSP's memory requests (`apps_mem`) are mapped
   by descriptor through the kernel commit “misc: fastrpc: map a client's buffer through mmap”. Its translations have native tests.
 - **pico4-slamd.** [`pico4-slamd`](../src/stockslam/pico4-slamd.c)
-  ([unit](../userspace/rootfs/usr/lib/systemd/system/pico4-slamd.service), wanted by Valve's session
+  ([unit](https://github.com/overpressure/packages/blob/main/phoenix/pico4-xr/pico4-slamd.service), wanted by Valve's session
   and Monado) creates `/dev/shm/pico4-slam` (group video, 0660) and drives the tracker as PICO OS's
   tracking service does: `createHandle("")`, `headSensorModel` `icm4x6xx`, `startAlgorithm`, the
   result callback, `start6DOF` `6`; one thread passes every IMU sample, another each frame set once

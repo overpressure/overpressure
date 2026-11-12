@@ -40,17 +40,6 @@ class ExtractionTests(unittest.TestCase):
         ):
             self.assertIn("ln -sfn " + link, build)
         self.assertIn('mkdir -p "$T/mnt/vendor/persist"', build)
-        self.assertIn("pico4-persist.service", build[build.index("in_t systemctl enable") :])
-
-
-class PersistTests(unittest.TestCase):
-    def test_mounted_read_only_without_journal_replay(self):
-        script = read(ROOT / "userspace/rootfs/usr/libexec/pico4/persist")
-        self.assertIn("mount -t ext4 -o ro,noload,nodev,nosuid,noexec", script)
-        self.assertIn('blockdev --setro "$dev"', script)
-        unit = read(ROOT / "userspace/rootfs/usr/lib/systemd/system/pico4-persist.service")
-        self.assertIn("After=pico4-storage-ro.service", unit)
-        self.assertIn("Before=local-fs.target", unit)
 
 
 class DevImageTests(unittest.TestCase):

@@ -7,7 +7,7 @@ Steam Frame 7.2 kernel.
 | --- | --- |
 | Works (worn) | 90 frames/s on both panels; the Steam client signs in and runs its library: x86 games through Proton and FEX, Android apps through Lepton; Steam Link from a PC |
 | How | Valve's `gamescope-session.target`: gamescope (OpenVR backend) and SteamVR 2.17.10, whose compositor drives the panels in direct mode through Turnip's display WSI on msm; `driver_monado` supplies the headset and both controllers in 6DoF from the PICO 4 driver of [xr.md](xr.md) |
-| Code | units, drop-ins and scripts in [userspace/rootfs](../userspace/rootfs); SteamVR files in [userspace/session](../userspace/session); `pico4-monado`, `overpressure-gamescope`, `overpressure-mangohud`, `pico4-swapchain-usage` in [overpressure/packages](https://github.com/overpressure/packages); setup panel in [pico4-monado's tools](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado) |
+| Code | units, drop-ins, scripts and SteamVR files in [`pico4-session`](https://github.com/overpressure/packages/tree/main/phoenix/pico4-session), the checks in [`pico4-checks`](https://github.com/overpressure/packages/tree/main/phoenix/pico4-checks); `pico4-monado`, `overpressure-gamescope`, `overpressure-mangohud`, `pico4-swapchain-usage` in [overpressure/packages](https://github.com/overpressure/packages); setup panel in [pico4-monado's tools](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado) |
 | Results | [kernel.md](kernel.md#results) |
 
 Valve's packages come from the Frame's public repository ([userspace.md](userspace.md)); the build
@@ -49,12 +49,12 @@ system: dsp_service, steamvr-program-ble (controller radio firmware), deckard-fp
 
 ### The session
 
-[`pico4-session.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-session.service) (wanted by
+[`pico4-session.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/pico4-session.service) (wanted by
 `graphical.target`, needs `/dev/dri/renderD128`) runs
-[`/usr/libexec/pico4/session`](../userspace/rootfs/usr/libexec/pico4/session) as `steamos` (uid 1000)
-through the PAM stack [`pico4-session`](../userspace/rootfs/etc/pam.d/pico4-session), without
+[`/usr/libexec/pico4/session`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/session) as `steamos` (uid 1000)
+through the PAM stack [`pico4-session`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/pico4-session), without
 authentication. `pam_env` runs before `pam_systemd` and sets class `user`, type `wayland` and seat
-`seat0` ([`session.pam-env`](../userspace/rootfs/etc/pico4/session.pam-env)), as sddm does: a session
+`seat0` ([`session.pam-env`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/session.pam-env)), as sddm does: a session
 without a terminal would not get class `user`, and only with it does logind start the user manager and
 count the session as active. gamescope opens the seat through logind (libseat). The unit also pulls in
 `pico4-slamd` (the head tracker) and `pico4-vr-performance` (PICO OS's VR CPU limits,
@@ -72,7 +72,7 @@ Restarts:
   Five starts within ten minutes stop it until the next boot or a deliberate start; deliberate restarts
   reset the count first (`systemctl reset-failed pico4-session.service`).
 - A SteamVR that ends without a requested stop (a crashed `vrcompositor`) ends the session
-  ([`steamvr-ended`](../userspace/rootfs/usr/libexec/pico4/steamvr-ended)). Restarting only SteamVR
+  ([`steamvr-ended`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/steamvr-ended)). Restarting only SteamVR
   would leave gamescope bound to the dead compositor: every DMA-BUF import of Steam's panel fails and
   the panel never shows. gamescope ignores the stop; its unit's 10 s end it.
 - A SteamVR that failed for good (its start limit, [below](#valves-packages)) ends the session through
@@ -81,7 +81,7 @@ Restarts:
 - A requested restart of `steamvr.service` keeps the session and restarts gamescope with it. A
   deliberate stop stays stopped.
 
-[`70-pico4-xr.rules`](../userspace/rootfs/usr/lib/udev/rules.d/70-pico4-xr.rules) opens the XR hardware
+[`70-pico4-xr.rules`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-xr/70-pico4-xr.rules) opens the XR hardware
 to the `video` group, of which `steamos` is a member: the controller radio (`spidev0.0`), the lens MCU's
 UART (`ttyHS1`), the cameras' V4L2 and media nodes, the DRM card nodes and the dma-buf heaps.
 `pico4-userspace-check` confirms `steamos` can open `/dev/dri/card0`, `/dev/spidev0.0`, `/dev/ttyHS1`,
@@ -108,7 +108,7 @@ stops at its first entry here; `pico4-kthread-priorities` sets its values), `ste
 `steamvr-web-debug-portforward`, `steam-web-debug-portforward`. Masked user units (global):
 `steamvr-v4l2cam`, `steamvr-proxmicmute` and `steamos-scheduler` (`scx_lavd` needs an option Valve's
 kernel configuration leaves out).
-[`pico4-micmute`](../userspace/rootfs/usr/lib/systemd/user/pico4-micmute.service) replaces
+[`pico4-micmute`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-audio/pico4-micmute.service) replaces
 `steamvr-proxmicmute`: it mutes PipeWire's default microphone while the wear sensor reports the headset
 off the head (`$XDG_RUNTIME_DIR/pico4-worn`, written by the driver). The input method,
 `ibus-gamescope`, runs with the Frame's `ibus`.
@@ -137,22 +137,22 @@ Further adaptations:
 
 | Where | What | Why |
 | --- | --- | --- |
-| [`gamescope-session.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/gamescope-session.service.d/50-pico4.conf) | `WLR_LIBINPUT_NO_DEVICES=1` | input comes through SteamVR's overlays and gamescope's EIS socket |
+| [`gamescope-session.service` drop-in](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/gamescope-session.service.d-50-pico4.conf) | `WLR_LIBINPUT_NO_DEVICES=1` | input comes through SteamVR's overlays and gamescope's EIS socket |
 | | `MESA_LOADER_DRIVER_OVERRIDE=zink` | OpenGL on the GPU for Xwayland's glamor (and DRI3 for X11 clients), zink on Turnip ([graphics.md](graphics.md#opengl)) |
-| [`steam.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/steam.service.d/50-pico4.conf) | `MESA_LOADER_DRIVER_OVERRIDE=zink` | OpenGL on the GPU for the client, its web helper and its games |
+| [`steam.service` drop-in](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/steam.service.d-50-pico4.conf) | `MESA_LOADER_DRIVER_OVERRIDE=zink` | OpenGL on the GPU for the client, its web helper and its games |
 | | `STEAM_EXTRA_ARGS=-cef-use-vulkan` | the web helper composites on ANGLE's Vulkan backend; on its OpenGL backend the UI flickers ([The Steam client](#the-steam-client)) |
 | | `STEAM_LAUNCH_WRAPPER_AFFINITY_LIST`, `STEAM_DESKTOP_APP_AFFINITY_LIST` `0xf0` | games on cores 4–7 ([The Steam client](#the-steam-client)) |
 | | `STEAM_ENABLE_VOLUME_HANDLER=1` | without it Steam shows the volume keys' popup but leaves the volume alone |
 | | `ExecStartPre` `steam-proton-mapping`; `wait-first-run` (`55-pico4-first-run.conf`) | Proton stable instead of Experimental; the [first-run setup](#first-run-setup) |
-| [`steamvr.service` drop-in](../userspace/rootfs/usr/lib/systemd/user/steamvr.service.d/50-pico4.conf) | `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` | `driver_monado` recommends the panel's render size, not Monado's 140 % |
+| [`steamvr.service` drop-in](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/steamvr.service.d-50-pico4.conf) | `XRT_COMPOSITOR_SCALE_PERCENTAGE=100` | `driver_monado` recommends the panel's render size, not Monado's 140 % |
 | | `PICO4_FRAMES_AHEAD=1`, `PICO4_VSYNC_LEAD_US=5000` | the pacing of [SteamVR's display](#steamvrs-display) |
 | | `ExecStartPre` `steamvr-settings` | the image's SteamVR settings into the user's file ([below](#steamvr-configuration)) |
 | | `ExecStop=-…vrstartup -shutdown` (exit status ignored) | at a session stop `vrserver` is often gone and the shutdown request exits 255; counted as failed launches, three in a row make Valve's `steamvr-health-check` reset the Steam installation. A crash still fails the unit |
-| [`/usr/bin/displays_turn_off_drm_master`](../userspace/rootfs/usr/bin/displays_turn_off_drm_master) | does nothing | stands in for the Frame's tool that `steamvr.service` runs at `ExecStopPost` (a missing program fails the unit) |
-| [`pico4-kthread-priorities.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-kthread-priorities.service) | the Frame's values: `gpu-worker` and `crtc_event:N` SCHED_RR 99, `atomic-worker-N` 88, `spi0` and the soundwire interrupt threads 80; workqueues `msm`, `ring0`–`ring3`, `dsi_drm_work_0/1` priority 90 (Valve's `prio` attribute) | SteamVR's threads run at SCHED_RR 99 and would hold back their own submissions and flips; `ring0` at nice 0 delays the compositor's GPU jobs by up to 6 ms |
+| [`/usr/bin/displays_turn_off_drm_master`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/displays_turn_off_drm_master) | does nothing | stands in for the Frame's tool that `steamvr.service` runs at `ExecStopPost` (a missing program fails the unit) |
+| [`pico4-kthread-priorities.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/pico4-kthread-priorities.service) | the Frame's values: `gpu-worker` and `crtc_event:N` SCHED_RR 99, `atomic-worker-N` 88, `spi0` and the soundwire interrupt threads 80; workqueues `msm`, `ring0`–`ring3`, `dsi_drm_work_0/1` priority 90 (Valve's `prio` attribute) | SteamVR's threads run at SCHED_RR 99 and would hold back their own submissions and flips; `ring0` at nice 0 delays the compositor's GPU jobs by up to 6 ms |
 | `/opt/steamvr/bin/linuxarm64/vrcompositor-launcher` | `cap_sys_nice=eip` | the compositor raises its priority |
 | `~/.steam/steam`, `~/.steam/root` | links to `~/.local/share/Steam` | SteamVR finds its logs and Steam through them (the Frame's `RUNSTEAM.sh` makes them) |
-| [`steamvr.service` start limit](../userspace/rootfs/etc/systemd/user/steamvr.service.d/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, then `pico4-steamvr-failed.service` ends the session | Valve's unit restarts always and a start takes 15–20 s, so systemd's default limit never applies; each start resets the controller radio, so a crash loop buzzed the controllers without end. `RestartMode=direct` keeps the unit out of the failed state between restarts. The session script resets the counter per session |
+| [`steamvr.service` start limit](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/50-pico4-restart-limit.conf) | restarts 25 s apart (`RestartMode=direct`), at most three starts in five minutes, then `pico4-steamvr-failed.service` ends the session | Valve's unit restarts always and a start takes 15–20 s, so systemd's default limit never applies; each start resets the controller radio, so a crash loop buzzed the controllers without end. `RestartMode=direct` keeps the unit out of the failed state between restarts. The session script resets the counter per session |
 
 ### The Steam client
 
@@ -174,9 +174,9 @@ Further adaptations:
   firmware, controller pairing, underscan and audio. The [first-run setup](#first-run-setup) covers it.
 - **Time zone.** The client's setting runs `/usr/bin/steamos-polkit-helpers/steamos-set-timezone ZONE`
   (one of its 62 zones). The image's
-  [own helper](../userspace/rootfs/usr/bin/steamos-polkit-helpers/steamos-set-timezone) has timedated set
+  [own helper](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/steamos-set-timezone) has timedated set
   a zone of the system's zoneinfo, which
-  [polkit](../userspace/rootfs/usr/share/polkit-1/rules.d/50-pico4-timezone.rules) allows the session user.
+  [polkit](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/50-pico4-timezone.rules) allows the session user.
 - **Device type.** `steamclient.so` sets it from the device tree's first `compatible` entry and `model`:
   5001 (Steam Frame) for `qcom` with a model containing `SM8650`; `valve`, `lenovo` and `OEM` entries give
   544 (Deck), 545 (Legion Go S) and 546 (Steam Machine); anything else on SteamOS is 541 (generic). The
@@ -225,7 +225,7 @@ Further adaptations:
   CPU compositing (`-cef-disable-gpu-compositing`) does not flicker either but takes 2.06 cores.
 - **The Frame's system updater is not installed** (`atomupd-daemon`, `steamos-atomupd-client`): it must
   never run here. The client polls `steamos-select-branch` and `steamos-update`, which call
-  `atomupd-manager`; the image's [`atomupd-manager`](../userspace/rootfs/usr/bin/atomupd-manager)
+  `atomupd-manager`; the image's [`atomupd-manager`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/atomupd-manager)
   answers as an up-to-date system on the stable branch (`rel`, "No update available") and refuses to
   switch or update. The image's `/usr/bin/steamos-polkit-helpers/steamos-update` calls it directly (no
   root needed). OS and BIOS checks answer "up to date" (`steamos-update` exit 7, `jupiter-biosupdate
@@ -247,7 +247,7 @@ What a new owner meets, from an empty data partition:
 | Introduction | the PICO 4's controllers, health and safety, laser and PICO button, the playspace setup | after the first sign-in, once |
 
 The setup and the introduction are [`pico4-onboarding`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-onboarding.cpp)
-([`pico4-onboarding.service`](../userspace/rootfs/usr/lib/systemd/user/pico4-onboarding.service), part of
+([`pico4-onboarding.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/pico4-onboarding.service), part of
 `steamvr.service`): a SteamVR overlay 1.3 m in front of the wearer, level, over other overlays. It comes
 back in front when the headset is put on and a second after it left the view (more than 30 degrees
 aside, or 0.3 m above or below the eyes); while looked at it stays. During the setup it is SteamVR's
@@ -268,7 +268,7 @@ scene application, otherwise a background one.
 
 Before the first sign-in the panel replaces the client's own setup. The client unpacks itself first (the
 panel shows its texts and fonts), then waits in
-[`wait-first-run`](../userspace/rootfs/usr/libexec/pico4/wait-first-run) (`ExecStartPre` of
+[`wait-first-run`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/wait-first-run) (`ExecStartPre` of
 `steam.service`) until the setup is finished or skipped, someone signed in before, or the panel's service
 failed for good. Until then `gamescope-session.target` stays in its start job, and the checks
 (`pico4-userspace-check`, `pico4-valve-session-check`) take SteamVR, gamescope and the setup's panel for
@@ -309,7 +309,7 @@ Cyrillic, the client's Noto font (`clientui/fonts`) every other script.
 | The client's page | Here |
 | --- | --- |
 | Welcome | the client's welcome, the controllers' state; Skip leaves the setup for good |
-| Language | the client's 31 languages by their own names; a choice sets the client's language in `registry.vdf` ([`steam-language`](../userspace/rootfs/usr/libexec/pico4/steam-language); a running client restarts, as its own setting does) and the panel's |
+| Language | the client's 31 languages by their own names; a choice sets the client's language in `registry.vdf` ([`steam-language`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/steam-language); a running client restarts, as its own setting does) and the panel's |
 | Time zone | the client's 62 zones with its names and cities, set through `steamos-set-timezone` |
 | Network | Wi-Fi networks (`nmcli`), strongest first; Wi-Fi turned on if off. A password page as in the client's settings: a field, a show switch, and SteamVR's keyboard in minimal mode, which sends each key to the panel and keeps no text. The password goes to `nmcli --ask` on its input only. A hidden network's name comes first on the same kind of page. The attempt shows a spinner, then a tick, or a cross with the reason and the password page again; a refused password's profile is deleted. Proxy and captive portals are in the client's settings |
 | Update | none: the system is updated from the installer on a computer; the client updates itself at every start |
@@ -336,9 +336,9 @@ on the host. `pico4-onboarding --render DIR [LANGUAGE]` draws every page as PNG 
 
 A development runtime outside Valve's session: the driver's OpenXR test clients (`pico4-openxr-pose`,
 `pico4-openxr-display`, [xr.md](xr.md)) run through it with the session stopped.
-[`pico4-monado.socket`](../userspace/rootfs/usr/lib/systemd/system/pico4-monado.socket) listens on
+[`pico4-monado.socket`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/pico4-monado.socket) listens on
 `/run/pico4-monado/monado_comp_ipc` (mode 0666); the first client starts
-[`pico4-monado.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-monado.service), which takes the
+[`pico4-monado.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/pico4-monado.service), which takes the
 display in direct mode with three swapchain images.
 
 ### SteamVR's display
@@ -372,7 +372,7 @@ display in direct mode with three swapchain images.
 
 ### SteamVR configuration
 
-The session user's [steamvr.vrsettings](../userspace/session/steamvr.vrsettings) (in
+The session user's [steamvr.vrsettings](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/steamvr.vrsettings) (in
 `~/.local/share/Steam/config`):
 
 - disables `driver_cv`, `driver_frame_hmd`, `driver_frame_controller`, `driver_indexhmd`,
@@ -392,9 +392,9 @@ The session user's [steamvr.vrsettings](../userspace/session/steamvr.vrsettings)
   start, no automatic re-centring of the play area or on user interaction, boundary style 2.
 
 The file lives on the data partition, copied from the image only on an install's first boot, and SteamVR
-rewrites it; [`steamvr-settings`](../userspace/rootfs/usr/libexec/pico4/steamvr-settings) sets every key
+rewrites it; [`steamvr-settings`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/steamvr-settings) sets every key
 of the image's copy (`/usr/share/pico4/steamvr.vrsettings`) in it before each start and keeps all others.
-[openvrpaths.vrpath](../userspace/session/openvrpaths.vrpath) (in `~/.config/openvr`) registers
+[openvrpaths.vrpath](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/openvrpaths.vrpath) (in `~/.config/openvr`) registers
 `/usr/share/steamvr-monado` as an external driver, the runtime in `/opt/steamvr` and configuration and
 logs under `~/.local/share/Steam`; `steamvr_first_init.sh` keeps both files. `pico4-monado` installs
 `driver_monado.so` in `bin/linuxarm64`, where SteamVR for linuxarm64 looks (Monado's install says
@@ -444,7 +444,7 @@ touch), grip (value, click), joystick (x, y, click, touch), A/B or X/Y (click, t
 The Frame's Android games (Cubism) bind only the Frame controller
 (`/interaction_profiles/valve/frame_controller_valve`). The image keeps the Frame controller's SteamVR
 resources (without firmware), and the build adds its layout
-([frame-controller-remapping.json](../userspace/session/frame-controller-remapping.json)) to
+([frame-controller-remapping.json](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/frame-controller-remapping.json)) to
 `default_pico_controller_remapping.json`, the only remapping SteamVR reads for `pico_controller`.
 Without it those controllers stay at the origin without input.
 
@@ -460,7 +460,7 @@ Frame: the PC's SteamVR renders and encodes HEVC (NVENC); `vrlink` decodes it on
 decoder and shows it through the local SteamVR. The PC's `driver_vrlink` knows the client as "PICO 4".
 
 - **Finding the codec.** `vrlink` asks `vrdevice_path video_decode`; the image's
-  [`vrdevice_path`](../userspace/rootfs/usr/local/bin/vrdevice_path) answers with the node of
+  [`vrdevice_path`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/vrdevice_path) answers with the node of
   `aa00000.video-codec` whose card is `Qualcomm Venus video decoder` (or `encoder`). It opens only those
   nodes: the Frame's `v4l2-ctl --list-devices` opens every video node, which stops head tracking.
   `steam-video-codec-setup.service` links `/dev/video-dec0` and `/dev/video-enc0`.
@@ -509,8 +509,8 @@ The session's parts are packages of the userspace archive (`scripts/build-usersp
 | `overpressure-gamescope` | upstream gamescope at `ea3579ed` and one patch | gamescope |
 | `deckard-steamvr-rel`, `deckard-steamvr-session` | the Frame's repository | SteamVR in `/opt/steamvr`; the session's scripts and user units |
 
-[userspace/rootfs](../userspace/rootfs) adds the units, drop-ins, PAM stack, udev rules, session script
-and `pico4-valve-session-check`; [userspace/session](../userspace/session) holds the SteamVR files.
+[`pico4-session`](https://github.com/overpressure/packages/tree/main/phoenix/pico4-session) adds the units, drop-ins, PAM stack, session script and the SteamVR
+files, [`pico4-xr`](https://github.com/overpressure/packages/tree/main/phoenix/pico4-xr) the udev rules, [`pico4-checks`](https://github.com/overpressure/packages/tree/main/phoenix/pico4-checks) `pico4-valve-session-check`.
 
 ## Run
 
@@ -536,7 +536,7 @@ SteamVR's logs are in `/home/steamos/.local/share/Steam/logs`.
 
 ### pico4-valve-session-check
 
-[`pico4-valve-session-check [--seconds SECONDS]`](../userspace/rootfs/usr/bin/pico4-valve-session-check)
+[`pico4-valve-session-check [--seconds SECONDS]`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-checks/pico4-valve-session-check)
 runs Valve's session for a bounded time and returns to the configured one:
 
 1. It saves `session.conf`, stops the Monado service, records the hottest thermal zone (below 200 °C),
@@ -557,7 +557,7 @@ hottest zone and fan state (`pico4-fan state`, [cooling.md](cooling.md#checks)) 
 status 0 only if `status` passed.
 
 `performance` is a separate verdict from
-[`session-performance`](../userspace/rootfs/usr/libexec/pico4/session-performance) over the measured
+[`session-performance`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-checks/session-performance) over the measured
 window only:
 
 | Measure | Limit |

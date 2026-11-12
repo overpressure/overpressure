@@ -5,7 +5,7 @@
 | What | Linux installed on the headset, in PICO OS's layout: Valve's kernel in `boot`, a read-only system image in `super`, data in `userdata`, the maintenance stage 1 (stock kernel) in `recovery`. It starts without the PC and keeps its data across reboots and updates |
 | Install, upgrade, back to stock | `python -m overpressure install`, `upgrade` or `restore`, or the window's installer ([the installer](#the-installer)) |
 | By hand | `dev recovery`, then `dev install` ([install and update](#install-and-update)); back with `dev restore` ([back to stock](#back-to-stock)) |
-| Code | [`tooling/install.py`](../tooling/install.py), [`tooling/devloop.py`](../tooling/devloop.py), [`scripts/build-system-image.sh`](../scripts/build-system-image.sh), [`preinit`](../userspace/rootfs/usr/libexec/pico4/preinit), [`pico4-install`](../initramfs/usr/bin/pico4-install) |
+| Code | [`tooling/install.py`](../tooling/install.py), [`tooling/devloop.py`](../tooling/devloop.py), [`scripts/build-system-image.sh`](../scripts/build-system-image.sh), [`preinit`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/preinit), [`pico4-install`](../initramfs/usr/bin/pico4-install) |
 
 Installing replaces PICO OS's system and data. The way back writes them from the EDL backup; PICO OS then
 starts with fresh data, as after a factory reset, because the backup does not hold its userdata. The
@@ -97,7 +97,7 @@ A suspend does not count against the watchdog (90 s asleep with it armed woke in
 that only crawls (every CPU busy at real-time priority) keeps pinging: the fair server leaves normal tasks 5 %
 of each CPU, and the hung-task panic restarted it after about 7 minutes.
 
-[`boot-attempts`](../userspace/rootfs/usr/libexec/pico4/boot-attempts) counts boots in
+[`boot-attempts`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/boot-attempts) counts boots in
 `/data/.pico4-boot-attempts`:
 
 | When | What happens |
@@ -110,11 +110,11 @@ A failed unit does not hold the graphical target back; a system that never reach
 
 Under systemd:
 
-- **USB link.** `pico4-usb-gadget.service` runs [`usb-gadget`](../userspace/rootfs/usr/libexec/pico4/usb-gadget)
+- **USB link.** `pico4-usb-gadget.service` runs [`usb-gadget`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/usb-gadget)
   before `sysinit.target`: the maintenance stage 1's composite gadget ([stage1.md](stage1.md)), recorded in
   `/run/pico4/usb-link.env`. systemd-networkd gives `usb0` `172.16.42.1/24` and one DHCP lease, `172.16.42.2`,
   without router, DNS or NTP, so the PC keeps its own internet route
-  ([`50-pico4-usb.network`](../userspace/rootfs/usr/lib/systemd/network/50-pico4-usb.network)). The Frame's own
+  ([`50-pico4-usb.network`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/50-pico4-usb.network)). The Frame's own
   gadget units stay masked. Windows 11's in-box NCM driver works as it is: only the maintenance stage 1 needs the
   [NCM initialization](hardware-testing.md#windows-ncm-initialization).
 - **Wi-Fi.** ath11k probes the QCA6390 before the system image is mounted and fails without its firmware;
@@ -138,10 +138,10 @@ from there starts the maintenance stage 1 again.
 
 With the USB cable attached, a powered-off headset starts again with `androidboot.mode=charger`. PICO OS then
 runs AOSP's `charger`; preinit starts systemd with `pico4-charger.target`: `basic.target`,
-`pico4-charger.service` ([`charger`](../userspace/rootfs/usr/libexec/pico4/charger)), the USB link,
+`pico4-charger.service` ([`charger`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/charger)), the USB link,
 systemd-networkd and sshd. The boot indication does not run, so the lenses stay dark. Holding the power key 2 s
 starts the system (a plain reboot); 10 s without USB power turn the headset off, as AOSP's charger does.
-[tests/test_charger.sh](../tests/test_charger.sh) tests these decisions on the host.
+[test_charger.sh](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/test_charger.sh) tests these decisions in `pico4-base`'s build.
 
 ### Power key
 

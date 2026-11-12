@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""PICO OS's head tracker on the Compute DSP: its units, the driver's camera path, rooms, depth mesh and floor."""
+"""PICO OS's head tracker on the Compute DSP: its build, the driver's camera path, rooms, depth mesh and floor."""
 
 import math
 import unittest
@@ -8,9 +8,6 @@ from pathlib import Path
 from devices.phoenix.tooling import assets
 
 ROOT = Path(__file__).resolve().parents[1]
-ROOTFS = ROOT / "userspace/rootfs"
-UNITS = ROOTFS / "usr/lib/systemd/system"
-LIBEXEC = ROOTFS / "usr/libexec/pico4"
 
 
 def read(path: Path) -> str:
@@ -18,63 +15,9 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-class CdspBootTests(unittest.TestCase):
-    """The Compute DSP for PICO OS's head tracker (docs/xr.md#head-tracking)."""
-
-    def test_unit(self):
-        unit = read(UNITS / "pico4-cdsp.service")
-        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4/remoteproc-boot cdsp$")
-        self.assertRegex(unit, r"(?m)^ConditionPathExists=/usr/lib/firmware/cdsp\.mdt$")
-        self.assertRegex(unit, r"(?m)^RemainAfterExit=yes$")
-
-
-class TrackerUnitTests(unittest.TestCase):
-    def test_cdsprpcd_runs_in_the_root_with_vendor_libraries(self):
-        unit = read(UNITS / "pico4-cdsprpcd.service")
-        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/pico4/stock-slam --vendor /vendor/bin/cdsprpcd$")
-        self.assertRegex(unit, r"(?m)^Requires=pico4-cdsp\.service$")
-
-    def test_slamd_restarts_for_each_driver(self):
-        unit = read(UNITS / "pico4-slamd.service")
-        self.assertIn("/usr/libexec/pico4/stock-slam /pico4/pico4-slamd", unit)
-        self.assertIn("getent group video", unit)
-        self.assertRegex(unit, r"(?m)^Restart=always$")
-        self.assertRegex(unit, r"(?m)^Requires=pico4-cdsprpcd\.service$")
-
-    def test_tracker_runs_on_upstream_fastrpc(self):
-        # Without the bridge PICO OS's FastRPC finds no ION or adsprpc node
-        # and restarts its listener every 100 ms, which also changes the IMU's rate.
-        for name in ("pico4-slamd", "pico4-cdsprpcd"):
-            unit = read(UNITS / f"{name}.service")
-            self.assertRegex(
-                unit, r"(?m)^ConditionPathExists=/usr/lib/pico4-stock-slam/pico4/libpico4-fastrpc-bridge\.so$", name
-            )
-        # The bridge's path in the root is the one stock-slam preloads.
-        self.assertIn("/pico4/libpico4-fastrpc-bridge.so", read(ROOT / "userspace/rootfs/usr/libexec/pico4/stock-slam"))
-
-    def test_session_and_monado_want_the_tracker(self):
-        for name in ("pico4-session", "pico4-monado"):
-            self.assertRegex(read(UNITS / f"{name}.service"), r"(?m)^Wants=pico4-slamd\.service$", name)
-
-
-class RootRunnerTests(unittest.TestCase):
-    def test_root_layout(self):
-        script = read(LIBEXEC / "stock-slam")
-        self.assertIn("root=/usr/lib/pico4-stock-slam", script)
-        # The factory calibration where libSlam reads it, the gyro bias table included.
-        self.assertIn('mount --bind "$calibration" "$root/mnt/vendor/persist/pvr"', script)
-        self.assertIn('mount --bind "$calibration" "$root/mnt/vendor/pvr"', script)
-        self.assertIn("unshare -m --propagation private", script)
-        self.assertIn("exec env -i", script)
-        self.assertIn("preload=/pico4/libpico4-slam-stubs.so:", script)
-        self.assertIn('LD_PRELOAD="$preload"', script)
-        self.assertIn('/usr/bin/chroot "$root" /system/bin/bootstrap/linker64 "$@"', script)
-        self.assertIn("ADSP_LIBRARY_PATH=/vendor/lib/rfsa/adsp;/vendor/dsp/cdsp", script)
-
-    def test_the_fastrpc_bridge_is_preloaded(self):
+class FastRpcBridgeTests(unittest.TestCase):
+    def test_the_fastrpc_bridge_is_built_and_tested(self):
         # The stock libraries' vendor FastRPC and ION calls, carried over to the upstream driver.
-        script = read(LIBEXEC / "stock-slam")
-        self.assertIn("preload=/pico4/libpico4-slam-stubs.so:/pico4/libpico4-fastrpc-bridge.so\n", script)
         build = read(ROOT / "src/stockslam/build.sh")
         # Its translations are tested natively before the bionic library is built.
         self.assertLess(build.index('"$work/test_fastrpc_bridge"'), build.index('libpico4-fastrpc-bridge.so" \\'))
@@ -84,14 +27,8 @@ class RootRunnerTests(unittest.TestCase):
         # The bridge reaches the kernel by system calls, never through the functions it replaces.
         self.assertNotIn("dlsym", bridge)
 
-    def test_files_stay_lf(self):
-        for path in (
-            LIBEXEC / "stock-slam",
-            LIBEXEC / "remoteproc-boot",
-            UNITS / "pico4-slamd.service",
-            ROOT / "src/stockslam/build.sh",
-        ):
-            self.assertNotIn(b"\r", path.read_bytes(), path.name)
+    def test_build_script_stays_lf(self):
+        self.assertNotIn(b"\r", (ROOT / "src/stockslam/build.sh").read_bytes())
 
 
 class ExtractionTests(unittest.TestCase):
@@ -185,8 +122,6 @@ class CameraOtpTests(unittest.TestCase):
     def test_saved_on_the_data_partition_where_pico_os_keeps_them(self):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
         self.assertIn('#define OTP_PATH "/data/stationservice/camera_otp.json"', slamd)
-        runner = read(LIBEXEC / "stock-slam")
-        self.assertIn('mount --bind "$state/stationservice" "$root/data/stationservice"', runner)
         # Saved only when PICO OS would keep them (all 8 or 9), and the saved ones offered first.
         self.assertIn("isp_otp_valid(ids) ? open(OTP_PATH", slamd)
         # Once saved, a driver started again while this pico4-slamd runs reads no OTP.
@@ -213,8 +148,6 @@ class AutoExposureTests(unittest.TestCase):
         self.assertIn("if (!own && !same)", slamd)
         self.assertIn("__atomic_fetch_add(&feed->ae_written, 1, __ATOMIC_RELEASE);", slamd)
         self.assertIn("__atomic_store_n(&feed->ae_generation, 0, __ATOMIC_RELEASE);", slamd)
-        runner = read(LIBEXEC / "stock-slam")
-        self.assertIn("${PICO4_SLAMD_AE:+PICO4_SLAMD_AE=$PICO4_SLAMD_AE}", runner)
         android = read(ROOT / "src/stockslam/android.c")
         for name in ("allocate", "lock", "unlock", "release", "sendHandleToUnixSocket", "recvHandleFromUnixSocket"):
             self.assertIn(f"AHardwareBuffer_{name}(", android)
@@ -222,11 +155,6 @@ class AutoExposureTests(unittest.TestCase):
 
 class RoomTests(unittest.TestCase):
     """PICO OS's map persistence and a SteamVR universe per room."""
-
-    def test_maps_on_the_data_partition(self):
-        runner = read(LIBEXEC / "stock-slam")
-        self.assertIn('mount --bind "$state/maps" "$root/data/misc/user/0/maps"', runner)
-        self.assertIn('mount --bind "$state/boundary" "$root/data/misc/user/0/boundary"', runner)
 
     def test_slamd_saves_every_map_with_its_rooms_shape(self):
         slamd = read(ROOT / "src/stockslam/pico4-slamd.c")
@@ -255,7 +183,6 @@ class RoomTests(unittest.TestCase):
         self.assertLess(
             slamd.index("tracker_stop(&t, h);", restart), slamd.index("h = tracker_start(&t, feed);", restart)
         )
-        self.assertIn("PICO4_SLAMD_RESTART_S", read(LIBEXEC / "stock-slam"))
 
     def test_slamd_takes_a_late_relocalisation(self):
         # The room settles when the tracker writes its copy of the saved room's boundary, also after
@@ -288,7 +215,6 @@ class RoomTests(unittest.TestCase):
         restart = slamd.index("restarting the tracker")
         for reset in ("relocalised = false;", "sets_at_start = __atomic_load_n(&frames.sets_fed", "input_since = 0;"):
             self.assertLess(restart, slamd.index(reset, restart))
-        self.assertIn("PICO4_SLAMD_RELOCALISE_S", read(LIBEXEC / "stock-slam"))
 
 
 class DepthMeshTests(unittest.TestCase):

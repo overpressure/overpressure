@@ -4,7 +4,7 @@
 | --- | --- |
 | What | The fan, the thermal policy, the VR CPU limits and the hardware limits of the system on Valve's kernel, following PICO OS |
 | How | The fan hangs off the GD32 MCU that also moves the lenses and drives the backlight ([xr.md](xr.md#lens-distortion-and-ipd)); `pico4-fan` sends it PICO OS's duty frames over `/dev/ttyHS1`, from PICO OS's policy on the CPU and GPU zones. The kernel throttles at the stock trips; `pico4-battery-guard` takes PICO OS's battery decisions |
-| Code | [`pico4-fan`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-power/pico4-fan) and its unit, [`battery-guard`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-power/battery-guard) (overpressure/packages' `pico4-power`), [`vr-performance`](../userspace/rootfs/usr/libexec/pico4/vr-performance), the trips in [the device tree](https://github.com/overpressure/linux/blob/phoenix/7.2/arch/arm64/boot/dts/qcom/sm8250-pico4-phoenix.dts) |
+| Code | [`pico4-fan`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-power/pico4-fan) and its unit, [`battery-guard`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-power/battery-guard) (overpressure/packages' `pico4-power`), [`vr-performance`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/vr-performance), the trips in [the device tree](https://github.com/overpressure/linux/blob/phoenix/7.2/arch/arm64/boot/dts/qcom/sm8250-pico4-phoenix.dts) |
 | State | The MCU acknowledges duties and reports the fan's speed; Valve's 30 s session check peaks at 65.5 °C, about 10 minutes of a worn game at 75.6 °C ([kernel.md](kernel.md#results)). The limit for the hottest zone is 90 °C |
 
 Without fan control the 30 s session check went from 47 °C to 86 °C. PICO OS's early table is the default; that it
@@ -162,9 +162,9 @@ While a VR app runs, PICO OS limits the CPU through Qualcomm's VR service: `svrS
 | KGSL `min_pwrlevel` / `max_pwrlevel` | 5 / 0 |
 
 Without limits the big cores reach 2419 MHz and the prime core 2842 MHz.
-[`vr-performance`](../userspace/rootfs/usr/libexec/pico4/vr-performance) applies the CPU part through the cpufreq
+[`vr-performance`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/vr-performance) applies the CPU part through the cpufreq
 policies (every core stays online, which meets `core_ctl`'s minimum).
-[`pico4-vr-performance.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-vr-performance.service) runs while
+[`pico4-vr-performance.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-session/pico4-vr-performance.service) runs while
 `pico4-session.service` or `pico4-monado.service` runs and restores the limits it found when it stops. It also keeps
 the big cores, where the compositor runs, at their limit (governor `performance`), and restores the governor: without
 it the compositor misses frames while Steam's panel redraws ([kernel.md](kernel.md#results)). In the session with the
@@ -239,8 +239,8 @@ from the images, not checked with `getprop`.
 
 ## Build
 
-The overlay in [userspace/rootfs](../userspace/rootfs) puts `pico4-fan` and its unit into the userspace archive, and
-`scripts/build-userspace.sh` enables the unit ([development.md](development.md)). Nothing about the batch is in the
+[`pico4-power`](https://github.com/overpressure/packages/tree/main/phoenix/pico4-power) puts `pico4-fan` and its unit into the userspace archive, and its preset
+enables the unit ([development.md](development.md)). Nothing about the batch is in the
 image: the `auto` profile reads the serial number from persist at start and keeps only the batch word;
 `pico4-fan batch FILE` prints that word for a serial number file.
 

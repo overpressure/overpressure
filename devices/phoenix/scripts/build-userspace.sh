@@ -48,7 +48,8 @@
 #    hotfix repository and the Holo Core preview (pacman.conf). Reinstalled when the list or
 #    pacman.conf changes, and with --refresh.
 # 3. Image root: an overlay on the base root with the current project packages and the
-#    PICO 4 adaptation layer (userspace/rootfs, shared stage-1 scripts, users, units),
+#    files stage 1 shares (its recovery policy, pico4-reboot, pico4-splash), the session user, the
+#    project packages' presets and the masks of the Frame's units,
 #    checked natively for unresolved ELF dependencies (overpressure/elfdeps.py), written as:
 #      OUTPUT_DIR/pico4-userspace.tar.zst        root filesystem for scripts/build-system-image.sh
 #      OUTPUT_DIR/pico4-userspace.manifest.json  sources, hashes, package list
@@ -281,9 +282,7 @@ base=$B/base
 # changed sources keeps its version, so a copy there would no longer match the repository
 # (a corrupt package for pacman, the wrong file for the manifest): only the repositories have them.
 while read -r file; do rm -f "$B/var/cache/pico4-pkgs/${file##*/}"; done < <(project_packages)
-steamos_user=userspace/rootfs/usr/lib/sysusers.d/pico4-steamos.conf
-base_key=$(cat "$definition/packages.txt" "$definition/pacman.conf" "$project/$steamos_user" |
-    sha256sum | cut -d' ' -f1)
+base_key=$(cat "$definition/packages.txt" "$definition/pacman.conf" | sha256sum | cut -d' ' -f1)
 if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null)" != "$base_key" ]]; then
     phase "installing packages.txt into a new base root"
     rm -f "$build_root/base.key"
@@ -307,9 +306,8 @@ if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null
         sync=""
     fi
     mount_api "$base"
-    # The session user exists before pacman's hooks run: steamos-customizations' tmpfiles
-    # entries name it, and the sysusers hook runs before the tmpfiles hook.
-    install -D -m 0644 "$project/$steamos_user" "$base/${steamos_user#userspace/rootfs/}"
+    # The session user, whom steamos-customizations' tmpfiles entries name, comes from pico4-session's
+    # sysusers file in the same transaction: pacman's sysusers hook runs before its tmpfiles hook.
     in_b pacman --config /etc/pico4/pacman.conf -r /base --cachedir /var/cache/pico4-pkgs \
         "-S$sync" --noconfirm --needed "${assumed[@]}" "${packages[@]}"
     unmount_below "$base" inner
@@ -395,10 +393,8 @@ overlay() {
     [[ "$(head -c 2 "$1")" == '#!' ]] && mode=0755
     install -D -o 0 -g 0 -m "$mode" "$1" "$2"
 }
-while IFS= read -r -d '' f; do
-    overlay "$f" "$T/${f#"$project/userspace/rootfs/"}"
-done < <(find "$project/userspace/rootfs" -type f -print0)
-# Shared with stage 1, at the same paths: one recovery policy for both stages.
+# Shared with stage 1, at the same paths: one recovery policy for both stages. The rest of the PICO 4's
+# files are the project's packages (pico4-base, -power, -audio, -xr, -session, -checks).
 for f in lib.sh recovery-policy.sh recovery-watch; do
     overlay "$project/initramfs/usr/libexec/pico4/$f" "$T/usr/libexec/pico4/$f"
 done
@@ -406,9 +402,10 @@ for f in pico4-reboot pico4-splash; do
     install -o 0 -g 0 -m 0755 "$project/prebuilt/aarch64/$f" "$T/usr/bin/$f"
 done
 # SteamVR reads its own remapping for pico_controller, whatever the profile names: the Frame
-# controller's layout (session/frame-controller-remapping.json) joins Valve's layouts there.
+# controller's layout (pico4-session's /usr/share/pico4/frame-controller-remapping.json) joins Valve's
+# layouts there.
 python3 - "$T/opt/steamvr/resources/input/default_pico_controller_remapping.json" \
-    "$project/userspace/session/frame-controller-remapping.json" <<'EOF'
+    "$T/usr/share/pico4/frame-controller-remapping.json" <<'EOF'
 import json, sys
 path, ours = sys.argv[1], json.load(open(sys.argv[2]))
 remapping = json.load(open(path))
@@ -473,7 +470,7 @@ if [[ -n "$audio" ]]; then
     install -m 0644 "$audio"/firmware/adsp* "$T/usr/lib/firmware/"
     install -D -m 0644 -t "$T/usr/lib/pico4-audio/acdb" "$audio"/calibration/*.acdb
     cp -r --no-preserve=ownership "$audio/audiopd/." "$T/usr/share/qcom/pico4-audio/"
-    python3 "$project/userspace/rootfs/usr/bin/pico4-audiocal" export --acdb "$audio/calibration" \
+    python3 "$project/packages/phoenix/pico4-audio/pico4-audiocal" export --acdb "$audio/calibration" \
         "$T/usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin"
     chown -R 0:0 "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio" "$T/usr/lib/firmware/qcom/sm8250/pico4"
     assets_modes "$T/usr/share/qcom/pico4-audio"
@@ -573,22 +570,16 @@ in_t usermod -p '*' "$user"
 echo pico4-steamos > "$T/etc/hostname"
 echo LANG=C.UTF-8 > "$T/etc/locale.conf"
 rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
+# pacman's tmpfiles hook ran the packages' entries for /tmp, a fresh tmpfs on the headset.
+find "$T/tmp" -mindepth 1 -delete
 # SteamOS keeps writable state on /home and bind-mounts it over /var/log,
 # /var/tmp, /root, ... (steamos-offload.target, before tmpfiles runs). On the
 # Frame the sources persist; here they are created in the image.
 in_t systemd-tmpfiles --create steamos-offload.conf
 # PICO OS's mount point of its persist partition (pico4-persist.service, read-only).
 mkdir -p "$T/mnt/vendor/persist"
-in_t systemctl enable sshd.service systemd-networkd.service NetworkManager.service \
-    pico4-recovery-watch.service pico4-storage-ro.service \
-    pico4-userspace-logdisk.timer pico4-userspace-netdiag.service pico4-sensors.target pico4-imu-ready.service pico4-kthread-priorities.service \
-    pico4-monado.socket pico4-session.service \
-    pico4-usb-internet.service systemd-timesyncd.service pico4-audio.target \
-    pico4-splash.service pico4-persist.service pico4-zram-swap.service \
-    pico4-venus-probe.service steam-video-codec-setup.service pico4-bt-firmware.service pico4-bt-address.service \
-    bluetooth.service pico4-wlan-probe.service pico4-wlan-address.service pico4-panel-probe.service pico4-clock.service \
-    pico4-usb-gadget.service pico4-boot-ok.service
-# The project packages' units, as their presets (usr/lib/systemd/system-preset/50-pico4-*.preset) enable them.
+# The units the project packages' presets (usr/lib/systemd/system-preset/50-pico4-*.preset) enable, Valve's
+# among them (sshd, networkd, NetworkManager, timesyncd, bluetooth, the codec links).
 mapfile -t preset_units < <(cat "$T"/usr/lib/systemd/system-preset/50-pico4-*.preset 2>/dev/null |
     sed -n 's/^enable[[:space:]]\+\([^[:space:]]\+\).*/\1/p')
 [[ ${#preset_units[@]} == 0 ]] || in_t systemctl preset "${preset_units[@]}"
@@ -638,10 +629,8 @@ fi
 # the Frame's drivers stay off. steamvr_first_init.sh keeps these files.
 install -d -o 1000 -g 1000 -m 0755 "$T/home/$user/.config/openvr" "$T/home/$user/.local/share/Steam/config" \
     "$T/home/$user/.local/share/Steam/logs" "$T/home/$user/.steam"
-install -o 1000 -g 1000 -m 0644 "$project/userspace/session/openvrpaths.vrpath" "$T/home/$user/.config/openvr/"
-install -o 1000 -g 1000 -m 0644 "$project/userspace/session/steamvr.vrsettings" "$T/home/$user/.local/share/Steam/config/"
-# The image's copy: steamvr-settings puts its keys into the user's file at each SteamVR start.
-install -D -m 0644 "$project/userspace/session/steamvr.vrsettings" "$T/usr/share/pico4/steamvr.vrsettings"
+install -o 1000 -g 1000 -m 0644 "$T/usr/share/pico4/openvrpaths.vrpath" "$T/home/$user/.config/openvr/"
+install -o 1000 -g 1000 -m 0644 "$T/usr/share/pico4/steamvr.vrsettings" "$T/home/$user/.local/share/Steam/config/"
 # The Steam client's RUNSTEAM.sh makes these links; SteamVR finds its logs and
 # the Steam folder through them.
 ln -sfn "/home/$user/.local/share/Steam" "$T/home/$user/.steam/steam"

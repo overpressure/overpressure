@@ -249,7 +249,7 @@ what it tests:
 | Valve's session | the archive has `deckard-steamvr-rel` | `pico4-valve-session-check --seconds 30`: `gamescope-session.target`, SteamVR and gamescope active, the configured session restored; SteamVR's compositor runs as a gamescope client without asserts and presents (msm's events) at ≥ 95 % of 90 Hz, at most 1 % late, no stalls, 99 % of its jobs at least 1 ms before their vblank; the headset and both controllers with finite poses, the controllers with positions |
 
 Thresholds: [tooling/userspace.py](../tooling/userspace.py) and the headset's
-[session-performance](../userspace/rootfs/usr/libexec/pico4/session-performance). Before Valve's session the
+[session-performance](https://github.com/overpressure/packages/blob/main/phoenix/pico4-checks/session-performance). Before Valve's session the
 runner stops the session and waits for SteamVR and the Steam client to exit; afterwards the session runs
 again, also after a failure. The cool-down reads the hottest thermal zone every 5 s (ignoring ≥ 200 °C) and
 starts below 70 °C or after 180 s (`valve_session_cooldown`). The check waits up to 180 s for the compositor

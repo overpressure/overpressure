@@ -40,7 +40,7 @@ src/              C sources outside the packages: stockslam/ (pico4-slamd), rebo
 prebuilt/         static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-system-image.sh, build-kernel-step.sh, upgrade-check.sh (with
                   upstream.py), check-package-lock.py and the on-headset preflight
-tests/            host tests (unittest), test_recovery_policy.sh, test_charger.sh, test_boot_attempts.sh, qemu/
+tests/            host tests (unittest), test_recovery_policy.sh, qemu/
 docs/             documentation
 ```
 
@@ -190,9 +190,11 @@ Each step is skipped when its inputs did not change:
    hotfix repository and the Holo Core preview; reinstalled when the package list or `pacman.conf` changes, and
    with `--refresh`.
 4. **Image root.** An overlay on the base root: the project packages that differ from the base root's, the
-   adaptation layer (`userspace/rootfs`, shared stage-1 scripts, users, units) and the session configuration.
-   The project packages' units are enabled as their presets (`usr/lib/systemd/system-preset/50-pico4-*.preset`)
-   name them.
+   files stage 1 shares (its recovery policy, `pico4-reboot`, `pico4-splash`), the session user, the private
+   assets and the SteamVR files from `pico4-session` in the user's home. The adaptation layer is the project's
+   packages (`pico4-base`, `-power`, `-audio`, `-xr`, `-session`, `-checks`); their units are enabled as their
+   presets (`usr/lib/systemd/system-preset/50-pico4-*.preset`) name them, the Frame's units the image does not
+   use are masked.
    [overpressure/elfdeps.py](../../../overpressure/elfdeps.py) checks natively that the programs and libraries of
    the Frame's and the project's packages, and of those depending on them, find their libraries and symbol
    versions and that the programs' symbols are all defined; the script excludes a few optional programs by name.
@@ -204,7 +206,7 @@ Times on the same host, with an archive of about 800 MB:
 
 | Change | Build time |
 | --- | --- |
-| nothing, or only the adaptation layer (`userspace/rootfs`, `userspace/session`) | 45 s |
+| nothing, or only an adaptation package of a `--packages` checkout (built here in seconds) | 45 s |
 | the package list or `pacman.conf` (new base root, packages reused) | 2 min |
 | everything: a new build root | about 16 min |
 
@@ -238,8 +240,6 @@ builds fails nothing: whether the session runs on it is the headset's check befo
 | --- | --- | --- |
 | Host tests: protocols, validators, the installer, runner, cycle and dev loop against fakes (with the generic tests) | `python -m unittest` | seconds |
 | Stage-1 recovery policy | `bash devices/phoenix/tests/test_recovery_policy.sh` | seconds |
-| Stage-1 charger mode | `sh devices/phoenix/tests/test_charger.sh` | seconds |
-| Count of unfinished boots | `bash devices/phoenix/tests/test_boot_attempts.sh` | seconds |
 | The host tests and every shell test above | `make test` (on Linux) | seconds |
 | The same on any host, in the build container, as root | `python -m overpressure container run -- make test` (`make container-test`) | as `make test`, once the image is built |
 | C tests of this repository's own sources (CI runs them) | `bash scripts/c-tests.sh` (a C compiler) | seconds |

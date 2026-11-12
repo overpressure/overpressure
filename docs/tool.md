@@ -432,5 +432,4 @@ ruff runs every rule (`select = ["ALL"]`, line length 120). `pyproject.toml` tur
 two incompatible docstring rules, the formatter's trailing commas, pytest's assertion style (the tests are
 unittest) and one `with` for several contexts (Python 3.9). Tests need no docstrings or return
 annotations, and `print` is allowed outside the tests. Any other exception is a `# noqa: RULE` with its
-reason. The headset's Python programs without a suffix in `devices/*/userspace/rootfs/` are listed in
-`pyproject.toml` by name; `tests/test_repo_checks.py` fails when one is missing there.
+reason. The headsets' own programs are packages in overpressure/packages, whose builds run their tests.

@@ -63,18 +63,20 @@ README.md current.
   `headsets/phoenix/` is the image's definition (`packages.txt`, `pacman.conf` with the Holo preview
   first and Frame packages named explicitly from `deckard-arch-hotfixes-release-0.3`, `packages.lock`),
   its layers the project's packages (Monado with the PICO 4 driver and its tools, Basalt, gamescope,
-  hexagonrpc, the swapchain layer, GTK 2, MangoHud and others), each with its code and patches.
-  Here: `rootfs/` (the adaptation layer, with `preinit`, the first process, and the system's own USB
-  gadget, `usb-gadget`) and `session/` (SteamVR configuration). A change to a package goes to
-  overpressure/packages, then a new tag there and the pin here.
+  hexagonrpc, the swapchain layer, GTK 2, MangoHud and others), each with its code and patches, and
+  the adaptation layer as packages with their tests: `pico4-base` (`preinit`, the first process, the
+  storage and recovery policy, the system's own USB gadget `usb-gadget`, network), `pico4-power`,
+  `pico4-audio`, `pico4-xr`, `pico4-session` (with the SteamVR configuration) and `pico4-checks`; each
+  package's preset enables its units. A change to a package goes to overpressure/packages, then a new
+  tag there and the pin here.
 - `src/`: the project's C sources outside the packages (`reboot/`, `splash/`, `gd32/`). `stockslam/`
   is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a bionic root; `build-userspace.sh`
   builds it with clang for Android, without an NDK.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-kernel-step.sh`,
   `windows-share-internet.ps1` and the on-headset preflight. The assets come from `python -m overpressure
   assets` (`tooling/assets.py`, PICO's public OTA, Python on any system). The headset's own factory data is not extracted: the image links to persist, mounted read-only at
-  boot (`pico4-persist`). `tests/`: unittest suites, `test_recovery_policy.sh`,
-  `test_charger.sh`, `tests/qemu/`. `device.mk`: its Makefile targets.
+  boot (`pico4-persist`). `tests/`: unittest suites, `test_recovery_policy.sh`, `tests/qemu/` (the
+  adaptation packages' tests run in their builds). `device.mk`: its Makefile targets.
 - Private and generated, ignored, at the repository root: `backup/` (identity
   `backup/device.json`, EDL backups), `assets/`, `cache/`, `out/` (`out/dev/` for the dev loop,
   `out/cycle-*/` evidence), `.env`.
@@ -87,7 +89,6 @@ steps):
 ```sh
 python -m unittest                                       # host tests, seconds, no hardware
 bash devices/phoenix/tests/test_recovery_policy.sh       # stage-1 recovery policy
-sh devices/phoenix/tests/test_charger.sh                 # charger mode's decisions
 python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> out/
 # Any system, no Linux needed: the stock firmware from PICO's public OTA, then the assets
 # (docs/development.md#stock-firmware; about 11 GB of OTA members and images in cache/pico4-stock):

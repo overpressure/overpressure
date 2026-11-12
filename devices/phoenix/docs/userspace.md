@@ -4,7 +4,7 @@
 | --- | --- |
 | What | The Steam Frame's ARM64 SteamOS userspace (systemd 257.7, SteamOS services, gamescope, PipeWire, NetworkManager, the Steam client, SteamVR) with the PICO 4's adaptations, on Valve's kernel ([kernel.md](kernel.md)) |
 | How | Packages from Valve's Holo Core aarch64 preview and the Frame's hotfix repository plus the project's own, locked by SHA-256, installed into a reproducible archive; that becomes a read-only system image in `super`, with data in `userdata` ([install.md](install.md)) |
-| Code | [userspace/](../userspace/) (`packages.json`, `rootfs/`, `session/`), [scripts/build-userspace.sh](../scripts/build-userspace.sh), [scripts/build-system-image.sh](../scripts/build-system-image.sh); the image's definition (`packages.txt`, `pacman.conf`, `packages.lock`) and the project's packages in [overpressure/packages](https://github.com/overpressure/packages), at the release `userspace/packages.json` pins |
+| Code | [userspace/packages.json](../userspace/packages.json), [scripts/build-userspace.sh](../scripts/build-userspace.sh), [scripts/build-system-image.sh](../scripts/build-system-image.sh); the image's definition (`packages.txt`, `pacman.conf`, `packages.lock`) and the project's packages in [overpressure/packages](https://github.com/overpressure/packages), at the release `userspace/packages.json` pins |
 | State | Reaches `running` with no failed units on the headset; the XR stack ([xr.md](xr.md)) and Valve's VR session ([session.md](session.md)) run in it |
 
 The stage-1 initramfs ([stage1.md](stage1.md)) is the maintenance environment in `recovery`, where the system is
@@ -133,7 +133,7 @@ systemd   257.7: udev devnode rules, read-only sweep, pico4-usb-gadget (USB NCM 
           log drive, ACM), systemd-networkd (DHCP for the PC), pico4-wlan-probe, sshd
 ```
 
-[`preinit`](../userspace/rootfs/usr/libexec/pico4/preinit) runs as PID 1 until it executes systemd;
+[`preinit`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/preinit) runs as PID 1 until it executes systemd;
 [install.md](install.md#how-it-starts) has its steps. A failure before systemd reboots into `recovery`. systemd's
 device monitor listens to udev only when `/dev` is a devtmpfs or udev already runs; the stock kernel has no devtmpfs,
 so the system runs only on Valve's kernel.
@@ -233,8 +233,8 @@ How it works:
   becomes a local pacman repository `overpressure-LAYER`. Package databases are downloaded only by the first
   build and with `--refresh`.
 - The base root ([packages.txt](https://github.com/overpressure/packages/blob/main/headsets/phoenix/packages.txt)) is kept between builds; each build assembles the image
-  root as an overlay on it with the project packages and the adaptation layer ([userspace/rootfs/](../userspace/rootfs/),
-  users, units, the session configuration).
+  root as an overlay on it with the project packages, among them the adaptation layer's (`pico4-base`, `-power`,
+  `-audio`, `-xr`, `-session`, `-checks`), whose presets enable their units, and the session user.
 - [overpressure/elfdeps.py](../../../overpressure/elfdeps.py) checks natively, as `ldd -r` would, that the programs and
   libraries of the Frame and project packages and of the packages that depend on them find their libraries, with
   symbol versions, and that every symbol they need is defined in what the program loads (a build against a newer
@@ -279,7 +279,7 @@ python -m overpressure dev check
 python -m overpressure dev installed    # reconnects after a reboot
 ```
 
-[`pico4-userspace-check`](../userspace/rootfs/usr/bin/pico4-userspace-check) `[--wait SECONDS] [--no-vulkan]` prints
+[`pico4-userspace-check`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-checks/pico4-userspace-check) `[--wait SECONDS] [--no-vulkan]` prints
 JSON, exit status 0 when it passed. It waits up to 180 s for the boot to settle, then checks:
 
 - systemd 257 as PID 1, state `running`, no failed units;
@@ -301,7 +301,7 @@ way back on the stock kernel ([hardware-testing.md](hardware-testing.md)).
 ## The headset's own data
 
 Each headset's factory data stays in its `persist` partition (ext4), where PICO OS keeps it.
-[`pico4-persist.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-persist.service) mounts it read-only at
+[`pico4-persist.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/pico4-persist.service) mounts it read-only at
 `/mnt/vendor/persist` before `local-fs.target` (`ro,noload`: no journal replay, the block device stays read-only), and
 the image links to it instead of shipping a copy:
 
@@ -322,7 +322,7 @@ about 1 s and the DSP runs from the registry in persist.
 
 ## Internet over USB
 
-[`pico4-usb-internet.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-usb-internet.service) adds the PC's end
+[`pico4-usb-internet.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/pico4-usb-internet.service) adds the PC's end
 of the link (`pico4.host_ip=`, default 172.16.42.2) to the USB link's network file (`50-pico4-usb.network`) as default
 gateway and DNS server, at route metric 2048, below NetworkManager's Wi-Fi and Ethernet routes. Without sharing on the
 PC that route leads nowhere. `systemd-timesyncd` corrects the clock once a time server answers.
@@ -346,8 +346,8 @@ the headset's reboots and the stage 1 NCM initialization. ICS's DNS proxy does n
 The kernel's ath11k drives the QCA6390 with PICO OS's firmware and board data from PICO's public package (modem and
 bluetooth partitions); only the addresses are the headset's, from `persist`. NetworkManager uses the Frame's iwd
 backend. ath11k's first probe, while the kernel starts, finds no firmware;
-[`wlan-probe`](../userspace/rootfs/usr/libexec/pico4/wlan-probe) probes the chip again once the system image is
-mounted ([install.md](install.md#how-it-starts)), and [`wlan-address`](../userspace/rootfs/usr/libexec/pico4/wlan-address)
+[`wlan-probe`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/wlan-probe) probes the chip again once the system image is
+mounted ([install.md](install.md#how-it-starts)), and [`wlan-address`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/wlan-address)
 sets `wlan0`'s address before NetworkManager starts. WPA2 and WPA3 networks join and reconnect after a reboot
 ([kernel.md](kernel.md#results)).
 
@@ -358,15 +358,15 @@ The card `PICO4` is mainline's SM8250 machine driver with the PICO's routing in 
 TX SoundWire buses (units 4 and 3), the LPASS macros and the DSP's APR services (AFE, ASM, ADM). Bring-up:
 
 1. `pico4-adsp` boots the ADSP through remoteproc (`remoteproc-boot`).
-2. `pico4-audiopd` starts the audio process on upstream FastRPC ([`audiopd`](../userspace/rootfs/usr/libexec/pico4/audiopd),
+2. `pico4-audiopd` starts the audio process on upstream FastRPC ([`audiopd`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-audio/audiopd),
    `/dev/fastrpc-adsp`): `hexagonrpcd -P` creates it with `FASTRPC_IOCTL_INIT_CREATE_STATIC`, backed by the stock
    remote heap (12 MiB of CMA), which the driver gives to the DSP's VMs (LPASS, ADSP heap) as the stock tree does.
-3. [`lpass-macros`](../userspace/rootfs/usr/libexec/pico4/lpass-macros) probes the VA macro again once the audio
+3. [`lpass-macros`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-audio/lpass-macros) probes the VA macro again once the audio
    process runs: its probe votes the LPASS hardware through the AFE, which refuses until then, and a failed probe is
    final. The driver has no bind file, so it uses the platform bus's `drivers_probe`. The other macros, the SoundWire
    buses and the card follow.
 
-The UCM profile ([`ucm2/conf.d/sm8250/PICO4.conf`](../userspace/rootfs/usr/share/alsa/ucm2/conf.d/sm8250/PICO4.conf))
+The UCM profile ([`ucm2/conf.d/sm8250/PICO4.conf`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-audio/PICO4.conf))
 has PICO OS's routes and levels under mainline's control names. Playback is on MultiMedia1 (PCM 0), capture on
 MultiMedia2 (PCM 1): mainline's ASM front end runs one stream at a time. Speaker voltage and current sense stays off.
 PICO OS's speaker protection is off too (`speaker.prot.enable=false`), and PICO OS has no volume cap
@@ -434,9 +434,9 @@ processes (steamwebhelper, vrwebhelper, steam) hold about 1.4 GB, GPU memory abo
 - **Swap as on the Frame and PICO OS.** The Frame's `holo-zram-swap` configures `zram0` at half the RAM, `lzo-rle`,
   zswap off; PICO OS swaps to zram the same way (`init.qcom.post_boot.sh`: half the RAM, at most 4 GiB). zram-generator
   is masked because its swap unit has no priority;
-  [`pico4-zram-swap.service`](../userspace/rootfs/usr/lib/systemd/system/pico4-zram-swap.service) runs its
+  [`pico4-zram-swap.service`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/pico4-zram-swap.service) runs its
   `--setup-device zram0` and `swapon` at PICO OS's priority 32758. GPU memory cannot be swapped.
-- **PICO OS's reclaim and overcommit.** [`50-pico4-memory.conf`](../userspace/rootfs/etc/sysctl.d/50-pico4-memory.conf):
+- **PICO OS's reclaim and overcommit.** [`50-pico4-memory.conf`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/50-pico4-memory.conf):
   `vm.swappiness` 100, `vm.watermark_scale_factor` 90, `vm.watermark_boost_factor` 0, `vm.overcommit_memory` 1 (as
   PICO OS's `init.rc`: allocations never fail; when memory and swap run out the OOM killer takes the highest score).
   With the default overcommit an allocation of the tracker can fail and crash `libSlam`. `pico4-slamd` runs at

@@ -53,8 +53,9 @@ ALLOWED = {
         rb"^(?:172\.16\.42\.\d+|192\.168\.137\.1|192\.168\.178\.23|10\.9\.8\.\d+|192\.168\.1\.1)$"
     ),
 }
-#: Fake identifiers of the tests.
-TEST_PATHS = re.compile(r"^(?:tests/|devices/[^/]+/tests/|scripts/check-private\.py$)")
+#: Fake identifiers of the tests: this repository's, and those beside overpressure/packages' recipes
+#: (LAYER/RECIPE/test_*).
+TEST_PATHS = re.compile(r"^(?:tests/|devices/[^/]+/tests/|scripts/check-private\.py$|[a-z0-9]+/[^/]+/test_[^/]+$)")
 TEST_ONLY = {"MAC address", "Steam ID", "private key"}
 #: This repository's own binaries: built from src/ here, so stage 1 builds without a compiler.
 BINARIES = re.compile(r"^devices/[^/]+/prebuilt/aarch64/pico4-(?:reboot|splash)$")
