@@ -97,8 +97,9 @@ OpenGL through zink.
 
 The packages are [overpressure/packages](https://github.com/overpressure/packages)': each recipe there holds its
 code, patches and installed files, and a code package's tests run in its build. `userspace/packages.json` pins a
-release of that repository by tag and commit; the build fetches the commit and builds its recipes
-(`--packages DIR` builds a checkout instead). A change to a package is a change there, a new tag and a new pin
+release of that repository by tag, commit and the hash of its `SHA256SUMS`; the build fetches the commit and
+builds its recipes, or takes the release's packages (`--packages-release`); `--packages DIR` builds a checkout
+instead. A change to a package is a change there, a new tag and a new pin
 here.
 
 | Package | Content | Details |
@@ -212,6 +213,7 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 | `--refresh` | downloads current package databases and reinstalls the base root |
 | `--update-lock` | writes `OUTPUT_DIR/packages.lock` instead of checking [the lock](#package-lock) |
 | `--packages DIR` | builds a checkout of overpressure/packages instead of the pinned commit |
+| `--packages-release` | takes the pinned release's packages instead of building them, each checked against the release's `SHA256SUMS`, whose hash the pin holds |
 
 How it works:
 

@@ -170,6 +170,7 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 | `--refresh` | download current package databases and reinstall the base root |
 | `--update-lock` | write `OUTPUT_DIR/packages.lock` for review instead of checking the build against the pinned lock ([userspace.md](userspace.md#package-lock)) |
 | `--packages DIR` | build a checkout of [overpressure/packages](https://github.com/overpressure/packages) instead of the commit `userspace/packages.json` pins: a change to a package, tried in the image |
+| `--packages-release` | take the pinned release's packages (built on arm64 with GCC) instead of building them: downloaded into `cache/packages-release/TAG`, each checked against the release's `SHA256SUMS`, whose hash the pin holds |
 
 Each step is skipped when its inputs did not change:
 

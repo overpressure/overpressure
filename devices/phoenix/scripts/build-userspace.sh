@@ -24,6 +24,8 @@
 #                       falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
 #   --packages DIR      a checkout of overpressure/packages instead of the commit that
 #                       userspace/packages.json pins (trying a change to a package)
+#   --packages-release  the pinned release's packages, downloaded and checked against its
+#                       SHA256SUMS (whose hash the pin holds), instead of building them here
 #   --refresh           download the current package databases and reinstall the base
 #                       root; without it every build installs the same package versions
 #   --update-lock       write OUTPUT_DIR/packages.lock instead of checking the pinned one
@@ -57,7 +59,7 @@ repo=$(cd "$source_dir/../.." && pwd)            # overpressure (its package, ca
 build_root=${1:?specify an isolated Linux-filesystem build directory}
 output=${2:?specify an output directory}
 shift 2
-firmware="" sensor_data="" wlan="" audio="" stock_slam="" packages_dir="" refresh=0
+firmware="" sensor_data="" wlan="" audio="" stock_slam="" packages_dir="" packages_release=0 refresh=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --gpu-firmware) firmware=$(realpath "${2:?}"); shift 2 ;;
@@ -66,12 +68,14 @@ while [[ $# -gt 0 ]]; do
     --audio) audio=$(realpath "${2:?}"); shift 2 ;;
     --stock-slam) stock_slam=$(realpath "${2:?}"); shift 2 ;;
     --packages) packages_dir=$(realpath "${2:?}"); shift 2 ;;
+    --packages-release) packages_release=1; shift ;;
     --refresh) refresh=1; shift ;;
     --update-lock) update_lock=1; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
     esac
 done
 [[ $EUID == 0 && "$build_root" = /* && "$build_root" != / ]] || { echo 'Root and an absolute isolated build directory are required' >&2; exit 2; }
+[[ $packages_release == 0 || -z $packages_dir ]] || { echo '--packages and --packages-release exclude each other' >&2; exit 2; }
 host_arch=$(uname -m)
 if [[ $host_arch != aarch64 ]]; then
     # The handler by its ELF magic (aarch64 executables), whatever it is named: qemu-aarch64 from
@@ -134,8 +138,8 @@ mount_api() {
 # -- 0. a snapshot of the inputs ------------------------------------------------------
 # overpressure/packages at the pinned commit, fetched once into cache/packages (git checks that the
 # files are the commit's), or the checkout --packages names.
-read -r packages_repository packages_tag packages_commit < <(python3 -c \
-    'import json,sys; d=json.load(open(sys.argv[1])); print(d["repository"], d["tag"], d["commit"])' \
+read -r packages_repository packages_tag packages_commit packages_sums < <(python3 -c \
+    'import json,sys; d=json.load(open(sys.argv[1])); print(d["repository"], d["tag"], d["commit"], d["sha256sums"])' \
     "$source_dir/userspace/packages.json")
 if [[ -z $packages_dir ]]; then
     packages_dir=$repo/cache/packages/$packages_commit
@@ -189,8 +193,37 @@ definition=$project/packages/headsets/phoenix
 mapfile -t layers < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$definition/layers")
 repos=$build_root/packages/repositories
 step "the build environment and the project packages"
-OVERPRESSURE_REFRESH=$([[ $refresh == 1 ]] && echo 1) bash "$project/packages/build/packages.sh" phoenix \
-    "$build_root/packages" "$repos"
+if [[ $packages_release == 1 ]]; then
+    # The release's packages, each checked against its SHA256SUMS, kept in cache/packages-release/TAG;
+    # each layer gets the packages its database lists. The environment is packages.sh's, without its tools.
+    release=$repo/cache/packages-release/$packages_tag
+    url=https://github.com/$packages_repository/releases/download/$packages_tag
+    mkdir -p "$release"
+    [[ -s $release/SHA256SUMS ]] || curl -fsSL --retry 3 -o "$release/SHA256SUMS" "$url/SHA256SUMS"
+    printf '%s  %s\n' "$packages_sums" "$release/SHA256SUMS" | sha256sum --check --quiet ||
+        { echo "the release's SHA256SUMS is not the pinned one" >&2; exit 1; }
+    while read -r sum name; do
+        [[ $name == *.pkg.tar.zst || $name == overpressure-*.db ]] || continue
+        if ! printf '%s  %s\n' "$sum" "$release/$name" | sha256sum --check --quiet --status 2>/dev/null; then
+            log "downloading $name"
+            curl -fsSL --retry 3 -o "$release/$name.part" "$url/$name"
+            mv "$release/$name.part" "$release/$name"
+        fi
+        printf '%s  %s\n' "$sum" "$release/$name" | sha256sum --check --quiet
+    done < "$release/SHA256SUMS"
+    rm -rf "$repos"
+    for layer in "${layers[@]}"; do
+        install -d "$repos/$layer"
+        while read -r name; do
+            cp "$release/$name" "$repos/$layer/"
+        done < <(tar -xzOf "$release/overpressure-$layer.db" --wildcards '*/desc' | awk '/^%FILENAME%$/ {getline; print}')
+    done
+    bash "$project/packages/build/packages.sh" --databases phoenix "$build_root/packages" "$repos"
+    packages_source="$packages_source release"
+else
+    OVERPRESSURE_REFRESH=$([[ $refresh == 1 ]] && echo 1) bash "$project/packages/build/packages.sh" phoenix \
+        "$build_root/packages" "$repos"
+fi
 in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root \
     SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$@"; }
 mkdir -p "$B/etc/pico4" "$B/var/cache/pico4-pkgs"
@@ -482,7 +515,7 @@ if [[ -n "$stock_slam" ]]; then
     rm -rf "$island"
     mkdir -p "$island"
     cp -r --no-preserve=ownership "$stock_slam/root/." "$island/"
-    bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" "$llvm"
+    bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" "$project/packages/phoenix/pico4-monado" "$llvm"
     mv "$island/pico4/libandroid.so" "$island/system/lib64/libandroid.so"
     # Mount points: the root is read-only on the headset.
     mkdir -p "$island"/{dev,proc,sys,data,tmp,mnt/vendor/persist/pvr,mnt/vendor/pvr}
@@ -670,8 +703,8 @@ print(json.dumps({
                                                    datetime.timezone.utc).isoformat(timespec="seconds"),
     "archive": {"file": os.path.basename(archive), "sha256": h.hexdigest(),
                 "bytes": os.path.getsize(archive), "installed_bytes": int(installed)},
-    "project_packages": dict(zip(("repository", "tag", "commit"), packages.split())) if not packages.startswith("local ")
-        else {"local": packages.split(" ", 1)[1]},
+    "project_packages": dict(zip(("repository", "tag", "commit", "from"), packages.split() + ["built here"]))
+        if not packages.startswith("local ") else {"local": packages.split(" ", 1)[1]},
     "repository_databases": {n.lstrip("./"): s for s, n in lines("db-hashes.txt")},
     "packages": {n: v for n, v in lines("packages.txt")},
     "package_files": {n.lstrip("./"): s for s, n in lines("package-hashes.txt")},

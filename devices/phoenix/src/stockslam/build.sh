@@ -5,14 +5,17 @@
 # python -m overpressure assets puts into ROOT. No NDK: own entry point (crt.c) and
 # declarations (bionic.h). Runs the image-processing test natively first.
 #
-#   src/stockslam/build.sh ROOT OUTPUT_DIR [LLVM_DIR]
+#   src/stockslam/build.sh ROOT OUTPUT_DIR FEED_DIR [LLVM_DIR]
 #
-# OUTPUT_DIR receives pico4-slamd, libpico4-slam-stubs.so, libpico4-fastrpc-bridge.so and libandroid.so.
+# FEED_DIR holds pico4_slam_feed.h, the shared memory's layout that Monado's PICO 4 driver
+# (overpressure/packages' phoenix/pico4-monado) and pico4-slamd share. OUTPUT_DIR receives pico4-slamd, libpico4-slam-stubs.so, libpico4-fastrpc-bridge.so and libandroid.so.
 set -euo pipefail
 src=$(cd "$(dirname "$0")" && pwd)
 root=${1:?specify the tracker root (system/lib64, system/lib64/bootstrap)}
 out=${2:?specify an output directory}
-llvm=${3:-}
+feed=${3:?specify the folder of pico4_slam_feed.h (overpressure/packages phoenix/pico4-monado)}
+llvm=${4:-}
+[[ -f $feed/pico4_slam_feed.h ]] || { echo "no pico4_slam_feed.h in $feed" >&2; exit 2; }
 clang=${llvm:+$llvm/bin/}clang
 [[ -x "$(command -v "$clang")" ]] || { echo "no clang ($clang)" >&2; exit 2; }
 [[ -s "$root/system/lib64/bootstrap/libc.so" && -s "$root/system/lib64/libSlam.so" ]] ||
@@ -30,7 +33,7 @@ trap 'rm -rf "$work"' EXIT
 "$work/test_fastrpc_bridge"
 
 cc=("$clang" --target=aarch64-linux-android29 -fuse-ld=lld -O2 -fPIC -fno-stack-protector -nostdlib -ffreestanding
-    -Wall -Wextra -Werror -I"$src/../monado")
+    -Wall -Wextra -Werror -I"$feed")
 libs=(-L"$root/system/lib64/bootstrap" -L"$root/system/lib64")
 "${cc[@]}" -shared -Wl,-soname,libpico4-slam-stubs.so -o "$out/libpico4-slam-stubs.so" "$src/stubs.c" "${libs[@]}" -lc
 "${cc[@]}" -shared -Wl,-soname,libandroid.so -o "$out/libandroid.so" "$src/android.c"
