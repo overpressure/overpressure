@@ -223,8 +223,8 @@ is compressed and readable only by the DRM master, so the check has no image.
 
 ## Changes to Valve's tree
 
-The project's commits on Valve's `509b71a1bdcd` are in [overpressure/linux](https://github.com/overpressure/linux), one
-branch per layer, each on the one before; each commit says why it is there:
+The project's commits on Valve's kernel are in [overpressure/linux](https://github.com/overpressure/linux), one branch
+per layer, each taking its changes from the one below it; each commit says why it is there:
 
 | Layer | What |
 | --- | --- |
@@ -232,8 +232,14 @@ branch per layer, each on the one before; each commit says why it is there:
 | `sm8250/7.2` | the SM8250's blocks: Venus, CAMSS (PHY settings, start of frame, the RGB camera's path, 16-bit samples), preemption on the A650, refresh changes on DPU 6.0 |
 | `phoenix/7.2` | the PICO 4: its panel, battery, tracking and RGB camera drivers, audio as the stock kernel runs it, the device tree, `pico4.config` and its driver tests (`tools/testing/overpressure/phoenix/`) |
 
-A new Valve commit means rebasing the layers onto it there, reviewed with `git range-diff`; that repository's CI builds
-the result. A release is a tag `phoenix/7.2-N` that never moves; this repository pins one.
+Every change moves up the layers by pull request, merged with a merge commit; nothing is rebased or force-pushed.
+`valve/7.2` is Valve's own history: weekly, the Valve workflow moves it forward to the newest commit of Valve's public
+`sm8650-7.2` branch through the [evlaV mirror](https://github.com/evlaV/deckard-linux-no-oopsies). Whenever a branch
+moves, the Layers workflow opens a pull request from it into the layer built on it (`valve/7.2` into `common/7.2`, then
+`common/7.2` into `sm8250/7.2`, then `sm8250/7.2` into `phoenix/7.2`); a pull request into a headset's branch is built
+with its merge, and a conflict is resolved in the pull request. Rulesets let the layers change only by such pull
+requests, with a passing build, and `valve/7.2` only move forward. A release is a tag `phoenix/7.2-N` that never moves;
+this repository pins one.
 
 ## Valve's Mesa
 

@@ -125,7 +125,8 @@ python -m overpressure cycle --restore-only              # verified stock boot a
   are ignored on purpose. Valve's packages and the built userspace archives are private too.
   Docs and code must not contain device serials or similar identifiers; they belong in `.env`.
 - **Valve's kernel.** The kernel and device tree are ours to change, as commits on overpressure/linux's
-  layer branches (`common/7.2`, `sm8250/7.2`, `phoenix/7.2`), following the stock kernel's behaviour
+  layer branches (`common/7.2`, `sm8250/7.2`, `phoenix/7.2`), by pull request merged with a merge commit
+  (no rebase, no force-push; changes move up the layers by pull request), following the stock kernel's behaviour
   where it is the reference. Its tags never move; this repository pins one in `kernel/release.json`,
   and `kernel contracts` checks the names both sides share. A new boot image goes through
   `dev boot-image` and `dev install`.
