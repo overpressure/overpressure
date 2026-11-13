@@ -3,15 +3,16 @@
 [overpressure](../../README.md) on the original PICO 4 (2022, Snapdragon XR2): Valve's Steam Frame kernel with the
 PICO's own drivers and device tree boots a SteamOS-compatible system installed on the headset (system in `super`,
 data in `userdata`, as PICO OS lays them out). It runs Valve's VR session (SteamVR in gamescope) with a Monado
-driver for the headset's lenses, cameras, sensors and controllers. A small Alpine system in `recovery` installs
-and rescues it; the way back to PICO OS restores everything from the backup the install makes.
+driver for the headset's lenses, cameras, sensors and controllers. A small Alpine system in `recovery`, on the same
+kernel, builds, installs and rescues it; the way back to PICO OS restores everything from the backup the install
+makes.
 
 ## Status
 
 | Step | Result |
 | --- | --- |
 | 1 Recoverable device | EDL backups, engineering bootloader, unlock, the way back to stock |
-| 2 Maintenance system | Alpine in `recovery`, SSH over USB, read-only storage |
+| 2 Maintenance system | Alpine on Valve's kernel in `recovery`, SSH over USB, read-only storage; the headset builds its system there |
 | 3 Graphics | Valve's Mesa (Turnip, OpenGL through zink); both 2160 × 2160 panels at 90 and 72 Hz |
 | 4 System | Holo Core aarch64 with the Steam Frame's systemd and SteamOS services; sound, Wi-Fi, Bluetooth, sleep |
 | 5 XR hardware | IMU, lens correction and IPD, four tracking cameras, 6DoF with PICO OS's tracker on the CDSP, controllers, the colour room view |
@@ -46,7 +47,8 @@ do. The install's four stages:
 | 3 Prepare your headset | one consent, a verified backup to this computer (**your way back: export it**), the engineering bootloader, the unlock, then the maintenance system: made here in a few minutes from the backup's own boot and recovery partitions and Valve's kernel (nothing of PICO OS's is downloaded); also makes this computer's SSH key | EDL, fastboot |
 | 4 Install | Wi-Fi if you like; the headset builds the SteamOS-compatible system itself, then it goes on and is checked; then "Unplug it and put it on" | on the cable |
 
-**Upgrade** has the headset build this version and installs it over yours, keeping your data. **Restore to stock** brings back
+**Upgrade** puts this version's maintenance system on the headset, has the headset build this version and installs
+it over yours, keeping your data. **Restore to stock** brings back
 PICO OS and its bootloader from the backup, with a stop for PICO OS's setup and USB debugging in between (wear the
 headset on the cable through that setup: its first start may update the lens and fan controller)
 ([docs/install.md](docs/install.md#the-upgrade-and-the-way-back)). *Export backup…* writes the backup into one

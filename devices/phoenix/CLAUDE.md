@@ -71,7 +71,7 @@ README.md current.
   `pico4-audio`, `pico4-xr`, `pico4-session` (with the SteamVR configuration) and `pico4-checks`; each
   package's preset enables its units. A change to a package goes to overpressure/packages, then a new
   tag there and the pin here.
-- `src/`: the project's C sources outside the packages (`reboot/`, `splash/`, `gd32/`). `pico4-slamd`, which
+- `src/`: the project's C sources outside the packages (`reboot/`, `splash/`). `pico4-slamd`, which
   runs PICO OS's head tracker (libSlam) in a bionic root, is a package of overpressure/packages.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-kernel-step.sh`,
   `windows-share-internet.ps1` and the on-headset preflight. The image holds no file of PICO OS's, only links

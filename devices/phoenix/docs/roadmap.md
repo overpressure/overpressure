@@ -5,7 +5,9 @@ Snapdragon XR2), on Valve's kernel from the Steam Frame with the PICO's own driv
 ([kernel.md](kernel.md)).
 
 **TL;DR.** All six steps work on the tested headset. The owner installs, upgrades and restores to stock through
-the installer (`python -m overpressure install|upgrade|restore`, [install.md](install.md#the-installer)).
+the installer (`python -m overpressure install|upgrade|restore`, [install.md](install.md#the-installer)); the
+headset builds its own system ([install.md](install.md#built-on-the-headset)), so the owner's computer builds
+nothing and downloads nothing of PICO OS's.
 Open: the rest of the direct boot's checks (the power key in charger mode, a boot without the PC, `dev check`
 with the controllers), a power press after a long sleep, and the checks under [Open work](#open-work).
 Background: [research.md](research.md).
@@ -15,7 +17,7 @@ Background: [research.md](research.md).
 | Step | Status | Document |
 | --- | --- | --- |
 | 1. Recoverable development device | Works: EDL backup, engineering ABL, persistent unlock, stock restore verified by readback, also through the installer | [device-preparation.md](device-preparation.md) |
-| 2. Minimal Linux | Works: root shell over USB-C, read-only storage, automatic return to fastboot | [stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md) |
+| 2. Minimal Linux | Works: root shell over USB-C, read-only storage, automatic return to fastboot; in `recovery` on Valve's kernel, where the headset builds its system | [stage1.md](stage1.md), [hardware-testing.md](hardware-testing.md) |
 | 3. Native graphics | Works: Valve's Mesa on msm; both panels at 90 Hz | [graphics.md](graphics.md) |
 | 4. SteamOS-compatible userspace | Works: Holo Core aarch64 with the Frame's systemd 257.7, no failed units | [userspace.md](userspace.md) |
 | 5. Native XR hardware | Works: head IMU, display, lens correction, tracking cameras, 6DoF head and controller tracking, RGB camera and the colour room view | [xr.md](xr.md) |
@@ -212,13 +214,14 @@ built for the Frame's hardware.
 
 **Not verified.**
 
-- On the headset: the upgrade, a restore from an imported backup on another computer, and `dev restore`
-  interrupted part way ([install.md](install.md#an-interrupted-restore)). The whole restore of an installed
+- On the headset: the installer's whole install from PICO OS with the headset's first build after the format, the
+  upgrade, a restore from an imported backup on another computer, and `dev restore` interrupted part way
+  ([install.md](install.md#an-interrupted-restore)). A panic in the maintenance stage 1 on Valve's kernel. The whole restore of an installed
   system, also through the window, ran into PICO OS.
 - A second headset: everything ran on one unit ([device-preparation.md](device-preparation.md#verified-hardware)).
-- macOS as the host: the host tests cover it, but no headset was installed from one (Linux hosts built images,
-  Windows also installed them); the Python assets extraction and EDL device counting through pyusb are not run
-  on a Mac.
+- Linux and macOS as the host: the host tests cover both, but no headset was installed from either (Windows
+  installed it); the SSH proxy the headset's build downloads through (`ssh -R`), the Python assets extraction and
+  EDL device counting through pyusb are not run on a Mac.
 - The first-run setup's failure page (a refused password, a network out of range) worn: drawn and host-tested
   only. Its texts in the 30 languages besides English are machine-assisted and not reviewed. The screen reader's
   voice choice in the client's settings is not tried.

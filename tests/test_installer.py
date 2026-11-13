@@ -423,19 +423,19 @@ class DemoTests(unittest.TestCase):
             self.assertEqual({e["event"] for e in events[1:]}, {"task"})
             self.assertEqual(model.start_page, recorded)
             self.assertEqual(
-                [s.status for s in model.stages], ["done"] * 4 + ["pending"] if recorded else ["pending"] * 5
+                [s.status for s in model.stages], ["done"] * 3 + ["pending"] if recorded else ["pending"] * 4
             )
 
     def test_the_demo_starts_over_from_a_stage(self):
         demo = installer.DemoEngine(pace=0, recorded=True)
-        demo.start(["--restart", "build"])
+        demo.start(["--restart", "connect"])
         while (event := json.loads(str(demo.items.get(timeout=10)[1])))["event"] != "task" or event["status"] != "done":
             pass
         while event["status"] != "running":
             event = json.loads(str(demo.items.get(timeout=10)[1]))
         first = event
         demo.stop()
-        self.assertEqual(first["task"], "kernel")  # the build stage again, the computer's stays done
+        self.assertEqual(first["task"], "find")  # the connect stage again, the computer's stays done
 
     def test_a_stop_ends_a_task_that_does_not_write_at_once(self):
         demo, model = installer.DemoEngine(pace=0.2), installer.Model()
@@ -659,9 +659,9 @@ class WindowTests(unittest.TestCase):
             press_panel(shown, "Cancel")
             self.assertFalse(shown.model.running)
             self.assertEqual(shown.title.cget("text"), "Welcome back")
-            shown.ask_restart("build")
+            shown.ask_restart("connect")
             press_panel(shown, "Start over")
-            self.pump(shown, lambda: (t := shown.model.task("kernel")) is not None and t.status == "running")
+            self.pump(shown, lambda: (t := shown.model.task("find")) is not None and t.status == "running")
             self.assertTrue(shown.stop_button.winfo_ismapped())
             self.assertEqual(shown.stop_button.cget("text"), "Stop")
             shown.ask_to_stop()

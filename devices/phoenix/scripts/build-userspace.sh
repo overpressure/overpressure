@@ -119,13 +119,6 @@ mount_api() {
     mnt -t tmpfs tmpfs "$1/run"
 }
 
-# The build root's layout before overpressure/packages (BUILD_ROOT/bootstrap): nothing reads it any more.
-if [[ -d $build_root/bootstrap ]]; then
-    unmount_below "$build_root/bootstrap"
-    rm -rf --one-file-system "$build_root/bootstrap"
-    log "removed the build root's old layout (bootstrap)"
-fi
-
 # -- 0. a snapshot of the inputs ------------------------------------------------------
 # overpressure/packages at the pinned commit, fetched once into cache/packages (git checks that the
 # files are the commit's), and the checkout --packages names.

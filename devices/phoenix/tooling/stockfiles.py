@@ -9,7 +9,7 @@ files as PICO's OTA of that firmware: assets.from_backup), laid out as the syste
 and written to the data partition as /var/lib/pico4-stock by the maintenance stage 1
 (pico4-install stock). The image holds symbolic links to them (userspace/stock-links.txt). PICO OS's modem,
 dsp and bluetooth partitions, which nothing writes, are mounted read-only at boot instead
-(preinit, under RUNTIME): the DSPs', the video codec's and the wireless chip's firmware come
+(preinit, under /run/pico4/firmware): the DSPs', the video codec's and the wireless chip's firmware come
 from there. persist, the headset's own data, is read at boot as before.
 
 The archive is the tree with a manifest.json of every file's SHA-256; the same assets give
@@ -38,10 +38,6 @@ Log = Callable[[str], None]
 
 #: Where the data partition's copy lives on the headset (the data partition's /var).
 STOCK = "/var/lib/pico4-stock"
-#: Where preinit mounts PICO OS's modem, dsp and bluetooth partitions read-only.
-RUNTIME = "/run/pico4/firmware"
-#: The kernel's firmware search path (firmware_class.path): the modem partition's images.
-FIRMWARE_PATH = f"{RUNTIME}/modem/image"
 SCHEMA = 1
 
 #: The tree, relative to /: (its path, the assets kind, the path in the kind's folder); a directory whole.
@@ -204,16 +200,6 @@ def _write(folders: dict[str, Path], version: str, output: Path, log: Log) -> di
     new.replace(output)
     log(f">> {output}: {len(manifest['files'])} files of PICO OS {version} ({output.stat().st_size >> 20} MiB)")
     return manifest
-
-
-def read_manifest(archive: Path) -> dict:
-    """Return the manifest of an archive write_archive made."""
-    with tarfile.open(archive, "r:gz") as tar:
-        member = tar.extractfile("manifest.json")
-        if member is None:
-            msg = f"{archive} has no manifest.json"
-            raise AssetError(msg)
-        return json.loads(member.read())
 
 
 def main(argv: list[str] | None = None) -> int:

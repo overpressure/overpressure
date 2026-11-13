@@ -78,7 +78,7 @@ python -m overpressure container run -- make test  # the host tests and every he
   `overpressure/linux.py` pins by tag and digest (`IMAGE`): Ubuntu 24.04 with every tool of the builds,
   LLVM 20's clang and lld, the kernel's cross compiler, pahole and qemu-user-static, for amd64 and arm64.
   The pin, not a package mirror, keeps a build's tools the same on every computer and later; the release
-  lists every package's version. `container pull` gets it (the installer and `container run` do when it
+  lists every package's version. `container pull` gets it (`container run` does when it
   is missing); `OVERPRESSURE_BUILDER` names another image, such as one built from the builder's recipe.
   Every run passes the image to the command as `OVERPRESSURE_IMAGE`. Its contract (entrypoint, ownership
   hand-back, the aarch64 handler) is in that repository's README.

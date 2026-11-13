@@ -662,7 +662,8 @@ class WorkflowTests(unittest.TestCase):
         build = {t.id: t for t in stages["build"].tasks}
         self.assertEqual({k for k, t in build.items() if t.done is None}, {"kernel", "boot-image"})
         tasks = [t.id for t in stages["install"].tasks]
-        self.assertEqual(tasks, ["plug-in", "recovery", "install", "installed", "check", "ready"])
+        # This version's maintenance system is written first: the headset's build and the write need its tools.
+        self.assertEqual(tasks, ["plug-in", "flash", "maintenance", "install", "installed", "check", "ready"])
         self.assertNotIn("--format-data", " ".join(self.plan.steps["install"].argv))
 
     def test_the_restore_asks_once_and_writes_only_after_the_backup_is_checked(self):

@@ -24,7 +24,7 @@ the EDL backup's LUNs, the unlock's fastboot serial and the Wi-Fi profile.
    "unplug it and put it on".
 
 The upgrade (upgrade_stages) checks this computer, makes this version's images from the backup,
-then dev recovery, dev install --on-headset, dev installed and dev check: the data partition stays.
+then dev flash, dev connect, dev install --on-headset, dev installed and dev check: the data partition stays.
 The way back (restore_stages) checks the backup file by file, then with one consent brings back
 PICO OS's system, boot, recovery and fresh data (dev restore --installed, unless PICO OS runs
 already), waits for PICO OS's setup and USB debugging, and returns the stock bootloader (cycle
@@ -819,10 +819,19 @@ class Plan:
                 + " Keep the cable in.",
                 (
                     Task("plug-in", "Connect the headset", self.plug_in_upgrade, ""),
+                    # This version's maintenance system goes to recovery first: the install runs in it.
                     self.step_task(
-                        "recovery",
-                        "Start the maintenance system",
-                        "about 2 min",
+                        "flash",
+                        "Update the maintenance system",
+                        "about 3 min",
+                        where="Your headset is in its bootloader (fastboot) or starting the maintenance system. "
+                        + AGAIN,
+                    ),
+                    Task(
+                        "maintenance",
+                        "Connect to the maintenance system",
+                        lambda ctx: self.run_step(ctx, "connect"),
+                        "about 1 min",
                         where="The headset may be in its maintenance system: " + AGAIN,
                     ),
                     self.step_task(

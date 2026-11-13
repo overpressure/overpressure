@@ -35,7 +35,7 @@ userspace/        stage 2: the SteamOS-compatible userspace
   session/          the session user's SteamVR configuration
 kernel/           the pinned release of overpressure/linux (release.json), build-tree.sh, imx471_mode.py,
                   recovery_image.py
-src/              C sources outside the packages: reboot/ (pico4-reboot), splash/ (pico4-splash), gd32/
+src/              C sources outside the packages: reboot/ (pico4-reboot), splash/ (pico4-splash)
 prebuilt/         static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-system-image.sh, build-kernel-step.sh, upgrade-check.sh (with
                   upstream.py), check-package-lock.py and the on-headset preflight
@@ -66,7 +66,7 @@ what is missing; `python -m overpressure tools` fetches adb, fastboot and edl-ng
 | --- | --- |
 | Stage-1 image, stock firmware and assets, host tests, headset commands | Python 3.9+ on Windows, Linux or macOS (the start scripts or `uv sync` add the pinned brotli, pyusb and libusb-package); platform-tools and OpenSSH for the headset |
 | Userspace archive, system image, Valve's kernel, the QEMU test kernel | the build container ([docs/tool.md](../../../docs/tool.md#linux-root-steps)): Docker or Podman on any host. Its image has every tool, LLVM 20 and qemu-user-static, and registers the aarch64 binfmt handler (F flag) on an x86-64 engine that has none |
-| Windows NCM initialization (stage 1 on the stock kernel) | UsbDk; pyusb and libusb-package |
+| Windows NCM initialization (a stage 1 on the stock kernel: the acceptance runner's) | UsbDk; pyusb and libusb-package |
 
 On an arm64 engine (Apple silicon, an arm64 Linux host) the build environment runs natively.
 

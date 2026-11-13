@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Unlicense
 """The PICO 4 (2022, codename phoenix, Snapdragon XR2) in overpressure.
 
-Its host tooling: the stage-1 boot image (the maintenance stage 1, on the stock kernel), the stock
-firmware from PICO's public OTA, EDL, fastboot and ADB, the acceptance runner, the development
-loop and the acceptance cycle; the system itself runs on Valve's kernel, overpressure/linux's
-release that kernel/release.json pins. Python 3.9+
+Its host tooling: the stage-1 boot image (from the headset's own boot partition in its backup; the
+maintenance stage 1 in recovery runs it on Valve's kernel), PICO OS's files from that backup, EDL,
+fastboot and ADB, the acceptance runner, the development loop and the acceptance cycle; the system
+runs on Valve's kernel, overpressure/linux's release that kernel/release.json pins, and the headset
+builds it itself. Python 3.9+
 with the standard library and overpressure's pinned packages (pyproject.toml); the formats it
 shares with other headsets come from the overpressure package.
 """
@@ -103,7 +104,7 @@ class Phoenix(Headset):
         "phoenix",
         "PICO 4",
         "Qualcomm Snapdragon XR2 (SM8250)",
-        "Valve's kernel 7.2 in boot; the maintenance stage 1 on its stock kernel 4.19 in recovery",
+        "Valve's kernel 7.2 in boot, and under the maintenance stage 1 in recovery",
     )
 
     def commands(self) -> dict[str, Command]:
@@ -348,7 +349,7 @@ class Phoenix(Headset):
         return USB_MODES
 
     def install_plan(self) -> Sequence[Stage]:
-        """Return the installer's five stages (tooling/install.py)."""
+        """Return the installer's stages (tooling/install.py)."""
         from .install import Plan  # noqa: PLC0415  # install imports this package's modules: a top-level import is circular
 
         return Plan(self).stages()

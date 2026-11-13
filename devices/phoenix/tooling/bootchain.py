@@ -3,9 +3,9 @@
 
     python -m overpressure bootchain [--reference NAME] [NAME...]
 
-The installed system takes everything of PICO OS's it runs from the verified build's public package
-(tooling/assets.py) and the headset's own persist. What stays the headset's own PICO OS version is
-what runs before the kernel and is never written by the install: the boot chain (XBL and its
+The installed system runs PICO OS's files of the headset's own firmware (from its backup and its
+partitions) and its own persist. What also stays the headset's own PICO OS version is what runs
+before the kernel and is never written by the install: the boot chain (XBL and its
 configuration, AOP, TrustZone and its libraries, the hypervisor, devcfg, the serial engines'
 firmware, the UEFI volume) and the board overlay in dtbo. The ABL is not among them: the install
 replaces it with the engineering ABL.

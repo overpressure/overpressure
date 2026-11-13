@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""The installer view's model and engines: the install engine's events as five stages, one main button at a time.
+"""The installer view's model and engines: the install engine's events as stages, one main button at a time.
 
 The window draws and asks; it does nothing itself. It runs ``python -m overpressure install
 --json`` as a child, reads its events (docs/tool.md, "The installer") line by line on a thread
@@ -476,7 +476,7 @@ DEMO_SECONDS = 1.2
 class DemoEngine:
     """A fake engine for --demo: every stage, a note, each kind of ask, progress, a failure and a retry.
 
-    RECORDED starts as if an earlier run had done the first four stages (the start page shows);
+    RECORDED starts as if an earlier run had done every stage but the last (the start page shows);
     it stops as the engine does: at once, except in a task that writes, which finishes first.
     """
 
@@ -492,16 +492,6 @@ class DemoEngine:
             ),
         ),
         (
-            "build",
-            "Build the system",
-            "Every image, built on this computer. It takes hours; the headset is not needed.",
-            (
-                ("kernel", "Kernel", "about 40 min", False),
-                ("userspace", "System", "about 2 h", False),
-                ("images", "Boot images", "about 5 min", False),
-            ),
-        ),
-        (
             "connect",
             "Connect your headset",
             "Turn on developer mode and USB debugging, then plug it in.",
@@ -513,21 +503,22 @@ class DemoEngine:
         (
             "prepare",
             "Prepare your headset",
-            "A backup first, then the bootloader is unlocked.",
+            "A backup first, then the bootloader is unlocked and the maintenance system made from the backup.",
             (
                 ("backup", "Back up the headset", "about 20 min", True),
                 ("abl", "Engineering bootloader", "about 1 min", True),
                 ("unlock", "Unlock", "about 1 min", True),
+                ("images", "Maintenance system and boot images", "about 5 min", False),
                 ("stage1", "Maintenance system", "about 2 min", True),
             ),
         ),
         (
             "install",
             "Install",
-            "The system goes onto the headset, then a check that it starts.",
+            "The headset builds the system itself, it goes on, then a check that it starts.",
             (
                 ("wifi", "Wi-Fi", "optional", True),
-                ("system", "Install the system", "about 15 min", True),
+                ("system", "Build and install the system", "about 15 min", True),
                 ("check", "Acceptance check", "about 2 min", False),
             ),
         ),
@@ -538,16 +529,17 @@ class DemoEngine:
         "upgrade": (
             (
                 "build",
-                "Build the system",
-                "This version of the system, built on this computer.",
-                (("userspace", "System", "minutes to hours", False),),
+                "Prepare the upgrade",
+                "This version's maintenance system and boot images, made from your backup.",
+                (("images", "Maintenance system and boot images", "a few minutes", False),),
             ),
             (
                 "install",
                 "Install the upgrade",
-                "The new system goes on; your data stays.",
+                "The headset builds the new system and it goes on; your data stays.",
                 (
-                    ("system", "Install the system", "about 10 min", True),
+                    ("stage1", "Update the maintenance system", "about 3 min", True),
+                    ("system", "Build and install the system", "about 10 min", True),
                     ("check", "Acceptance check", "about 2 min", False),
                 ),
             ),
@@ -589,7 +581,7 @@ class DemoEngine:
         name: str = "headset",
         workflow: str = INSTALL,
     ) -> None:
-        """Walk through the plan; PACE scales the pauses (0 in tests); RECORDED: the first four stages done.
+        """Walk through the plan; PACE scales the pauses (0 in tests); RECORDED: every stage but the last done.
 
         The plan names the headset CODENAME and NAME: the window's chosen one; WORKFLOW picks the
         install's stages or another workflow's (never recorded).
@@ -601,7 +593,7 @@ class DemoEngine:
         self.items: queue.Queue[Item] = queue.Queue()
         self.answers: queue.Queue[str | None] = queue.Queue()
         recorded = recorded and workflow == INSTALL
-        self.done: set[str] = {t[0] for s in self.stages[:4] for t in s[3]} if recorded else set()
+        self.done: set[str] = {t[0] for s in self.stages[:-1] for t in s[3]} if recorded else set()
         self.writes = {t[0] for s in self.stages for t in s[3] if t[3]}
         self.failed_once = False
         self.stopping = threading.Event()
