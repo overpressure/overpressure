@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Unlicense
-"""The image is built without the user's backup.
+"""PICO OS's files come from PICO OS's partitions only, never from the headset's own data.
 
-The stock files come from PICO's public OTA (python -m overpressure stock), the headset's own factory data
-from its persist partition at boot (pico4-persist.service).
+They come from the headset's backup (or PICO's public OTA) and reach the data partition at the install
+(tooling/stockfiles.py); the headset's own factory data is read from its persist partition at boot
+(pico4-persist.service).
 """
 
 import re
@@ -11,7 +12,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from devices.phoenix.tooling import assets, stock
+from devices.phoenix.tooling import assets, stock, stockfiles
 from overpressure import ota
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,16 +34,11 @@ class ExtractionTests(unittest.TestCase):
         for name, kind in assets.KINDS.items():
             self.assertTrue(set(kind.images) <= set(assets.BACKUP_IMAGES), name)
 
-    def test_the_build_ships_no_persist_data(self):
+    def test_the_headsets_own_data_stays_in_persist(self):
+        # The image and PICO OS's files on the data partition link to persist, never copy from it.
+        self.assertTrue(all(t.startswith("/mnt/vendor/persist/") for t in stockfiles.TREE_LINKS.values()))
         build = read(ROOT / "scripts/build-userspace.sh")
-        self.assertNotIn("wlan_mac.bin; do", build)
-        self.assertNotRegex(build, r'"\$sensor_data/sensors/registry"')
-        for link in (
-            '/mnt/vendor/persist/sensors/registry/registry "$qcom/sensors/registry"',
-            '/mnt/vendor/persist/sensors/registry/sns_reg_version "$qcom/sensors/sns_reg_version"',
-            '/mnt/vendor/persist/pvr "$qcom/calibration/pvr"',
-        ):
-            self.assertIn("ln -sfn " + link, build)
+        self.assertNotIn("wlan_mac.bin", build)
         self.assertIn('mkdir -p "$T/mnt/vendor/persist"', build)
 
 

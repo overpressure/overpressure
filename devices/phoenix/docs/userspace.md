@@ -197,21 +197,14 @@ archive* step and `make userspace` run the same with the defaults:
 
 ```sh
 python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
-    /var/tmp/pico4-userspace-build out/userspace \
-    --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
-    --wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
+    /var/tmp/pico4-userspace-build out/userspace
 ```
 
-`build-userspace.sh BUILD_ROOT OUTPUT_DIR [OPTIONS]`; the asset folders come from `python -m overpressure assets`
-([development.md](development.md#stock-firmware)):
+`build-userspace.sh BUILD_ROOT OUTPUT_DIR [OPTIONS]`. The image holds no file of PICO OS's, only links to where
+they are on the headset ([install.md](install.md#pico-oss-files)):
 
 | Option | Effect |
 | --- | --- |
-| `--gpu-firmware DIR` | the six `a650_*` GPU firmware files ([graphics.md](graphics.md)); without them the system boots, but Vulkan cannot start |
-| `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data ([xr.md](xr.md)); without it the head IMU stack stays inactive |
-| `--wlan DIR` | Wi-Fi firmware and board data; without it Wi-Fi stays off |
-| `--audio DIR` | ADSP firmware and the audio process's files; without it there is no sound card |
-| `--stock-slam DIR` | PICO OS's head tracker, its Compute DSP firmware and bionic root ([xr.md](xr.md)); without it head tracking falls back to 3DoF unless `PICO4_SLAM_BACKEND=basalt` |
 | `--refresh` | downloads current package databases and reinstalls the base root; builds the project's packages here against them |
 | `--update-lock` | writes `OUTPUT_DIR/packages.lock` instead of checking [the lock](#package-lock) |
 | `--packages DIR` | takes a checkout of overpressure/packages instead of the pinned commit: its recipes that differ from the pinned commit's are built here, the others come from the release |

@@ -431,8 +431,9 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
 - **Its root.** `/usr/lib/pico4-stock-slam`, with PICO OS's bootstrap linker and bionic C library
   (no Android runtime): the tracker and its libraries (`libion.so` among them, without which the DSP
   optical flow cannot allocate and 6DoF never starts), DSP modules, configuration
-  (`/system/etc/pvr/config`), the DSP's process shells and `cdsprpcd`, all from
-  `python -m overpressure assets` ([Build](#build)). Stand-ins of this project: `libandroid.so` (the
+  (`/system/etc/pvr/config`), the DSP's process shells and `cdsprpcd`, the headset's own: preinit binds them in
+  read-only from the data partition's copy and the `dsp` partition ([install.md](install.md#pico-oss-files)).
+  Stand-ins of this project: `libandroid.so` (the
   trace calls and the hardware-buffer calls, which fail) and `libpico4-slam-stubs.so` (preloaded:
   Android logging to the journal, empty property lookups). Programs in the root are built with the
   host's clang for `aarch64-linux-android29`, without an NDK ([src/stockslam](../src/stockslam)).
@@ -696,11 +697,13 @@ the recorded head accelerometer (`--head-up`, or `--estimate-head-up` from a sti
 
 ## Build
 
-The inputs come from the stock firmware ([development.md](development.md#stock-firmware)), in Python on
-any system; the command checks the stock folder against its manifest and never touches the headset:
+PICO OS's files are the headset's own: the install takes them from its backup and writes them to the data
+partition (`python -m overpressure stock-files`, [install.md](install.md#pico-oss-files)); the DSP images come
+from its `modem` partition at boot. The same extraction, as folders, from a backup or PICO's OTA
+([development.md](development.md#stock-firmware)):
 
 ```sh
-python -m overpressure assets sensor-data stock-slam
+python -m overpressure assets sensor-data stock-slam [--backup DIR]
 ```
 
 | `sensor-data` output | Content (source partition) |
@@ -723,20 +726,12 @@ python -m overpressure assets sensor-data stock-slam
 | `root/vendor/bin/cdsprpcd`, `root/vendor/lib64/` | the DSP's root listener (vendor) |
 | `manifest.json` | sources and SHA-256 of every file |
 
-`make userspace` passes both to the userspace build
-([development.md](development.md#the-userspace-build), [userspace.md](userspace.md)):
-
-```sh
-python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
-    /var/tmp/pico4-userspace-build out/userspace --gpu-firmware assets/graphics-firmware-5.13.7 \
-    --sensor-data assets/sensor-data-5.13.7 --stock-slam assets/stock-slam-5.13.7   # plus --wlan, --audio
-```
-
-`--sensor-data` installs the DSP firmware in `/usr/lib/firmware` and the sensor tree in
-`/usr/share/qcom/pico4/`. `--stock-slam` installs the CDSP firmware and the root in
-`/usr/lib/pico4-stock-slam`, and builds `pico4-slamd` and the stand-ins
-([src/stockslam/build.sh](../src/stockslam/build.sh)) with the host's clang after running `test_isp`
-natively. The extracted data and the archive are proprietary: keep them private.
+The userspace build ([development.md](development.md#the-userspace-build)) builds `pico4-slamd` and the
+stand-ins ([src/stockslam/build.sh](../src/stockslam/build.sh)) with the host's clang after running
+`test_isp` natively, against stand-ins of bionic's `libc.so`, `libm.so` and `libdl.so`
+([bionic-stubs.c](../src/stockslam/bionic-stubs.c)); the binaries are the same as against PICO OS's own. The
+image's tracker root holds them and empty mount points for PICO OS's parts. The extracted data is
+proprietary: keep it private.
 
 - **`sm8250-hexagonrpc`**: hexagonrpcd from a pinned linux-msm commit plus this project's patches.
 - **`pico4-basalt`**: Basalt and its submodules at pinned commits.

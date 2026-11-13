@@ -114,6 +114,7 @@ class Phoenix(Headset):
             "match": Command("image", "find the firmware.json entry for a headset's fingerprint", keep=True),
             "stock": Command("stock", "the stock firmware's partitions from PICO's public OTA"),
             "assets": Command("assets", "the stock firmware, then every file the userspace build takes from it"),
+            "stock-files": Command("stockfiles", "PICO OS's files for the data partition, from the headset's backup"),
             "bootchain": Command(
                 "bootchain", "each PICO OS build's boot chain against the verified one, from PICO's OTAs"
             ),
@@ -140,15 +141,6 @@ class Phoenix(Headset):
         return (
             tools_step(),
             Step(
-                "assets",
-                "Stock firmware and assets",
-                "Image",
-                ("assets", "--firmware", "{firmware}", "--stock", "{stock}"),
-                "PICO's public OTA (about 11 GB, kept in the stock folder), then every file the userspace "
-                "build takes from it into assets/*-VERSION. Python on this computer, no Linux needed.",
-                (_firmware, Param("stock", "Stock folder", STOCK_FOLDER, "path")),
-            ),
-            Step(
                 "stage1",
                 "Stage-1 boot image",
                 "Image",
@@ -164,30 +156,14 @@ class Phoenix(Headset):
                     "scripts/build-userspace.sh",
                     "{build_root}",
                     "{output}",
-                    "--gpu-firmware",
-                    "assets/graphics-firmware-{version}",
-                    "--sensor-data",
-                    "assets/sensor-data-{version}",
-                    "--wlan",
-                    "assets/wlan-{version}",
-                    "--audio",
-                    "assets/audio-{version}",
-                    "--stock-slam",
-                    "assets/stock-slam-{version}",
                     "{refresh}",
                     "{build_packages}",
                 ),
                 "Holo Core and the Frame's packages, the project's from the pinned release, with this headset's "
-                "adaptation; incremental.",
+                "adaptation; no file of PICO OS's (the install writes them from the backup); incremental.",
                 (
                     Param("build_root", "Build folder (container volume)", build, "path"),
                     Param("output", "Output folder", "out/userspace", "path"),
-                    Param(
-                        "version",
-                        "Asset version",
-                        FIRMWARE.split("-", maxsplit=1)[0],
-                        help="the assets/*-VERSION folders",
-                    ),
                     Param("refresh", "Refresh package databases", "0", "flag", option="--refresh"),
                     Param(
                         "build_packages",

@@ -13,6 +13,13 @@
 #   pico4-install keys --size BYTES --id ID < AUTHORIZED_KEYS
 #       the installed system's SSH keys and install ID on its data partition (pico4-data):
 #       /root/.ssh/authorized_keys and /etc/pico4/install-id (in the /etc overlay's upper layer)
+#   pico4-install stock --size BYTES --bytes N --sha256 HEX < ARCHIVE.tar.gz
+#       PICO OS's files the installed system needs (python -m overpressure stock-files, from the
+#       headset's own backup) as /var/lib/pico4-stock on the data partition (pico4-data): the
+#       archive must be N bytes with the SHA-256 HEX, every file must match its SHA256SUMS; the
+#       new copy replaces the old one only when complete
+#   pico4-install stock-hash --size BYTES
+#       the SHA-256 of that copy's manifest.json, "none" without one (read-only)
 #   pico4-install wipe userdata|metadata --size BYTES
 #       zero the first 64 MiB, the way back to PICO OS: both are "formattable" in its fstab,
 #       so it makes new file systems (and encryption keys) on its next boot
@@ -155,6 +162,61 @@ keys() {
 	echo "keys $count"
 }
 
+# The data partition's copy of PICO OS's files, as the installed system's /var sees it.
+STOCK_DIR=var/lib/pico4-stock
+
+stock() {
+	local size="" bytes="" sha="" dev mnt=$STATE/data archive=$STATE/stock.tar.gz got rc=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--size) size=$2; shift ;;
+		--bytes) bytes=$2; shift ;;
+		--sha256) sha=$2; shift ;;
+		*) die "unknown option $1" ;;
+		esac
+		shift
+	done
+	[ -n "$size" ] && [ -n "$bytes" ] && [ ${#sha} = 64 ] || die "stock needs --size, --bytes and --sha256"
+	dev=$(partition userdata "$size")
+	[ "$(ext_label "$dev")" = pico4-data ] || die "userdata holds no pico4-data file system"
+	mkdir -p "$STATE" "$mnt"
+	head -c "$bytes" > "$archive"
+	got=$(sha256 < "$archive")
+	[ "$(wc -c < "$archive")" = "$bytes" ] && [ "$got" = "$sha" ] || { rm -f "$archive"; die "the archive is not the one sent ($got)"; }
+	writable "$dev"
+	mount -t ext4 -o noatime "$dev" "$mnt" || { readonly_again "$dev"; die "mounting userdata failed"; }
+	{
+		rm -rf "$mnt/$STOCK_DIR.new" &&
+			mkdir -p "$mnt/$STOCK_DIR.new" &&
+			tar -xzf "$archive" -C "$mnt/$STOCK_DIR.new" &&
+			(cd "$mnt/$STOCK_DIR.new" && sha256sum -c SHA256SUMS >/dev/null) &&
+			rm -rf "$mnt/$STOCK_DIR" &&
+			mv "$mnt/$STOCK_DIR.new" "$mnt/$STOCK_DIR"
+	} || rc=1
+	[ $rc = 0 ] || rm -rf "$mnt/$STOCK_DIR.new"
+	got=$(sha256 < "$mnt/$STOCK_DIR/manifest.json" 2>/dev/null)
+	umount "$mnt" || rc=1
+	sync
+	readonly_again "$dev"
+	rm -f "$archive"
+	[ $rc = 0 ] || die "writing PICO OS's files to userdata failed"
+	log "install: PICO OS's files on userdata, manifest $got"
+	echo "stock $got"
+}
+
+stock_hash() {
+	local size="" dev mnt=$STATE/data-ro got
+	[ "$1" = --size ] && size=$2
+	[ -n "$size" ] || die "stock-hash needs --size"
+	dev=$(partition userdata "$size")
+	[ "$(ext_label "$dev" 2>/dev/null)" = pico4-data ] || { echo none; return 0; }
+	mkdir -p "$mnt"
+	mount -t ext4 -o ro,noload "$dev" "$mnt" || die "mounting userdata read-only failed"
+	got=$(sha256 < "$mnt/$STOCK_DIR/manifest.json" 2>/dev/null)
+	umount "$mnt"
+	echo "${got:-none}"
+}
+
 wipe() {
 	local name=$1 size="" dev mib=64
 	case "$name" in userdata | metadata) ;; *) die "wipe refuses $name (userdata or metadata only)" ;; esac
@@ -220,9 +282,11 @@ case "${1:-}" in
 write) shift; write "$@" ;;
 format-data) shift; format_data "$@" ;;
 keys) shift; keys "$@" ;;
+stock) shift; stock "$@" ;;
+stock-hash) shift; stock_hash "$@" ;;
 hash) hash "$2" "$3" ;;
 wipe) shift; wipe "$@" ;;
 bootmode) bootmode "$2" ;;
 status) status ;;
-*) sed -n '3,27s/^# \{0,1\}//p' "$0"; exit 2 ;;
+*) sed -n '3,34s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

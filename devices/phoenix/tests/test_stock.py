@@ -2,7 +2,6 @@
 """devices.phoenix.tooling.stock: the PICO 4's members of PICO's full OTA, and its firmware default."""
 
 import json
-import re
 import unittest
 from pathlib import Path
 
@@ -33,7 +32,6 @@ class FirmwareDefaultTests(unittest.TestCase):
     def test_the_makefile_repeats_it(self):
         mk = (ROOT / "device.mk").read_text(encoding="utf-8")
         self.assertIn(f"FIRMWARE ?= {FIRMWARE}\n", mk)
-        self.assertEqual(set(re.findall(r"assets/[a-z-]+-(\d[\d.]*)", mk)), {FIRMWARE.split("-")[0]})
 
     def test_the_example_settings_repeat_it(self):
         example = (ROOT.parents[1] / ".env.example").read_text(encoding="utf-8")

@@ -3,15 +3,16 @@
 The project publishes source: its own code, recipes, patches and pins, and one binary, Valve's kernel with the
 project's changes, which is GPL-2.0 and published with its source ([overpressure/linux](https://github.com/overpressure/linux)). It publishes
 no image, no vendor file and no other binary of anyone else's. Each owner builds their own image on their own
-computer, from files each of them downloads from where the vendors publish them. This is a description of how the
+computer, from files each of them downloads from where the vendors publish them; PICO OS's own files come from
+the owner's own headset. This is a description of how the
 project works, not legal advice.
 
 | Input | Publisher | In this repository | How an owner gets it | Used for |
 | --- | --- | --- | --- | --- |
-| PICO OS OTA of the headset's firmware | PICO, public download | URL and hashes (`tooling/firmware.json`) | `python -m overpressure stock`, on their PC | stock kernel, device-tree overlays, GPU, Wi-Fi, audio and DSP firmware, sensor data |
-| PICO OS's head tracker (`libSlam` and its libraries) | PICO, in that OTA | no | `python -m overpressure assets`, on their PC | 6DoF head tracking |
+| PICO OS OTA of the headset's firmware | PICO, public download | URL and hashes (`tooling/firmware.json`) | its boot and recovery images (about 40 MB) by range requests, on their PC | the maintenance stage 1's stock kernel, the recovery image's overlay and signature block |
+| PICO OS's files: GPU, Wi-Fi, Bluetooth, audio and DSP firmware, sensor data, the head tracker (`libSlam` and its libraries) | PICO, on the owner's headset | no | their own headset: its `modem`, `dsp` and `bluetooth` partitions at boot, the rest from its EDL backup to its data partition (`dev install`) | the system's hardware, 6DoF head tracking |
 | Panel commands, the ABL overlay's labels | PICO, in that OTA's board overlay (part of its kernel's device tree) | no: in overpressure/linux's device tree, as GPL source | the kernel release | both panels, the ABL's overlay |
-| Camera sensor settings | PICO, in that OTA | no: written by the assets step (`kernel/imx471_mode.py`) | `python -m overpressure assets`, on their PC; the system image carries them, the kernel loads them | the RGB camera |
+| Camera sensor settings | PICO, on the owner's headset (its camera module) | no: written from it at the install (`kernel/imx471_mode.py`) | their own headset's backup, to its data partition; the kernel loads them | the RGB camera |
 | Engineering ABL | PICO, in a public PICO Neo 3 OTA | URL and hash (`tooling/unlockfiles.py`) | `python -m overpressure device fetch-unlock-files` | unlocking, development mode |
 | Firehose loader | PICO, in a public PICO Neo 3 package | URL and hash (`tooling/unlockfiles.py`) | the same command | EDL backups and restores |
 | The headset's calibration | the owner's headset | no | read from `persist`, on the headset, at run time | tracking, displays |
@@ -23,7 +24,8 @@ project works, not legal advice.
 
 ## What this means for an owner
 
-- The install needs no file from anyone's private collection: everything comes from public downloads.
+- The install needs no file from anyone's private collection: everything comes from public downloads or the
+  owner's own headset.
 - The built images (`out/`) hold PICO's and Valve's files, and are the owner's own copies. They stay private:
   an owner who publishes one redistributes those files.
 - The backup (`backup/`) and its exported file (`python -m overpressure backup export`) hold the headset's own

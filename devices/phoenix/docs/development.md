@@ -3,7 +3,7 @@
 | | |
 | --- | --- |
 | What | how the PICO 4's part is laid out, built and tested, and the fastest way from a change to the headset |
-| Build | `python -m overpressure assets`, then the userspace and system image in the build container (`python -m overpressure container run -- ...`) |
+| Build | the userspace and system image in the build container (`python -m overpressure container run -- ...`); PICO OS's files come from the headset's backup at the install |
 | Test | `python -m unittest` on the host; the installed system (`dev install`, `dev check`) is the integration test |
 | Code | `devices/phoenix/` ([layout](#repository-layout)); the generic package `overpressure/` ([docs/tool.md](../../../docs/tool.md)) |
 
@@ -96,8 +96,10 @@ machine.
 
 ## Stock firmware
 
-The image needs PICO OS's firmware and data files (DSP images, the head tracker, configuration). They are the
-same on every PICO 4 with that firmware and come from PICO's public full OTA, not from the user's backup:
+The system needs PICO OS's firmware and data files (DSP images, the head tracker, configuration). They are the
+same on every PICO 4 with that firmware. The image holds none of them: the install takes them from the
+headset's own backup ([install.md](install.md#pico-oss-files)). For development, `assets` takes the same
+files from PICO's public full OTA (or, with `--backup DIR`, from a backup, with no download):
 
 ```sh
 # Any system, no root and no Linux: the OTA's partitions (about 3.6 GB of OTA members, kept under
@@ -155,18 +157,15 @@ of the write checks ([install.md](install.md)).
 # In the build container, as root (the window's "Userspace archive" step and make userspace do the
 # same with these defaults):
 python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
-    /var/tmp/pico4-userspace-build out/userspace \
-    --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
-    --wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
+    /var/tmp/pico4-userspace-build out/userspace
 ```
+
+The image holds no file of PICO OS's, only links to where they are on the headset
+([install.md](install.md#pico-oss-files)); `pico4-slamd` links against stand-ins of bionic's libraries and
+needs the host's clang.
 
 | Option | Effect |
 | --- | --- |
-| `--gpu-firmware DIR` | GPU and Venus firmware, `assets/graphics-firmware-VERSION`; without it Vulkan cannot start |
-| `--sensor-data DIR` | sensor DSP firmware and configuration, lens configuration and controller data, `assets/sensor-data-VERSION` |
-| `--wlan DIR` | Wi-Fi firmware and board data, `assets/wlan-VERSION` |
-| `--audio DIR` | ADSP firmware and the audio process's files, `assets/audio-VERSION` |
-| `--stock-slam DIR` | PICO OS's head tracker, the Compute DSP's firmware and the tracker's bionic root, `assets/stock-slam-VERSION` ([xr.md](xr.md#head-tracking)); needs the host's clang |
 | `--refresh` | download current package databases and reinstall the base root; builds the project's packages here against them |
 | `--update-lock` | write `OUTPUT_DIR/packages.lock` for review instead of checking the build against the pinned lock ([userspace.md](userspace.md#package-lock)) |
 | `--packages DIR` | a checkout of [overpressure/packages](https://github.com/overpressure/packages) instead of the commit `userspace/packages.json` pins: its recipes that differ from the pinned commit's are built here, the others come from the pinned release; a change to a package, tried in the image |

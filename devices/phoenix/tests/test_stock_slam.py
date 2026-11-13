@@ -74,23 +74,20 @@ class ExtractionTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
-    def test_build_installs_the_root(self):
-        build = read(ROOT / "scripts/build-userspace.sh")
-        self.assertIn('--stock-slam) stock_slam=$(realpath "${2:?}"); shift 2 ;;', build)
-        self.assertIn('install -m 0644 "$stock_slam"/firmware/cdsp* "$T/usr/lib/firmware/"', build)
+    def test_the_tracker_links_against_bionic_stand_ins_not_pico_os_s_libraries(self):
+        build = read(ROOT / "src/stockslam/build.sh")
+        self.assertIn('libs=(-L"$stubs")', build)
+        self.assertNotIn("system/lib64", build)
+        stubs = read(ROOT / "src/stockslam/bionic-stubs.c")
+        for lib in ("LIBC", "LIBM", "LIBDL"):
+            self.assertIn(f"defined(STUB_{lib})", stubs)
+        image = read(ROOT / "scripts/build-userspace.sh")
         self.assertIn(
-            'bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" '
-            '"$project/packages/phoenix/pico4-monado" "$llvm"',
-            build,
+            'bash "$project/src/stockslam/build.sh" "$island/pico4" "$project/packages/phoenix/pico4-monado" "$llvm"',
+            image,
         )
-        self.assertIn('mv "$island/pico4/libandroid.so" "$island/system/lib64/libandroid.so"', build)
-        self.assertRegex(
-            build, r"mkdir -p \"\$island\"/\{dev,proc,sys,data,tmp,mnt/vendor/persist/pvr,mnt/vendor/pvr\}"
-        )
-        self.assertIn('"stock_slam": json.loads(stock)', build)
-        # The manifest's script gets the list after the other assets, before the version and commit.
-        self.assertIn('"$wlan_json" "$audio_json" "$stock_json" "$version" "$commit" >', build)
-        self.assertIn("audio, stock, version, commit = sys.argv[1:12]", build)
+        # PICO OS's parts of the tracker's root are bound over these when it starts (stock-slam).
+        self.assertIn('mkdir -p "$island"/{dev,proc,sys,data,tmp,system,vendor,', image)
 
 
 class SlamdThreadTests(unittest.TestCase):

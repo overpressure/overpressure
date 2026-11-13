@@ -80,11 +80,13 @@ log on stderr contains device identifiers. Identity files, logs and backups stay
 is the newest. `seko` and `sek` are secure-boot user builds, `seko` with `ro.oem.state` true; the region is the
 fingerprint's product (`Phoenix_ovs` global, `Phoenix` China).
 
-**What the headset's own build still decides.** The installed system takes everything of PICO OS's it runs from
-the 5.13.7 `global-seko` package, whatever the headset runs: DSP images, Wi-Fi and Bluetooth firmware, GPU
-firmware, PICO's tracker and libraries, sensor and audio configuration (`python -m overpressure assets`) and the
-stock recovery under the maintenance stage 1. Only `persist` is read from the headset. The headset's own build
-stays in what runs before the kernel and is never written: the boot chain (XBL and its configuration, AOP,
+**What the headset's own build decides.** The installed system runs the headset's own build's files: DSP
+images, Wi-Fi and Bluetooth firmware from its `modem`, `dsp` and `bluetooth` partitions; GPU firmware, PICO's
+tracker and libraries, sensor and audio configuration from its backup's `super`
+([install.md](install.md#pico-oss-files)); `persist`. Only on 5.13.7 `global-seko` have they run; on the other
+accepted builds they are that build's, untested. The stock recovery under the maintenance stage 1 comes from the
+5.13.7 `global-seko` package. The headset's own build also stays in what runs before the kernel and is never
+written: the boot chain (XBL and its configuration, AOP,
 TrustZone and its libraries, the hypervisor, devcfg, the serial engines' firmware, the UEFI volume) and the board
 overlay in `dtbo`. The ABL is not among them: the install replaces it with the engineering ABL.
 

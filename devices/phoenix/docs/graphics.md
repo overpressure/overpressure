@@ -29,15 +29,9 @@ DRM properties show:
 ## GPU firmware
 
 Six files from `/firmware` of the stock `vendor` partition: `a650_gmu.bin`, `a650_sqe.fw`, `a650_zap.mdt`
-and `a650_zap.b00` to `.b02`, out of PICO's public OTA ([development.md](development.md#stock-firmware)):
-
-```sh
-python -m overpressure assets --firmware 5.13.7-global-seko graphics-firmware
-```
-
-It checks the stock folder's manifest first and writes each file's SHA-256 and the firmware build to
-`manifest.json`. The userspace build takes the directory (`--gpu-firmware`, [userspace.md](userspace.md)).
-The project distributes no vendor files; `assets/` and the build output stay private.
+and `a650_zap.b00` to `.b02`. The install writes them to the data partition from the headset's own backup;
+the image links `/usr/lib/firmware/a650_*` to them ([install.md](install.md#pico-oss-files)), and msm loads them
+at the first open of the GPU's node. The project distributes no vendor files.
 
 ## Run the test
 

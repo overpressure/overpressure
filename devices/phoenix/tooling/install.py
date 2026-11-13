@@ -12,7 +12,7 @@ the EDL backup's LUNs, the unlock's fastboot serial and the Wi-Fi profile.
 
 1. computer: the host tools, the unlock files, then the doctor's checks (what fails becomes one
    message with its fixes).
-2. build: stock firmware and assets, stage-1 image, the build container's image (the builds'
+2. build: stage-1 image, the build container's image (the builds'
    Linux side runs there), userspace archive, system image, dev image, Valve's kernel, boot
    image; each skips when its output is there.
 3. connect: developer mode and USB debugging (an action ask), exactly one adb device, its
@@ -43,7 +43,7 @@ from overpressure import REPO, android, doctor, linux, qualcomm, runner, tools, 
 from overpressure.install import Ask, Context, Failed, Field, Stage, Task
 from overpressure.process import until
 
-from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, assets, device, devloop, localconfig, unlockfiles
+from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, device, devloop, localconfig, unlockfiles
 from . import doctor as checks
 from . import kernel as pinned_kernel
 
@@ -350,7 +350,7 @@ class Plan:
 
     def check_computer(self, ctx: Context) -> None:
         """Run the doctor's checks; what the installer does not provide itself and fails stops the run."""
-        found = [c for c in self.computer() if c.name not in PROVIDED and c.needed_for != checks.ASSETS]
+        found = [c for c in self.computer() if c.name not in PROVIDED]
         for check in found:
             ctx.log(f"{check.status}: {check.name} ({check.needed_for}): {check.detail}")
             if check.status == doctor.WARNING:
@@ -360,11 +360,6 @@ class Plan:
             raise Failed(computer_problems(problems), NOTHING_CHANGED + " " + AGAIN)
 
     # -- 2. the build ---------------------------------------------------------------------------
-    def assets_there(self, _ctx: Context) -> bool:
-        """Tell whether every extraction's assets are there, as today's recipe extracts them."""
-        version = checks.FIRMWARE_VERSION
-        return all(assets.current(self.root / "assets" / f"{k}-{version}", k) for k in checks.ASSET_KINDS)
-
     def build_done(self, key: str) -> Callable[[Context], bool]:
         """Return the done check of the build step @p key: its outputs are there, not older than their inputs."""
         archive = self.out("userspace", "pico4-userspace.tar.zst")
@@ -373,7 +368,6 @@ class Plan:
         dev = self.work
 
         outputs: dict[str, Callable[[Context], bool]] = {
-            "assets": self.assets_there,
             "stage1": lambda ctx: self.stage1(ctx).is_file(),
             "userspace": lambda _ctx: archive.is_file(),
             "system": lambda _ctx: self.newer(system, archive),
@@ -921,9 +915,6 @@ class Plan:
         installed_where = "The system is installed. Keep the cable in and start the installer again."
         built_where = NOTHING_CHANGED + " " + AGAIN
         build = [
-            self.step_task(
-                "assets", "Stock firmware and assets", "about 20 min", where=built_where, done=self.build_done("assets")
-            ),
             self.step_task(
                 "stage1", "Maintenance system image", "about 2 min", where=built_where, done=self.build_done("stage1")
             ),

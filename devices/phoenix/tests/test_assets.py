@@ -12,8 +12,7 @@ from typing import Callable
 from unittest import mock
 
 from devices.phoenix.tests.test_kernel_poc import camera_module
-from devices.phoenix.tooling import HEADSET, assets, doctor
-from overpressure import runner
+from devices.phoenix.tooling import HEADSET, assets
 from overpressure.assets import AssetError, StockFolder
 from tests.images import Ext4Image, FatImage, stock_folder
 
@@ -293,31 +292,14 @@ class AssetsTests(unittest.TestCase):
 
 
 class WiringTests(unittest.TestCase):
-    def test_kinds_are_the_userspace_builds_folders(self):
-        self.assertEqual(doctor.ASSET_KINDS, ("graphics-firmware", "sensor-data", "wlan", "audio", "stock-slam"))
+    def test_the_image_takes_none_of_them(self):
+        # PICO OS's files reach the headset from its backup at the install (tooling/stockfiles.py).
         build = (ROOT / "scripts/build-userspace.sh").read_text(encoding="utf-8")
         for option in ("--gpu-firmware", "--sensor-data", "--wlan", "--audio", "--stock-slam"):
-            self.assertIn(f"    {option}) ", build)
-
-    def test_the_step_is_python_on_this_computer(self):
-        step = next(s for s in HEADSET.steps() if s.key == "assets")
-        self.assertFalse(step.script or step.linux_root)
-        argv = runner.process(HEADSET, step, {"firmware": "5.13.7-global-seko"}, python="python")
-        self.assertEqual(
-            argv,
-            [
-                "python",
-                "-m",
-                "overpressure",
-                "--device",
-                "phoenix",
-                "assets",
-                "--firmware",
-                "5.13.7-global-seko",
-                "--stock",
-                "cache/pico4-stock/5.13.7-global-seko",
-            ],
-        )
+            self.assertNotIn(f"    {option}) ", build)
+        self.assertNotIn("assets", [s.key for s in HEADSET.steps()])
+        userspace = next(s for s in HEADSET.steps() if s.key == "userspace")
+        self.assertFalse([word for word in userspace.argv if "assets" in word])
         # The kernel is a download of the pinned release: no stock folder, no Linux.
         kernel = next(s for s in HEADSET.steps() if s.key == "kernel")
         self.assertEqual(kernel.argv, ("kernel", "fetch"))

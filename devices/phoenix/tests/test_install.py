@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
-from devices.phoenix.tooling import HEADSET, assets, devloop, localconfig
+from devices.phoenix.tooling import HEADSET, devloop, localconfig
 from devices.phoenix.tooling import install as plan
 from overpressure import doctor, qualcomm, tools
 from overpressure.doctor import Check
@@ -196,7 +196,7 @@ class PlanTests(unittest.TestCase):
             [[t.id for t in s.tasks] for s in stages],
             [
                 ["tools", "unlock-files", "doctor"],
-                ["assets", "stage1", "container", "userspace", "system", "dev-image", "kernel", "boot-image"],
+                ["stage1", "container", "userspace", "system", "dev-image", "kernel", "boot-image"],
                 ["find", "identity", "panel"],
                 ["consent", "backup", "stage-abl", "unlock", "flash", "maintenance"],
                 ["wifi", "install", "installed", "wifi-profile", "check", "ready"],
@@ -214,7 +214,7 @@ class PlanTests(unittest.TestCase):
         build = next(s for s in self.plan.stages() if s.id == "build")
         argv = self.plan.argv(self.ctx(), "stage1")
         self.assertEqual(argv[-4:], ["phoenix", "build", "--firmware", "5.13.7-global-seko"])
-        self.assertEqual(len(build.tasks), 8)
+        self.assertEqual(len(build.tasks), 7)
         # The Linux side runs in the build container, whose image a task builds before the first Linux step.
         ids = [t.id for t in build.tasks]
         linux_root = [i for i in ids if i in self.plan.steps and self.plan.steps[i].linux_root]
@@ -242,15 +242,10 @@ class PlanTests(unittest.TestCase):
         self.assertFalse(any(check(ctx) for check in done.values() if check))
         self.image = True
         self.assertTrue(done["container"](ctx))  # ty: ignore[call-non-callable]  # every build has one
-        for kind in ("graphics-firmware", "sensor-data", "wlan", "audio", "stock-slam"):
-            (self.root / "assets" / f"{kind}-5.13.7").mkdir(parents=True)
-            (self.root / "assets" / f"{kind}-5.13.7" / "manifest.json").write_text(
-                json.dumps({"sources": assets.KINDS[kind].sources})
-            )
         for name in ("pico4-stage1-5.13.7-global-seko.img", "userspace/pico4-userspace.tar.zst"):
             (out / name).parent.mkdir(parents=True, exist_ok=True)
             (out / name).write_text("x")
-        self.assertTrue(done["assets"](ctx) and done["stage1"](ctx) and done["userspace"](ctx))  # ty: ignore[call-non-callable]  # every build has one
+        self.assertTrue(done["stage1"](ctx) and done["userspace"](ctx))  # ty: ignore[call-non-callable]  # every build has one
         self.assertFalse(done["system"](ctx))  # ty: ignore[call-non-callable]  # every build has one
         (out / "userspace/pico4-system.img").write_text("x")
         self.assertTrue(done["system"](ctx))  # ty: ignore[call-non-callable]  # every build has one
@@ -573,7 +568,6 @@ class PlanTests(unittest.TestCase):
         self.checks = [
             Check("PICO4_ADB_SERIAL", doctor.HEADSET, doctor.MISSING, "empty"),
             Check("EDL backup", doctor.HEADSET, doctor.MISSING, "none"),
-            Check("assets/wlan-5.13.7", plan.checks.ASSETS, doctor.MISSING, "not extracted"),
             Check(
                 "build container image",
                 doctor.BUILDS,

@@ -63,8 +63,8 @@ def unlock_token(number: int) -> str:
 #: The PICO OS builds the install accepts (docs/device-preparation.md#other-pico-os-builds), as (version,
 #: region, ro.oem.state): the one the whole path has run on, and the ones that run the same code before
 #: the kernel by `python -m overpressure bootchain` (the boot chain re-signed, the board overlay the same)
-#: and sign vbmeta and recovery with the same key at the same rollback index. Everything else the system
-#: runs comes from the verified build's public package, whatever the headset runs.
+#: and sign vbmeta and recovery with the same key at the same rollback index. Everything of PICO OS's the
+#: system runs is the headset's own build's: its partitions and its backup (docs/install.md#pico-oss-files).
 VERIFIED_FIRMWARES = {("5.13.7", "global", "true")}
 SAME_CODE_FIRMWARES = {("5.13.3", "global", "true"), ("5.13.8", "global", "true")}
 #: Panels the kernel's driver and tree know, as the bootloader names them to the stock kernel.

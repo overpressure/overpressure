@@ -6,22 +6,10 @@
 # python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh ...):
 #   scripts/build-userspace.sh BUILD_ROOT OUTPUT_DIR [OPTIONS]
 #
-# Each of these comes from the stock firmware (PICO's public OTA) through python -m overpressure
-# assets, an assets/KIND-VERSION folder (docs/development.md#stock-firmware). The headset's own factory data is
-# not in the image: it links to persist, mounted read-only at boot (pico4-persist.service).
-#   --gpu-firmware DIR  a650_* GPU firmware (python -m overpressure assets,
-#                       docs/graphics.md). Without it the userspace boots, but Vulkan cannot start.
-#   --sensor-data DIR   sensor DSP firmware and config, lens and controller data, the RGB camera's
-#                       register table (python -m overpressure assets, docs/xr.md). Without it the
-#                       head IMU stack stays inactive and the RGB camera dark.
-#   --wlan DIR          Wi-Fi firmware and board data (python -m overpressure assets,
-#                       docs/userspace.md). Without it Wi-Fi stays off.
-#   --audio DIR         ADSP firmware and the audio process's files
-#                       (python -m overpressure assets, docs/userspace.md). Without it there is no
-#                       sound card.
-#   --stock-slam DIR    PICO OS's head tracker, its Compute DSP firmware and bionic root
-#                       (python -m overpressure assets, docs/xr.md). Without it head tracking
-#                       falls back to 3DoF unless PICO4_SLAM_BACKEND=basalt.
+# The image holds no file of PICO OS's: links to where they are on the headset (the data partition's
+# copy, which the install writes from the headset's own backup, and PICO OS's modem, dsp and
+# bluetooth partitions, mounted read-only at boot: userspace/stock-links.txt,
+# docs/install.md#pico-oss-files). The headset's own factory data is read from persist at boot.
 #   --packages DIR      a checkout of overpressure/packages instead of the pinned commit (trying a
 #                       change to a package): its recipes that differ from the pinned commit's are
 #                       built here, the others come from the pinned release
@@ -65,14 +53,9 @@ repo=$(cd "$source_dir/../.." && pwd)            # overpressure (its package, ca
 build_root=${1:?specify an isolated Linux-filesystem build directory}
 output=${2:?specify an output directory}
 shift 2
-firmware="" sensor_data="" wlan="" audio="" stock_slam="" packages_dir="" build_packages=0 refresh=0
+packages_dir="" build_packages=0 refresh=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
-    --gpu-firmware) firmware=$(realpath "${2:?}"); shift 2 ;;
-    --sensor-data) sensor_data=$(realpath "${2:?}"); shift 2 ;;
-    --wlan) wlan=$(realpath "${2:?}"); shift 2 ;;
-    --audio) audio=$(realpath "${2:?}"); shift 2 ;;
-    --stock-slam) stock_slam=$(realpath "${2:?}"); shift 2 ;;
     --packages) packages_dir=$(realpath "${2:?}"); shift 2 ;;
     --build-packages) build_packages=1; shift ;;
     --refresh) refresh=1; shift ;;
@@ -110,13 +93,6 @@ phase() { printf '>> [%4ss] %s\n' "$SECONDS" "$*"; }
 step_total=8
 step_done=0
 step() { printf 'progress %d/%d: %s\n' "$step_done" "$step_total" "$*"; step_done=$((step_done + 1)); }
-# assets_modes DIR...: what came from an assets folder as 0644 files and 0755 directories,
-# whatever modes the checkout showed (a Windows checkout through the container's bind mount shows
-# 0777 or 0755); links stay as they are. What must run gets 0755 explicitly afterwards.
-assets_modes() {
-    find "$@" -type d -exec chmod 0755 {} +
-    find "$@" -type f -exec chmod 0644 {} +
-}
 mounted=()
 mnt() { mount "$@"; mounted+=("${!#}"); }
 cleanup() { for ((i=${#mounted[@]}-1;i>=0;i--)); do umount -l "${mounted[$i]}" 2>/dev/null || true; done; mounted=(); }
@@ -260,7 +236,7 @@ for layer in "${layers[@]}"; do
 done
 cp -L /etc/resolv.conf "$B/etc/resolv.conf"
 mount_api "$B"
-# The host's clang and lld, for PICO OS's tracker (--stock-slam).
+# The host's clang and lld, for pico4-slamd (PICO OS's tracker's root).
 llvm=""
 if [[ $host_arch == x86_64 ]]; then
     for v in 21 20 19; do
@@ -414,139 +390,38 @@ remapping["layouts"] = [l for l in remapping["layouts"]
 with open(path, "w") as f:
     json.dump(remapping, f, indent=2)
 EOF
-firmware_json="[]"
-if [[ -n "$firmware" ]]; then
-    mkdir -p "$T/usr/lib/firmware"
-    for f in a650_gmu.bin a650_sqe.fw a650_zap.mdt a650_zap.b00 a650_zap.b01 a650_zap.b02; do
-        [[ -s "$firmware/$f" ]] || { echo "missing GPU firmware $firmware/$f" >&2; exit 1; }
-        install -m 0644 "$firmware/$f" "$T/usr/lib/firmware/$f"
-    done
-    # A mainline kernel's msm (Valve's) loads them again after a GPU recovery: at its paths, the
-    # zap shader where the device tree names it.
-    mkdir -p "$T/usr/lib/firmware/qcom/sm8250/pico/phoenix"
-    ln -sfn ../a650_sqe.fw "$T/usr/lib/firmware/qcom/a650_sqe.fw"
-    ln -sfn ../a650_gmu.bin "$T/usr/lib/firmware/qcom/a650_gmu.bin"
-    for f in a650_zap.mdt a650_zap.b00 a650_zap.b01 a650_zap.b02; do
-        ln -sfn "../../../../$f" "$T/usr/lib/firmware/qcom/sm8250/pico/phoenix/$f"
-    done
-    # The video codec (Venus) for Steam Link's decoder (docs/session.md#steam-link).
-    [[ -s "$firmware/venus.mdt" ]] || { echo "missing video codec firmware $firmware/venus.mdt" >&2; exit 1; }
-    install -m 0644 "$firmware"/venus.* "$T/usr/lib/firmware/"
-    firmware_json=$(cd "$T/usr/lib/firmware" && sha256sum a650_* venus.* | python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
-fi
-# Wi-Fi: the QCA6390's firmware and the headset's board data, under ath11k's names, where the
-# kernel's firmware loader looks. PICO OS's driver picks bdwlanq.elf on this headset: ath11k's board.bin.
-wlan_json="[]"
-if [[ -n "$wlan" ]]; then
-    mkdir -p "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0"
-    for f in amss20.bin m3.bin bdwlanq.elf; do
-        [[ -s "$wlan/firmware/qca6390/$f" ]] || { echo "missing $wlan/firmware/qca6390/$f (see python -m overpressure assets)" >&2; exit 1; }
-        install -m 0644 "$wlan/firmware/qca6390/$f" "$T/usr/lib/firmware/qca6390/"
-    done
-    ln -sfn ../../../qca6390/amss20.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/amss.bin"
-    ln -sfn ../../../qca6390/m3.bin "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/m3.bin"
-    ln -sfn ../../../qca6390/bdwlanq.elf "$T/usr/lib/firmware/ath11k/QCA6390/hw2.0/board.bin"
-    # The same chip's Bluetooth firmware and NV data, under the names hci_qca asks for.
-    mkdir -p "$T/usr/lib/firmware/qca"
-    for f in htbtfw20.tlv htnv20.bin; do
-        [[ -s "$wlan/firmware/qca/$f" ]] || { echo "missing $wlan/firmware/qca/$f (see python -m overpressure assets)" >&2; exit 1; }
-        install -m 0644 "$wlan/firmware/qca/$f" "$T/usr/lib/firmware/qca/"
-    done
-    chown -R 0:0 "$T/usr/lib/firmware/qca6390" "$T/usr/lib/firmware/ath11k" "$T/usr/lib/firmware/qca"
-    wlan_json=$(cd "$T" && find usr/lib/firmware/qca6390 usr/lib/firmware/qca -type f -print0 |
-        sort -z | xargs -0 sha256sum |
-        python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
-fi
-# Audio: the ADSP's image and protection-domain maps where the kernel and pd-mapper look, the tree
-# hexagonrpcd serves to the audio process (pico4-audiopd.service) and the calibration: the q6
-# calibration driver loads PICO OS's database's blocks from one file that pico4-audiocal builds here.
-audio_json="[]"
-if [[ -n "$audio" ]]; then
-    for f in firmware/adsp.mdt firmware/adspr.jsn \
-        firmware/adspua.jsn audiopd/acdb/adsp_avs_config.acdb calibration/MTP_base_Wsa8810_Global_cal.acdb; do
-        [[ -s "$audio/$f" ]] || { echo "missing $audio/$f (see python -m overpressure assets)" >&2; exit 1; }
-    done
-    mkdir -p "$T/usr/lib/firmware" "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio"
-    install -m 0644 "$audio"/firmware/adsp* "$T/usr/lib/firmware/"
-    install -D -m 0644 -t "$T/usr/lib/pico4-audio/acdb" "$audio"/calibration/*.acdb
-    cp -r --no-preserve=ownership "$audio/audiopd/." "$T/usr/share/qcom/pico4-audio/"
-    python3 "$project/packages/phoenix/pico4-audio/pico4-audiocal" export --acdb "$audio/calibration" \
-        "$T/usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin"
-    chown -R 0:0 "$T/usr/lib/pico4-audio" "$T/usr/share/qcom/pico4-audio" "$T/usr/lib/firmware/qcom/sm8250/pico4"
-    assets_modes "$T/usr/share/qcom/pico4-audio"
-    audio_json=$(cd "$T" && find usr/lib/firmware/adsp* usr/lib/firmware/qcom/sm8250/pico4/audio-calibration.bin usr/lib/pico4-audio \
-        usr/share/qcom/pico4-audio -type f -print0 |
-        sort -z | xargs -0 sha256sum |
-        python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
-fi
-# Sensor DSP: firmware for the kernel's PIL loader, protection-domain maps for
-# pd-mapper, and the tree hexagonrpcd serves to the sensors process (-R).
-sensor_json="[]"
-if [[ -n "$sensor_data" ]]; then
-    [[ -s "$sensor_data/firmware/slpi.mdt" && -d "$sensor_data/sensors/config" ]] ||
-        { echo "incomplete sensor data in $sensor_data (see python -m overpressure assets)" >&2; exit 1; }
-    [[ -s "$sensor_data/camera/imx471-mode.bin" ]] ||
-        { echo "no RGB camera table in $sensor_data: extract it again (python -m overpressure assets sensor-data)" >&2; exit 1; }
-    mkdir -p "$T/usr/lib/firmware"
-    install -m 0644 "$sensor_data"/firmware/slpi* "$T/usr/lib/firmware/"
-    # The RGB camera's register table, which the kernel's IMX471 driver loads at its first stream.
-    install -D -m 0644 "$sensor_data/camera/imx471-mode.bin" "$T/usr/lib/firmware/qcom/sm8250/pico4/imx471-mode.bin"
-    qcom=$T/usr/share/qcom/pico4
-    mkdir -p "$qcom"
-    cp -r --no-preserve=ownership "$sensor_data/sensors" "$qcom/"
-    # Lens configuration and controller data from the stock firmware.
-    [[ ! -d "$sensor_data/calibration" ]] || cp -r --no-preserve=ownership "$sensor_data/calibration" "$qcom/"
-    # The headset's own: the sensor registry with its factory calibration and the camera, IMU and
-    # lens calibration, in persist where PICO OS keeps them (docs/userspace.md#the-headsets-own-data).
-    mkdir -p "$qcom/calibration"
-    ln -sfn /mnt/vendor/persist/sensors/registry/registry "$qcom/sensors/registry"
-    ln -sfn /mnt/vendor/persist/sensors/registry/sns_reg_version "$qcom/sensors/sns_reg_version"
-    ln -sfn /mnt/vendor/persist/pvr "$qcom/calibration/pvr"
-    chown -R 0:0 "$qcom"
-    assets_modes "$qcom/sensors" "$qcom/calibration"
-    # The controllers' render models, where SteamVR finds the Monado driver's resources ({monado}name).
-    models=$T/usr/share/steamvr-monado/resources/rendermodels
-    if [[ -d "$sensor_data/rendermodels" ]]; then
-        mkdir -p "$models"
-        cp -r --no-preserve=ownership "$sensor_data"/rendermodels/* "$models/"
-        chown -R 0:0 "$models"
-        assets_modes "$models"
-    fi
-    rendermodels=()
-    [[ ! -d $models ]] || rendermodels=(usr/share/steamvr-monado/resources/rendermodels)
-    sensor_json=$(cd "$T" && find usr/lib/firmware/slpi* usr/lib/firmware/qcom/sm8250/pico4/imx471-mode.bin \
-        usr/share/qcom/pico4 "${rendermodels[@]}" \
-        -type f -print0 | sort -z | xargs -0 sha256sum |
-        python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
-fi
+# PICO OS's files are not in the image (docs/install.md#pico-oss-files): links point to where they
+# are on the headset (userspace/stock-links.txt), the data partition's copy that the install writes
+# from the headset's own backup (/var/lib/pico4-stock) and PICO OS's modem, dsp and bluetooth
+# partitions, which preinit mounts read-only (/run/pico4/firmware).
+while read -r link target; do
+    mkdir -p "$(dirname "$T/$link")"
+    ln -sfn "$target" "$T/$link"
+done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$project/userspace/stock-links.txt")
+# A mainline kernel's msm (Valve's) loads the GPU firmware again after a GPU recovery: at its paths,
+# the zap shader where the device tree names it.
+mkdir -p "$T/usr/lib/firmware/qcom/sm8250/pico/phoenix"
+ln -sfn ../a650_sqe.fw "$T/usr/lib/firmware/qcom/a650_sqe.fw"
+ln -sfn ../a650_gmu.bin "$T/usr/lib/firmware/qcom/a650_gmu.bin"
+for f in a650_zap.mdt a650_zap.b00 a650_zap.b01 a650_zap.b02; do
+    ln -sfn "../../../../$f" "$T/usr/lib/firmware/qcom/sm8250/pico/phoenix/$f"
+done
 
-# PICO OS's head tracker (docs/xr.md#head-tracking): the Compute DSP's firmware for the PIL
-# loader and pd-mapper, the tracker's bionic root, and this project's pico4-slamd with the
-# root's stand-ins, built for bionic with the host's clang against the root's own libraries.
-stock_json="[]"
-if [[ -n "$stock_slam" ]]; then
-    [[ -s "$stock_slam/firmware/cdsp.mdt" &&
-       -s "$stock_slam/root/system/lib64/libSlam.so" && -s "$stock_slam/root/system/lib64/libphotoid.so" ]] ||
-        { echo "incomplete tracker data in $stock_slam (see python -m overpressure assets)" >&2; exit 1; }
-    [[ -n $llvm ]] || { echo "--stock-slam needs the host's clang and lld (LLVM 20, in the build container)" >&2; exit 1; }
-    mkdir -p "$T/usr/lib/firmware"
-    install -m 0644 "$stock_slam"/firmware/cdsp* "$T/usr/lib/firmware/"
-    island=$T/usr/lib/pico4-stock-slam
-    rm -rf "$island"
-    mkdir -p "$island"
-    cp -r --no-preserve=ownership "$stock_slam/root/." "$island/"
-    bash "$project/src/stockslam/build.sh" "$island" "$island/pico4" "$project/packages/phoenix/pico4-monado" "$llvm"
-    mv "$island/pico4/libandroid.so" "$island/system/lib64/libandroid.so"
-    # Mount points: the root is read-only on the headset.
-    mkdir -p "$island"/{dev,proc,sys,data,tmp,mnt/vendor/persist/pvr,mnt/vendor/pvr}
-    chown -R 0:0 "$island"
-    find "$island" -type d -exec chmod 0755 {} +
-    find "$island" -type f -exec chmod 0644 {} +
-    chmod 0755 "$island/system/bin/bootstrap/linker64" "$island/vendor/bin/cdsprpcd" "$island/pico4/pico4-slamd"
-    stock_json=$(cd "$T" && find usr/lib/firmware/cdsp* usr/lib/pico4-stock-slam -type f -print0 | sort -z |
-        xargs -0 sha256sum |
-        python3 -c 'import json,sys; print(json.dumps([dict(zip(("sha256","file"),l.split())) for l in sys.stdin]))')
-fi
+# PICO OS's head tracker (docs/xr.md#head-tracking): the tracker's root, with this project's
+# pico4-slamd and the root's stand-ins, built for bionic with the host's clang. PICO OS's parts of the
+# root (system, vendor, the DSP's shells) are bound in from the headset's copies when it starts
+# (stock-slam).
+[[ -n $llvm ]] || { echo "pico4-slamd needs the host's clang and lld (LLVM 20, in the build container)" >&2; exit 1; }
+island=$T/usr/lib/pico4-stock-slam
+rm -rf "$island"
+mkdir -p "$island"
+bash "$project/src/stockslam/build.sh" "$island/pico4" "$project/packages/phoenix/pico4-monado" "$llvm"
+# Mount points: the root is read-only on the headset.
+mkdir -p "$island"/{dev,proc,sys,data,tmp,system,vendor,mnt/vendor/persist/pvr,mnt/vendor/pvr}
+chown -R 0:0 "$island"
+find "$island" -type d -exec chmod 0755 {} +
+find "$island" -type f -exec chmod 0644 {} +
+chmod 0755 "$island/pico4/pico4-slamd"
 
 in_t systemd-sysusers
 # The Frame's session user (steamos-customizations-deckard refers to it), from
@@ -700,10 +575,10 @@ tar --numeric-owner --xattrs --xattrs-include=security.capability --sort=name \
 mv "$archive.part" "$archive"
 installed_bytes=$(du -sb --apparent-size "$T" | cut -f1)
 cleanup
-python3 - "$archive" "$build_root" "$packages_source" "$installed_bytes" "$firmware_json" "$sensor_json" \
-    "$wlan_json" "$audio_json" "$stock_json" "$version" "$commit" > "$output/pico4-userspace.manifest.json" <<'EOF'
+python3 - "$archive" "$build_root" "$packages_source" "$installed_bytes" "$project/userspace/stock-links.txt" \
+    "$version" "$commit" > "$output/pico4-userspace.manifest.json" <<'EOF'
 import hashlib, json, os, sys, datetime
-archive, root, packages, installed, firmware, sensors, wlan, audio, stock, version, commit = sys.argv[1:12]
+archive, root, packages, installed, links, version, commit = sys.argv[1:8]
 def lines(name):
     with open(os.path.join(root, name)) as f:
         return [l.split() for l in f if l.strip()]
@@ -724,11 +599,8 @@ print(json.dumps({
     "repository_databases": {n.lstrip("./"): s for s, n in lines("db-hashes.txt")},
     "packages": {n: v for n, v in lines("packages.txt")},
     "package_files": {n.lstrip("./"): s for s, n in lines("package-hashes.txt")},
-    "gpu_firmware": json.loads(firmware),
-    "sensor_data": json.loads(sensors),
-    "wlan": json.loads(wlan),
-    "audio": json.loads(audio),
-    "stock_slam": json.loads(stock),
+    # PICO OS's files: links to the headset's own copies (docs/install.md#pico-oss-files).
+    "stock_links": dict(l.split("#", 1)[0].split() for l in open(links) if l.split("#", 1)[0].strip()),
 }, indent=1, sort_keys=True))
 EOF
 step "done"

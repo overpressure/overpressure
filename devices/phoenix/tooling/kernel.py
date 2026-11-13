@@ -169,7 +169,8 @@ def _numbered(name: str) -> str:
 
 #: Where the kernel's names are used: the image's files, its build, Monado's cameras and panels.
 _PHOENIX = f"{IN_PACKAGES}phoenix"
-_BUILD = "devices/phoenix/scripts/build-userspace.sh"
+#: The system image's links to PICO OS's files on the headset, which the build script makes.
+_LINKS = "devices/phoenix/userspace/stock-links.txt"
 _MONADO = f"{IN_PACKAGES}phoenix/pico4-monado"
 _CAM = f"{_MONADO}/pico4_cam.c"
 #: The scripts that read the power supplies.
@@ -179,14 +180,14 @@ _POWER_READERS = tuple(
 )
 CONTRACTS = (
     Contract(
-        "the RGB camera's register table: where the driver loads it, where the image installs it",
+        "the RGB camera's register table: where the driver loads it, where the image links it",
         (("drivers/media/i2c/pico4-imx471.c", r'#define IMX471_MODE_FIRMWARE\s+"([^"]+)"'),),
-        ((_BUILD, r"usr/lib/firmware/(qcom/sm8250/pico4/imx471-mode\.bin)"),),
+        ((_LINKS, r"usr/lib/firmware/(qcom/sm8250/pico4/imx471-mode\.bin)"),),
     ),
     Contract(
-        "the audio calibration: where the driver loads it, where the image installs it",
+        "the audio calibration: where the driver loads it, where the image links it",
         (("sound/soc/qcom/qdsp6/q6calibration-pico4.c", r'#define CAL_FIRMWARE\s+"([^"]+)"'),),
-        ((_BUILD, r"usr/lib/firmware/(qcom/sm8250/pico4/audio-calibration\.bin)"),),
+        ((_LINKS, r"usr/lib/firmware/(qcom/sm8250/pico4/audio-calibration\.bin)"),),
     ),
     Contract(
         "the audio calibration file's magic: what pico4-audiocal writes, what the driver takes",

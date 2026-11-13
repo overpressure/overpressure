@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Unlicense
 """The PICO 4's checks for python -m overpressure doctor.
 
-They cover its settings and private files, the tools that talk to it, the Windows USB link and
-the extracted assets. Its builds' Linux side (the userspace, the system image and the kernel) runs
-in the build container, which overpressure.doctor checks for every headset; the stock firmware and
-the assets are Python on any system. What every Qualcomm Android headset checks is
-overpressure.doctor's; the identity, the engineering ABL and the assets are the PICO 4's.
+They cover its settings and private files, the tools that talk to it and the Windows USB link.
+Its builds' Linux side (the userspace, the system image and the kernel) runs in the build
+container, which overpressure.doctor checks for every headset. PICO OS's files come from the
+headset's own backup at the install (tooling/stockfiles.py): no extracted assets are needed. What
+every Qualcomm Android headset checks is overpressure.doctor's; the identity and the engineering
+ABL are the PICO 4's.
 
 Like every doctor check they only look: version queries, file sizes and the small files' hashes.
 The EDL backup's images are not hashed here (gigabytes); every write checks them against the
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, Callable
 from overpressure import REPO, backup, doctor
 from overpressure.doctor import HEADSET, MISSING, OK, WARNING, Check, Host
 
-from . import FIRMWARE, USB_MODES, assets, device, localconfig
+from . import FIRMWARE, USB_MODES, device, localconfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,10 +28,7 @@ if TYPE_CHECKING:
     from .localconfig import Settings
 
 EDL = "EDL (development mode, way back)"
-ASSETS = "userspace build: extracted stock files"
 FIRMWARE_VERSION = FIRMWARE.split("-")[0]
-#: assets/<name>-VERSION, which python -m overpressure assets writes.
-ASSET_KINDS = tuple(assets.KINDS)
 BACKUP_FIX = "python -m overpressure device backup (docs/device-preparation.md)"
 
 
@@ -104,21 +102,6 @@ def usb_checks(host: Host) -> list[Check]:
     return doctor.usb_check(host, USB_MODES)
 
 
-def asset_checks(_host: Host, root: Path = REPO, version: str = FIRMWARE_VERSION) -> list[Check]:
-    """Check that every kind of assets is there as today's recipe extracts it (they need no host: plain files)."""
-    checks = []
-    for kind in ASSET_KINDS:
-        folder = root / "assets" / f"{kind}-{version}"
-        name = f"assets/{kind}-{version}"
-        if assets.current(folder, kind):
-            checks.append(Check(name, ASSETS, OK, "manifest.json present"))
-        else:
-            detail = "extracted by an older recipe" if (folder / "manifest.json").is_file() else "not extracted"
-            fix = f"python -m overpressure assets {kind} (docs/development.md#stock-firmware)"
-            checks.append(Check(name, ASSETS, MISSING, detail, fix))
-    return checks
-
-
 def probes() -> tuple[Callable[[Host], list[Check]], ...]:
     """Return the PICO 4's checks, each called with the host."""
-    return (settings_checks, tool_checks, ncm_checks, usb_checks, asset_checks)
+    return (settings_checks, tool_checks, ncm_checks, usb_checks)

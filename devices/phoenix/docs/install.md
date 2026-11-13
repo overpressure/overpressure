@@ -39,17 +39,51 @@ Every other partition stays read-only; the calibration and firmware the system n
   `/data/var`, `/data/home` and `/data/root`, copied from the image on the first boot. SteamOS's offload units
   bind `/srv`, `/var/log`, `/var/tmp`, the pacman cache, flatpak and container storage from
   `/home/.steamos/offload`, so they land on the data partition too.
+- **PICO OS's files.** The image holds none of them, only links ([below](#pico-oss-files)).
 - **Updates.** A new system image replaces `super` whole; the data stays. On an image it has not booted
   before, preinit takes `/var/lib/pacman` (which describes the image) from the new image.
 - **Boot indication.** [`pico4-splash`](../src/splash/pico4-splash.c) draws the logo's headset
   ([docs/logo](../../../docs/logo/README.md)), the name and a moving bar in the middle of both lenses while the
-  system starts ([pico4-splash-draw.h](../src/splash/pico4-splash-draw.h)). preinit starts it before it mounts
-  the data; `pico4-splash.service` takes the display over and the bar carries on (its place follows the
+  system starts ([pico4-splash-draw.h](../src/splash/pico4-splash-draw.h)). preinit starts it once the data
+  and PICO OS's files are there; `pico4-splash.service` takes the display over and the bar carries on (its place follows the
   clock). It sets the panels' 90 Hz mode on msm's primary plane and gives up DRM master, so the next compositor
   (Monado, SteamVR's) becomes master; that compositor's commit ends the indication, four minutes at the latest.
 - **SSH.** `dev install` writes the enrolled keys to the data partition ([security.md](security.md#logins)).
   The installed system makes its host keys on the first boot (`sshdgenkeys.service`) and keeps them in the
   `/etc` overlay; the maintenance stage 1 makes new ones on every boot, so the two answer with different keys.
+
+### PICO OS's files
+
+The system needs about 85 MB of PICO OS's files (GPU firmware, sensor and audio configuration, the
+camera's table, controller data and models, the head tracker's bionic root) and the firmware of
+its DSPs, video codec and wireless chip. The image holds none of them, only links
+([`userspace/stock-links.txt`](../userspace/stock-links.txt)) to where they are on the headset:
+
+| Where | What | Written by |
+| --- | --- | --- |
+| PICO OS's `modem`, `dsp` and `bluetooth` partitions, mounted read-only by preinit under `/run/pico4/firmware` | the DSPs', the video codec's and the wireless chip's firmware; the kernel's firmware path is `modem`'s `/image` | nothing: PICO OS's own, as they came |
+| `/var/lib/pico4-stock` on the data partition | what lived in `super` (system and vendor), which the install overwrites | `dev install`, from the headset's own EDL backup |
+| `/run/pico4/audio-calibration.bin` | the audio calibration, from PICO OS's databases | `pico4-adsp.service`, before the audio DSP starts |
+| `persist`, mounted read-only | the headset's own calibration and addresses | nothing: read at boot |
+
+- **The copy.** [`tooling/stockfiles.py`](../tooling/stockfiles.py) reads `super`'s logical partitions
+  out of the backup ([overpressure/lp.py](../../../overpressure/lp.py)) with the project's ext4 reader, takes
+  the same files as from PICO's OTA of that firmware ([`assets.py`](../tooling/assets.py)) and writes them,
+  laid out as the system expects them, into a gzip-compressed tar with a manifest and `SHA256SUMS`; the same
+  backup gives the same archive. `dev install` sends it to the maintenance stage 1 after the keys
+  (`pico4-install stock`), which checks the archive's size and hash and every file, and replaces the old copy
+  only when the new one is complete; a headset that holds the same manifest is skipped (`stock-hash`).
+  `python -m overpressure stock-files OUTPUT` writes the archive alone (`--assets DIR` from assets folders).
+- **At boot.** preinit mounts the three partitions read-only (vfat, ext4 without journal replay), sets the
+  kernel's firmware path and binds the copy's tracker root (`system`, `vendor`) and the `dsp` partition's
+  process shells into `/usr/lib/pico4-stock-slam`, read-only, so that it looks the same to every process.
+  The drivers that probe while the kernel starts (Wi-Fi, Bluetooth, the video codec) are probed again later
+  by their units, and the DSPs start from `remoteproc-boot`, as before; the GPU loads its firmware at the
+  first open of its node, which the splash makes after the copy is there.
+- **The tracker.** `pico4-slamd` links against stand-ins of bionic's `libc.so`, `libm.so` and `libdl.so`
+  ([`src/stockslam/bionic-stubs.c`](../src/stockslam/bionic-stubs.c)): the build needs no file of PICO's.
+- **Without a copy** (an image installed by hand, a formatted data partition) the system starts, and the
+  acceptance check names what is missing; `dev install` writes it.
 
 ### How it starts
 

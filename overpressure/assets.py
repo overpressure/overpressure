@@ -21,6 +21,7 @@ to root anyway), and permissions only on systems that have them: Windows keeps n
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import stat
@@ -169,7 +170,7 @@ class BackupFolder(StockFolder):
         if logical is None:
             return file
         try:
-            return lp.LogicalPartition(file, lp.partitions(file)[logical])
+            return io.BufferedReader(lp.LogicalPartition(file, lp.partitions(file)[logical]), 1 << 20)
         except KeyError as exc:
             msg = f"the backup's {self.images[name][0]} holds no logical partition {logical}"
             raise AssetError(msg) from exc

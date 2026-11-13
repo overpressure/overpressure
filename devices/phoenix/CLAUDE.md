@@ -48,8 +48,9 @@ README.md current.
   (its commands, the window's steps, the installer's workflows, its backup); `install.py` the
   installer's plans (install, upgrade, restore); `device.py` EDL/fastboot/ADB and the verified
   firmware list; `devloop.py` the development loop; `cycle.py`, `hardware_test.py` the acceptance
-  runs; `image.py` the stage-1 image; `stock.py`, `assets.py` PICO's public OTA and what the build
-  takes from it. What every headset shares is in `overpressure/` ([docs/tool.md](../../docs/tool.md#how-it-fits-together)).
+  runs; `image.py` the stage-1 image; `stockfiles.py` PICO OS's files for the data partition, from the
+  headset's own backup (through `assets.py`; `stock.py` reads PICO's public OTA instead, for development).
+  What every headset shares is in `overpressure/` ([docs/tool.md](../../docs/tool.md#how-it-fits-together)).
 - `initramfs/`: stage 1, the maintenance environment in `recovery` and the base of test images;
   `pico4-install` is the installer's only writer. `pico4-init` is PID 1, not busybox init: busybox's
   `kill(-1)` killed the f_mass_storage kernel thread and with it the USB link.
@@ -73,9 +74,11 @@ README.md current.
   is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a bionic root; `build-userspace.sh`
   builds it with clang for Android, without an NDK.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-kernel-step.sh`,
-  `windows-share-internet.ps1` and the on-headset preflight. The assets come from `python -m overpressure
-  assets` (`tooling/assets.py`, PICO's public OTA, Python on any system). The headset's own factory data is not extracted: the image links to persist, mounted read-only at
-  boot (`pico4-persist`). `tests/`: unittest suites, `test_recovery_policy.sh`, `tests/qemu/` (the
+  `windows-share-internet.ps1` and the on-headset preflight. The image holds no file of PICO OS's, only links
+  (`userspace/stock-links.txt`) to the data partition's copy, which `dev install` writes from the headset's backup,
+  and to PICO OS's modem, dsp and bluetooth partitions, mounted read-only at boot (docs/install.md#pico-oss-files).
+  The headset's own factory data is not extracted: the image links to persist, mounted read-only at boot
+  (`pico4-persist`). `tests/`: unittest suites, `test_recovery_policy.sh`, `tests/qemu/` (the
   adaptation packages' tests run in their builds). `device.mk`: its Makefile targets.
 - Private and generated, ignored, at the repository root: `backup/` (identity
   `backup/device.json`, EDL backups), `assets/`, `cache/`, `out/` (`out/dev/` for the dev loop,
@@ -90,17 +93,13 @@ steps):
 python -m unittest                                       # host tests, seconds, no hardware
 bash devices/phoenix/tests/test_recovery_policy.sh       # stage-1 recovery policy
 python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> out/
-# Any system, no Linux needed: the stock firmware from PICO's public OTA, then the assets
-# (docs/development.md#stock-firmware; about 11 GB of OTA members and images in cache/pico4-stock):
-python -m overpressure assets --firmware 5.13.7-global-seko
 # In the build container, as root (incremental; the project's packages from the pinned release of
 # overpressure/packages; --refresh for new Valve packages; --packages DIR takes a checkout of it and
 # builds the recipes that differ from the pinned commit's, --build-packages every recipe, with native
-# clang/lld on x86-64):
+# clang/lld on x86-64). The image holds no file of PICO OS's: dev install writes them to the data
+# partition from the headset's own backup (docs/install.md#pico-oss-files):
 python -m overpressure container run -- bash devices/phoenix/scripts/build-userspace.sh \
-    /var/tmp/pico4-userspace-build out/userspace \
-    --gpu-firmware assets/graphics-firmware-5.13.7 --sensor-data assets/sensor-data-5.13.7 \
-    --wlan assets/wlan-5.13.7 --audio assets/audio-5.13.7 --stock-slam assets/stock-slam-5.13.7
+    /var/tmp/pico4-userspace-build out/userspace
 # The headset stays in development mode (settings from .env). The installed system is the integration
 # test (docs/install.md): the image in the build container, then from the maintenance stage 1:
 python -m overpressure container run -- bash devices/phoenix/scripts/build-system-image.sh \

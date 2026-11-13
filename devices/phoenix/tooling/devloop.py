@@ -58,7 +58,7 @@ from overpressure import (
 from overpressure.fastboot import NOT_IN_FASTBOOT
 from overpressure.fastboot import flash as flash_image
 
-from . import device, localconfig
+from . import device, localconfig, stockfiles
 from . import hardware_test as hw
 from .cycle import Headset, run
 
@@ -305,6 +305,31 @@ class Dev(Headset):
             msg = "the headset did not confirm the keys"
             raise RuntimeError(msg)
 
+    def write_stock(self) -> None:
+        """Write PICO OS's files to the data partition (pico4-install stock) unless it holds them already.
+
+        They come from the headset's own backup (stockfiles.from_backup): the system image holds
+        none of them, and super's copy of PICO OS is gone once the system image is written.
+        """
+        backup = self.s.path("backup")
+        archive = self.work / "stock-files.tar.gz"
+        want = stockfiles.manifest_sha256(stockfiles.from_backup(backup, archive, log=lambda _line: None))
+        size = qualcomm.partition_size(backup, "userdata")
+        if self.ssh(f"pico4-install stock-hash --size {size}", 60).split()[-1:] == [want]:
+            print("userdata holds PICO OS's files already", flush=True)
+            return
+        digest = backups.digest(archive)
+        print(f"writing PICO OS's files ({digest['size'] >> 20} MiB) to userdata", flush=True)
+        with archive.open("rb") as stream:
+            output = self.ssh(
+                f"pico4-install stock --size {size} --bytes {digest['size']} --sha256 {digest['sha256']}",
+                300,
+                stdin=stream,
+            )
+        if output.splitlines()[-1:] != [f"stock {want}"]:
+            msg = "the headset did not confirm PICO OS's files"
+            raise RuntimeError(msg)
+
     def to_fastboot(self) -> None:
         """From PICO OS (ADB, once it is through with the MCU), stage 1 or stage 2 (SSH) into the bootloader."""
         fastboot = self.s.tool("fastboot")
@@ -544,6 +569,8 @@ class Dev(Headset):
                 raise RuntimeError(msg)
         progress.say("adding this computer's key", INSTALL_WRITES + 0.03)
         self.write_keys()
+        progress.say("PICO OS's files from the backup", INSTALL_WRITES + 0.04)
+        self.write_stock()
         progress.say("starting the installed system", INSTALL_WRITES + 0.05)
         self.normal()
 

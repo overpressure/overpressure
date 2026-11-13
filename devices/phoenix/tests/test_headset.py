@@ -516,6 +516,18 @@ class DevTests(HeadsetFixture):
         system.write_bytes(b"system image")
         boot_sha = hashlib.sha256(confirmed_boot).hexdigest()
         system_sha = hashlib.sha256(b"system image").hexdigest()
+        # PICO OS's files from the backup (stockfiles.from_backup reads a real backup's partitions).
+        stock = {"schema": 1, "firmware": "5.13.7", "files": {}}
+
+        def from_backup(_backup: Path, archive: Path, *, log: Callable[[str], None] = print) -> dict:  # noqa: ARG001  # its signature
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            archive.write_bytes(b"stock archive")
+            return stock
+
+        patcher = patch.object(devloop.stockfiles, "from_backup", from_backup)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        stock_sha = devloop.stockfiles.manifest_sha256(stock)
         responses = {
             f"pico4-install hash {name} ": sha
             for name, sha in (("boot", boot_sha), ("super", system_sha))
@@ -532,6 +544,8 @@ class DevTests(HeadsetFixture):
                 "pico4-install status": f"bootmode: boot-recovery\nsystem: pico4-system\ndata: {data}",
                 "pico4-install format-data": "formatted userdata",
                 "pico4-install keys": "keys 1",
+                "pico4-install stock-hash": stock_sha if "stock" in (held or ()) else "none",
+                "pico4-install stock --": f"stock {stock_sha}",
                 "pico4-install bootmode normal": "bootmode normal",
                 "cat /proc/1/comm /etc/pico4/install-id": "systemd\ndev-loop\n1234567",
             }
@@ -556,10 +570,14 @@ class DevTests(HeadsetFixture):
                 "pico4-install status",
                 "pico4-install format-data",
                 "pico4-install keys",
+                "pico4-install stock-hash",
+                "pico4-install stock",
                 "pico4-install bootmode normal",
                 "pico4-reboot",
             ],
         )
+        # PICO OS's files from the backup go to the data partition: the archive's size and hash.
+        self.assertIn(f"--bytes 13 --sha256 {hashlib.sha256(b'stock archive').hexdigest()}", steps[6])
         # Sizes from the backup's partition maps, not from the headset.
         self.assertIn("--size 100663296 --bytes 12 ", steps[0])
         self.assertIn(f"--size {2097152 * 4096} ", steps[1])
@@ -578,7 +596,12 @@ class DevTests(HeadsetFixture):
         self.assertAlmostEqual(writes[-1], devloop.INSTALL_WRITES)
         self.assertEqual(
             [text for _, text in shown if not text.startswith("writing ")],
-            ["formatting userdata", "adding this computer's key", "starting the installed system"],
+            [
+                "formatting userdata",
+                "adding this computer's key",
+                "PICO OS's files from the backup",
+                "starting the installed system",
+            ],
         )
 
     def test_install_refuses_keys_the_headset_did_not_confirm(self):
