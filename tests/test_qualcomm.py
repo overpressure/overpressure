@@ -178,6 +178,15 @@ class EdlTests(unittest.TestCase):
             qualcomm.validate_native_dump(self.root, [4], include_userdata=True)
         (directory / "abl.bin").write_bytes(b"x" * 4096)
         qualcomm.validate_native_dump(self.root, [4], include_userdata=True)
+        # A partition the backup leaves out (Android's cache) is in the map without an image.
+        xml.write_text(
+            xml.read_text().replace(
+                "</data>",
+                '<program filename="cache.bin" label="cache" num_partition_sectors="9" SECTOR_SIZE_IN_BYTES="4096" '
+                'physical_partition_number="4" /></data>',
+            )
+        )
+        qualcomm.validate_native_dump(self.root, [4], include_userdata=True)
         map_file("../abl.bin")
         with self.assertRaises(ValueError):
             qualcomm.validate_native_dump(self.root, [4], include_userdata=True)
@@ -207,6 +216,7 @@ class EdlTests(unittest.TestCase):
         manifest = self.capture(self.root / "good", complete)
         self.assertEqual(sorted(manifest["files"]), sorted(complete))
         self.assertEqual(manifest["identity"], {"serial": "A"})
+        self.assertEqual(manifest["skipped"], ["cache", "rawdump", "logdump", "userdata"])
         self.assertIn("ran edl rl", (self.root / "good" / "edl.log").read_text())
         self.assertEqual(json.loads((self.root / "good" / "manifest.json").read_text()), manifest)
         with self.assertRaisesRegex(ValueError, "new backup directory"):

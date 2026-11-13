@@ -29,7 +29,7 @@ that isn't verified ([list](docs/device-preparation.md#verified-hardware)): toda
 You build your own system; the project publishes no image and no vendor file ([docs/distribution.md](docs/distribution.md)).
 
 **You need** the headset, a USB-C data cable, a computer with Windows, macOS or Linux and its internet connection,
-and about 15 GB free there (the backup is most of it). The headset builds its own system during the install,
+and about 10 GB free there (the backup is most of it). The headset builds its own system during the install,
 downloading about 2.2 GB through the computer's connection; nothing is built on the computer, and it needs no
 Docker or Podman. On Linux also `python3-tk`
 (or your distribution's equivalent), for a smooth window, and the Android udev rules (Arch `android-udev`, Debian
@@ -54,7 +54,7 @@ headset on the cable through that setup: its first start may update the lens and
 ([docs/install.md](docs/install.md#the-upgrade-and-the-way-back)). *Export backup…* writes the backup into one
 checked file to keep safe; *Import backup…* brings it to another computer.
 
-**In a terminal**, the same: `python -m overpressure install`, `upgrade`, `restore` and `backup export|import FILE`
+**In a terminal**, the same: `python -m overpressure install`, `upgrade`, `restore` and `backup export|import FILE` (and `backup compact` for a backup from an older version)
 ([the tool](../../docs/tool.md#the-installer)); `python -m overpressure steps` lists every step's command. Commands
 that touch the headset ask the disclaimer `y`/`n` first (`--accept-disclaimer` for unattended runs) and refuse on a
 laptop on battery below 30 %.

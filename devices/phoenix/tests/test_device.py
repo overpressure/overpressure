@@ -91,9 +91,10 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(command[:3], ["native tool.exe", "--memory", "Ufs"])
             self.assertEqual(command[5], "dump-rawprogram")
             self.assertEqual(Path(command[6]), (self.backup / f"lun{lun}").resolve())
-            self.assertEqual(command[7:], ["--lun", str(lun), "--skip", "userdata"])
+            # Android's cache and the crash dumps are never kept (no install or restore needs them).
+            self.assertEqual(command[7:], ["--lun", str(lun), "--skip", "cache,rawdump,logdump,userdata"])
         args.include_userdata = True
-        self.assertNotIn("--skip", device.backup_commands(args)[0])
+        self.assertEqual(device.backup_commands(args)[0][-2:], ["--skip", "cache,rawdump,logdump"])
         self.assertEqual(device.edl_command(args, "r", "abl", "read.bin")[5:], ["read-part", "abl", "read.bin"])
         self.assertEqual(device.edl_command(args, "w", "abl", "write.bin")[5:], ["write-part", "abl", "write.bin"])
 

@@ -246,6 +246,7 @@ python -m overpressure upgrade                  # install --workflow upgrade: a 
 python -m overpressure restore                  # install --workflow restore: back to the headset's own system
 python -m overpressure backup export FILE       # the headset's backup as one checked file
 python -m overpressure backup import FILE       # such a file onto this computer, checked
+python -m overpressure backup compact           # the backup's zero runs given back to the disk, content unchanged
 ```
 
 `upgrade` and `restore` take `--json`, `--plan` and `--restart` too. A headset's plan comes from
@@ -283,14 +284,18 @@ the plan). A headset without one has no installer (exit status 2). The engine is
 - **Exit status.** 0 finished, 1 failed, 2 a usage error, no installer or a refused workflow, 3 stopped.
 - **The backup as one file.** `backup export FILE` writes the headset's backup (`Headset.backup_set()`: the
   verified backup folder, the identity, other files and the `.env` settings the way back needs on another
-  computer) as one uncompressed tar ([overpressure/backup.py](../overpressure/backup.py)):
+  computer) as one uncompressed tar ([overpressure/backup.py](../overpressure/backup.py)), whose partition
+  images are sparse members (GNU's PAX format 1.0: their zero runs are not stored; tarfile and GNU tar read
+  them back whole):
   `overpressure-backup.json` first (schema, headset, folder name, identity, file names, settings, export
   time), then the backup under `backup/` and the other files under `files/`. The backup is verified before,
   the file read back after; it appears only when both match, never over an existing file. `backup import
   FILE` refuses another kind of headset, another headset than this computer's identity, a damaged file and
   any file that would replace a different one; a backup already there with the same manifest is kept,
   another gets a new folder beside it. The imported backup is verified, then `Headset.adopt_backup` names
-  it in `.env`. An export holds what reaches the headset's maintenance system: keep it private.
+  it in `.env`, its zero runs handed back to the disk as a new backup's are
+  ([overpressure/holes.py](../overpressure/holes.py)). An export holds what reaches the headset's maintenance
+  system: keep it private.
 
 ### Events
 
@@ -390,7 +395,8 @@ be read, they go on.
 | [overpressure/stage1.py](../overpressure/stage1.py) | a stage 1: an Alpine ramdisk in the stock Android boot image, from a headset's `Spec` |
 | [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), checked against the zip, brotli by the package or the command; a pinned file out of a remote zip, checked by its hash |
 | [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed, the wait for Android's boot, a partition's size from `getvar all`; the SoC ID, EDL devices counted through pyusb (PowerShell, ioreg or sysfs without it), EDL (edl-ng, bkerler/edl), partition maps, a full backup and a write verified by readback |
-| [overpressure/backup.py](../overpressure/backup.py) | verified backups and a partition's image in them; the backup archive (`backup export` and `import`) |
+| [overpressure/backup.py](../overpressure/backup.py) | verified backups and a partition's image in them; the backup archive (`backup export`, `import` and `compact`) |
+| [overpressure/holes.py](../overpressure/holes.py) | a file's zero runs handed back to the file system (sparse files on NTFS, ext4, APFS), its content unchanged |
 | [overpressure/process.py](../overpressure/process.py), [ssh.py](../overpressure/ssh.py) | programs and bounded waits; SSH with the project's key, the keys an image enrolls |
 | [overpressure/evidence.py](../overpressure/evidence.py), [storage.py](../overpressure/storage.py) | a run that records every step and command in its results folder, bounded waits and HTTP fetches; the read-only storage policy a headset's Linux stages enforce |
 | `bootimg`, `avb`, `sparse`, `payload`, `cpio`, `compress`, `alpine`, `apksign`, `kernelinfo`, `elfdeps`, `windows_ncm` | the formats and helpers Android-based headsets share (`bootimg` also edits a boot image's ramdisk and command line) |

@@ -6,13 +6,16 @@ write to a device is checked against it first, so a changed or truncated backup 
 
     python -m overpressure backup export FILE     the headset's backup as one file, checked
     python -m overpressure backup import FILE     such a file onto this computer, checked
+    python -m overpressure backup compact         the backup's zero runs given back to the disk
 
 An export is one uncompressed tar: ARCHIVE_META first (the headset, the backup folder's name, the
 headset's identity, the other files and the .env settings the way back needs, Headset.backup_set),
-then the backup under backup/ and the other files under files/. The backup is verified before it
-is written, and the finished file is read back against its manifest. An import refuses another
-headset's backup, a file that is not one, and any file that would replace a different one here; the
-imported backup is verified before the headset's settings name it (Headset.adopt_backup).
+then the backup under backup/ and the other files under files/. A partition image is a sparse member
+(PAX format 1.0, as GNU tar writes them): its zero runs are not stored, and tarfile and GNU tar read it
+back whole. On this computer the backup's zero runs take no space either (overpressure/holes.py). The
+backup is verified before it is written, and the finished file is read back against its manifest. An import
+refuses another headset's backup, a file that is not one, and any file that would replace a different one
+here; the imported backup is verified before the headset's settings name it (Headset.adopt_backup).
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ import tarfile
 from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Callable
 
-from . import progress
+from . import holes, progress
 
 if TYPE_CHECKING:
     from .headset import BackupSet, Headset
@@ -141,22 +144,6 @@ def _digest_stream(stream: IO[bytes], count: Callable[[int], None] | None = None
     return {"size": size, "sha256": sha.hexdigest()}
 
 
-class _Counted(io.RawIOBase):
-    """A file read through, its bytes counted: what tarfile copies into the archive."""
-
-    def __init__(self, stream: IO[bytes], count: Callable[[int], None]) -> None:
-        super().__init__()
-        self._stream, self._count = stream, count
-
-    def readable(self) -> bool:
-        return True
-
-    def read(self, size: int = -1) -> bytes:
-        data = self._stream.read(size)
-        self._count(len(data))
-        return data
-
-
 class _Passes:
     """An export's or import's three passes over every file on one meter: check, copy, check again."""
 
@@ -177,6 +164,66 @@ class _Passes:
     def count(self, size: int) -> None:
         """Count @p size more bytes of the pass."""
         self.meter.add(size)
+
+
+class _SparseBody(io.RawIOBase):
+    """A sparse member's stored bytes: the map of its data runs, then those runs read from the file."""
+
+    def __init__(self, path: Path, head: bytes, data: list[tuple[int, int]]) -> None:
+        super().__init__()
+        self._stream = path.open("rb")
+        self._head, self._data = head, list(data)
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        """Return @p size bytes, fewer only at the end: tarfile copies in full blocks."""
+        parts, want = [], size if size >= 0 else 1 << 62
+        while want > 0:
+            if self._head:
+                part, self._head = self._head[:want], self._head[want:]
+            else:
+                while self._data and self._data[0][1] == 0:
+                    self._data.pop(0)
+                if not self._data:
+                    break
+                offset, length = self._data[0]
+                self._stream.seek(offset)
+                part = self._stream.read(min(want, length))
+                if not part:
+                    break
+                self._data[0] = (offset + len(part), length - len(part))
+            parts.append(part)
+            want -= len(part)
+        return b"".join(parts)
+
+    def close(self) -> None:
+        self._stream.close()
+        super().close()
+
+
+def _sparse_member(
+    tar: tarfile.TarFile, path: Path, name: str, count: Callable[[int], None] | None
+) -> tuple[tarfile.TarInfo, _SparseBody]:
+    """Return the archive member of @p path without its zero runs (GNU sparse, PAX format 1.0)."""
+    with path.open("rb") as stream:
+        found = list(holes.runs(stream, count))
+    size = path.stat().st_size
+    data = [(offset, length) for offset, length, empty in found if not empty]
+    if not data or data[-1][0] + data[-1][1] != size:
+        data.append((size, 0))  # GNU's convention: the map ends at the file's size
+    head = (f"{len(data)}\n" + "".join(f"{offset}\n{length}\n" for offset, length in data)).encode()
+    head += bytes(-len(head) % tarfile.BLOCKSIZE)
+    info = tar.gettarinfo(path, name)
+    info.size = len(head) + sum(length for _offset, length in data)
+    info.pax_headers = {
+        "GNU.sparse.major": "1",
+        "GNU.sparse.minor": "0",
+        "GNU.sparse.name": name,
+        "GNU.sparse.realsize": str(size),
+    }
+    return info, _SparseBody(path, head, data)
 
 
 def _listed(manifest: Path) -> object:
@@ -232,9 +279,9 @@ def export_archive(bundle: BackupSet, codename: str, target: Path, say: Callable
             passes.begin("Writing the backup file")
             for n, name in enumerate(manifest["files"], 1):
                 say(f"Exporting {name} ({n} of {len(manifest['files'])})")
-                info = tar.gettarinfo(bundle.folder / name, f"backup/{name}")
-                with (bundle.folder / name).open("rb") as stream:
-                    tar.addfile(info, _Counted(stream, passes.count))
+                info, body = _sparse_member(tar, bundle.folder / name, f"backup/{name}", passes.count)
+                with body:
+                    tar.addfile(info, body)
             for name, path in bundle.files.items():
                 tar.add(path, f"files/{name}", recursive=False)
         passes.begin("Reading the export back")
@@ -348,6 +395,7 @@ def import_archive(source: Path, codename: str, here: BackupSet, say: Callable[[
         _unpack(source, folder, manifest, here, names=meta.get("files", []), say=say, count=passes.count)
         passes.begin("Checking the imported backup")
         verified_backup(folder, passes.count)
+        compact(folder)
     if not here.identity.is_file():
         save_new(here.identity, identity)
     settings = {str(k): str(v) for k, v in (meta.get("settings") or {}).items()}
@@ -408,18 +456,37 @@ def _unpack(  # noqa: PLR0913  # the archive, where it goes, what it must hold
             path.chmod(0o600)
 
 
+def compact(folder: Path, say: Callable[[str], None] | None = None) -> tuple[int, int]:
+    """Give the backup's zero runs back to the file system; return its bytes on disk before and after.
+
+    The files read the same, byte for byte: their manifest stays true.
+    """
+    names = list(json.loads((folder / "manifest.json").read_text(encoding="utf-8"))["files"])
+    before = sum(holes.on_disk(folder / n) for n in names)
+    for n, name in enumerate(names, 1):
+        if say is not None:
+            say(f"Compacting {name} ({n} of {len(names)})")
+        holes.free_zeros(folder / name)
+    return before, sum(holes.on_disk(folder / n) for n in names)
+
+
 def main(headset: Headset, argv: list[str]) -> int:
-    """Run python -m overpressure backup export|import FILE."""
+    """Run python -m overpressure backup export|import FILE, or backup compact."""
     ap = argparse.ArgumentParser(prog="python -m overpressure backup", description=(__doc__ or "").split("\n\n")[1])
-    ap.add_argument("action", choices=("export", "import"))
-    ap.add_argument("file", type=Path)
+    ap.add_argument("action", choices=("export", "import", "compact"))
+    ap.add_argument("file", type=Path, nargs="?")
     args = ap.parse_args(argv)
+    if (args.file is None) != (args.action == "compact"):
+        ap.error("export and import take a FILE, compact none")
     here = headset.backup_set()
     if here is None:
         print(f"error: the {headset.info.name} keeps no backup in overpressure", file=sys.stderr)
         return 2
     try:
-        if args.action == "export":
+        if args.action == "compact":
+            before, after = compact(here.folder, lambda line: print(line, flush=True))
+            print(f"{here.folder}: {before / 2**30:.1f} GiB on disk before, {after / 2**30:.1f} GiB now")
+        elif args.action == "export":
             export_archive(here, headset.info.codename, args.file, lambda line: print(line, flush=True))
         else:
             imported = import_archive(args.file, headset.info.codename, here, lambda line: print(line, flush=True))

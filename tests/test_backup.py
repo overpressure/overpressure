@@ -70,6 +70,9 @@ class ArchiveTests(unittest.TestCase):
         for name in ("lun0/boot.bin", "lun4/abl.bin"):
             (folder / name).parent.mkdir(parents=True, exist_ok=True)
             (folder / name).write_bytes(name.encode() * 1000)
+        # A partition image as most are: a few data runs in zeros.
+        boot = folder / "lun0/boot.bin"
+        boot.write_bytes(boot.read_bytes() + bytes(1 << 18) + b"tail" + bytes(1 << 17))
         files = {n: backup.digest(folder / n) for n in ("lun0/boot.bin", "lun4/abl.bin")}
         (folder / "manifest.json").write_text(json.dumps({"schema": 1, "identity": self.IDENTITY, "files": files}))
         self.here.identity.write_text(json.dumps(self.IDENTITY))
@@ -107,6 +110,8 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual((meta["headset"], meta["folder"], meta["files"]), ("phoenix", "stock-1", ["id_ed25519"]))
         self.assertFalse(self.archive.with_name(self.archive.name + ".part").exists())
         self.assertIn("Reading the export back", self.lines)
+        # The zero runs are not in the file (sparse members), and GNU tar's format reads them back whole.
+        self.assertLess(self.archive.stat().st_size, (self.here.folder / "lun0/boot.bin").stat().st_size)
         self.assertEqual(
             self.shown(),
             [
@@ -122,6 +127,9 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.shown()[-1][0], 1.0)
         self.assertEqual(imported.folder, other.folder)
         self.assertEqual(backup.verified_backup(other.folder)["identity"], self.IDENTITY)
+        self.assertEqual(
+            (other.folder / "lun0/boot.bin").read_bytes(), (self.here.folder / "lun0/boot.bin").read_bytes()
+        )
         self.assertEqual(json.loads(other.identity.read_text()), self.IDENTITY)
         self.assertEqual(other.files["id_ed25519"].read_bytes(), b"key of id_ed25519")
         self.assertEqual(imported.settings, {"PICO4_ADB_SERIAL": "SERIAL1"})

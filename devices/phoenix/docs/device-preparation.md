@@ -156,6 +156,18 @@ python -m overpressure device backup --identity backup/device.json --backup back
 Add `--execute --confirm-device ADB_SERIAL` to dump. The backup directory must not exist yet. The dump takes
 all partitions and the GPT and rawprogram metadata, without userdata by default; `--include-userdata` adds the
 full partition (allow space for the whole storage; no used-sector mode). Back up personal data separately.
+It always leaves out Android's `cache` and the crash-dump areas `rawdump` and `logdump`
+(`qualcomm.NOT_KEPT`): no install or restore writes them back, and they hold nothing of the unit's own
+(2.7 GiB of the PICO 4's 12.5, 0.1 GiB of it data). They stay in the rawprogram maps, with their sizes, and the
+manifest names them (`skipped`). Every other partition stays, the boot chain's `*bak` copies and the unit's
+own data (`persist`, `fsg`, `modemst1`/`2`, the `mdm*efs` partitions, `devinfo`, `secdata`, `keystore`)
+included: no tool writes them, they are the way back after an EDL accident.
+
+On this computer the images' zero runs take no space ([overpressure/holes.py](../../../overpressure/holes.py)):
+they are handed back to the file system right after the manifest is written (sparse files on NTFS, ext4 and
+APFS; elsewhere the files keep their full size), and the files read the same, byte for byte. The PICO 4's
+backup of 9.8 GiB takes about 6.9 GiB. `python -m overpressure backup compact` does the same for a backup
+taken before.
 
 With edl-ng, list the LUNs first (`edl-ng --loader assets/firehose.elf --memory Ufs printgpt`) and pass **all
 LUNs that device reports**:

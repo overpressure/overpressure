@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from . import progress, usbaccess
+from . import holes, progress, usbaccess
 from .android import executable
 from .backup import digest, save_new
 from .process import run, until
@@ -150,27 +150,34 @@ def edl_command(args: argparse.Namespace, *words: str, memory: str = "ufs") -> l
     return [*tool, *words, f"--memory={memory.lower()}", f"--loader={loader}"]
 
 
+#: Partitions a backup leaves out besides userdata: Android's cache and the crash-dump areas. No install or
+#: restore writes them back, and they hold nothing of the unit's own (2.7 GiB of a PICO 4's 12.5, 0.1 of it data).
+NOT_KEPT = ("cache", "rawdump", "logdump")
+
+
+def skipped(*, include_userdata: bool) -> list[str]:
+    """Return the partitions a backup leaves out: NOT_KEPT, and userdata unless it is asked for."""
+    return [*NOT_KEPT, *(() if include_userdata else ("userdata",))]
+
+
 def backup_commands(args: argparse.Namespace) -> list[list[str]]:
     """Return the EDL command lines of a full backup (ARGS as edl_command's, with the backup's)."""
+    skip = ",".join(skipped(include_userdata=args.include_userdata))
     if args.edl_backend == "edl-ng":
         if not args.edl_luns or len(set(args.edl_luns)) != len(args.edl_luns):
             msg = "edl-ng backup requires distinct --edl-luns from the device's GPT scan"
             raise ValueError(msg)
-        commands = [
-            edl_command(args, "dump-rawprogram", str((args.backup / f"lun{lun}").resolve()), "--lun", str(lun))
+        # The skipped partitions stay in the rawprogram maps (their sizes), without an image.
+        return [
+            edl_command(
+                args, "dump-rawprogram", str((args.backup / f"lun{lun}").resolve()), "--lun", str(lun), "--skip", skip
+            )
             for lun in args.edl_luns
         ]
-        if not args.include_userdata:
-            for command in commands:
-                command.extend(["--skip", "userdata"])
-        return commands
     if args.edl_luns:
         msg = "--edl-luns applies only to the edl-ng backend"
         raise ValueError(msg)
-    command = edl_command(args, "rl", str(args.backup.resolve()), "--genxml")
-    if not args.include_userdata:
-        command.append("--skip=userdata")
-    return [command]
+    return [edl_command(args, "rl", str(args.backup.resolve()), "--genxml", f"--skip={skip}")]
 
 
 def validate_native_dump(folder: Path, luns: list[int], *, include_userdata: bool) -> None:
@@ -181,8 +188,9 @@ def validate_native_dump(folder: Path, luns: list[int], *, include_userdata: boo
         if not rows:
             msg = f"Empty rawprogram map for LUN {lun}"
             raise ValueError(msg)
+        left_out = set(skipped(include_userdata=include_userdata))
         for row in rows:
-            if not include_userdata and row.get("label") == "userdata":
+            if row.get("label") in left_out:
                 continue
             name = row.attrib["filename"]
             path = (directory / name).resolve()
@@ -275,11 +283,15 @@ def capture_backup(  # noqa: PLR0913  # the backup's folder, commands and identi
         "schema": 1,
         "identity": identity,
         "includes_userdata": include_userdata,
+        "skipped": skipped(include_userdata=include_userdata),
         "edl_backend": backend,
         "luns": luns,
         "files": files,
     }
     save_new(folder / "manifest.json", manifest)
+    # The images' zero runs go back to the file system: the same bytes, about half the space.
+    for name in files:
+        holes.free_zeros(folder / name)
     return manifest
 
 
