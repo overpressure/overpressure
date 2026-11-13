@@ -175,8 +175,9 @@ PICO_OS_SETUP = Ask(
     "version seven times; then Developer, USB debugging) and accept the USB debugging prompt.",
 )
 #: How long the headset's build and install take: the first one downloads about 2.2 GB and builds for about
-#: 9 minutes, an upgrade's build is incremental (docs/install.md#built-on-the-headset).
+#: 9 minutes, an upgrade's build is incremental, 3 to 4 minutes (docs/install.md#built-on-the-headset).
 INSTALL_ESTIMATE = "about 15 min"
+UPGRADE_ESTIMATE = "about 8 min"
 INSTALL_TIME = "About 20 minutes."
 RESTORED = (
     "Your headset runs PICO OS again, with the system and the bootloader from your backup. Its bootloader stays "
@@ -832,12 +833,12 @@ class Plan:
                         "Connect to the maintenance system",
                         lambda ctx: self.run_step(ctx, "connect"),
                         "about 1 min",
-                        where="The headset may be in its maintenance system: " + AGAIN,
+                        where="The headset may be in its maintenance system. " + AGAIN,
                     ),
                     self.step_task(
                         "install",
                         "Build and install the system",
-                        INSTALL_ESTIMATE,
+                        UPGRADE_ESTIMATE,
                         where="The headset is in the maintenance system; the old system may be replaced already. "
                         "Keep the cable in and start the installer again: the install can be repeated.",
                     ),
@@ -885,7 +886,7 @@ class Plan:
                 "backup",
                 "Back up the headset",
                 self.backup,
-                "about 30 min",
+                "about 25 min",
                 done=self.backup_there,
                 where="Your headset may be in EDL mode (its lenses stay dark); nothing was written to it. Keep "
                 "the cable in and start the installer again: it goes on from there. To return to PICO OS "

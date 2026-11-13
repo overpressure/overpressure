@@ -915,7 +915,7 @@ class Engine:
             self.set_status(stage, task, PENDING)
             return self.finish(STOPPED, task, "", STOPPED_BETWEEN)
         problem = self.battery() if task.writes else ""
-        if problem:  # the computer went on its battery during the run (a build takes hours)
+        if problem:  # the computer went on its battery during the run (an install takes a while)
             self.set_status(stage, task, FAILED)
             return self.finish(
                 FAILED, task, problem, "Nothing was written to the headset by this step. " + STOPPED_AGAIN

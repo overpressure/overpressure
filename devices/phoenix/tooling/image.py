@@ -152,8 +152,9 @@ def load_stock(args: argparse.Namespace) -> tuple[str, bytes]:
     folder = args.backup or localconfig.load().path("backup")
     if not (folder / "manifest.json").is_file():
         msg = (
-            f"no EDL backup at {folder}: the stage-1 image takes the headset's own boot partition from it "
-            "(PICO4_BACKUP in .env, or --backup DIR; --stock-boot for another image)"
+            f"no backup of the headset at {folder}: the maintenance system is made from it. Import it (the "
+            "window's Import backup..., or python -m overpressure backup import FILE), or name it in .env "
+            "(PICO4_BACKUP)"
         )
         raise SystemExit(msg)
     try:

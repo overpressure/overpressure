@@ -32,7 +32,7 @@ class StockBootTests(unittest.TestCase):
             self.assertEqual(image.load_stock(self.args()), (FIRMWARE, b"the headset's boot"))
 
     def test_no_backup_or_a_changed_image_stops_the_build(self):
-        with self.assertRaisesRegex(SystemExit, "no EDL backup"):
+        with self.assertRaisesRegex(SystemExit, "no backup of the headset"):
             image.load_stock(self.args(backup=self.backup / "missing"))
         (self.backup / "lun4/boot.bin").write_bytes(b"changed")
         with self.assertRaisesRegex(SystemExit, "differs from the backup's manifest"):

@@ -963,6 +963,15 @@ class DevTests(HeadsetFixture):
                 self.assertEqual(bool(devloop.battery_refusal(reading)), refused)
         self.assertIn("at 19 % (Discharging)", devloop.battery_refusal("19\nDischarging"))
 
+    def test_a_headset_build_without_the_internet_stops_before_any_write(self):
+        dev, system = self.install_setup()
+        with (
+            patch.object(devloop, "unreachable", lambda: ["holo-packages.steamos.cloud"]),
+            self.assertRaisesRegex(RuntimeError, "reaches no holo-packages.steamos.cloud.*nothing was written"),
+        ):
+            dev.install(system, on_headset=True)
+        self.assertFalse([t for t in self.texts() if "pico4-install" in t or "reboot" in t])
+
     def test_install_refuses_an_empty_battery_before_any_write(self):
         dev, system = self.install_setup(battery="7\nDischarging\n")
         with self.assertRaisesRegex(RuntimeError, "battery is at 7 %"):

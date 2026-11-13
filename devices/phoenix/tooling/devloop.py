@@ -38,6 +38,8 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable
 
@@ -95,6 +97,12 @@ HEADSET_BUILD = "var/tmp/pico4-build"
 HEADSET_BUILD_SECONDS = 7200
 #: The headset's loopback port where this PC's connection is during its build: a SOCKS proxy (ssh -R).
 HEADSET_PROXY_PORT = 1080
+#: What the headset's build downloads from, through this PC: the project's releases, Holo, the Frame's packages.
+DOWNLOAD_HOSTS = (
+    "https://github.com",
+    "https://holo-packages.steamos.cloud",
+    "https://steamdeck-packages.steamos.cloud",
+)
 #: What the build reads of this repository: its scripts, the userspace definition, the stage-1 files it shares,
 #: the prebuilt helpers and the overpressure package (elfdeps), and the version.
 BUILD_TREE = (
@@ -118,6 +126,22 @@ def _git(*words: str) -> str:
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return ""
+
+
+def answers(url: str, timeout: float = 15) -> bool:
+    """Tell whether this PC gets an answer from @p url: any HTTP status is one."""
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=timeout).close()  # noqa: S310  # fixed https URLs
+    except urllib.error.HTTPError:
+        return True
+    except (urllib.error.URLError, OSError):
+        return False
+    return True
+
+
+def unreachable(urls: tuple[str, ...] = DOWNLOAD_HOSTS) -> list[str]:
+    """Return the hosts of @p urls this PC gets no answer from."""
+    return [url.split("//", 1)[1] for url in urls if not answers(url)]
 
 
 def source_commit() -> str:
@@ -271,7 +295,10 @@ class Dev(Headset):
         """Return the headset's stock recovery partition image from its EDL backup, checked against the manifest."""
         folder = self.s.path("backup")
         if not (folder / "manifest.json").is_file():
-            msg = f"no EDL backup at {folder} (PICO4_BACKUP): the images take the headset's own stock recovery"
+            msg = (
+                f"no backup of the headset at {folder}: the boot images are made from it. Import it (the window's "
+                "Import backup..., or python -m overpressure backup import FILE), or name it in .env (PICO4_BACKUP)"
+            )
             raise ValueError(msg)
         return backups.verified_partition(folder, "recovery")
 
@@ -691,7 +718,17 @@ class Dev(Headset):
             if not self.image_there(path):
                 msg = f"missing {path}: run {hint}"
                 raise ValueError(msg)
-        if not on_headset or format_data or not self.installed_running():
+        if not on_headset:
+            return None
+        # The headset downloads through this PC: a PC without the internet stops here, before anything is written.
+        missing = unreachable()
+        if missing:
+            msg = (
+                f"this computer reaches no {', '.join(missing)}: the headset builds its system from there through "
+                "this computer's internet connection. Connect it and start again; nothing was written"
+            )
+            raise RuntimeError(msg)
+        if format_data or not self.installed_running():
             return None
         return self.build_on_headset(stage1=False)
 

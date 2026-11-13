@@ -110,7 +110,9 @@ class Phoenix(Headset):
     def commands(self) -> dict[str, Command]:
         """Return the command words of python -m overpressure and their modules."""
         return {
-            "build": Command("image", "build the stage-1 boot image from a stock boot.img, OTA zip or URL", keep=True),
+            "build": Command(
+                "image", "build the stage-1 boot image from the headset's backup (or another boot.img)", keep=True
+            ),
             "inspect": Command("image", "analyse a stock boot image and its kernel configuration", keep=True),
             "match": Command("image", "find the firmware.json entry for a headset's fingerprint", keep=True),
             "stock": Command("stock", "the stock firmware's partitions from PICO's public OTA"),
@@ -279,7 +281,7 @@ class Phoenix(Headset):
                 (
                     Param("system", "System image", system, "path"),
                     Param("format_data", "Format the data partition", "0", "flag", option="--format-data"),
-                    Param("on_headset", "Built on the headset", "0", "flag", option="--on-headset"),
+                    Param("on_headset", "Built on the headset", "1", "flag", option="--on-headset"),
                 ),
                 writes=True,
             ),
@@ -367,8 +369,8 @@ class Phoenix(Headset):
             Workflow(
                 UPGRADE,
                 "Upgrade",
-                "Builds this version of the system and installs it over the one this computer installed. Your "
-                "Steam account, games, settings and Wi-Fi stay.",
+                "Your headset builds this version of the system and installs it over the one this computer "
+                "installed. Your Steam account, games, settings and Wi-Fi stay.",
             ),
             Workflow(
                 RESTORE,
