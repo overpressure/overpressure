@@ -77,9 +77,9 @@ def _dep_name(token: str) -> str:
     return re.split(r"[<>=~]", token, maxsplit=1)[0]
 
 
-def _download(url: str, dest: str, log: Callable[[str], None] = print) -> str:
+def _download(url: str, dest: str, log: Callable[[str], None] = print, *, fresh: bool = False) -> str:
     target = Path(dest)
-    if target.exists():
+    if target.exists() and not fresh:
         return dest
     target.parent.mkdir(parents=True, exist_ok=True)
     log(f"  downloading {url}")
@@ -125,12 +125,16 @@ def _record_to_package(rec: dict[str, str], repo_url: str = "") -> Package:
 
 
 def load_index(cache: str, branch: str, repos: list[str], arch: str, log: Callable[[str], None] = print) -> Index:
-    """Download the repositories' APKINDEX files, verify their signatures and read them."""
+    """Download the repositories' APKINDEX files, verify their signatures and read them.
+
+    Always afresh: the branch's packages move, and the mirror drops the versions an older index names.
+    """
     index = Index()
     keys = apksign.alpine_keys(arch)
     for repo in repos:
         url = f"{MIRROR}/{branch}/{repo}/{arch}"
-        path = Path(_download(f"{url}/APKINDEX.tar.gz", str(Path(cache, branch, repo, arch, "APKINDEX.tar.gz")), log))
+        index_path = str(Path(cache, branch, repo, arch, "APKINDEX.tar.gz"))
+        path = Path(_download(f"{url}/APKINDEX.tar.gz", index_path, log, fresh=True))
         raw = path.read_bytes()
         what = f"{branch}/{repo}/{arch}/APKINDEX.tar.gz"
         try:

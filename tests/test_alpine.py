@@ -197,6 +197,16 @@ class LoadIndexTest(unittest.TestCase):
         path = Path(tmp, "v0", "main", "aarch64", "APKINDEX.tar.gz")
         path.parent.mkdir(parents=True)
         path.write_bytes(raw)
+        # The mirror, as the download sees it: the index fetched afresh lands where the cache keeps it.
+        self.fetched: list[bool] = []
+
+        def download(_url: str, dest: str, _log: object = None, *, fresh: bool = False) -> str:
+            self.fetched.append(fresh)
+            return dest
+
+        patcher = mock.patch.object(alpine, "_download", download)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         return tmp, path
 
     def test_signed_index_loads(self):
@@ -204,6 +214,7 @@ class LoadIndexTest(unittest.TestCase):
         with mock.patch.dict(apksign.ALPINE_KEYS, {"aarch64": TEST_KEYS}):
             index = alpine.load_index(cache, "v0", ["main"], "aarch64", log=lambda *_: None)
         self.assertEqual(index.packages["pico4-test"].version, "1.0-r0")
+        self.assertEqual(self.fetched, [True])  # never an old index: the mirror drops what it names
 
     def test_bad_index_fails_and_is_removed(self):
         cache, path = self._cache(INDEX_SHA1)
