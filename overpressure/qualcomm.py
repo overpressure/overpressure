@@ -392,6 +392,15 @@ def fresh_edl_argv(program: str | Path, loader: str | Path) -> list[str | Path]:
     return edl_ng(program, loader, "reset", "--mode", "Edl")
 
 
+def reboot_argv(program: str | Path, loader: str | Path) -> list[str | Path]:
+    """Return the edl-ng command that leaves EDL with a normal restart (Firehose's reset): Android starts.
+
+    The PICO 4's loader carries it out at once, also after a session that read the whole storage, where it
+    left a restart into EDL (fresh_edl_argv) undone. No storage is written.
+    """
+    return edl_ng(program, loader, "reset", "--mode", "Reset")
+
+
 #: Seconds a loader may take to carry out fresh_edl_argv's restart (the PICO 4's: about 12 s, whatever the delay asked).
 RESTART_SECONDS = 60
 

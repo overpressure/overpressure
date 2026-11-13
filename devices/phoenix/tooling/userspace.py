@@ -198,6 +198,8 @@ def validate_imu(value: object, rate: float = IMU_RATE_HZ) -> None:
 
 
 DISPLAY_HZ = 90.0
+#: The panels' refresh rates: SteamVR picks one (the Frame's default per-app rate is 72 Hz).
+DISPLAY_RATES = (DISPLAY_HZ, 72.0)
 
 VALVE_SESSION_SECONDS = 30  # bounded: the session heats the headset quickly (docs/cooling.md)
 VALVE_SESSION_START_C = 70.0  # the hottest thermal zone before the session starts...
@@ -205,7 +207,7 @@ VALVE_SESSION_COOLDOWN_SECONDS = 180  # ...or this long a wait for it
 # Integration only needs SteamVR's compositor to present; the check's performance
 # verdict (session-performance, docs/session.md) holds it to the display rate.
 VALVE_SESSION_MIN_HZ = 0.4 * DISPLAY_HZ
-#: The panels' vblank rate may differ from the display rate by this fraction.
+#: The panels' vblank rate may differ from one of the display rates by this fraction.
 VBLANK_TOLERANCE = 0.01
 #: SteamVR's devices: the headset, then the two controllers.
 HEADSET_INDEX, CONTROLLER_INDICES = 0, (1, 2)
@@ -271,7 +273,8 @@ def _validate_frames(frames: object) -> None:
     if (frames.get("commit_hz") or 0) < VALVE_SESSION_MIN_HZ:
         msg = f"SteamVR's compositor presented {frames.get('commit_hz')} frames per second"
         raise ValueError(msg)
-    if abs((frames.get("vblank_hz") or 0) - DISPLAY_HZ) > VBLANK_TOLERANCE * DISPLAY_HZ:
+    vblank_hz = frames.get("vblank_hz") or 0
+    if not any(abs(vblank_hz - rate) <= VBLANK_TOLERANCE * rate for rate in DISPLAY_RATES):
         msg = f"The panels' vblanks ran at {frames.get('vblank_hz')} Hz"
         raise ValueError(msg)
 

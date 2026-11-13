@@ -469,6 +469,7 @@ def _capture(argv: list[str], timeout: float) -> tuple[int, str]:
             stdin=subprocess.DEVNULL,
             timeout=timeout,
             check=False,
+            env=dict(os.environ, PYTHONIOENCODING="utf-8"),
         )
     except subprocess.TimeoutExpired:
         return 124, f"{Path(argv[0]).name}: no answer within {timeout:.0f} s"
@@ -826,7 +827,9 @@ class Engine:
             runner.stop(child[0], child[2])
 
     def _spawn(self, argv: list[str], stdin: bytes | None, writes: bool, line: Callable[[str], None]) -> int:  # noqa: FBT001  # the Spawn signature, positional for the fakes
-        env = dict(os.environ, PYTHONUNBUFFERED="1")
+        # The output is read as UTF-8: a Python child on Windows would write its console's code page, and
+        # stop at the first character that has none there (a build's arrows).
+        env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
         if sys.platform == "win32":
             env.setdefault("MSYS_NO_PATHCONV", "1")
         # A child that writes to the headset gets its own process group: Ctrl-C reaches the engine only.

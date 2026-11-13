@@ -63,7 +63,7 @@ def run(
     argv: list[str], output: Callable[[str], None], started: Callable[[subprocess.Popen], None] | None = None
 ) -> int:
     """Run @p argv from the repository root, handing each line of its output to @p output; return its exit status."""
-    env = dict(os.environ, PYTHONUNBUFFERED="1")
+    env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")  # read as UTF-8 below
     if sys.platform == "win32":
         env.setdefault("MSYS_NO_PATHCONV", "1")
     proc = subprocess.Popen(  # noqa: S603  # a step's own command line, no shell

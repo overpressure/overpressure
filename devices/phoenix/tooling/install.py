@@ -541,6 +541,17 @@ class Plan:
             raise
         ctx.progress(None, "Checking the backup")
         ctx.run(self.command("device", "verify-backup", "--backup", folder))
+        # Back to PICO OS: the engineering bootloader's step enters EDL afresh from there (adb reboot edl). A
+        # restart into EDL from this session's loader is not carried out after a whole backup.
+        ctx.progress(None, "Restarting the headset into PICO OS")
+        ctx.output(qualcomm.reboot_argv(settings.edl_program(), settings.path("loader")), 60, check=False)
+        android.wait_booted(
+            settings.tool("adb"),
+            settings.adb_serial,
+            lambda argv, timeout=60: ctx.output(argv, timeout, check=False),
+            ctx.clock,
+            system="PICO OS",
+        )
         ctx.note(
             f"Your backup is in {folder}: it is your way back to PICO OS. Keep a copy somewhere safe: Export backup "
             "on the installer's start page writes it into one file (python -m overpressure backup export FILE)."
@@ -886,7 +897,7 @@ class Plan:
                 "backup",
                 "Back up the headset",
                 self.backup,
-                "about 25 min",
+                "about 5 min",
                 done=self.backup_there,
                 where="Your headset may be in EDL mode (its lenses stay dark); nothing was written to it. Keep "
                 "the cable in and start the installer again: it goes on from there. To return to PICO OS "

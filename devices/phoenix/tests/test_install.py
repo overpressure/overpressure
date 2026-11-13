@@ -131,7 +131,7 @@ class PlanTests(unittest.TestCase):
         line("ok")
         return 0
 
-    def capture(self, argv: list[str], _timeout: float) -> tuple[int, str]:  # noqa: PLR0911  # one answer per command
+    def capture(self, argv: list[str], _timeout: float) -> tuple[int, str]:  # noqa: C901, PLR0911  # one answer per command
         self.captured.append(argv)
         text = " ".join([Path(argv[0]).stem, *argv[1:]])
         if text == "adb devices":
@@ -146,6 +146,11 @@ class PlanTests(unittest.TestCase):
         if "reset --mode Edl" in text:
             self.restarting = [1, 1, 1, 0, 0]  # still there a while, then gone, then back (as the PICO 4)
             return 0, ""
+        if "reset --mode Reset" in text:  # out of EDL, into PICO OS
+            self.edl = 0
+            return 0, ""
+        if "getprop sys.boot_completed" in text:
+            return 0, "1\nPico/Phoenix_ovs/PICOA8110:10/5.13.7/x:user/dev-keys"
         if "printgpt" in text:
             return 0, PRINTGPT
         if text.endswith("reboot bootloader"):
@@ -250,6 +255,9 @@ class PlanTests(unittest.TestCase):
                 "dev connect",
             ],
         )
+        # After the backup the headset goes back to PICO OS: the bootloader's step enters EDL afresh from there.
+        shown = [" ".join(map(str, c)) for c in self.captured]
+        self.assertTrue(any(c.endswith("reset --mode Reset") for c in shown))
         backup = next(argv for argv, _, _ in self.spawned if "backup" in argv and "--execute" in argv)
         luns = backup[backup.index("--edl-luns") + 1 : backup.index("--execute")]
         self.assertEqual(luns, ["1", "2", "0"])

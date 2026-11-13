@@ -529,8 +529,13 @@ class Dev(Headset):
             valve = False
         return None if valve else self.s.ncm()
 
-    def connect(self) -> str:
-        """Log in to the running stage 1; return the partition it started from, checked by readback."""
+    def connect(self, *, flashed: bool = True) -> str:
+        """Log in to the running stage 1; return the partition it started from, checked by readback.
+
+        @p flashed: right after a flash, a partition that does not hold out/dev's image is a failed
+        write. Otherwise (dev recovery: the restore, a repeated install) an earlier dev image of this
+        computer's (its key and the headset's serial answered) is only noted: dev flash writes the current one.
+        """
         # Stage 1 makes new host keys on every boot.
         (self.work / "known_hosts").unlink(missing_ok=True)
         ncm = self.stage1_ncm()
@@ -545,8 +550,13 @@ class Dev(Headset):
             expected = json.loads((self.work / "dev-image.json").read_text(encoding="utf-8")).get(f"{name}_sha256")
             output = self.ssh(f"pico4-install hash {name} {image.stat().st_size}", 60).split()
             if output[:1] != [expected]:
-                msg = f"{name} does not hold out/dev/dev-{name}.img (readback differs)"
-                raise RuntimeError(msg)
+                if flashed:
+                    msg = f"{name} does not hold out/dev/dev-{name}.img (readback differs)"
+                    raise RuntimeError(msg)
+                print(
+                    f"stage 1 authenticated, started from {name}, which holds an earlier dev image of this computer's"
+                )
+                return name
         print(f"stage 1 authenticated, started from {name}, which holds the dev image")
         return name
 
@@ -827,7 +837,7 @@ class Dev(Headset):
         self.to_fastboot()
         self.fastboot("reboot", "recovery")
         # From fastboot nothing else answers: connect retries until stage 1 does.
-        if self.connect() != "recovery":
+        if self.connect(flashed=False) != "recovery":
             msg = "the maintenance stage 1 did not start from recovery"
             raise RuntimeError(msg)
 

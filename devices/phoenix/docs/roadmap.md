@@ -214,11 +214,10 @@ built for the Frame's hardware.
 
 **Not verified.**
 
-- On the headset: the installer's whole install from PICO OS with the headset's first build after the format, the
-  upgrade, a restore from an imported backup on another computer, and `dev restore` interrupted part way
-  ([install.md](install.md#an-interrupted-restore)). A panic in the maintenance stage 1 on Valve's kernel. The whole restore of an installed
-  system, also through the window, ran into PICO OS, with the maintenance stage 1 on the stock kernel; not yet with
-  it on Valve's kernel, whose writes take the disk's read-only flag into account.
+- On the headset: a restore from an imported backup on another computer, `dev restore` interrupted part way
+  ([install.md](install.md#an-interrupted-restore)), and a panic in the maintenance stage 1 on Valve's kernel. The
+  installer's restore, install from PICO OS and upgrade ran on the command line with that stage 1; the window ran
+  the restore with the stage 1 on the stock kernel.
 - A second headset: everything ran on one unit ([device-preparation.md](device-preparation.md#verified-hardware)).
 - Linux and macOS as the host: the host tests cover both, but no headset was installed from either (Windows
   installed it); the SSH proxy the headset's build downloads through (`ssh -R`), the Python assets extraction and

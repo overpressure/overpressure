@@ -630,7 +630,7 @@ class DevTests(HeadsetFixture):
         dev.ssh = lambda command, *_, **__: (
             reads[command] if command in reads else self.fail("wrote before reading the panel: " + command)
         )
-        _real_connect, dev.connect = dev.connect, lambda: "recovery"
+        _real_connect, dev.connect = dev.connect, lambda *, flashed=True: "recovery"  # noqa: ARG005  # the signature
         with self.assertRaisesRegex(ValueError, "nt57900.*not verified"):
             dev.install(system)
 
@@ -1061,6 +1061,8 @@ class DevTests(HeadsetFixture):
         (self.root / "dev/dev-image.json").write_text(json.dumps({"boot_sha256": "0" * 64}))
         with self.assertRaisesRegex(RuntimeError, "readback differs"):
             dev.connect()
+        # Not right after a flash (dev recovery: the restore): an earlier dev image of this computer's goes on.
+        self.assertEqual(dev.connect(flashed=False), "boot")
 
     def test_reboot_from_fastboot_restarts_stage_1_without_a_flash(self):
         dev = self.make({"cat /etc/pico4/test-run": "dev-loop\n1234567"})

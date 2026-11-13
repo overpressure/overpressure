@@ -572,7 +572,7 @@ window only:
 
 | Measure | Limit |
 | --- | --- |
-| commits per second | at least 85.5 (95 % of 90 Hz) |
+| commits per second | at least 95 % of the panels' refresh rate, from their vblanks: 85.5 at 90 Hz, 68.4 at 72 Hz (the Frame's default per-app rate, which a fresh install has) |
 | late commits (more than 1.5 refreshes after the one before) | at most 1 % |
 | stalls (gaps between commits above 100 ms) | none |
 | compositor's job margin before its vblank, p99 | at least 1 ms |
@@ -580,7 +580,7 @@ window only:
 
 It also reports the window's length, GPU time per job (`gpu_ms`), the web helpers' GPU share and the
 longest gap. On the host, `validate_valve_session` in [tooling/userspace.py](../tooling/userspace.py)
-also requires frames from msm (`target` msm), at least 36 commits/s, vblanks within 1 % of 90 Hz, finite
+also requires frames from msm (`target` msm), at least 36 commits/s, vblanks within 1 % of 90 or 72 Hz, finite
 poses for the three devices with a position for each controller, the fan record (a state or null), and a
 passed performance verdict.
 

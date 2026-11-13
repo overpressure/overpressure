@@ -297,6 +297,9 @@ VALVE_SESSION_PASSING: dict[str, Any] = {
 class ValveSessionTests(unittest.TestCase):
     def test_passing_session(self):
         userspace.validate_valve_session(VALVE_SESSION_PASSING)
+        # At 72 Hz too: the Frame's default per-app rate, which a fresh install's SteamVR picks.
+        at72 = {**VALVE_SESSION_PASSING["frames"], "vblank_hz": 72.006, "commit_hz": 72.0}
+        userspace.validate_valve_session({**VALVE_SESSION_PASSING, "frames": at72})
         # Without the fan daemon both states are null.
         userspace.validate_valve_session({**VALVE_SESSION_PASSING, "fan": {"before": None, "after_run": None}})
 
