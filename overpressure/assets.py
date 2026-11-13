@@ -25,8 +25,9 @@ import json
 import os
 import stat
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
+from . import lp
 from .ext4 import Ext4, Ext4Error, Inode
 from .fat import Fat, FatError
 
@@ -119,6 +120,80 @@ class StockFolder:
     ) -> None:
         """Close the open images."""
         self.close()
+
+
+class BackupFolder(StockFolder):
+    """A headset's backup in a stock folder's place: the same images, read out of its partitions.
+
+    @p images maps each image name a stock folder would hold to the backup's partition and, for a
+    super partition, the logical partition in it (overpressure/lp.py). Each partition file is
+    checked against the backup's manifest before anything is read from it.
+    """
+
+    def __init__(self, root: Path, images: Mapping[str, tuple[str, str | None]]) -> None:
+        """Read the backup's manifest.json in @p root."""
+        self.root = root.resolve()
+        try:
+            data = json.loads((self.root / "manifest.json").read_text(encoding="utf-8"))
+            backed: dict[str, dict] = data["files"]
+        except (OSError, ValueError, KeyError) as exc:
+            msg = f"{self.root} has no backup manifest.json ({exc})"
+            raise AssetError(msg) from exc
+        self.images = dict(images)
+        self.files = {}
+        self._paths: dict[str, str] = {}
+        for name, (partition, _logical) in self.images.items():
+            found = [n for n in backed if PurePosixPath(n).stem == partition and n.endswith((".bin", ".img"))]
+            if len(found) == 1:
+                self._paths[name] = found[0]
+                self.files[found[0]] = backed[found[0]].get("sha256", "")
+        self.firmware = (data.get("identity") or {}).get("fingerprint")
+        self._checked = set()
+        self._ext4 = {}
+        self._fat = {}
+        self._open: list[IO[bytes]] = []
+
+    def check(self, *names: str) -> None:
+        """Check each image's partition file against the backup's manifest (once per folder object)."""
+        for name in names:
+            if name not in self._paths:
+                msg = f"the backup in {self.root} holds no {self.images.get(name, (name,))[0]} partition"
+                raise AssetError(msg)
+            super().check(self._paths[name])
+
+    def _image(self, name: str) -> IO[bytes]:
+        self.check(name)
+        file = (self.root / self._paths[name]).open("rb")
+        self._open.append(file)
+        logical = self.images[name][1]
+        if logical is None:
+            return file
+        try:
+            return lp.LogicalPartition(file, lp.partitions(file)[logical])
+        except KeyError as exc:
+            msg = f"the backup's {self.images[name][0]} holds no logical partition {logical}"
+            raise AssetError(msg) from exc
+        except lp.LpError as exc:
+            raise AssetError(str(exc)) from exc
+
+    def ext4(self, name: str) -> Ext4:
+        """Return the ext4 file system the image @p name names, open for reading."""
+        if name not in self._ext4:
+            self._ext4[name] = Ext4(self._image(name))
+        return self._ext4[name]
+
+    def fat(self, name: str) -> Fat:
+        """Return the FAT file system the image @p name names, open for reading."""
+        if name not in self._fat:
+            self._fat[name] = Fat(self._image(name))
+        return self._fat[name]
+
+    def close(self) -> None:
+        """Close the partition files."""
+        super().close()
+        for file in self._open:
+            file.close()
+        self._open.clear()
 
 
 def _write(fs: Ext4, inode: Inode, dest: Path) -> None:

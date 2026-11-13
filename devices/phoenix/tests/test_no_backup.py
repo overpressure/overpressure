@@ -23,11 +23,15 @@ def read(path: Path) -> str:
 
 
 class ExtractionTests(unittest.TestCase):
-    def test_no_extraction_reads_the_backup(self):
-        source = read(ROOT / "tooling/assets.py")
-        self.assertNotRegex(source, r"lun\d/|persist\.bin|superimg|backup")
+    def test_extraction_reads_only_pico_os_s_own_partitions_never_the_headsets(self):
+        # From the OTA or from a backup, the same images: PICO OS's partitions, never persist.
+        self.assertEqual(
+            set(assets.BACKUP_IMAGES), set(stock.COPIED) - {"recovery.img", "boot.img"} | set(stock.BLOCK_IMAGES)
+        )
+        self.assertNotIn("persist", {partition for partition, _logical in assets.BACKUP_IMAGES.values()})
+        self.assertNotRegex(read(ROOT / "tooling/assets.py"), r"persist\.bin|lun\d/")
         for name, kind in assets.KINDS.items():
-            self.assertTrue(set(kind.images) <= set(stock.COPIED) | set(stock.BLOCK_IMAGES), name)
+            self.assertTrue(set(kind.images) <= set(assets.BACKUP_IMAGES), name)
 
     def test_the_build_ships_no_persist_data(self):
         build = read(ROOT / "scripts/build-userspace.sh")

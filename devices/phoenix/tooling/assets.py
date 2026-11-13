@@ -50,7 +50,7 @@ from typing import Callable
 
 from devices.phoenix.kernel import imx471_mode
 from overpressure import REPO
-from overpressure.assets import AssetError, StockFolder, copy_matching, dump, widen_modes, write_manifest
+from overpressure.assets import AssetError, BackupFolder, StockFolder, copy_matching, dump, widen_modes, write_manifest
 from overpressure.ext4 import Ext4Error
 from overpressure.fat import FatError
 
@@ -368,6 +368,45 @@ def version_of(firmware: str) -> str:
     return firmware.split("-", 1)[0]
 
 
+#: The stock folder's images in a backup: its partition and, in super, the logical partition.
+BACKUP_IMAGES: dict[str, tuple[str, str | None]] = {
+    "system.img": ("super", "system"),
+    "vendor.img": ("super", "vendor"),
+    "modem.bin": ("modem", None),
+    "dsp.bin": ("dsp", None),
+    "bluetooth.bin": ("bluetooth", None),
+}
+
+
+def backup_folder(backup: Path) -> BackupFolder:
+    """Return the headset's backup @p backup as a stock folder: the same images, from its partitions."""
+    return BackupFolder(backup, BACKUP_IMAGES)
+
+
+def firmware_version(fingerprint: str | None) -> str:
+    """Return the firmware's number from a build fingerprint (Pico/Phoenix_ovs/PICOA8110:10/5.13.7/...)."""
+    parts = (fingerprint or "").split("/")
+    if len(parts) < 4 or not parts[3]:  # noqa: PLR2004  # brand/product/device:release/version/...
+        msg = f"no firmware version in the backup's fingerprint {fingerprint!r}"
+        raise AssetError(msg)
+    return parts[3]
+
+
+def extract_all(folder: StockFolder, version: str, assets: Path, kinds: tuple[str, ...], log: Log) -> list[Path]:
+    """Extract each kind from @p folder into @p assets/KIND-@p version, each replacing the old folder when complete."""
+    done = []
+    for name in kinds:
+        out = assets / f"{name}-{version}"
+        new = out.with_name(out.name + ".new")
+        log(f">> {out}")
+        shutil.rmtree(new, ignore_errors=True)
+        extract(name, folder, new, log)
+        shutil.rmtree(out, ignore_errors=True)
+        new.rename(out)
+        done.append(out)
+    return done
+
+
 def build(  # noqa: PLR0913  # what to extract and where; the stock step and the log keyword-only
     firmware: str,
     stock_dir: Path,
@@ -383,19 +422,23 @@ def build(  # noqa: PLR0913  # what to extract and where; the stock step and the
     """
     started = time.monotonic()
     fetch(firmware, stock_dir, log)
-    version = version_of(firmware)
-    done = []
     with StockFolder(stock_dir) as folder:
-        for name in kinds:
-            out = assets / f"{name}-{version}"
-            new = out.with_name(out.name + ".new")
-            log(f">> {out}")
-            shutil.rmtree(new, ignore_errors=True)
-            extract(name, folder, new, log)
-            shutil.rmtree(out, ignore_errors=True)
-            new.rename(out)
-            done.append(out)
+        done = extract_all(folder, version_of(firmware), assets, kinds, log)
     log(f">> assets for {firmware}: {' '.join(p.name for p in done)} ({time.monotonic() - started:.0f} s)")
+    return done
+
+
+def from_backup(backup: Path, assets: Path, kinds: tuple[str, ...] = tuple(KINDS), *, log: Log = print) -> list[Path]:
+    """Extract each kind from the headset's own backup @p backup into @p assets/KIND-VERSION (no download).
+
+    The files are the same as from PICO's OTA of the backup's firmware; persist, the headset's own
+    data, is not read.
+    """
+    started = time.monotonic()
+    with backup_folder(backup) as folder:
+        version = firmware_version(folder.firmware)
+        done = extract_all(folder, version, assets, kinds, log)
+    log(f">> assets of {version} from {backup}: {' '.join(p.name for p in done)} ({time.monotonic() - started:.0f} s)")
     return done
 
 
@@ -406,13 +449,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--firmware", default=FIRMWARE, help=f"firmware.json entry (default {FIRMWARE})")
     ap.add_argument("--stock", type=Path, help="the stock folder (default cache/pico4-stock/FIRMWARE)")
     ap.add_argument("--assets", type=Path, default=REPO / "assets", help="where the KIND-VERSION folders go")
+    ap.add_argument("--backup", type=Path, help="take them from this EDL backup of the headset instead (no download)")
     args = ap.parse_args(argv)
     unknown = [k for k in args.kinds if k not in KINDS]
     if unknown:
         ap.error(f"unknown KIND {', '.join(unknown)}; known: {', '.join(KINDS)}")
     stock_dir = args.stock or REPO / "cache" / "pico4-stock" / args.firmware
     try:
-        build(args.firmware, stock_dir, args.assets, tuple(args.kinds) or tuple(KINDS))
+        if args.backup:
+            from_backup(args.backup, args.assets, tuple(args.kinds) or tuple(KINDS))
+        else:
+            build(args.firmware, stock_dir, args.assets, tuple(args.kinds) or tuple(KINDS))
     except (AssetError, Ext4Error, FatError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

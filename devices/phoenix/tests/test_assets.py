@@ -323,9 +323,7 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(kernel.argv, ("kernel", "fetch"))
         self.assertFalse(kernel.linux_root)
 
-    def test_no_extraction_reads_the_backup(self):
-        source = (ROOT / "tooling/assets.py").read_text(encoding="utf-8")
-        self.assertNotRegex(source, r"lun\d/|persist\.bin|superimg|backup")
+    def test_extraction_reads_only_pico_os_s_partitions(self):
         for kind in assets.KINDS.values():
             self.assertTrue(set(kind.images) <= {"system.img", "vendor.img", "modem.bin", "dsp.bin", "bluetooth.bin"})
         self.assertFalse(list((ROOT / "scripts").glob("extract-*.sh")))
