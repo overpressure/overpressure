@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -719,6 +720,19 @@ class PreflightDefaultTests(unittest.TestCase):
             self.assertEqual(hw.newest_rootfs(out).name, "pico4-stage1-a-rootfs.tar")
             with self.assertRaises(SystemExit):
                 hw.newest_rootfs(out / "missing")
+
+
+class UserspaceStateTests(unittest.TestCase):
+    def test_an_image_that_links_pico_os_s_files_gets_the_gpu_imu_and_session_checks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / "pico4-userspace.tar.zst"
+            archive.write_bytes(b"archive")
+            sha = hashlib.sha256(b"archive").hexdigest()
+            manifest = archive.with_name("pico4-userspace.manifest.json")
+            for extra, expected in (({"stock_links": {"usr/lib/firmware/a650_sqe.fw": "/var"}}, True), ({}, False)):
+                manifest.write_text(json.dumps({"archive": {"sha256": sha}, "packages": {}, **extra}))
+                state = hw.userspace_state(archive)
+                self.assertEqual((state["gpu_firmware"], state["sensor_data"]), (expected, expected))
 
 
 if __name__ == "__main__":

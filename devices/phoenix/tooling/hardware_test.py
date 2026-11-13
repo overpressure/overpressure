@@ -128,14 +128,17 @@ def userspace_state(archive: Path) -> dict:
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     require(manifest.get("archive", {}).get("sha256") == digest, "Userspace archive does not match its manifest")
     packages = manifest.get("packages", {})
+    # PICO OS's files are on the headset (docs/install.md#pico-oss-files): the image links to them. An image
+    # from before carried them itself, or went without.
+    linked = bool(manifest.get("stock_links"))
     return {
         "archive": str(archive.resolve()),
         "sha256": digest,
         "bytes": archive.stat().st_size,
         "packages": len(packages),
         "systemd": packages.get("systemd"),
-        "gpu_firmware": bool(manifest.get("gpu_firmware")),
-        "sensor_data": bool(manifest.get("sensor_data")),
+        "gpu_firmware": linked or bool(manifest.get("gpu_firmware")),
+        "sensor_data": linked or bool(manifest.get("sensor_data")),
         "steamvr": "deckard-steamvr-rel" in packages,
     }
 
