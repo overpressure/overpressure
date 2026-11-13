@@ -46,7 +46,8 @@ do. The install's five stages:
 | 5 Install | Wi-Fi if you like, the system, the acceptance checks; then "Unplug it and put it on" | on the cable |
 
 **Upgrade** builds this version and installs it over yours, keeping your data. **Restore to stock** brings back
-PICO OS and its bootloader from the backup, with a stop for PICO OS's setup and USB debugging in between
+PICO OS and its bootloader from the backup, with a stop for PICO OS's setup and USB debugging in between (wear the
+headset on the cable through that setup: its first start may update the lens and fan controller)
 ([docs/install.md](docs/install.md#the-upgrade-and-the-way-back)). *Export backup…* writes the backup into one
 checked file to keep safe; *Import backup…* brings it to another computer.
 

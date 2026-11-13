@@ -515,6 +515,8 @@ class Runner(evidence.Runner):
         self.save()
         for warning in state["warnings"]:
             print(f"   warning: {warning}", flush=True)
+        repair = userspace.mcu_fault(value.get("fan"))
+        require(repair is None, repair or "")
         require(code.strip() == "0", "Userspace check failed")
         userspace.validate_check(value, require_vulkan=state["gpu_firmware"])
         # The storage and identity guarantees of stage 1 must hold in stage 2.

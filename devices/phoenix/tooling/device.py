@@ -17,6 +17,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from overpressure import android, process
 from overpressure.android import run
@@ -31,6 +32,9 @@ from overpressure.qualcomm import (
 )
 
 from . import localconfig, unlockfiles
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 #: The SoC ID is a 32-bit number.
 CHIP_ID_MAX = 0xFFFFFFFF
@@ -180,6 +184,67 @@ def check_panel_in_pico_os(output: str) -> str:
         )
         raise ValueError(msg)
     return name
+
+
+#: PICO OS's init service (PxrInitService in libpxrinit.so) checks the lens and fan MCU on every start and updates
+#: it when its version differs from the file PICO OS carries (/system/etc/mcubin/); once that is over, whether an
+#: update ran, finished or failed, it sets this property to 1 (docs/cooling.md#an-mcu-that-answers-f1).
+MCU_DONE = "sys.pxr.init.status"
+#: The service's log lines for an update that failed in this start.
+MCU_FAILED = "FW/OTA FAILED|FW_OTA_FAILED"
+#: One look: the property, then the first failure line the log still holds (the shell's status stays 0).
+MCU_PROBE = f"getprop {MCU_DONE}; logcat -d -s PxrInitService 2>&1 | grep -m1 -E '{MCU_FAILED}'; true"
+MCU_SECONDS = 900
+MCU_WAITING = (
+    "PICO OS is checking the headset's lens and fan controller (its MCU) and may update it. Keep the headset on "
+    "your head with the cable in until this step goes on: an update that the headset's sleep interrupts leaves "
+    "the controller without its program, and the headset without its fan and lens adjustment."
+)
+MCU_UPDATE_FAILED = (
+    "PICO OS's update of the headset's lens and fan controller (its MCU) failed in this start; leaving PICO OS "
+    "now would leave the headset without its fan. Restart the headset (hold the power button, then Restart), keep "
+    "it on your head with the cable in until PICO OS's home appears, then start again: PICO OS checks the "
+    "controller on every start and updates it again."
+)
+
+
+class McuUpdateFailedError(process.Final, RuntimeError):
+    """PICO OS's update of the MCU failed in this start: waiting does not cure it, a restart of PICO OS does."""
+
+
+def wait_mcu(  # noqa: PLR0913  # adb and the serial, the runner and the clock; the note and the bound
+    adb: str,
+    serial: str,
+    runner: Callable[..., str],
+    clock: process.Timing,
+    *,
+    note: Callable[[str], None] = print,
+    seconds: float = MCU_SECONDS,
+) -> None:
+    """Wait until PICO OS is through with the lens and fan MCU; refuse to go on after a failed update.
+
+    Every way out of PICO OS (into EDL or the bootloader) waits here first: PICO OS's first start
+    after a restore or a reset may update the MCU, and an update cut short leaves it answering
+    only F1 (docs/cooling.md#an-mcu-that-answers-f1). The log may no longer hold the lines of a
+    long setup; the acceptance check on the installed system names such an MCU too.
+    """
+    told = False
+
+    def over() -> None:
+        nonlocal told
+        lines = runner([adb, "-s", serial, "shell", MCU_PROBE], 30).splitlines()
+        failed = next((line.strip() for line in lines[1:] if re.search(MCU_FAILED, line)), "")
+        if failed:
+            msg = f"{MCU_UPDATE_FAILED} (PICO OS's log: {failed})"
+            raise McuUpdateFailedError(msg)
+        if not lines or lines[0].strip() != "1":
+            if not told:
+                note(MCU_WAITING)
+                told = True
+            msg = "PICO OS has not finished its check of the MCU"
+            raise RuntimeError(msg)
+
+    process.until("PICO OS's check of the lens and fan MCU", seconds, over, clock, interval=5)
 
 
 def read_identity(path: Path) -> dict:

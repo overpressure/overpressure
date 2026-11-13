@@ -142,6 +142,17 @@ class CheckValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, message):
                 userspace.validate_check(value)
 
+    def test_an_mcu_that_answers_only_f1_is_named_with_its_repair(self):
+        value = copy.deepcopy(PASSING)
+        value["fan"]["state"].update(
+            duty=None, error="SetFanSpeed 30 %: the MCU still answers F1 after 50 wakes (docs/cooling.md)"
+        )
+        self.assertEqual(userspace.mcu_fault(value["fan"]), userspace.MCU_WITHOUT_PROGRAM)
+        with self.assertRaisesRegex(ValueError, "Restore PICO OS"):
+            userspace.validate_check(value)
+        self.assertIsNone(userspace.mcu_fault(PASSING["fan"]))
+        self.assertIsNone(userspace.mcu_fault({"service": "skipped", "state": None}))
+
     def test_vulkan_only_required_with_firmware(self):
         value = copy.deepcopy(PASSING)
         value["vulkan"] = {"status": "skipped", "result": None}

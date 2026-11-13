@@ -233,7 +233,7 @@ the others' recorded progress (the install starts afresh after a restore).
 | Upgrade | Install the upgrade | an action ask (switched on, on the cable); `dev recovery`, `dev install` (data kept), `dev installed`, `dev check` | installed system, maintenance stage 1 |
 | Restore | Check the backup | `tools`; `device verify-backup` of `PICO4_BACKUP`, which must be the headset `PICO4_IDENTITY` describes | not needed |
 | Restore | Restore PICO OS | one consent (it erases the system and its data); an action ask; a headset that answers `adb devices` with its serial runs PICO OS already and is left alone, any other gets `dev restore --installed` ([back to stock](#back-to-stock)) | maintenance stage 1, fastboot |
-| Restore | Set PICO OS up | an action ask: PICO OS's first-time setup, developer mode and USB debugging; exactly one `adb devices` entry, written to `PICO4_ADB_SERIAL` | PICO OS |
+| Restore | Set PICO OS up | an action ask: PICO OS's first-time setup worn and on the cable (its first start may update the lens and fan MCU), developer mode and USB debugging; exactly one `adb devices` entry, written to `PICO4_ADB_SERIAL`; then the wait for PICO OS's MCU check ([cooling.md](cooling.md#an-mcu-that-answers-f1)) | PICO OS |
 | Restore | Stock bootloader | `cycle --restore-only`: stock boot verified, stock ABL written back; then "Back on PICO OS". The bootloader stays unlocked | PICO OS |
 
 ### The backup as one file
@@ -309,7 +309,10 @@ it unless PICO OS runs). From the maintenance stage 1 it writes the backup's `su
 the manifest, read back), wipes the start of `userdata` and `metadata` (both `formattable` in PICO OS's fstab,
 so PICO OS makes new file systems and keys), clears `misc`, then writes stock `recovery` through fastboot and
 starts PICO OS. PICO OS's first-time setup follows; ADB stays off until developer mode is on again, so
-`cycle --restore-only` (stock ABL) and `dev stage-abl` (development mode again) wait for that.
+`cycle --restore-only` (stock ABL) and `dev stage-abl` (development mode again) wait for that. That first start may
+update the lens and fan MCU: keep the headset worn and on the cable through the setup. Every way out of PICO OS
+(EDL or fastboot) first waits until PICO OS is through with the MCU, and stays in PICO OS after a failed update
+([cooling.md](cooling.md#an-mcu-that-answers-f1)).
 
 ### An interrupted restore
 

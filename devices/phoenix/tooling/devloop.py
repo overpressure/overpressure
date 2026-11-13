@@ -306,7 +306,7 @@ class Dev(Headset):
             raise RuntimeError(msg)
 
     def to_fastboot(self) -> None:
-        """From PICO OS (ADB), stage 1 or stage 2 (SSH) into the bootloader."""
+        """From PICO OS (ADB, once it is through with the MCU), stage 1 or stage 2 (SSH) into the bootloader."""
         fastboot = self.s.tool("fastboot")
         self.release_adb()
         if self.s.fastboot_serial in self.run([fastboot, "devices"], 30, check=False):
@@ -315,6 +315,7 @@ class Dev(Headset):
         # That look started the adb server again, which on Linux holds the headset in fastboot.
         self.release_adb()
         if pico_os:
+            device.wait_mcu(self.s.tool("adb"), self.s.adb_serial, self.run, self.clock)
             self.run([self.s.tool("adb"), "-s", self.s.adb_serial, "reboot", "bootloader"], 30)
             self.release_adb()  # that command started the server again
         else:

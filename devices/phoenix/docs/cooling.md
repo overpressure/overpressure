@@ -67,15 +67,33 @@ Frames as `gd32ipdservice` builds them (requests `A0 cmd p1 p2 p3 xor`, replies 
 Each transaction votes the port's clocks (`ioctl 0x544D`), flushes both queues, writes the 6 bytes and polls up to ten
 times at 1 ms for a reply starting with `79`.
 
-**An MCU that answers `F1`.** `gd32ipdservice` wakes the MCU as the screen comes on (`wakeUp`): SetBrightness with
+### An MCU that answers `F1`
+
+`gd32ipdservice` wakes the MCU as the screen comes on (`wakeUp`): SetBrightness with
 the configured level (`sys_brt_level` in `com.pvr.configuration`; 63 below 30 or without one), every 10 ms, up to 50
 times, until it answers `79`; PICO OS's shutdown sets the backlight to 0 (`ScreenOffForShutDown`: `A0 05 00 00 00 A5`).
 Its `ResetMCU` sets the boot line high, the reset line high for 10 ms, then wakes it. On one headset after a restore to
 stock and PICO OS's first-run setup, the MCU answered every request, these included, with a single `F1`, through cold
-starts and the reset: no fan control, no IPD. PICO OS updates the MCU on its first boot (`libpxrinit.so`,
-`check_GD_MCU_Update`, from `/system/etc/mcubin/`), and an update that a suspend interrupts fails ("FW/OTA FAILED
-BECAUSE OF SYSTEM SUSPEND"). Only PICO OS's update repairs it: a restore to stock, a first boot kept awake until the
-setup is through, then the install from the running PICO OS.
+starts and the reset: no fan control, no IPD. Only PICO OS's update repairs it: a restore to stock, a first start kept
+awake until the setup is through, then the install from the running PICO OS.
+
+PICO OS's update, from its init service (`PxrInitService` in `libpxrinit.so`):
+
+- **When.** On every start of PICO OS, `check_GD_MCU_Update` compares the MCU's version with the file in
+  `/system/etc/mcubin/` (`PhoenixGD_P1M<version>_App_updateota_<checksum>.bin`); with a different version and the
+  battery from 20 to 100 % it sends that file through `gd32ipdservice`, otherwise it skips the update.
+- **Failure.** An update cut short fails ("FW/OTA FAILED BECAUSE OF SYSTEM SUSPEND!", "FW_OTA_FAILED_NAK!", "please keep
+  device wakeup"), and the MCU stays without its program.
+- **The end.** Whether it updated, skipped or failed, the service then sets `sys.pxr.init.status` to `1`. The property
+  says the check is over, not that it succeeded; the service's log says which.
+
+The installer reads both over adb before every way out of PICO OS (`device.wait_mcu`: the backup's and the stock
+bootloader's EDL, the unlock's and `dev flash`'s fastboot). It waits up to 15 minutes for the property, telling the
+owner to keep the headset on with the cable in. It stays in PICO OS after a failed update and asks for a restart, kept
+awake: the next start updates the MCU again. The log may no longer hold a long setup's lines, so the acceptance check
+on the installed system names an MCU that answers only `F1`, with the repair above. The fan daemon treats such an MCU as
+silent: it retries, the check fails, and at a hottest mean of 95.1 °C for 2 minutes it powers the headset off
+([below](#hardware-limits)).
 
 ### PICO OS's policy
 

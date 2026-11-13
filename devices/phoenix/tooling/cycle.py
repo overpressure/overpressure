@@ -34,7 +34,7 @@ from overpressure.fastboot import NOT_IN_FASTBOOT
 from overpressure.process import run, until
 from overpressure.qualcomm import edl_devices
 
-from . import ADB_MODE, EDL_RESTART, FASTBOOT_MODE, USB_MODES, localconfig
+from . import ADB_MODE, EDL_RESTART, FASTBOOT_MODE, USB_MODES, device, localconfig
 
 if TYPE_CHECKING:
     from overpressure.process import Timing
@@ -74,7 +74,12 @@ class Headset:
         )
 
     def enter_edl(self) -> None:
-        """Bring the headset from PICO OS to EDL, unless it is the one EDL device already."""
+        """Bring the headset from PICO OS to EDL, unless it is the one EDL device already.
+
+        PICO OS is left only once it is through with the lens and fan MCU (device.wait_mcu).
+        """
+        if self.edl_count() != 1:
+            device.wait_mcu(self.s.tool("adb"), self.s.adb_serial, self.run, self.clock)
         qualcomm.enter_edl(
             self.s.tool("adb"), self.s.adb_serial, self.run, self.clock, edl_count=self.edl_count, modes=USB_MODES
         )

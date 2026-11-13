@@ -94,6 +94,8 @@ FASTBOOT_WHERE = (
 
 NOTHING_CHANGED = "Nothing was changed on your headset."
 AGAIN = "Start the installer again to go on where it stopped."
+#: Where the headset is when PICO OS is not through with its MCU: the installer did not take it out of PICO OS.
+STILL_PICO_OS = "PICO OS runs on the headset; the installer has not taken it out of PICO OS. " + AGAIN
 #: The container engine the builds need, whichever it is and however it runs.
 ENGINE_MISSING = (
     "The system is built in a container, which needs Docker or Podman. Install one (docs.docker.com/get-docker "
@@ -126,8 +128,10 @@ FACTORY_RESET = Ask(
     "Reset PICO OS",
     "PICO OS needs a factory reset after the unlock. Unplug the cable and hold the power button until the "
     "headset restarts; in PICO OS's recovery, Volume +/- (on the top edge of the right strap) moves and a "
-    "short power press selects: select the factory reset, confirm it, then Reboot system now. Set PICO OS "
-    "up, turn on developer mode and USB debugging again, plug the headset in and accept the prompt.",
+    "short power press selects: select the factory reset, confirm it, then Reboot system now. Plug the "
+    "headset in again and set PICO OS up wearing it, without letting it fall asleep: its first start may update "
+    "the headset's lens and fan controller. Then turn on developer mode and USB debugging again and accept the "
+    "prompt.",
 )
 WIFI = Ask(
     "wifi",
@@ -170,9 +174,10 @@ PICO_OS_SETUP = Ask(
     "pico-os",
     "action",
     "Set PICO OS up",
-    "PICO OS has started with a fresh setup on the headset. Go through it, then turn on developer mode and USB "
-    "debugging again (Settings, General, About: tap the software version seven times; then Developer, USB "
-    "debugging). Plug the headset in, put it on and accept the USB debugging prompt.",
+    "PICO OS has started with a fresh setup on the headset. Keep the cable in and go through the setup wearing "
+    "the headset, without letting it fall asleep: this first start may update the headset's lens and fan "
+    "controller. Then turn on developer mode and USB debugging again (Settings, General, About: tap the software "
+    "version seven times; then Developer, USB debugging) and accept the USB debugging prompt.",
 )
 RESTORED = (
     "Your headset runs PICO OS again, with the system and the bootloader from your backup. Its bootloader stays "
@@ -472,8 +477,23 @@ class Plan:
         """Tell whether the consent is needed no more: every write it covers is done."""
         return all(ctx.completed(task) for task in later)
 
+    def mcu_settled(self, ctx: Context, settings: localconfig.Settings) -> None:
+        """Wait until PICO OS is through with the lens and fan MCU, before the headset leaves it (device.wait_mcu)."""
+        try:
+            device.wait_mcu(
+                settings.tool("adb"),
+                settings.adb_serial,
+                lambda argv, timeout: ctx.output(argv, timeout, check=False),
+                ctx.clock,
+                note=ctx.note,
+            )
+        except RuntimeError as exc:
+            raise Failed(str(exc), STILL_PICO_OS) from exc
+
     def enter_edl(self, ctx: Context, settings: localconfig.Settings) -> None:
         """Bring the headset from PICO OS to EDL, unless it is the one EDL device already."""
+        if self.edl_count() != 1:
+            self.mcu_settled(ctx, settings)
         try:
             qualcomm.enter_edl(
                 settings.tool("adb"),
@@ -616,6 +636,7 @@ class Plan:
 
         release()
         if not listed():
+            self.mcu_settled(ctx, settings)
             ctx.output([settings.tool("adb"), "-s", settings.adb_serial, "reboot", "bootloader"], 30)
             release()  # that command started the server again
         ctx.note("The headset restarts into its bootloader. Keep the cable in.")
@@ -746,7 +767,7 @@ class Plan:
                     Task(
                         "pico-os",
                         "PICO OS's setup",
-                        lambda ctx: self.find(ctx, PICO_OS_SETUP),
+                        self.pico_os_setup,
                         "about 10 min",
                         where="PICO OS runs on the headset with its stock system. " + AGAIN,
                     ),
@@ -767,6 +788,11 @@ class Plan:
                 ),
             ),
         )
+
+    def pico_os_setup(self, ctx: Context) -> None:
+        """Wait for PICO OS's setup and USB debugging, then for its check of the MCU (its first start may update it)."""
+        self.find(ctx, PICO_OS_SETUP)
+        self.mcu_settled(ctx, ctx.settings(Settings))
 
     @staticmethod
     def consent_restore(ctx: Context) -> None:

@@ -97,6 +97,7 @@ class PlanTests(unittest.TestCase):
         self.version = "5.13.7"
         self.model = "PICO 4"
         self.cmdline = SHARP
+        self.mcu = ["1\n"]  # PICO OS's answers to the MCU probe, the last one repeated
         self.edl = 0
         self.restarting: list[int] = []  # the EDL count's next answers while a restart into EDL runs
         self.fastboot = False
@@ -139,6 +140,8 @@ class PlanTests(unittest.TestCase):
             return 0, f"List of devices attached\n{ADB}\tdevice\n"
         if "cat /proc/cmdline" in text:
             return 0, self.cmdline
+        if "getprop sys.pxr.init.status" in text:
+            return 0, self.mcu.pop(0) if len(self.mcu) > 1 else self.mcu[0]
         if text.endswith("reboot edl"):
             self.edl = 1
             return 0, ""
@@ -286,6 +289,26 @@ class PlanTests(unittest.TestCase):
         text = self.env.read_text(encoding="utf-8")
         self.assertEqual(text.count("PICO4_ADB_SERIAL="), 1)
         self.assertIn(f"PICO4_IDENTITY={self.identity.as_posix()}", text)  # the other lines stay
+
+    def test_pico_os_is_left_only_once_it_is_through_with_the_mcu(self):
+        self.mcu = ["", "0\n", "1\n"]  # not set yet, still checking, then through
+        ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
+        self.assertEqual(ui.finished()["status"], "done", ui.finished())
+        texts = [" ".join(c) for c in self.captured]
+        first_probe = next(i for i, t in enumerate(texts) if "sys.pxr.init.status" in t)
+        self.assertLess(first_probe, next(i for i, t in enumerate(texts) if t.endswith("reboot edl")))
+        notes = [e["text"] for e in ui.events if e["event"] == "note"]
+        self.assertEqual(sum("lens and fan controller" in n for n in notes), 1)  # said once
+
+    def test_a_failed_mcu_update_keeps_the_headset_in_pico_os(self):
+        self.mcu = ["1\n11-13 10:00:00.000  901  944 E PxrInitService: FW/OTA FAILED BECAUSE OF SYSTEM SUSPEND!\n"]
+        ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
+        finished = ui.finished()
+        self.assertEqual((finished["status"], finished["task"]), ("failed", "backup"))
+        self.assertIn("Restart the headset", finished["error"])
+        self.assertIn("SYSTEM SUSPEND", finished["error"])
+        self.assertEqual(finished["where"], plan.STILL_PICO_OS)
+        self.assertFalse(any("reboot" in " ".join(c) for c in self.captured))
 
     def test_an_unsupported_firmware_is_refused_before_any_write(self):
         self.version = "5.13.9"
@@ -703,6 +726,18 @@ class WorkflowTests(unittest.TestCase):
             self.plan.restore_system(ctx)
         ctx.run.assert_not_called()
         self.assertIn("only its bootloader", ctx.note.call_args.args[0])
+
+    def test_the_restore_waits_for_pico_os_s_mcu_check_after_its_setup(self):
+        ctx = mock.Mock(clock=FakeClock())
+        ctx.settings.return_value = mock.Mock(adb_serial="SERIAL", tool=mock.Mock(return_value="adb"))
+        ctx.output.side_effect = lambda argv, *_a, **_k: (
+            "0\n" if "sys.pxr.init.status" in " ".join(argv) else "List of devices attached\nSERIAL\tdevice\n"
+        )
+        with self.assertRaises(plan.Failed) as failed:
+            self.plan.pico_os_setup(ctx)
+        self.assertEqual(ctx.ask.call_args.args[0].id, "pico-os")
+        self.assertIn("timed out waiting for PICO OS's check", str(failed.exception))
+        self.assertIn("keep the headset on your head", ctx.note.call_args.args[0].lower())
 
     def test_an_upgrade_needs_an_installed_system_and_a_restore_a_backup(self):
         with tempfile.TemporaryDirectory() as folder:

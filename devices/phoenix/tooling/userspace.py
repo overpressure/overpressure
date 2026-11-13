@@ -102,6 +102,21 @@ def _validate_session(session: dict) -> None:
         raise ValueError(msg)
 
 
+#: What an MCU that answers only F1 means, and its repair (docs/cooling.md#an-mcu-that-answers-f1).
+MCU_WITHOUT_PROGRAM = (
+    "The headset's lens and fan controller (its MCU) answers only F1: PICO OS's update of it did not finish, so "
+    "the fan does not run (docs/cooling.md#an-mcu-that-answers-f1). Restore PICO OS, keep the headset on your head "
+    "with the cable in through its first start until the installer goes on, then install again."
+)
+
+
+def mcu_fault(fan: object) -> str | None:
+    """Return the repair for an MCU that answers only F1, from pico4-userspace-check's fan part; None otherwise."""
+    state = fan.get("state") if isinstance(fan, dict) else None
+    error = state.get("error") if isinstance(state, dict) else None
+    return MCU_WITHOUT_PROGRAM if isinstance(error, str) and "answers F1" in error else None
+
+
 def _validate_fan(fan: dict) -> None:
     """Refuse a fan service that does not run, or a duty the MCU has not acknowledged."""
     service = fan.get("service")
@@ -113,7 +128,7 @@ def _validate_fan(fan: dict) -> None:
         msg = "The fan daemon writes no state"
         raise ValueError(msg)  # noqa: TRY004  # a failed check like every other: the runner catches ValueError
     if state.get("error"):
-        msg = f"The lens MCU fails the fan (docs/cooling.md): {state['error']}"
+        msg = mcu_fault(fan) or f"The lens MCU fails the fan (docs/cooling.md): {state['error']}"
         raise ValueError(msg)
     if type(state.get("duty")) is not int:
         msg = "The lens MCU has not acknowledged a fan duty (docs/cooling.md)"

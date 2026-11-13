@@ -161,6 +161,8 @@ class HeadsetFixture(unittest.TestCase):
             self.restarting = [1, 1, 1, 0, 0]  # still there a while, then gone, then back (as the PICO 4)
         elif "getprop sys.boot_completed" in text:
             output = "1\nPico/Phoenix_ovs/PICOA8110:10/5.13.7/test:user/dev-keys"
+        elif "getprop sys.pxr.init.status" in text:
+            output = "1\n"  # PICO OS is through with the MCU
         elif "hwtest flash-run" in text:
             run = Path(words[words.index("--out") + 1])
             run.mkdir()
@@ -185,6 +187,7 @@ class HeadsetFixture(unittest.TestCase):
         for words in self.calls:
             text = " ".join(words)
             for marker, name in (
+                ("getprop sys.pxr.init.status", "mcu"),
                 ("reboot edl", "adb-edl"),
                 ("printgpt", "identify"),
                 ("device stage", "stage"),
@@ -219,6 +222,7 @@ class CycleTests(HeadsetFixture):
         self.assertEqual(
             self.steps(),
             [
+                "mcu",
                 "adb-edl",
                 "identify",
                 "stage",
@@ -226,6 +230,7 @@ class CycleTests(HeadsetFixture):
                 "pico-os",
                 "flash-run",
                 "pico-os",
+                "mcu",
                 "adb-edl",
                 "identify",
                 "readback",
@@ -287,7 +292,7 @@ class CycleTests(HeadsetFixture):
         self.edl_output = "Serial Number: OTHER"
         with self.assertRaisesRegex(RuntimeError, "not the configured headset"):
             self.run_cycle(self.make())
-        self.assertEqual(self.steps(), ["adb-edl", "identify"])
+        self.assertEqual(self.steps(), ["mcu", "adb-edl", "identify"])
 
     def test_pending_boot_restore_flashes_the_pinned_stock_image(self):
         stock = self.root / "stock-boot.img"
