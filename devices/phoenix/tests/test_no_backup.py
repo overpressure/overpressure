@@ -42,8 +42,9 @@ class ExtractionTests(unittest.TestCase):
         self.assertIn('mkdir -p "$T/mnt/vendor/persist"', build)
 
 
-class DevImageTests(unittest.TestCase):
-    def test_recovery_from_the_ota(self):
+class OtaTests(unittest.TestCase):
+    def test_either_image_out_of_an_ota_zip(self):
+        # For development only (build --stock-boot): the install takes both from the headset's backup.
         with tempfile.TemporaryDirectory() as tmp:
             zip_path = Path(tmp) / "ota.zip"
             with zipfile.ZipFile(zip_path, "w") as zf:
@@ -53,10 +54,6 @@ class DevImageTests(unittest.TestCase):
             self.assertEqual(
                 ota.fetch_boot_image(str(zip_path), log=lambda *_: None, partition="recovery"), b"ANDROID!recovery"
             )
-        devloop = read(ROOT / "tooling/devloop.py")
-        image = devloop[devloop.index("    def image(self)") : devloop.index("    def enrolled_keys(")]
-        self.assertIn('ota.fetch_boot_image(self.stock_location(), str(ROOT / "cache"), print, "recovery")', image)
-        self.assertNotIn("stock_partition", image)
 
 
 class StockLibTests(unittest.TestCase):

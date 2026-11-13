@@ -98,22 +98,24 @@ python -m overpressure match --fingerprint "Pico/Phoenix_ovs/..." --oem-state fa
 `match` returns the entry with the same fingerprint, else the one with the same version, region (`_ovs` =
 global) and OEM state, with a note that the build number (`_bNNNN_` in `ro.pvr.internal.version`) is not
 confirmed. Kernel, trees and configuration are identical across the 5.13.7 and 5.13.8 builds compared, so a
-close match works, but an exact match is safer: the stock boot image of the same build restores PICO OS.
+close match works, but an exact match is safer: the stock boot image of the same build restores PICO OS. The
+build does not download it: the stock boot image is the headset's own `boot` partition in its EDL backup.
 
 | Option | Effect |
 | --- | --- |
-| `--firmware NAME` | entry of `firmware.json` (default `5.13.7-global-seko`) |
-| `--stock-boot PATH` | instead: a `boot.img` (for example from the EDL backup), an OTA zip, or a URL of either |
+| `--firmware NAME` | the headset's build in `firmware.json` (default `5.13.7-global-seko`): the image's name, checked against the verified list |
+| `--backup DIR` | the EDL backup whose `boot` partition the image takes (default `PICO4_BACKUP` in `.env`), checked against its manifest |
+| `--stock-boot PATH` | instead, for development: another `boot.img`, an OTA zip, or a URL of either |
 | `--cmdline-append ARG...` | extra kernel arguments ([options](#kernel-command-line-options)) |
 | `--out DIR` | output directory (default `out/`) |
 | `--force` | build even if the kernel checks fail (not `RD_GZIP`) |
 
-The first build downloads about 17 MB of the OTA (the zip's central directory and its `boot.img` member, by
-HTTP range requests, checked against the zip's CRC-32) and about 12 MB of Alpine packages into `cache/`. The
-build:
+The first build downloads about 12 MB of Alpine packages into `cache/`, and nothing of PICO's. The build:
 
-1. Gets the stock `boot.img` ([overpressure/ota.py](../../../overpressure/ota.py); A/B OTAs with `payload.bin`
-   work too, [overpressure/payload.py](../../../overpressure/payload.py)).
+1. Takes the stock `boot.img` from the backup ([overpressure/backup.py](../../../overpressure/backup.py),
+   `verified_partition`: the image's size and SHA-256 are the manifest's), or `--stock-boot`'s
+   ([overpressure/ota.py](../../../overpressure/ota.py), by HTTP range requests checked against the zip's CRC-32;
+   A/B OTAs with `payload.bin` work too, [overpressure/payload.py](../../../overpressure/payload.py)).
 2. Parses it ([overpressure/bootimg.py](../../../overpressure/bootimg.py), header v0–4) and analyses the
    kernel ([overpressure/kernelinfo.py](../../../overpressure/kernelinfo.py)). It stops if the kernel lacks
    `BLK_DEV_INITRD`, `RD_GZIP`, `USB_CONFIGFS`, `CONFIGFS_FS` or `UNIX98_PTYS`, or has none of the NCM,
@@ -136,9 +138,9 @@ build:
 | `pico4-stage1-<firmware>-initramfs.cpio.gz` | the bare ramdisk, for the QEMU tests |
 | `pico4-stage1-<firmware>-rootfs.tar` | the root file system without device nodes, for the preflight |
 | `pico4-stage1-<firmware>.json` | build record: SHA-256 and size, command line, package versions, stock analysis |
-| `stock-boot-<firmware>.img` | the untouched stock boot image of the same OTA |
+| `stock-boot-<name>.img` | with `--stock-boot` only: that untouched stock boot image (the backup holds the headset's own) |
 
-`python -m overpressure inspect` (`--firmware` or `--stock-boot`) prints the analysis without building and
+`python -m overpressure inspect` (the backup's, or `--stock-boot`) prints the analysis without building and
 writes `out/inspect/<firmware>/analysis.json` and `kernel.config`. With `SOURCE_DATE_EPOCH` set the image is
 byte-reproducible on Windows and Linux; without it only the build time in `build-info` differs. The build
 warns when the image is larger than the stock partition.

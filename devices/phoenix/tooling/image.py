@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: Unlicense
 """Build the PICO 4's stage-1 image: the maintenance environment, and the base of its test images.
 
-    python -m overpressure inspect --firmware 5.13.7-global-seko  # analyse a stock boot.img
+    python -m overpressure inspect --firmware 5.13.7-global-seko  # analyse the backup's stock boot image
     python -m overpressure build   --firmware 5.13.7-global-seko  # -> out/pico4-stage1-5.13.7-global-seko.img
-    python -m overpressure build   --stock-boot my-boot.img        # from your own dump/OTA
+    python -m overpressure build   --stock-boot my-boot.img        # from another boot.img, an OTA zip or its URL
+
+The stock boot image is the headset's own: the boot partition in its EDL backup (PICO4_BACKUP in .env,
+or --backup DIR), checked against the backup's manifest; --firmware names that build (firmware.json's
+verified list). Nothing of PICO OS's is downloaded unless --stock-boot names a URL.
 
 overpressure's stage 1 (overpressure/stage1.py) with the PICO 4's spec: its packages, its
 overlay (initramfs/), the prebuilt pico4-reboot, its kernel arguments, and its
@@ -22,9 +26,9 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from overpressure import REPO, compress, cpio, ota, stage1
+from overpressure import REPO, backup, compress, cpio, ota, stage1
 
-from . import FIRMWARE
+from . import FIRMWARE, localconfig
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -135,23 +139,29 @@ def log(msg: str) -> None:
 # -- stock image ------------------------------------------------------------------
 
 
-def resolve_stock(args: argparse.Namespace) -> tuple[str, str]:
-    """Return (label, location) for the stock boot image."""
+def load_stock(args: argparse.Namespace) -> tuple[str, bytes]:
+    """Return the stock boot image's label and bytes: the backup's boot partition, or --stock-boot's."""
     if args.stock_boot:
-        return Path(args.stock_boot.rstrip("/")).name, args.stock_boot
+        label = Path(args.stock_boot.rstrip("/")).name
+        log(f">> stock boot image: {label}")
+        return label, ota.fetch_boot_image(args.stock_boot, CACHE, log)
     builds = ota.load_catalog(CATALOG)
     if args.firmware not in builds:
         msg = f"unknown --firmware {args.firmware!r}; known: {', '.join(builds)}"
         raise SystemExit(msg)
-    return args.firmware, builds[args.firmware]["url"]
-
-
-def load_stock(args: argparse.Namespace) -> tuple[str, bytes]:
-    """Return the stock boot image's label and bytes, from the cache when it holds them."""
-    label, location = resolve_stock(args)
-    log(f">> stock boot image: {label}")
-    data = ota.fetch_boot_image(location, CACHE, log)
-    return label, data
+    folder = args.backup or localconfig.load().path("backup")
+    if not (folder / "manifest.json").is_file():
+        msg = (
+            f"no EDL backup at {folder}: the stage-1 image takes the headset's own boot partition from it "
+            "(PICO4_BACKUP in .env, or --backup DIR; --stock-boot for another image)"
+        )
+        raise SystemExit(msg)
+    try:
+        path, data = backup.verified_partition(folder, "boot")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    log(f">> stock boot image: {args.firmware}, the headset's own ({path})")
+    return args.firmware, data
 
 
 # -- rootfs -----------------------------------------------------------------------
@@ -229,15 +239,13 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     name = f"pico4-stage1-{label}"
-    paths = {
-        "image": args.out / f"{name}.img",
-        "ramdisk": args.out / f"{name}-initramfs.cpio.gz",
-        # The unmodified stock image: what to flash back after a manual "fastboot flash boot".
-        "stock": args.out / f"stock-boot-{label}.img",
-    }
+    paths = {"image": args.out / f"{name}.img", "ramdisk": args.out / f"{name}-initramfs.cpio.gz"}
     paths["image"].write_bytes(image)
     paths["ramdisk"].write_bytes(ramdisk)
-    paths["stock"].write_bytes(data)
+    if args.stock_boot:
+        # The unmodified stock image: what to flash back after a manual "fastboot flash boot" (the backup
+        # holds the headset's own).
+        (args.out / f"stock-boot-{label}.img").write_bytes(data)
     # The rootfs as a tar (no device nodes) for inspection and for the
     # preflight check, which runs these binaries on the headset under PICO OS.
     with (args.out / f"{name}-rootfs.tar").open("wb") as f:
@@ -296,8 +304,11 @@ def main(argv: list[str]) -> int:
     for name in ("inspect", "build"):
         p = sub.add_parser(name)
         src = p.add_mutually_exclusive_group()
-        src.add_argument("--firmware", default=FIRMWARE, help="stock build from firmware.json (default: %(default)s)")
-        src.add_argument("--stock-boot", help="stock boot.img, OTA zip, or URL of either")
+        p.add_argument(
+            "--firmware", default=FIRMWARE, help="the headset's build in firmware.json (default: %(default)s)"
+        )
+        src.add_argument("--backup", type=Path, help="the EDL backup to take boot from (default: PICO4_BACKUP)")
+        src.add_argument("--stock-boot", help="another stock boot.img, OTA zip, or URL of either")
         p.add_argument("--out", type=Path, default=REPO / "out", help="output directory")
         if name == "build":
             p.add_argument(

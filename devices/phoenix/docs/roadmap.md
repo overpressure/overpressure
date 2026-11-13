@@ -42,8 +42,8 @@ Each step's document holds its design, measurements and reproduction steps.
   for unattended runs) and refuses on a computer on its battery below 30 %; `dev install` and `dev restore`
   refuse a headset below 20 % that is not charging.
 - **Private data.** Backups, vendor firmware, factory calibration, Valve's packages and the built images stay
-  out of the repository. Builds take the stock firmware files from PICO's public OTA, the headset's own data
-  from `persist` at boot, and Valve's packages from its public repositories ([distribution.md](distribution.md)).
+  out of the repository. Nothing is taken from PICO's OTA: the images use the headset's own `boot` and
+  `recovery` from its backup, the system the headset's own files and its data from `persist` at boot, and Valve's packages from its public repositories ([distribution.md](distribution.md)).
 
 ## Steps
 
@@ -81,8 +81,9 @@ verified; a hard reset then starts PICO OS. The cause is not known.
 
 - The maintenance stage-1 image is a standard Android boot image: the stock kernel and DTBs byte for byte, the
   ramdisk replaced by Alpine Linux 3.24 (aarch64) with `pico4-init` as PID 1.
-  `python -m overpressure build --firmware <build>` builds it from the matching official OTA's boot image
-  ([tooling/image.py](../tooling/image.py), [tooling/firmware.json](../tooling/firmware.json)).
+  `python -m overpressure build --firmware <build>` builds it from the headset's own boot partition in its EDL
+  backup ([tooling/image.py](../tooling/image.py); [tooling/firmware.json](../tooling/firmware.json) lists the
+  verified builds).
 - USB-C carries the debugging: an NCM link (headset 172.16.42.1; DHCP gives the PC an address without gateway or
   DNS), SSH, telnet, a web page with logs and a hardware report, and a read-only log drive. No serial console:
   the stock kernel has no ACM function.

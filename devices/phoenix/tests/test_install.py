@@ -189,37 +189,41 @@ class PlanTests(unittest.TestCase):
     # -- the tests -------------------------------------------------------------------------------
     def test_the_stages_and_their_tasks(self):
         stages = self.plan.stages()
-        self.assertEqual([s.id for s in stages], ["computer", "build", "connect", "prepare", "install"])
+        self.assertEqual([s.id for s in stages], ["computer", "connect", "prepare", "install"])
+        images = ["stage1", "kernel", "dev-image", "boot-image"]
         self.assertEqual(
             [[t.id for t in s.tasks] for s in stages],
             [
                 ["tools", "unlock-files", "doctor"],
-                ["stage1", "kernel", "dev-image", "boot-image"],
                 ["find", "identity", "panel"],
-                ["consent", "backup", "stage-abl", "unlock", "flash", "maintenance"],
+                # The images take the backup's boot and recovery: after the backup, before the flash.
+                ["consent", "backup", "stage-abl", "unlock", *images, "flash", "maintenance"],
                 ["wifi", "install", "installed", "wifi-profile", "check", "ready"],
             ],
         )
         writes = [t.id for s in stages for t in s.tasks if t.writes]
         self.assertEqual(writes, ["stage-abl", "unlock", "flash", "install", "wifi-profile"])
-        self.assertTrue(all(t.done is not None for t in stages[1].tasks))
+        self.assertTrue(all(t.done is not None for t in stages[2].tasks if t.id in images))
         self.assertTrue(all(t.where for s in stages[1:] for t in s.tasks if t.id not in {"ready", "wifi"}))
-        reset = plan.Plan(HEADSET, factory_reset=True).stages()[3]
+        reset = plan.Plan(HEADSET, factory_reset=True).stages()[2]
         self.assertEqual([t.id for t in reset.tasks][3:5], ["unlock", "reset"])
         self.assertTrue(HEADSET.install_plan())
 
     def test_the_builds_run_the_steps_command_lines_and_the_headset_builds_the_system(self):
-        build = next(s for s in self.plan.stages() if s.id == "build")
         argv = self.plan.argv(self.ctx(), "stage1")
         self.assertEqual(argv[-4:], ["phoenix", "build", "--firmware", "5.13.7-global-seko"])
-        # Nothing of the install needs the build container: the headset builds the system itself.
-        self.assertFalse([t.id for t in build.tasks if self.plan.steps[t.id].linux_root])
+        # Neither the install nor the upgrade needs the build container: the headset builds the system itself.
+        for stages in (self.plan.stages(), self.plan.upgrade_stages()):
+            linux = [
+                t.id for s in stages for t in s.tasks if t.id in self.plan.steps and self.plan.steps[t.id].linux_root
+            ]
+            self.assertEqual(linux, [])
         self.assertIn("--on-headset", self.plan.argv(self.ctx(), "install"))
 
     def test_build_done_checks_look_at_the_outputs(self):
         ctx = self.ctx()
         out = self.root / "out"
-        done = {t.id: t.done for t in self.plan.stages()[1].tasks}
+        done = {t.id: t.done for t in self.plan.image_tasks("")}
         self.assertFalse(any(check(ctx) for check in done.values() if check))
         out.mkdir(parents=True, exist_ok=True)
         (out / "pico4-stage1-5.13.7-global-seko.img").write_text("x")
@@ -238,6 +242,10 @@ class PlanTests(unittest.TestCase):
                 "device verify-backup",
                 "dev stage-abl",
                 "device unlock",
+                "build --firmware",
+                "kernel fetch",
+                "dev image",
+                "dev boot-image",
                 "dev flash",
                 "dev connect",
             ],

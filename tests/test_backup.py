@@ -35,6 +35,13 @@ class BackupTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, f"exactly one {name} partition image"):
                 backup.partition_image(self.root, name)
 
+    def test_a_partition_from_the_backup_matches_its_manifest(self):
+        # The headset's own stock images, in place of a vendor's download.
+        self.assertEqual(backup.verified_partition(self.root, "boot"), (self.root / "boot.bin", b"boot.bin"))
+        (self.root / "boot.bin").write_bytes(b"changed!")
+        with self.assertRaisesRegex(ValueError, "differs from the backup's manifest"):
+            backup.verified_partition(self.root, "boot")
+
     def test_a_verified_backup_and_a_record_that_is_never_overwritten(self):
         self.assertEqual(backup.verified_backup(self.root), self.manifest)
         (self.root / "boot.bin").write_bytes(b"changed")

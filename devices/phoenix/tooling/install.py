@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""The PICO 4's installer: five stages from a new computer to the installed system; the upgrade; the way back.
+"""The PICO 4's installer: four stages from a new computer to the installed system; the upgrade; the way back.
 
     python -m overpressure install [--json] [--plan] [--restart STAGE]
     python -m overpressure upgrade|restore [--json] [--plan] [--restart STAGE]
@@ -12,22 +12,23 @@ the EDL backup's LUNs, the unlock's fastboot serial and the Wi-Fi profile.
 
 1. computer: the host tools, the unlock files, then the doctor's checks (what fails becomes one
    message with its fixes).
-2. build: stage-1 image, the build container's image (the builds'
-   Linux side runs there), userspace archive, system image, dev image, Valve's kernel, boot
-   image; each skips when its output is there.
-3. connect: developer mode and USB debugging (an action ask), exactly one adb device, its
+2. connect: developer mode and USB debugging (an action ask), exactly one adb device, its
    identity (device probe), firmware and panel; an unverified one is refused here.
-4. prepare (writes): one data-loss consent, the EDL backup (printgpt for the LUNs and the EDL
+3. prepare (writes): one data-loss consent, the EDL backup (printgpt for the LUNs and the EDL
    serial, device backup, verify-backup), the engineering ABL (dev stage-abl), the unlock
-   (device unlock), the maintenance stage 1 (dev flash, dev connect).
-5. install: Wi-Fi (a form, optional), dev install, dev installed, the Wi-Fi profile over SSH
-   (the password on stdin only), dev check, then "unplug it and put it on".
+   (device unlock), the images from the backup's boot and recovery (stage-1 image, Valve's
+   kernel, dev image, boot image; each skips when its output is there), the maintenance stage 1
+   (dev flash, dev connect).
+4. install: Wi-Fi (a form, optional), dev install --on-headset (the headset builds the system),
+   dev installed, the Wi-Fi profile over SSH (the password on stdin only), dev check, then
+   "unplug it and put it on".
 
-The upgrade (upgrade_stages) is the first two stages again, the system rebuilt, then dev recovery,
-dev install, dev installed and dev check: the data partition stays. The way back (restore_stages)
-checks the backup file by file, then with one consent brings back PICO OS's system, boot, recovery
-and fresh data (dev restore --installed, unless PICO OS runs already), waits for PICO OS's setup and
-USB debugging, and returns the stock bootloader (cycle --restore-only).
+The upgrade (upgrade_stages) checks this computer, makes this version's images from the backup,
+then dev recovery, dev install --on-headset, dev installed and dev check: the data partition stays.
+The way back (restore_stages) checks the backup file by file, then with one consent brings back
+PICO OS's system, boot, recovery and fresh data (dev restore --installed, unless PICO OS runs
+already), waits for PICO OS's setup and USB debugging, and returns the stock bootloader (cycle
+--restore-only).
 """
 
 from __future__ import annotations
@@ -787,11 +788,11 @@ class Plan:
         The kernel and the boot image are made on every upgrade, the system on the headset (its build is
         incremental): only that tells whether this version changed them. The data partition stays.
         """
-        computer, build = self.stages()[:2]
+        computer = self.stages()[0]
         rebuilt = {"kernel", "boot-image"}
         tasks = tuple(
             Task(t.id, t.title, t.run, t.estimate, t.writes, None if t.id in rebuilt else t.done, t.where)
-            for t in build.tasks
+            for t in self.image_tasks(NOTHING_CHANGED + " " + AGAIN)
         )
         installed_where = "The new system is installed. Keep the cable in and start the installer again."
         return (
@@ -803,10 +804,10 @@ class Plan:
                 computer.tasks[:1] + computer.tasks[2:],
             ),
             Stage(
-                build.id,
-                build.title,
-                "This version's maintenance system and boot images, made on this computer in a few minutes; "
-                "the headset is not needed.",
+                "build",
+                "Prepare the upgrade",
+                "This version's maintenance system and boot images, made on this computer in a few minutes from "
+                "your backup's boot and recovery partitions; the headset is not needed.",
                 tasks,
             ),
             Stage(
@@ -838,9 +839,30 @@ class Plan:
             ),
         )
 
+    def image_tasks(self, where: str) -> list[Task]:
+        """Return the tasks that make the maintenance system and the boot images from the headset's own backup.
+
+        The stage-1 image takes the backup's boot partition, the dev and boot images its recovery: nothing of
+        PICO OS's is downloaded. The maintenance system runs on Valve's kernel, so the kernel comes first.
+        """
+        return [
+            self.step_task(
+                "stage1", "Maintenance system image", "about 2 min", where=where, done=self.build_done("stage1")
+            ),
+            self.step_task("kernel", "Valve's kernel", "about 1 min", where=where, done=self.build_done("kernel")),
+            self.step_task("dev-image", "Boot images", "about 2 min", where=where, done=self.build_done("dev-image")),
+            self.step_task(
+                "boot-image",
+                "Boot image with Valve's kernel",
+                "about 1 min",
+                where=where,
+                done=self.build_done("boot-image"),
+            ),
+        ]
+
     # -- the plan ---------------------------------------------------------------------------------
     def stages(self) -> tuple[Stage, ...]:
-        """Return the five stages."""
+        """Return the four stages."""
         prepare_writes = ("stage-abl", "unlock", *(("reset",) if self.factory_reset else ()), "flash", "maintenance")
         prepare = [
             Task(
@@ -886,6 +908,11 @@ class Plan:
             "Your headset is in its bootloader (fastboot) or starting the maintenance system. Keep the cable "
             "in and start the installer again."
         )
+        # The images take the backup's boot and recovery; the headset waits in fastboot or PICO OS meanwhile.
+        prepare += self.image_tasks(
+            "Your headset is unlocked and waits in its bootloader (fastboot) or in PICO OS. Keep the cable in and "
+            "start the installer again: it goes on from there."
+        )
         prepare += [
             self.step_task("flash", "Maintenance system", "about 3 min", where=maintenance_where),
             Task(
@@ -897,26 +924,6 @@ class Plan:
             ),
         ]
         installed_where = "The system is installed. Keep the cable in and start the installer again."
-        built_where = NOTHING_CHANGED + " " + AGAIN
-        build = [
-            self.step_task(
-                "stage1", "Maintenance system image", "about 2 min", where=built_where, done=self.build_done("stage1")
-            ),
-            # The maintenance system runs on Valve's kernel: the kernel comes first.
-            self.step_task(
-                "kernel", "Valve's kernel", "about 1 min", where=built_where, done=self.build_done("kernel")
-            ),
-            self.step_task(
-                "dev-image", "Boot images", "about 3 min", where=built_where, done=self.build_done("dev-image")
-            ),
-            self.step_task(
-                "boot-image",
-                "Boot image with Valve's kernel",
-                "about 1 min",
-                where=built_where,
-                done=self.build_done("boot-image"),
-            ),
-        ]
         return (
             Stage(
                 "computer",
@@ -928,14 +935,6 @@ class Plan:
                     self.step_task("unlock-files", "Unlock files", "about 2 min", done=self.unlock_files_there),
                     Task("doctor", "Everything else this computer needs", self.check_computer, "under a minute"),
                 ),
-            ),
-            Stage(
-                "build",
-                "Prepare the install",
-                "The maintenance system and the boot images for your headset, made on this computer from public "
-                "downloads in a few minutes; the headset is not needed. The system itself is built on the headset "
-                "during the install.",
-                tuple(build),
             ),
             Stage(
                 "connect",
@@ -959,7 +958,8 @@ class Plan:
                 "prepare",
                 "Prepare your headset",
                 "Erases the headset: a backup of its storage to this computer first, your way back to PICO OS; "
-                "then the engineering bootloader, the unlock and the maintenance system.",
+                "then the engineering bootloader, the unlock and the maintenance system, made here from the "
+                "backup's own boot and recovery partitions.",
                 tuple(prepare),
             ),
             Stage(

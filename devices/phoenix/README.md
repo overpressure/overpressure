@@ -37,15 +37,14 @@ Docker or Podman. On Linux also `python3-tk`
 **The installer.** Double-click `Install.cmd` (Windows) or `Install.command` (macOS), or run `sh install.sh`
 (Linux). Accept the disclaimer, choose the PICO 4, then **Install**, **Upgrade** or **Restore to stock**. Each
 goes on where it stopped when started again, and after a failure says what state the headset is in and what to
-do. The install's five stages:
+do. The install's four stages:
 
 | Stage | What happens | Headset |
 | --- | --- | --- |
 | 1 Check this computer | host tools and unlock files (pinned, hash-checked), then what else is missing, with fixes | not needed |
-| 2 Prepare the install | the maintenance system, Valve's kernel and the boot images, from public downloads in a few minutes; also makes this computer's SSH key | not needed |
-| 3 Connect your headset | developer mode and USB debugging on, plugged in; the installer checks the headset, firmware and panel before anything is written | in PICO OS |
-| 4 Prepare your headset | one consent, a verified backup to this computer (**your way back: export it**), the engineering bootloader, the unlock, the maintenance system | EDL, fastboot |
-| 5 Install | Wi-Fi if you like; the headset builds the SteamOS-compatible system itself, then it goes on and is checked; then "Unplug it and put it on" | on the cable |
+| 2 Connect your headset | developer mode and USB debugging on, plugged in; the installer checks the headset, firmware and panel before anything is written | in PICO OS |
+| 3 Prepare your headset | one consent, a verified backup to this computer (**your way back: export it**), the engineering bootloader, the unlock, then the maintenance system: made here in a few minutes from the backup's own boot and recovery partitions and Valve's kernel (nothing of PICO OS's is downloaded); also makes this computer's SSH key | EDL, fastboot |
+| 4 Install | Wi-Fi if you like; the headset builds the SteamOS-compatible system itself, then it goes on and is checked; then "Unplug it and put it on" | on the cable |
 
 **Upgrade** has the headset build this version and installs it over yours, keeping your data. **Restore to stock** brings back
 PICO OS and its bootloader from the backup, with a stop for PICO OS's setup and USB debugging in between (wear the

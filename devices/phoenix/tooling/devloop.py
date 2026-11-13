@@ -47,7 +47,6 @@ from overpressure import (
     android,
     avb,
     bootimg,
-    ota,
     process,
     progress,
     qualcomm,
@@ -268,13 +267,13 @@ class Dev(Headset):
         """Run fastboot on the configured headset; return its output."""
         return self.run([self.s.tool("fastboot"), "-s", self.s.fastboot_serial, *words], timeout)
 
-    def stock_location(self) -> str:
-        """Return the URL of the headset's firmware in the OTA catalog (PICO4_FIRMWARE, as for stage 1)."""
-        builds = ota.load_catalog(str(Path(__file__).with_name("firmware.json")))
-        if self.s.firmware not in builds:
-            msg = f"unknown firmware {self.s.firmware!r} (pico4/firmware.json)"
+    def stock_recovery(self) -> tuple[Path, bytes]:
+        """Return the headset's stock recovery partition image from its EDL backup, checked against the manifest."""
+        folder = self.s.path("backup")
+        if not (folder / "manifest.json").is_file():
+            msg = f"no EDL backup at {folder} (PICO4_BACKUP): the images take the headset's own stock recovery"
             raise ValueError(msg)
-        return builds[self.s.firmware]["url"]
+        return backups.verified_partition(folder, "recovery")
 
     def image(self) -> None:
         """Build the dev image for recovery (and boot) in out/dev."""
@@ -297,10 +296,10 @@ class Dev(Headset):
         (self.work / "test-boot.img").replace(self.work / "dev-boot.img")
         # The same image for recovery, marked so stage 1 can tell which partition started it.
         # Booting recovery, the ABL loads the device-tree overlay from the image itself
-        # (recovery_dtbo); without one it falls back to fastboot. It comes from the stock recovery
-        # of the headset's firmware (its public OTA, as stage 1's kernel), the whole partition with
-        # its AVB footer, so it stays private like the rest of out/dev.
-        stock = ota.fetch_boot_image(self.stock_location(), str(ROOT / "cache"), print, "recovery")
+        # (recovery_dtbo); without one it falls back to fastboot. It comes from the headset's own stock
+        # recovery in its EDL backup (as stage 1's boot image), the whole partition with its AVB footer,
+        # so it stays private like the rest of out/dev.
+        stock_path, stock = self.stock_recovery()
         dtbo = bootimg.parse(stock).recovery_dtbo
         if not dtbo:
             msg = "the stock recovery image has no recovery_dtbo"
@@ -321,7 +320,6 @@ class Dev(Headset):
         if not (kernel / "Image.gz").exists():
             msg = f"missing {kernel / 'Image.gz'}: run python -m overpressure kernel fetch"
             raise ValueError(msg)
-        stock_path = ROOT / "cache" / "stock" / (self.stock_location().rsplit("/", 1)[-1] + ".recovery.img")
         base = self.work / "dev-recovery-stock-kernel.img"
         base.write_bytes(recovery)
         try:
@@ -868,10 +866,7 @@ class Dev(Headset):
             if not path.exists():
                 msg = f"missing {path}: run {hint} first"
                 raise ValueError(msg)
-        stock = ROOT / "cache" / "stock" / (self.stock_location().rsplit("/", 1)[-1] + ".recovery.img")
-        if not stock.exists():
-            msg = f"no stock recovery at {stock}: run the dev image step first"
-            raise ValueError(msg)
+        stock, _ = self.stock_recovery()
         code = recovery_image.main(
             ["--direct", "--boot", str(kernel), str(stock), str(self.work / "dev-recovery.img"), str(out)]
         )

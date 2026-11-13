@@ -9,7 +9,7 @@ project works, not legal advice.
 
 | Input | Publisher | In this repository | How an owner gets it | Used for |
 | --- | --- | --- | --- | --- |
-| PICO OS OTA of the headset's firmware | PICO, public download | URL and hashes (`tooling/firmware.json`) | its boot and recovery images (about 40 MB) by range requests, on their PC | the maintenance stage 1's stock kernel, the recovery image's overlay and signature block |
+| PICO OS's boot and recovery images of the headset's firmware | PICO, on the owner's headset | no (`tooling/firmware.json` lists the verified builds) | their own headset's `boot` and `recovery` partitions, in its EDL backup on their PC | the stage-1 image's header and device trees (and the acceptance runner's stock kernel), the recovery image's overlay and signature block |
 | PICO OS's files: GPU, Wi-Fi, Bluetooth, audio and DSP firmware, sensor data, the head tracker (`libSlam` and its libraries) | PICO, on the owner's headset | no | their own headset: its `modem`, `dsp` and `bluetooth` partitions at boot, the rest from its EDL backup to its data partition (`dev install`) | the system's hardware, 6DoF head tracking |
 | Panel commands, the ABL overlay's labels | PICO, in that OTA's board overlay (part of its kernel's device tree) | no: in overpressure/linux's device tree, as GPL source | the kernel release | both panels, the ABL's overlay |
 | Camera sensor settings | PICO, on the owner's headset (its camera module) | no: written from it at the install (`kernel/imx471_mode.py`) | their own headset's backup, to its data partition; the kernel loads them | the RGB camera |

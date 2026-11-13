@@ -199,8 +199,8 @@ IMU samples that do not move forward, and restarts the camera capture.
 ## Boot images
 
 `python -m overpressure dev image` writes two images from the stage-1 image to `out/dev/` (private: the recovery
-image carries stock recovery's overlay and vbmeta, from the public OTA of the headset's firmware, cached in
-`cache/stock`):
+image carries stock recovery's overlay and vbmeta, from the headset's own `recovery` partition in its EDL backup,
+checked against the backup's manifest):
 
 - `dev-boot.img`: the dev image for `boot`, on the stock kernel (the acceptance runner's).
 - `dev-recovery.img`: the same stage 1 for `recovery` on Valve's kernel from `out/kernel`
@@ -280,15 +280,14 @@ writes). A stop (*Stop*, closing the window, Ctrl-C) ends any wait at once, such
 Connect your headset waits for USB; a task that writes (`dev stage-abl`, the unlock, `dev flash`, `dev install`,
 the Wi-Fi profile) finishes its write first.
 
-The install takes a headset from PICO OS to the installed system in five stages, with the commands of this
+The install takes a headset from PICO OS to the installed system in four stages, with the commands of this
 document and of [device-preparation.md](device-preparation.md):
 
 | Stage | Tasks | Headset |
 | --- | --- | --- |
 | Check this computer | `tools`, `device fetch-unlock-files`, then the doctor's checks: a failure stops it with the fixes, apart from what the installer finds out (serials, identity, backup); the build container's checks do not count (the headset builds the system) | not needed |
-| Prepare the install | each skipped while its output is there and not older than its input: stage-1 image, Valve's kernel, dev image (stage 1 on that kernel), boot image | not needed |
 | Connect your headset | an action ask (developer mode, USB debugging, the cable, the prompt in the headset); exactly one `adb devices` entry in state `device`, written to `PICO4_ADB_SERIAL`; `device probe` unless `PICO4_IDENTITY` already holds this headset (another headset's record stops it: records are never overwritten); the firmware (`check_firmware`) and panel (`check_panel` on `/proc/cmdline` over adb). An unverified one ends the run | PICO OS |
-| Prepare your headset | one consent (it erases the headset; the backup is the way back); `adb reboot edl`, `edl-ng printgpt` for the LUNs (LUN 0 last) and the serial (`PICO4_EDL_SERIAL`), `device backup --execute` without userdata, `device verify-backup` (a new backup goes to `backup/stock-TIME`, written to `PICO4_BACKUP`; an unfinished one stays); `dev stage-abl`; `adb reboot bootloader`, exactly one fastboot device (`PICO4_FASTBOOT_SERIAL`), `device unlock --execute --accept-data-loss`; `dev flash`, `dev connect` | EDL, fastboot, maintenance stage 1 |
+| Prepare your headset | one consent (it erases the headset; the backup is the way back); `adb reboot edl`, `edl-ng printgpt` for the LUNs (LUN 0 last) and the serial (`PICO4_EDL_SERIAL`), `device backup --execute` without userdata, `device verify-backup` (a new backup goes to `backup/stock-TIME`, written to `PICO4_BACKUP`; an unfinished one stays); `dev stage-abl`; `adb reboot bootloader`, exactly one fastboot device (`PICO4_FASTBOOT_SERIAL`), `device unlock --execute --accept-data-loss`; then, each skipped while its output is there and not older than its input, the images from the backup's own `boot` and `recovery`: stage-1 image, Valve's kernel, dev image (stage 1 on that kernel), boot image; `dev flash`, `dev connect` | EDL, fastboot, maintenance stage 1 |
 | Install | a form for Wi-Fi (both fields optional, kept in memory only); `dev install --on-headset` (stage 1 formats `userdata`, builds the system there and writes it, [above](#built-on-the-headset)), `dev installed`; the Wi-Fi profile as a NetworkManager keyfile (WPA-PSK, or open) through SSH's stdin: `install -D -m 600 /dev/stdin /etc/NetworkManager/system-connections/overpressure-wifi.nmconnection && nmcli connection reload`, so neither name nor password is in a command line, a log or `.env`; `dev check`; then "Unplug it and put it on" | on the cable |
 
 After the backup the installer suggests exporting it. It goes from the unlock straight to fastboot and
@@ -306,7 +305,7 @@ the others' recorded progress (the install starts afresh after a restore).
 | Workflow | Stage | Tasks | Headset |
 | --- | --- | --- | --- |
 | Upgrade | Check this computer | `tools`, the doctor's checks | not needed |
-| Upgrade | Prepare the install | as the install's, but Valve's kernel and the boot image are made every time | not needed |
+| Upgrade | Prepare the upgrade | the install's images from the backup; Valve's kernel and the boot image are made every time | not needed |
 | Upgrade | Install the upgrade | an action ask (switched on, on the cable); `dev recovery`, `dev install --on-headset` (stage 1 builds on the data partition, incrementally; data kept), `dev installed`, `dev check` | installed system, maintenance stage 1 |
 | Restore | Check the backup | `tools`; `device verify-backup` of `PICO4_BACKUP`, which must be the headset `PICO4_IDENTITY` describes | not needed |
 | Restore | Restore PICO OS | one consent (it erases the system and its data); an action ask; a headset that answers `adb devices` with its serial runs PICO OS already and is left alone, any other gets `dev restore --installed` ([back to stock](#back-to-stock)) | maintenance stage 1, fastboot |

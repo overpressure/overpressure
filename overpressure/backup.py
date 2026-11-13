@@ -111,6 +111,19 @@ def partition_image(backup: Path, name: str) -> tuple[Path, dict]:
     return backup / names[0], manifest["files"][names[0]]
 
 
+def verified_partition(backup: Path, name: str) -> tuple[Path, bytes]:
+    """Return the path and bytes of partition @p name's image in a backup, checked against its manifest.
+
+    The headset's own copy of a stock image (its boot or recovery, say), in place of a vendor's download.
+    """
+    path, entry = partition_image(backup, name)
+    data = path.read_bytes()
+    if len(data) != entry.get("size") or hashlib.sha256(data).hexdigest() != entry.get("sha256"):
+        msg = f"{path} differs from the backup's manifest"
+        raise ValueError(msg)
+    return path, data
+
+
 # -- the archive: export and import --------------------------------------------------------------
 def _member(name: str, data: bytes) -> tuple[tarfile.TarInfo, IO[bytes]]:
     info = tarfile.TarInfo(name)

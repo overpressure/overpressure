@@ -92,7 +92,7 @@ steps):
 ```sh
 python -m unittest                                       # host tests, seconds, no hardware
 bash devices/phoenix/tests/test_recovery_policy.sh       # stage-1 recovery policy
-python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> out/
+python -m overpressure build --firmware 5.13.7-global-seko   # stage-1 image -> out/, from the backup's boot
 # In the build container, as root (incremental; the project's packages from the pinned release of
 # overpressure/packages; --refresh for new Valve packages; --packages DIR takes a checkout of it and
 # builds the recipes that differ from the pinned commit's, --build-packages every recipe, with native

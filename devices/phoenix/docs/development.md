@@ -146,9 +146,9 @@ file system has them, not its ownership. On Windows they carry no POSIX modes (t
 For 5.13.7 every asset file is byte-identical to the same file in an EDL backup of a headset on that firmware.
 The headset's own factory data (sensor registry and calibration, camera, IMU and lens calibration, the serial
 the fan's table follows, the Wi-Fi MAC addresses) stays in its `persist` partition, mounted read-only at boot
-([userspace.md](userspace.md#the-headsets-own-data)). The dev image takes its stock recovery (device-tree
-overlay and AVB footer) from the same OTA. The user's backup remains the way back to stock and the reference
-of the write checks ([install.md](install.md)).
+([userspace.md](userspace.md#the-headsets-own-data)). The stage-1 image takes its stock boot image and the dev
+image its stock recovery (device-tree overlay and AVB footer) from the headset's EDL backup, not the OTA. The
+user's backup remains the way back to stock and the reference of the write checks ([install.md](install.md)).
 
 ## The userspace build
 
