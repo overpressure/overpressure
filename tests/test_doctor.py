@@ -146,19 +146,19 @@ class DoctorTests(unittest.TestCase):
             found(linux={"arch": "x86_64", "binfmt": "qemu-aarch64 OC"})["aarch64 handler"].status, doctor.OPTIONAL
         )
         self.assertEqual(found(linux={"arch": "aarch64"})["aarch64 handler"].status, doctor.OK)
-        # The image: the installer pulls it itself; the checks only name the command.
+        # Builds on this computer are the owner's choice: nothing of the container is ever missing.
         unbuilt = found(image=False)
-        self.assertEqual(unbuilt["build container image"].status, doctor.MISSING)
+        self.assertEqual(unbuilt["build container image"].status, doctor.OPTIONAL)
         self.assertIn("python -m overpressure container pull", unbuilt["build container image"].fix)
         self.assertNotIn("aarch64 handler", unbuilt)
 
     def test_a_missing_or_silent_engine_has_one_fix_on_every_host(self):
         for platform in ("win32", "darwin", "linux"):
             missing = doctor.container_checks(FakeHost(platform=platform, tools=()))
-            self.assertEqual([(c.name, c.status) for c in missing], [(doctor.ENGINE, doctor.MISSING)])
+            self.assertEqual([(c.name, c.status) for c in missing], [(doctor.ENGINE, doctor.OPTIONAL)])
             self.assertEqual(missing[0].fix, doctor.ENGINE_FIX)
             silent = doctor.container_checks(FakeHost(platform=platform, engine=(1, "failed to connect to the API")))
-            self.assertEqual([(c.name, c.status) for c in silent], [(doctor.ENGINE, doctor.MISSING)])
+            self.assertEqual([(c.name, c.status) for c in silent], [(doctor.ENGINE, doctor.OPTIONAL)])
             self.assertEqual(silent[0].fix, doctor.ENGINE_FIX)
             self.assertIn("failed to connect to the API", silent[0].detail)
 

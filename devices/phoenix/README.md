@@ -27,8 +27,10 @@ that isn't verified ([list](docs/device-preparation.md#verified-hardware)): toda
 5.13.3, 5.13.7 or 5.13.8, not a `sek` or China build ([why](docs/device-preparation.md#other-pico-os-builds)).
 You build your own system; the project publishes no image and no vendor file ([docs/distribution.md](docs/distribution.md)).
 
-**You need** the headset, a USB-C data cable, a computer with Windows, macOS or Linux, about 40 GB free, a few
-hours for the first build (it downloads about 15 GB), and Docker or Podman running; on Linux also `python3-tk`
+**You need** the headset, a USB-C data cable, a computer with Windows, macOS or Linux and its internet connection,
+and about 15 GB free there (the backup is most of it). The headset builds its own system during the install,
+downloading about 2.2 GB through the computer's connection; nothing is built on the computer, and it needs no
+Docker or Podman. On Linux also `python3-tk`
 (or your distribution's equivalent), for a smooth window, and the Android udev rules (Arch `android-udev`, Debian
 `android-udev-rules`), for USB access to the headset ([how it is checked](../../docs/tool.md#usb-access-on-linux)).
 
@@ -40,12 +42,12 @@ do. The install's five stages:
 | Stage | What happens | Headset |
 | --- | --- | --- |
 | 1 Check this computer | host tools and unlock files (pinned, hash-checked), then what else is missing, with fixes | not needed |
-| 2 Build the system | stock firmware and assets, the maintenance system, the SteamOS-compatible system, Valve's kernel; hours; also makes this computer's SSH key | not needed |
+| 2 Prepare the install | the maintenance system, Valve's kernel and the boot images, from public downloads in a few minutes; also makes this computer's SSH key | not needed |
 | 3 Connect your headset | developer mode and USB debugging on, plugged in; the installer checks the headset, firmware and panel before anything is written | in PICO OS |
 | 4 Prepare your headset | one consent, a verified backup to this computer (**your way back: export it**), the engineering bootloader, the unlock, the maintenance system | EDL, fastboot |
-| 5 Install | Wi-Fi if you like, the system, the acceptance checks; then whether to remove the build files from this computer; then "Unplug it and put it on" | on the cable |
+| 5 Install | Wi-Fi if you like; the headset builds the SteamOS-compatible system itself, then it goes on and is checked; then "Unplug it and put it on" | on the cable |
 
-**Upgrade** builds this version and installs it over yours, keeping your data. **Restore to stock** brings back
+**Upgrade** has the headset build this version and installs it over yours, keeping your data. **Restore to stock** brings back
 PICO OS and its bootloader from the backup, with a stop for PICO OS's setup and USB debugging in between (wear the
 headset on the cable through that setup: its first start may update the lens and fan controller)
 ([docs/install.md](docs/install.md#the-upgrade-and-the-way-back)). *Export backup…* writes the backup into one

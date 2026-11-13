@@ -65,7 +65,7 @@ command-line options instead; the cycle passes these settings to it.
 ## Development mode
 
 Between tasks the headset stays in development mode: the engineering ABL in `abl`, the dev image as the
-maintenance stage 1 (stock kernel) in `recovery`, and the installed system on Valve's kernel in `boot`,
+maintenance stage 1 (Valve's kernel) in `recovery`, and the installed system on Valve's kernel in `boot`,
 `super` and `userdata` ([install.md](install.md)). `dev recovery` keeps every boot in the maintenance stage 1
 until `dev normal`. Nothing is restored when a task ends. Enter it once, from PICO OS, with the images of
 [install.md](install.md#install-and-update) built:

@@ -63,6 +63,8 @@ PACKAGES = [
     "lsblk",
     "device-mapper",
     "e2fsprogs",  # pico4-install format-data: the installed system's data partition
+    "curl",  # pico4-install build: the headset builds its system, downloading through the PC (SOCKS)
+    "tar",  # pico4-install build: GNU tar unpacks the build host (Holo's rootfs) with numeric owners
 ]
 
 # Appended to the stock command line:

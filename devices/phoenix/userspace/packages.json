@@ -1,6 +1,6 @@
 {
  "repository": "overpressure/packages",
- "tag": "2026.11.13",
- "commit": "3dc0107c8b5d25d456d634e49ced608fc719e69e",
- "sha256sums": "9a86e8aeb970f4d576d8fecd02fd420d2e0f2904c584dd53df7223d269c13099"
+ "tag": "2026.11.13.1",
+ "commit": "0155be2bc360021b017a3e49488bfdaadbca3a42",
+ "sha256sums": "cce0dcbf88e30f10506a891d0c7066c53de9073b0e71fb64cb124ea79cb4ca15"
 }

@@ -15,7 +15,7 @@ be reimplemented).
 
 | Component | Stock files (partition: path) | Extracted by | Used by | Class |
 | --- | --- | --- | --- | --- |
-| Kernel, device tree, boot header | boot.img (OTA) | `build` (stage 1), `overpressure stock` | the maintenance stage 1 and the way back to PICO OS; the system runs Valve's kernel | signed |
+| Kernel, device tree, boot header | boot.img (OTA) | `build` (stage 1), `overpressure stock` | the acceptance runner's stage 1 and the way back to PICO OS; the system and the maintenance stage 1 run Valve's kernel | signed |
 | Recovery device-tree overlay, vbmeta | recovery.img (OTA) | `dev image` | the maintenance stage 1 in `recovery` | signed (the ABL checks the AVB chain) |
 | GPU firmware | vendor `/firmware`: a650_gmu.bin, a650_sqe.fw, a650_zap.mdt and .b00–.b02 | `assets graphics-firmware` | msm | zap signed; GMU and SQE in linux-firmware (same files unverified) |
 | Video codec firmware | modem `/image`: venus.mdt, venus.b00–.b10, venus.b19 | `assets graphics-firmware` | Venus (Steam Link's decoder) | signed |

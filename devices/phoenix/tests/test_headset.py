@@ -448,6 +448,15 @@ class DevTests(HeadsetFixture):
                 dev.flash_boot(image)
             self.assertNotIn("flash-boot", self.steps())
 
+    def test_only_a_stage_1_on_the_stock_kernel_gets_the_windows_ncm_initialization(self):
+        dev = self.make()
+        record = self.root / "dev/dev-image.json"
+        record.parent.mkdir(exist_ok=True)
+        with patch.object(type(dev.s), "ncm", lambda _self: Path("ncm-python")):
+            self.assertEqual(dev.stage1_ncm(), Path("ncm-python"))  # no record: an older dev image, stock kernel
+            record.write_text(json.dumps({"recovery_kernel": "valve"}))
+            self.assertIsNone(dev.stage1_ncm())  # Windows 11's own driver; the initialization disturbs it
+
     def test_recovery_gets_the_same_checks_and_is_started(self):
         backup = Path(self.settings.backup)
         (backup / "lun0").mkdir()
@@ -889,6 +898,55 @@ class DevTests(HeadsetFixture):
         dev.write_partition("super", image, 60)
         self.assertIn(f"pico4-install hash super {len(data)}", seen[1])
         self.assertTrue(seen[-1].endswith(f"--bytes {len(data)} --sha256 {sha} --zstd"))
+
+    def test_the_headset_builds_its_system_and_stage_1_writes_it_from_the_data_partition(self):
+        dev, _ = self.install_setup()
+        record = {"bytes": 4096, "sha256": "d" * 64, "prefix_bytes": 1024, "prefix_sha256": "e" * 64}
+        seen: list[str] = []
+        streamed: list[tuple[list, bytes]] = []
+
+        def ssh(command: str, *_: object, **__: object) -> str:
+            seen.append(command)
+            if "pico4-system.img.json" in command:
+                return json.dumps(record)
+            if "manifest.json" in command:
+                return '{"archive": {"sha256": "f"}}'
+            if "pico4-install hash super 1024" in command:
+                return "0" * 64
+            if "pico4-install write super" in command:
+                return f"written super {'d' * 64}"
+            return ""
+
+        def run_streamed(argv: list, *_: object, stdin: IO[bytes], **__: object) -> str:
+            streamed.append((argv, stdin.read()))
+            return ""
+
+        dev.ssh = ssh
+        with (
+            patch.object(devloop.process, "run_streamed", run_streamed),
+            patch.object(devloop, "ROOT", self.root),
+            patch.object(devloop, "source_date_epoch", lambda: 1700000000),
+            patch.object(devloop, "source_commit", lambda: "abc123"),
+            patch.object(devloop.Dev, "build_tree", lambda _self, target: target.write(b"tree")),
+        ):
+            # From the installed system (its session stops), and from stage 1 (pico4-install build).
+            installed = dev.build_on_headset(stage1=False)
+            first = dev.build_on_headset(stage1=True)
+        for built, (argv, tree) in zip((installed, first), streamed):
+            self.assertEqual(built["path"], f"{devloop.HEADSET_BUILD}/out/pico4-system.img.zst")
+            self.assertEqual(tree, b"tree")
+            # The headset downloads through this PC: a SOCKS proxy on its loopback.
+            self.assertEqual(argv[argv.index("-R") + 1], f"127.0.0.1:{devloop.HEADSET_PROXY_PORT}")
+        self.assertIn("systemctl stop pico4-session.service", streamed[0][0][-1])
+        self.assertIn("SOURCE_DATE_EPOCH=1700000000 OVERPRESSURE_COMMIT=abc123", streamed[0][0][-1])
+        self.assertIn("pico4-install build --size 113885655040 --epoch 1700000000 --commit abc123", streamed[1][0][-1])
+        self.assertIn("pico4-install build-file --size 113885655040 out/pico4-system.img.json", seen)
+        self.assertTrue((self.root / "out/headset/pico4-userspace.manifest.json").is_file())  # for dev check
+        seen.clear()
+        dev.write_partition("super", self.root / "nowhere.img", 60, from_data=first)
+        self.assertTrue(
+            seen[-1].endswith(f"--bytes 4096 --sha256 {'d' * 64} --zstd --from-data {first['path']}"), seen[-1]
+        )
 
     def test_writes_wait_for_a_battery_that_lasts(self):
         for reading, refused in (

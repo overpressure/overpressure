@@ -5,9 +5,10 @@ has the general rules): Linux and a SteamOS-compatible userspace on the original
 codename *phoenix*, Snapdragon XR2), on **Valve's kernel** (the Steam Frame's 7.2 with the project's
 changes in [overpressure/linux](https://github.com/overpressure/linux), pinned by `kernel/release.json`,
 [docs/kernel.md](docs/kernel.md)) with Valve's Mesa.
-The stock Android kernel (4.19.81-perf+, PICO OS 5.13.7/5.13.8) no longer runs the system, and the
-image no longer drives the GPU there; it stays under the maintenance stage 1 in `recovery` and on the
-way back to PICO OS. Paths are relative to this folder (`devices/phoenix/`); commands run
+The maintenance stage 1 in `recovery` runs on Valve's kernel too. The stock Android kernel (4.19.81-perf+,
+PICO OS 5.13.7/5.13.8) runs neither: it stays in the acceptance runner's boot image and on the way back to
+PICO OS. The headset builds its own system (docs/install.md#built-on-the-headset); the installer needs no
+build on the PC. Paths are relative to this folder (`devices/phoenix/`); commands run
 from the repository root.
 
 ## Where things stand
@@ -70,9 +71,8 @@ README.md current.
   `pico4-audio`, `pico4-xr`, `pico4-session` (with the SteamVR configuration) and `pico4-checks`; each
   package's preset enables its units. A change to a package goes to overpressure/packages, then a new
   tag there and the pin here.
-- `src/`: the project's C sources outside the packages (`reboot/`, `splash/`, `gd32/`). `stockslam/`
-  is `pico4-slamd`, which runs PICO OS's head tracker (libSlam) in a bionic root; `build-userspace.sh`
-  builds it with clang for Android, without an NDK.
+- `src/`: the project's C sources outside the packages (`reboot/`, `splash/`, `gd32/`). `pico4-slamd`, which
+  runs PICO OS's head tracker (libSlam) in a bionic root, is a package of overpressure/packages.
 - `scripts/`: `build-userspace.sh`, `build-system-image.sh`, `build-kernel-step.sh`,
   `windows-share-internet.ps1` and the on-headset preflight. The image holds no file of PICO OS's, only links
   (`userspace/stock-links.txt`) to the data partition's copy, which `dev install` writes from the headset's backup,
@@ -107,6 +107,7 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-syste
 # Commands that touch the headset ask the disclaimer first; unattended (an agent, a script):
 # python -m overpressure --accept-disclaimer dev ..., or OVERPRESSURE_ACCEPT_DISCLAIMER=1.
 python -m overpressure dev recovery && python -m overpressure dev install   # boot, super, data; starts it
+python -m overpressure dev install --on-headset   # the headset builds the system itself (the installer's way)
 python -m overpressure dev installed && python -m overpressure dev check    # reconnect after a reboot; check
 # Back to stock only when the user asks: the installer's restore (python -m overpressure restore, or
 # the window's Restore to stock), or by hand python -m overpressure dev restore, then after PICO OS's setup
@@ -188,8 +189,10 @@ passed.
   kernel comes from `kernel fetch` (or `kernel build`) and `dev boot-image`;
   `dev installed` reconnects after a reboot, `dev check` runs the acceptance runner's stage-2 checks,
   `dev ssh CMD` a command. The session runs only on Valve's kernel, not in the maintenance stage 1. A
-  changed stage-1 image needs `dev image` and `dev flash`; the installed system's boot image holds no
-  stage 1.
+  changed stage-1 image needs `python -m overpressure build`, `dev image` and `dev flash` (dev image takes
+  the stage-1 image as it is); the installed system's boot image holds no stage 1. `dev install
+  --on-headset` sends the tree's build part and builds on the data partition: in the installed system when it
+  runs, else in stage 1; scripts/build-on-headset.sh comes with the tree, `pico4-install` with stage 1.
 - **Deadlines.** Device-side deadlines return the headset to fastboot; `dev reboot` starts
   stage 1 from there without a flash. The dev image's maximum runtime (an hour) counts from the
   last `python -m overpressure dev` command, which renews it; plain `ssh` does not. A kernel panic reboots after 5 s (`panic=5`, the
@@ -205,11 +208,11 @@ passed.
   appear, ask the user to look at the headset rather than retrying anything.
 - **Venus.** A firmware exception can end the driver's recovery in an interrupt storm that starves storage or
   in a panic; both reboot the headset by themselves. Run decoder experiments that may crash it with the user near.
-- **Windows NCM.** Stage 1 on the stock kernel needs `overpressure/windows_ncm.py` (repository root)
-  (UsbDk) after each boot (`dev connect`, `dev recovery` and the runner do it). Valve's kernel takes
-  Windows 11's NCM driver as it is: the installed system needs no initialization, and running it on
-  a working link disturbs it. `dev installed` never sends it; `dev reboot` sends it once when nothing
-  has answered for 60 s (the maintenance stage 1 started).
+- **Windows NCM.** Valve's kernel takes Windows 11's NCM driver as it is: neither the installed system nor
+  the maintenance stage 1 needs an initialization, and running it on a working link disturbs it. Only a stage 1
+  on the stock kernel (the acceptance runner's, a dev image older than `recovery_kernel: valve` in
+  `out/dev/dev-image.json`) needs `overpressure/windows_ncm.py` (UsbDk) after each boot; the dev loop and the
+  runner send it only there.
 - Binary files from the device: use `ssh` directly; `dev ssh` decodes output as text.
 
 ## Environment quirks

@@ -25,9 +25,9 @@ Each step's document holds its design, measurements and reproduction steps.
 
 ## Constraints
 
-- **Valve's kernel.** `boot` carries Valve's 7.2 kernel and starts the installed system. The maintenance stage 1
-  in `recovery` stays on the stock Android kernel, which no longer runs the system; its behaviour stays the
-  reference for the hardware, and the way back to PICO OS stays.
+- **Valve's kernel.** `boot` carries Valve's 7.2 kernel and starts the installed system; the maintenance stage 1
+  in `recovery` runs on the same kernel. The stock Android kernel runs neither: it stays in the acceptance
+  runner's boot image, its behaviour stays the reference for the hardware, and the way back to PICO OS stays.
 - **Read-only storage.** Both stages switch every physical block device read-only, except the installed
   system's data partition. Only the explicit, backup-validated paths write: `dev flash` (`recovery`),
   `pico4-install` in the maintenance stage 1 (`boot`, `super`, `userdata`, `metadata`, `misc`'s bootloader

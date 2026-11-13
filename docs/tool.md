@@ -34,12 +34,14 @@ pyusb and libusb-package, brotli while the brotli command is there) and warnings
 checks only look: they install, build and change nothing. The window has the same as *Check dependencies*
 in Advanced mode.
 
-The builds' checks are the build container's ([Linux-root steps](#linux-root-steps)):
+The builds' checks are the build container's ([Linux-root steps](#linux-root-steps)), for builds on this
+computer: optional, never missing, since a headset can build its own system (the PICO 4's installer does, and
+skips them):
 
 | Check | Fix when it is not there |
 | --- | --- |
 | Docker or Podman answers (`ENGINE info`) | install Docker or Podman and have it running (how it runs its containers is the owner's choice) |
-| the image is pulled | `python -m overpressure container pull` (the installer pulls it itself) |
+| the image is pulled | `python -m overpressure container pull` |
 | the engine has 8 GiB of memory or more | give the engine more (Docker Desktop: Settings, Resources, Memory limit; Podman: `podman machine set --memory`); below it a warning: the build runs fewer jobs and takes much longer |
 | the aarch64 handler (an x86-64 engine) | none: each build registers it; after a failure, `python -m overpressure container binfmt` |
 

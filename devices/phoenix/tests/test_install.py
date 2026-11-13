@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
-from devices.phoenix.tooling import HEADSET, USERSPACE_BUILD, devloop, localconfig
+from devices.phoenix.tooling import HEADSET, devloop, localconfig
 from devices.phoenix.tooling import install as plan
 from overpressure import doctor, qualcomm, tools
 from overpressure.doctor import Check
@@ -104,14 +104,12 @@ class PlanTests(unittest.TestCase):
         self.spawned: list[tuple[list[str], bytes | None, bool]] = []
         self.captured: list[list[str]] = []
         self.checks: list[Check] = []
-        self.image = False
         self.plan = plan.Plan(
             HEADSET,
             root=self.root,
             work=self.root / "out" / "dev",
             computer=lambda: self.checks,
             edl_count=lambda: self.restarting.pop(0) if self.restarting else self.edl,
-            image_present=lambda: self.image,
         )
 
     # -- the fakes -----------------------------------------------------------------------------
@@ -196,10 +194,10 @@ class PlanTests(unittest.TestCase):
             [[t.id for t in s.tasks] for s in stages],
             [
                 ["tools", "unlock-files", "doctor"],
-                ["stage1", "container", "userspace", "system", "dev-image", "kernel", "boot-image"],
+                ["stage1", "kernel", "dev-image", "boot-image"],
                 ["find", "identity", "panel"],
                 ["consent", "backup", "stage-abl", "unlock", "flash", "maintenance"],
-                ["wifi", "install", "installed", "wifi-profile", "check", "free-space", "ready"],
+                ["wifi", "install", "installed", "wifi-profile", "check", "ready"],
             ],
         )
         writes = [t.id for s in stages for t in s.tasks if t.writes]
@@ -210,49 +208,22 @@ class PlanTests(unittest.TestCase):
         self.assertEqual([t.id for t in reset.tasks][3:5], ["unlock", "reset"])
         self.assertTrue(HEADSET.install_plan())
 
-    def test_the_builds_run_the_steps_command_lines(self):
+    def test_the_builds_run_the_steps_command_lines_and_the_headset_builds_the_system(self):
         build = next(s for s in self.plan.stages() if s.id == "build")
         argv = self.plan.argv(self.ctx(), "stage1")
         self.assertEqual(argv[-4:], ["phoenix", "build", "--firmware", "5.13.7-global-seko"])
-        self.assertEqual(len(build.tasks), 7)
-        # The Linux side runs in the build container, whose image a task builds before the first Linux step.
-        ids = [t.id for t in build.tasks]
-        linux_root = [i for i in ids if i in self.plan.steps and self.plan.steps[i].linux_root]
-        self.assertLess(ids.index("container"), ids.index(linux_root[0]))
-        for key in linux_root:
-            self.assertEqual(self.plan.argv(self.ctx(), key)[1:6], ["-m", "overpressure", "container", "run", "--"])
-        task = build.tasks[ids.index("container")]
-        self.assertEqual((task.title, task.estimate), ("Build environment", "a minute the first time"))
-
-    def test_the_build_environment_is_pulled_unless_its_image_is_there(self):
-        ui = self.run_stages(("build",), {})
-        self.assertEqual(ui.finished()["status"], "done", ui.finished())
-        built = [argv for argv, _, _ in self.spawned if argv[1:5] == ["-m", "overpressure", "container", "pull"]]
-        self.assertEqual(len(built), 1)
-        self.spawned.clear()
-        self.image = True
-        (self.root / "out" / "install" / "phoenix" / "state.json").unlink()
-        self.run_stages(("build",), {})
-        self.assertFalse([argv for argv, _, _ in self.spawned if "container" in argv and "build" in argv])
+        # Nothing of the install needs the build container: the headset builds the system itself.
+        self.assertFalse([t.id for t in build.tasks if self.plan.steps[t.id].linux_root])
+        self.assertIn("--on-headset", self.plan.argv(self.ctx(), "install"))
 
     def test_build_done_checks_look_at_the_outputs(self):
         ctx = self.ctx()
         out = self.root / "out"
         done = {t.id: t.done for t in self.plan.stages()[1].tasks}
         self.assertFalse(any(check(ctx) for check in done.values() if check))
-        self.image = True
-        self.assertTrue(done["container"](ctx))  # ty: ignore[call-non-callable]  # every build has one
-        for name in ("pico4-stage1-5.13.7-global-seko.img", "userspace/pico4-userspace.tar.zst"):
-            (out / name).parent.mkdir(parents=True, exist_ok=True)
-            (out / name).write_text("x")
-        self.assertTrue(done["stage1"](ctx) and done["userspace"](ctx))  # ty: ignore[call-non-callable]  # every build has one
-        self.assertFalse(done["system"](ctx))  # ty: ignore[call-non-callable]  # every build has one
-        (out / "userspace/pico4-system.img").write_text("x")
-        self.assertTrue(done["system"](ctx))  # ty: ignore[call-non-callable]  # every build has one
-        archive = out / "userspace/pico4-userspace.tar.zst"
-        mtime = (out / "userspace/pico4-system.img").stat().st_mtime
-        os.utime(archive, (mtime + 10, mtime + 10))  # a newer archive: the system image is built again
-        self.assertFalse(done["system"](ctx))  # ty: ignore[call-non-callable]  # every build has one
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "pico4-stage1-5.13.7-global-seko.img").write_text("x")
+        self.assertTrue(done["stage1"](ctx))  # ty: ignore[call-non-callable]  # every build has one
 
     def test_connect_and_prepare_find_the_serials_and_write_them_to_env(self):
         ui = self.run_stages(("connect", "prepare"), self.yes("plug-in", "consent"))
@@ -559,69 +530,6 @@ class PlanTests(unittest.TestCase):
         self.assertNotIn(PASSWORD, self.env.read_text(encoding="utf-8"))
         self.assertIn(plan.READY, [e["text"] for e in ui.events if e["event"] == "note"])
 
-    def free_space(self, *, answer: bool, held: int = 3 << 30) -> Recorder:
-        """Run the free-space task alone, the build folder holding @p held bytes and the owner answering @p answer."""
-        original = self.capture
-
-        def capture(argv: list[str], timeout: float) -> tuple[int, str]:
-            if "du" in argv:
-                return 0, f"{held}\t{argv[-1]}\n"
-            return original(argv, timeout)
-
-        stage = Stage("install", "Install", "", (Task("free-space", "Free space", self.plan.free_space),))
-        ui = Recorder({"free-space": {"answer": "free-space", "accepted": answer, "values": {}}})
-        engine = Engine(
-            HEADSET.info,
-            [stage],
-            ui,
-            root=self.root / "out" / "install",
-            env=self.env,
-            spawn=self.spawn,
-            capture=capture,
-            clock=FakeClock(),
-        )
-        engine.run()
-        return ui
-
-    def userspace_outputs(self) -> Path:
-        folder = self.root / "out" / "userspace"
-        folder.mkdir(parents=True)
-        for name in ("pico4-system.img.zst", "pico4-system.img.json", "pico4-userspace.manifest.json"):
-            (folder / name).write_text("x")
-        return folder
-
-    def test_the_build_files_go_only_when_the_owner_says_so(self):
-        folder = self.userspace_outputs()
-        ui = self.free_space(answer=False)
-        self.assertEqual(ui.finished()["status"], "done")  # a no goes on
-        self.assertTrue((folder / "pico4-system.img.zst").exists())
-        self.assertFalse([argv for argv, _, _ in self.spawned if "rm" in argv])
-        ask = next(e for e in ui.events if e["event"] == "ask")
-        self.assertIn("3.0 GiB", ask["text"])
-        (self.root / "out" / "install" / "phoenix" / "state.json").unlink()  # the run again, afresh
-        ui = self.free_space(answer=True)
-        self.assertEqual(ui.finished()["status"], "done")
-        removed = next(argv for argv, _, _ in self.spawned if "rm" in argv)
-        self.assertEqual(removed[-1], USERSPACE_BUILD)
-        self.assertEqual([p.name for p in folder.iterdir()], ["pico4-userspace.manifest.json"])  # what dev check reads
-
-    def test_little_to_free_is_not_asked_about(self):
-        self.userspace_outputs()
-        ui = self.free_space(answer=True, held=0)
-        self.assertFalse([e for e in ui.events if e["event"] == "ask"])
-        self.assertFalse([argv for argv, _, _ in self.spawned if "rm" in argv])
-
-    def test_the_system_counts_as_built_from_its_record_alone(self):
-        folder = self.root / "out" / "userspace"
-        folder.mkdir(parents=True)
-        (folder / "pico4-userspace.manifest.json").write_text(json.dumps({"archive": {"sha256": "a" * 64}}))
-        (folder / "pico4-system.img.zst").write_text("x")
-        done = {t.id: t.done for t in self.plan.stages()[1].tasks}
-        ctx = self.ctx()
-        for archive, expected in (("a" * 64, True), ("b" * 64, False)):
-            (folder / "pico4-system.img.json").write_text(json.dumps({"archive_sha256": archive}))
-            self.assertEqual((done["userspace"](ctx), done["system"](ctx)), (expected, expected))  # ty: ignore[call-non-callable]  # every build has one
-
     def test_no_wifi_writes_no_profile(self):
         ui = self.run_stages(("install",), {"wifi": {"answer": "wifi", "accepted": True, "values": {}}})
         self.assertEqual(ui.finished()["status"], "done")
@@ -648,21 +556,12 @@ class PlanTests(unittest.TestCase):
         logged = [e["line"] for e in ui.events if e["event"] == "log" and e.get("task") == "doctor"]
         self.assertIn("warning: git config (build): none", logged)
         self.assertFalse(any("PICO4_ADB_SERIAL" in line for line in logged))
+        self.assertFalse(any("build container" in line for line in logged))  # the headset builds the system
         self.checks.append(Check("ssh", doctor.HEADSET, doctor.MISSING, "not on PATH", "OpenSSH"))
         (self.root / "out" / "install" / "phoenix" / "state.json").unlink()  # a fresh start: the doctor runs again
         ui = self.run_stages(("computer",), {})
         self.assertEqual(ui.finished()["task"], "doctor")
         self.assertIn("- ssh (working on the headset): not on PATH\n  How: OpenSSH", ui.finished()["error"])
-
-    def test_a_missing_or_silent_engine_is_explained_first_in_one_message(self):
-        missing = [Check(doctor.ENGINE, doctor.BUILDS, doctor.MISSING, "neither docker nor podman", "install one")]
-        text = plan.computer_problems(missing)
-        self.assertEqual(text.splitlines()[1], plan.ENGINE_MISSING)
-        self.assertIn("Docker or Podman", plan.ENGINE_MISSING)
-        self.assertIn("start the installer again", plan.ENGINE_MISSING)
-        other = [Check("ssh", doctor.HEADSET, doctor.MISSING, "not on PATH", "OpenSSH")]
-        self.assertEqual(plan.engine_problem(other), "")
-        self.assertNotIn(plan.ENGINE_MISSING, plan.computer_problems(other))
 
 
 class ParserTests(unittest.TestCase):
@@ -753,11 +652,9 @@ class WorkflowTests(unittest.TestCase):
         stages = {s.id: s for s in self.plan.upgrade_stages()}
         self.assertNotIn("unlock-files", [t.id for t in stages["computer"].tasks])
         build = {t.id: t for t in stages["build"].tasks}
-        self.assertEqual(
-            {k for k, t in build.items() if t.done is None}, {"userspace", "system", "kernel", "boot-image"}
-        )
+        self.assertEqual({k for k, t in build.items() if t.done is None}, {"kernel", "boot-image"})
         tasks = [t.id for t in stages["install"].tasks]
-        self.assertEqual(tasks, ["plug-in", "recovery", "install", "installed", "check", "free-space", "ready"])
+        self.assertEqual(tasks, ["plug-in", "recovery", "install", "installed", "check", "ready"])
         self.assertNotIn("--format-data", " ".join(self.plan.steps["install"].argv))
 
     def test_the_restore_asks_once_and_writes_only_after_the_backup_is_checked(self):

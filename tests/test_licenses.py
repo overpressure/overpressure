@@ -71,8 +71,8 @@ class RuleTests(unittest.TestCase):
 
     def test_the_longest_prefix_decides(self):
         self.assertEqual(allowed("overpressure/tools.py"), {"Unlicense"})
-        self.assertEqual(allowed("devices/phoenix/src/stockslam/vst.c"), {"Unlicense"})
-        self.assertEqual(allowed("devices/phoenix/src/stockslam/build.sh"), {"Unlicense"})
+        self.assertEqual(allowed("devices/phoenix/src/reboot/pico4-reboot.c"), {"Unlicense"})
+        self.assertEqual(allowed("devices/phoenix/src/splash/pico4-splash.c"), {"BSL-1.0"})
 
     def test_what_the_rule_covers(self):
         self.assertTrue(is_source("overpressure/tools.py", b""))

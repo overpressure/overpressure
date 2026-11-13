@@ -11,12 +11,12 @@ the measurements are under [Verified results](#verified-results).
 | Part | How it works | Code |
 | --- | --- | --- |
 | Head IMU | ICM-42688 on the sensor DSP (SLPI), read over QMI/QRTR; 1 kHz | `sm8250-hexagonrpc` (hexagonrpcd), [pico4_ssc.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ssc.c), [`pico4-imu`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-xr/pico4-imu) |
-| Head 6DoF | PICO OS's `libSlam.so` on the Compute DSP, in a bionic root, fed by `pico4-slamd`; Basalt selectable | [src/stockslam/](../src/stockslam), [pico4_slam.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_slam.c) |
+| Head 6DoF | PICO OS's `libSlam.so` on the Compute DSP, in a bionic root, fed by `pico4-slamd`; Basalt selectable | [src/stockslam/](https://github.com/overpressure/packages/tree/main/phoenix/pico4-slamd), [pico4_slam.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_slam.c) |
 | Display, lenses, IPD | 2 × 2160×2160 at 90 Hz; PICO OS's lens model; IPD from the lens motor's MCU, set by `pico4-lens` | [pico4_lens.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_lens.c), [pico4_ipd.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_ipd.c) |
 | Cameras | 4 × OV7251 and the IMX471 RGB camera on V4L2/CAMSS, frame sync from the station | [pico4_cam.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_cam.c), [`pico4-cam`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-cam.c) |
 | Controllers | station (nRF52832) on SPI for control, inputs and IMU through the sensor DSP; LED tracking reimplemented from PICO OS; PICO OS's render models; vibration | [pico4_station.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_station.c), [pico4_controller.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_controller.c), `pico4_ctrack_*` |
-| Room view | colour from the RGB camera on PICO OS's depth mesh, through SteamVR's private passthrough interface | [pico4_passthrough.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_passthrough.c), [`pico4-roomview`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-roomview.c), [vst.c](../src/stockslam/vst.c) |
-| Rooms | the tracker's maps kept on the data partition; each room is a SteamVR universe | [room.h](../src/stockslam/room.h), [pico4-slamd.c](../src/stockslam/pico4-slamd.c) |
+| Room view | colour from the RGB camera on PICO OS's depth mesh, through SteamVR's private passthrough interface | [pico4_passthrough.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_passthrough.c), [`pico4-roomview`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4-roomview.c), [vst.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/vst.c) |
+| Rooms | the tracker's maps kept on the data partition; each room is a SteamVR universe | [room.h](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/room.h), [pico4-slamd.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/pico4-slamd.c) |
 
 Packages: the driver in [pico4-monado](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado) and its Monado recipe and patches in
 [pico4-monado](https://github.com/overpressure/packages/tree/main/phoenix/pico4-monado); the sensor daemons in
@@ -345,8 +345,8 @@ the frames the driver already captures in `vrserver`, so cameras and station kee
   that ends at the ground, which `libSlam` reports with ground detection on
   (`setAlgorithmParameters("plane", "1")`). The guardian service colours it from the RGB camera.
 - **The same mesh here.** `pico4-slamd` runs `libphotoid` in the tracker's root
-  ([vst.c](../src/stockslam/vst.c)): cam3 and cam2 after each scene set, `libSlam`'s pose nearest the
-  set's time and its map points. The stand-ins ([stubs.c](../src/stockslam/stubs.c)) answer the CVP
+  ([vst.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/vst.c)): cam3 and cam2 after each scene set, `libSlam`'s pose nearest the
+  set's time and its map points. The stand-ins ([stubs.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/stubs.c)) answer the CVP
   session, so neither `/dev/cvp` nor CVP firmware is needed (a call of `cvpDfs_Sync` would fail
   loudly). SNPE's DSP module lies in `/system/lib64`, the path SNPE gives the DSP. Meshes go into the
   feed's two mesh slots ([pico4_slam_feed.h](https://github.com/overpressure/packages/blob/main/phoenix/pico4-monado/pico4_slam_feed.h)).
@@ -435,8 +435,9 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   read-only from the data partition's copy and the `dsp` partition ([install.md](install.md#pico-oss-files)).
   Stand-ins of this project: `libandroid.so` (the
   trace calls and the hardware-buffer calls, which fail) and `libpico4-slam-stubs.so` (preloaded:
-  Android logging to the journal, empty property lookups). Programs in the root are built with the
-  host's clang for `aarch64-linux-android29`, without an NDK ([src/stockslam](../src/stockslam)).
+  Android logging to the journal, empty property lookups). Programs in the root are built with clang for
+  `aarch64-linux-android29`, without an NDK: the package
+  [pico4-slamd](https://github.com/overpressure/packages/tree/main/phoenix/pico4-slamd) of overpressure/packages.
 - **Its runner.** [`stock-slam`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-xr/stock-slam) chroots a program
   of the root in a private mount namespace with `/dev`, `/proc`, `/sys`, persist's `pvr/` at
   `/mnt/vendor/persist/pvr` and `/mnt/vendor/pvr`, and tmpfs `/data` and `/tmp`.
@@ -448,12 +449,12 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
 - **The FastRPC bridge.** The stock `libcdsprpc.so` speaks the vendor kernel's ioctls on
   `/dev/adsprpc-smd` and allocates through ION; Valve's kernel has upstream FastRPC
   (`/dev/fastrpc-cdsp`) and DMA-BUF heaps. `stock-slam` preloads `libpico4-fastrpc-bridge.so`
-  ([fastrpc_bridge.h](../src/stockslam/fastrpc_bridge.h)): GETINFO opens the upstream node, INIT and
+  ([fastrpc_bridge.h](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/fastrpc_bridge.h)): GETINFO opens the upstream node, INIT and
   INIT_ATTRS become INIT_ATTACH, INIT_CREATE or INIT_CREATE_STATIC, INVOKE becomes the upstream INVOKE,
   MMAP and MUNMAP keep their layouts, CONTROL says the kernel allocates (`FASTRPC_CONTROL_KALLOC`), and
   ION allocations come from `/dev/dma_heap/system`. The DSP's memory requests (`apps_mem`) are mapped
   by descriptor through the kernel commit “misc: fastrpc: map a client's buffer through mmap”. Its translations have native tests.
-- **pico4-slamd.** [`pico4-slamd`](../src/stockslam/pico4-slamd.c)
+- **pico4-slamd.** [`pico4-slamd`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/pico4-slamd.c)
   ([unit](https://github.com/overpressure/packages/blob/main/phoenix/pico4-xr/pico4-slamd.service), wanted by Valve's session
   and Monado) creates `/dev/shm/pico4-slam` (group video, 0660) and drives the tracker as PICO OS's
   tracking service does: `createHandle("")`, `headSensorModel` `icm4x6xx`, `startAlgorithm`, the
@@ -462,7 +463,7 @@ cameras, head IMU ─▶ pico4_slam.c (driver_monado or monado-service)
   queues; the work happens inside a later `update6AxisIMU` (up to 11 ms), so poses can be up to about
   18 ms apart. Each driver start bumps a generation in the shared memory; `pico4-slamd` then exits
   and comes back with a new tracker.
-- **Images.** PICO OS's processing, reimplemented in [isp.h](../src/stockslam/isp.h): the first scene
+- **Images.** PICO OS's processing, reimplemented in [isp.h](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/isp.h): the first scene
   row doubled (replacing the metadata row), black level 16 off, `v + (v >> 8)`, a per-pixel
   lens-shading gain (128 = 1×) and a 10-to-8-bit gamma table; no rotation. The lens-shading table
   follows camera 0's module (vendor) id: 8 → `config_lscSY.txt`, 9 and 13 → `config_lscLH.txt`, 7 →
@@ -509,7 +510,7 @@ files hold `vertexcount` and points `(a, b, c)`, b up; the world point is (b, �
   mode 0700) into the root, so maps survive reboots and updates and never leave the headset.
 - **Room ids.** Every map is saved with its room's reference quadrilateral as its boundary, 1.5 m
   below the room's first start: three sides of 1.5 m + v × 0.2 mm, v 12 bits each, which carry the
-  room's id ([room.h](../src/stockslam/room.h)). After a relocalisation `pico4-slamd` reads the id from
+  room's id ([room.h](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/room.h)). After a relocalisation `pico4-slamd` reads the id from
   the copy's sides and fits the copy to the room's shape (a turn about up and a shift, accepted below
   5 cm residual): the transform from the session's world to the room's. It publishes it in the shared
   memory and writes the copy to `stdata.txt`; the driver puts every pose of that generation into the
@@ -726,10 +727,10 @@ python -m overpressure assets sensor-data stock-slam [--backup DIR]
 | `root/vendor/bin/cdsprpcd`, `root/vendor/lib64/` | the DSP's root listener (vendor) |
 | `manifest.json` | sources and SHA-256 of every file |
 
-The userspace build ([development.md](development.md#the-userspace-build)) builds `pico4-slamd` and the
-stand-ins ([src/stockslam/build.sh](../src/stockslam/build.sh)) with the host's clang after running
-`test_isp` natively, against stand-ins of bionic's `libc.so`, `libm.so` and `libdl.so`
-([bionic-stubs.c](../src/stockslam/bionic-stubs.c)); the binaries are the same as against PICO OS's own. The
+The package `pico4-slamd` builds the tracker's programs and the stand-ins
+([build.sh](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/build.sh)) with clang and lld, atomics
+inline, after running its image-processing tests natively, against stand-ins of bionic's `libc.so`, `libm.so` and `libdl.so`
+([bionic-stubs.c](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/bionic-stubs.c)); the binaries are the same as against PICO OS's own. The
 image's tracker root holds them and empty mount points for PICO OS's parts. The extracted data is
 proprietary: keep it private.
 

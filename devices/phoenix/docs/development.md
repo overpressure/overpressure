@@ -35,8 +35,7 @@ userspace/        stage 2: the SteamOS-compatible userspace
   session/          the session user's SteamVR configuration
 kernel/           the pinned release of overpressure/linux (release.json), build-tree.sh, imx471_mode.py,
                   recovery_image.py
-src/              C sources outside the packages: stockslam/ (pico4-slamd), reboot/ (pico4-reboot),
-                  splash/ (pico4-splash), gd32/
+src/              C sources outside the packages: reboot/ (pico4-reboot), splash/ (pico4-splash), gd32/
 prebuilt/         static aarch64 pico4-reboot and pico4-splash, so stage 1 builds without a compiler
 scripts/          build-userspace.sh, build-system-image.sh, build-kernel-step.sh, upgrade-check.sh (with
                   upstream.py), check-package-lock.py and the on-headset preflight
@@ -161,8 +160,9 @@ python -m overpressure container run -- bash devices/phoenix/scripts/build-users
 ```
 
 The image holds no file of PICO OS's, only links to where they are on the headset
-([install.md](install.md#pico-oss-files)); `pico4-slamd` links against stand-ins of bionic's libraries and
-needs the host's clang.
+([install.md](install.md#pico-oss-files)); the tracker's host `pico4-slamd` is one of the release's packages. The
+same build runs on the headset itself, which is how the installer builds ([install.md](install.md#built-on-the-headset)),
+and gives the same archive.
 
 | Option | Effect |
 | --- | --- |

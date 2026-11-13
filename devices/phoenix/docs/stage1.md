@@ -2,10 +2,11 @@
 
 **TL;DR.** Stage 1 is an Android boot image for the original PICO 4 (A8110, *phoenix*): the stock kernel
 (`4.19.81-perf+`) and device trees byte for byte, with the ramdisk replaced by Alpine Linux 3.24 and the
-project's init. It is the maintenance environment in `recovery`, where the installed system is written and
-rescued, and the base of the test images. Over USB-C it offers NCM networking with SSH, telnet and a status
-page, and a read-only log drive. Every disk and partition is read-only, except what `pico4-install` writes on
-purpose ([install.md](install.md)). With no PC using it, it returns to fastboot by itself.
+project's init. In `recovery`, as the maintenance environment where the installed system is built, written and
+rescued, it runs on Valve's kernel instead ([below](#in-recovery-valves-kernel)); the stock kernel stays in the
+acceptance runner's boot image. Over USB-C it offers NCM networking with SSH, telnet and a status page, and a
+read-only log drive. Every disk and partition is read-only, except what `pico4-install` writes on purpose
+([install.md](install.md)). With no PC using it, it returns to fastboot by itself.
 
 | | |
 | --- | --- |
@@ -15,8 +16,28 @@ purpose ([install.md](install.md)). With no PC using it, it returns to fastboot 
 | Code | [tooling/image.py](../tooling/image.py) on [overpressure/stage1.py](../../../overpressure/stage1.py); [initramfs/](../initramfs/) |
 
 The installed system (stage 2, [userspace.md](userspace.md)) starts without it: its boot image has no ramdisk
-([install.md](install.md#how-it-starts)). A one-shot test image carries Valve's kernel instead
-([kernel.md](kernel.md#a-one-shot-test-boot)); this document describes the stock-kernel images.
+([install.md](install.md#how-it-starts)).
+
+## In recovery: Valve's kernel
+
+`dev image` builds the recovery image from this image with
+[kernel/recovery_image.py](../kernel/recovery_image.py): the same ramdisk and command line with Valve's kernel and
+device tree from `out/kernel` (so `kernel fetch` comes first), the stock `recovery_dtbo`, as a whole recovery
+partition with the stock vbmeta behind it; `dev-image.json` records `recovery_kernel: valve`. The kernel is the
+installed system's, so the headset builds its system on the same kernel wherever it builds it
+([install.md](install.md#built-on-the-headset)), with the fan's MCU on `ttyHS1`; Windows 11 takes its USB link
+without the NCM initialization, which the dev loop then no longer sends.
+
+| Check on Valve's kernel | Result |
+| --- | --- |
+| Start | SSH 18 s after `dev flash`, without the NCM initialization |
+| Storage | every one of the 99 `sd*` disks and partitions read-only; loop and nbd devices are left alone, as on the stock kernel |
+| Writes | `pico4-install` makes the partition and its disk writable for a write (this kernel counts the disk's flag) and both read-only again; a data mount that BusyBox falls back to read-only counts as a failure |
+| Deadline | `pico4-reboot bootloader` reaches fastboot in 6 s; `dev reboot` starts stage 1 again from there (20 s) |
+| Hardware | `/dev` is devtmpfs; the battery reads; the GPU, Wi-Fi and Bluetooth firmware is missing (stage 1 needs none) |
+| Clock | starts in 1971 (no RTC): `pico4-install build` takes the PC's time |
+
+A panic reboots after 5 s (`panic=5`) into stage 1 again (the bootloader message); not tried.
 
 ## The image
 
@@ -24,7 +45,7 @@ The installed system (stage 2, [userspace.md](userspace.md)) starts without it: 
 | --- | --- |
 | Kernel and device trees | the stock image's, byte for byte, with every other header field (load addresses, page size, OS version, patch level) |
 | Kernel command line | the stock one plus `printk.devkmsg=on` (the init's `/dev/kmsg` lines are not rate-limited), `rng_core.default_quality=1000` (the hardware RNG credits entropy, so dropbear's first host key cannot block) and `console=none` (the tree's UART console at 115200 baud delayed `/init` from 1.0 s to 14 s; `dmesg` and pstore keep every message) |
-| Ramdisk | Alpine 3.24.2 aarch64: the minirootfs, the packages of `PACKAGES` in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, e2fsprogs for the data partition, zstd for the compressed system image, OpenSSL for fast SHA-256, exploration tools), the [initramfs/](../initramfs/) overlay and `pico4-reboot` |
+| Ramdisk | Alpine 3.24.2 aarch64: the minirootfs, the packages of `PACKAGES` in [tooling/image.py](../tooling/image.py) (BusyBox extras, dropbear, an SFTP server, mtools, e2fsprogs for the data partition, zstd for the compressed system image, OpenSSL for fast SHA-256, curl and GNU tar for the headset's own build, exploration tools), the [initramfs/](../initramfs/) overlay and `pico4-reboot` |
 | PID 1 | `pico4-init`, which runs `/etc/inittab` like busybox init ([PID 1](#pid-1)) |
 
 Over the USB-C cable:

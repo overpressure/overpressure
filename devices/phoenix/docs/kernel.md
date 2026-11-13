@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| What | The Steam Frame's kernel, `linux-valve` 7.2.0, close to mainline, with the PICO 4's changes, drivers and device tree; `boot` carries it and it runs the installed system. The maintenance stage 1 in `recovery` stays on the stock Android kernel |
+| What | The Steam Frame's kernel, `linux-valve` 7.2.0, close to mainline, with the PICO 4's changes, drivers and device tree; `boot` carries it and it runs the installed system and the maintenance stage 1 in `recovery` ([stage1.md](stage1.md#in-recovery-valves-kernel)) |
 | How | Its source is [overpressure/linux](https://github.com/overpressure/linux): Valve's commit and the project's commits on it, in layers (`common/7.2`, `sm8250/7.2`, `phoenix/7.2`). [kernel/release.json](../kernel/release.json) pins one of its releases; the installer downloads it, checked by hash, or builds the same commit, with the same result |
 | Code | [kernel/](../kernel/): `release.json`, `build-tree.sh`, `imx471_mode.py`, `recovery_image.py`; [tooling/kernel.py](../tooling/kernel.py) |
 | State | [Results](#results): boot, display, GPU, DSPs, sensors, cameras, audio, Wi-Fi, Bluetooth, video codec, battery and Valve's VR session verified on the headset |

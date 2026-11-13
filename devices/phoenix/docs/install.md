@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| What | Linux installed on the headset, in PICO OS's layout: Valve's kernel in `boot`, a read-only system image in `super`, data in `userdata`, the maintenance stage 1 (stock kernel) in `recovery`. It starts without the PC and keeps its data across reboots and updates |
+| What | Linux installed on the headset, in PICO OS's layout: Valve's kernel in `boot`, a read-only system image in `super`, data in `userdata`, the maintenance stage 1 (Valve's kernel too) in `recovery`. It starts without the PC and keeps its data across reboots and updates |
 | Install, upgrade, back to stock | `python -m overpressure install`, `upgrade` or `restore`, or the window's installer ([the installer](#the-installer)) |
 | By hand | `dev recovery`, then `dev install` ([install and update](#install-and-update)); back with `dev restore` ([back to stock](#back-to-stock)) |
 | Code | [`tooling/install.py`](../tooling/install.py), [`tooling/devloop.py`](../tooling/devloop.py), [`scripts/build-system-image.sh`](../scripts/build-system-image.sh), [`preinit`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-base/preinit), [`pico4-install`](../initramfs/usr/bin/pico4-install) |
@@ -16,7 +16,7 @@ installed system runs on Valve's kernel ([kernel.md](kernel.md)).
 | Partition | Size | PICO OS | Linux |
 | --- | --- | --- | --- |
 | `boot` | 96 MiB | kernel and first-stage ramdisk | Valve's kernel, its device tree and the command line that starts the system image; no ramdisk ([the boot image](#install-and-update)) |
-| `recovery` | 100 MiB | recovery | the maintenance stage 1 on the stock kernel: development, installs, rescue |
+| `recovery` | 100 MiB | recovery | the maintenance stage 1 on Valve's kernel: development, installs and the headset's own build, rescue |
 | `super` | 8 GiB | the read-only system (system, vendor, product, odm) | the system image: read-only ext4, about 4.6 GiB |
 | `userdata` | 106 GiB | apps and data (f2fs, file-based encryption) | the data: ext4 `pico4-data`, mounted at `/data` |
 | `misc` | 1 MiB | the bootloader message | the same: it selects the maintenance mode |
@@ -28,8 +28,8 @@ Every other partition stays read-only; the calibration and firmware the system n
 ## The installed system
 
 - **System image.** `build-system-image.sh` turns the userspace archive into ext4 for `super`, as root in the
-  build container: no journal (never written on the headset), without `orphan_file` and `metadata_csum_seed`
-  (the stock kernel under the maintenance stage 1 cannot mount them), file capabilities kept (gamescope's
+  build container or on the headset ([built on the headset](#built-on-the-headset)): no journal (never written on the headset), without `orphan_file` and `metadata_csum_seed`
+  (the stock kernel, under the acceptance runner's stage 1, cannot mount them), file capabilities kept (gamescope's
   `cap_sys_nice`). Its size is the content plus 10 % and 128 MiB. It names its archive in
   `/usr/share/pico4/system-image`. What stays is what `dev install` sends: `pico4-system.img.zst` (zstd level 3,
   about 38 % of the image), the image's SHA-256 in `pico4-system.img.zst.sha256` and `pico4-system.img.json` (the
@@ -83,7 +83,7 @@ its DSPs, video codec and wireless chip. The image holds none of them, only link
   by their units, and the DSPs start from `remoteproc-boot`, as before; the GPU loads its firmware at the
   first open of its node, which the splash makes after the copy is there.
 - **The tracker.** `pico4-slamd` links against stand-ins of bionic's `libc.so`, `libm.so` and `libdl.so`
-  ([`src/stockslam/bionic-stubs.c`](../src/stockslam/bionic-stubs.c)): the build needs no file of PICO's.
+  ([`bionic-stubs.c`](https://github.com/overpressure/packages/blob/main/phoenix/pico4-slamd/bionic-stubs.c)): the build needs no file of PICO's.
 - **Without a copy** (an image installed by hand, a formatted data partition) the system starts, and the
   acceptance check names what is missing; `dev install` writes it.
 
@@ -165,7 +165,7 @@ The ABL starts `recovery` instead of `boot` while `misc` holds the bootloader me
 | Mode | Starts | Entered by | Left by |
 | --- | --- | --- | --- |
 | Installed | `boot`: the kernel mounts `super`, preinit mounts `userdata` and executes systemd, with or without a PC; a failure reboots into recovery | a boot with an empty bootloader message | `dev recovery` |
-| Maintenance | `recovery`: the dev image's stage 1 on the stock kernel with its deadlines; `dev install` writes from here | `fastboot reboot recovery` (the ABL writes `boot-recovery`), or a reboot with reason `recovery` (once) | `pico4-install bootmode normal` (`dev normal`) |
+| Maintenance | `recovery`: the dev image's stage 1 on Valve's kernel with its deadlines; `dev install` writes from here | `fastboot reboot recovery` (the ABL writes `boot-recovery`), or a reboot with reason `recovery` (once) | `pico4-install bootmode normal` (`dev normal`) |
 
 The maintenance stage 1's deadlines return the headset to fastboot; with `boot-recovery` in `misc`, every boot
 from there starts the maintenance stage 1 again.
@@ -202,8 +202,9 @@ IMU samples that do not move forward, and restarts the camera capture.
 image carries stock recovery's overlay and vbmeta, from the public OTA of the headset's firmware, cached in
 `cache/stock`):
 
-- `dev-boot.img`: the dev image for `boot`.
-- `dev-recovery.img`: the same stage 1 for `recovery`, marked `pico4.part=recovery` on its command line, as a
+- `dev-boot.img`: the dev image for `boot`, on the stock kernel (the acceptance runner's).
+- `dev-recovery.img`: the same stage 1 for `recovery` on Valve's kernel from `out/kernel`
+  ([stage1.md](stage1.md#in-recovery-valves-kernel)), marked `pico4.part=recovery` on its command line, as a
   whole-partition image:
   - the ABL loads the device-tree overlay from the image itself (`recovery_dtbo`), taken from stock recovery;
   - `recovery` is a chained AVB partition: stock's own signed vbmeta (RSA-4096) follows the image, with a
@@ -217,6 +218,46 @@ The installed system's boot image comes from `dev boot-image` ([below](#install-
 Large raw downloads crash the ABL's fastboot (the 100 MiB stock recovery left it in crash-dump mode), so
 whole-partition images go sparse ([`overpressure/sparse.py`](../../../overpressure/sparse.py)), zero runs as fill
 chunks.
+
+## Built on the headset
+
+The headset builds its own system: no build on the owner's computer, and no Docker or Podman there. This
+repository's build part (its scripts, the userspace definition and pin, the `overpressure` package, the stage-1
+files the image shares; about 1 MB) goes over SSH, and
+[`scripts/build-on-headset.sh`](../scripts/build-on-headset.sh) runs on the data partition, in
+`/data/var/tmp/pico4-build`:
+
+- **The build host.** Holo Core aarch64's rootfs, the one the pinned overpressure/packages builds in (its hash in
+  that commit's `build/packages.sh`), unpacked once per snapshot with python added. `build-userspace.sh` and
+  `build-system-image.sh` run in it as in the build container, so the archive is the container build's, byte for
+  byte, from the same commit and pin: both take tar and zstd from the build environment, and the image holds no
+  file that a base root's history or a random key could change.
+- **The network.** Everything comes through the PC's connection: `ssh -R` gives the headset a SOCKS proxy on
+  `127.0.0.1:1080`, names resolved on the PC (`socks5h`), 18 to 29 MB/s. The build's chroots pass `ALL_PROXY`
+  on.
+- **Where it runs.** `dev install --on-headset` (the installer's install and upgrade) builds in the installed system
+  when it runs and keeps its data (its fan service runs); otherwise, as at the first install, the maintenance
+  stage 1 formats the data partition first and builds there through `pico4-install build`, which takes the PC's
+  clock and renews its deadline while it runs. Stage 1 then writes the image from the data partition
+  (`write super --from-data`).
+- **Its own mount namespace.** The build's binds of `/sys` and `/dev` live in a private mount namespace
+  (`unshare --propagation private`): on the installed system `/` is a shared mount, and the lazy unmount of a
+  recursive bind of `/sys` once took the system's own cgroup and configfs mounts with it.
+- **The fan.** Where no fan service runs (stage 1), the build runs the installed system's `pico4-fan`, from the
+  pinned overpressure/packages, in the build host for as long as it runs.
+- **Disk.** The build folder keeps the build host (1.4 GB), the build root (7.6 GB) and the compressed image
+  (1.7 GB) for the next upgrade: 10.7 GB of the 104 GB data partition.
+
+| Run | Time | Hottest zone |
+| --- | --- | --- |
+| From an empty build folder, installed system (fan service) | 507 s, 2.2 GB downloaded | 74 °C |
+| From an empty build folder, maintenance stage 1 (Valve's kernel, the build's fan): the first install | 504 s, 2.2 GB downloaded | 73.6 °C |
+| Again, incremental (a new pin or tree), maintenance stage 1 | 174 to 256 s | 76 °C |
+| Writing `super` from the data partition, then the keys and the start | about 90 s | |
+
+The archive is the same, byte for byte, from all three and from the build container (one commit, one pin). An
+installed system built this way passes `dev check` (90.03 commits/s) with the tracker from its package.
+| From an empty build folder, maintenance stage 1 on the stock kernel, no fan | stopped at 88.8 °C while compressing the image | 88.8 °C |
 
 ## The installer
 
@@ -244,11 +285,11 @@ document and of [device-preparation.md](device-preparation.md):
 
 | Stage | Tasks | Headset |
 | --- | --- | --- |
-| Check this computer | `tools`, `device fetch-unlock-files`, then the doctor's checks: a failure stops it with the fixes, apart from what the installer finds out (serials, identity, backup) or builds (the assets) | not needed |
-| Build the system | each skipped while its output is there and not older than its input: assets, stage-1 image, the build environment (the container image), userspace archive, system image, dev image, Valve's kernel, boot image | not needed |
+| Check this computer | `tools`, `device fetch-unlock-files`, then the doctor's checks: a failure stops it with the fixes, apart from what the installer finds out (serials, identity, backup); the build container's checks do not count (the headset builds the system) | not needed |
+| Prepare the install | each skipped while its output is there and not older than its input: stage-1 image, Valve's kernel, dev image (stage 1 on that kernel), boot image | not needed |
 | Connect your headset | an action ask (developer mode, USB debugging, the cable, the prompt in the headset); exactly one `adb devices` entry in state `device`, written to `PICO4_ADB_SERIAL`; `device probe` unless `PICO4_IDENTITY` already holds this headset (another headset's record stops it: records are never overwritten); the firmware (`check_firmware`) and panel (`check_panel` on `/proc/cmdline` over adb). An unverified one ends the run | PICO OS |
 | Prepare your headset | one consent (it erases the headset; the backup is the way back); `adb reboot edl`, `edl-ng printgpt` for the LUNs (LUN 0 last) and the serial (`PICO4_EDL_SERIAL`), `device backup --execute` without userdata, `device verify-backup` (a new backup goes to `backup/stock-TIME`, written to `PICO4_BACKUP`; an unfinished one stays); `dev stage-abl`; `adb reboot bootloader`, exactly one fastboot device (`PICO4_FASTBOOT_SERIAL`), `device unlock --execute --accept-data-loss`; `dev flash`, `dev connect` | EDL, fastboot, maintenance stage 1 |
-| Install | a form for Wi-Fi (both fields optional, kept in memory only); `dev install`, `dev installed`; the Wi-Fi profile as a NetworkManager keyfile (WPA-PSK, or open) through SSH's stdin: `install -D -m 600 /dev/stdin /etc/NetworkManager/system-connections/overpressure-wifi.nmconnection && nmcli connection reload`, so neither name nor password is in a command line, a log or `.env`; `dev check`; then, when the build files take a gibibyte or more, a yes-or-no question whether to remove them (the build folder in the container's volume and `out/userspace` but its manifest: an upgrade then builds from scratch; a no goes on); then "Unplug it and put it on" | on the cable |
+| Install | a form for Wi-Fi (both fields optional, kept in memory only); `dev install --on-headset` (stage 1 formats `userdata`, builds the system there and writes it, [above](#built-on-the-headset)), `dev installed`; the Wi-Fi profile as a NetworkManager keyfile (WPA-PSK, or open) through SSH's stdin: `install -D -m 600 /dev/stdin /etc/NetworkManager/system-connections/overpressure-wifi.nmconnection && nmcli connection reload`, so neither name nor password is in a command line, a log or `.env`; `dev check`; then "Unplug it and put it on" | on the cable |
 
 After the backup the installer suggests exporting it. It goes from the unlock straight to fastboot and
 `dev flash`, without PICO OS's factory reset of
@@ -257,16 +298,16 @@ anyway. `Plan(factory_reset=True)` adds the reset as an action ask after the unl
 
 ### The upgrade and the way back
 
-*Upgrade* builds this version of the system and installs it over the one this computer installed, keeping the
-data; it is offered only when `out/dev/installed.json` exists. *Restore to stock* brings back PICO OS and its
+*Upgrade* has the headset build this version of the system and installs it over the one this computer installed,
+keeping the data; it is offered only when `out/dev/installed.json` exists. *Restore to stock* brings back PICO OS and its
 bootloader; it needs a backup on this computer, made by the install or imported. A finished workflow forgets
 the others' recorded progress (the install starts afresh after a restore).
 
 | Workflow | Stage | Tasks | Headset |
 | --- | --- | --- | --- |
 | Upgrade | Check this computer | `tools`, the doctor's checks | not needed |
-| Upgrade | Build the system | as the install's, but the userspace archive, system image, Valve's kernel and boot image are built every time (each build reuses what it can) | not needed |
-| Upgrade | Install the upgrade | an action ask (switched on, on the cable); `dev recovery`, `dev install` (data kept), `dev installed`, `dev check`, the same question about the build files | installed system, maintenance stage 1 |
+| Upgrade | Prepare the install | as the install's, but Valve's kernel and the boot image are made every time | not needed |
+| Upgrade | Install the upgrade | an action ask (switched on, on the cable); `dev recovery`, `dev install --on-headset` (stage 1 builds on the data partition, incrementally; data kept), `dev installed`, `dev check` | installed system, maintenance stage 1 |
 | Restore | Check the backup | `tools`; `device verify-backup` of `PICO4_BACKUP`, which must be the headset `PICO4_IDENTITY` describes | not needed |
 | Restore | Restore PICO OS | one consent (it erases the system and its data); an action ask; a headset that answers `adb devices` with its serial runs PICO OS already and is left alone, any other gets `dev restore --installed` ([back to stock](#back-to-stock)) | maintenance stage 1, fastboot |
 | Restore | Set PICO OS up | an action ask: PICO OS's first-time setup worn and on the cable (its first start may update the lens and fan MCU), developer mode and USB debugging; exactly one `adb devices` entry, written to `PICO4_ADB_SERIAL`; then the wait for PICO OS's MCU check ([cooling.md](cooling.md#an-mcu-that-answers-f1)) | PICO OS |
@@ -289,13 +330,14 @@ reaches the headset's maintenance system.
 # Valve's kernel: the pinned release of overpressure/linux into out/kernel, checked by hash (the window's
 # "Valve's kernel" step); kernel build builds the same commit here instead
 python -m overpressure --device phoenix kernel fetch
-python -m overpressure dev image
+python -m overpressure dev image              # stage 1 on that kernel, for recovery
 python -m overpressure dev boot-image         # out/kernel/valve-boot.img
-python -m overpressure container run -- bash devices/phoenix/scripts/build-system-image.sh \
-    out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
 python -m overpressure dev flash              # a new dev image: the maintenance stage 1; starts it
 python -m overpressure dev recovery           # or, with the dev image in recovery already: into it
-python -m overpressure dev install            # boot, super, userdata (if new), then the installed system
+python -m overpressure dev install --on-headset   # the headset builds the system; boot, super, userdata (if new)
+# Or a system image built here, in the build container, then dev install without --on-headset:
+python -m overpressure container run -- bash devices/phoenix/scripts/build-system-image.sh \
+    out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
 python -m overpressure dev check              # the acceptance checks, on the installed system
 python -m overpressure dev installed          # after a later reboot: connect to it again
 ```
@@ -305,14 +347,16 @@ which writes only these:
 
 | Command | Writes | Checks |
 | --- | --- | --- |
-| `pico4-install write boot\|super --size --bytes --sha256 [--zstd]` | the image to the start of the partition, through `dd` in 4 MiB blocks; `--zstd` decompresses the stream first | the partition's size equals the backup's, the image fits, a readback against the image's SHA-256 |
+| `pico4-install build --size --epoch --commit [--proxy] [--now]` (stdin: the build part, tar.gz) | the build in `var/tmp/pico4-build` on the data partition ([built on the headset](#built-on-the-headset)) | the backup's size, the `pico4-data` label; the clock set to the PC's |
+| `pico4-install build-file --size out/…` | nothing | the build's record or manifest, from the data partition mounted read-only |
+| `pico4-install write boot\|super --size --bytes --sha256 [--zstd] [--from-data PATH]` | the image to the start of the partition, through `dd` in 4 MiB blocks; `--zstd` decompresses the stream first; `--from-data` reads it from the data partition (mounted read-only), where the headset built it | the partition's size equals the backup's, the image fits, a readback against the image's SHA-256 |
 | `pico4-install hash NAME BYTES` | nothing | the SHA-256 of the partition's first BYTES (whether it holds its image already) |
 | `pico4-install format-data --size` | ext4 `pico4-data` on `userdata` | the backup's size; the label afterwards |
 | `pico4-install keys --size --id` (stdin: `authorized_keys`) | `/root/.ssh/authorized_keys` and `/etc/pico4/install-id` in the `/etc` overlay's upper layer on the data partition | the backup's size, the `pico4-data` label, at least one public key |
 | `pico4-install wipe userdata\|metadata --size` | zeros over the first 64 MiB | the backup's size; a readback |
 | `pico4-install bootmode recovery\|normal` | the 2 KiB bootloader message in `misc` | a readback |
 
-Each partition is writable for its write only. `dev install` skips a partition that holds its image already (by
+Each partition is writable for its write only, with its disk on Valve's kernel, which counts the disk's read-only flag for its partitions (the disk's other partitions keep their own); a data mount that BusyBox falls back to read-only is a failure. `dev install` skips a partition that holds its image already (by
 readback hash), formats `userdata` only when it holds no `pico4-data` file system (or with `--format-data`), and
 writes the keys and install ID ([security.md](security.md#logins)). An update is the same command with a new
 system image: the data stays, `boot` and `super` are written only when they differ, the keys again.
@@ -371,6 +415,7 @@ it. This follows from the order and the boot rules; it was not tried with a pull
 | System image from the 1,701 MiB archive | 4,707 MiB ext4; capabilities of gamescope, newuidmap and newgidmap kept |
 | Install | `boot` (24 MiB) and `super` (4,706 MiB) written and read back, `userdata` formatted (104 GiB for data); keys and install ID written, and `dev installed` logs in with them |
 | Install time | `dev install` of a new system image: 2 min 22 s from the maintenance stage 1 to the running system; `super` from the 1,808 MiB compressed image written and read back in 101 s (the USB link carries 26 to 28 MB/s with any SSH cipher); unchanged `boot` skipped after its first MiB's hash |
+| Built on the headset | `dev install --on-headset` from the maintenance stage 1 on Valve's kernel: the build from an empty folder in 504 s (hottest zone 73.6 °C, the build's fan), an incremental one in 3 to 4 minutes; `super` written from the data partition; the archive identical with the build container's; `dev check` passes ([above](#built-on-the-headset)) |
 | Direct boot | the ABL boots a boot image without a ramdisk; `root=PARTLABEL=super` mounts the system image (`sda7`) read-only 1.43 s after the kernel starts; the display and the GPU bind |
 | Windows NCM on Valve's kernel | after a reboot the installed system answers SSH without the NCM initialization; no `Wrong NDP SIGN` |
 | Start without stage 1 | preinit at 1.4 s, systemd at 1.9 s (storage sweep 0.03 s); USB link at about 4 s, `wlan0` (re-probed) at about 9 s; systemd `running`, no failed units; `/` read-only from `sda7`, `/data` writable, `/etc` an overlay; governor `schedutil` |
@@ -392,7 +437,7 @@ it. This follows from the order and the boot rules; it was not tried with a pull
 2. **Integrity.** The system image is checked when written, not at boot (no dm-verity).
 3. **The direct boot.** Still to run: the power key held 2 s in charger mode, the lenses dark there (by eye), a
    boot without the PC, and `dev check` with both controllers connected.
-4. **The installer.** The whole path with its builds and a new backup: the LUNs from `printgpt`, and the Wi-Fi
+4. **The installer.** The whole path from PICO OS, with the headset's first build after the format, and a new backup: the LUNs from `printgpt`, and the Wi-Fi
    keyfile on the installed system (WPA2; a WPA3-only network may need `key-mgmt=sae`).
 5. **The boot indication in the lenses.** Tested on the host (the drawing also on aarch64 under QEMU); still to
    see: the picture in both lenses and the bar carrying on when `pico4-splash.service` takes over.

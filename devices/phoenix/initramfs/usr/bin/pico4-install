@@ -3,11 +3,13 @@
 # Install the Linux system on the headset, from the maintenance stage 1 in recovery
 # (docs/install.md). The only partitions it writes:
 #
-#   pico4-install write boot|super --size BYTES --bytes N --sha256 HEX [--zstd] < IMAGE
+#   pico4-install write boot|super --size BYTES --bytes N --sha256 HEX [--zstd] [--from-data PATH] < IMAGE
 #       write an image to the start of boot (the installed boot image) or super (the system
 #       image). The partition must be BYTES large (the PC passes the backup's size), the image
 #       at most that; the written bytes are read back and must have the SHA-256 HEX.
 #       --zstd: the stream is zstd-compressed; N and HEX are the image's, decompressed.
+#       --from-data: the image is PATH on the data partition (mounted read-only), where the
+#       headset built it, instead of standard input.
 #   pico4-install format-data --size BYTES
 #       a new ext4 file system "pico4-data" on userdata (BYTES as the backup has it)
 #   pico4-install keys --size BYTES --id ID < AUTHORIZED_KEYS
@@ -20,6 +22,13 @@
 #       new copy replaces the old one only when complete
 #   pico4-install stock-hash --size BYTES
 #       the SHA-256 of that copy's manifest.json, "none" without one (read-only)
+#   pico4-install build --size BYTES --epoch SECONDS --commit COMMIT [--proxy URL] [--now SECONDS] < TREE.tar.gz
+#       build the system image on the data partition (pico4-data), in var/tmp/pico4-build: this
+#       repository's build part (the PC sends it) and its scripts/build-on-headset.sh, downloading
+#       through URL (socks5h://127.0.0.1:PORT, the PC's connection over ssh -R) when given; --now sets
+#       the clock (the PC's), which HTTPS needs
+#   pico4-install build-file --size BYTES out/pico4-system.img.json|out/pico4-userspace.manifest.json
+#       that build's record or manifest (read-only)
 #   pico4-install wipe userdata|metadata --size BYTES
 #       zero the first 64 MiB, the way back to PICO OS: both are "formattable" in its fstab,
 #       so it makes new file systems (and encryption keys) on its next boot
@@ -48,8 +57,31 @@ partition() {
 	echo "$dev"
 }
 
-writable() { blockdev --setrw "$1" || die "could not make $1 writable"; }
-readonly_again() { blockdev --setro "$1" || log "install: could not set $1 read-only"; }
+# writable DEV: the partition writable for its write. Valve's kernel counts a disk's read-only flag
+# for its partitions too (the stock kernel does not), so there the disk becomes writable as well; its
+# other partitions keep their own flags. readonly_again sets both back.
+writable() {
+	local disk
+	blockdev --setrw "$1" || die "could not make $1 writable"
+	if [ "$(cat "/sys/class/block/${1##*/}/ro" 2>/dev/null)" != 0 ]; then
+		disk=$(readlink -f "/sys/class/block/${1##*/}/..")
+		blockdev --setrw "/dev/${disk##*/}" || die "could not make ${disk##*/} writable"
+	fi
+	[ "$(cat "/sys/class/block/${1##*/}/ro" 2>/dev/null)" = 0 ] || die "$1 stays read-only"
+}
+readonly_again() {
+	local disk
+	disk=$(readlink -f "/sys/class/block/${1##*/}/..")
+	blockdev --setro "$1" || log "install: could not set $1 read-only"
+	[ ! -b "/dev/${disk##*/}" ] || blockdev --setro "/dev/${disk##*/}" || log "install: could not set ${disk##*/} read-only"
+}
+# mount_data DEV DIR: the data partition mounted writable at DIR (made writable before). BusyBox's
+# mount falls back to read-only by itself where the device refuses writes: that counts as a failure.
+mount_data() {
+	mount -t ext4 -o noatime "$1" "$2" || { readonly_again "$1"; die "mounting userdata failed"; }
+	awk -v d="$2" '$2 == d {split($4, o, ","); exit o[1] != "rw"}' /proc/mounts ||
+		{ umount "$2"; readonly_again "$1"; die "userdata mounted read-only"; }
+}
 
 # sha256: the SHA-256 of standard input in hex: OpenSSL's, which uses the CPU's SHA-2 instructions,
 # else BusyBox's (42 MB/s here: slower than the USB link brings a compressed image).
@@ -73,7 +105,7 @@ stream() {
 }
 
 write() {
-	local name=$1 size="" bytes="" sha="" zstd=0 dev back
+	local name=$1 size="" bytes="" sha="" zstd=0 from="" dev back src=$STATE/data-src
 	shift
 	case "$name" in boot | super) ;; *) die "write refuses $name (boot or super only)" ;; esac
 	while [ $# -gt 0 ]; do
@@ -82,6 +114,7 @@ write() {
 		--bytes) bytes=$2; shift ;;
 		--sha256) sha=$2; shift ;;
 		--zstd) zstd=1 ;;
+		--from-data) from=$2; shift ;;
 		*) die "unknown option $1" ;;
 		esac
 		shift
@@ -91,6 +124,12 @@ write() {
 	[ "$zstd" = 0 ] || command -v zstd >/dev/null || die "zstd missing from this image (rebuild stage 1)"
 	dev=$(partition "$name" "$size")
 	mkdir -p "$STATE"
+	if [ -n "$from" ]; then
+		case "$from" in /* | *..*) die "--from-data takes a path inside the data partition" ;; esac
+		data_ro "$src" || die "mounting userdata read-only failed"
+		[ -f "$src/$from" ] || { umount "$src"; die "no $from on the data partition"; }
+		exec < "$src/$from"
+	fi
 	writable "$dev"
 	log "install: writing $bytes bytes to $name ($dev)"
 	# Straight into dd in 4 MiB blocks: a hash of the stream beside it (tee) held the write to
@@ -100,6 +139,8 @@ write() {
 	local rc=$?
 	sync
 	readonly_again "$dev"
+	# The image is this shell's standard input: closed first, or the mount stays busy.
+	[ -z "$from" ] || { exec < /dev/null; umount "$src" || log "install: could not unmount $src"; }
 	[ $rc = 0 ] || die "writing $name failed ($(tail -n 2 "$STATE/dd.log" | tr '\n' ' '))"
 	echo 3 > /proc/sys/vm/drop_caches
 	back=$(read_part "$dev" "$bytes" | sha256)
@@ -145,7 +186,7 @@ keys() {
 	count=$(grep -c -E '^(ssh-|ecdsa-|sk-)' "$STATE/authorized_keys")
 	[ "$count" -gt 0 ] || die "no SSH public key on standard input"
 	writable "$dev"
-	mount -t ext4 -o noatime "$dev" "$mnt" || { readonly_again "$dev"; die "mounting userdata failed"; }
+	mount_data "$dev" "$mnt"
 	{
 		mkdir -p "$mnt/root/.ssh" "$mnt/etc/upper/pico4" &&
 			chmod 700 "$mnt/root/.ssh" &&
@@ -184,7 +225,7 @@ stock() {
 	got=$(sha256 < "$archive")
 	[ "$(wc -c < "$archive")" = "$bytes" ] && [ "$got" = "$sha" ] || { rm -f "$archive"; die "the archive is not the one sent ($got)"; }
 	writable "$dev"
-	mount -t ext4 -o noatime "$dev" "$mnt" || { readonly_again "$dev"; die "mounting userdata failed"; }
+	mount_data "$dev" "$mnt"
 	{
 		rm -rf "${mnt:?}/$STOCK_DIR.new" &&
 			mkdir -p "$mnt/$STOCK_DIR.new" &&
@@ -204,6 +245,15 @@ stock() {
 	echo "stock $got"
 }
 
+# data_ro DIR: the data partition (pico4-data) mounted read-only at DIR, without a journal replay.
+data_ro() {
+	local dev
+	dev=$(readlink -f /dev/block/by-name/userdata 2>/dev/null)
+	[ -b "$dev" ] && [ "$(ext_label "$dev" 2>/dev/null)" = pico4-data ] || return 1
+	mkdir -p "$1"
+	mount -t ext4 -o ro,noload "$dev" "$1"
+}
+
 stock_hash() {
 	local size="" dev mnt=$STATE/data-ro got
 	[ "$1" = --size ] && size=$2
@@ -215,6 +265,68 @@ stock_hash() {
 	got=$(sha256 < "$mnt/$STOCK_DIR/manifest.json" 2>/dev/null)
 	umount "$mnt"
 	echo "${got:-none}"
+}
+
+# The headset's own build of the system (scripts/build-on-headset.sh) on the data partition.
+BUILD_DIR=var/tmp/pico4-build
+
+build() {
+	local size="" epoch="" commit="" proxy="" now="" dev mnt=$STATE/data rc=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--size) size=$2; shift ;;
+		--epoch) epoch=$2; shift ;;
+		--commit) commit=$2; shift ;;
+		--proxy) proxy=$2; shift ;;
+		--now) now=$2; shift ;;
+		*) die "unknown option $1" ;;
+		esac
+		shift
+	done
+	[ -n "$size" ] && [ -n "$epoch" ] && [ -n "$commit" ] || die "build needs --size, --epoch and --commit"
+	case "$epoch$now" in *[!0-9]*) die "--epoch and --now take seconds" ;; esac
+	case "$commit" in *[!A-Za-z0-9._-]*) die "the commit may hold letters, digits, dots, dashes" ;; esac
+	case "$proxy" in '' | socks5h://127.0.0.1:[0-9]*) ;; *) die "--proxy takes socks5h://127.0.0.1:PORT" ;; esac
+	command -v curl >/dev/null && tar --version 2>/dev/null | grep -q GNU ||
+		die "curl or GNU tar missing from this image (rebuild stage 1)"
+	dev=$(partition userdata "$size")
+	[ "$(ext_label "$dev")" = pico4-data ] || die "userdata holds no pico4-data file system"
+	# This system starts in 1970 (no network time): HTTPS needs the PC's clock. Only the system time.
+	[ -z "$now" ] || date -u -s "@$now" > /dev/null || die "could not set the clock"
+	mkdir -p "$STATE" "$mnt"
+	writable "$dev"
+	mount_data "$dev" "$mnt"
+	# The PC waits for the build: its contact (recovery-watch's maximum runtime) stays renewed while
+	# this runs, and ends with it.
+	(while kill -0 $$ 2>/dev/null; do cut -d. -f1 /proc/uptime > "$P4_RUN/host-contact"; sleep 30; done) &
+	log "install: building the system on userdata ($commit)"
+	{
+		rm -rf "${mnt:?}/$BUILD_DIR/src" &&
+			mkdir -p "$mnt/$BUILD_DIR/src" &&
+			tar -xzf - -C "$mnt/$BUILD_DIR/src" &&
+			SOURCE_DATE_EPOCH=$epoch OVERPRESSURE_COMMIT=$commit ALL_PROXY=$proxy \
+				sh "$mnt/$BUILD_DIR/src/devices/phoenix/scripts/build-on-headset.sh" "$mnt/$BUILD_DIR"
+	} || rc=1
+	sync
+	umount "$mnt" || { umount -l "$mnt"; rc=1; }
+	readonly_again "$dev"
+	[ $rc = 0 ] || die "the build on userdata failed"
+	log "install: built the system on userdata"
+	echo "built"
+}
+
+build_file() {
+	local size="" name=${3:-} mnt=$STATE/data-ro rc=0
+	[ "${1:-}" = --size ] && size=$2
+	[ -n "$size" ] || die "build-file needs --size"
+	case "$name" in out/pico4-system.img.json | out/pico4-userspace.manifest.json) ;;
+	*) die "build-file reads out/pico4-system.img.json or out/pico4-userspace.manifest.json" ;;
+	esac
+	partition userdata "$size" > /dev/null
+	data_ro "$mnt" || die "userdata holds no pico4-data file system"
+	cat "$mnt/$BUILD_DIR/$name" || rc=1
+	umount "$mnt"
+	[ $rc = 0 ] || die "no $name on userdata"
 }
 
 wipe() {
@@ -284,9 +396,11 @@ format-data) shift; format_data "$@" ;;
 keys) shift; keys "$@" ;;
 stock) shift; stock "$@" ;;
 stock-hash) shift; stock_hash "$@" ;;
+build) shift; build "$@" ;;
+build-file) shift; build_file "$@" ;;
 hash) hash "$2" "$3" ;;
 wipe) shift; wipe "$@" ;;
 bootmode) bootmode "$2" ;;
 status) status ;;
-*) sed -n '3,34s/^# \{0,1\}//p' "$0"; exit 2 ;;
+*) sed -n '3,43s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

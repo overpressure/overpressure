@@ -272,11 +272,13 @@ class Phoenix(Headset):
                 "install",
                 "Install the system",
                 "Headset",
-                ("dev", "install", "{system}", "{format_data}"),
-                "From the maintenance stage 1: boot, super and the data partition; then starts it.",
+                ("dev", "install", "{system}", "{format_data}", "{on_headset}"),
+                "From the maintenance stage 1: boot, super and the data partition; then starts it. Built on the "
+                "headset: it builds the system image itself (no build container here).",
                 (
                     Param("system", "System image", system, "path"),
                     Param("format_data", "Format the data partition", "0", "flag", option="--format-data"),
+                    Param("on_headset", "Built on the headset", "0", "flag", option="--on-headset"),
                 ),
                 writes=True,
             ),

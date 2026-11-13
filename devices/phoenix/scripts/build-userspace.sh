@@ -136,10 +136,17 @@ pinned=$repo/cache/packages/$packages_commit
 if [[ ! -f $pinned/.overpressure-commit ]]; then
     log "fetching $packages_repository $packages_tag ($packages_commit)"
     rm -rf "$pinned.new"
-    git init -q "$pinned.new"
-    git -C "$pinned.new" fetch -q --depth 1 "https://github.com/$packages_repository.git" "$packages_commit"
-    git -C "$pinned.new" -c advice.detachedHead=false checkout -q FETCH_HEAD
-    [[ $(git -C "$pinned.new" rev-parse HEAD) == "$packages_commit" ]]
+    if command -v git >/dev/null; then
+        git init -q "$pinned.new"
+        git -C "$pinned.new" fetch -q --depth 1 "https://github.com/$packages_repository.git" "$packages_commit"
+        git -C "$pinned.new" -c advice.detachedHead=false checkout -q FETCH_HEAD
+        [[ $(git -C "$pinned.new" rev-parse HEAD) == "$packages_commit" ]]
+    else
+        # Without git (the headset builds its own system): GitHub's archive of that commit.
+        mkdir -p "$pinned.new"
+        curl -fsSL --retry 3 "https://github.com/$packages_repository/archive/$packages_commit.tar.gz" |
+            tar -xz --strip-components=1 -C "$pinned.new"
+    fi
     rm -rf "$pinned.new/.git" "$pinned"
     echo "$packages_commit" > "$pinned.new/.overpressure-commit"
     mv "$pinned.new" "$pinned"
@@ -173,7 +180,8 @@ version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$repo/pyproject.toml")
 # A worktree's repository is at OVERPRESSURE_GIT_DIR in the build container (overpressure/linux.py).
 git_where=(-C "$repo")
 [ -z "${OVERPRESSURE_GIT_DIR:-}" ] || git_where=(--git-dir="$OVERPRESSURE_GIT_DIR" --work-tree="$repo")
-commit=$(git -c safe.directory='*' "${git_where[@]}" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)
+# Where the tree has no Git (a release, the headset's build), the caller names it: OVERPRESSURE_COMMIT.
+commit=${OVERPRESSURE_COMMIT:-$(git -c safe.directory='*' "${git_where[@]}" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)}
 if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
     SOURCE_DATE_EPOCH=$(git -c safe.directory='*' "${git_where[@]}" log -1 --format=%ct 2>/dev/null || date +%s)
 fi
@@ -231,8 +239,9 @@ else
     OVERPRESSURE_REFRESH=$([[ $refresh == 1 ]] && echo 1) bash "$project/packages/build/packages.sh" phoenix \
         "$build_root/packages" "$repos"
 fi
+# pacman downloads through ALL_PROXY when it is set (the headset's build: the PC's connection).
 in_b() { chroot "$B" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root \
-    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$@"; }
+    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" ${ALL_PROXY:+ALL_PROXY="$ALL_PROXY"} "$@"; }
 mkdir -p "$B/etc/pico4" "$B/var/cache/pico4-pkgs"
 cp "$definition/pacman.conf" "$B/etc/pico4/pacman.conf"
 # Each layer's repository where pacman.conf's file:// servers name it.
@@ -243,13 +252,6 @@ for layer in "${layers[@]}"; do
 done
 cp -L /etc/resolv.conf "$B/etc/resolv.conf"
 mount_api "$B"
-# The host's clang and lld, for pico4-slamd (PICO OS's tracker's root).
-llvm=""
-if [[ $host_arch == x86_64 ]]; then
-    for v in 21 20 19; do
-        if [[ -x /usr/lib/llvm-$v/bin/clang && -x /usr/lib/llvm-$v/bin/ld.lld ]]; then llvm=/usr/lib/llvm-$v; break; fi
-    done
-fi
 # project_packages: every project package file, as /var/cache/overpressure/LAYER/FILE.
 project_packages() {
     (cd "$B" && find var/cache/overpressure -name '*.pkg.tar.zst' ! -name '*-debug-*' | sort | sed 's|^|/|')
@@ -322,7 +324,16 @@ done < <(project_packages | (cd "$B" && sed 's|^/||' | xargs -r sha256sum))
 step "the image's project packages"
 if [[ ${#changed[@]} -gt 0 ]]; then
     phase "installing ${#changed[@]} changed project packages"
-    in_b pacman --config /etc/pico4/pacman.conf -r /target --cachedir /var/cache/pico4-pkgs -U --noconfirm "${changed[@]}"
+    # From their repositories, as a new base root installs them: pacman records a package installed from a
+    # file differently (no validation, no build date), and the image would depend on the base root's history.
+    # The cache holds the base root's copies under the same names: gone first.
+    names=()
+    for file in "${changed[@]}"; do
+        rm -f "$B/var/cache/pico4-pkgs/${file##*/}"
+        layer=${file#/var/cache/overpressure/}
+        names+=("overpressure-${layer%%/*}/$(in_b bsdtar -xOf "$file" .PKGINFO | sed -n 's/^pkgname = //p')")
+    done
+    in_b pacman --config /etc/pico4/pacman.conf -r /target --cachedir /var/cache/pico4-pkgs -S --noconfirm "${names[@]}"
 fi
 # adb (android-platform-tools, with which Lepton installs Android games) was built against
 # protobuf 25; the base has 33. The Frame repository's protobuf 25 libraries go where adb's
@@ -360,6 +371,8 @@ optional+='|^deckard-steamvr-rel /opt/steamvr/[^:]*:\s*(\./)?lib(openvr_api|stea
 # Android Mesa and Vulkan layers.
 optional+='|^deckard-steamvr-rel /opt/steamvr/bin/androidarm64/'
 optional+='|^deckard-(mesa|vulkan-layers)-android-aarch64 '
+# pico4-slamd's bionic programs: PICO OS's libraries they link are bound into the tracker's root at boot.
+optional+='|^pico4-slamd /usr/lib/pico4-stock-slam/'
 # The preview's optional parts that depend on a Frame package: glibc's memusagestat (libgd),
 # lm_sensors' sensord (librrd), OpenCV's HDF5 and VTK modules.
 optional+='|^(glibc /usr/bin/memusagestat|lm_sensors /usr/bin/sensord|opencv /usr/lib/libopencv_(hdf|viz)\.so[.0-9]*):'
@@ -414,21 +427,6 @@ for f in a650_zap.mdt a650_zap.b00 a650_zap.b01 a650_zap.b02; do
     ln -sfn "../../../../$f" "$T/usr/lib/firmware/qcom/sm8250/pico/phoenix/$f"
 done
 
-# PICO OS's head tracker (docs/xr.md#head-tracking): the tracker's root, with this project's
-# pico4-slamd and the root's stand-ins, built for bionic with the host's clang. PICO OS's parts of the
-# root (system, vendor, the DSP's shells) are bound in from the headset's copies when it starts
-# (stock-slam).
-[[ -n $llvm ]] || { echo "pico4-slamd needs the host's clang and lld (LLVM 20, in the build container)" >&2; exit 1; }
-island=$T/usr/lib/pico4-stock-slam
-rm -rf "$island"
-mkdir -p "$island"
-bash "$project/src/stockslam/build.sh" "$island/pico4" "$project/packages/phoenix/pico4-monado" "$llvm"
-# Mount points: the root is read-only on the headset.
-mkdir -p "$island"/{dev,proc,sys,data,tmp,system,vendor,mnt/vendor/persist/pvr,mnt/vendor/pvr}
-chown -R 0:0 "$island"
-find "$island" -type d -exec chmod 0755 {} +
-find "$island" -type f -exec chmod 0644 {} +
-chmod 0755 "$island/pico4/pico4-slamd"
 
 in_t systemd-sysusers
 # The Frame's session user (steamos-customizations-deckard refers to it), from
@@ -452,6 +450,9 @@ in_t usermod -p '*' "$user"
 echo pico4-steamos > "$T/etc/hostname"
 echo LANG=C.UTF-8 > "$T/etc/locale.conf"
 rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
+# brltty's install script writes a random BrlAPI key into each new base root: no secret in the image, and
+# the same bytes from every base root (no braille display reads it here).
+rm -f "$T/etc/brlapi.key"
 # pacman's tmpfiles hook ran the packages' entries for /tmp, a fresh tmpfs on the headset.
 find "$T/tmp" -mindepth 1 -delete
 # SteamOS keeps writable state on /home and bind-mounts it over /var/log,
@@ -559,9 +560,12 @@ done < "$build_root/packages.txt" | sort -u -k2 |
     awk 'NR == FNR {project[$2] = 1; next} !($2 in project)' "$build_root/project-hashes.txt" - \
     > "$build_root/upstream-hashes.txt"
 sort -u -k2 "$build_root/upstream-hashes.txt" "$build_root/project-hashes.txt" > "$build_root/package-hashes.txt"
-# The project repositories' databases are the build's own (repo-add records the time it ran), and the
-# headset's pacman.conf has none of them: the image keeps only the upstream databases.
-rm -f "$T"/var/lib/pacman/sync/overpressure-*.db
+# The image keeps the databases of the headset's pacman.conf's repositories only: the project
+# repositories' are the build's own (repo-add records the time it ran), and a base root can carry one an
+# earlier layout of the build left (pico4.db), which a build from scratch has not.
+for db in "$T"/var/lib/pacman/sync/*.db; do
+    grep -qxF "[$(basename "$db" .db)]" "$T/etc/pacman.conf" || rm -f "$db"
+done
 (cd "$T/var/lib/pacman/sync" && sha256sum ./*.db) > "$build_root/db-hashes.txt"
 # Every upstream package is the tested one, or the build stops: Valve's repositories publish no
 # signatures, and the Frame's hotfix repository moves on (docs/userspace.md#package-lock).
@@ -574,11 +578,11 @@ rm -rf "$T/var/cache/pacman/pkg"/* "$T/var/log/pacman.log"
 # pacman records when it installed each package and has no SOURCE_DATE_EPOCH.
 sed -i "/^%INSTALLDATE%\$/{n;s/.*/$SOURCE_DATE_EPOCH/}" "$T"/var/lib/pacman/local/*/desc
 archive=$output/pico4-userspace.tar.zst
-# No time after SOURCE_DATE_EPOCH, and no access or change times.
-tar --numeric-owner --xattrs --xattrs-include=security.capability --sort=name \
+# No time after SOURCE_DATE_EPOCH, and no access or change times. The build environment's tar and zstd
+# (Holo's, pinned), not the host's: the same bytes wherever it is built, in the container or on the headset.
+in_b sh -c 'tar --numeric-owner --xattrs --xattrs-include=security.capability --sort=name \
     --mtime="@$SOURCE_DATE_EPOCH" --clamp-mtime --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
-    -C "$T" -cf - . |
-    zstd -q -T0 -12 -o "$archive.part" -f
+    -C /target -cf - . | zstd -q -T0 -12' > "$archive.part"
 mv "$archive.part" "$archive"
 installed_bytes=$(du -sb --apparent-size "$T" | cut -f1)
 cleanup

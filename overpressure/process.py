@@ -60,14 +60,24 @@ def run(
 
 
 def run_streamed(
-    argv: Sequence[str | os.PathLike[str]], timeout: float, on_line: Callable[[str], None], *, check: bool = True
+    argv: Sequence[str | os.PathLike[str]],
+    timeout: float,
+    on_line: Callable[[str], None],
+    *,
+    check: bool = True,
+    stdin: IO[bytes] | None = None,
 ) -> str:
     """Run a program as run() does, handing each line to @p on_line as it comes; return its output.
 
-    A carriage return ends a line too: a progress display redraws its line with one.
+    A carriage return ends a line too: a progress display redraws its line with one. @p stdin is
+    its standard input (none by default).
     """
     proc = subprocess.Popen(  # noqa: S603  # the host tools' fixed command lines, no shell
-        [str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=REPO
+        [str(a) for a in argv],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=stdin or subprocess.DEVNULL,
+        cwd=REPO,
     )
     chunks: list[bytes] = []
 

@@ -85,7 +85,7 @@ ADSP_REQUIRED = ("adsp.mdt", "adsp.b00", "adspr.jsn", "adspua.jsn")
 CDSP_FIRMWARE = ("cdsp.*", "cdspr.jsn")
 SLAM_BOOTSTRAP = ("libc.so", "libm.so", "libdl.so")
 #: The head tracker and auto exposure with what they link; libandroid and liblog's log calls are
-#: replaced by the image's own stand-ins (src/stockslam).
+#: replaced by the image's own stand-ins (overpressure/packages' pico4-slamd).
 SLAM_LIBRARIES = (
     "libSlam.so",
     "libslamDSP.so",

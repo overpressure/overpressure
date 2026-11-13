@@ -39,11 +39,11 @@ import sys
 import uuid
 from typing import TYPE_CHECKING, Callable
 
-from overpressure import REPO, android, doctor, linux, qualcomm, runner, tools, usbaccess
+from overpressure import REPO, android, doctor, qualcomm, runner, tools, usbaccess
 from overpressure.install import Ask, Context, Failed, Field, Stage, Task
 from overpressure.process import until
 
-from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, USERSPACE_BUILD, device, devloop, localconfig, unlockfiles
+from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, device, devloop, localconfig, unlockfiles
 from . import doctor as checks
 from . import kernel as pinned_kernel
 
@@ -65,7 +65,6 @@ PROVIDED = {
     KEY("edl_serial"),
     "identity",
     "EDL backup",
-    "build container image",  # the build stage's first Linux task builds it
 }
 #: The connection file the installer writes on the headset (one, replaced by the next install).
 WIFI_FILE = "/etc/NetworkManager/system-connections/overpressure-wifi.nmconnection"
@@ -96,11 +95,6 @@ NOTHING_CHANGED = "Nothing was changed on your headset."
 AGAIN = "Start the installer again to go on where it stopped."
 #: Where the headset is when PICO OS is not through with its MCU: the installer did not take it out of PICO OS.
 STILL_PICO_OS = "PICO OS runs on the headset; the installer has not taken it out of PICO OS. " + AGAIN
-#: The container engine the builds need, whichever it is and however it runs.
-ENGINE_MISSING = (
-    "The system is built in a container, which needs Docker or Podman. Install one (docs.docker.com/get-docker "
-    "or podman.io), make sure it is running, then start the installer again."
-)
 PLUG_IN = Ask(
     "plug-in",
     "action",
@@ -179,19 +173,10 @@ PICO_OS_SETUP = Ask(
     "controller. Then turn on developer mode and USB debugging again (Settings, General, About: tap the software "
     "version seven times; then Developer, USB debugging) and accept the USB debugging prompt.",
 )
-#: The build files the installer offers to remove, once the headset runs the checked system.
-FREE_SPACE = Ask(
-    "free-space",
-    "confirm",
-    "Free space on this computer?",
-    "The system runs on your headset. Its build files take {gib:.1f} GiB on this computer: the build folder "
-    "and the system image. An upgrade builds them again from the start, which takes longer (about 20 "
-    "minutes on a fast computer, more on a laptop). Your backup stays either way.",
-    accept="Remove them",
-    decline="Keep them",
-)
-#: Below this, the question is not worth asking.
-FREE_SPACE_MIN = 1 << 30
+#: How long the headset's build and install take: the first one downloads about 2.2 GB and builds for about
+#: 9 minutes, an upgrade's build is incremental (docs/install.md#built-on-the-headset).
+INSTALL_ESTIMATE = "about 15 min"
+INSTALL_TIME = "About 20 minutes."
 RESTORED = (
     "Your headset runs PICO OS again, with the system and the bootloader from your backup. Its bootloader stays "
     "unlocked, as the install left it. Keep your backup: the installer can install the system again from here."
@@ -260,17 +245,9 @@ def keyfile(ssid: str, password: str, connection: str) -> bytes:
     return "\n".join(lines).encode()
 
 
-def engine_problem(found: Sequence[Check]) -> str:
-    """Return the plain message for a missing or silent container engine, or ""."""
-    return ENGINE_MISSING if any(c.name == doctor.ENGINE for c in found) else ""
-
-
 def computer_problems(found: Sequence[Check]) -> str:
-    """Return the doctor's failed checks as one message with their fixes; the container engine's explained first."""
+    """Return the doctor's failed checks as one message with their fixes."""
     lines = ["This computer needs a few things first:"]
-    engine = engine_problem(found)
-    if engine:
-        lines.append(engine)
     for check in found:
         lines.append(f"- {check.name} ({check.needed_for}): {check.detail}")
         if check.fix:
@@ -289,7 +266,6 @@ class Plan:
         work: Path = devloop.WORK,
         computer: Callable[[], list[Check]] | None = None,
         edl_count: Callable[[], int] = qualcomm.edl_devices,
-        image_present: Callable[[], bool] = linux.image_present,
         factory_reset: bool = False,
         edl_denied: Callable[[], bool] | None = None,
     ) -> None:
@@ -302,7 +278,6 @@ class Plan:
         self.work = work
         self.computer = computer or (lambda: doctor.run(headset))
         self.edl_count = edl_count
-        self.image_present = image_present
         self.factory_reset = factory_reset
         self.edl_denied = edl_denied
         self.usb_reader: Callable[[], bool] | None = None  #: tests: what reads the EDL device's pipe
@@ -310,9 +285,11 @@ class Plan:
 
     # -- helpers ------------------------------------------------------------------------------
     def argv(self, ctx: Context, key: str) -> list[str]:
-        """Return the window's step @p key as this host runs it, with the firmware of .env."""
+        """Return the window's step @p key as this host runs it: the firmware of .env, built on the headset."""
         step = self.steps[key]
         values = {"firmware": ctx.settings(Settings).firmware} if any(p.name == "firmware" for p in step.params) else {}
+        if key == "install":
+            values["on_headset"] = "1"
         return runner.process(self.headset, step, values)
 
     def command(self, *words: str | Path) -> list[str]:
@@ -328,11 +305,6 @@ class Plan:
     def run_step(self, ctx: Context, key: str) -> None:
         """Run the window's step @p key."""
         ctx.run(self.argv(ctx, key))
-
-    @staticmethod
-    def build_environment(ctx: Context) -> None:
-        """Pull the build image, where the builds' Linux side runs."""
-        ctx.run([sys.executable, "-m", "overpressure", "container", "pull"])
 
     def out(self, *parts: str) -> Path:
         """Return a path under the repository's out/."""
@@ -363,7 +335,8 @@ class Plan:
 
     def check_computer(self, ctx: Context) -> None:
         """Run the doctor's checks; what the installer does not provide itself and fails stops the run."""
-        found = [c for c in self.computer() if c.name not in PROVIDED]
+        # The system is built on the headset: the build container is for builds on this computer only.
+        found = [c for c in self.computer() if c.name not in PROVIDED and c.needed_for != doctor.BUILDS]
         for check in found:
             ctx.log(f"{check.status}: {check.name} ({check.needed_for}): {check.detail}")
             if check.status == doctor.WARNING:
@@ -373,33 +346,15 @@ class Plan:
             raise Failed(computer_problems(problems), NOTHING_CHANGED + " " + AGAIN)
 
     # -- 2. the build ---------------------------------------------------------------------------
-    def system_built(self) -> bool:
-        """Tell whether the system image's compressed copy and record are there, from the build's archive.
-
-        build-system-image.sh keeps only those: the archive and the image itself go once it is built.
-        """
-        manifest = self.out("userspace", "pico4-userspace.manifest.json")
-        record = self.out("userspace", "pico4-system.img.json")
-        try:
-            archive = json.loads(manifest.read_text(encoding="utf-8"))["archive"]["sha256"]
-            built = json.loads(record.read_text(encoding="utf-8"))["archive_sha256"]
-        except (OSError, ValueError, KeyError, TypeError):
-            return False
-        return archive == built and self.out("userspace", "pico4-system.img.zst").is_file()
-
     def build_done(self, key: str) -> Callable[[Context], bool]:
         """Return the done check of the build step @p key: its outputs are there, not older than their inputs."""
-        archive = self.out("userspace", "pico4-userspace.tar.zst")
-        system = self.out("userspace", "pico4-system.img")
         kernel = self.out("kernel", "Image.gz")
         dev = self.work
 
         outputs: dict[str, Callable[[Context], bool]] = {
             "stage1": lambda ctx: self.stage1(ctx).is_file(),
-            "userspace": lambda _ctx: archive.is_file() or self.system_built(),
-            "system": lambda _ctx: self.system_built() if not archive.is_file() else self.newer(system, archive),
             "dev-image": lambda ctx: (
-                self.newer(dev / "dev-image.json", self.stage1(ctx)) and (dev / "dev-recovery.img").is_file()
+                self.newer(dev / "dev-image.json", self.stage1(ctx), kernel) and (dev / "dev-recovery.img").is_file()
             ),
             "kernel": lambda _ctx: pinned_kernel.current(self.out("kernel")),
             "boot-image": lambda _ctx: self.newer(
@@ -709,41 +664,6 @@ class Plan:
         ctx.run(dev.ssh_argv(WIFI_COMMAND), stdin=keyfile(ssid, password, str(uuid.uuid4())))
         ctx.note("The headset joins your Wi-Fi network when it is in range.")
 
-    def build_files(self) -> list[Path]:
-        """Return what the builds leave in out/userspace that an installed headset no longer needs.
-
-        The manifest stays: it tells the next dev check what the headset runs.
-        """
-        folder = self.out("userspace")
-        return sorted(p for p in folder.glob("pico4-*") if p.is_file() and p.name != "pico4-userspace.manifest.json")
-
-    def free_space(self, ctx: Context) -> None:
-        """Offer to remove the build files once the headset runs the checked system (the build folder, the image)."""
-        build_root = USERSPACE_BUILD
-        output = ctx.output(self.command("container", "run", "--", "du", "-sb", build_root), 300, check=False)
-        words = output.split()
-        held = int(words[-2]) if len(words) >= 2 and words[-2].isdigit() else 0  # noqa: PLR2004  # du's "BYTES PATH"
-        files = self.build_files()
-        total = held + sum(p.stat().st_size for p in files)
-        if total < FREE_SPACE_MIN:
-            return
-        ask = Ask(
-            FREE_SPACE.id,
-            FREE_SPACE.kind,
-            FREE_SPACE.title,
-            FREE_SPACE.text.format(gib=total / (1 << 30)),
-            accept=FREE_SPACE.accept,
-            decline=FREE_SPACE.decline,
-        )
-        if not ctx.choose(ask):
-            ctx.note("The build files stay: an upgrade reuses them.")
-            return
-        if held:
-            ctx.run(self.command("container", "run", "--", "rm", "-rf", "--one-file-system", build_root))
-        for path in files:
-            path.unlink(missing_ok=True)
-        ctx.note(f"Removed {total / (1 << 30):.1f} GiB of build files. Your backup stays.")
-
     # -- the way back -------------------------------------------------------------------------------
     def check_backup(self, ctx: Context) -> None:
         """Verify the backup .env names, file by file, and that it is the saved identity's headset."""
@@ -862,13 +782,13 @@ class Plan:
         ctx.ask(UPGRADE_PLUG_IN)
 
     def upgrade_stages(self) -> tuple[Stage, ...]:
-        """Return the upgrade: this computer, the system built from this version, its install over the old one.
+        """Return the upgrade: this computer, this version's boot images, the system built and installed on the headset.
 
-        The system, the kernel and the boot image are built on every upgrade: each build is
-        incremental, and only that tells whether this version changed them. The data partition stays.
+        The kernel and the boot image are made on every upgrade, the system on the headset (its build is
+        incremental): only that tells whether this version changed them. The data partition stays.
         """
         computer, build = self.stages()[:2]
-        rebuilt = {"userspace", "system", "kernel", "boot-image"}
+        rebuilt = {"kernel", "boot-image"}
         tasks = tuple(
             Task(t.id, t.title, t.run, t.estimate, t.writes, None if t.id in rebuilt else t.done, t.where)
             for t in build.tasks
@@ -885,15 +805,17 @@ class Plan:
             Stage(
                 build.id,
                 build.title,
-                "This version of the system, built on this computer. What the last build left is reused, so it "
-                "takes minutes to hours depending on what changed; the headset is not needed.",
+                "This version's maintenance system and boot images, made on this computer in a few minutes; "
+                "the headset is not needed.",
                 tasks,
             ),
             Stage(
                 "install",
                 "Install the upgrade",
-                "The headset's maintenance system starts, the new system goes on and is checked. Your data "
-                "stays. About 15 minutes; keep the cable in.",
+                "The headset's maintenance system starts and builds the new system itself, from public downloads "
+                "through this computer's connection; then it goes on and is checked. Your data stays. "
+                + INSTALL_TIME
+                + " Keep the cable in.",
                 (
                     Task("plug-in", "Connect the headset", self.plug_in_upgrade, ""),
                     self.step_task(
@@ -904,16 +826,13 @@ class Plan:
                     ),
                     self.step_task(
                         "install",
-                        "Install the system",
-                        "about 10 min",
+                        "Build and install the system",
+                        INSTALL_ESTIMATE,
                         where="The headset is in the maintenance system; the old system may be replaced already. "
                         "Keep the cable in and start the installer again: the install can be repeated.",
                     ),
                     self.step_task("installed", "Start the installed system", "about 2 min", where=installed_where),
                     self.step_task("check", "Acceptance checks", "about 3 min", where=installed_where),
-                    Task(
-                        "free-space", "Free space on this computer", self.free_space, "a minute", where=installed_where
-                    ),
                     Task("ready", "Unplug it and put it on", lambda ctx: ctx.note(UPGRADED), ""),
                 ),
             ),
@@ -983,27 +902,12 @@ class Plan:
             self.step_task(
                 "stage1", "Maintenance system image", "about 2 min", where=built_where, done=self.build_done("stage1")
             ),
-            Task(
-                "container",
-                "Build environment",
-                self.build_environment,
-                "a minute the first time",
-                done=lambda _ctx: self.image_present(),
-                where=built_where,
-            ),
-            self.step_task(
-                "userspace",
-                "SteamOS-compatible system",
-                "1 to 3 h",
-                where=built_where,
-                done=self.build_done("userspace"),
-            ),
-            self.step_task("system", "System image", "about 10 min", where=built_where, done=self.build_done("system")),
-            self.step_task(
-                "dev-image", "Boot images", "about 3 min", where=built_where, done=self.build_done("dev-image")
-            ),
+            # The maintenance system runs on Valve's kernel: the kernel comes first.
             self.step_task(
                 "kernel", "Valve's kernel", "about 1 min", where=built_where, done=self.build_done("kernel")
+            ),
+            self.step_task(
+                "dev-image", "Boot images", "about 3 min", where=built_where, done=self.build_done("dev-image")
             ),
             self.step_task(
                 "boot-image",
@@ -1027,9 +931,10 @@ class Plan:
             ),
             Stage(
                 "build",
-                "Build the system",
-                "The SteamOS-compatible system for your headset, built on this computer from public downloads "
-                "(about 15 GB). It takes a few hours; the headset is not needed.",
+                "Prepare the install",
+                "The maintenance system and the boot images for your headset, made on this computer from public "
+                "downloads in a few minutes; the headset is not needed. The system itself is built on the headset "
+                "during the install.",
                 tuple(build),
             ),
             Stage(
@@ -1060,14 +965,14 @@ class Plan:
             Stage(
                 "install",
                 "Install",
-                "Wi-Fi if you like, then the system goes onto the headset and is checked. About 15 minutes; keep "
-                "the cable in.",
+                "Wi-Fi if you like; then the headset builds the system itself, from public downloads through this "
+                "computer's connection, and it goes on and is checked. " + INSTALL_TIME + " Keep the cable in.",
                 (
                     Task("wifi", "Wi-Fi (optional)", self.wifi, "a minute"),
                     self.step_task(
                         "install",
-                        "Install the system",
-                        "about 10 min",
+                        "Build and install the system",
+                        INSTALL_ESTIMATE,
                         where="The headset is in the maintenance system; PICO OS's system may be gone already. "
                         "Keep the cable in and start the installer again: the install can be repeated.",
                     ),
@@ -1081,9 +986,6 @@ class Plan:
                         where=installed_where,
                     ),
                     self.step_task("check", "Acceptance checks", "about 3 min", where=installed_where),
-                    Task(
-                        "free-space", "Free space on this computer", self.free_space, "a minute", where=installed_where
-                    ),
                     Task("ready", "Unplug it and put it on", lambda ctx: ctx.note(READY), ""),
                 ),
             ),

@@ -35,6 +35,7 @@ import json
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from pathlib import Path
@@ -47,6 +48,7 @@ from overpressure import (
     avb,
     bootimg,
     ota,
+    process,
     progress,
     qualcomm,
     ssh,
@@ -89,6 +91,47 @@ BOOT_ID = "/proc/sys/kernel/random/boot_id"
 INSTALLED_PROOF = ("/proc/1/comm", INSTALL_ID, "/sys/devices/soc0/serial_number")
 #: The start of an image that tells whether a partition may hold it (write_partition).
 PREFIX_BYTES = 1 << 20
+#: Where the headset builds its own system: its data partition's /var/tmp (build_on_headset).
+HEADSET_BUILD = "var/tmp/pico4-build"
+HEADSET_BUILD_SECONDS = 7200
+#: The headset's loopback port where this PC's connection is during its build: a SOCKS proxy (ssh -R).
+HEADSET_PROXY_PORT = 1080
+#: What the build reads of this repository: its scripts, the userspace definition, the stage-1 files it shares,
+#: the prebuilt helpers and the overpressure package (elfdeps), and the version.
+BUILD_TREE = (
+    "pyproject.toml",
+    "overpressure",
+    "devices/phoenix/scripts",
+    "devices/phoenix/src",
+    "devices/phoenix/userspace",
+    "devices/phoenix/initramfs/usr/libexec/pico4",
+    "devices/phoenix/prebuilt",
+)
+
+
+def _git(*words: str) -> str:
+    try:
+        return subprocess.run(  # noqa: S603  # git on this repository, fixed words
+            ["git", "-C", str(ROOT), *words],  # noqa: S607  # git from PATH, where the owner has one
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def source_commit() -> str:
+    """Return this tree's commit as the build records it (git describe), "unknown" without Git."""
+    return _git("describe", "--always", "--dirty", "--abbrev=12") or "unknown"
+
+
+def source_date_epoch() -> int:
+    """Return the build's time: this commit's (as the container build takes it), else pyproject.toml's."""
+    found = _git("log", "-1", "--format=%ct")
+    return int(found) if found.isdigit() else int((ROOT / "pyproject.toml").stat().st_mtime)
+
+
 #: The share of an install's progress its partition writes stand for; the short steps after them have the rest.
 INSTALL_WRITES = 0.9
 #: Seconds without an answer after a reboot before the Windows NCM initialization (the maintenance
@@ -271,8 +314,23 @@ class Dev(Headset):
             raise RuntimeError(msg)
         # recovery is a chained AVB partition: the whole partition, with stock's vbmeta behind it.
         recovery = avb.with_stock_vbmeta(stock, recovery)
+        # The maintenance stage 1 runs on Valve's kernel, as the installed system does: the same
+        # kernel for the headset's build wherever it runs, the fan's MCU driver, Windows 11's own NCM
+        # driver. The stock kernel stays in dev-boot.img for the acceptance runner.
+        kernel = self.work.parent / "kernel"
+        if not (kernel / "Image.gz").exists():
+            msg = f"missing {kernel / 'Image.gz'}: run python -m overpressure kernel fetch"
+            raise ValueError(msg)
+        stock_path = ROOT / "cache" / "stock" / (self.stock_location().rsplit("/", 1)[-1] + ".recovery.img")
+        base = self.work / "dev-recovery-stock-kernel.img"
+        base.write_bytes(recovery)
+        try:
+            recovery = recovery_image.build(kernel, stock_path, base)
+        finally:
+            base.unlink()
         (self.work / "dev-recovery.img").write_bytes(recovery)
         info["recovery_sha256"] = hashlib.sha256(recovery).hexdigest()
+        info["recovery_kernel"] = "valve"
         (self.work / "dev-image.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
         print(f"out/dev/dev-boot.img {info['boot_sha256']}")
         print(f"out/dev/dev-recovery.img {info['recovery_sha256']}")
@@ -433,11 +491,24 @@ class Dev(Headset):
             raise RuntimeError(msg)
         self.ssh("touch /run/pico4/test-authenticated", 10)
 
+    def stage1_ncm(self) -> Path | None:
+        """Return the Windows NCM initialization's Python when the maintenance stage 1 needs it, else None.
+
+        Only the stock kernel needs it (dev images before stage 1 moved to Valve's kernel); Valve's
+        kernel takes Windows 11's NCM driver as it is, and the initialization disturbs a working link.
+        """
+        record = self.work / "dev-image.json"
+        try:
+            valve = json.loads(record.read_text(encoding="utf-8")).get("recovery_kernel") == "valve"
+        except (OSError, ValueError):
+            valve = False
+        return None if valve else self.s.ncm()
+
     def connect(self) -> str:
         """Log in to the running stage 1; return the partition it started from, checked by readback."""
         # Stage 1 makes new host keys on every boot.
         (self.work / "known_hosts").unlink(missing_ok=True)
-        ncm = self.s.ncm()
+        ncm = self.stage1_ncm()
         if ncm:
             self.until("NCM gadget", 120, lambda: self.run(windows_ncm.command(ncm, self.s.fastboot_serial), 30))
         self.until("stage-1 SSH", 120, self.authenticate)
@@ -490,15 +561,25 @@ class Dev(Headset):
         compressed = image.with_name(image.name + ".zst")
         return (compressed if compressed.is_file() else image).stat().st_size
 
-    def write_partition(self, name: str, image: Path, timeout: int, meter: progress.Meter | None = None) -> None:
+    def write_partition(
+        self,
+        name: str,
+        image: Path,
+        timeout: int,
+        meter: progress.Meter | None = None,
+        *,
+        from_data: dict | None = None,
+    ) -> None:
         """Stream an image to boot or super through the maintenance stage 1 (pico4-install).
 
         The backup's partition size bounds it; pico4-install checks the stream and reads it back.
         @p meter counts the bytes sent (an image the partition holds already counts at once);
-        without one, the image's own meter prints the progress lines.
+        without one, the image's own meter prints the progress lines. @p from_data: the image is
+        on the data partition (its record, with its path there: build_on_headset), and stage 1
+        writes it from there.
         """
         size = qualcomm.partition_size(self.s.path("backup"), name)
-        recorded = self.image_record(image)
+        recorded = from_data or self.image_record(image)
         if recorded is None:
             digest = backups.digest(image)
             with image.open("rb") as head:
@@ -515,9 +596,20 @@ class Dev(Headset):
             held = self.ssh(f"pico4-install hash {name} {digest['size']}", timeout).split()
             if held[:1] == [digest["sha256"]]:
                 print(f"{name} holds {image.name} already", flush=True)
-                if meter is not None:
+                if meter is not None and from_data is None:
                     meter.add(self.stream_size(image))
                 return
+        if from_data is not None:
+            print(f"writing {from_data['path']} from the data partition to {name}", flush=True)
+            output = self.ssh(
+                f"pico4-install write {name} --size {size} --bytes {digest['size']} --sha256 {digest['sha256']}"
+                f" --zstd --from-data {from_data['path']}",
+                timeout,
+            )
+            if output.splitlines()[-1:] != [f"written {name} {digest['sha256']}"]:
+                msg = f"the headset did not confirm {name}"
+                raise RuntimeError(msg)
+            return
         # The system image goes compressed when its build made a copy of exactly this image.
         compressed = image.with_name(image.name + ".zst")
         record = image.with_name(image.name + ".zst.sha256")
@@ -538,21 +630,96 @@ class Dev(Headset):
             msg = f"the headset did not confirm {name}"
             raise RuntimeError(msg)
 
-    def install(self, system: Path = SYSTEM, *, format_data: bool = False, boot: Path | None = None) -> None:
+    def build_tree(self, target: IO[bytes]) -> None:
+        """Write what the headset's build reads of this repository (BUILD_TREE) as a gzip-compressed tar."""
+        with tarfile.open(fileobj=target, mode="w:gz") as tar:
+            for name in BUILD_TREE:
+                tar.add(ROOT / name, arcname=name, filter=lambda i: None if "__pycache__" in i.name else i)
+
+    def build_on_headset(self, *, stage1: bool) -> dict:
+        """Build the system on the headset itself (docs/install.md#built-on-the-headset).
+
+        This repository's build part goes over SSH, and scripts/build-on-headset.sh runs it on the
+        data partition, in a build host of Holo's rootfs: from the installed system (its session
+        stops for it), or with @p stage1 from the maintenance stage 1 through pico4-install build
+        (the first install). Everything it downloads comes through this PC's connection, a SOCKS
+        proxy on the headset's loopback (ssh -R). Returns the system image's record, with the
+        image's path on the data partition, for the maintenance stage 1's write.
+        """
+        epoch, commit = source_date_epoch(), source_commit()
+        proxy = f"socks5h://127.0.0.1:{HEADSET_PROXY_PORT}"
+        if stage1:
+            size = qualcomm.partition_size(self.s.path("backup"), "userdata")
+            command = (
+                f"pico4-install build --size {size} --epoch {epoch} --commit {commit} --proxy {proxy}"
+                f" --now {int(time.time())}"
+            )
+            read = f"pico4-install build-file --size {size} "
+        else:
+            base = f"/data/{HEADSET_BUILD}"
+            command = (
+                f"systemctl stop pico4-session.service; rm -rf {base}/src && mkdir -p {base}/src && "
+                f"tar -xzf - -C {base}/src && SOURCE_DATE_EPOCH={epoch} OVERPRESSURE_COMMIT={commit} "
+                f"ALL_PROXY={proxy} sh {base}/src/devices/phoenix/scripts/build-on-headset.sh {base}"
+            )
+            read = f"cat {base}/"
+        argv = self.ssh_argv(command)
+        argv[-2:-2] = ["-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{HEADSET_PROXY_PORT}"]
+        print("building the system on the headset", flush=True)
+        started = time.monotonic()
+        with tempfile.TemporaryFile() as tree:
+            self.build_tree(tree)
+            tree.seek(0)
+            process.run_streamed(argv, HEADSET_BUILD_SECONDS, lambda line: print(line, flush=True), stdin=tree)
+        print(f"built on the headset in {time.monotonic() - started:.0f} s", flush=True)
+        record = json.loads(self.ssh(f"{read}out/pico4-system.img.json", 30))
+        record["path"] = f"{HEADSET_BUILD}/out/pico4-system.img.zst"
+        # dev installed and dev check find the build by its manifest (out/*/pico4-userspace.manifest.json).
+        manifest = ROOT / "out" / "headset" / "pico4-userspace.manifest.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(self.ssh(f"{read}out/pico4-userspace.manifest.json", 30) + "\n", encoding="utf-8")
+        return record
+
+    def install_inputs(self, system: Path, boot: Path, *, on_headset: bool, format_data: bool) -> dict | None:
+        """Check the install's images; with @p on_headset, the record of what the installed system built.
+
+        The installed system builds when it runs and its data stays (its fan runs there); otherwise
+        the maintenance stage 1 builds after formatting (install), and this returns None.
+        """
+        needed = [(boot, "python -m overpressure dev boot-image")]
+        if not on_headset:
+            needed.append((system, "scripts/build-system-image.sh"))
+        for path, hint in needed:
+            if not self.image_there(path):
+                msg = f"missing {path}: run {hint}"
+                raise ValueError(msg)
+        if not on_headset or format_data or not self.installed_running():
+            return None
+        return self.build_on_headset(stage1=False)
+
+    def format_userdata(self, *, always: bool) -> None:
+        """Format userdata from the maintenance stage 1 when it holds no data yet, or @p always."""
+        status = self.ssh("pico4-install status", 30)
+        if always or "data: pico4-data" not in status.splitlines():
+            size = qualcomm.partition_size(self.s.path("backup"), "userdata")
+            progress.say("formatting userdata", INSTALL_WRITES)
+            if self.ssh(f"pico4-install format-data --size {size}", 900).splitlines()[-1:] != ["formatted userdata"]:
+                msg = "formatting userdata failed"
+                raise RuntimeError(msg)
+
+    def install(
+        self, system: Path = SYSTEM, *, format_data: bool = False, boot: Path | None = None, on_headset: bool = False
+    ) -> None:
         """Install from the maintenance stage 1, then start the installed system.
 
         The boot image with Valve's kernel goes to boot, the system image to super, and userdata is
         formatted if it holds no data yet (or when asked); the enrolled keys and the install ID go
-        onto it. @p boot replaces the boot image.
+        onto it. @p boot replaces the boot image. @p on_headset: the headset builds the system
+        image itself (build_on_headset), its installed system when it runs and keeps its data, else
+        the maintenance stage 1 after formatting, and stage 1 writes it from the data partition.
         """
         boot = boot or self.work.parent / "kernel/valve-boot.img"
-        for path, hint in (
-            (boot, "python -m overpressure dev boot-image"),
-            (system, "scripts/build-system-image.sh"),
-        ):
-            if not self.image_there(path):
-                msg = f"missing {path}: run {hint}"
-                raise ValueError(msg)
+        built = self.install_inputs(system, boot, on_headset=on_headset, format_data=format_data)
         # A repeat after an install that got as far as starting the system: back into stage 1 first.
         if self.in_fastboot():
             print("the headset is in fastboot: into the maintenance system to repeat the install", flush=True)
@@ -576,8 +743,13 @@ class Dev(Headset):
             + "\n",
             encoding="utf-8",
         )
+        if on_headset and built is None:
+            # The build lives on the data partition: formatted first, then built there by stage 1.
+            self.format_userdata(always=format_data)
+            format_data = False
+            built = self.build_on_headset(stage1=True)
         # The writes are most of the install: up to WRITES of its progress, the short steps after them the rest.
-        sizes = {"boot": self.stream_size(boot), "super": self.stream_size(system)}
+        sizes = {"boot": self.stream_size(boot), "super": 0 if built else self.stream_size(system)}
         current = {"name": "boot"}
         meter = progress.Meter(
             sum(sizes.values()),
@@ -586,14 +758,8 @@ class Dev(Headset):
         )
         for name, image, timeout in (("boot", boot, 120), ("super", system, 1800)):
             current["name"] = name
-            self.write_partition(name, image, timeout, meter)
-        status = self.ssh("pico4-install status", 30)
-        if format_data or "data: pico4-data" not in status.splitlines():
-            size = qualcomm.partition_size(self.s.path("backup"), "userdata")
-            progress.say("formatting userdata", INSTALL_WRITES)
-            if self.ssh(f"pico4-install format-data --size {size}", 900).splitlines()[-1:] != ["formatted userdata"]:
-                msg = "formatting userdata failed"
-                raise RuntimeError(msg)
+            self.write_partition(name, image, timeout, meter, from_data=built if name == "super" else None)
+        self.format_userdata(always=format_data)
         progress.say("adding this computer's key", INSTALL_WRITES + 0.03)
         self.write_keys()
         progress.say("PICO OS's files from the backup", INSTALL_WRITES + 0.04)
@@ -662,7 +828,10 @@ class Dev(Headset):
         # (out/userspace, or another build's output folder), by its manifest: the archive itself goes
         # once the system image is built.
         archive = self.ssh("cat /usr/share/pico4/userspace-archive.sha256", 10).strip()
-        local = [ARCHIVE, *sorted(p for p in (ROOT / "out").glob("*/pico4-userspace.tar.zst") if p != ARCHIVE)]
+        local = [
+            ARCHIVE,
+            *sorted(m.with_name(ARCHIVE.name) for m in (ROOT / "out").glob("*/pico4-userspace.manifest.json")),
+        ]
         found = next((p for p in local if hw.manifest_archive_sha256(p) == archive), None)
         if found is not None:
             state = hw.userspace_state(found)
@@ -854,10 +1023,10 @@ class Dev(Headset):
 
         "maintenance" (stage 1 from recovery) or "installed" (the installed system's systemd), by
         PID 1 and the kernel command line. The installed system answers without the Windows NCM
-        initialization, which would disturb its link; the maintenance stage 1's stock kernel needs
-        it, so it is sent once when nothing answered for a while.
+        initialization, which would disturb its link; a maintenance stage 1 on the stock kernel needs
+        it (stage1_ncm), so it is sent once when nothing answered for a while.
         """
-        ncm = self.s.ncm()
+        ncm = self.stage1_ncm()
         started = self.clock.monotonic()
         initialized = [False]
 
@@ -984,6 +1153,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901  # one branch per 
     inst.add_argument("system", nargs="?", type=Path, default=SYSTEM)
     inst.add_argument("--format-data", action="store_true", help="format userdata even if it holds data")
     inst.add_argument("--boot", type=Path, help="the boot image to install instead of out/kernel/valve-boot.img")
+    inst.add_argument(
+        "--on-headset", action="store_true", help="the headset builds the system image itself, no build here"
+    )
     restore = sub.add_parser("restore", help="back to PICO OS from the backup: system, boot, recovery, fresh data")
     restore.add_argument(
         "--installed", action="store_true", help="the system is installed, also where this computer did not record it"
@@ -1003,7 +1175,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901  # one branch per 
         elif args.command == "check":
             return dev.check()
         elif args.command == "install":
-            dev.install(args.system, format_data=args.format_data, boot=args.boot)
+            dev.install(args.system, format_data=args.format_data, boot=args.boot, on_headset=args.on_headset)
         elif args.command == "boot-image":
             print(dev.boot_image())
         elif args.command == "release-check":

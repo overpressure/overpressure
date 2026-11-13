@@ -38,8 +38,9 @@ HEADSET = "working on the headset"
 EDL = "EDL"
 #: The fixes' common beginning: the pinned host tools.
 FETCH = "python -m overpressure tools"
-#: What the build container's checks are needed for.
-BUILDS = "the builds (build container)"
+#: What the build container's checks are needed for: builds on this computer, the owner's choice (a headset
+#: may build its own system, as the PICO 4 does), so they are never missing.
+BUILDS = "builds on this computer (build container)"
 
 
 @dataclass(frozen=True)
@@ -406,18 +407,18 @@ BINFMT_PROBE = (
 
 
 def container_checks(host: Host) -> list[Check]:
-    """Check the build container: Docker or Podman answers, its image is built, the aarch64 handler.
+    """Check the build container, for builds on this computer: Docker or Podman answers, its image, the handler.
 
     Only whether an engine answers counts: how it runs its containers (a VM, WSL, a service,
     rootless) is the owner's choice and none of the builds' business.
     """
     tool = host.engine
     if host.which(tool) is None:
-        return [Check(ENGINE, BUILDS, MISSING, "neither docker nor podman is on PATH", ENGINE_FIX)]
+        return [Check(ENGINE, BUILDS, OPTIONAL, "neither docker nor podman is on PATH", ENGINE_FIX)]
     code, out = host.run([tool, "info"], 30)
     if code != 0:
         last = (out.splitlines() or ["no answer"])[-1][:120]
-        return [Check(ENGINE, BUILDS, MISSING, f"{Path(tool).name} does not answer: {last}", ENGINE_FIX)]
+        return [Check(ENGINE, BUILDS, OPTIONAL, f"{Path(tool).name} does not answer: {last}", ENGINE_FIX)]
     checks = [Check(ENGINE, BUILDS, OK, Path(tool).name)]
     memory = engine_memory(out)
     if memory is not None and memory < ENGINE_MEMORY:
@@ -431,8 +432,8 @@ def container_checks(host: Host) -> list[Check]:
             )
         )
     if not host.container_ready():
-        fix = "python -m overpressure container pull (the installer pulls it itself)"
-        checks.append(Check("build container image", BUILDS, MISSING, f"{linux.image()} not pulled", fix))
+        fix = "python -m overpressure container pull"
+        checks.append(Check("build container image", BUILDS, OPTIONAL, f"{linux.image()} not pulled", fix))
         return checks
     checks.append(Check("build container image", BUILDS, OK, linux.image()))
     state = host.linux(BINFMT_PROBE)
