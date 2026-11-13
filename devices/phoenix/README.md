@@ -43,7 +43,7 @@ do. The install's five stages:
 | 2 Build the system | stock firmware and assets, the maintenance system, the SteamOS-compatible system, Valve's kernel; hours; also makes this computer's SSH key | not needed |
 | 3 Connect your headset | developer mode and USB debugging on, plugged in; the installer checks the headset, firmware and panel before anything is written | in PICO OS |
 | 4 Prepare your headset | one consent, a verified backup to this computer (**your way back: export it**), the engineering bootloader, the unlock, the maintenance system | EDL, fastboot |
-| 5 Install | Wi-Fi if you like, the system, the acceptance checks; then "Unplug it and put it on" | on the cable |
+| 5 Install | Wi-Fi if you like, the system, the acceptance checks; then whether to remove the build files from this computer; then "Unplug it and put it on" | on the cable |
 
 **Upgrade** builds this version and installs it over yours, keeping your data. **Restore to stock** brings back
 PICO OS and its bootloader from the backup, with a stop for PICO OS's setup and USB debugging in between (wear the

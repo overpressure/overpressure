@@ -5,17 +5,21 @@
 # and file capabilities): the window's "System image for super" step, or python -m overpressure
 # container run -- bash devices/phoenix/scripts/build-system-image.sh ...:
 #
-#   scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img
+#   scripts/build-system-image.sh out/userspace/pico4-userspace.tar.zst out/userspace/pico4-system.img [--keep]
 #
 # ext4 without a journal (it is never written on the headset) and without the features the stock
 # kernel, under the maintenance stage 1, cannot mount. /data is the data partition's mount point; the image names the
-# archive it came from in /usr/share/pico4. IMAGE.zst beside it is what dev install sends, IMAGE.zst.sha256 the hash
-# of the image it holds.
+# archive it came from in /usr/share/pico4. What is kept is what dev install sends: IMAGE.zst, the image
+# compressed, IMAGE.zst.sha256 the hash of the image it holds and IMAGE.json the image's size, hash and its first
+# MiB's hash (dev install's check of what super holds). The image itself and the archive go, unless --keep: the
+# install needs neither, and an upgrade builds both again.
 set -euo pipefail
 
 SUPER_MIB=8192 # the super partition
 archive=${1:?archive}
 image=${2:?image}
+keep=0
+[ "${3:-}" = --keep ] && keep=1
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 [ -s "$archive" ] || { echo "no archive $archive" >&2; exit 1; }
 
@@ -60,4 +64,11 @@ image_sha=$(sha256sum "$image" | cut -d' ' -f1)
 rm -f "$image.zst" "$image.zst.sha256"
 zstd -q -T0 -3 "$image" -o "$image.zst"
 echo "$image_sha" > "$image.zst.sha256"
+prefix_sha=$(head -c 1048576 "$image" | sha256sum | cut -d' ' -f1)
+printf '{"image": "%s", "bytes": %s, "sha256": "%s", "prefix_bytes": 1048576, "prefix_sha256": "%s", "archive_sha256": "%s"}\n' \
+	"$(basename "$image")" "$(stat -c %s "$image")" "$image_sha" "$prefix_sha" "$sha" > "$image.json"
 echo "$image: ${size_mib} MiB, $image_sha, from archive $sha; $(( $(stat -c %s "$image.zst") >> 20 )) MiB compressed"
+if [ "$keep" = 0 ]; then
+	rm -f "$image" "$archive"
+	echo "kept $image.zst and its record; the image and the archive are removed (--keep keeps them)"
+fi

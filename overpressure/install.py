@@ -554,6 +554,25 @@ class Context:
                 return values
             self.note("Please fill in: " + ", ".join(missing), "warning")
 
+    def choose(self, ask: Ask) -> bool:
+        """Ask a yes-or-no question whose no goes on (@p ask's decline); return True for its accept.
+
+        No answer at all (the window closed, no one to ask) stops the run, as with ask().
+        """
+        if self.stopping:
+            raise Stopped
+        event = ask.event()
+        event["title"], event["text"] = self.engine.redact(event["title"]), self.engine.redact(event["text"])
+        self.engine.emit(event)
+        answer = self.engine.ui.answer(ask)
+        if answer is None:
+            self.engine.write_log(self.task, f"ask {ask.id}: no answer")
+            msg = f"{ask.title}: no answer"
+            raise Stopped(msg)
+        chosen = answer.get("accepted") is True
+        self.engine.write_log(self.task, f"ask {ask.id}: {'accepted' if chosen else 'declined'}")
+        return chosen
+
     def run(
         self,
         argv: Sequence[str | os.PathLike[str]],

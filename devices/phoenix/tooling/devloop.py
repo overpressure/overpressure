@@ -464,6 +464,27 @@ class Dev(Headset):
             print("warning: the battery's charge is unknown; keep the headset connected", flush=True)
 
     @staticmethod
+    def image_record(image: Path) -> dict | None:
+        """Return what build-system-image.sh recorded of @p image (IMAGE.json), when only its compressed copy is kept.
+
+        Its size, hash and first MiB's hash: what write_partition needs of the image itself.
+        """
+        record, compressed = image.with_name(image.name + ".json"), image.with_name(image.name + ".zst")
+        if image.is_file() or not (record.is_file() and compressed.is_file()):
+            return None
+        try:
+            data = json.loads(record.read_text(encoding="utf-8"))
+            return {k: data[k] for k in ("bytes", "sha256", "prefix_bytes", "prefix_sha256")}
+        except (OSError, ValueError, KeyError) as exc:
+            msg = f"{record} is not build-system-image.sh's record: build the system image again"
+            raise ValueError(msg) from exc
+
+    @classmethod
+    def image_there(cls, image: Path) -> bool:
+        """Tell whether @p image can be written: the image itself, or its compressed copy and record."""
+        return image.is_file() or cls.image_record(image) is not None
+
+    @staticmethod
     def stream_size(image: Path) -> int:
         """Return the bytes write_partition sends for @p image: its compressed copy's, when the build made one."""
         compressed = image.with_name(image.name + ".zst")
@@ -477,14 +498,20 @@ class Dev(Headset):
         without one, the image's own meter prints the progress lines.
         """
         size = qualcomm.partition_size(self.s.path("backup"), name)
-        digest = backups.digest(image)
+        recorded = self.image_record(image)
+        if recorded is None:
+            digest = backups.digest(image)
+            with image.open("rb") as head:
+                prefix = head.read(PREFIX_BYTES)
+            prefix_bytes, prefix_sha = len(prefix), hashlib.sha256(prefix).hexdigest()
+        else:
+            digest = {"size": recorded["bytes"], "sha256": recorded["sha256"]}
+            prefix_bytes, prefix_sha = recorded["prefix_bytes"], recorded["prefix_sha256"]
         # An update rewrites only what changed: the partition may hold the image already. Its first
         # MiB tells a different image at once (the file system's superblock is in it); only a
         # match is worth hashing the whole image on the headset.
-        with image.open("rb") as head:
-            prefix = head.read(PREFIX_BYTES)
-        quick = self.ssh(f"pico4-install hash {name} {len(prefix)}", 30).split()
-        if quick[:1] == [hashlib.sha256(prefix).hexdigest()]:
+        quick = self.ssh(f"pico4-install hash {name} {prefix_bytes}", 30).split()
+        if quick[:1] == [prefix_sha]:
             held = self.ssh(f"pico4-install hash {name} {digest['size']}", timeout).split()
             if held[:1] == [digest["sha256"]]:
                 print(f"{name} holds {image.name} already", flush=True)
@@ -523,7 +550,7 @@ class Dev(Headset):
             (boot, "python -m overpressure dev boot-image"),
             (system, "scripts/build-system-image.sh"),
         ):
-            if not path.exists():
+            if not self.image_there(path):
                 msg = f"missing {path}: run {hint}"
                 raise ValueError(msg)
         # A repeat after an install that got as far as starting the system: back into stage 1 first.
@@ -631,11 +658,12 @@ class Dev(Headset):
                 raise RuntimeError(msg)
 
         self.until("installed system", 240, installed)
-        # dev check's state: the archive the system image was built from, if it is a local one
-        # (out/userspace, or another build's output folder).
+        # dev check's state: the archive the system image was built from, if a local build made it
+        # (out/userspace, or another build's output folder), by its manifest: the archive itself goes
+        # once the system image is built.
         archive = self.ssh("cat /usr/share/pico4/userspace-archive.sha256", 10).strip()
         local = [ARCHIVE, *sorted(p for p in (ROOT / "out").glob("*/pico4-userspace.tar.zst") if p != ARCHIVE)]
-        found = next((p for p in local if p.exists() and backups.digest(p)["sha256"] == archive), None)
+        found = next((p for p in local if hw.manifest_archive_sha256(p) == archive), None)
         if found is not None:
             state = hw.userspace_state(found)
             state["installed"] = True

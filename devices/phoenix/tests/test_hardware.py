@@ -733,6 +733,10 @@ class UserspaceStateTests(unittest.TestCase):
                 manifest.write_text(json.dumps({"archive": {"sha256": sha}, "packages": {}, **extra}))
                 state = hw.userspace_state(archive)
                 self.assertEqual((state["gpu_firmware"], state["sensor_data"]), (expected, expected))
+            # The archive goes once the system image is built; its manifest tells what the headset runs.
+            archive.unlink()
+            self.assertEqual(hw.userspace_state(archive)["sha256"], sha)
+            self.assertEqual(hw.manifest_archive_sha256(archive), sha)
 
 
 if __name__ == "__main__":

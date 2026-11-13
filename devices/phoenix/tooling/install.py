@@ -43,7 +43,7 @@ from overpressure import REPO, android, doctor, linux, qualcomm, runner, tools, 
 from overpressure.install import Ask, Context, Failed, Field, Stage, Task
 from overpressure.process import until
 
-from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, device, devloop, localconfig, unlockfiles
+from . import ADB_MODE, FASTBOOT_MODE, USB_MODES, USERSPACE_BUILD, device, devloop, localconfig, unlockfiles
 from . import doctor as checks
 from . import kernel as pinned_kernel
 
@@ -179,6 +179,19 @@ PICO_OS_SETUP = Ask(
     "controller. Then turn on developer mode and USB debugging again (Settings, General, About: tap the software "
     "version seven times; then Developer, USB debugging) and accept the USB debugging prompt.",
 )
+#: The build files the installer offers to remove, once the headset runs the checked system.
+FREE_SPACE = Ask(
+    "free-space",
+    "confirm",
+    "Free space on this computer?",
+    "The system runs on your headset. Its build files take {gib:.1f} GiB on this computer: the build folder "
+    "and the system image. An upgrade builds them again from the start, which takes longer (about 20 "
+    "minutes on a fast computer, more on a laptop). Your backup stays either way.",
+    accept="Remove them",
+    decline="Keep them",
+)
+#: Below this, the question is not worth asking.
+FREE_SPACE_MIN = 1 << 30
 RESTORED = (
     "Your headset runs PICO OS again, with the system and the bootloader from your backup. Its bootloader stays "
     "unlocked, as the install left it. Keep your backup: the installer can install the system again from here."
@@ -360,6 +373,20 @@ class Plan:
             raise Failed(computer_problems(problems), NOTHING_CHANGED + " " + AGAIN)
 
     # -- 2. the build ---------------------------------------------------------------------------
+    def system_built(self) -> bool:
+        """Tell whether the system image's compressed copy and record are there, from the build's archive.
+
+        build-system-image.sh keeps only those: the archive and the image itself go once it is built.
+        """
+        manifest = self.out("userspace", "pico4-userspace.manifest.json")
+        record = self.out("userspace", "pico4-system.img.json")
+        try:
+            archive = json.loads(manifest.read_text(encoding="utf-8"))["archive"]["sha256"]
+            built = json.loads(record.read_text(encoding="utf-8"))["archive_sha256"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        return archive == built and self.out("userspace", "pico4-system.img.zst").is_file()
+
     def build_done(self, key: str) -> Callable[[Context], bool]:
         """Return the done check of the build step @p key: its outputs are there, not older than their inputs."""
         archive = self.out("userspace", "pico4-userspace.tar.zst")
@@ -369,8 +396,8 @@ class Plan:
 
         outputs: dict[str, Callable[[Context], bool]] = {
             "stage1": lambda ctx: self.stage1(ctx).is_file(),
-            "userspace": lambda _ctx: archive.is_file(),
-            "system": lambda _ctx: self.newer(system, archive),
+            "userspace": lambda _ctx: archive.is_file() or self.system_built(),
+            "system": lambda _ctx: self.system_built() if not archive.is_file() else self.newer(system, archive),
             "dev-image": lambda ctx: (
                 self.newer(dev / "dev-image.json", self.stage1(ctx)) and (dev / "dev-recovery.img").is_file()
             ),
@@ -682,6 +709,41 @@ class Plan:
         ctx.run(dev.ssh_argv(WIFI_COMMAND), stdin=keyfile(ssid, password, str(uuid.uuid4())))
         ctx.note("The headset joins your Wi-Fi network when it is in range.")
 
+    def build_files(self) -> list[Path]:
+        """Return what the builds leave in out/userspace that an installed headset no longer needs.
+
+        The manifest stays: it tells the next dev check what the headset runs.
+        """
+        folder = self.out("userspace")
+        return sorted(p for p in folder.glob("pico4-*") if p.is_file() and p.name != "pico4-userspace.manifest.json")
+
+    def free_space(self, ctx: Context) -> None:
+        """Offer to remove the build files once the headset runs the checked system (the build folder, the image)."""
+        build_root = USERSPACE_BUILD
+        output = ctx.output(self.command("container", "run", "--", "du", "-sb", build_root), 300, check=False)
+        words = output.split()
+        held = int(words[-2]) if len(words) >= 2 and words[-2].isdigit() else 0  # noqa: PLR2004  # du's "BYTES PATH"
+        files = self.build_files()
+        total = held + sum(p.stat().st_size for p in files)
+        if total < FREE_SPACE_MIN:
+            return
+        ask = Ask(
+            FREE_SPACE.id,
+            FREE_SPACE.kind,
+            FREE_SPACE.title,
+            FREE_SPACE.text.format(gib=total / (1 << 30)),
+            accept=FREE_SPACE.accept,
+            decline=FREE_SPACE.decline,
+        )
+        if not ctx.choose(ask):
+            ctx.note("The build files stay: an upgrade reuses them.")
+            return
+        if held:
+            ctx.run(self.command("container", "run", "--", "rm", "-rf", "--one-file-system", build_root))
+        for path in files:
+            path.unlink(missing_ok=True)
+        ctx.note(f"Removed {total / (1 << 30):.1f} GiB of build files. Your backup stays.")
+
     # -- the way back -------------------------------------------------------------------------------
     def check_backup(self, ctx: Context) -> None:
         """Verify the backup .env names, file by file, and that it is the saved identity's headset."""
@@ -849,6 +911,9 @@ class Plan:
                     ),
                     self.step_task("installed", "Start the installed system", "about 2 min", where=installed_where),
                     self.step_task("check", "Acceptance checks", "about 3 min", where=installed_where),
+                    Task(
+                        "free-space", "Free space on this computer", self.free_space, "a minute", where=installed_where
+                    ),
                     Task("ready", "Unplug it and put it on", lambda ctx: ctx.note(UPGRADED), ""),
                 ),
             ),
@@ -1016,6 +1081,9 @@ class Plan:
                         where=installed_where,
                     ),
                     self.step_task("check", "Acceptance checks", "about 3 min", where=installed_where),
+                    Task(
+                        "free-space", "Free space on this computer", self.free_space, "a minute", where=installed_where
+                    ),
                     Task("ready", "Unplug it and put it on", lambda ctx: ctx.note(READY), ""),
                 ),
             ),

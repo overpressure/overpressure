@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
-from devices.phoenix.tooling import HEADSET, devloop, localconfig
+from devices.phoenix.tooling import HEADSET, USERSPACE_BUILD, devloop, localconfig
 from devices.phoenix.tooling import install as plan
 from overpressure import doctor, qualcomm, tools
 from overpressure.doctor import Check
@@ -199,7 +199,7 @@ class PlanTests(unittest.TestCase):
                 ["stage1", "container", "userspace", "system", "dev-image", "kernel", "boot-image"],
                 ["find", "identity", "panel"],
                 ["consent", "backup", "stage-abl", "unlock", "flash", "maintenance"],
-                ["wifi", "install", "installed", "wifi-profile", "check", "ready"],
+                ["wifi", "install", "installed", "wifi-profile", "check", "free-space", "ready"],
             ],
         )
         writes = [t.id for s in stages for t in s.tasks if t.writes]
@@ -559,6 +559,69 @@ class PlanTests(unittest.TestCase):
         self.assertNotIn(PASSWORD, self.env.read_text(encoding="utf-8"))
         self.assertIn(plan.READY, [e["text"] for e in ui.events if e["event"] == "note"])
 
+    def free_space(self, *, answer: bool, held: int = 3 << 30) -> Recorder:
+        """Run the free-space task alone, the build folder holding @p held bytes and the owner answering @p answer."""
+        original = self.capture
+
+        def capture(argv: list[str], timeout: float) -> tuple[int, str]:
+            if "du" in argv:
+                return 0, f"{held}\t{argv[-1]}\n"
+            return original(argv, timeout)
+
+        stage = Stage("install", "Install", "", (Task("free-space", "Free space", self.plan.free_space),))
+        ui = Recorder({"free-space": {"answer": "free-space", "accepted": answer, "values": {}}})
+        engine = Engine(
+            HEADSET.info,
+            [stage],
+            ui,
+            root=self.root / "out" / "install",
+            env=self.env,
+            spawn=self.spawn,
+            capture=capture,
+            clock=FakeClock(),
+        )
+        engine.run()
+        return ui
+
+    def userspace_outputs(self) -> Path:
+        folder = self.root / "out" / "userspace"
+        folder.mkdir(parents=True)
+        for name in ("pico4-system.img.zst", "pico4-system.img.json", "pico4-userspace.manifest.json"):
+            (folder / name).write_text("x")
+        return folder
+
+    def test_the_build_files_go_only_when_the_owner_says_so(self):
+        folder = self.userspace_outputs()
+        ui = self.free_space(answer=False)
+        self.assertEqual(ui.finished()["status"], "done")  # a no goes on
+        self.assertTrue((folder / "pico4-system.img.zst").exists())
+        self.assertFalse([argv for argv, _, _ in self.spawned if "rm" in argv])
+        ask = next(e for e in ui.events if e["event"] == "ask")
+        self.assertIn("3.0 GiB", ask["text"])
+        (self.root / "out" / "install" / "phoenix" / "state.json").unlink()  # the run again, afresh
+        ui = self.free_space(answer=True)
+        self.assertEqual(ui.finished()["status"], "done")
+        removed = next(argv for argv, _, _ in self.spawned if "rm" in argv)
+        self.assertEqual(removed[-1], USERSPACE_BUILD)
+        self.assertEqual([p.name for p in folder.iterdir()], ["pico4-userspace.manifest.json"])  # what dev check reads
+
+    def test_little_to_free_is_not_asked_about(self):
+        self.userspace_outputs()
+        ui = self.free_space(answer=True, held=0)
+        self.assertFalse([e for e in ui.events if e["event"] == "ask"])
+        self.assertFalse([argv for argv, _, _ in self.spawned if "rm" in argv])
+
+    def test_the_system_counts_as_built_from_its_record_alone(self):
+        folder = self.root / "out" / "userspace"
+        folder.mkdir(parents=True)
+        (folder / "pico4-userspace.manifest.json").write_text(json.dumps({"archive": {"sha256": "a" * 64}}))
+        (folder / "pico4-system.img.zst").write_text("x")
+        done = {t.id: t.done for t in self.plan.stages()[1].tasks}
+        ctx = self.ctx()
+        for archive, expected in (("a" * 64, True), ("b" * 64, False)):
+            (folder / "pico4-system.img.json").write_text(json.dumps({"archive_sha256": archive}))
+            self.assertEqual((done["userspace"](ctx), done["system"](ctx)), (expected, expected))  # ty: ignore[call-non-callable]  # every build has one
+
     def test_no_wifi_writes_no_profile(self):
         ui = self.run_stages(("install",), {"wifi": {"answer": "wifi", "accepted": True, "values": {}}})
         self.assertEqual(ui.finished()["status"], "done")
@@ -694,7 +757,7 @@ class WorkflowTests(unittest.TestCase):
             {k for k, t in build.items() if t.done is None}, {"userspace", "system", "kernel", "boot-image"}
         )
         tasks = [t.id for t in stages["install"].tasks]
-        self.assertEqual(tasks, ["plug-in", "recovery", "install", "installed", "check", "ready"])
+        self.assertEqual(tasks, ["plug-in", "recovery", "install", "installed", "check", "free-space", "ready"])
         self.assertNotIn("--format-data", " ".join(self.plan.steps["install"].argv))
 
     def test_the_restore_asks_once_and_writes_only_after_the_backup_is_checked(self):

@@ -877,6 +877,18 @@ class DevTests(HeadsetFixture):
         seen.clear()
         dev.write_partition("super", image, 60)
         self.assertFalse(seen[-1].endswith(" --zstd"))
+        # Only the compressed copy kept (build-system-image.sh): its record stands in for the image.
+        (self.root / "big.img.zst.sha256").write_text(sha + "\n")
+        record = {"bytes": len(data), "sha256": sha, "prefix_bytes": devloop.PREFIX_BYTES, "prefix_sha256": "c" * 64}
+        (self.root / "big.img.json").write_text(json.dumps(record))
+        image.unlink()
+        self.assertTrue(dev.image_there(image))
+        answers[f"pico4-install hash super {devloop.PREFIX_BYTES}"] = "c" * 64  # the start matches the record's
+        answers[f"pico4-install hash super {len(data)}"] = "0" * 64
+        seen.clear()
+        dev.write_partition("super", image, 60)
+        self.assertIn(f"pico4-install hash super {len(data)}", seen[1])
+        self.assertTrue(seen[-1].endswith(f"--bytes {len(data)} --sha256 {sha} --zstd"))
 
     def test_writes_wait_for_a_battery_that_lasts(self):
         for reading, refused in (

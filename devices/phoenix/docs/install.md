@@ -31,9 +31,11 @@ Every other partition stays read-only; the calibration and firmware the system n
   build container: no journal (never written on the headset), without `orphan_file` and `metadata_csum_seed`
   (the stock kernel under the maintenance stage 1 cannot mount them), file capabilities kept (gamescope's
   `cap_sys_nice`). Its size is the content plus 10 % and 128 MiB. It names its archive in
-  `/usr/share/pico4/system-image`. Beside it: `pico4-system.img.zst` (zstd level 3, about 38 % of the image)
-  and the image's SHA-256 in `pico4-system.img.zst.sha256`; `dev install` sends the compressed copy when that
-  hash is the image's.
+  `/usr/share/pico4/system-image`. What stays is what `dev install` sends: `pico4-system.img.zst` (zstd level 3,
+  about 38 % of the image), the image's SHA-256 in `pico4-system.img.zst.sha256` and `pico4-system.img.json` (the
+  image's size, hash and its first MiB's hash, for the check of what `super` holds). The image itself and the
+  archive go (`--keep` keeps them): the install needs neither, `dev check` reads the build's manifest, and an
+  upgrade builds both again.
 - **Data.** preinit mounts `userdata` at `/data` and lays the changing parts onto the read-only image: `/etc`
   as an overlay (upper: `/data/etc/upper`, without the inodes index), `/var`, `/home` and `/root` as binds of
   `/data/var`, `/data/home` and `/data/root`, copied from the image on the first boot. SteamOS's offload units
@@ -246,7 +248,7 @@ document and of [device-preparation.md](device-preparation.md):
 | Build the system | each skipped while its output is there and not older than its input: assets, stage-1 image, the build environment (the container image), userspace archive, system image, dev image, Valve's kernel, boot image | not needed |
 | Connect your headset | an action ask (developer mode, USB debugging, the cable, the prompt in the headset); exactly one `adb devices` entry in state `device`, written to `PICO4_ADB_SERIAL`; `device probe` unless `PICO4_IDENTITY` already holds this headset (another headset's record stops it: records are never overwritten); the firmware (`check_firmware`) and panel (`check_panel` on `/proc/cmdline` over adb). An unverified one ends the run | PICO OS |
 | Prepare your headset | one consent (it erases the headset; the backup is the way back); `adb reboot edl`, `edl-ng printgpt` for the LUNs (LUN 0 last) and the serial (`PICO4_EDL_SERIAL`), `device backup --execute` without userdata, `device verify-backup` (a new backup goes to `backup/stock-TIME`, written to `PICO4_BACKUP`; an unfinished one stays); `dev stage-abl`; `adb reboot bootloader`, exactly one fastboot device (`PICO4_FASTBOOT_SERIAL`), `device unlock --execute --accept-data-loss`; `dev flash`, `dev connect` | EDL, fastboot, maintenance stage 1 |
-| Install | a form for Wi-Fi (both fields optional, kept in memory only); `dev install`, `dev installed`; the Wi-Fi profile as a NetworkManager keyfile (WPA-PSK, or open) through SSH's stdin: `install -D -m 600 /dev/stdin /etc/NetworkManager/system-connections/overpressure-wifi.nmconnection && nmcli connection reload`, so neither name nor password is in a command line, a log or `.env`; `dev check`; then "Unplug it and put it on" | on the cable |
+| Install | a form for Wi-Fi (both fields optional, kept in memory only); `dev install`, `dev installed`; the Wi-Fi profile as a NetworkManager keyfile (WPA-PSK, or open) through SSH's stdin: `install -D -m 600 /dev/stdin /etc/NetworkManager/system-connections/overpressure-wifi.nmconnection && nmcli connection reload`, so neither name nor password is in a command line, a log or `.env`; `dev check`; then, when the build files take a gibibyte or more, a yes-or-no question whether to remove them (the build folder in the container's volume and `out/userspace` but its manifest: an upgrade then builds from scratch; a no goes on); then "Unplug it and put it on" | on the cable |
 
 After the backup the installer suggests exporting it. It goes from the unlock straight to fastboot and
 `dev flash`, without PICO OS's factory reset of
@@ -264,7 +266,7 @@ the others' recorded progress (the install starts afresh after a restore).
 | --- | --- | --- | --- |
 | Upgrade | Check this computer | `tools`, the doctor's checks | not needed |
 | Upgrade | Build the system | as the install's, but the userspace archive, system image, Valve's kernel and boot image are built every time (each build reuses what it can) | not needed |
-| Upgrade | Install the upgrade | an action ask (switched on, on the cable); `dev recovery`, `dev install` (data kept), `dev installed`, `dev check` | installed system, maintenance stage 1 |
+| Upgrade | Install the upgrade | an action ask (switched on, on the cable); `dev recovery`, `dev install` (data kept), `dev installed`, `dev check`, the same question about the build files | installed system, maintenance stage 1 |
 | Restore | Check the backup | `tools`; `device verify-backup` of `PICO4_BACKUP`, which must be the headset `PICO4_IDENTITY` describes | not needed |
 | Restore | Restore PICO OS | one consent (it erases the system and its data); an action ask; a headset that answers `adb devices` with its serial runs PICO OS already and is left alone, any other gets `dev restore --installed` ([back to stock](#back-to-stock)) | maintenance stage 1, fastboot |
 | Restore | Set PICO OS up | an action ask: PICO OS's first-time setup worn and on the cable (its first start may update the lens and fan MCU), developer mode and USB debugging; exactly one `adb devices` entry, written to `PICO4_ADB_SERIAL`; then the wait for PICO OS's MCU check ([cooling.md](cooling.md#an-mcu-that-answers-f1)) | PICO OS |

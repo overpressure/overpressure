@@ -122,11 +122,27 @@ def prepare_image(  # noqa: PLR0913  # the image's inputs; its deadlines keyword
     }
 
 
+def manifest_archive_sha256(archive: Path) -> str | None:
+    """Return the archive's SHA-256 its build's manifest records, None without a manifest."""
+    try:
+        manifest = json.loads(archive.with_name("pico4-userspace.manifest.json").read_text(encoding="utf-8"))
+        return str(manifest["archive"]["sha256"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def userspace_state(archive: Path) -> dict:
-    """Return the archive's identity and the features its manifest says it contains."""
+    """Return the archive's identity and the features its manifest says it contains.
+
+    The archive itself is checked against the manifest while it is there; build-system-image.sh
+    removes it once the system image is built, and the manifest stays.
+    """
     manifest = json.loads(archive.with_name("pico4-userspace.manifest.json").read_text(encoding="utf-8"))
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    require(manifest.get("archive", {}).get("sha256") == digest, "Userspace archive does not match its manifest")
+    digest = manifest.get("archive", {}).get("sha256")
+    if archive.is_file():
+        require(
+            hashlib.sha256(archive.read_bytes()).hexdigest() == digest, "Userspace archive does not match its manifest"
+        )
     packages = manifest.get("packages", {})
     # PICO OS's files are on the headset (docs/install.md#pico-oss-files): the image links to them. An image
     # from before carried them itself, or went without.
@@ -134,7 +150,7 @@ def userspace_state(archive: Path) -> dict:
     return {
         "archive": str(archive.resolve()),
         "sha256": digest,
-        "bytes": archive.stat().st_size,
+        "bytes": manifest.get("archive", {}).get("bytes"),
         "packages": len(packages),
         "systemd": packages.get("systemd"),
         "gpu_firmware": linked or bool(manifest.get("gpu_firmware")),
