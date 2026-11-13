@@ -186,14 +186,14 @@ stock() {
 	writable "$dev"
 	mount -t ext4 -o noatime "$dev" "$mnt" || { readonly_again "$dev"; die "mounting userdata failed"; }
 	{
-		rm -rf "$mnt/$STOCK_DIR.new" &&
+		rm -rf "${mnt:?}/$STOCK_DIR.new" &&
 			mkdir -p "$mnt/$STOCK_DIR.new" &&
 			tar -xzf "$archive" -C "$mnt/$STOCK_DIR.new" &&
 			(cd "$mnt/$STOCK_DIR.new" && sha256sum -c SHA256SUMS >/dev/null) &&
-			rm -rf "$mnt/$STOCK_DIR" &&
+			rm -rf "${mnt:?}/$STOCK_DIR" &&
 			mv "$mnt/$STOCK_DIR.new" "$mnt/$STOCK_DIR"
 	} || rc=1
-	[ $rc = 0 ] || rm -rf "$mnt/$STOCK_DIR.new"
+	[ $rc = 0 ] || rm -rf "${mnt:?}/$STOCK_DIR.new"
 	got=$(sha256 < "$mnt/$STOCK_DIR/manifest.json" 2>/dev/null)
 	umount "$mnt" || rc=1
 	sync
