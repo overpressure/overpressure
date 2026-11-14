@@ -25,7 +25,7 @@ SMALL_UP_TO = 48
 #: The light tile's renderings, for the headset page in the light appearance.
 APP_LIGHT = (64, 80, 96, 112, 128, 144, 160, 192)
 #: The mark's renderings by height (pixels); each is twice as wide as high.
-MARK = (18, 23, 27, 32, 36, 41, 45, 54)
+MARK = (24, 30, 36, 42, 48, 54, 60, 72)
 #: What Tk's iconphoto gets (the dock on macOS, the window lists on Linux).
 WINDOW_ICON = (16, 32, 48, 64, 128, 256)
 #: Windows shows a window under the program that runs it (python.exe) unless the process names its own app.

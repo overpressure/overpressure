@@ -145,6 +145,18 @@ class ModelTests(unittest.TestCase):
         t.seconds, t.estimate = None, ""
         self.assertEqual(installer.bar_state(t, 65), (None, "1:05"))
 
+    def test_the_whole_run_weighs_each_task_by_its_estimate(self):
+        m = installer.Model()
+        done = installer.Task("a", "A", seconds=30, status="done")
+        running = installer.Task("b", "B", seconds=60, status="running", started=0, fraction=0.5)
+        unestimated = installer.Task("c", "C")  # weighs installer.UNESTIMATED: 10 s
+        m.stages = [installer.Stage("s", "S", tasks=[done, running]), installer.Stage("t", "T", tasks=[unestimated])]
+        self.assertAlmostEqual(m.overall(0), (30 + 30) / 100)
+        self.assertEqual(m.stages_done(), 0)
+        running.status, unestimated.status = "done", "skipped"
+        self.assertEqual((m.overall(0), m.stages_done()), (1.0, 2))
+        self.assertEqual(installer.Model().overall(0), 0.0)
+
     def test_a_backup_job_reads_its_progress_lines(self):
         job = installer.BackupJob("phoenix", "export", "x.tar")
         job.started, job.begun = True, 0.0

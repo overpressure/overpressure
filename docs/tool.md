@@ -153,10 +153,12 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
 The view runs `python -m overpressure install --json` as a child, renders its [events](#events) and writes
 the answers to its stdin; it does nothing itself.
 
-- **Layout.** The stages down the left with their state; on the right the current stage, its tasks with
-  estimates and progress, and the engine's notes. The action bar holds *Show details* (the child programs'
-  output) and one main button: *Start*, *Continue* after a stop, *Retry* after a failure, *Stop* while it
-  runs.
+- **Layout.** Down the left, a ring with the share of the whole run done (each task weighed by its
+  estimate, a running one by its bar), the stages done in words, and the stages with their state; on the
+  right the current stage, its tasks with estimates and progress, and the engine's notes, in a column at most
+  760 points wide, centred. The action bar under it, in the same column, holds *Show details* (the child
+  programs' output, wrapped at the drawer's width) and one main button: *Start*, *Continue* after a stop,
+  *Retry* after a failure, *Stop* while it runs.
 - **Progress.** A running task has a bar and a status line under it. A task that reports its progress
   fills the bar ("45% · 2:10 · about 3 min left"); one that does not follows its estimate up to 90%, then
   the bar moves to and fro ("2:10 of about 20 min"); one without an estimate counts its time. The backup's
@@ -259,8 +261,8 @@ the plan). A headset without one has no installer (exit status 2). The engine is
   --workflow KEY` runs one. Before a run, `Headset.workflow_problem(key)` may refuse it (exit status 2).
 - **Order and resume.** Tasks run in order; the first failure ends the run. The state is
   `out/install/<codename>/state.json` for the install, `out/install/<codename>/<workflow>/state.json` for
-  another workflow (`{"schema": 1, "tasks": {ID: {"status": ..., "finished": UTC}}}`), the tasks' logs
-  beside it. A task done earlier is skipped unless its done check says its result is gone; a done check
+  another workflow (`{"schema": 1, "tasks": {ID: {"status": ..., "finished": UTC}}}`, and `"choices"`: what
+  a task recorded with `ctx.remember`, never a secret, such as a skipped ask), the tasks' logs beside it. A task done earlier is skipped unless its done check says its result is gone; a done check
   also skips a task whose output is already there (`skipped`). `--restart STAGE` forgets that stage and
   every later one. A finished workflow forgets the other workflows' state.
 - **Child programs** run from the repository root (Linux-root steps in the build container); their output,

@@ -161,7 +161,7 @@ class AdvancedView:
         self.run_button = kit.button(actions, "Run", self.press_run, kind=PRIMARY)
         self.run_button.pack(side="right")
         self.stop_button = kit.button(actions, "Stop", self.press_stop)
-        self.log_block = Code(kit, page, "Output", height=OUTPUT, wrap="none")
+        self.log_block = Code(kit, page, "Output", height=OUTPUT, wrap="word")
         self.log_block.frame.grid(row=5, column=0, sticky="nsew")
         self.log = self.log_block.box
         self.log.configure(text_color=TEXT_SECONDARY)

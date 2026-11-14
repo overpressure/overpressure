@@ -59,7 +59,10 @@ class Recorder:
         self.events.append(event)
 
     def answer(self, ask: plan.Ask) -> dict | None:
-        return self.answers.get(ask.id)
+        answer = self.answers.get(ask.id)
+        if isinstance(answer, list):  # one answer per ask, then none (declined)
+            return answer.pop(0) if answer else None
+        return answer
 
     def finished(self):
         return next(e for e in self.events if e["event"] == "finished")
@@ -203,13 +206,13 @@ class PlanTests(unittest.TestCase):
                 ["find", "identity", "panel"],
                 # The images take the backup's boot and recovery: after the backup, before the flash.
                 ["consent", "backup", "stage-abl", "unlock", *images, "flash", "maintenance"],
-                ["wifi", "install", "installed", "wifi-profile", "check", "ready"],
+                ["wifi", "ssh-key", "install", "installed", "wifi-profile", "check", "ready"],
             ],
         )
         writes = [t.id for s in stages for t in s.tasks if t.writes]
         self.assertEqual(writes, ["stage-abl", "unlock", "flash", "install", "wifi-profile"])
         self.assertTrue(all(t.done is not None for t in stages[2].tasks if t.id in images))
-        self.assertTrue(all(t.where for s in stages[1:] for t in s.tasks if t.id not in {"ready", "wifi"}))
+        self.assertTrue(all(t.where for s in stages[1:] for t in s.tasks if t.id not in {"ready", "wifi", "ssh-key"}))
         reset = plan.Plan(HEADSET, factory_reset=True).stages()[2]
         self.assertEqual([t.id for t in reset.tasks][3:5], ["unlock", "reset"])
         self.assertTrue(HEADSET.install_plan())
@@ -527,6 +530,7 @@ class PlanTests(unittest.TestCase):
 
     def test_the_wifi_password_reaches_the_headset_on_stdin_only(self):
         answers = {"wifi": {"answer": "wifi", "accepted": True, "values": {"ssid": "Home Net", "password": PASSWORD}}}
+        answers |= self.yes("ssh-key")
         ui = self.run_stages(("install",), answers)
         self.assertEqual(ui.finished()["status"], "done", ui.finished())
         self.assertEqual(self.commands(), ["dev install", "dev installed", "dev check"])
@@ -547,9 +551,39 @@ class PlanTests(unittest.TestCase):
         self.assertIn(plan.READY, [e["text"] for e in ui.events if e["event"] == "note"])
 
     def test_no_wifi_writes_no_profile(self):
-        ui = self.run_stages(("install",), {"wifi": {"answer": "wifi", "accepted": True, "values": {}}})
+        ui = self.run_stages(("install",), self.yes("wifi", "ssh-key"))
         self.assertEqual(ui.finished()["status"], "done")
         self.assertFalse([1 for _, data, _ in self.spawned if data is not None])
+
+    def test_a_skipped_wifi_is_not_asked_again_in_a_later_run(self):
+        ui = self.run_stages(("install",), self.yes("wifi", "ssh-key"))
+        self.assertEqual(ui.finished()["status"], "done")
+        state = self.root / "out" / "install" / "phoenix" / "state.json"
+        record = json.loads(state.read_text(encoding="utf-8"))
+        record["tasks"].pop("wifi-profile")  # a later run, after a stop before the profile
+        state.write_text(json.dumps(record), encoding="utf-8")
+        ui = self.run_stages(("install",), {})  # nothing answers: an ask would stop the run
+        self.assertEqual(ui.finished()["status"], "done", ui.finished())
+        self.assertFalse([e for e in ui.events if e["event"] == "ask"])
+
+    def test_the_owners_ssh_key_goes_to_env_for_the_install(self):
+        key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample me@laptop"
+        answers = self.yes("wifi")
+        answers["ssh-key"] = {"answer": "ssh-key", "accepted": True, "values": {"key": key}}
+        ui = self.run_stages(("install",), answers)
+        self.assertEqual(ui.finished()["status"], "done", ui.finished())
+        settings = self.settings()
+        self.assertEqual(settings.path("ssh_public_key").read_text(encoding="utf-8"), key + "\n")
+        self.assertEqual(self.commands()[0], "dev install")  # which enrolls it (devloop.enrolled_keys)
+
+    def test_no_private_key_is_taken_for_a_public_one(self):
+        answers: dict = self.yes("wifi")
+        private = {"answer": "ssh-key", "accepted": True, "values": {"key": "-----BEGIN OPENSSH PRIVATE KEY-----"}}
+        answers["ssh-key"] = [private, {"answer": "ssh-key", "accepted": True, "values": {}}]
+        ui = self.run_stages(("install",), answers)
+        self.assertEqual(ui.finished()["status"], "done", ui.finished())
+        self.assertIn(plan.NO_PUBLIC_KEY, [e["text"] for e in ui.events if e["event"] == "note"])
+        self.assertEqual(self.settings().ssh_public_key, "")
 
     def test_the_doctor_ignores_what_the_installer_provides(self):
         self.checks = [

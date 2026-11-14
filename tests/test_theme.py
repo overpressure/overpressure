@@ -128,8 +128,9 @@ class TokenTests(unittest.TestCase):
 class Widget:
     """A gridded widget or a label, as Reflow sees one."""
 
-    def __init__(self, manager: str = "grid") -> None:
+    def __init__(self, manager: str = "grid", parent_width: int = 0) -> None:
         self.manager, self.options = manager, {}
+        self.master = type("Parent", (), {"winfo_width": lambda _self: parent_width})()
 
     def winfo_manager(self) -> str:
         return self.manager
@@ -184,6 +185,13 @@ class ReflowTests(unittest.TestCase):
         self.assertEqual((page.options["padx"], label.options["wraplength"]), ((32, 48), 504))
         flow.fit(self.event(1000))
         self.assertEqual((page.options["padx"], label.options["wraplength"]), ((134, 150), 700))
+
+    def test_a_wider_parent_keeps_the_columns_right_edge(self):
+        bar = Widget(parent_width=1016)  # the action bar: its parent is as wide as the area and its scroll bar
+        flow = kit.Reflow(Scaled(1.0), Widget(), 700, sides=(48, 48), center=True)  # ty: ignore[invalid-argument-type]  # fakes
+        flow.add(bar)
+        flow.fit(self.event(1000))
+        self.assertEqual(bar.options["padx"], (150, 166))
 
 
 if __name__ == "__main__":

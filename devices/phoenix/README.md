@@ -45,7 +45,7 @@ do. The install's four stages:
 | 1 Check this computer | host tools and unlock files (pinned, hash-checked), then what else is missing, with fixes | not needed |
 | 2 Connect your headset | developer mode and USB debugging on, plugged in; the installer checks the headset, firmware and panel before anything is written | in PICO OS |
 | 3 Prepare your headset | one consent, a verified backup to this computer (**your way back: export it**), the engineering bootloader, the unlock, then the maintenance system: made here in a few minutes from the backup's own boot and recovery partitions and Valve's kernel (nothing of PICO OS's is downloaded); also makes this computer's SSH key | EDL, fastboot |
-| 4 Install | Wi-Fi if you like; the headset builds the SteamOS-compatible system itself, then it goes on and is checked; then "Unplug it and put it on" | on the cable |
+| 4 Install | Wi-Fi and your own SSH key if you like; the headset builds the SteamOS-compatible system itself, then it goes on and is checked; then "Unplug it and put it on" | on the cable |
 
 **Upgrade** puts this version's maintenance system on the headset, has the headset build this version and installs
 it over yours, keeping your data. **Restore to stock** brings back
@@ -60,7 +60,7 @@ that touch the headset ask the disclaimer `y`/`n` first (`--accept-disclaimer` f
 laptop on battery below 30 %.
 
 **Your login.** The headset takes SSH (cable and Wi-Fi) only with a key: this computer's, `out/dev/id_ed25519`, or
-your own named as `PICO4_SSH_PUBLIC_KEY` in `.env` before the install. No account has a password
+your own, pasted in the install's *Your SSH key* step (or named as `PICO4_SSH_PUBLIC_KEY` in `.env`). No account has a password
 ([docs/security.md](docs/security.md)).
 
 **If something goes wrong.** `python -m overpressure dev support-bundle` collects the logs for a bug report, your

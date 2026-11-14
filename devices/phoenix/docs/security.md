@@ -30,7 +30,8 @@ PC a password login or a key that was not enrolled is refused for both, on USB a
 (`Permission denied (publickey)`).
 
 **The keys.** `python -m overpressure dev image` makes this PC's key once, `out/dev/id_ed25519`;
-`PICO4_SSH_PUBLIC_KEY` in `.env` adds the owner's own public key. `dev install` writes both, with the
+`PICO4_SSH_PUBLIC_KEY` in `.env` adds the owner's own public key: the install's *Your SSH key* step saves a pasted
+one as `out/dev/owner-key.pub` and names it there. `dev install` writes both, with the
 install ID, from the maintenance stage 1 onto the data partition (`pico4-install keys`):
 `/root/.ssh/authorized_keys` (`/root` is on the data partition) and `/etc/pico4/install-id` in the `/etc`
 overlay's upper layer. They are never in the system image, a boot image or anything the project

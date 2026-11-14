@@ -631,6 +631,18 @@ class Context:
         localconfig.update({key: value}, self.engine.env)
         self.engine.write_log(self.task, f"saved {key} in .env")
 
+    def remember(self, choice: str) -> None:
+        """Record the owner's CHOICE for this task in the state (never a secret): a later run reads it back."""
+        if any(secret in choice for secret in self.engine.secrets):
+            msg = f"refusing to write a secret into the state ({self.task.id})"
+            raise Failed(msg)
+        self.engine.state.setdefault("choices", {})[self.task.id] = choice
+        self.engine.save_state()
+
+    def recall(self, task: str) -> str:
+        """Return the choice the task @p task recorded, in this run or an earlier one; "" without one."""
+        return str(self.engine.state.get("choices", {}).get(task, ""))
+
     def completed(self, task: str) -> bool:
         """Tell whether the task @p task is done or skipped, in this run or an earlier one."""
         return self.engine.status(task) in COMPLETE
@@ -766,6 +778,7 @@ class Engine:
         for stage in self.stages[ids.index(stage_id) :]:
             for task in stage.tasks:
                 self.state["tasks"].pop(task.id, None)
+                self.state.get("choices", {}).pop(task.id, None)
         self.save_state()
 
     # -- what leaves the engine -----------------------------------------------------------------

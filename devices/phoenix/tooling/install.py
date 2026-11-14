@@ -40,7 +40,7 @@ import sys
 import uuid
 from typing import TYPE_CHECKING, Callable
 
-from overpressure import REPO, android, doctor, qualcomm, runner, tools, usbaccess
+from overpressure import REPO, android, doctor, qualcomm, runner, ssh, tools, usbaccess
 from overpressure.install import Ask, Context, Failed, Field, Stage, Task
 from overpressure.process import until
 
@@ -137,6 +137,24 @@ WIFI = Ask(
     "join a network later too.",
     (Field("ssid", "Network name", optional=True), Field("password", "Password", secret=True, optional=True)),
 )
+SSH_KEY = Ask(
+    "ssh-key",
+    "form",
+    "Your SSH key",
+    "To log in to the headset from your own computer over SSH, paste your public key: the one line of your "
+    "id_ed25519.pub (or another .pub file) in your .ssh folder, starting with ssh-ed25519, ssh-rsa or "
+    "ecdsa-sha2. The headset takes it besides this computer's own key; it takes no password. Leave it empty "
+    "to skip.",
+    (Field("key", "Public key", optional=True),),
+)
+NO_PUBLIC_KEY = (
+    "That is no public key: paste the one line of a .pub file, starting with ssh-ed25519, ssh-rsa or ecdsa-sha2. "
+    "Never the private key."
+)
+#: Where the installer keeps the owner's public key; .env names it, and every install and upgrade enrolls it.
+OWNER_KEY = "owner-key.pub"
+#: What the Wi-Fi ask's answer was, in the state (the network and its password stay in memory).
+WIFI_JOIN, WIFI_SKIP = "join", "skip"
 READY = (
     "Unplug the headset and put it on. Sign in to Steam, pair the controllers and set up your room in the "
     "headset. If you skipped Wi-Fi, join a network in its settings first. The installer can upgrade the "
@@ -663,13 +681,39 @@ class Plan:
             ctx.note(problem, "warning")
 
     def wifi(self, ctx: Context) -> None:
-        """Ask for Wi-Fi now, so the owner can leave during the install; the answer stays in memory."""
-        ctx.memory["wifi"] = self.ask_wifi(ctx)
+        """Ask for Wi-Fi now, so the owner can leave during the install: the answer in memory, a skip in the state."""
+        answer = self.ask_wifi(ctx)
+        ctx.memory["wifi"] = answer
+        ctx.remember(WIFI_JOIN if answer[0] else WIFI_SKIP)
+
+    def ssh_key(self, ctx: Context) -> None:
+        """Ask for the owner's own SSH public key: a file .env names, which the install writes to authorized_keys."""
+        settings = ctx.settings(Settings)
+        if settings.ssh_public_key:
+            ctx.note(f"Your SSH key comes from {settings.path('ssh_public_key')} ({KEY('ssh_public_key')} in .env).")
+            return
+        while True:
+            line = ctx.ask(SSH_KEY)["key"].strip()
+            if not line:
+                ctx.note("No SSH key of yours: this computer's own key logs in to the headset.")
+                return
+            if ssh.is_public_key(line.encode()) and len(line.split()) >= 2:  # noqa: PLR2004  # its kind and its key
+                break
+            ctx.note(NO_PUBLIC_KEY, "warning")
+        path = self.work / OWNER_KEY
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(line.encode() + b"\n")
+        shown = path.relative_to(REPO).as_posix() if path.is_relative_to(REPO) else str(path)
+        ctx.set_setting(KEY("ssh_public_key"), shown)
+        ctx.note("The install adds your SSH key to the headset; upgrades keep it.")
 
     def wifi_profile(self, ctx: Context) -> None:
         """Write the Wi-Fi profile to the installed system over SSH: the keyfile on stdin, never in an argv."""
-        # After a restart the answer is gone (it is never written down): ask again.
-        ssid, password = ctx.memory.get("wifi") or self.ask_wifi(ctx)
+        held = ctx.memory.get("wifi")
+        if held is None and ctx.recall("wifi") == WIFI_SKIP:  # skipped in an earlier run: not asked twice
+            held = "", ""
+        # After a restart a network's password is gone (it is never written down): ask for it again.
+        ssid, password = held or self.ask_wifi(ctx)
         if not ssid:
             ctx.note("No Wi-Fi set up: join a network in the headset's settings.")
             return
@@ -986,10 +1030,13 @@ class Plan:
             Stage(
                 "install",
                 "Install",
-                "Wi-Fi if you like; then the headset builds the system itself, from public downloads through this "
-                "computer's connection, and it goes on and is checked. " + INSTALL_TIME + " Keep the cable in.",
+                "Wi-Fi and your SSH key if you like; then the headset builds the system itself, from public "
+                "downloads through this computer's connection, and it goes on and is checked. "
+                + INSTALL_TIME
+                + " Keep the cable in.",
                 (
                     Task("wifi", "Wi-Fi (optional)", self.wifi, "a minute"),
+                    Task("ssh-key", "Your SSH key (optional)", self.ssh_key, "a minute"),
                     self.step_task(
                         "install",
                         "Build and install the system",

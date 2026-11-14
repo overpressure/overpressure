@@ -69,11 +69,10 @@ class ChoiceTests(unittest.TestCase):
         self.assertEqual(logo.nearest((10, 20), 15), 20)
 
     def test_the_header_mark_follows_the_scaling(self):
-        self.assertEqual(logo.mark(18, 1.0).name, "mark-18.png")
-        self.assertEqual(logo.mark(18, 1.25).name, "mark-23.png")
-        self.assertEqual(logo.mark(18, 1.5).name, "mark-27.png")
-        self.assertEqual(logo.mark(18, 2.0).name, "mark-36.png")
-        self.assertEqual(logo.mark(18, 3.0).name, "mark-54.png")
+        self.assertEqual(logo.mark(24, 1.0).name, "mark-24.png")
+        self.assertEqual(logo.mark(24, 1.25).name, "mark-30.png")
+        self.assertEqual(logo.mark(24, 1.75).name, "mark-42.png")
+        self.assertEqual(logo.mark(24, 3.0).name, "mark-72.png")
 
     def test_the_app_icon_by_scaling_and_tile(self):
         self.assertEqual(logo.app_icon(64, 1.0).name, "app-64.png")

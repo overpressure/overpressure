@@ -62,6 +62,8 @@ class Task:
 
 #: Where a bar that follows the estimate stops and moves to and fro: how long is left stays vague.
 ESTIMATE_CAP = 0.9
+#: What a task without an estimate weighs in the whole run's share: a short one.
+UNESTIMATED = 10.0
 
 
 def bar_state(task: Task, now: float) -> tuple[float | None, str]:
@@ -206,6 +208,24 @@ class Model:
             (s.id for s in self.stages if s.status != DONE), self.stages[-1].id if self.stages else ""
         )
         self.start_page = not self.started and self.recorded()
+
+    def overall(self, now: float) -> float:
+        """Return the share of the whole run done: each task weighed by its estimate, a running one by its bar."""
+        total = done = 0.0
+        for stage in self.stages:
+            for task in stage.tasks:
+                weight = task.seconds or UNESTIMATED
+                total += weight
+                if task.status in FINISHED:
+                    done += weight
+                elif task.status == RUNNING:
+                    share, _ = bar_state(task, now)
+                    done += weight * (ESTIMATE_CAP if share is None else share)
+        return done / total if total else 0.0
+
+    def stages_done(self) -> int:
+        """Return how many stages are done."""
+        return sum(stage.status == DONE for stage in self.stages)
 
     def progress_text(self) -> str:
         """Return what the start page says was done so far and where it stopped."""

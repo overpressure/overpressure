@@ -390,6 +390,55 @@ class Icon:
         return self
 
 
+class Ring:
+    """A round meter of how much of a run is done: a track, the share in the accent colour, the share in its middle.
+
+    CustomTkinter has no round meter, so a Tk canvas draws it, in pixels for the display's scaling and in
+    the colours of the appearance it shows, which it follows.
+    """
+
+    def __init__(self, kit: Kit, parent: Any, size: int) -> None:  # noqa: ANN401  # a Tk widget
+        """Build the ring of SIZE points in PARENT, on the RAISED surface."""
+        import tkinter as tk  # noqa: PLC0415  # Tk only with the window: the tool imports without it
+
+        self.kit = kit
+        self.pixels = round(size * kit.scaling(parent))
+        self.canvas = tk.Canvas(parent, width=self.pixels, height=self.pixels, highlightthickness=0, borderwidth=0)
+        family, weight = kit.families.face(LABEL, strong=True)
+        self.font = (family, -round(self.pixels * 0.26), weight)  # a negative size is in pixels
+        self.share = 0.0
+        self.draw()
+        kit.ctk.AppearanceModeTracker.add(lambda _mode: self.draw(), self.canvas)
+
+    def set(self, share: float) -> None:
+        """Show SHARE (0 to 1) done; a change below a whole percent waits for the next."""
+        share = min(max(share, 0.0), 1.0)
+        if round(share * 100) != round(self.share * 100):
+            self.share = share
+            self.draw()
+
+    def draw(self) -> None:
+        """Draw the ring for its share in the appearance shown now."""
+        if not self.canvas.winfo_exists():
+            return
+        light = self.kit.ctk.get_appearance_mode() == "Light"
+
+        def colour(pair: tuple[str, str]) -> str:
+            return pair[0] if light else pair[1]
+
+        canvas, size = self.canvas, self.pixels
+        line = max(round(size * 0.1), 3)
+        box = (line / 2 + 1, line / 2 + 1, size - line / 2 - 1, size - line / 2 - 1)
+        canvas.delete("all")
+        canvas.configure(background=colour(RAISED))
+        canvas.create_oval(*box, outline=colour(BORDER_SUBTLE), width=line)
+        if self.share >= 1:
+            canvas.create_oval(*box, outline=colour(ACCENT), width=line)
+        elif self.share > 0:
+            canvas.create_arc(*box, start=90, extent=-360 * self.share, style="arc", outline=colour(ACCENT), width=line)
+        canvas.create_text(size / 2, size / 2, text=f"{self.share:.0%}", fill=colour(TEXT), font=self.font)
+
+
 class Note:
     """A note box in a tone (info, warning, danger): a round glyph and the text, on the tone's tint."""
 
@@ -558,7 +607,9 @@ class Reflow:
         self.padx = padx
         for widget, shift in self.targets:
             if widget.winfo_exists() and widget.winfo_manager() == "grid":  # a page may be gone with its window
-                widget.grid(padx=(padx[0] - shift, padx[1]))
+                # A parent wider than the host (the action bar beside a scrolling area's bar) keeps the column's edges.
+                wider = max(widget.master.winfo_width() - event.width, 0) / self.kit.scaling(self.host)
+                widget.grid(padx=(padx[0] - shift, round(padx[1] + wider)))
         if abs(column - self.column) >= 1:
             self.column = column
             for label, inset in self.labels:

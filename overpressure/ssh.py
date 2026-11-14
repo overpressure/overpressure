@@ -45,6 +45,11 @@ def argv(  # noqa: PLR0913  # the ssh setup, the target and the command; the tim
     ]
 
 
+def is_public_key(line: bytes) -> bool:
+    """Tell whether LINE is one OpenSSH public key (not a private one): what authorized_keys takes."""
+    return b"PRIVATE KEY" not in line and line.strip().startswith((b"ssh-", b"ecdsa-", b"sk-"))
+
+
 def authorized_keys(this_pc: bytes, extra: Path | None, setting: str) -> bytes:
     """Return the authorized_keys a headset's image enrolls: this PC's key, and those of @p extra.
 
@@ -58,7 +63,7 @@ def authorized_keys(this_pc: bytes, extra: Path | None, setting: str) -> bytes:
             raise ValueError(msg)
         own = [line.strip() for line in extra.read_bytes().splitlines() if line.strip()]
         for line in own:
-            if b"PRIVATE KEY" in line or not line.startswith((b"ssh-", b"ecdsa-", b"sk-")):
+            if not is_public_key(line):
                 msg = f"{setting}: {extra} is no public key file"
                 raise ValueError(msg)
         keys += own

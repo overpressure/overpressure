@@ -36,7 +36,19 @@ from overpressure.window.installer import (
     bar_state,
     drain,
 )
-from overpressure.window.kit import HEADER, PRIMARY, PRIMARY_WIDTH, QUIET, SECONDARY, Code, Icon, Kit, Note, Reflow
+from overpressure.window.kit import (
+    HEADER,
+    PRIMARY,
+    PRIMARY_WIDTH,
+    QUIET,
+    SECONDARY,
+    Code,
+    Icon,
+    Kit,
+    Note,
+    Reflow,
+    Ring,
+)
 from overpressure.window.theme import (
     ACCENT,
     ACCENT_SOFT,
@@ -64,6 +76,7 @@ from overpressure.window.theme import (
     RADIUS_CONTROL,
     RADIUS_PANEL,
     RAISED,
+    RING,
     SCREEN_MARGIN,
     SIDEBAR,
     SMALL,
@@ -271,10 +284,7 @@ class Window:
         self.body = body = kit.frame(self.root, PAGE)
         body.grid_columnconfigure(2, weight=1)
         body.grid_rowconfigure(0, weight=1)
-        self.stepper = kit.frame(body, RAISED)
-        self.stepper.configure(width=SIDEBAR)
-        self.stepper.grid(row=0, column=0, sticky="ns")
-        self.stepper.pack_propagate(False)  # noqa: FBT003  # Tk's own positional flag: the width stays
+        self._build_stepper(body)
         kit.line(body, vertical=True).grid(row=0, column=1, sticky="ns")
         # The content: the page (scrolling when the window is short), then the action bar; panels cover both.
         self.content = content = kit.frame(body, PAGE)
@@ -306,17 +316,35 @@ class Window:
         self.primary = kit.button(bottom, "", self.press, kind=PRIMARY)
         self.stop_button = kit.button(bottom, "Stop", self.ask_to_stop)
         self.quiet = kit.frame(bottom)  # the start page's and the final page's other choices
-        reflow = Reflow(kit, self.scroll.canvas, CONTENT, sides=(Space.XXXL, Space.XXXL))
+        reflow = Reflow(kit, self.scroll.canvas, CONTENT, sides=(Space.XXXL, Space.XXXL), center=True)
         reflow.add(page)
         reflow.add(bottom, shift=Space.L)  # a quiet button's text lines up with the page's
         reflow.wrap(self.summary)
+
+    def _build_stepper(self, body: Any) -> None:  # noqa: ANN401  # a CTkFrame
+        """Build the left side: the whole run's ring over the stages (render_stepper fills them)."""
+        kit = self.kit
+        self.stepper = kit.frame(body, RAISED)
+        self.stepper.configure(width=SIDEBAR)
+        self.stepper.grid(row=0, column=0, sticky="ns")
+        self.stepper.pack_propagate(False)  # noqa: FBT003  # Tk's own positional flag: the width stays
+        # Over the stages: the meter of the whole run, the workflow's title and how many stages are done.
+        self.overall = overall = kit.frame(self.stepper)
+        self.ring = Ring(kit, overall, RING)
+        self.ring.canvas.grid(row=0, column=0, rowspan=2, padx=(0, Space.M))
+        self.workflow_label = kit.label(overall, size=BODY, strong=True)
+        self.workflow_label.grid(row=0, column=1, sticky="sw")
+        self.stages_label = kit.label(overall, size=SMALL, colour=TEXT_MUTED)
+        self.stages_label.grid(row=1, column=1, sticky="nw")
+        self.stage_list = kit.frame(self.stepper)
+        self.stage_list.pack(fill="both", expand=True)
 
     def _build_drawer(self) -> None:
         kit = self.kit
         # The details: the child programs' output in a drawer under the view, its height a share of the window.
         self.drawer = kit.frame(self.root, SUNKEN)
         kit.line(self.drawer).pack(fill="x")
-        self.details_block = Code(kit, self.drawer, "Details", height=DETAILS[0], wrap="none", radius=0)
+        self.details_block = Code(kit, self.drawer, "Details", height=DETAILS[0], wrap="word", radius=0)
         self.details_block.frame.pack(fill="both", expand=True)
         self.details = self.details_block.box
         self.details.configure(text_color=TEXT_SECONDARY)
@@ -839,15 +867,17 @@ class Window:
     def render_stepper(self) -> None:
         """Draw the stages down the left side: a status icon each, joined by a line; the current one shaded."""
         kit = self.kit
-        for child in self.stepper.winfo_children():
+        for child in self.stage_list.winfo_children():
             child.destroy()
         stages = self.model.stages
-        top = kit.frame(self.stepper)
-        top.pack(fill="x", padx=Space.M, pady=(Space.XL, 0))
         if stages:
-            kit.label(top, self.workflow_title(), size=SMALL, colour=TEXT_MUTED, strong=True).pack(
-                fill="x", padx=Space.M, pady=(0, Space.S)
-            )
+            self.overall.pack(fill="x", padx=Space.XL, pady=(Space.XL, Space.S), before=self.stage_list)
+            self.workflow_label.configure(text=self.workflow_title())
+            self.update_overall()
+        else:
+            self.overall.pack_forget()
+        top = kit.frame(self.stage_list)
+        top.pack(fill="x", padx=Space.M, pady=(Space.M if stages else Space.XL, 0))
         for n, stage in enumerate(stages):
             if n:  # the line between two stages, in the accent colour once the one above is done
                 done = stages[n - 1].status in (DONE, SKIPPED)
@@ -865,6 +895,12 @@ class Window:
             kit.label(row, stage.title, size=BODY, strong=current, colour=colour).pack(
                 side="left", fill="x", padx=(Space.M, Space.S)
             )
+
+    def update_overall(self) -> None:
+        """Show how much of the whole run is done: the ring, and the stages done in words."""
+        m = self.model
+        self.ring.set(m.overall(m.clock()))
+        self.stages_label.configure(text=f"{m.stages_done()} of {len(m.stages)} stages done")
 
     def clear_right(self) -> None:
         """Empty the task rows, the note, the end pages' mark and the final page's choices."""
@@ -914,7 +950,8 @@ class Window:
         if label:
             self.kit.retext(self.stop_button, label)
             self.stop_button.configure(state="disabled" if m.stopping else "normal")
-            self.stop_button.pack(side="right", padx=(0, Space.S))
+            beside = self.primary.winfo_manager() == "pack"  # the gap only beside the main button
+            self.stop_button.pack(side="right", padx=(0, Space.S if beside else 0))
 
     def stage_note(self) -> tuple[str, str]:
         """Return the stage view's note and tone: the stop under way, how the last run stopped, else the last note."""
@@ -1057,7 +1094,9 @@ class Window:
             self.update_job_panel(self.job)
 
     def tick_tasks(self) -> None:
-        """Update the running tasks' rows: their time counts on between the engine's events."""
+        """Update the running tasks' rows and the whole run's ring: their time counts on between the engine's events."""
+        if self.model.stages:
+            self.update_overall()
         for stage in self.model.stages:
             for task in stage.tasks:
                 if task.status == RUNNING and task.id in self.task_rows:
@@ -1298,7 +1337,6 @@ class Window:
         self.details.delete("1.0", "end")
         self.details.insert("end", "\n".join(self.model.log) or EMPTY_DETAILS)
         self.details.see("end")
-        self.details.xview_moveto(0)  # the last line's end may be far right: the lines' starts stay in view
         self.details.configure(state="disabled")
 
     def ask_to_stop(self, *, closing: bool = False) -> None:
@@ -1474,6 +1512,7 @@ class Window:
                 task = self.model.task(str(event.get("task")))
                 if task is not None:
                     self.update_task(task)
+                    self.update_overall()
             elif name != "log":
                 changed = True
             if name == "finished" and self.model.running and not self.stopped_at:
