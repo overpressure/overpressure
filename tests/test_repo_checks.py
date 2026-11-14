@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest import mock
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -50,6 +53,20 @@ class PrivateDataTests(unittest.TestCase):
         }
         for data, kind in cases.items():
             self.assertEqual(self.kinds("devices/phoenix/docs/a.md", data), [kind], data)
+
+    def test_a_finding_outside_the_consoles_code_page_is_printed_and_fails(self):
+        console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        self.addCleanup(console.close)
+        mangled = "packages/a" + chr(0xF03A) + "b.bin"
+        with (
+            mock.patch.object(private, "local_secrets", list),
+            mock.patch.object(private, "tracked", return_value=[(mangled, b"x")]),
+            mock.patch.object(private, "findings", lambda path, _data, _secrets: [f"{path}: binary"]),
+            mock.patch.object(sys, "stdout", console),
+        ):
+            self.assertEqual(private.main([]), 1)
+            console.flush()
+        self.assertIn(b"packages/a" + bytes([92]) + b"uf03ab.bin: binary", console.buffer.getvalue())
 
     def test_the_projects_own_addresses_pass(self):
         for data in (b"172.16.42.1", b"192.168.137.1 is Windows' shared internet", b"version 1.0.30.0", b"C:/Users/x"):

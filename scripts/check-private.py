@@ -15,6 +15,7 @@ printed. Fake values in tests are listed below.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import subprocess
@@ -158,6 +159,9 @@ def main(argv: list[str]) -> int:
             if path == name
             else [f"{name}: {line.partition(': ')[2]}" for line in findings(path, data, secrets)]
         )
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        # A path Windows' git mangled (a colon as U+F03A) is outside a cp1252 console: shown escaped, not a crash.
+        sys.stdout.reconfigure(errors="backslashreplace")
     for line in found:
         print(line)
     print(f"{len(found)} finding(s)")
