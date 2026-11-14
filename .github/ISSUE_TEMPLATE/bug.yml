@@ -1,6 +1,20 @@
-name: Bug
-description: Something on the headset or in the tools doesn't work
+name: Bug report
+description: Something on the headset, in the installer or in the tools does not work as documented.
+labels: [bug]
 body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      options:
+        - Installer (window or command line)
+        - Installed system on the headset
+        - Games, Steam or SteamVR
+        - Tracking or controllers
+        - Builds and host tooling
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: what
     attributes:
@@ -10,21 +24,26 @@ body:
   - type: textarea
     id: steps
     attributes:
-      label: How to get there
-      placeholder: Worn or on the table? With the cable in? What game?
+      label: Steps to reproduce
+      placeholder: Worn or on the table, cable in or out, which game or command.
   - type: input
     id: version
     attributes:
       label: Version
-      description: "`cat /usr/share/pico4/version` on the headset, or the Git commit you built"
+      description: The installer's version, or `cat /usr/share/pico4/version` on the headset, or the commit you built.
     validations:
       required: true
+  - type: input
+    id: host
+    attributes:
+      label: Computer
+      placeholder: Windows 11, macOS 15, Ubuntu 24.04, ...
   - type: textarea
     id: bundle
     attributes:
       label: Support bundle
       description: >-
-        Attach the archive from `python -m overpressure dev support-bundle`. Its identifiers are masked; it is plain
-        text, so read it before attaching it. If the headset can't be reached, say so.
+        Attach the archive from `python -m overpressure dev support-bundle`. Identifiers are masked; it is plain text,
+        so read it before attaching it. If the headset cannot be reached, say so.
     validations:
       required: true

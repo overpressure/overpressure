@@ -26,9 +26,11 @@ the lenses are `#0b0d12`, the red zone `#ff7849`, the needle and hub white. The 
 | File | Size | Use |
 | --- | --- | --- |
 | [overpressure-social.png](overpressure-social.png), [overpressure-social-light.png](overpressure-social-light.png) | 1280 &times; 640 | The repository's social preview (the image a link to it unfurls into) |
+| [overpressure-social-packages.png](overpressure-social-packages.png), [overpressure-social-linux.png](overpressure-social-linux.png), [overpressure-social-builder.png](overpressure-social-builder.png) | 1280 &times; 640 | The social previews of [packages](https://github.com/overpressure/packages), [linux](https://github.com/overpressure/linux) and [builder](https://github.com/overpressure/builder) |
+| [overpressure-avatar.png](overpressure-avatar.png) | 512 &times; 512 | The GitHub organization's avatar |
 | [`overpressure/window/icons/`](../../overpressure/window/icons/) | `app-*.png` 16 to 256 px, `app-light-*.png` 64 to 192 px, `mark-*.png` 24 to 72 px high, `overpressure.ico` | The window: Tk draws no SVG and scales no image, so [logo.py](../../overpressure/window/logo.py) picks the rendering nearest to the display's scaling |
 
-A browser (Chromium) renders them from the drawings, each at the size it is used. After a drawing changes,
+A browser (Chromium) renders them from the drawings, each at the size it is used. GitHub takes the avatar and the social previews only through its settings pages: they are uploaded by hand. After a drawing changes,
 render them again rather than editing them. The headset's boot indication draws the mark itself, from the
 same geometry
 ([pico4-splash.c](../../devices/phoenix/src/splash/pico4-splash.c)).

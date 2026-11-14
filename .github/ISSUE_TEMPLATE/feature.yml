@@ -1,0 +1,27 @@
+name: Feature request
+description: Something the headset, the installer or the tools should do.
+labels: [story, feature]
+body:
+  - type: textarea
+    id: story
+    attributes:
+      label: User story
+      placeholder: As a ... I want ... so that ...
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: Now
+      description: What happens today, measured or observed.
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: Short and checkable, one per line.
+      placeholder: "- ..."
+  - type: textarea
+    id: reference
+    attributes:
+      label: Reference
+      description: How the stock system or the Steam Frame does it, if you know.

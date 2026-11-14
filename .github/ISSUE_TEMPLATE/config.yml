@@ -1,5 +1,8 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
-  - name: A security problem
+  - name: Security vulnerability
     url: https://github.com/overpressure/overpressure/security/advisories/new
-    about: Please report vulnerabilities privately.
+    about: Report it privately, not in a public issue.
+  - name: Documentation
+    url: https://github.com/overpressure/overpressure#readme
+    about: How to install, upgrade and go back to stock.

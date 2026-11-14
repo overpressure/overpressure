@@ -121,5 +121,6 @@ CLAUDE.md lists its build and hardware commands.
 - **Pinned sources.** Pin external sources by commit or hash. Keep patches as `.patch` files
   next to their recipe, and regenerate their `sha256sums` after any change.
 - **Tests.** New behaviour gets host tests (fakes for hardware, golden data for protocols).
-- **Commits.** Conventional commits (`feat:`, `docs:`, ...) on a step branch, fast-forwarded into
-  `main`. Commit and push only when asked. Remote: `origin`.
+- **Commits.** Conventional commits (`feat:`, `docs:`, ...) on a step branch. `main` changes only by pull
+  request, merged by rebase or squash once its required checks pass (`gh pr merge --auto --rebase`); every
+  repository of the organization has that rule. Commit and push only when asked. Remote: `origin`.

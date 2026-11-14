@@ -12,12 +12,13 @@ generic parts can grow where your headset needs them.
 
 ## A bug
 
-Open an issue with the template and attach the headset's support bundle (the PICO 4's:
+Open an issue with the bug template and attach the headset's support bundle (the PICO 4's:
 `python -m overpressure dev support-bundle`). Its identifiers are masked, and it is plain text: read it first.
 
 ## A change
 
-- Work on a branch and open a pull request against `main`. CI has to pass: the host tests on Linux with Python 3.9
+- Work on a branch and open a pull request against `main`, titled as a conventional commit; it is merged by
+  rebase or squash, and `main` takes no direct pushes. CI has to pass: the host tests on Linux with Python 3.9
   and 3.13 (a system Python may be either) and on Windows and macOS with 3.12 (what the start scripts install),
   `make lint` (ruff and ty through uv:
   [docs/tool.md](docs/tool.md#development)), the shell tests, shellcheck, the C tests, the link check and the
