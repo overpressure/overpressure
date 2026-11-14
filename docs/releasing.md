@@ -32,8 +32,8 @@ uvx git-cliff@2.14.2 --unreleased
 
 A pushed tag makes the release; nothing is uploaded by hand.
 
-1. **Ready.** Everything is on `main`, CI is green (each headset's `main` too, which the `headsets` job runs
-   against it), and no issue the release depends on is open.
+1. **Ready.** Everything is on `main`, CI is green (each headset's `main` and its oldest supported release too,
+   which the `headsets` job runs against it), and no issue the release depends on is open.
 2. **The version.** Set it in `pyproject.toml`, by pull request like every change to `main`.
 3. **The headsets.** Each supported headset's current release runs its checklist with this commit (the
    PICO 4's: [release-checklist.md](https://github.com/overpressure/phoenix/blob/main/docs/release-checklist.md)).

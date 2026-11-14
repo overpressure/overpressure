@@ -70,13 +70,14 @@ repository root:
 
 ```sh
 python -m overpressure headset list  # the headsets there are, and which release devices/ holds
-python -m overpressure headset add phoenix  # download its newest stable release (--channel beta|preview, --version V)
+python -m overpressure headset add phoenix  # download its newest stable release, a beta until there is one (--channel beta|preview, --version V)
+python -m overpressure headset update phoenix  # what its channel offers now, when newer
 python -m overpressure devices       # the headsets in devices/, and those this version cannot run
 python -m overpressure doctor        # what this computer lacks, with fixes
 python -m overpressure gui           # the window (--advanced: every step, one click each)
 python -m overpressure install       # the installer in a terminal; also upgrade, restore
 python -m overpressure steps         # the headset's steps and the command lines they run
-python -m unittest                   # every host test, in seconds; make lint: ruff and ty
+python -m unittest                   # the tool's host tests and each downloaded headset's, in seconds; make lint: ruff and ty
 ```
 
 `overpressure/` is the generic tool: the installer, the window, the build container, the formats Android-based
@@ -89,5 +90,6 @@ stay in the ignored `backup/`, `assets/`, `cache/`, `out/` and `.env`. See [CONT
 ## License
 
 The project's own code is in the public domain ([the Unlicense](LICENSE)). What comes from elsewhere keeps its
-license ([THIRD-PARTY.md](THIRD-PARTY.md)): the kernel's sources are under the GPL, the Monado driver under
-BSL-1.0.
+license, listed in each repository's THIRD-PARTY.md ([this one's](THIRD-PARTY.md)): the kernel
+([overpressure/linux](https://github.com/overpressure/linux)) is under the GPL, the Monado driver
+([overpressure/packages](https://github.com/overpressure/packages)) under BSL-1.0.

@@ -24,15 +24,15 @@ here first, keeping the headset interface backwards compatible
 ([docs/adding-a-headset.md](docs/adding-a-headset.md#the-headset-interface): an addition raises the minor in
 `SUPPORTED`, a break adds `overpressure/api/vN` and keeps the old major as adapters), then in the headset,
 which imports overpressure only through `overpressure.api.vN`. CI checks both ways: this
-repository's `headsets` job runs each headset's `main` against the change, and a headset's CI runs
-against this repository's `main`.
+repository's `headsets` job runs each headset's `main` and its oldest supported release against the change,
+and a headset's CI runs against this repository's `main`.
 
 ## Backlog
 
-The backlog lives in the repository's GitHub issues, for the headsets and the generic tooling
-alike. Every new bug, gap (something unverified or unmeasured) or missing feature found during
-work gets an issue there, in the active milestone, when it is found; search the issues first so
-that nothing is filed twice.
+The backlog lives in the GitHub issues of the repository it concerns: a headset's in its own
+repository, the installer's, the window's and the generic tooling's here. Every new bug, gap
+(something unverified or unmeasured) or missing feature found during work gets an issue there, in
+the active milestone, when it is found; search the issues first so that nothing is filed twice.
 
 - **Kind.** A label: `story` for features and gaps, `bug` for defects, `task` for technical work.
 - **Description.** A user story ("As a ... I want ... so that ..."), a "Now:" line with the
@@ -79,7 +79,8 @@ link may not leave its repository, so links between this repository and a headse
 ## Commands
 
 ```sh
-python -m overpressure headset add phoenix        # a headset's newest stable release into devices/ (--channel, --version)
+python -m overpressure headset add phoenix        # a headset's newest stable release (a beta until there is one) into devices/
+python -m overpressure headset update phoenix     # what its recorded channel offers now, when newer
 python -m unittest                                # every host test (generic and each headset's), seconds
 uv run --extra gui python -m unittest tests.test_headsets tests.test_installer tests.test_advanced
                                                   # the window's tests with real widgets (skipped without CustomTkinter)
@@ -118,9 +119,10 @@ CLAUDE.md lists its build and hardware commands.
 - **Backslashes.** Commands sent through the Bash tool collapse `\\` to `\` (also `\n` in a
   heredoc's Python string), and some heredocs fail to parse at all. Write such files and scripts
   with the file tools, or build backslashes with `chr(92)`.
-- **CRLF.** Python on Windows writes CRLF unless `newline="\n"`; files under
-  `devices/*/userspace/`, `devices/*/initramfs/` and scripts must stay LF (PKGBUILD checksums
-  depend on it).
+- **CRLF.** Python on Windows writes CRLF unless `newline="\n"`; a headset's `userspace/`,
+  `initramfs/` and scripts must stay LF (PKGBUILD checksums depend on it). Each repository's
+  `.gitattributes` checks them out with LF; a clone made before its `.gitattributes` existed keeps CRLF
+  until its files are checked out again.
 - **Python on PATH** is 3.11 without CustomTkinter; the window and its tests need
   `uv run --extra gui`. A scratch folder holding a file named like a standard module (`xml.py`)
   shadows it for scripts run from there.
@@ -137,8 +139,9 @@ CLAUDE.md lists its build and hardware commands.
   booleans; a `# ty: ignore[rule]` or `# noqa: RULE` names its rule and says why. A new
   extensionless Python program goes into both file lists in `pyproject.toml`. Shell scripts use
   `set -euo pipefail`. C sources carry SPDX headers (BSL-1.0 for Monado code).
-- **Generic or headset.** Code that only one headset uses lives in its folder; a format or a
-  helper a second headset needs moves into `overpressure/` with its tests.
+- **Generic or headset.** Code that only one headset uses lives in its repository; a format or a
+  helper a second headset needs moves into `overpressure/` with its tests and joins the headset
+  interface (`overpressure/api/`, a new minor version).
 - **Pinned sources.** Pin external sources by commit or hash. Keep patches as `.patch` files
   next to their recipe, and regenerate their `sha256sums` after any change.
 - **Tests.** New behaviour gets host tests (fakes for hardware, golden data for protocols).

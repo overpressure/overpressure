@@ -12,7 +12,9 @@ issue early, so the generic parts can grow where your headset needs them.
 
 ## A bug
 
-Open an issue with the bug template and attach the headset's support bundle (the PICO 4's:
+Open an issue with the bug template in the repository it concerns: a headset's system, drivers or install
+steps in its own ([the PICO 4's](https://github.com/overpressure/phoenix/issues/new/choose)), the installer
+window, the command line or the generic tooling here. Attach the headset's support bundle (the PICO 4's:
 `python -m overpressure dev support-bundle`). Its identifiers are masked, and it is plain text: read it first.
 
 ## A change
@@ -22,10 +24,11 @@ Open an issue with the bug template and attach the headset's support bundle (the
   commit; it is merged by rebase or squash, and `main` takes no direct pushes. CI has to pass: here the host
   tests on Linux with Python 3.9 and 3.13 (a system Python may be either) and on Windows and macOS with 3.12
   (what the start scripts install), `make lint` (ruff and ty through uv:
-  [docs/tool.md](docs/tool.md#development)), shellcheck, the link check, the private-data scan and each
-  headset's tests against the change; a headset's CI runs its own tests, lint and checks against this
-  repository's `main`.
-- A change both need lands here first, keeping the headset interface compatible, then in the headset.
+  [docs/tool.md](docs/tool.md#development)), shellcheck, the link check, the private-data scan, and the tests
+  of each headset's `main` and of its oldest supported release against the change; a headset's CI runs its
+  own tests, lint and checks against this repository's `main`.
+- A change both need lands here first, keeping the headset interface backwards compatible
+  ([the rules](docs/adding-a-headset.md#the-headset-interface)), then in the headset.
 - [CLAUDE.md](CLAUDE.md) and each headset's CLAUDE.md hold the project's rules, for people and agents alike: hard
   rules, code style, how documents are written.
 - Use conventional commits (`feat:`, `fix:`, `docs:`); the changelog is generated from them.
@@ -41,7 +44,8 @@ Open an issue with the bug template and attach the headset's support bundle (the
   [docs/distribution.md](https://github.com/overpressure/phoenix/blob/main/docs/distribution.md)).
 - Code copied from other projects without a license that allows it.
 
-`python scripts/check-private.py` looks for identifiers, vendor register tables and binary files.
+`python scripts/check-private.py` looks for identifiers, vendor register tables and binary files (`--repo
+devices/<codename>` in a headset's repository).
 
 ## Safety
 

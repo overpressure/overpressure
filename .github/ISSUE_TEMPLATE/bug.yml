@@ -1,5 +1,5 @@
 name: Bug report
-description: Something on the headset, in the installer or in the tools does not work as documented.
+description: The installer, the window, the command line or the build tooling does not work as documented (a headset's own system goes to its repository).
 labels: [bug]
 body:
   - type: dropdown
@@ -8,9 +8,7 @@ body:
       label: Where
       options:
         - Installer (window or command line)
-        - Installed system on the headset
-        - Games, Steam or SteamVR
-        - Tracking or controllers
+        - Downloading a headset or its update
         - Builds and host tooling
         - Other
     validations:
@@ -30,7 +28,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: The installer's version, or `cat /usr/share/pico4/version` on the headset, or the commit you built.
+      description: overpressure's version or commit, and the headset's release (`python -m overpressure headset list`).
     validations:
       required: true
   - type: input

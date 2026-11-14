@@ -9,7 +9,7 @@ headset.
 | To | Run |
 | --- | --- |
 | install, as an owner | `Install.cmd` (Windows), `Install.command` (macOS) or `sh install.sh` (Linux) |
-| download a headset's release into `devices/` | `python -m overpressure headset add CODENAME [--channel beta\|preview \| --version V]` |
+| download a headset's release into `devices/`, or its update | `python -m overpressure headset add CODENAME [--channel beta\|preview \| --version V]`, `headset update CODENAME` |
 | see what this computer lacks | `python -m overpressure doctor` |
 | open the window | `python -m overpressure gui [--advanced]` |
 | install, upgrade or restore in a terminal | `python -m overpressure install`, `upgrade`, `restore` |
@@ -129,8 +129,9 @@ python -m overpressure container run -- make test  # the host tests and every he
 - **Ownership.** With a rootful engine the entrypoint gives what root created under `/work` back to the
   host's user (`OVERPRESSURE_UID`, `OVERPRESSURE_GID`), whatever the exit status. A rootless engine, or one
   that maps ownership itself, needs nothing.
-- **Parallel jobs.** The userspace build runs one job per CPU, but at most one per 1.5 GiB of the
-  container's memory (`MAKEFLAGS`, `CMAKE_BUILD_PARALLEL_LEVEL`, `PICO4_BUILD_JOBS` for meson).
+- **Parallel jobs.** A package build in it (`build/packages.sh` of
+  [overpressure/packages](https://github.com/overpressure/packages)) runs one job per CPU, but at most one per 1.5 GiB of the container's memory
+  (`MAKEFLAGS`, `CMAKE_BUILD_PARALLEL_LEVEL`, `OVERPRESSURE_BUILD_JOBS` for meson).
 - **The aarch64 handler.** The chroot runs arm64 programs through binfmt_misc with the F flag. Before a
   build on an x86-64 engine without one, the container registers the image's `qemu-aarch64-static` as
   `overpressure-aarch64` (as Ubuntu does: `aarch64-binfmt-P`, flags `POF`); it serves later containers
@@ -319,8 +320,8 @@ the plan). A headset without one has no installer (exit status 2). The engine is
   command line (refused), an event or stderr; a program gets them on its stdin only. Text that would carry
   one shows `***`.
 - **Settings.** What the installer finds out (a headset's serials) it writes to `.env`
-  (`localconfig.update`: the key's line replaced, everything else kept; a missing `.env` starts as a copy
-  of `.env.example`).
+  (`localconfig.update`: the key's line replaced, everything else kept; a missing `.env` starts as
+  `.env.example` and each headset's `env.example`).
 - **Power.** Before each task that writes to the headset the engine checks the computer's battery again
   and fails the task before its write when it has dropped below the limit ([the command
   line](#the-command-line)).

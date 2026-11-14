@@ -568,7 +568,7 @@ class WorkflowModelTests(unittest.TestCase):
 
     def test_the_demo_has_the_other_workflows_never_recorded(self):
         demo = installer.DemoEngine(pace=0, recorded=True, workflow="restore")
-        self.assertEqual([s[0] for s in demo.stages], ["backup", "restore", "pico-os", "bootloader"])
+        self.assertEqual([s[0] for s in demo.stages], ["backup", "restore", "stock-setup", "bootloader"])
         self.assertEqual(demo.done, set())
         demo.start(["--plan"])
         plan = json.loads(str(demo.items.get(timeout=10)[1]))

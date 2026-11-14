@@ -52,8 +52,9 @@ the source zip (`git archive`, one top folder) and its `.sha256`, as overpressur
 **CI.** Its CI checks out overpressure's `main`, itself into `devices/<codename>`, and runs its tests,
 `ruff`/`ty` on its folder, `scripts/check-docs.py --repo devices/<codename>`,
 `scripts/check-private.py --repo devices/<codename> --history` and `scripts/run-shellcheck.py --repo
-devices/<codename>`. overpressure's CI runs its `main` against every change of the generic code (the
-`headsets` job, its codename in the matrix).
+devices/<codename>`. overpressure's CI runs its `main`, and the oldest of its releases that overpressure still
+runs, against every change of the generic code (the `headsets` job, its codename in the matrix and a required
+check of each).
 
 How the images are built is the headset's own business. The PICO 4 keeps an Alpine stage 1 on its stock
 kernel as the maintenance environment and boots its userspace, built from Valve's Holo packages, on
