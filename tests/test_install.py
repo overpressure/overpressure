@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from overpressure import install, localconfig
 from overpressure.headset import Command, Headset, Info, Workflow
-from overpressure.install import Ask, Context, Engine, Failed, Field, Stage, Task
+from overpressure.install import IMPORT_BACKUP, Ask, Context, Engine, Failed, Field, NoBackup, Stage, Task
 from overpressure.process import until
 
 if TYPE_CHECKING:
@@ -193,6 +193,17 @@ class EngineTests(unittest.TestCase):
             },
         )
         self.assertEqual(json.loads((self.folder / "state.json").read_text())["tasks"]["two"]["status"], "failed")
+
+    def test_a_missing_backup_fails_in_the_core_s_words_and_offers_its_import(self):
+        def no_backup(_ctx: Context) -> None:
+            raise NoBackup(Path("backup/stock"), "the way back needs it", "Nothing was written.")
+
+        ui = Recorder()
+        self.engine((Stage("a", "A", "", (self.task("one", run=no_backup),)),), ui).run()
+        finished = ui.finished()
+        self.assertEqual((finished["offer"], finished["where"]), (IMPORT_BACKUP, "Nothing was written."))
+        self.assertIn("(the way back needs it): import the one you exported (Import backup", finished["error"])
+        self.assertIn("python -m overpressure backup import FILE", finished["error"])
 
     def test_any_exception_fails_in_words_and_the_task_runs_again_next_time(self):
         calls = []

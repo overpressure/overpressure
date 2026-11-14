@@ -15,7 +15,7 @@ from typing import Callable
 from unittest import mock
 
 from overpressure import __main__ as cli
-from overpressure import catalogue, install, window
+from overpressure import backup, catalogue, install, window
 from overpressure.headset import Registry
 from overpressure.window import advanced, app, installer
 
@@ -725,6 +725,19 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(shown.primary.cget("text"), "Retry")
             shown.toggle_details()
             self.assertIn("unlock: demo output", shown.details.get("1.0", "end"))
+        finally:
+            close(shown)
+
+    def test_a_missing_backup_offers_its_import_beside_retry(self):
+        shown = self.window(installer.DemoEngine(pace=0))
+        try:
+            self.pump(shown, lambda: not shown.probing)
+            with mock.patch.object(shown.choice, "headset", mock.Mock(backup_set=object)):
+                for offer, buttons in ((install.IMPORT_BACKUP, [backup.IMPORT_LABEL]), ("", [])):
+                    shown.model.finished = {"status": "failed", "error": "no backup", "offer": offer}
+                    shown.render_end("failed")
+                    self.assertEqual([b.cget("text") for b in shown.quiet.winfo_children()], buttons)
+                    self.assertEqual(shown.primary.cget("text"), "Retry")
         finally:
             close(shown)
 

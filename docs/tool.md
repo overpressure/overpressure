@@ -343,7 +343,7 @@ event. Texts are plain words for the owner; stack traces go to the task's log fi
 | `log` | `task`, `line` | a line of a child program, or of the task itself: the details view |
 | `note` | `task`, `level` (`info` or `warning`), `text` | something the owner should know |
 | `ask` | `id`, `kind`, `title`, `text`, `fields` [{`name`, `label`, `secret`, `optional`}], `accept`, `decline` | the engine waits for the answer |
-| `finished` | `status` (`done`, `failed`, `stopped`), `task` (null when done), `error`, `where` | last, once |
+| `finished` | `status` (`done`, `failed`, `stopped`), `task` (null when done), `error`, `where`; `offer` when the failure offers more than Retry (`import-backup`: the window shows *Import backup…*) | last, once |
 
 **Progress lines.** A program a task runs reports how far it is with lines of its own on stdout
 (`overpressure.progress`): `progress 42%: writing super`, `progress 3/8: package pico4-monado` (three of

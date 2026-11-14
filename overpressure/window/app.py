@@ -15,9 +15,10 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from overpressure import disclaimer
+from overpressure import backup, disclaimer
 from overpressure.backup import ARCHIVE_SUFFIX
 from overpressure.headset import INSTALL, AfterInstall
+from overpressure.install import IMPORT_BACKUP
 from overpressure.window import logo
 from overpressure.window.advanced import INSTALLER, busy
 from overpressure.window.advanced_view import AdvancedView
@@ -626,11 +627,11 @@ class Window:
         text = BACKUP_THERE.format(folder=here.folder.name) if there else BACKUP_NONE
         about = kit.label(card, text, size=LABEL, colour=TEXT_SECONDARY)
         buttons = kit.frame(card)
-        export = kit.button(buttons, "Export backup\N{HORIZONTAL ELLIPSIS}", self.export_backup)
+        export = kit.button(buttons, backup.EXPORT_LABEL, self.export_backup)
         export.pack(side="left", padx=(0, Space.S))
         if not there:
             export.configure(state="disabled")
-        kit.button(buttons, "Import backup\N{HORIZONTAL ELLIPSIS}", self.import_backup).pack(side="left")
+        kit.button(buttons, backup.IMPORT_LABEL, self.import_backup).pack(side="left")
         self.place_parts([kit.label(card, BACKUP_TITLE, size=HEADING, strong=True), about, buttons])
         buttons.grid_configure(pady=(Space.M, Space.L + Space.XS))
         self.actions_flow.wrap(about, inset=2 * Space.XL)
@@ -1192,6 +1193,9 @@ class Window:
         where = str(finished.get("where") or "")
         if where:
             self.show_note(where, WARNING_TONE)
+        if finished.get("offer") == IMPORT_BACKUP and self.choice.headset and self.choice.headset.backup_set():
+            self.kit.button(self.quiet, backup.IMPORT_LABEL, self.import_backup).pack(side="left", padx=(0, Space.S))
+            self.quiet.pack(side="left", padx=(Space.L, 0))
         self.set_primary("Retry")
 
     def switch_workflow(self, workflow: str) -> None:

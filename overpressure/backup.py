@@ -42,6 +42,22 @@ ARCHIVE_SCHEMA = 1
 #: The suffix the window suggests for an export.
 ARCHIVE_SUFFIX = ".overpressure-backup.tar"
 CHUNK = 1024 * 1024
+#: The window's backup buttons, and how a headset's texts point at them: the window's words stay here, so a
+#: headset never names a control of the window itself (docs/adding-a-headset.md#what-a-headset-may-use).
+EXPORT_LABEL, IMPORT_LABEL = "Export backup\N{HORIZONTAL ELLIPSIS}", "Import backup\N{HORIZONTAL ELLIPSIS}"
+HOW_TO_IMPORT = (
+    f"import the one you exported ({IMPORT_LABEL} in the window, or python -m overpressure backup import FILE)"
+)
+HOW_TO_EXPORT = f"{EXPORT_LABEL} in the window writes it into one file (python -m overpressure backup export FILE)"
+
+
+def missing(folder: Path, needed_for: str = "") -> str:
+    """Return the words for a backup that is not in @p folder on this computer, with how to import it.
+
+    @p needed_for says what it is needed for ("the boot images are made from it").
+    """
+    why = f" ({needed_for})" if needed_for else ""
+    return f"There is no backup of the headset in {folder}{why}: {HOW_TO_IMPORT}."
 
 
 def digest(path: Path, count: Callable[[int], None] | None = None) -> dict:

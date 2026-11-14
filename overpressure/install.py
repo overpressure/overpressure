@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, ClassVar, Protocol, TypeVar
 
 from . import REPO, localconfig, power, runner
+from . import backup as backups
 from . import progress as progress_lines
 from .headset import INSTALL
 
@@ -123,13 +124,30 @@ class Ask:
         }
 
 
+#: What a failure offers beside Retry, by name (the finished event's "offer"): the backup's import.
+IMPORT_BACKUP = "import-backup"
+
+
 class Failed(RuntimeError):  # noqa: N818  # a task's outcome, as the protocol names it
     """A task failed: the message says what, in plain words; where says the headset's state and what to do."""
+
+    #: What the window offers beside Retry (IMPORT_BACKUP), "" for nothing more.
+    offer = ""
 
     def __init__(self, message: str, where: str = "") -> None:
         """Fail with @p message; @p where replaces the task's own where."""
         super().__init__(message)
         self.where = where
+
+
+class NoBackup(Failed):
+    """The headset's backup is not on this computer: the message says how to import it, the window offers it."""
+
+    offer = IMPORT_BACKUP
+
+    def __init__(self, folder: Path, needed_for: str = "", where: str = "") -> None:
+        """Fail for the backup missing in @p folder, which @p needed_for needs; @p where as Failed's."""
+        super().__init__(backups.missing(folder, needed_for), where)
 
 
 class Stopped(Exception):  # noqa: N818  # the run's outcome, as the protocol names it, not an error
@@ -815,17 +833,20 @@ class Engine:
             stream.close()
         self._logs.clear()
 
-    def finish(self, status: str, task: Task | None, error: str = "", where: str = "") -> str:
-        """Emit the finished event; return @p status."""
-        self.emit(
-            {
-                "event": "finished",
-                "status": status,
-                "task": task.id if task else None,
-                "error": self.redact(error),
-                "where": self.redact(where),
-            }
-        )
+    def finish(
+        self, status: str, task: Task | None, error: str = "", where: str = "", offer: str = ""
+    ) -> str:  # the event's fields
+        """Emit the finished event (with what the window offers beside Retry, OFFER); return @p status."""
+        event = {
+            "event": "finished",
+            "status": status,
+            "task": task.id if task else None,
+            "error": self.redact(error),
+            "where": self.redact(where),
+        }
+        if offer:
+            event["offer"] = offer
+        self.emit(event)
         return status
 
     # -- stopping and child programs -------------------------------------------------------
@@ -957,7 +978,7 @@ class Engine:
         except Failed as exc:
             self.write_log(task, f"failed: {self.redact(str(exc))}")
             self.set_status(stage, task, FAILED)
-            return self.finish(FAILED, task, str(exc), exc.where or task.where)
+            return self.finish(FAILED, task, str(exc), exc.where or task.where, exc.offer)
         except Exception as exc:  # noqa: BLE001  # whatever ends a task is its failure, said in words
             self.write_log(task, self.redact(traceback.format_exc()))
             self.set_status(stage, task, FAILED)

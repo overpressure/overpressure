@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from .install import Stage
     from .usbaccess import UsbMode
 
-#: The headset interface this overpressure gives (this module, the generic modules a headset imports).
-#: A change that breaks a headset raises it; each headset's headset.json names the one it was made for.
+#: The headset interface this overpressure gives: what docs/adding-a-headset.md#what-a-headset-may-use lists.
+#: A change that breaks any of it raises it; each headset's headset.json names the one it was made for.
 API = 1
 #: A headset folder's description of itself: devices/<codename>/headset.json.
 MANIFEST = "headset.json"

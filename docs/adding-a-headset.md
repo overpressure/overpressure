@@ -84,6 +84,31 @@ Most of what a headset on its stock Android kernel needs is generic:
 | Reading ext4 and FAT12/16/32 images without mounting them | `overpressure.ext4`, `overpressure.fat` |
 | A Linux build script taking a file out of a stock ext4 image | `scripts/stock-lib.sh` |
 
+## What a headset may use
+
+A headset declares; overpressure draws and runs. A headset has no UI code: it never imports
+`overpressure.window`, Tk or CustomTkinter. The window builds every page from what the headset declares:
+its steps, its plan's stages and tasks, the questions it asks, the notes it writes and its finished page.
+The headset interface (`API` in [overpressure/headset.py](../overpressure/headset.py)) is exactly what
+this section lists. A change that breaks any of it raises `API`; adding something does not.
+
+| What | Where |
+| --- | --- |
+| The headset and its steps: `Headset`, `Info`, `Command`, `Step`, `Param`, `Workflow`, `Action`, `AfterInstall`, `BackupSet`, `INSTALL`, `tools_step`, `ram_boot_step`, `manifest` | `overpressure.headset` |
+| The installer: `Stage`, `Task`, `Ask`, `Field`, `Failed`, `NoBackup` and the `Context` a task runs in (`run`, `output`, `progress`, `note`, `log`, `ask`, `settings`, `set_setting`, `remember`, `recall`, `clock`, `memory`, `completed`) | `overpressure.install` |
+| Words for the window's backup controls: `HOW_TO_IMPORT`, `HOW_TO_EXPORT`, `missing(folder, needed_for)` | `overpressure.backup` |
+| Settings and checks: `DeviceSettings`, `load`, `update`; `Check`, `Host` and the check states; `UsbMode` | `overpressure.localconfig`, `overpressure.doctor`, `overpressure.usbaccess` |
+| Paths and programs: `REPO`, bounded waits and running tools, progress lines, a step's command line, the pinned host tools | `overpressure`, `.process`, `.progress`, `.runner`, `.tools` |
+| Formats and devices: everything in the table above, and `avb`, `compress`, `cpio`, `kernelinfo`, `payload` | the modules named there |
+
+Two rules keep the window the core's own:
+
+- **A headset's texts never name the window's controls.** Where a message has to point at one, it takes
+  the core's words: `backup.HOW_TO_IMPORT` and `backup.HOW_TO_EXPORT`, or `backup.missing(folder)` for a
+  backup that is not on this computer. A task fails for a missing backup with `NoBackup(folder)`; the
+  window then offers *Import backup…* beside *Retry*.
+- **What a second headset needs moves into overpressure**, with its tests, and joins this list.
+
 ## HEADSET
 
 `devices/<codename>/tooling/__init__.py` exports `HEADSET`, an instance of a subclass of
