@@ -134,7 +134,9 @@ def env_check(root: Path = REPO, needed_for: str = HEADSET) -> Check:
         needed_for,
         OK if env.exists() else MISSING,
         str(env) if env.exists() else "no .env",
-        "" if env.exists() else "copy .env.example to .env and fill in the headset's serials and files",
+        ""
+        if env.exists()
+        else "copy .env.example and devices/<codename>/env.example into .env; fill in the serials and files",
     )
 
 

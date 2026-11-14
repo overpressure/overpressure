@@ -2,6 +2,8 @@
 """overpressure's command line: python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS...].
 
   devices              the headsets in devices/
+  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V]
+                       the headsets overpressure knows, their releases, one downloaded into devices/
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
                        the window: the installer, and every step of the headset in its Advanced mode;
                        it opens on the page that asks which headset, unless --device names one
@@ -41,7 +43,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from . import backup, disclaimer, doctor, fastboot, install, linux, localconfig, runner, tools
+from . import backup, catalogue, disclaimer, doctor, fastboot, install, linux, localconfig, runner, tools
 from .headset import Headset, Registry, discover
 
 
@@ -94,7 +96,15 @@ def ram_boot(headset: Headset, argv: list[str]) -> int:
 def _devices(registry: Registry, _headset: Headset | None, _args: list[str]) -> int:
     for name, h in sorted(registry.headsets.items()):
         print(f"{name:<12} {h.info.name}" + (f" ({h.info.soc})" if h.info.soc else ""))
+    for name, why in sorted(registry.refused.items()):
+        print(f"{name:<12} refused: {why}")
+    if not registry.headsets and not registry.refused:
+        print("no headsets in devices/: python -m overpressure headset list, then headset add CODENAME")
     return 0
+
+
+def _headset_command(_registry: Registry, _headset: Headset | None, args: list[str]) -> int:
+    return catalogue.main(args)
 
 
 GUI_USAGE = """usage: python -m overpressure gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
@@ -174,6 +184,7 @@ def _run(headset: Headset, args: list[str]) -> int:
 #: The commands of overpressure itself, with or without a headset.
 GENERIC: dict[str, Callable[[Registry, Headset | None, list[str]], int]] = {
     "devices": _devices,
+    "headset": _headset_command,
     "gui": _gui,
     "container": _container,
     "tools": _tools,
@@ -248,8 +259,10 @@ def main(argv: list[str] | None = None) -> int:
         # The window asks which headset on its first page: only --device skips it, not .env's choice.
         headset = None if argv[:1] == ["gui"] and codename is None else select(registry, codename)
     except KeyError as exc:
-        print(f"error: {exc.args[0]}", file=sys.stderr)
-        return 2
+        if not argv or argv[0] not in GENERIC:  # overpressure's own commands work without it (headset add)
+            print(f"error: {exc.args[0]}", file=sys.stderr)
+            return 2
+        headset = None
     if not argv or argv[0] in ("-h", "--help"):
         print(usage(headset))
         return 0 if argv else 2

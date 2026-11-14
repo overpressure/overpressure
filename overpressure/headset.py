@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: Unlicense
 """What a headset gives overpressure: its identity, its commands and its workflow steps.
 
-Each headset lives in devices/<codename>/ with its own sources, image recipes, scripts, tests
-and documents. Its Python tooling, the package devices/<codename>/tooling, exports HEADSET, an
-instance of a Headset subclass. The command line passes each of its commands on to the module
-that implements it, and the window shows its steps: each step is a command line with parameters, so
-everything the window does can be repeated in a terminal word for word. A headset may also give an
+Each headset lives in its own repository (overpressure/<codename>, with its own releases) and is
+dropped into devices/<codename>/ (overpressure/catalogue.py): its sources, image recipes, scripts,
+tests and documents, and headset.json, which names the headset interface (API) it was made for; a
+headset made for another one is listed as refused, not loaded. Its Python tooling, the package
+devices/<codename>/tooling, exports HEADSET, an instance of a Headset subclass. The command line
+passes each of its commands on to the module that implements it, and the window shows its steps:
+each step is a command line with parameters, so everything the window does can be repeated in a
+terminal word for word. A headset may also give an
 installer's plan (install_plan: stages of tasks built on those commands, overpressure/install.py)
 and what the window's finished page says and offers after it (after_install); with more than the
 install (workflows and plan: an upgrade, the way back), the window asks which right after the
@@ -19,6 +22,7 @@ steps that string them together. docs/adding-a-headset.md walks through it.
 from __future__ import annotations
 
 import importlib
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
@@ -32,6 +36,12 @@ if TYPE_CHECKING:
     from .fastboot import RamBootTarget
     from .install import Stage
     from .usbaccess import UsbMode
+
+#: The headset interface this overpressure gives (this module, the generic modules a headset imports).
+#: A change that breaks a headset raises it; each headset's headset.json names the one it was made for.
+API = 1
+#: A headset folder's description of itself: devices/<codename>/headset.json.
+MANIFEST = "headset.json"
 
 
 @dataclass(frozen=True)
@@ -286,25 +296,60 @@ class Headset(ABC):
 
 @dataclass
 class Registry:
-    """The headsets in devices/, by codename."""
+    """The headsets in devices/, by codename; refused: those this overpressure cannot run, and why."""
 
     headsets: dict[str, Headset] = field(default_factory=dict)
+    refused: dict[str, str] = field(default_factory=dict)
 
     def get(self, codename: str) -> Headset:
-        """Return the headset CODENAME; KeyError names the known ones."""
+        """Return the headset CODENAME; KeyError names the known ones, or why it was refused."""
         try:
             return self.headsets[codename]
         except KeyError:
+            if codename in self.refused:
+                msg = f"devices/{codename}: {self.refused[codename]}"
+                raise KeyError(msg) from None
             known = ", ".join(sorted(self.headsets)) or "none"
-            msg = f"no headset {codename!r} in devices/ (known: {known})"
+            msg = (
+                f"no headset {codename!r} in devices/ (known: {known});"
+                f" python -m overpressure headset add {codename} downloads one"
+            )
             raise KeyError(msg) from None
 
 
+def manifest(folder: Path) -> dict:
+    """Return a headset folder's headset.json (codename, name, version, api, commit, date), {} if missing or broken."""
+    try:
+        data = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def refusal(codename: str, data: dict) -> str:
+    """Return why a headset folder with headset.json DATA cannot run here, or "" when it can."""
+    if not data:
+        return f"no {MANIFEST}: not a headset release (python -m overpressure headset add {codename})"
+    if data.get("codename") != codename:
+        return f"{MANIFEST} names {data.get('codename')!r}"
+    if data.get("api") != API:
+        return (
+            f"release {data.get('version', '?')} needs headset interface {data.get('api')!r}, this overpressure has"
+            f" {API}: update overpressure, or download another release (python -m overpressure headset releases"
+            f" {codename})"
+        )
+    return ""
+
+
 def discover() -> Registry:
-    """Every devices/<codename>/tooling package that exports HEADSET."""
+    """Every devices/<codename>/tooling package that exports HEADSET, whose headset.json this interface runs."""
     registry = Registry()
     for folder in sorted((REPO / "devices").glob("*/tooling/__init__.py")):
         codename = folder.parent.parent.name
+        refused = refusal(codename, manifest(folder.parent.parent))
+        if refused:
+            registry.refused[codename] = refused
+            continue
         module = importlib.import_module(f"devices.{codename}.tooling")
         headset = getattr(module, "HEADSET", None)
         if isinstance(headset, Headset):

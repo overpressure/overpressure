@@ -15,9 +15,23 @@ from typing import Callable
 from unittest import mock
 
 from overpressure import __main__ as cli
-from overpressure import install, window
+from overpressure import catalogue, install, window
 from overpressure.headset import Registry
 from overpressure.window import advanced, app, installer
+
+# The headset page lists the catalogue's headsets too: none in these tests, which bring their own.
+_EMPTY_CATALOGUE = mock.patch.dict(catalogue.CATALOGUE, clear=True)
+
+
+def setUpModule() -> None:
+    """Empty the catalogue for this module's tests."""
+    _EMPTY_CATALOGUE.start()
+
+
+def tearDownModule() -> None:
+    """Give the catalogue back."""
+    _EMPTY_CATALOGUE.stop()
+
 
 PLAN = {
     "event": "plan",

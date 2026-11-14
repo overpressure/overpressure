@@ -1,22 +1,59 @@
 # Adding a headset
 
-**TL;DR.** Make a folder `devices/<codename>/` (the vendor's internal name, a Python identifier) whose
-package `devices/<codename>/tooling` exports `HEADSET`, a `Headset` subclass that names its commands and
-its window's steps. Add an installer plan, dependency checks and a RAM boot where it has them, build on
-the generic modules below, and check it with `python -m overpressure devices` and `--device CODENAME
-steps`. The PICO 4 (`devices/phoenix`) is the worked example.
+**TL;DR.** A headset is a repository of its own, `overpressure/<codename>` (the vendor's internal name, a
+Python identifier), cloned into `devices/<codename>/` of an overpressure checkout while it is developed. Its
+`headset.json` names it and the headset interface it was made for; its package `tooling` exports `HEADSET`,
+a `Headset` subclass that names its commands and its window's steps. Add an installer plan, dependency
+checks and a RAM boot where it has them, build on the generic modules below, and check it with `python -m
+overpressure devices` and `--device CODENAME steps`. Once it has a release, an entry in
+`overpressure/catalogue.py` makes it downloadable. The PICO 4
+([overpressure/phoenix](https://github.com/overpressure/phoenix)) is the worked example.
 
-## The folder
+## The repository
 
 ```text
-devices/<codename>/
+devices/<codename>/   a clone of overpressure/<codename>
+  headset.json     codename, name, version, the headset interface (api), commit and date (git archive's)
   __init__.py      makes devices.<codename> importable
   README.md        what runs on the headset, its status, its quick start
+  CLAUDE.md        its rules and hardware workflow
+  env.example      its keys in .env, with their comments (a new .env starts with them)
   tooling/         its host tooling: HEADSET in __init__.py, the command modules
   tests/           its host tests (with an __init__.py), run by python -m unittest
   docs/            its documents
+  .github/         its CI (against overpressure's main) and its release workflow
   ...              whatever its images need (stage 1, userspace, sources, scripts)
 ```
+
+`headset.json`:
+
+```json
+{
+ "codename": "example",
+ "name": "Example VR 1",
+ "version": "1.0-beta",
+ "api": 1,
+ "commit": "$Format:%H$",
+ "date": "$Format:%ct$"
+}
+```
+
+`api` is the headset interface it was made for (`API` in
+[overpressure/headset.py](../overpressure/headset.py)): `discover()` loads only a headset whose `api` this
+overpressure has, and lists the others as refused with the reason (`python -m overpressure devices`).
+`.gitattributes` marks `headset.json` `export-subst`, so a release zip carries its commit and time.
+
+**Releases.** A tag `vMAJOR.MINOR[-beta[.N]]` naming `headset.json`'s version makes a GitHub release with
+the source zip (`git archive`, one top folder) and its `.sha256`, as overpressure's own releases have
+([the PICO 4's release workflow](https://github.com/overpressure/phoenix/blob/main/.github/workflows/release.yml)).
+`python -m overpressure headset add CODENAME` and the window's Download take it from there
+([tool.md](tool.md#headsets-in-devices)).
+
+**CI.** Its CI checks out overpressure's `main`, itself into `devices/<codename>`, and runs its tests,
+`ruff`/`ty` on its folder, `scripts/check-docs.py --repo devices/<codename>`,
+`scripts/check-private.py --repo devices/<codename> --history` and `scripts/run-shellcheck.py --repo
+devices/<codename>`. overpressure's CI runs its `main` against every change of the generic code (the
+`headsets` job, its codename in the matrix).
 
 How the images are built is the headset's own business. The PICO 4 keeps an Alpine stage 1 on its stock
 kernel as the maintenance environment and boots its userspace, built from Valve's Holo packages, on
@@ -104,7 +141,7 @@ HEADSET = Example()
   from `DeviceSettings`: `adb_serial`, `fastboot_serial`, `edl_serial`, `identity` (default
   `backup/device.json`), `backup` (`backup/stock`), `loader` (`assets/firehose.elf`), `edl`, `ncm_python`
   and `ssh_public_key`, with `edl_program()` and `ncm()` resolving the tools. The headset adds only its own
-  fields ([the PICO 4's](../devices/phoenix/tooling/localconfig.py)).
+  fields ([the PICO 4's](https://github.com/overpressure/phoenix/blob/main/tooling/localconfig.py)).
 - Output goes to the repository's `out/`, downloads to `cache/` (`overpressure.REPO`).
 
 ## Dependencies
@@ -118,7 +155,7 @@ rest from the shared checks: `env_check`, `serial_checks`, `backup_check`, `load
 `edl_tool_check`, `tool_checks` (adb, fastboot), `ncm_checks` (Windows' USB link) and `usb_check`
 (Linux's USB access to each of `Headset.usb_modes()`: the `UsbMode`s, vendor and product ID, its tools open,
 such as adb, fastboot and EDL; a USB network needs none). Example:
-[devices/phoenix/tooling/doctor.py](../devices/phoenix/tooling/doctor.py).
+[devices/phoenix/tooling/doctor.py](https://github.com/overpressure/phoenix/blob/main/tooling/doctor.py).
 
 ## The installer
 
@@ -130,7 +167,7 @@ action, a form; secret fields never leave the engine) and writes settings to `.e
 work whose output is already there. The engine keeps the state in `out/install/<codename>/`, resumes after
 a failure and drives the window through JSON events ([tool.md](tool.md#the-installer)). Reuse the
 headset's steps' command lines. Example:
-[devices/phoenix/tooling/install.py](../devices/phoenix/tooling/install.py).
+[devices/phoenix/tooling/install.py](https://github.com/overpressure/phoenix/blob/main/tooling/install.py).
 
 **More than the install.** `Headset.workflows()` returns the installer's workflows (`Workflow`: key,
 title, summary, whether it erases the headset), the install alone by default, and `Headset.plan(key)`
@@ -214,4 +251,5 @@ that order, and tells a refusal (`Refused`: no `fastboot boot`) apart from a fai
 `python -m overpressure devices` lists the new headset, and `python -m overpressure --device CODENAME
 steps` prints its steps with their command lines. The generic tests
 ([tests/test_overpressure.py](../tests/test_overpressure.py)) check that every registered headset's
-command modules and step scripts exist.
+command modules and step scripts exist; its own tests run with `python -m unittest discover -t . -s
+devices/<codename>/tests`.

@@ -145,16 +145,17 @@ def update(values: Mapping[str, str], path: Path | None = None, example: Path | 
     """Set KEY=VALUE lines in .env, keeping every other line and comment.
 
     A key's first line takes the new value and its later lines go (no duplicates); a key that is
-    not there is added at the end. A missing .env starts as a copy of .env.example (@p example),
-    so its comments explain the keys. The file is written in place: .env may be a hard link
-    shared by several checkouts.
+    not there is added at the end. A missing .env starts as a copy of .env.example (@p example)
+    and each headset's devices/<codename>/env.example, so its comments explain the keys. The file
+    is written in place: .env may be a hard link shared by several checkouts.
     """
     path = ROOT / ".env" if path is None else path
-    example = ROOT / ".env.example" if example is None else example
+    examples = [ROOT / ".env.example", *sorted((ROOT / "devices").glob("*/env.example"))]
     if path.exists():
         raw = path.read_bytes().decode("utf-8")
     else:
-        raw = example.read_bytes().decode("utf-8") if example.exists() else ""
+        found = [example] if example is not None else examples
+        raw = "".join(p.read_bytes().decode("utf-8") for p in found if p.exists())
     newline = "\r\n" if "\r\n" in raw else "\n"
     lines, done = [], set()
     for line in raw.splitlines():

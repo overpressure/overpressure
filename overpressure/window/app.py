@@ -21,7 +21,7 @@ from overpressure.headset import INSTALL, AfterInstall
 from overpressure.window import logo
 from overpressure.window.advanced import INSTALLER, busy
 from overpressure.window.advanced_view import AdvancedView
-from overpressure.window.headsets import INTRO, LAST_USED, QUESTION, Choice, Probe
+from overpressure.window.headsets import INTRO, LAST_USED, QUESTION, Choice, Download, Entry, Probe
 from overpressure.window.installer import (
     DONE,
     FAILED,
@@ -176,6 +176,9 @@ class Window:
         if self.choice.headset is not None:
             self.engine_of[self.choice.headset.info.codename, INSTALL] = engine
         self.probes: dict[str, Probe] = {}  # codename -> the headset page's read of its install's plan
+        self.downloads: dict[str, Download] = {}  # codename -> its release's download, until its end is shown
+        self.release_vars: dict[str, Any] = {}  # codename -> the release chosen on its card
+        self.releases_shown = False  # the page shows the published releases (read once, on a thread)
         self.workflow_probes: dict[tuple[str, str], Probe] = {}  # the page of what to do: each workflow's
         self.logs: dict[tuple[str, str], list[str]] = {}  # its details, while another headset or workflow is chosen
         self.workflow = INSTALL  # what the installer view runs: the install, or another of the headset's workflows
@@ -205,6 +208,12 @@ class Window:
         self._build()
         self.advanced_view = AdvancedView(self, self.root)
         self.render()
+        self._open(view)
+        self.show_disclaimer()
+        self.root.after(100, self._tick)
+
+    def _open(self, view: str) -> None:
+        """Show the first page: the headset page, Advanced mode (no installer), else VIEW with its plan read."""
         if self.choice.asking():
             self.probing = False  # the page reads each headset's plan; the installer's waits for the choice
             self.show(CHOOSER_VIEW)
@@ -213,11 +222,9 @@ class Window:
             self.show(ADVANCED_VIEW)  # a headset without an installer: Advanced mode only
         else:
             self.show(view)
-            engine.start(["--plan"])
+            self.engine.start(["--plan"])
         if not self.choice.asking():
             self.first_view = INSTALLER_VIEW  # shown already: a later choice opens the installer
-        self.show_disclaimer()
-        self.root.after(100, self._tick)
 
     def show_disclaimer(self) -> None:
         """Cover the whole window with the disclaimer, on every start: accepted, or the window closes.
@@ -417,8 +424,10 @@ class Window:
             child.destroy()
         self.headset_cards.clear()
         self.chooser_flow.labels = [(label, inset) for label, inset in self.chooser_flow.labels if label.winfo_exists()]
+        self.choice.releases.start(self.choice.known)
         entries = self.choice.entries()
-        lead = next((e.codename for e in entries if e.last), entries[0].codename if len(entries) == 1 else "")
+        usable = [e for e in entries if e.usable]
+        lead = next((e.codename for e in usable if e.last), usable[0].codename if len(usable) == 1 else "")
         for n, entry in enumerate(entries):
             card = kit.card(self.headset_list)
             card.grid(row=n, column=0, sticky="ew", pady=(0, Space.M))
@@ -429,16 +438,11 @@ class Window:
                 marks.append(kit.pill(heading, LAST_USED, INFO))
             for i, mark in enumerate(marks):
                 mark.pack(side="left", padx=(Space.S if i else 0, 0))
-            probe = self.probes.get(entry.codename)
-            line = probe.line() if probe is not None else ""
             about = kit.label(card, entry.about, size=LABEL, colour=TEXT_SECONDARY)
-            parts = [
-                heading,
-                about,
-                kit.label(card, entry.mode, size=LABEL, colour=TEXT if entry.installer else WARNING),
-            ]
-            if line:
-                parts.append(kit.label(card, line, size=SMALL, colour=TEXT_MUTED))
+            lines = [heading, about, *self._card_lines(card, entry)]
+            parts = list(lines)
+            if entry.release != "development checkout":  # Git updates a checkout
+                parts.append(self._release_row(card, entry, primary=not entry.usable and not lead))
             last = len(parts) - 1
             for row, part in enumerate(parts):
                 part.grid(
@@ -452,13 +456,71 @@ class Window:
                     ),
                 )
             self.chooser_flow.wrap(about, inset=2 * Space.XL + PRIMARY_WIDTH + 2 * Space.L)  # the button beside it
-            primary = entry.codename == lead
-            button = kit.button(
-                card, "Choose", lambda c=entry.codename: self.choose(c), kind=PRIMARY if primary else SECONDARY
-            )
-            button.grid(row=0, column=1, rowspan=len(parts), padx=(Space.L, Space.XL))
-            self.hover_card(card, (*parts, *marks), entry.codename)
+            if entry.usable:
+                primary = entry.codename == lead
+                button = kit.button(
+                    card, "Choose", lambda c=entry.codename: self.choose(c), kind=PRIMARY if primary else SECONDARY
+                )
+                button.grid(row=0, column=1, rowspan=len(parts), padx=(Space.L, Space.XL))
+                self.hover_card(card, (*lines, *marks), entry.codename)
             self.headset_cards[entry.codename] = card
+
+    def _card_lines(self, card: Any, entry: Entry) -> list[Any]:  # noqa: ANN401  # Tk widgets
+        """Return the lines under a card's summary: what it opens, where it stopped, its release, a download."""
+        kit = self.kit
+        lines = [kit.label(card, entry.mode, size=LABEL, colour=TEXT if entry.installer else WARNING)]
+        probe = self.probes.get(entry.codename)
+        line = probe.line() if probe is not None else ""
+        if line:
+            lines.append(kit.label(card, line, size=SMALL, colour=TEXT_MUTED))
+        if entry.release:
+            lines.append(kit.label(card, entry.release.capitalize(), size=SMALL, colour=TEXT_MUTED))
+        download = self.downloads.get(entry.codename)
+        if download is not None:
+            tone = WARNING if download.error else TEXT_MUTED
+            lines.append(kit.label(card, download.line(), size=SMALL, colour=tone, wrap=CARDS))
+        return lines
+
+    def _release_row(self, card: Any, entry: Entry, *, primary: bool) -> Any:  # noqa: ANN401  # Tk widgets
+        """Return a card's release choice (the channels, then the published releases) and its Download button."""
+        kit = self.kit
+        row = kit.frame(card)
+        values = self.choice.releases.choices(entry.codename)
+        var = self.release_vars.get(entry.codename)
+        if var is None or var.get() not in values:
+            var = self.release_vars[entry.codename] = self.ctk.StringVar(value=values[0])
+        kit.choice(row, values, var).pack(side="left")
+        text = "Download" if entry.usable is False and not entry.refused else "Download this release"
+        button = kit.button(
+            row, text, lambda c=entry.codename: self.download(c), kind=PRIMARY if primary else SECONDARY
+        )
+        button.pack(side="left", padx=(Space.S, 0))
+        download = self.downloads.get(entry.codename)
+        if download is not None and not download.done:
+            button.configure(state="disabled")
+        return row
+
+    def download(self, codename: str) -> bool:
+        """Download the release chosen on CODENAME's card into devices/; refused while something runs."""
+        if self.refused() or any(not d.done for d in self.downloads.values()):
+            return False
+        wanted = self.release_vars[codename].get()
+        self.downloads[codename] = Download(codename, wanted).start()
+        self.render_chooser()
+        return True
+
+    def downloaded(self) -> bool:
+        """Take in the downloads that ended: devices/ read again, the page redrawn; whether any ended."""
+        ended = [c for c, d in self.downloads.items() if d.done and not getattr(d, "taken", False)]
+        for codename in ended:
+            download = self.downloads[codename]
+            download.taken = True  # ty: ignore[unresolved-attribute]  # the window's own mark on it
+            if not download.error:
+                self.choice.rediscover()
+                self.probes.pop(codename, None)
+        if ended and self.view == CHOOSER_VIEW:
+            self.probe_headsets()
+        return bool(ended)
 
     def _build_actions(self) -> None:
         kit = self.kit
@@ -661,8 +723,7 @@ class Window:
         if self.view != ACTIONS_VIEW and self.asks_what() and self.choice.headset is not None:
             back = "\N{SINGLE LEFT-POINTING ANGLE QUOTATION MARK} " + self.choice.headset.info.name
         self.kit.retext(self.back_link, back)
-        if self.choice.registry.headsets:
-            self.back_link.pack(side="right", padx=(0, Space.XS))
+        self.back_link.pack(side="right", padx=(0, Space.XS))
 
     # -- the headset ---------------------------------------------------------------------
     def engine_for(self, headset: Headset, workflow: str = INSTALL) -> Engine:
@@ -1523,8 +1584,10 @@ class Window:
         """Apply what the engine, a step's program and the checks have sent, then redraw; every 100 ms."""
         changed, logged = self.receive()
         probed = [codename for codename, probe in self.probes.items() if probe.receive()]
-        if probed and self.view == CHOOSER_VIEW:
-            self.render_chooser()  # where each headset stopped last time
+        releases = self.choice.releases.done and not self.releases_shown
+        self.releases_shown |= releases
+        if (probed or releases or self.downloaded()) and self.view == CHOOSER_VIEW:
+            self.render_chooser()  # where each headset stopped last time, its releases, a download's end
         workflows = [key for key, probe in self.workflow_probes.items() if probe.receive()]
         if workflows and self.view == ACTIONS_VIEW and not (self.job is not None and self.job.running):
             self.render_actions()  # where each workflow stopped last time

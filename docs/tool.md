@@ -9,6 +9,7 @@ headset.
 | To | Run |
 | --- | --- |
 | install, as an owner | `Install.cmd` (Windows), `Install.command` (macOS) or `sh install.sh` (Linux) |
+| download a headset's release into `devices/` | `python -m overpressure headset add CODENAME [--channel beta\|preview \| --version V]` |
 | see what this computer lacks | `python -m overpressure doctor` |
 | open the window | `python -m overpressure gui [--advanced]` |
 | install, upgrade or restore in a terminal | `python -m overpressure install`, `upgrade`, `restore` |
@@ -20,6 +21,31 @@ It is Python 3.9+ on the standard library, with pinned packages where they spare
 tool: brotli (the stock OTA), pyusb with libusb-package (EDL devices, Windows' USB network link), and Tk
 with CustomTkinter for the window. It runs on Windows, Linux and macOS, from the repository root, where
 `.env` and the private folders (`out/`, `cache/`, `assets/`, `backup/`) live.
+
+## Headsets in devices/
+
+overpressure holds no headset. Each is its own repository (`overpressure/<codename>`) with its own releases,
+dropped into the ignored `devices/<codename>/`; [overpressure/catalogue.py](../overpressure/catalogue.py)
+lists the headsets there are.
+
+```sh
+python -m overpressure headset list                 # every headset, and what devices/ holds of it
+python -m overpressure headset releases phoenix     # its published releases, newest first
+python -m overpressure headset add phoenix          # its newest stable release
+python -m overpressure headset add phoenix --channel beta      # the newest, betas included
+python -m overpressure headset add phoenix --channel preview   # its main: development state, untested
+python -m overpressure headset add phoenix --version 1.0-beta  # a release by its version, older ones too
+```
+
+A release is the tag's source zip, checked against its published SHA-256 (a preview of `main` has none),
+unpacked into a new folder and checked against its `headset.json` before it replaces what was there.
+`devices/<codename>/.release.json` records which it is. A development checkout, a Git clone of the
+headset's repository in its folder, is never replaced: Git updates it.
+
+`headset.json` names the headset interface the release was made for (`api`; `API` in
+[overpressure/headset.py](../overpressure/headset.py)). The registry loads only a headset this overpressure
+runs; `python -m overpressure devices` lists the others as refused, with the reason (update overpressure, or
+download another release). A new `.env` starts as `.env.example` and each headset's `env.example`.
 
 ## Dependencies
 
@@ -132,9 +158,14 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
 - **The disclaimer.** On every start the window is covered by *Before you go on*: the warranty is void,
   nobody else is to blame, no warranty of any kind. *I accept* holds for every program the window starts;
   *Close* closes it. It shows even when the environment has accepted it ([below](#the-command-line)).
-- **The headset page.** One card per headset in `devices/` with its name, SoC and summary and, for one
-  with an installer, where its last run stopped (read with `install --json --plan`, which runs nothing).
-  The headset chosen last is listed first, marked *Last used*. It is kept in `out/window.json`
+- **The headset page.** One card per headset of the catalogue. A headset in `devices/` shows its name,
+  SoC and summary, its release and, for one with an installer, where its last run stopped (read with
+  `install --json --plan`, which runs nothing). Every card but a development checkout's has a release
+  choice (*Newest stable*, *Newest beta*, *Preview (main, untested)*, then each published release, read in
+  the background) and *Download*, which runs [`headset add`](#headsets-in-devices) on a thread and reads
+  `devices/` again when it ends. A headset not downloaded yet, or held in a release this overpressure
+  cannot run (the card says why), only downloads. The headset chosen last is listed first, marked *Last
+  used*. It is kept in `out/window.json`
   (`{"last_headset": CODENAME}`), not in `.env`. Only `--device` skips the page; `OVERPRESSURE_DEVICE`
   does not.
 - **What to do.** A headset with more than the install ([workflows](#the-installer)) asks *What would you
@@ -334,7 +365,9 @@ with asks through `input()` and `getpass()`.
 ```text
 python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS...]
 
-  devices              the headsets in devices/
+  devices              the headsets in devices/, and those this version cannot run
+  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V]
+                       the headsets there are, their releases, one downloaded into devices/
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
                        the window: the installer, and every step in its Advanced mode
   steps                the headset's steps and their command lines
@@ -382,7 +415,8 @@ be read, they go on.
 
 | Module | Role |
 | --- | --- |
-| [overpressure/headset.py](../overpressure/headset.py) | `Headset` (`Info`, `commands()`, `steps()`, `dependencies()`, `usb_modes()`, `ram_boot()`, `install_plan()`, `workflows()`, `plan()`, `workflow_problem()`, `after_install()`, `finished_page()`, `backup_set()`, `adopt_backup()`, `touches()`), `Command`, `Step`, `Param`, `Workflow`, `BackupSet`, `AfterInstall`, `Action`, the registry |
+| [overpressure/catalogue.py](../overpressure/catalogue.py) | the headsets there are and their repositories; their releases on GitHub, a channel's or a version's, downloaded into `devices/<codename>/` against the checksum and `headset.json` (`headset list\|releases\|add`) |
+| [overpressure/headset.py](../overpressure/headset.py) | `API`, the headset interface; `headset.json` read and checked; `Headset` (`Info`, `commands()`, `steps()`, `dependencies()`, `usb_modes()`, `ram_boot()`, `install_plan()`, `workflows()`, `plan()`, `workflow_problem()`, `after_install()`, `finished_page()`, `backup_set()`, `adopt_backup()`, `touches()`), `Command`, `Step`, `Param`, `Workflow`, `BackupSet`, `AfterInstall`, `Action`, the registry |
 | [overpressure/install.py](../overpressure/install.py) | the install engine: `Stage`, `Task`, `Ask`, the `Context` a task gets, the state, the lock, the events, `install`, `upgrade` and `restore` |
 | [overpressure/disclaimer.py](../overpressure/disclaimer.py), [power.py](../overpressure/power.py) | the disclaimer and the gate before a command that touches the headset (`--accept-disclaimer`, `OVERPRESSURE_ACCEPT_DISCLAIMER`); this computer's power: a battery below 30 % refuses those commands (Windows, Linux and macOS readers) |
 | [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (a Linux-root step's in the build container), its display, running and stopping it |
@@ -443,3 +477,7 @@ two incompatible docstring rules, the formatter's trailing commas, pytest's asse
 unittest) and one `with` for several contexts (Python 3.9). Tests need no docstrings or return
 annotations, and `print` is allowed outside the tests. Any other exception is a `# noqa: RULE` with its
 reason. The headsets' own programs are packages in overpressure/packages, whose builds run their tests.
+
+A headset's folder is outside this repository's Git, and `ruff`/`ty` skip it when run on `.`; name it
+(`uv run ruff check devices/phoenix`, `uv run ty check devices/phoenix`) and run its tests with `python -m
+unittest discover -t . -s devices/phoenix/tests`. `python -m unittest` from the root runs them too.

@@ -221,12 +221,6 @@ class ContainerTests(unittest.TestCase):
 
 
 class RegistryTests(unittest.TestCase):
-    def test_the_pico_4_is_registered(self):
-        registry = discover()
-        self.assertEqual(registry.get("phoenix").info.name, "PICO 4")
-        with self.assertRaises(KeyError):
-            registry.get("nonexistent")
-
     def test_steps_only_name_commands_and_scripts_that_exist(self):
         for codename, headset in discover().headsets.items():
             self.assertEqual(headset.root, REPO / "devices" / codename)
@@ -258,23 +252,10 @@ class CommandLineTests(unittest.TestCase):
             code = cli.main(list(argv))
         return code, out.getvalue()
 
-    def test_devices_and_steps(self):
-        code, out = self.run_cli("devices")
-        self.assertEqual(code, 0)
-        self.assertIn("phoenix", out)
-        code, out = self.run_cli("--device", "phoenix", "steps")
-        self.assertEqual(code, 0)
-        self.assertIn("-m overpressure --device phoenix build --firmware", out)
-
     def test_unknown_headset(self):
         code, out = self.run_cli("--device", "nonexistent", "steps")
         self.assertEqual(code, 2)
         self.assertIn("no headset 'nonexistent'", out)
-
-    def test_headset_commands_are_listed(self):
-        code, out = self.run_cli()
-        self.assertEqual(code, 2)
-        self.assertIn("Commands of the PICO 4 (phoenix)", out)
 
     def test_a_command_reaches_the_headset_module(self):
         h = Fake()

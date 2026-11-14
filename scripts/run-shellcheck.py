@@ -26,17 +26,18 @@ def shell(data: bytes) -> str | None:
     return None
 
 
-def main() -> int:
-    """Check every tracked shell script; fail when any has a warning or an error."""
+def main(argv: list[str]) -> int:
+    """Check every tracked shell script (of --repo DIR: a headset's); fail when any has a warning or an error."""
+    repo = Path(argv[argv.index("--repo") + 1]).resolve() if "--repo" in argv else REPO
     # In the build container a worktree's repository is at OVERPRESSURE_GIT_DIR (overpressure/linux.py).
-    git_dir = os.environ.get("OVERPRESSURE_GIT_DIR")
-    where = ["--git-dir", git_dir, "--work-tree", str(REPO)] if git_dir else ["-C", str(REPO)]
+    git_dir = os.environ.get("OVERPRESSURE_GIT_DIR") if repo == REPO else None
+    where = ["--git-dir", git_dir, "--work-tree", str(repo)] if git_dir else ["-C", str(repo)]
     ls_files = ["git", *where, "ls-files", "-z"]
     names = subprocess.run(ls_files, check=True, stdout=subprocess.PIPE).stdout  # noqa: S603  # git from PATH, no shell
     code = 0
     count = 0
     for name in names.decode().split("\0"):
-        path = REPO / name
+        path = repo / name
         # .command: macOS's start script (Install.command)
         if not name or not path.is_file() or path.suffix not in ("", ".sh", ".command"):
             continue
@@ -51,4 +52,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

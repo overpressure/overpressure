@@ -1,4 +1,0 @@
-#!/bin/sh
-# SPDX-License-Identifier: Unlicense
-printf 'Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
-exec pico4-info

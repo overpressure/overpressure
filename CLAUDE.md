@@ -1,16 +1,29 @@
 # CLAUDE.md
 
 Guidance for working in this repository: **overpressure**, Linux and a SteamOS-compatible
-userspace on standalone VR headsets, on Valve's Steam Frame kernel. The generic host tooling is at
-the root and serves every headset; everything specific to one headset lives in
-`devices/<codename>/`. The PICO 4 is the first; new headsets are welcome.
+userspace on standalone VR headsets, on Valve's Steam Frame kernel. This repository is the generic
+host tooling and serves every headset. Each headset is its own repository, `overpressure/<codename>`,
+with its own releases, dropped into the git-ignored `devices/<codename>/`. The PICO 4 is the first;
+new headsets are welcome.
 
 **Before working on a headset, read its `devices/<codename>/CLAUDE.md`**: its status, its hard
 rules (what must never be written, what crashes its kernel) and its hardware workflow.
 
-| Codename | Headset | Guidance |
-| --- | --- | --- |
-| phoenix | PICO 4 (2022, Snapdragon XR2) | [devices/phoenix/CLAUDE.md](devices/phoenix/CLAUDE.md) |
+| Codename | Headset | Repository | Guidance |
+| --- | --- | --- | --- |
+| phoenix | PICO 4 (2022, Snapdragon XR2) | [overpressure/phoenix](https://github.com/overpressure/phoenix) | [CLAUDE.md](https://github.com/overpressure/phoenix/blob/main/CLAUDE.md) |
+
+**A development checkout** of a headset is a Git clone in its folder, which `headset add` never replaces:
+
+```sh
+git clone https://github.com/overpressure/phoenix devices/phoenix
+```
+
+Its changes are commits in its own repository, by pull request there. A change both sides need lands
+here first, keeping the headset interface compatible (`API` in `overpressure/headset.py`; a headset's
+`headset.json` names the one it was made for), then in the headset. CI checks both ways: this
+repository's `headsets` job runs each headset's `main` against the change, and a headset's CI runs
+against this repository's `main`.
 
 ## Backlog
 
@@ -42,17 +55,21 @@ state facts, short, with a TL;DR first: what the system is, how it works, how to
 verify it, verified results and open work. No work logs: no dated entries, no history of
 attempts, no evidence file paths, no test counts, no issue keys; git history is the log. When a
 result changes, update the fact in place, and keep each headset's roadmap and README current.
-`python scripts/check-docs.py` checks every link and anchor.
+`python scripts/check-docs.py` checks every link and anchor (`--repo devices/<codename>` a headset's); a
+link may not leave its repository, so links between this repository and a headset's are GitHub URLs.
 
 ## Layout
 
 - `overpressure/`: the generic host package (Python 3.9+): the command line, the `Headset`
   interface, the installer's engine, the window, the build container, the shared formats. Its
   module map: [docs/tool.md](docs/tool.md#how-it-fits-together).
-- `devices/<codename>/`: one headset: `tooling/` (its Python package with `HEADSET`), its images'
-  sources and recipes, `scripts/`, `tests/`, `docs/`, `README.md`, `CLAUDE.md`, `device.mk`.
-- `tests/`: host tests of the generic package. `scripts/`: the repository's checks
-  (`check-private.py`, `check-docs.py`, `run-shellcheck.py`, `c-tests.sh`, `release.py`).
+- `devices/<codename>/` (ignored): one headset, downloaded (`python -m overpressure headset add`)
+  or a clone of its repository: `headset.json`, `tooling/` (its Python package with `HEADSET`), its
+  images' sources and recipes, `scripts/`, `tests/`, `docs/`, `env.example`, `README.md`, `CLAUDE.md`,
+  `device.mk`. `overpressure/catalogue.py` lists the headsets there are.
+- `tests/`: host tests of the generic package. `scripts/`: the repositories' checks
+  (`check-private.py`, `check-docs.py`, `run-shellcheck.py`, each with `--repo DIR` for a headset's;
+  `release.py`).
 - `Install.cmd`, `Install.command`, `install.sh`: the start scripts (a pinned uv, a managed Python and
   CustomTkinter into `cache/`, then the window).
 - Private and generated, ignored: `backup/`, `assets/`, `cache/`, `out/`, `.env`.
@@ -60,6 +77,7 @@ result changes, update the fact in place, and keep each headset's roadmap and RE
 ## Commands
 
 ```sh
+python -m overpressure headset add phoenix        # a headset's newest stable release into devices/ (--channel, --version)
 python -m unittest                                # every host test (generic and each headset's), seconds
 uv run --extra gui python -m unittest tests.test_headsets tests.test_installer tests.test_advanced
                                                   # the window's tests with real widgets (skipped without CustomTkinter)
@@ -82,7 +100,8 @@ CLAUDE.md lists its build and hardware commands.
 - **Private data.** Never commit or redistribute device data or vendor files: `backup/`,
   `assets/`, `out/`, `cache/` and `.env` are ignored on purpose. Valve's packages and the built
   userspace archives are private too. Docs and code must not contain device serials or similar
-  identifiers; they belong in `.env`. `python scripts/check-private.py --history` before a push.
+  identifiers; they belong in `.env`. `python scripts/check-private.py --history` before a push
+  (`--repo devices/<codename> --history` for a headset's).
 - **Hardware actions need a recoverable path**, as each headset's CLAUDE.md defines it. Ask
   the user before the first flash or low-level (EDL, bootloader) action in a new conversation.
 - **Never run two builds at once**: they share their build roots and caches.
@@ -123,4 +142,5 @@ CLAUDE.md lists its build and hardware commands.
 - **Tests.** New behaviour gets host tests (fakes for hardware, golden data for protocols).
 - **Commits.** Conventional commits (`feat:`, `docs:`, ...) on a step branch. `main` changes only by pull
   request, merged by rebase or squash once its required checks pass (`gh pr merge --auto --rebase`); every
-  repository of the organization has that rule. Commit and push only when asked. Remote: `origin`.
+  repository of the organization has that rule, a headset's too. Commit and push only when asked. Remote:
+  `origin`.

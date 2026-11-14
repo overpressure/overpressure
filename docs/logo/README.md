@@ -33,4 +33,4 @@ the lenses are `#0b0d12`, the red zone `#ff7849`, the needle and hub white. The 
 A browser (Chromium) renders them from the drawings, each at the size it is used. GitHub takes the avatar and the social previews only through its settings pages: they are uploaded by hand. After a drawing changes,
 render them again rather than editing them. The headset's boot indication draws the mark itself, from the
 same geometry
-([pico4-splash.c](../../devices/phoenix/src/splash/pico4-splash.c)).
+([pico4-splash.c](https://github.com/overpressure/phoenix/blob/main/src/splash/pico4-splash.c)).

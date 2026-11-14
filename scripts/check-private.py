@@ -57,8 +57,9 @@ ALLOWED = {
 #: (LAYER/RECIPE/test_*).
 TEST_PATHS = re.compile(r"^(?:tests/|devices/[^/]+/tests/|scripts/check-private\.py$|[a-z0-9]+/[^/]+/test_[^/]+$)")
 TEST_ONLY = {"MAC address", "Steam ID", "private key"}
-#: This repository's own binaries: built from src/ here, so stage 1 builds without a compiler.
-BINARIES = re.compile(r"^devices/[^/]+/prebuilt/aarch64/pico4-(?:reboot|splash)$")
+#: A headset's own binaries (the PICO 4's, in its repository): built from its src/, so stage 1 builds without a
+#: compiler.
+BINARIES = re.compile(r"^(?:devices/[^/]+/)?prebuilt/aarch64/pico4-(?:reboot|splash)$")
 BINARY_SUFFIXES = {".png", ".jpg", ".svg", ".ico"}
 
 

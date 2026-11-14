@@ -16,11 +16,24 @@ from typing import Any, Callable
 from unittest import mock
 
 from overpressure import __main__ as cli
-from overpressure import disclaimer, window
+from overpressure import catalogue, disclaimer, window
 from overpressure.headset import Action, AfterInstall, BackupSet, Command, Headset, Info, Registry, Step, Workflow
 from overpressure.install import Stage, Task
 from overpressure.window import advanced, app, headsets, installer
 from tests.test_installer import PLAN, close, feed, panel_texts, press_panel, task
+
+# The headset page lists the catalogue's headsets too: none in these tests, which bring their own.
+_EMPTY_CATALOGUE = mock.patch.dict(catalogue.CATALOGUE, clear=True)
+
+
+def setUpModule() -> None:
+    """Empty the catalogue for this module's tests."""
+    _EMPTY_CATALOGUE.start()
+
+
+def tearDownModule() -> None:
+    """Give the catalogue back."""
+    _EMPTY_CATALOGUE.stop()
 
 
 class Planned(Headset):
@@ -166,6 +179,43 @@ class ChoiceTests(Folder):
     def test_each_headset_says_what_its_finished_page_offers(self):
         self.assertEqual(Bare().after_install(), AfterInstall("Installed", "Your headset is ready.", ()))
         self.assertEqual([a.step for a in Planned().after_install().actions], ["install", "nope", "help"])
+
+
+#: A catalogue of one headset that devices/ does not hold.
+KNOWN = {"later": catalogue.Known("later", "Later headset", "overpressure/later")}
+
+
+class DownloadTests(Folder):
+    def test_the_catalogue_s_headsets_follow_to_download_and_a_refused_one_says_why(self):
+        registry = one()
+        registry.refused["later"] = "release 2.0 needs headset interface 2"
+        choice = headsets.Choice(registry, None, known={**KNOWN, "planned": catalogue.Known("planned", "", "")})
+        entries = choice.entries(self.root)
+        self.assertEqual([(e.codename, e.usable) for e in entries], [("planned", True), ("later", False)])
+        self.assertEqual(entries[1].mode, "release 2.0 needs headset interface 2")
+        self.assertEqual(
+            headsets.Choice(Registry({}), None, known=KNOWN).entries(self.root)[0].mode, (headsets.NOT_DOWNLOADED)
+        )
+        self.assertTrue(headsets.Choice(Registry({}), None, known=KNOWN).asking())  # to download
+
+    def test_a_download_takes_the_channel_or_the_version_chosen(self):
+        calls = []
+
+        def add(codename: str, **options: str) -> catalogue.Release:
+            calls.append((codename, options["channel"], options["version"]))
+            if options["version"] == "0.1":
+                msg = "no release 0.1"
+                raise LookupError(msg)
+            return catalogue.Release("v1.0", prerelease=False, zip_url="")
+
+        for wanted in (headsets.NEWEST_BETA, "0.9", "0.1"):
+            download = headsets.Download("later", wanted, add).start()
+            download.thread.join()
+            self.assertTrue(download.done)
+        self.assertEqual(calls, [("later", "beta", ""), ("later", "stable", "0.9"), ("later", "stable", "0.1")])
+        self.assertEqual(download.line(), "The download failed: no release 0.1")
+        published = [catalogue.Release("v1.0", prerelease=False, zip_url="")]
+        self.assertEqual(headsets.release_choices(published)[3:], ["1.0"])
 
 
 class LastTimeTests(unittest.TestCase):

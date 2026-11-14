@@ -6,9 +6,9 @@ everything has run on one PICO 4).
 ## A new headset
 
 overpressure is built for more than one headset: the installer, the window, the build container and the formats
-Android-based headsets share are generic, and a headset adds a folder under `devices/` with its plan, images and
-drivers. [docs/adding-a-headset.md](docs/adding-a-headset.md) walks through it; open an issue early, so the
-generic parts can grow where your headset needs them.
+Android-based headsets share are generic, and a headset is a repository of its own with its plan, images and
+drivers, dropped into `devices/`. [docs/adding-a-headset.md](docs/adding-a-headset.md) walks through it; open an
+issue early, so the generic parts can grow where your headset needs them.
 
 ## A bug
 
@@ -17,23 +17,28 @@ Open an issue with the bug template and attach the headset's support bundle (the
 
 ## A change
 
-- Work on a branch and open a pull request against `main`, titled as a conventional commit; it is merged by
-  rebase or squash, and `main` takes no direct pushes. CI has to pass: the host tests on Linux with Python 3.9
-  and 3.13 (a system Python may be either) and on Windows and macOS with 3.12 (what the start scripts install),
-  `make lint` (ruff and ty through uv:
-  [docs/tool.md](docs/tool.md#development)), the shell tests, shellcheck, the C tests, the link check and the
-  private-data scan.
+- Work on a branch and open a pull request against `main` of the repository you change (this one, or a
+  headset's such as [overpressure/phoenix](https://github.com/overpressure/phoenix)), titled as a conventional
+  commit; it is merged by rebase or squash, and `main` takes no direct pushes. CI has to pass: here the host
+  tests on Linux with Python 3.9 and 3.13 (a system Python may be either) and on Windows and macOS with 3.12
+  (what the start scripts install), `make lint` (ruff and ty through uv:
+  [docs/tool.md](docs/tool.md#development)), shellcheck, the link check, the private-data scan and each
+  headset's tests against the change; a headset's CI runs its own tests, lint and checks against this
+  repository's `main`.
+- A change both need lands here first, keeping the headset interface compatible, then in the headset.
 - [CLAUDE.md](CLAUDE.md) and each headset's CLAUDE.md hold the project's rules, for people and agents alike: hard
   rules, code style, how documents are written.
 - Use conventional commits (`feat:`, `fix:`, `docs:`); the changelog is generated from them.
 - New behaviour gets host tests, with fakes for hardware.
-- Your contribution goes out under the license of what it changes: the Unlicense unless the folder says otherwise.
+- Your contribution goes out under the license of what it changes: the Unlicense unless the folder says otherwise
+  (each repository's THIRD-PARTY.md).
 
 ## What never enters the repository
 
 - Serials, MAC addresses, Steam IDs, network names and other identifiers.
 - Vendor files and vendor data: firmware, Valve's packages, panel commands, sensor settings. They come from the
-  public downloads at build time ([devices/phoenix/docs/distribution.md](devices/phoenix/docs/distribution.md)).
+  public downloads at build time (the PICO 4's:
+  [docs/distribution.md](https://github.com/overpressure/phoenix/blob/main/docs/distribution.md)).
 - Code copied from other projects without a license that allows it.
 
 `python scripts/check-private.py` looks for identifiers, vendor register tables and binary files.

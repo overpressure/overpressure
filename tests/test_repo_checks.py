@@ -95,7 +95,14 @@ class LinkTests(unittest.TestCase):
                 "[good](b.md) [good](b.md#a-title-here) [web](https://example.com) `[code](none.md)`\n"
                 "```\n[fenced](none.md)\n```\n[gone](c.md) [nohead](b.md#other)\n"
             )
-            self.assertEqual(docs.broken(root / "a.md", text), ["c.md: no such file", "b.md#other: no such heading"])
+            self.assertEqual(
+                docs.broken(root / "a.md", text, root), ["c.md: no such file", "b.md#other: no such heading"]
+            )
+            (root / "inner").mkdir()
+            self.assertEqual(
+                docs.broken(root / "inner" / "a.md", "[up](../b.md)", root / "inner"),
+                ["../b.md: outside the repository"],
+            )
 
 
 class ReleaseTests(unittest.TestCase):

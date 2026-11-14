@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Unlicense
 """Every relative link in the Markdown documents leads somewhere: the file, and its heading if named.
 
-python scripts/check-docs.py
+python scripts/check-docs.py [--repo DIR]   (DIR: another repository, a headset's in devices/)
+
+A link may not leave its repository: on GitHub it would lead nowhere.
 """
 
 from __future__ import annotations
@@ -30,8 +32,8 @@ def anchors(text: str) -> set[str]:
     return found
 
 
-def broken(path: Path, text: str) -> list[str]:
-    """Return the links of the document at @p path that lead nowhere."""
+def broken(path: Path, text: str, root: Path = REPO) -> list[str]:
+    """Return the links of the document at @p path (in the repository at @p root) that lead nowhere."""
     bad = []
     body = CODE.sub("", FENCE.sub("", text))
     for target in LINK.findall(body):
@@ -39,24 +41,27 @@ def broken(path: Path, text: str) -> list[str]:
             continue
         name, _, anchor = target.partition("#")
         file = (path.parent / name).resolve() if name else path
-        if not file.exists():
+        if not file.is_relative_to(root.resolve()):
+            bad.append(f"{target}: outside the repository")
+        elif not file.exists():
             bad.append(f"{target}: no such file")
         elif anchor and file.suffix == ".md" and anchor.lower() not in anchors(file.read_text(encoding="utf-8")):
             bad.append(f"{target}: no such heading")
     return bad
 
 
-def main() -> int:
-    """Check every tracked or new Markdown document and print what is broken."""
-    ls_files = ["git", "-C", str(REPO), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*.md"]
+def main(argv: list[str]) -> int:
+    """Check every tracked or new Markdown document (of --repo DIR) and print what is broken."""
+    repo = Path(argv[argv.index("--repo") + 1]).resolve() if "--repo" in argv else REPO
+    ls_files = ["git", "-C", str(repo), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*.md"]
     result = subprocess.run(ls_files, check=True, stdout=subprocess.PIPE)  # noqa: S603  # git from PATH, no shell
     names = result.stdout.decode().split("\0")
     count = 0
     for name in names:
-        path = REPO / name
+        path = repo / name
         if not name or not path.is_file():
             continue
-        for problem in broken(path, path.read_text(encoding="utf-8")):
+        for problem in broken(path, path.read_text(encoding="utf-8"), repo):
             print(f"{name}: {problem}")
             count += 1
     print(f"{count} broken link(s)")
@@ -64,4 +69,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
