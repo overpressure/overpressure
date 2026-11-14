@@ -21,7 +21,7 @@ uvx git-cliff@2.14.2 --unreleased
 A pushed tag makes the release; nothing is uploaded by hand.
 
 1. **Ready.** Everything is on `main`, CI is green, and no issue the release depends on is open.
-2. **The version.** Set it in `pyproject.toml`, commit and push.
+2. **The version.** Set it in `pyproject.toml`, by pull request like every change to `main`.
 3. **The image.** Build from a clean checkout, the whole path of the headset's README, with the package lock
    on, in a new build root: a second such build gives the same archive and system image
    ([devices/phoenix/docs/userspace.md](../devices/phoenix/docs/userspace.md#reproducible-builds)). Run the
