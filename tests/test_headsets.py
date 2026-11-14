@@ -221,6 +221,20 @@ class DownloadTests(Folder):
         self.assertEqual(headsets.release_choices(published)[3:], ["1.0"])
 
 
+class FirstChoiceTests(unittest.TestCase):
+    def test_a_card_offers_its_recorded_channel_else_stable_else_beta_and_says_its_update(self):
+        stable = catalogue.Release("v1.0", prerelease=False, zip_url="")
+        beta = catalogue.Release("v1.1-beta", prerelease=True, zip_url="")
+        self.assertEqual(headsets.default_choice([beta, stable], {}), headsets.NEWEST)
+        self.assertEqual(headsets.default_choice([beta], {}), headsets.NEWEST_BETA)  # no stable release yet
+        self.assertEqual(headsets.default_choice(None, {}), headsets.NEWEST)  # offline
+        self.assertEqual(headsets.default_choice([beta, stable], {"channel": "preview"}), headsets.PREVIEW_MAIN)
+        self.assertEqual(headsets.default_choice([beta, stable], {"tag": "v1.0", "pinned": True}), "1.0")
+        self.assertEqual(headsets.update_line(stable), "Update available: release 1.0")
+        self.assertEqual(headsets.update_line(catalogue.preview(KNOWN["later"])), "Update available: main has changed")
+        self.assertEqual(headsets.update_line(None), "")
+
+
 class LastTimeTests(unittest.TestCase):
     """The headset page's line on where a headset stopped, from its plan probe."""
 

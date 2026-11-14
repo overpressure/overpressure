@@ -194,6 +194,25 @@ class EngineTests(unittest.TestCase):
         )
         self.assertEqual(json.loads((self.folder / "state.json").read_text())["tasks"]["two"]["status"], "failed")
 
+    def test_progress_another_release_made_starts_over_and_the_answers_stay(self):
+        def remember(ctx: Context) -> None:
+            self.ran.append("remember")
+            ctx.remember("skip")
+
+        def at(release: str) -> Engine:
+            stages = (Stage("a", "A", "", (Task("one", "One", remember),)),)
+            return Engine(INFO, stages, Recorder(), root=self.out, env=self.env, release=release)
+
+        at("v1.0 aaaa").run()
+        at("v1.0 aaaa").run()  # the same release: done, skipped
+        self.assertEqual(self.ran, ["remember"])
+        state = json.loads((self.out / "fake" / "state.json").read_text())
+        self.assertEqual((state["release"], state["choices"]), ("v1.0 aaaa", {"one": "skip"}))
+        at("v1.1 bbbb").run()  # another release: the plan runs again, the answer is still there
+        self.assertEqual(self.ran, ["remember", "remember"])
+        state = json.loads((self.out / "fake" / "state.json").read_text())
+        self.assertEqual((state["release"], state["choices"]), ("v1.1 bbbb", {"one": "skip"}))
+
     def test_a_missing_backup_fails_in_the_core_s_words_and_offers_its_import(self):
         def no_backup(_ctx: Context) -> None:
             raise NoBackup(Path("backup/stock"), "the way back needs it", "Nothing was written.")

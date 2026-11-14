@@ -245,13 +245,41 @@ class Download:
         return f"Downloaded release {self.release.version}" if self.release else ""
 
 
-class Releases:
-    """Each catalogue headset's published releases, read once on a thread for the headset page's choices."""
+def default_choice(found: list[catalogue.Release] | None, record: dict) -> str:
+    """Return the release a card offers first: what its download recorded, else the newest stable, else beta.
 
-    def __init__(self, get: Callable[[catalogue.Known], list[catalogue.Release]] = catalogue.releases) -> None:
-        """Read releases with GET (the catalogue's, from GitHub)."""
-        self.get = get
+    RECORD is the headset's .release.json (catalogue.record_of): a pinned version, else its channel. Without
+    one, the newest stable; while only betas run here, the newest beta, so the first choice is not refused.
+    """
+    choices = release_choices(found)
+    if record.get("pinned") and str(record.get("tag", "")).removeprefix("v") in choices:
+        return str(record["tag"]).removeprefix("v")
+    by_channel = {channel: label for label, channel in CHANNEL_OF.items()}
+    if record.get("channel") in by_channel:
+        return by_channel[str(record["channel"])]
+    runs = [r for r in found or () if not r.problem]
+    return NEWEST_BETA if runs and all(r.prerelease for r in runs) else NEWEST
+
+
+def update_line(newer: catalogue.Release | None) -> str:
+    """Return a card's line on an update its recorded channel offers, "" for none."""
+    if newer is None:
+        return ""
+    return "Update available: main has changed" if newer.tag == "main" else f"Update available: release {newer.version}"
+
+
+class Releases:
+    """Each catalogue headset's published releases and updates, read once on a thread for the headset page."""
+
+    def __init__(
+        self,
+        get: Callable[[catalogue.Known], list[catalogue.Release]] = catalogue.releases,
+        check: Callable[[str], catalogue.Release | None] = catalogue.update,
+    ) -> None:
+        """Read releases with GET and each download's update with CHECK (the catalogue's, from GitHub)."""
+        self.get, self.check = get, check
         self.found: dict[str, list[catalogue.Release]] = {}
+        self.updates: dict[str, catalogue.Release | None] = {}
         self.thread: threading.Thread | None = None
 
     def start(self, known: dict[str, catalogue.Known] | None = None) -> None:
@@ -264,6 +292,8 @@ class Releases:
             for codename, item in known.items():
                 with contextlib.suppress(LookupError, ValueError, OSError):
                     self.found[codename] = self.get(item)
+                with contextlib.suppress(LookupError, ValueError, OSError):
+                    self.updates[codename] = self.check(codename)
 
         self.thread = threading.Thread(target=run, daemon=True)
         self.thread.start()
@@ -276,6 +306,10 @@ class Releases:
     def choices(self, codename: str) -> list[str]:
         """Return CODENAME's release choices as known so far."""
         return release_choices(self.found.get(codename))
+
+    def first(self, codename: str, root: Path = REPO) -> str:
+        """Return the choice CODENAME's card offers first (default_choice)."""
+        return default_choice(self.found.get(codename), catalogue.record_of(codename, root))
 
 
 def last_time(model: Model) -> str:

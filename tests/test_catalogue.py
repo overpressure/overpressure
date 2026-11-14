@@ -127,6 +127,38 @@ class CatalogueTests(unittest.TestCase):
             self.add()
         self.assertEqual(catalogue.installed("phoenix", self.root), "development checkout")
 
+    def test_stable_takes_the_newest_beta_until_there_is_a_stable_release(self):
+        self.github = Published(("v1.0-beta.2", True, archive("1.0-beta.2")), ("v1.0-beta", True, archive("1.0-beta")))
+        self.assertEqual(self.add().version, "1.0-beta.2")
+        self.assertEqual(catalogue.record_of("phoenix", self.root)["channel"], "stable")
+
+    def test_an_update_follows_the_recorded_channel_and_a_pinned_release_stays(self):
+        self.add(version="0.9")  # pinned: asked for by version
+        self.assertTrue(catalogue.record_of("phoenix", self.root)["pinned"])
+        self.assertIsNone(catalogue.update("phoenix", self.root, self.github.get))
+        for channel in (catalogue.STABLE, catalogue.BETA):
+            self.add(channel=channel)
+            self.assertIsNone(catalogue.update("phoenix", self.root, self.github.get), channel)  # it has the newest
+            self.github = Published(
+                ("v1.2", False, archive("1.2")),
+                ("v1.1-beta", True, archive("1.1-beta")),
+                ("v1.0", False, archive("1.0")),
+            )
+            found = catalogue.update("phoenix", self.root, self.github.get)
+            self.assertEqual(getattr(found, "version", None), "1.2", channel)
+            self.setUp()
+        self.add(channel=catalogue.PREVIEW)  # main's commit as its headset.json carries it
+        commits = f"{catalogue.GITHUB}/repos/overpressure/phoenix/commits/main"
+        self.github.files[commits] = json.dumps({"sha": "abc"}).encode()
+        self.assertEqual(getattr(catalogue.update("phoenix", self.root, self.github.get), "tag", None), "main")
+
+    def test_versions_sort_betas_before_their_release(self):
+        order = ["0.9", "1.0-beta", "1.0-beta.2", "1.0", "1.1-beta", "1.1", "2.0"]
+        keys = [catalogue.version_key(v) for v in order]
+        self.assertEqual(keys, sorted(k for k in keys if k is not None))  # each later than the one before
+        self.assertEqual(len(set(keys)), len(order))
+        self.assertIsNone(catalogue.version_key("main"))
+
     def test_the_command_line_lists_and_adds(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):

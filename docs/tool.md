@@ -29,18 +29,22 @@ dropped into the ignored `devices/<codename>/`; [overpressure/catalogue.py](../o
 lists the headsets there are.
 
 ```sh
-python -m overpressure headset list                 # every headset, and what devices/ holds of it
+python -m overpressure headset list                 # every headset, what devices/ holds of it, its update
 python -m overpressure headset releases phoenix     # its published releases, newest first
-python -m overpressure headset add phoenix          # its newest stable release
+python -m overpressure headset add phoenix          # its newest stable release (until there is one, beta)
 python -m overpressure headset add phoenix --channel beta      # the newest, betas included
 python -m overpressure headset add phoenix --channel preview   # its main: development state, untested
 python -m overpressure headset add phoenix --version 1.0-beta  # a release by its version, older ones too
+python -m overpressure headset update phoenix       # what its recorded channel offers now, when newer
 ```
 
 A release is the tag's source zip, checked against its published SHA-256 (a preview of `main` has none),
 unpacked into a new folder and checked against its `headset.json` before it replaces what was there.
-`devices/<codename>/.release.json` records which it is. A development checkout, a Git clone of the
-headset's repository in its folder, is never replaced: Git updates it.
+`devices/<codename>/.release.json` records which it is: its tag, its channel and its zip's SHA-256, or that
+it was asked for by version (pinned). `headset update` and the headset page follow the recorded channel: a
+newer release on it (for a preview, another commit of `main`) is an update; a pinned release has none. A
+development checkout, a Git clone of the headset's repository in its folder, is never replaced: Git updates
+it.
 
 `headset.json` names the headset interface the release was made for (`api`, `MAJOR.MINOR`,
 [adding-a-headset.md](adding-a-headset.md#the-headset-interface)). `headset releases` marks each release this
@@ -164,7 +168,9 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
   `install --json --plan`, which runs nothing). Every card but a development checkout's has a release
   choice (*Newest stable*, *Newest beta*, *Preview (main, untested)*, then each published release, read in
   the background) and *Download*, which runs [`headset add`](#headsets-in-devices) on a thread and reads
-  `devices/` again when it ends. A headset not downloaded yet, or held in a release this overpressure
+  `devices/` again when it ends. The choice starts on what the download recorded (its channel, or its pinned
+  version), else on *Newest stable*, or *Newest beta* while no stable release runs here; a newer release on
+  the recorded channel shows as *Update available*. A headset not downloaded yet, or held in a release this overpressure
   cannot run (the card says why), only downloads. The headset chosen last is listed first, marked *Last
   used*. It is kept in `out/window.json`
   (`{"last_headset": CODENAME}`), not in `.env`. Only `--device` skips the page; `OVERPRESSURE_DEVICE`
@@ -296,7 +302,10 @@ the plan). A headset without one has no installer (exit status 2). The engine is
   another workflow (`{"schema": 1, "tasks": {ID: {"status": ..., "finished": UTC}}}`, and `"choices"`: what
   a task recorded with `ctx.remember`, never a secret, such as a skipped ask), the tasks' logs beside it. A task done earlier is skipped unless its done check says its result is gone; a done check
   also skips a task whose output is already there (`skipped`). `--restart STAGE` forgets that stage and
-  every later one. A finished workflow forgets the other workflows' state.
+  every later one. A finished workflow forgets the other workflows' state. The state records the headset's
+  tooling (`"release"`: its tag and zip, or the development checkout); progress another release made starts
+  over, the choices kept, so a changed plan never resumes in the middle, and each task's done check skips
+  what is there already.
 - **Child programs** run from the repository root (Linux-root steps in the build container); their output,
   and what a task prints, goes to log events and `out/install/<codename>/<task>.log`, so stdout carries only
   events.

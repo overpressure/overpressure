@@ -22,7 +22,7 @@ from overpressure.install import IMPORT_BACKUP
 from overpressure.window import logo
 from overpressure.window.advanced import INSTALLER, busy
 from overpressure.window.advanced_view import AdvancedView
-from overpressure.window.headsets import INTRO, LAST_USED, QUESTION, Choice, Download, Entry, Probe
+from overpressure.window.headsets import INTRO, LAST_USED, QUESTION, Choice, Download, Entry, Probe, update_line
 from overpressure.window.installer import (
     DONE,
     FAILED,
@@ -476,6 +476,9 @@ class Window:
             lines.append(kit.label(card, line, size=SMALL, colour=TEXT_MUTED))
         if entry.release:
             lines.append(kit.label(card, entry.release.capitalize(), size=SMALL, colour=TEXT_MUTED))
+        newer = update_line(self.choice.releases.updates.get(entry.codename))
+        if newer:
+            lines.append(kit.label(card, newer, size=SMALL, colour=ACCENT_TEXT))
         download = self.downloads.get(entry.codename)
         if download is not None:
             tone = WARNING if download.error else TEXT_MUTED
@@ -489,7 +492,8 @@ class Window:
         values = self.choice.releases.choices(entry.codename)
         var = self.release_vars.get(entry.codename)
         if var is None or var.get() not in values:
-            var = self.release_vars[entry.codename] = self.ctk.StringVar(value=values[0])
+            first = self.choice.releases.first(entry.codename)
+            var = self.release_vars[entry.codename] = self.ctk.StringVar(value=first)
         kit.choice(row, values, var).pack(side="left")
         text = "Download" if entry.usable is False and not entry.refused else "Download this release"
         button = kit.button(
@@ -519,6 +523,8 @@ class Window:
             if not download.error:
                 self.choice.rediscover()
                 self.probes.pop(codename, None)
+                self.choice.releases.updates.pop(codename, None)  # what it offered is what it has now
+                self.release_vars.pop(codename, None)
         if ended and self.view == CHOOSER_VIEW:
             self.probe_headsets()
         return bool(ended)
@@ -1590,6 +1596,8 @@ class Window:
         probed = [codename for codename, probe in self.probes.items() if probe.receive()]
         releases = self.choice.releases.done and not self.releases_shown
         self.releases_shown |= releases
+        if releases:
+            self.release_vars.clear()  # each card's first choice, now that the releases are known
         if (probed or releases or self.downloaded()) and self.view == CHOOSER_VIEW:
             self.render_chooser()  # where each headset stopped last time, its releases, a download's end
         workflows = [key for key, probe in self.workflow_probes.items() if probe.receive()]

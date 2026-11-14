@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, ClassVar, Protocol, TypeVar
 
-from . import REPO, localconfig, power, runner
+from . import REPO, catalogue, localconfig, power, runner
 from . import backup as backups
 from . import progress as progress_lines
 from .headset import INSTALL
@@ -693,6 +693,7 @@ class Engine:
         workflow: str = INSTALL,
         others: Sequence[str] = (),
         battery: Callable[[], str] | None = None,
+        release: str = "",
     ) -> None:
         """Run @p stages of the headset @p info through @p ui; tests pass the root folder, .env and fakes.
 
@@ -708,6 +709,7 @@ class Engine:
         self.workflow = workflow
         self.others = tuple(o for o in others if o != workflow)
         self.battery = battery or power.battery_problem
+        self.release = release  #: the headset's tooling (catalogue.identity): progress made by another starts over
         self.folder = workflow_folder(root, info.codename, workflow)
         self.env = env if env is not None else localconfig.ROOT / ".env"
         self.spawn: Spawn = spawn or self._spawn
@@ -754,8 +756,16 @@ class Engine:
         return self.folder / STATE
 
     def load_state(self) -> None:
-        """Read the state file; a missing or unreadable one is a fresh start."""
+        """Read the state file; a missing or unreadable one is a fresh start.
+
+        Progress another release of the headset's tooling made starts over: its plan may differ. The
+        owner's answers (choices) stay, and each task's done check skips what is there already.
+        """
         self.state = _read_state(self.state_path) or {"schema": SCHEMA, "tasks": {}}
+        if self.release and self.state.get("release", self.release) != self.release:
+            self.state["tasks"] = {}
+        if self.release:
+            self.state["release"] = self.release
 
     def save_state(self) -> None:
         """Write the state file whole."""
@@ -1105,7 +1115,8 @@ def main(
     if problem:
         return refuse(problem)
     ui: UI = JsonUI(stdout, stdin if stdin is not None else sys.stdin) if args.json else TextUI(stdout)
-    engine = Engine(headset.info, stages, ui, root=root, workflow=args.workflow, others=workflows)
+    release = catalogue.identity(headset.info.codename)  # progress another release made starts over
+    engine = Engine(headset.info, stages, ui, root=root, workflow=args.workflow, others=workflows, release=release)
     if args.plan:
         engine.show_plan()
         return 0
