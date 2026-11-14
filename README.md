@@ -26,8 +26,8 @@
 overpressure turns standalone VR headsets into SteamOS headsets: Valve's Steam Frame kernel and VR session
 (SteamVR in gamescope) with drivers for each headset's own lenses, cameras, sensors and controllers. Your Steam
 library runs on it, Windows games through Proton and FEX, Android games through Valve's Lepton, and PC games over
-Steam Link. One installer builds the system on your computer from public downloads and puts it on the headset;
-the way back to the headset's own system is one click away.
+Steam Link. One installer has the system built from public downloads and puts it on the headset (the PICO 4
+builds its own, through your computer's connection); the way back to the headset's own system is one click away.
 
 Each headset is its own repository with its own releases, dropped into `devices/` of one shared tool: the
 installer downloads the one you choose. The PICO 4 is the first; more are welcome
