@@ -231,7 +231,11 @@ class AdvancedView:
                 self.entries[entry.key] = (row, label)
                 self.marks[entry.key] = mark
         headset = self.model.steps.headset
-        self.headset_name.configure(text=headset.info.name if headset is not None else "No headsets in devices/")
+        self.headset_name.configure(
+            text=headset.info.name
+            if headset is not None
+            else "No headsets in devices/: download one on the headset page"
+        )
         self.about.configure(text=self.model.steps.about())
         self.update_list()
 

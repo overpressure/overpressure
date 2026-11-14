@@ -96,7 +96,7 @@ jobs:
       - name: Types
         run: uv run ty check
 
-  shell-and-c:
+  shell:
     needs: tree
     if: needs.tree.outputs.passed != 'true'
     runs-on: ubuntu-latest
@@ -106,13 +106,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-      - name: Shell tests
-        run: |
-          bash devices/phoenix/tests/test_recovery_policy.sh
       - name: Shellcheck
         run: python3 scripts/run-shellcheck.py
-      - name: C tests
-        run: bash scripts/c-tests.sh
 
   repository:
     needs: tree
@@ -126,14 +121,42 @@ jobs:
         run: python3 scripts/check-docs.py
       - name: Private data, in every commit
         run: python3 scripts/check-private.py --history
-      - name: The pinned kernel release, downloaded and checked against the pin
-        run: python3 -m overpressure --device phoenix kernel fetch
-      - name: What the pinned kernel and this repository share (contracts)
-        run: python3 -m overpressure --device phoenix kernel contracts
+
+  # Each headset of the catalogue (overpressure/catalogue.py), its main dropped into devices/: this change
+  # must not break it. Its own CI tests its changes against overpressure's main.
+  headsets:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        headset: [phoenix]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: overpressure/${{ matrix.headset }}
+          path: devices/${{ matrix.headset }}
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.9.26"
+      - run: uv sync --locked
+      - name: It loads
+        run: |
+          found=$(uv run python -m overpressure devices)
+          echo "$found"
+          ! grep -q refused <<< "$found"
+      - name: Its tests
+        run: uv run python -m unittest discover -t . -s devices/${{ matrix.headset }}/tests
+        env:
+          PYTHONIOENCODING: utf-8
+      - name: Its types
+        run: uv run ty check devices/${{ matrix.headset }}
 
   # The marker that this tree passed, for the runs after this one.
   passed:
-    needs: [tree, host-tests, host-tests-windows-macos, lint, shell-and-c, repository]
+    needs: [tree, host-tests, host-tests-windows-macos, lint, shell, repository, headsets]
     if: ${{ !cancelled() && !failure() && needs.tree.outputs.passed != 'true' }}
     runs-on: ubuntu-latest
     steps:

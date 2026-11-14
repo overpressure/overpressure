@@ -14,7 +14,6 @@ REPO = Path(__file__).resolve().parents[1]
 #: Path prefix (a folder or one file) -> the SPDX identifiers allowed there; the longest prefix decides.
 LICENSES = {
     "": {"Unlicense"},
-    "devices/phoenix/src/splash/": {"BSL-1.0"},
 }
 
 SOURCE_SUFFIXES = {".c", ".cpp", ".dts", ".frag", ".h", ".hpp", ".ps1", ".py", ".sh", ".vert"}
@@ -71,14 +70,13 @@ class RuleTests(unittest.TestCase):
 
     def test_the_longest_prefix_decides(self):
         self.assertEqual(allowed("overpressure/tools.py"), {"Unlicense"})
-        self.assertEqual(allowed("devices/phoenix/src/reboot/pico4-reboot.c"), {"Unlicense"})
-        self.assertEqual(allowed("devices/phoenix/src/splash/pico4-splash.c"), {"BSL-1.0"})
 
     def test_what_the_rule_covers(self):
         self.assertTrue(is_source("overpressure/tools.py", b""))
-        self.assertTrue(is_source("devices/phoenix/initramfs/init", b"#!/bin/sh\n"))
+        self.assertTrue(is_source("scripts/stock-lib.sh", b""))
+        self.assertTrue(is_source("a/program", b"#!/bin/sh\n"))
         self.assertFalse(is_source("README.md", b"# overpressure\n"))
-        self.assertFalse(is_source("devices/phoenix/prebuilt/aarch64/pico4-reboot", b"\x7fELF"))
+        self.assertFalse(is_source("a/program", b"\x7fELF"))
 
 
 class RepositoryTests(unittest.TestCase):
@@ -101,23 +99,6 @@ class RepositoryTests(unittest.TestCase):
     def test_a_shebang_stays_on_the_first_line(self):
         wrong = [path for path, data in self.sources.items() if b"#!" in {line[:2] for line in data.splitlines()[1:2]}]
         self.assertEqual(wrong, [])
-
-
-#: What THIRD-PARTY.md pins, read from where the build pins it: (file, pattern of the pin).
-PINS = (
-    ("devices/phoenix/kernel/release.json", r'^ "tag": "([^"]+)"'),
-    ("devices/phoenix/userspace/packages.json", r'^ "tag": "([^"]+)"'),
-)
-
-
-class ThirdPartyTests(unittest.TestCase):
-    def test_the_list_names_what_the_build_pins(self):
-        listed = (REPO / "THIRD-PARTY.md").read_text(encoding="utf-8")
-        for path, pattern in PINS:
-            match = re.search(pattern, (REPO / path).read_text(encoding="utf-8"), re.MULTILINE)
-            self.assertIsNotNone(match, path)
-            assert match is not None
-            self.assertIn(match.group(1), listed, path)
 
 
 if __name__ == "__main__":

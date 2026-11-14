@@ -4,15 +4,11 @@
 from __future__ import annotations
 
 import io
-import os
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Callable
-from unittest import mock
 
-from devices.phoenix.tooling import HEADSET
-from overpressure import __main__ as cli
 from overpressure import disclaimer, power
 
 
@@ -58,56 +54,6 @@ class GateTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("12 %", text)
         self.assertNotIn("warranty", text)
-
-
-class TouchesTests(unittest.TestCase):
-    def test_what_touches_the_headset_and_what_does_not(self):
-        touching = [
-            ["dev", "install"],
-            ["dev", "restore", "--installed"],
-            ["dev", "ssh", "true"],
-            ["device", "backup", "--identity", "x"],
-            ["device", "unlock"],
-            ["cycle", "--restore-only"],
-            ["hwtest", "preflight"],
-            ["install"],
-            ["restore"],
-            ["upgrade", "--json"],
-            ["run", "install"],
-            ["run", "restore-abl"],
-        ]
-        not_touching = [
-            ["build", "--firmware", "x"],
-            ["assets"],
-            ["dev", "image"],
-            ["dev", "boot-image"],
-            ["device", "verify-backup", "--backup", "x"],
-            ["device", "fetch-unlock-files"],
-            ["install", "--plan"],
-            ["dev", "install", "--help"],
-            ["backup", "export", "x"],
-            ["steps"],
-            ["ram-boot"],  # the PICO 4 has none: it only says so
-            ["run", "userspace"],
-            ["run", "tools"],
-        ]
-        for argv in touching:
-            self.assertTrue(cli.touches(HEADSET, argv), argv)
-        for argv in not_touching:
-            self.assertFalse(cli.touches(HEADSET, argv), argv)
-
-    def test_the_command_line_asks_first_and_the_flag_accepts(self):
-        with mock.patch.dict(os.environ, clear=False), mock.patch.object(cli.disclaimer, "gate", return_value=1):
-            os.environ.pop(disclaimer.ENV, None)
-            with mock.patch.object(HEADSET, "main") as ran:
-                self.assertEqual(cli.main(["--device", "phoenix", "dev", "install"]), 1)
-                ran.assert_not_called()
-        with mock.patch.dict(os.environ, clear=False):
-            os.environ.pop(disclaimer.ENV, None)
-            with mock.patch.object(HEADSET, "main", return_value=0) as ran:
-                self.assertEqual(cli.main(["--device", "phoenix", disclaimer.FLAG, "dev", "install"]), 0)
-                ran.assert_called_once_with(["dev", "install"])
-                self.assertTrue(disclaimer.accepted())
 
 
 class PowerTests(unittest.TestCase):

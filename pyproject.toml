@@ -26,13 +26,13 @@ overpressure = "overpressure.__main__:main"
 [project.gui-scripts]
 overpressure-gui = "overpressure.__main__:gui"
 
-# The tool runs from the repository (pip install -e .): .env, out/ and cache/ are there.
+# The tool runs from the repository (pip install -e .): .env, out/ and cache/ are there, and the
+# headsets dropped into devices/ (python -m overpressure headset add CODENAME).
 [tool.setuptools.packages.find]
 include = ["overpressure", "overpressure.*", "devices", "devices.*"]
 exclude = ["devices.*.tests"]
 
 [tool.setuptools.package-data]
-"devices.phoenix.tooling" = ["firmware.json"]
 "overpressure.window" = ["icons/*.png", "icons/*.ico"]
 
 # Development: uv, ruff and ty (docs/development.md in the repository root's docs).

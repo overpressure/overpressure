@@ -8,8 +8,9 @@ import sys
 import time
 import unittest
 from typing import TYPE_CHECKING, Callable, NoReturn
+from unittest import mock
 
-from overpressure import REPO, doctor, runner, window
+from overpressure import REPO, catalogue, doctor, runner, window
 from overpressure.headset import Command, Headset, Info, Param, Registry, Step
 from overpressure.install import Stage, Task
 from overpressure.window import advanced, app, installer
@@ -17,6 +18,20 @@ from tests.test_installer import close
 
 if TYPE_CHECKING:
     from overpressure.window.installer import Item
+
+# The headset page lists the catalogue's headsets too: none in these tests, which bring their own.
+_EMPTY_CATALOGUE = mock.patch.dict(catalogue.CATALOGUE, clear=True)
+
+
+def setUpModule() -> None:
+    """Empty the catalogue for this module's tests."""
+    _EMPTY_CATALOGUE.start()
+
+
+def tearDownModule() -> None:
+    """Give the catalogue back."""
+    _EMPTY_CATALOGUE.stop()
+
 
 CHECKS = [
     doctor.Check("thing", "building", doctor.MISSING, "not there", "install thing"),

@@ -17,14 +17,18 @@ test: ## host tests of the package and every headset: no hardware, seconds
 container-test: ## the same tests in the build container, as root (any host with Docker or Podman)
 	$(PYTHON) -m overpressure container run -- make test
 
-lint: ## formatting, lint and types: ruff and ty, through uv
-	$(UV) run ruff format --check .
-	$(UV) run ruff check .
-	$(UV) run ty check
+# The headsets in devices/ are their own repositories, ignored here: named explicitly, ruff and ty check them too.
+HEADSETS = $(wildcard devices/*/headset.json)
+HEADSET_DIRS = $(patsubst %/headset.json,%,$(HEADSETS))
 
-format: ## format the Python code and apply ruff's safe fixes
-	$(UV) run ruff format .
-	$(UV) run ruff check --fix .
+lint: ## formatting, lint and types: ruff and ty, through uv, here and in each headset in devices/
+	$(UV) run ruff format --check . $(HEADSET_DIRS)
+	$(UV) run ruff check . $(HEADSET_DIRS)
+	$(UV) run ty check . $(HEADSET_DIRS)
+
+format: ## format the Python code and apply ruff's safe fixes, here and in each headset in devices/
+	$(UV) run ruff format . $(HEADSET_DIRS)
+	$(UV) run ruff check --fix . $(HEADSET_DIRS)
 
 gui: ## the window: the installer, and every step in its Advanced mode
 	$(UV) run --extra gui python -m overpressure gui

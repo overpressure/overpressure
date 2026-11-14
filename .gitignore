@@ -19,3 +19,5 @@ known_hosts
 .vscode/
 .serena/
 *.egg-info/
+# headsets dropped in (python -m overpressure headset add CODENAME, or a clone of overpressure/CODENAME)
+/devices/*/

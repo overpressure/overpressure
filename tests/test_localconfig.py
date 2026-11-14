@@ -48,16 +48,6 @@ class DeviceSettingsTests(unittest.TestCase):
         self.assertEqual((s.firmware, s.backup), ("1.0", "backup/stock"))
         self.assertEqual(localconfig.load(Example, env, {"EXAMPLE_FIRMWARE": "2.0"}).firmware, "2.0")
 
-    def test_the_pico4_env_example_keeps_the_known_engineering_abl_hash(self):
-        from devices.phoenix.tooling import localconfig as pico4  # noqa: PLC0415  # the PICO 4's settings
-        from devices.phoenix.tooling import unlockfiles  # noqa: PLC0415  # the known hash
-
-        env = self.root / ".env"
-        env.write_text((localconfig.ROOT / ".env.example").read_text(encoding="utf-8"), encoding="utf-8")
-        s = pico4.load(env, {})
-        self.assertEqual(s.engineering_abl_sha256, unlockfiles.ENGINEERING_ABL_SHA256)
-        s.require("engineering_abl_sha256")  # what dev stage-abl requires: there on a new computer
-
     def test_edl_ng_and_the_ncm_python_fall_back_to_what_is_there(self):
         s = Example()
         self.assertEqual(s.edl_program(), Path("edl-ng" + localconfig.EXE))  # from PATH

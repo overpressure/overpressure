@@ -80,7 +80,7 @@ def main(
         Advanced(registry, headset, process=DemoProcess(), checks=demo_checks) if demo else Advanced(registry, headset)
     )
     # The last choice is the window's preference, not the command line's setting: .env stays the owner's.
-    choice = Choice(registry, headset, prefs=localconfig.ROOT / PREFS, save=not demo)
+    choice = Choice(registry, headset, prefs=localconfig.ROOT / PREFS, save=not demo, known={} if demo else None)
     view = ADVANCED_VIEW if advanced else INSTALLER_VIEW
     try:
         window = Window(

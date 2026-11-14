@@ -1,7 +1,0 @@
-#!/bin/sh
-# SPDX-License-Identifier: Unlicense
-# Download the hardware report (collected first if it does not exist yet).
-[ -f /run/pico4/report.tar.gz ] || pico4-probe --boot >/dev/null 2>&1
-printf 'Content-Type: application/gzip\r\nContent-Disposition: attachment; filename="pico4-report-%s.tar.gz"\r\n\r\n' \
-	"$(date +%Y%m%d-%H%M%S)"
-cat /run/pico4/report.tar.gz
