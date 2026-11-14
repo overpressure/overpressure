@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
@@ -37,9 +38,14 @@ if TYPE_CHECKING:
     from .install import Stage
     from .usbaccess import UsbMode
 
-#: The headset interface this overpressure gives: what docs/adding-a-headset.md#what-a-headset-may-use lists.
-#: A change that breaks any of it raises it; each headset's headset.json names the one it was made for.
-API = 1
+#: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this
+#: overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new
+#: major, and the old one stays, as its module overpressure.api.vMAJOR, until overpressure's next major release.
+SUPPORTED: dict[int, int] = {1: 0}
+#: The newest interface: what a new headset is made for.
+API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"
+#: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
+RETIRED: dict[int, str] = {}
 #: A headset folder's description of itself: devices/<codename>/headset.json.
 MANIFEST = "headset.json"
 
@@ -326,17 +332,47 @@ def manifest(folder: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def api_version(value: object) -> tuple[int, int] | None:
+    """Return a headset.json api ("1.2"; a bare 1 is 1.0) as (major, minor), None when it is none."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value, 0
+    if isinstance(value, str) and re.fullmatch(r"\d+\.\d+", value):
+        major, minor = value.split(".")
+        return int(major), int(minor)
+    return None
+
+
+def runs() -> str:
+    """Return the interfaces this overpressure runs, in words."""
+    return ", ".join(f"{major}.0 to {major}.{minor}" for major, minor in sorted(SUPPORTED.items()))
+
+
+def api_problem(value: object) -> str:
+    """Return why this overpressure cannot run a headset made for interface VALUE, "" when it can."""
+    version = api_version(value)
+    if version is None:
+        return f"its headset interface {value!r} is no MAJOR.MINOR"
+    major, minor = version
+    needs = f"it needs headset interface {major}.{minor}"
+    if major in RETIRED:
+        return f"{needs}, which overpressure {RETIRED[major]} was the last to run: use that one"
+    if major not in SUPPORTED or minor > SUPPORTED[major]:
+        newer = major > max(SUPPORTED) or major in SUPPORTED
+        return f"{needs}, this overpressure runs {runs()}: " + ("update overpressure" if newer else "use an older one")
+    return ""
+
+
 def refusal(codename: str, data: dict) -> str:
     """Return why a headset folder with headset.json DATA cannot run here, or "" when it can."""
     if not data:
         return f"no {MANIFEST}: not a headset release (python -m overpressure headset add {codename})"
     if data.get("codename") != codename:
         return f"{MANIFEST} names {data.get('codename')!r}"
-    if data.get("api") != API:
+    problem = api_problem(data.get("api"))
+    if problem:
         return (
-            f"release {data.get('version', '?')} needs headset interface {data.get('api')!r}, this overpressure has"
-            f" {API}: update overpressure, or download another release (python -m overpressure headset releases"
-            f" {codename})"
+            f"release {data.get('version', '?')}: {problem}, or download another release"
+            f" (python -m overpressure headset releases {codename})"
         )
     return ""
 

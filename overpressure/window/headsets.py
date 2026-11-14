@@ -203,8 +203,8 @@ class Choice:
 
 
 def release_choices(found: list[catalogue.Release] | None) -> list[str]:
-    """Return the page's release choices: the channels, then each published release's version (FOUND)."""
-    return [NEWEST, NEWEST_BETA, PREVIEW_MAIN, *(r.version for r in found or ())]
+    """Return the page's release choices: the channels, then each published release (FOUND) that runs here."""
+    return [NEWEST, NEWEST_BETA, PREVIEW_MAIN, *(r.version for r in found or () if not r.problem)]
 
 
 class Download:

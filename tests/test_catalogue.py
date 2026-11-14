@@ -11,14 +11,15 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
-from overpressure import catalogue
+from overpressure import catalogue, headset
 from overpressure.headset import API, refusal
 
 REPO = "https://api.github.com/repos/overpressure/phoenix/releases?per_page=100"
 
 
-def archive(version: str, api: int = API, codename: str = "phoenix") -> bytes:
+def archive(version: str, api: str = API, codename: str = "phoenix") -> bytes:
     """Return a release zip as git archive makes it: one top folder, headset.json, a program."""
     data = io.BytesIO()
     with zipfile.ZipFile(data, "w") as out:
@@ -43,6 +44,11 @@ class Published:
             assets = [{"name": "p.zip", "browser_download_url": zip_url}]
             assets.append({"name": "p.zip.sha256", "browser_download_url": sha_url})
             listing.append({"tag_name": tag, "prerelease": prerelease, "draft": False, "assets": assets})
+            with zipfile.ZipFile(
+                io.BytesIO(data)
+            ) as out:  # the tag's headset.json, as raw.githubusercontent.com has it
+                manifest = next(n for n in out.namelist() if n.endswith("/headset.json"))
+                self.files[f"{catalogue.RAW}/overpressure/phoenix/{tag}/headset.json"] = out.read(manifest)
         self.files[REPO] = json.dumps(listing).encode()
         self.files["https://codeload.github.com/overpressure/phoenix/zip/refs/heads/main"] = archive("1.2-dev")
 
@@ -90,11 +96,30 @@ class CatalogueTests(unittest.TestCase):
         self.github.files["https://x/v0.9.zip.sha256"] = b"0" * 64
         with self.assertRaisesRegex(RuntimeError, "is not the published"):
             self.add(version="0.9")
-        self.github = Published(("v2.0", False, archive("2.0", api=API + 1)))
-        with self.assertRaisesRegex(RuntimeError, f"needs headset interface {API + 1}"):
-            self.add()
+        main = "https://codeload.github.com/overpressure/phoenix/zip/refs/heads/main"
+        self.github.files[main] = archive("2.0-dev", api="2.0")  # its zip says more than the tag's file did
+        with self.assertRaisesRegex(RuntimeError, "needs headset interface 2.0"):
+            self.add(channel=catalogue.PREVIEW)
         self.assertEqual(self.version(), "1.0")
         self.assertEqual(sorted(p.name for p in (self.root / "devices").iterdir()), ["phoenix"])
+
+    def test_releases_this_overpressure_cannot_run_are_marked_and_never_picked(self):
+        self.github = Published(
+            ("v2.0", False, archive("2.0", api="2.0")), ("v1.1", False, archive("1.1")), ("v0.5", False, archive("0.5"))
+        )
+        found = catalogue.releases(catalogue.CATALOGUE["phoenix"], self.github.get)
+        self.assertEqual([bool(r.problem) for r in found], [True, False, False])
+        self.assertEqual(self.add().version, "1.1")  # the newest that runs here
+        with self.assertRaisesRegex(LookupError, r"release 2\.0: it needs headset interface 2\.0"):
+            self.add(version="2.0")
+        self.assertEqual(getattr(catalogue.oldest_supported(found), "tag", None), "v0.5")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            catalogue.main(["releases", "phoenix"], self.root, self.github.get)
+            catalogue.main(["releases", "phoenix", "--oldest-supported"], self.root, self.github.get)
+        lines = out.getvalue().splitlines()
+        self.assertIn("update overpressure", lines[0])
+        self.assertEqual((lines[1].split()[-2:], lines[-1]), (["runs", "here"], "v0.5"))
 
     def test_a_development_checkout_is_never_replaced(self):
         (self.root / "devices/phoenix/.git").mkdir(parents=True)
@@ -117,7 +142,16 @@ class RefusalTests(unittest.TestCase):
         self.assertEqual(refusal("phoenix", {"codename": "phoenix", "version": "1.0", "api": API}), "")
         self.assertIn("no headset.json", refusal("phoenix", {}))
         self.assertIn("names 'other'", refusal("phoenix", {"codename": "other", "api": API}))
-        self.assertIn("this overpressure has", refusal("phoenix", {"codename": "phoenix", "api": API + 1}))
+        self.assertIn("update overpressure", refusal("phoenix", {"codename": "phoenix", "api": "2.0"}))
+
+    def test_a_minor_adds_and_a_major_breaks(self):
+        with mock.patch.dict(headset.SUPPORTED, {1: 3, 2: 1}, clear=True), mock.patch.dict(headset.RETIRED, {0: "0.9"}):
+            for api in (1, "1.0", "1.3", "2.1"):  # a bare 1 is 1.0
+                self.assertEqual(headset.api_problem(api), "", api)
+            self.assertIn("runs 1.0 to 1.3, 2.0 to 2.1: update overpressure", headset.api_problem("1.4"))
+            self.assertIn("update overpressure", headset.api_problem("3.0"))
+            self.assertIn("overpressure 0.9 was the last to run: use that one", headset.api_problem("0.2"))
+            self.assertIn("is no MAJOR.MINOR", headset.api_problem("one"))
 
 
 if __name__ == "__main__":

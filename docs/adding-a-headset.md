@@ -32,15 +32,15 @@ devices/<codename>/   a clone of overpressure/<codename>
  "codename": "example",
  "name": "Example VR 1",
  "version": "1.0-beta",
- "api": 1,
+ "api": "1.0",
  "commit": "$Format:%H$",
  "date": "$Format:%ct$"
 }
 ```
 
-`api` is the headset interface it was made for (`API` in
-[overpressure/headset.py](../overpressure/headset.py)): `discover()` loads only a headset whose `api` this
-overpressure has, and lists the others as refused with the reason (`python -m overpressure devices`).
+`api` is the headset interface it was made for, `MAJOR.MINOR` ([the headset
+interface](#the-headset-interface)): `discover()` loads only a headset this overpressure runs, and lists the
+others as refused with the reason (`python -m overpressure devices`).
 `.gitattributes` marks `headset.json` `export-subst`, so a release zip carries its commit and time.
 
 **Releases.** A tag `vMAJOR.MINOR[-beta[.N]]` naming `headset.json`'s version makes a GitHub release with
@@ -84,13 +84,37 @@ Most of what a headset on its stock Android kernel needs is generic:
 | Reading ext4 and FAT12/16/32 images without mounting them | `overpressure.ext4`, `overpressure.fat` |
 | A Linux build script taking a file out of a stock ext4 image | `scripts/stock-lib.sh` |
 
-## What a headset may use
+## The headset interface
+
+A headset imports overpressure only through `overpressure.api.vMAJOR`, the interface's module for its major
+version: `from overpressure.api.v1 import REPO, qualcomm` and `from overpressure.api.v1.headset import
+Step`. Its `headset.json` names the version it was made for, `"api": "MAJOR.MINOR"`. overpressure stays
+backwards compatible, so an older headset release keeps installing:
+
+- **A minor version only adds.** A new name, a new optional argument or a new field raises the minor of its
+  major in `SUPPORTED` ([overpressure/headset.py](../overpressure/headset.py)). A headset made for `1.2` runs
+  on every overpressure that runs `1.2` or a later `1.x`.
+- **A change that breaks anything makes a new major.** `overpressure.api.v2` gets the new interface, and
+  `v1`'s modules become adapters that keep interface 1's names and behaviour on top of it. Both stay in
+  `SUPPORTED` until overpressure's next major release.
+- **A retired major** leaves `SUPPORTED` for `RETIRED`, with the last overpressure version that ran it: a
+  release made for it is refused with that version to use.
+- **CI keeps it true.** overpressure's `headsets` job runs each headset's `main` and the oldest of its
+  releases this overpressure still runs (`python -m overpressure headset releases CODENAME
+  --oldest-supported`): their tests against the change.
+- **Downloads take what runs.** `headset releases` marks each release this overpressure cannot run, with the
+  reason; `stable` and `beta` take the newest that runs; the window lists only those.
+
+Today `v1`'s modules are overpressure's own, the same objects at run time, so a patch in a headset's test
+reaches every caller.
+
+### What a headset may use
 
 A headset declares; overpressure draws and runs. A headset has no UI code: it never imports
 `overpressure.window`, Tk or CustomTkinter. The window builds every page from what the headset declares:
 its steps, its plan's stages and tasks, the questions it asks, the notes it writes and its finished page.
-The headset interface (`API` in [overpressure/headset.py](../overpressure/headset.py)) is exactly what
-this section lists. A change that breaks any of it raises `API`; adding something does not.
+Interface 1 is exactly what this list names, each in `overpressure.api.v1`; a headset's tests use the same
+(the command line and the window are overpressure's to test).
 
 | What | Where |
 | --- | --- |
@@ -98,7 +122,7 @@ this section lists. A change that breaks any of it raises `API`; adding somethin
 | The installer: `Stage`, `Task`, `Ask`, `Field`, `Failed`, `NoBackup` and the `Context` a task runs in (`run`, `output`, `progress`, `note`, `log`, `ask`, `settings`, `set_setting`, `remember`, `recall`, `clock`, `memory`, `completed`) | `overpressure.install` |
 | Words for the window's backup controls: `HOW_TO_IMPORT`, `HOW_TO_EXPORT`, `missing(folder, needed_for)` | `overpressure.backup` |
 | Settings and checks: `DeviceSettings`, `load`, `update`; `Check`, `Host` and the check states; `UsbMode` | `overpressure.localconfig`, `overpressure.doctor`, `overpressure.usbaccess` |
-| Paths and programs: `REPO`, bounded waits and running tools, progress lines, a step's command line, the pinned host tools | `overpressure`, `.process`, `.progress`, `.runner`, `.tools` |
+| Paths and programs: `REPO`, bounded waits and running tools, progress lines, a step's command line, the pinned host tools | `overpressure.api.v1` itself, `.process`, `.progress`, `.runner`, `.tools` |
 | Formats and devices: everything in the table above, and `avb`, `compress`, `cpio`, `kernelinfo`, `payload` | the modules named there |
 
 Two rules keep the window the core's own:

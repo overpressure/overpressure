@@ -42,10 +42,11 @@ unpacked into a new folder and checked against its `headset.json` before it repl
 `devices/<codename>/.release.json` records which it is. A development checkout, a Git clone of the
 headset's repository in its folder, is never replaced: Git updates it.
 
-`headset.json` names the headset interface the release was made for (`api`; `API` in
-[overpressure/headset.py](../overpressure/headset.py)). The registry loads only a headset this overpressure
-runs; `python -m overpressure devices` lists the others as refused, with the reason (update overpressure, or
-download another release). A new `.env` starts as `.env.example` and each headset's `env.example`.
+`headset.json` names the headset interface the release was made for (`api`, `MAJOR.MINOR`,
+[adding-a-headset.md](adding-a-headset.md#the-headset-interface)). `headset releases` marks each release this
+overpressure cannot run, with the reason, and the channels take the newest that runs. The registry loads only
+a headset this overpressure runs; `python -m overpressure devices` lists the others as refused, with the
+reason (update overpressure, use an older one, or download another release). A new `.env` starts as `.env.example` and each headset's `env.example`.
 
 ## Dependencies
 
@@ -416,7 +417,8 @@ be read, they go on.
 | Module | Role |
 | --- | --- |
 | [overpressure/catalogue.py](../overpressure/catalogue.py) | the headsets there are and their repositories; their releases on GitHub, a channel's or a version's, downloaded into `devices/<codename>/` against the checksum and `headset.json` (`headset list\|releases\|add`) |
-| [overpressure/headset.py](../overpressure/headset.py) | `API`, the headset interface; `headset.json` read and checked; `Headset` (`Info`, `commands()`, `steps()`, `dependencies()`, `usb_modes()`, `ram_boot()`, `install_plan()`, `workflows()`, `plan()`, `workflow_problem()`, `after_install()`, `finished_page()`, `backup_set()`, `adopt_backup()`, `touches()`), `Command`, `Step`, `Param`, `Workflow`, `BackupSet`, `AfterInstall`, `Action`, the registry |
+| [overpressure/api/](../overpressure/api/__init__.py) | The headset interface by major version (`v1`): the only way a headset imports overpressure; a later major keeps the old one's modules as adapters |
+| [overpressure/headset.py](../overpressure/headset.py) | `SUPPORTED`, `API` and `RETIRED`, the headset interface's versions; `headset.json` read and checked; `Headset` (`Info`, `commands()`, `steps()`, `dependencies()`, `usb_modes()`, `ram_boot()`, `install_plan()`, `workflows()`, `plan()`, `workflow_problem()`, `after_install()`, `finished_page()`, `backup_set()`, `adopt_backup()`, `touches()`), `Command`, `Step`, `Param`, `Workflow`, `BackupSet`, `AfterInstall`, `Action`, the registry |
 | [overpressure/install.py](../overpressure/install.py) | the install engine: `Stage`, `Task`, `Ask`, the `Context` a task gets, the state, the lock, the events, `install`, `upgrade` and `restore` |
 | [overpressure/disclaimer.py](../overpressure/disclaimer.py), [power.py](../overpressure/power.py) | the disclaimer and the gate before a command that touches the headset (`--accept-disclaimer`, `OVERPRESSURE_ACCEPT_DISCLAIMER`); this computer's power: a battery below 30 % refuses those commands (Windows, Linux and macOS readers) |
 | [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (a Linux-root step's in the build container), its display, running and stopping it |

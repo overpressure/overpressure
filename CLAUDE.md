@@ -20,8 +20,10 @@ git clone https://github.com/overpressure/phoenix devices/phoenix
 ```
 
 Its changes are commits in its own repository, by pull request there. A change both sides need lands
-here first, keeping the headset interface compatible (`API` in `overpressure/headset.py`; a headset's
-`headset.json` names the one it was made for), then in the headset. CI checks both ways: this
+here first, keeping the headset interface backwards compatible
+([docs/adding-a-headset.md](docs/adding-a-headset.md#the-headset-interface): an addition raises the minor in
+`SUPPORTED`, a break adds `overpressure/api/vN` and keeps the old major as adapters), then in the headset,
+which imports overpressure only through `overpressure.api.vN`. CI checks both ways: this
 repository's `headsets` job runs each headset's `main` against the change, and a headset's CI runs
 against this repository's `main`.
 

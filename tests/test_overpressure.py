@@ -53,6 +53,13 @@ class Fake(Headset):
         )
 
 
+class Writer(Fake):
+    """A headset with one command that writes to it."""
+
+    def commands(self):
+        return {"flash": Command("image", "writes", keep=True, headset=True)}
+
+
 class StepTests(unittest.TestCase):
     def test_parameters_flags_and_empty_words(self):
         img, us = Fake().steps()
@@ -266,6 +273,25 @@ class CommandLineTests(unittest.TestCase):
             code, _ = self.run_cli("build", "--firmware", "x")
         self.assertEqual(code, 7)
         main.assert_called_once_with(["build", "--firmware", "x"])
+
+    def test_a_command_that_touches_the_headset_asks_first_and_the_flag_accepts(self):
+        h = Writer()
+        quiet = io.StringIO()
+        with (
+            mock.patch.object(cli, "discover", return_value=Registry({"fake": h})),
+            mock.patch.dict(os.environ, clear=False),
+            contextlib.redirect_stdout(quiet),
+        ):
+            os.environ.pop(disclaimer.ENV, None)
+            with mock.patch.object(cli.disclaimer, "gate", return_value=1), mock.patch.object(h, "main") as ran:
+                self.assertEqual(cli.main(["--device", "fake", "flash"]), 1)
+                ran.assert_not_called()
+            with mock.patch.object(h, "main", return_value=0) as ran:
+                self.assertEqual(cli.main(["--device", "fake", disclaimer.FLAG, "flash"]), 0)
+                ran.assert_called_once_with(["flash"])
+                self.assertTrue(disclaimer.accepted())
+        self.assertFalse(cli.touches(h, ["steps"]))
+        self.assertFalse(cli.touches(h, ["flash", "--help"]))
 
     def test_ram_boot_needs_a_target_and_reports_refusal_apart(self):
         registry = Registry({"fake": Fake()})

@@ -5,8 +5,8 @@ Each headset is its own repository (overpressure/<codename>) with its own releas
 vMAJOR.MINOR[-beta[.N]], each with a source zip and its SHA-256, as overpressure's own. "headset add"
 puts one into devices/<codename>/, checked against its checksum and its headset.json:
 
-  stable    the newest release that is not a beta (the default)
-  beta      the newest release, betas included
+  stable    the newest release that is not a beta and that this overpressure runs (the default)
+  beta      the newest release this overpressure runs, betas included
   preview   the newest commit of main: development state, untested on the headset, no checksum
   VERSION   a release by its version (--version 1.0-beta), also an older one
 
@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import shutil
 import sys
 import urllib.request
@@ -29,13 +30,15 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from . import REPO
-from .headset import manifest, refusal
+from .headset import MANIFEST, api_problem, manifest, refusal
 
 STABLE, BETA, PREVIEW = "stable", "beta", "preview"
 CHANNELS = (STABLE, BETA, PREVIEW)
 #: What a download leaves in the headset's folder: which release it is.
 RECORD = ".release.json"
 GITHUB = "https://api.github.com"
+#: Where a tag's files are read one by one (its headset.json, before anything is downloaded).
+RAW = "https://raw.githubusercontent.com"
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,7 @@ class Release:
     prerelease: bool
     zip_url: str
     sha_url: str = ""
+    problem: str = ""  #: why this overpressure cannot run it (its headset.json's api), "" when it can
 
     @property
     def version(self) -> str:
@@ -71,13 +75,26 @@ def fetch(url: str, timeout: float = 60) -> bytes:
     if not url.startswith("https://"):
         msg = f"not an https URL: {url}"
         raise ValueError(msg)
-    request = urllib.request.Request(url, headers={"User-Agent": "overpressure", "Accept": "*/*"})  # noqa: S310  # https only
+    headers = {"User-Agent": "overpressure", "Accept": "*/*"}
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token and url.startswith(GITHUB + "/"):  # CI's own token, for GitHub's API only: its limit without one is low
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)  # noqa: S310  # https only
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310  # https only, above
         return response.read()
 
 
+def compatibility(known: Known, tag: str, get: Callable[[str], bytes] = fetch) -> str:
+    """Return why this overpressure cannot run KNOWN's TAG (its headset.json's api), "" when it can."""
+    try:
+        data = json.loads(get(f"{RAW}/{known.repository}/{tag}/{MANIFEST}"))
+    except (OSError, ValueError):
+        return f"its {MANIFEST} could not be read"
+    return api_problem(data.get("api") if isinstance(data, dict) else None)
+
+
 def releases(known: Known, get: Callable[[str], bytes] = fetch) -> list[Release]:
-    """Return KNOWN's published releases with a zip and its checksum, newest first."""
+    """Return KNOWN's published releases with a zip and its checksum, newest first, each marked runnable or not."""
     found = json.loads(get(f"{GITHUB}/repos/{known.repository}/releases?per_page=100"))
     out = []
     for item in found:
@@ -85,10 +102,15 @@ def releases(known: Known, get: Callable[[str], bytes] = fetch) -> list[Release]
         zips = [name for name in assets if name.endswith(".zip") and name + ".sha256" in assets]
         if item.get("draft") or not zips:
             continue
-        out.append(
-            Release(item["tag_name"], bool(item.get("prerelease")), assets[zips[0]], assets[zips[0] + ".sha256"])
-        )
+        tag = item["tag_name"]
+        zip_url, sha_url = assets[zips[0]], assets[zips[0] + ".sha256"]
+        out.append(Release(tag, bool(item.get("prerelease")), zip_url, sha_url, compatibility(known, tag, get)))
     return out
+
+
+def oldest_supported(found: list[Release]) -> Release | None:
+    """Return the oldest release of FOUND (newest first) this overpressure runs: what its CI keeps running."""
+    return next((r for r in reversed(found) if not r.problem), None)
 
 
 def preview(known: Known) -> Release:
@@ -99,14 +121,20 @@ def preview(known: Known) -> Release:
 
 
 def pick(found: list[Release], channel: str = STABLE, version: str = "") -> Release:
-    """Return the release of FOUND that CHANNEL or VERSION names; LookupError when there is none."""
+    """Return the release of FOUND that CHANNEL (its newest that runs here) or VERSION names.
+
+    LookupError when there is none, or the one named cannot run here (and why).
+    """
     if version:
         chosen = [r for r in found if r.version == version.removeprefix("v")]
+        if chosen and chosen[0].problem:
+            msg = f"release {chosen[0].version}: {chosen[0].problem}"
+            raise LookupError(msg)
     else:
-        chosen = [r for r in found if channel == BETA or not r.prerelease]
+        chosen = [r for r in found if (channel == BETA or not r.prerelease) and not r.problem]
     if not chosen:
-        wanted = f"release {version}" if version else f"{channel} release"
-        known = ", ".join(r.version for r in found) or "none"
+        wanted = f"release {version}" if version else f"{channel} release this overpressure runs"
+        known = ", ".join(r.version + (" (cannot run here)" if r.problem else "") for r in found) or "none"
         msg = f"no {wanted} (published: {known})"
         raise LookupError(msg)
     return chosen[0]
@@ -204,7 +232,7 @@ USAGE = """usage: python -m overpressure headset list | releases CODENAME
        python -m overpressure headset add CODENAME [--channel stable|beta|preview | --version V]
 
   list                 every headset overpressure knows, and what devices/ holds of it
-  releases CODENAME    its published releases, newest first
+  releases CODENAME    its published releases, newest first, and whether this overpressure runs each
   add CODENAME         download it into devices/CODENAME: the newest stable release, a channel's
                        newest (beta: betas too, preview: main, untested), or a release by version"""
 
@@ -220,14 +248,21 @@ def main(argv: list[str], root: Path = REPO, get: Callable[[str], bytes] = fetch
     parser.add_argument("codename", choices=sorted(CATALOGUE))
     parser.add_argument("--channel", choices=CHANNELS, default=STABLE)
     parser.add_argument("--version", default="")
+    parser.add_argument("--oldest-supported", action="store_true", help=argparse.SUPPRESS)
     if not argv or argv[0] in ("-h", "--help"):
         print(USAGE)
         return 0 if argv else 2
     args = parser.parse_args(argv)
     try:
         if args.action == "releases":
-            for release in releases(CATALOGUE[args.codename], get):
-                print(f"{release.version:<16} {'beta' if release.prerelease else 'stable'}")
+            found = releases(CATALOGUE[args.codename], get)
+            if args.oldest_supported:  # for CI: the tag of the oldest release this overpressure keeps running
+                oldest = oldest_supported(found)
+                print(oldest.tag if oldest else "")
+                return 0
+            for release in found:
+                kind = "beta" if release.prerelease else "stable"
+                print(f"{release.version:<16} {kind:<7} {release.problem or 'runs here'}")
             return 0
         add(args.codename, channel=args.channel, version=args.version, root=root, get=get)
     except (LookupError, RuntimeError, ValueError, OSError) as exc:

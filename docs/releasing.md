@@ -13,9 +13,10 @@ spelling (`1.0-beta` is `1.0b1`, `1.0-beta.2` is `1.0b2`). A headset's version i
 `headset.json`; the image it builds reports both (the PICO 4's `/usr/share/pico4/version`: the headset's
 version and commit, and `overpressure=` this version).
 
-A release that changes the headset interface raises `API` in
-[overpressure/headset.py](../overpressure/headset.py): headset releases made for the old one are then
-refused, so each headset needs a release for the new one first.
+A release keeps every headset release it ran before running
+([adding-a-headset.md](adding-a-headset.md#the-headset-interface)): an addition to the headset interface
+raises its minor in `SUPPORTED`; a break adds a major and keeps the old one as adapters; only a major
+release of overpressure retires a major (`RETIRED`, with this version).
 
 ## Changelog
 

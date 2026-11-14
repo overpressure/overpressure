@@ -122,8 +122,9 @@ jobs:
       - name: Private data, in every commit
         run: python3 scripts/check-private.py --history
 
-  # Each headset of the catalogue (overpressure/catalogue.py), its main dropped into devices/: this change
-  # must not break it. Its own CI tests its changes against overpressure's main.
+  # Each headset of the catalogue (overpressure/catalogue.py) dropped into devices/: this change must not break
+  # its main, nor the oldest of its releases this overpressure still runs (backwards compatibility,
+  # docs/adding-a-headset.md#the-headset-interface). Its own CI tests its changes against overpressure's main.
   headsets:
     needs: tree
     if: needs.tree.outputs.passed != 'true'
@@ -131,27 +132,48 @@ jobs:
       fail-fast: false
       matrix:
         headset: [phoenix]
+        state: [main, oldest]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: overpressure/${{ matrix.headset }}
-          path: devices/${{ matrix.headset }}
       - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
           version: "0.9.26"
       - run: uv sync --locked
+      - name: Which state
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEADSET: ${{ matrix.headset }}
+          STATE: ${{ matrix.state }}
+        run: |
+          if [ "$STATE" = main ]; then
+            ref=main
+          else
+            ref=$(uv run python -m overpressure headset releases "$HEADSET" --oldest-supported)
+            [ -n "$ref" ] || echo "no release of $HEADSET runs here yet: nothing older to keep running"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        if: steps.ref.outputs.ref
+        with:
+          repository: overpressure/${{ matrix.headset }}
+          ref: ${{ steps.ref.outputs.ref }}
+          path: devices/${{ matrix.headset }}
       - name: It loads
+        if: steps.ref.outputs.ref
         run: |
           found=$(uv run python -m overpressure devices)
           echo "$found"
           ! grep -q refused <<< "$found"
       - name: Its tests
+        if: steps.ref.outputs.ref
         run: uv run python -m unittest discover -t . -s devices/${{ matrix.headset }}/tests
         env:
           PYTHONIOENCODING: utf-8
+      # A release's types were checked by the type checker of its day; main's are checked by today's.
       - name: Its types
+        if: steps.ref.outputs.ref && matrix.state == 'main'
         run: uv run ty check devices/${{ matrix.headset }}
 
   # The marker that this tree passed, for the runs after this one.

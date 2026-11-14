@@ -214,7 +214,10 @@ class DownloadTests(Folder):
             self.assertTrue(download.done)
         self.assertEqual(calls, [("later", "beta", ""), ("later", "stable", "0.9"), ("later", "stable", "0.1")])
         self.assertEqual(download.line(), "The download failed: no release 0.1")
-        published = [catalogue.Release("v1.0", prerelease=False, zip_url="")]
+        published = [
+            catalogue.Release("v2.0", prerelease=False, zip_url="", problem="it needs headset interface 2.0"),
+            catalogue.Release("v1.0", prerelease=False, zip_url=""),
+        ]  # a release this overpressure cannot run is no choice
         self.assertEqual(headsets.release_choices(published)[3:], ["1.0"])
 
 
