@@ -19,6 +19,7 @@ import http.client
 import io
 import lzma
 import struct
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -62,6 +63,8 @@ class Source:
     """Random access to the bytes of a file, local or remote."""
 
     size: int
+    #: Whether read_at may run in several threads at once (each HTTP request is its own connection).
+    parallel = False
 
     def read_at(self, offset: int, length: int) -> bytes:
         """Return LENGTH bytes from OFFSET (fewer at the end)."""
@@ -87,6 +90,7 @@ class HttpSource(Source):
     """Random access to a remote file through HTTP Range requests."""
 
     BLOCK = 256 * 1024
+    parallel = True
 
     def __init__(self, url: str, log: Callable[[str], None] = print) -> None:
         """Ask for the first byte, which also tells whether the server does ranges and the size."""
@@ -94,6 +98,7 @@ class HttpSource(Source):
         self.log = log
         self.cache: dict[int, bytes] = {}
         self.downloaded = 0
+        self._lock = threading.Lock()
         head = self._request(0, 0)
         content_range = head.headers.get("Content-Range", "")
         if head.status != HTTP_PARTIAL_CONTENT or "/" not in content_range:
@@ -143,7 +148,8 @@ class HttpSource(Source):
                 self.log(f"  download error ({exc!r}); retrying...")
                 time.sleep(2 * (attempt + 1))
             else:
-                self.downloaded += len(data)
+                with self._lock:
+                    self.downloaded += len(data)
                 return data
         msg = "unreachable"
         raise AssertionError(msg)

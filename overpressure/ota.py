@@ -5,8 +5,9 @@ Android OTAs come in two kinds. A classic (non-A/B) block OTA is a zip whose mem
 small images (``boot.img``, ``recovery.img``, firmware files) and, per big partition, a
 brotli-compressed ``NAME.new.dat.br`` with the ``NAME.transfer.list`` that places its blocks.
 An A/B OTA holds a ``payload.bin`` (:mod:`overpressure.payload`). For URLs only what is needed is
-downloaded (HTTP Range requests: the zip's central directory and the members), and every member
-is checked against the CRC-32 the zip records; the brotli package (pinned, see pyproject.toml)
+downloaded (HTTP Range requests: the zip's central directory and the members, a member's parts
+over several connections at once, resumed after an interruption), and every member is checked
+against the CRC-32 the zip records; the brotli package (pinned, see pyproject.toml)
 decompresses the block images, the brotli command where a Python lacks it. A headset keeps a
 catalog of its vendor's builds (``{"builds": {NAME: {"url": ...}}}``) and says which members it
 needs. A PinnedMember is one
@@ -24,6 +25,7 @@ import struct
 import subprocess
 import zipfile
 import zlib
+from concurrent import futures
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Callable, TypeVar, cast
@@ -35,6 +37,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Mapping
 
 CHUNK = 8 * 1024 * 1024
+#: Range requests one member downloads with at once: PICO's server gives each connection about 3 MB/s.
+CONNECTIONS = 8
 #: The share of an extraction's progress its downloads stand for; rebuilding the block images has the rest.
 DOWNLOADS = 0.85
 BLOCK = 4096
@@ -255,6 +259,78 @@ def member_ok(path: Path, info: zipfile.ZipInfo) -> bool:
     return crc == info.CRC
 
 
+def _parts_there(raw: Path, size: int) -> set[int]:
+    """Return the parts an interrupted download left in @p raw (RAW.parts); start it afresh without."""
+    record = raw.with_name(raw.name + "s")
+    count = -(-size // CHUNK)
+    if record.exists() and raw.exists() and raw.stat().st_size == size:
+        return {int(n) for n in record.read_text(encoding="ascii").split() if n.isdigit() and int(n) < count}
+    record.unlink(missing_ok=True)
+    with raw.open("wb") as out:
+        out.truncate(size)
+    return set()
+
+
+def _fetch_parts(  # noqa: PLR0913  # the range, where it goes; what to tell keyword-only
+    src: payload.Source,
+    start: int,
+    size: int,
+    raw: Path,
+    *,
+    log: Callable[[str], None],
+    meter: progress.Meter | None,
+) -> None:
+    """Download @p size bytes of @p src from @p start into @p raw, CHUNK by CHUNK, resuming.
+
+    Up to CONNECTIONS parts run at once where the source allows it. Each part is written once its
+    request returned all of its bytes, and its number then goes into RAW.parts, so that an
+    interrupted download fetches only the parts that are missing.
+    """
+    record = raw.with_name(raw.name + "s")
+    count = -(-size // CHUNK)
+    done = _parts_there(raw, size)
+    add = meter.add if meter is not None else (lambda _n: None)
+    if done:
+        log(f"  {raw.name}: resuming, {len(done)} of {count} parts there")
+    add(sum(min(CHUNK, size - n * CHUNK) for n in done))
+
+    def part(n: int) -> tuple[int, bytes]:
+        length = min(CHUNK, size - n * CHUNK)
+        data = src.read_at(start + n * CHUNK, length)
+        if len(data) != length:
+            msg = f"part {n} of {raw.name}: {len(data)} of {length} bytes"
+            raise OSError(msg)
+        return n, data
+
+    todo = iter([n for n in range(count) if n not in done])
+    workers = CONNECTIONS if src.parallel else 1
+    with (
+        raw.open("r+b") as out,
+        record.open("a", encoding="ascii") as parts,
+        futures.ThreadPoolExecutor(workers) as pool,
+    ):
+        running: set[futures.Future[tuple[int, bytes]]] = set()
+        try:
+            while True:
+                while len(running) < workers and (n := next(todo, None)) is not None:
+                    running.add(pool.submit(part, n))
+                if not running:
+                    break
+                finished, running = futures.wait(running, return_when=futures.FIRST_COMPLETED)
+                for future in finished:
+                    n, data = future.result()
+                    out.seek(n * CHUNK)
+                    out.write(data)
+                    out.flush()
+                    parts.write(f"{n}\n")
+                    parts.flush()
+                    add(len(data))
+        except BaseException:
+            for future in running:
+                future.cancel()
+            raise
+
+
 def download_member(
     src: payload.Source,
     info: zipfile.ZipInfo,
@@ -262,21 +338,51 @@ def download_member(
     log: Callable[[str], None] = print,
     meter: progress.Meter | None = None,
 ) -> None:
-    """Download one zip member into @p path, checked against its CRC-32; keep it if it is there."""
+    """Download one zip member into @p path, checked against its CRC-32; keep it if it is there.
+
+    Its bytes come in parallel range requests (_fetch_parts) into PATH.part, which an interrupted
+    download resumes; a member that fails its CRC-32 is removed, parts and all.
+    """
     if member_ok(path, info):
         log(f"  {info.filename}: already downloaded")
         if meter is not None:
             meter.add(info.compress_size)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".part")
-    try:
-        with tmp.open("wb") as out:
-            stream_member(src, info, out, log, meter)
-    except ValueError:
-        tmp.unlink(missing_ok=True)
-        raise
-    tmp.replace(path)
+    raw = path.with_name(path.name + ".part")
+    record = raw.with_name(raw.name + "s")
+    _fetch_parts(src, _member_start(src, info), info.compress_size, raw, log=log, meter=meter)
+    record.unlink(missing_ok=True)
+    if info.compress_type == zipfile.ZIP_STORED:
+        ok = member_ok(raw, info)
+        if ok:
+            raw.replace(path)
+    else:
+        unpacked = path.with_name(path.name + ".unpacked")
+        ok = _inflate(raw, info, unpacked)
+        if ok:
+            unpacked.replace(path)
+        unpacked.unlink(missing_ok=True)
+    raw.unlink(missing_ok=True)
+    if not ok:
+        msg = f"{info.filename}: CRC/size mismatch after download (corrupt transfer?)"
+        raise ValueError(msg)
+
+
+def _inflate(raw: Path, info: zipfile.ZipInfo, path: Path) -> bool:
+    """Inflate a deflated member's bytes from @p raw into @p path; tell whether its size and CRC-32 match."""
+    inflater = zlib.decompressobj(-15)
+    crc, written = 0, 0
+    with raw.open("rb") as packed, path.open("wb") as out:
+        while True:
+            chunk = packed.read(CHUNK)
+            data = inflater.decompress(chunk) if chunk else inflater.flush()
+            crc = zlib.crc32(data, crc)
+            written += len(data)
+            out.write(data)
+            if not chunk:
+                break
+    return written == info.file_size and crc == info.CRC
 
 
 class BrotliReader(io.RawIOBase):

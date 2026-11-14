@@ -197,6 +197,73 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual(members, {"dir/a.bin", "system.new.dat.br", "system.transfer.list"})
 
 
+class Remote(ota.payload.Source):
+    """A zip as a server gives it: parallel reads, each recorded; @p broken offsets fail once."""
+
+    parallel = True
+
+    def __init__(self, data: bytes, broken: tuple[int, ...] = ()) -> None:
+        self.data, self.size, self.broken, self.reads = data, len(data), set(broken), []
+
+    def read_at(self, offset: int, length: int) -> bytes:
+        self.reads.append(offset)
+        if offset in self.broken:
+            self.broken.discard(offset)
+            msg = "connection reset"
+            raise OSError(msg)
+        return self.data[offset : offset + length]
+
+
+class ParallelDownloadTests(unittest.TestCase):
+    """A member in parts over several connections, resumed after an interruption, refused when corrupt."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.dir = Path(temp.name)
+        chunk = mock.patch.object(ota, "CHUNK", 1000)
+        chunk.start()
+        self.addCleanup(chunk.stop)
+        self.member = bytes(range(256)) * 40  # ten parts and a bit
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("system.new.dat.br", self.member)
+            archive.writestr("system.transfer.list", b"4\n1\n0\n0\n" * 300, zipfile.ZIP_DEFLATED)
+        self.zip = buffer.getvalue()
+
+    def download(self, src: Remote, name: str) -> Path:
+        info = ota.zip_infos(ota.payload.FileSource(str(self.zip_file())))[name]
+        path = self.dir / "download" / name
+        ota.download_member(src, info, path, log=lambda _line: None)
+        return path
+
+    def zip_file(self) -> Path:
+        path = self.dir / "ota.zip"
+        path.write_bytes(self.zip)
+        return path
+
+    def test_parts_resume_after_a_failed_one(self):
+        # The last of eleven parts fails: it starts only once three of the first eight are written.
+        start = self.zip.index(self.member)
+        broken = Remote(self.zip, broken=(start + 10000,))
+        with self.assertRaisesRegex(OSError, "connection reset"):
+            self.download(broken, "system.new.dat.br")
+        resumed = Remote(self.zip)
+        path = self.download(resumed, "system.new.dat.br")
+        self.assertEqual(path.read_bytes(), self.member)
+        self.assertIn(start + 10000, resumed.reads)
+        self.assertLessEqual(len([r for r in resumed.reads if r >= start]), 8)  # not the parts already there
+        self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["system.new.dat.br"])
+
+    def test_a_deflated_member_is_inflated_and_a_corrupt_one_removed(self):
+        self.assertEqual(self.download(Remote(self.zip), "system.transfer.list").read_bytes(), b"4\n1\n0\n0\n" * 300)
+        start = self.zip.index(self.member)
+        corrupt = self.zip[:start] + b"x" + self.zip[start + 1 :]
+        with self.assertRaisesRegex(ValueError, "CRC/size mismatch"):
+            self.download(Remote(corrupt), "system.new.dat.br")
+        self.assertFalse(any((self.dir / "download").glob("system.new.dat.br*")))
+
+
 class PinnedMemberTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
