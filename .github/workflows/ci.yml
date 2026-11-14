@@ -1,9 +1,10 @@
-# Every push and pull request, and every release before it is made (release.yml): nothing here needs
-# vendor files or a headset.
+# Every pull request, every push to main, and every release before it is made (release.yml): nothing here
+# needs vendor files or a headset. One run per content: a tree that passed once (a pull request's) is not
+# tested again when it lands on main or is tagged; its checks are skipped, which counts as passed.
 name: CI
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_call:
 
@@ -11,9 +12,37 @@ permissions:
   contents: read
 
 jobs:
+  # Whether this tree passed in an earlier run of this repository (never a fork's): the artifact its last
+  # job leaves.
+  tree:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      passed: ${{ steps.earlier.outputs.id != '' }}
+      marker: ${{ steps.tree.outputs.marker }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: The tree
+        id: tree
+        run: echo "marker=ci-passed-$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - name: An earlier pass
+        id: earlier
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MARKER: ${{ steps.tree.outputs.marker }}
+          OURS: "[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == ${{ github.repository_id }})][0].id // empty"
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$MARKER&per_page=30" --jq "$OURS")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          [ -z "$id" ] || echo "$MARKER passed before (artifact $id): the checks are skipped"
+
   # Linux: the oldest and the newest Python an owner's system may bring, since install.sh prefers a
   # system Python whose Tk draws with Xft (uv's own Python on Linux has a Tk without it).
   host-tests:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -32,7 +61,8 @@ jobs:
 
   # Windows and macOS: the Python the start scripts install there (Install.cmd, Install.command).
   host-tests-windows-macos:
-    if: github.server_url == 'https://github.com'
+    needs: tree
+    if: needs.tree.outputs.passed != 'true' && github.server_url == 'https://github.com'
     strategy:
       fail-fast: false
       matrix:
@@ -50,6 +80,8 @@ jobs:
           PYTHONIOENCODING: utf-8
 
   lint:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -65,6 +97,8 @@ jobs:
         run: uv run ty check
 
   shell-and-c:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -81,6 +115,8 @@ jobs:
         run: bash scripts/c-tests.sh
 
   repository:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -94,3 +130,16 @@ jobs:
         run: python3 -m overpressure --device phoenix kernel fetch
       - name: What the pinned kernel and this repository share (contracts)
         run: python3 -m overpressure --device phoenix kernel contracts
+
+  # The marker that this tree passed, for the runs after this one.
+  passed:
+    needs: [tree, host-tests, host-tests-windows-macos, lint, shell-and-c, repository]
+    if: ${{ !cancelled() && !failure() && needs.tree.outputs.passed != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.sha }}" > passed.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ needs.tree.outputs.marker }}
+          path: passed.txt
+          retention-days: 90

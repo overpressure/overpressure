@@ -1,5 +1,5 @@
 # A release from its tag (docs/releasing.md): a pushed tag vMAJOR.MINOR[-beta[.N]] runs every CI check on the
-# tagged commit, then makes the GitHub release: the tag's own message and the changelog section as its notes,
+# tagged commit (skipped when its tree passed on main already), then makes the GitHub release: the tag's own message and the changelog section as its notes,
 # the source zip the start scripts install from, and its checksum. No image, package or vendor file is
 # attached (devices/phoenix/docs/distribution.md).
 name: Release
@@ -18,6 +18,9 @@ jobs:
   checks:
     if: github.server_url == 'https://github.com'
     uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      actions: read # an earlier pass of the same tree
 
   release:
     needs: checks
