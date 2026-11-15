@@ -17,12 +17,27 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from overpressure import backup, disclaimer
 from overpressure.backup import ARCHIVE_SUFFIX
+from overpressure.catalogue import record_of
 from overpressure.headset import INSTALL, AfterInstall
 from overpressure.install import IMPORT_BACKUP
 from overpressure.window import logo
 from overpressure.window.advanced import INSTALLER, busy
 from overpressure.window.advanced_view import AdvancedView
-from overpressure.window.headsets import INTRO, LAST_USED, QUESTION, Choice, Download, Entry, Probe, update_line
+from overpressure.window.headsets import (
+    HIDE_VERSIONS,
+    INTRO,
+    LAST_USED,
+    OTHER_VERSIONS,
+    QUESTION,
+    VERSIONS_NOTE,
+    Choice,
+    Download,
+    Entry,
+    Probe,
+    footer,
+    open_label,
+    status_line,
+)
 from overpressure.window.installer import (
     DONE,
     FAILED,
@@ -82,6 +97,8 @@ from overpressure.window.theme import (
     SIDEBAR,
     SMALL,
     STEP_ICON,
+    SUCCESS,
+    SUCCESS_TONE,
     SUNKEN,
     TASK_ICON,
     TEXT,
@@ -179,6 +196,7 @@ class Window:
         self.probes: dict[str, Probe] = {}  # codename -> the headset page's read of its install's plan
         self.downloads: dict[str, Download] = {}  # codename -> its release's download, until its end is shown
         self.release_vars: dict[str, Any] = {}  # codename -> the release chosen on its card
+        self.picking: set[str] = set()  # codenames whose card shows its release choice
         self.releases_shown = False  # the page shows the published releases (read once, on a thread)
         self.workflow_probes: dict[tuple[str, str], Probe] = {}  # the page of what to do: each workflow's
         self.logs: dict[tuple[str, str], list[str]] = {}  # its details, while another headset or workflow is chosen
@@ -415,10 +433,13 @@ class Window:
         return card
 
     def render_chooser(self) -> None:
-        """List the headsets: name, SoC and summary, what choosing one opens, where it stopped last time.
+        """List the headsets, a card each: the headset, a plain line on it, and its support on this computer.
 
         The headset chosen last comes first, marked, with the page's one main button (so does the
-        only headset); every entry opens with one click, on it or on its button.
+        only headset); every entry opens with one click, on it or on its button (Continue when an
+        installation is unfinished). Under it, in its own panel, the headset's support on this computer:
+        what is there, at most one status and one action, and what a download changes and what it does
+        not (headsets.footer), so that it is never taken for the headset itself.
         """
         kit = self.kit
         for child in self.headset_list.winfo_children():
@@ -429,88 +450,139 @@ class Window:
         entries = self.choice.entries()
         usable = [e for e in entries if e.usable]
         lead = next((e.codename for e in usable if e.last), usable[0].codename if len(usable) == 1 else "")
+        beside = 2 * Space.XL + PRIMARY_WIDTH + 2 * Space.L  # what the button beside a line takes
         for n, entry in enumerate(entries):
             card = kit.card(self.headset_list)
             card.grid(row=n, column=0, sticky="ew", pady=(0, Space.M))
             card.grid_columnconfigure(0, weight=1)
+            probe = self.probes.get(entry.codename)
+            model = probe.model if probe is not None and probe.done else None
+            if entry.usable:  # the card's own button first: it is what a click on the card does
+                button = kit.button(
+                    card,
+                    open_label(entry, model),
+                    lambda c=entry.codename: self.choose(c),
+                    kind=PRIMARY if entry.codename == lead else SECONDARY,
+                )
+                button.grid(row=0, column=1, rowspan=2, sticky="e", padx=(Space.L, Space.XL), pady=(Space.L, 0))
             heading = kit.frame(card)
+            heading.grid(row=0, column=0, sticky="ew", padx=(Space.XL, 0), pady=(Space.L + Space.XS, 0))
             marks = [kit.label(heading, entry.name, size=HEADING, strong=True)]
             if entry.last:
                 marks.append(kit.pill(heading, LAST_USED, INFO))
             for i, mark in enumerate(marks):
                 mark.pack(side="left", padx=(Space.S if i else 0, 0))
-            about = kit.label(card, entry.about, size=LABEL, colour=TEXT_SECONDARY)
-            lines = [heading, about, *self._card_lines(card, entry)]
-            parts = list(lines)
-            if entry.release != "development checkout":  # Git updates a checkout
-                parts.append(self._release_row(card, entry, primary=not entry.usable and not lead))
-            last = len(parts) - 1
-            for row, part in enumerate(parts):
-                part.grid(
-                    row=row,
-                    column=0,
-                    sticky="ew",
-                    padx=(Space.XL, Space.S),
-                    pady=(
-                        Space.L + Space.XS if row == 0 else Space.S if row == 1 else Space.XS,
-                        Space.L + Space.XS if row == last else 0,
-                    ),
-                )
-            self.chooser_flow.wrap(about, inset=2 * Space.XL + PRIMARY_WIDTH + 2 * Space.L)  # the button beside it
+            parts = [heading, *marks]
+            text, tone = status_line(entry, model)
+            if text:
+                colour = {WARNING_TONE: WARNING, SUCCESS_TONE: SUCCESS}.get(tone, TEXT_SECONDARY)
+                line = kit.label(card, text, size=LABEL, colour=colour)
+                line.grid(row=1, column=0, sticky="ew", padx=(Space.XL, 0), pady=(Space.XS, 0))
+                self.chooser_flow.wrap(line, inset=beside)
+                parts.append(line)
+            support = self._support_panel(card, entry, primary=not entry.usable and not lead)
+            support.grid(row=2, column=0, columnspan=2, sticky="ew", padx=Space.L, pady=(Space.L, Space.L))
             if entry.usable:
-                primary = entry.codename == lead
-                button = kit.button(
-                    card, "Choose", lambda c=entry.codename: self.choose(c), kind=PRIMARY if primary else SECONDARY
-                )
-                button.grid(row=0, column=1, rowspan=len(parts), padx=(Space.L, Space.XL))
-                self.hover_card(card, (*lines, *marks), entry.codename)
+                self.hover_card(card, tuple(parts), entry.codename)
             self.headset_cards[entry.codename] = card
 
-    def _card_lines(self, card: Any, entry: Entry) -> list[Any]:  # noqa: ANN401  # Tk widgets
-        """Return the lines under a card's summary: what it opens, where it stopped, its release, a download."""
+    def _support_panel(self, card: Any, entry: Entry, *, primary: bool) -> Any:  # noqa: ANN401  # Tk widgets
+        """Return a card's panel on the headset's support on this computer (headsets.footer says what it shows)."""
         kit = self.kit
-        lines = [kit.label(card, entry.mode, size=LABEL, colour=TEXT if entry.installer else WARNING)]
-        probe = self.probes.get(entry.codename)
-        line = probe.line() if probe is not None else ""
-        if line:
-            lines.append(kit.label(card, line, size=SMALL, colour=TEXT_MUTED))
-        if entry.release:
-            lines.append(kit.label(card, entry.release.capitalize(), size=SMALL, colour=TEXT_MUTED))
-        newer = update_line(self.choice.releases.updates.get(entry.codename))
-        if newer:
-            lines.append(kit.label(card, newer, size=SMALL, colour=ACCENT_TEXT))
-        download = self.downloads.get(entry.codename)
-        if download is not None:
-            tone = WARNING if download.error else TEXT_MUTED
-            lines.append(kit.label(card, download.line(), size=SMALL, colour=tone, wrap=CARDS))
-        return lines
+        shown = footer(
+            entry,
+            record_of(entry.codename),
+            self.choice.releases.updates,
+            checking=not self.choice.releases.done,
+            download=self.downloads.get(entry.codename),
+        )
+        running = any(not d.done for d in self.downloads.values())
+        panel = kit.card(card, colour=SUNKEN, radius=RADIUS_CONTROL + 2)
+        panel.grid_columnconfigure(0, weight=1)
+        box = kit.frame(panel)  # the inset panel's content, inside its rounded border
+        box.grid(row=0, column=0, sticky="ew", padx=(Space.XL - Space.L, Space.M), pady=Space.M)
+        box.grid_columnconfigure(0, weight=1)
+        kit.label(box, shown.heading, size=SMALL, colour=TEXT_MUTED).grid(row=0, column=0, sticky="w")
+        if shown.versions and not shown.picker and not shown.busy:
+            picking = entry.codename in self.picking
+            link = kit.button(
+                box,
+                HIDE_VERSIONS if picking else OTHER_VERSIONS,
+                lambda c=entry.codename: self.toggle_versions(c),
+                kind=QUIET,
+                small=True,
+            )
+            link.grid(row=0, column=1, sticky="e")
+        what = kit.frame(box)
+        what.grid(row=1, column=0, sticky="w", pady=(Space.XS, 0))
+        kit.label(what, shown.title, size=BODY, strong=True).pack(side="left")
+        if shown.detail:
+            kit.label(what, shown.detail, size=SMALL, colour=TEXT_MUTED).pack(side="left", padx=(Space.S, 0))
+        if shown.status:
+            kit.pill(what, shown.status, shown.tone).pack(side="left", padx=(Space.M, 0))
+        if shown.action:
+            action = kit.button(
+                box,
+                shown.action,
+                lambda c=entry.codename, w=shown.action_choice: self.download(c, w),
+                kind=PRIMARY if primary else SECONDARY,
+            )
+            action.grid(row=1, column=1, sticky="e", pady=(Space.XS, 0))
+            if running:
+                action.configure(state="disabled")
+        row = 2
+        if shown.busy:
+            bar = kit.progress(box)
+            bar.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(Space.S, 0))
+            bar.start()
+            row += 1
+        for text, colour in ((shown.error, DANGER), (shown.caption, TEXT_SECONDARY)):
+            if text:
+                label = kit.label(box, text, size=SMALL, colour=colour, wrap=CARDS)
+                label.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(Space.S, 0))
+                self.chooser_flow.wrap(label, inset=2 * Space.XL + Space.M)
+                row += 1
+        if shown.versions and (shown.picker or entry.codename in self.picking):
+            self._release_choice(box, entry, running=running).grid(
+                row=row, column=0, columnspan=2, sticky="ew", pady=(Space.M, 0)
+            )
+        return panel
 
-    def _release_row(self, card: Any, entry: Entry, *, primary: bool) -> Any:  # noqa: ANN401  # Tk widgets
-        """Return a card's release choice (the channels, then the published releases) and its Download button."""
+    def _release_choice(self, parent: Any, entry: Entry, *, running: bool) -> Any:  # noqa: ANN401  # Tk widgets
+        """Return the release choice (the channels, then the published releases), its Download and a note on them."""
         kit = self.kit
-        row = kit.frame(card)
+        box = kit.frame(parent)
+        box.grid_columnconfigure(0, weight=1)
+        row = kit.frame(box)
+        row.grid(row=0, column=0, sticky="w")
         values = self.choice.releases.choices(entry.codename)
         var = self.release_vars.get(entry.codename)
         if var is None or var.get() not in values:
             first = self.choice.releases.first(entry.codename)
             var = self.release_vars[entry.codename] = self.ctk.StringVar(value=first)
         kit.choice(row, values, var).pack(side="left")
-        text = "Download" if entry.usable is False and not entry.refused else "Download this release"
-        button = kit.button(
-            row, text, lambda c=entry.codename: self.download(c), kind=PRIMARY if primary else SECONDARY
-        )
+        button = kit.button(row, "Download", lambda c=entry.codename: self.download(c), kind=SECONDARY)
         button.pack(side="left", padx=(Space.S, 0))
-        download = self.downloads.get(entry.codename)
-        if download is not None and not download.done:
+        if running:
             button.configure(state="disabled")
-        return row
+        note = kit.label(box, VERSIONS_NOTE, size=SMALL, colour=TEXT_MUTED, wrap=CARDS)
+        note.grid(row=1, column=0, sticky="ew", pady=(Space.XS, 0))
+        self.chooser_flow.wrap(note, inset=2 * Space.XL + Space.M)
+        return box
 
-    def download(self, codename: str) -> bool:
-        """Download the release chosen on CODENAME's card into devices/; refused while something runs."""
+    def toggle_versions(self, codename: str) -> None:
+        """Show or hide the release choice on CODENAME's card."""
+        self.picking ^= {codename}
+        self.render_chooser()
+
+    def download(self, codename: str, wanted: str = "") -> bool:
+        """Download WANTED (else the release chosen on CODENAME's card) into devices/; refused while something runs."""
         if self.refused() or any(not d.done for d in self.downloads.values()):
             return False
-        wanted = self.release_vars[codename].get()
-        self.downloads[codename] = Download(codename, wanted).start()
+        wanted = wanted or self.release_vars[codename].get()
+        download = Download(codename, wanted)
+        download.first = codename not in self.choice.registry.headsets  # ty: ignore[unresolved-attribute]  # the window's own mark
+        self.downloads[codename] = download.start()
         self.render_chooser()
         return True
 
@@ -525,6 +597,7 @@ class Window:
                 self.probes.pop(codename, None)
                 self.choice.releases.updates.pop(codename, None)  # what it offered is what it has now
                 self.release_vars.pop(codename, None)
+                self.picking.discard(codename)
         if ended and self.view == CHOOSER_VIEW:
             self.probe_headsets()
         return bool(ended)

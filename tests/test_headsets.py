@@ -235,6 +235,93 @@ class FirstChoiceTests(unittest.TestCase):
         self.assertEqual(headsets.update_line(None), "")
 
 
+class CardTests(unittest.TestCase):
+    """A headset card in plain words: the headset's own line, and its support on this computer kept apart from it."""
+
+    entry = headsets.Entry("later", "Later", "SoC", installer=True, release="release 1.0")
+    stable = catalogue.Release("v1.1", prerelease=False, zip_url="")
+
+    def footer(
+        self, record: dict, updates: dict, *, checking: bool = False, download: mock.Mock | None = None
+    ) -> headsets.Footer:
+        return headsets.footer(self.entry, record, updates, checking=checking, download=download)
+
+    @staticmethod
+    def probed(*events: dict) -> installer.Model:
+        m = installer.Model()
+        feed(m, PLAN, *events)
+        m.probed()
+        return m
+
+    def test_the_support_is_named_as_on_this_computer_never_as_the_headset(self):
+        shown = self.footer({"channel": "stable", "tag": "v1.0"}, {"later": None})
+        self.assertEqual(shown.heading, "Later support on this computer")
+        self.assertEqual((shown.title, shown.status, shown.action), ("Version 1.0", "Up to date", ""))
+        pinned = self.footer({"tag": "v1.0", "pinned": True}, {"later": None})
+        self.assertEqual((pinned.detail, pinned.status), ("kept at this version", ""))  # a pin is never updated
+        copy = headsets.footer(
+            headsets.Entry("later", "Later", "", installer=True, release=catalogue.CHECKOUT), {}, {}, checking=False
+        )
+        self.assertEqual((copy.title, copy.detail, copy.versions), ("Developer copy", "updated with Git", False))
+
+    def test_an_update_downloads_to_this_computer_and_says_how_the_headset_follows(self):
+        shown = self.footer({"channel": "beta", "tag": "v1.0"}, {"later": self.stable})
+        self.assertEqual(
+            (shown.status, shown.action, shown.action_choice), ("New version 1.1", "Download 1.1", headsets.NEWEST_BETA)
+        )
+        self.assertIn("Only this computer changes", shown.caption)
+        self.assertIn("choose Upgrade to update the headset", shown.caption)
+        running = mock.Mock(done=False, wanted=headsets.NEWEST_BETA, error="", release=None)
+        busy = self.footer({"channel": "beta", "tag": "v1.0"}, {"later": self.stable}, download=running)
+        self.assertEqual((busy.status, busy.busy, busy.action, busy.versions), ("Downloading 1.1", True, "", False))
+        done = mock.Mock(done=True, wanted=headsets.NEWEST_BETA, error="", release=self.stable, first=False)
+        after = self.footer({"channel": "beta", "tag": "v1.1"}, {}, download=done)
+        self.assertEqual(after.status, "Downloaded")
+        self.assertIn("Your headset has not changed yet", after.caption)
+        self.assertEqual(
+            self.footer({"channel": "stable", "tag": "v1.0"}, {}, checking=True).status, "Checking for updates"
+        )
+        self.assertEqual(self.footer({"channel": "stable", "tag": "v1.0"}, {}).status, "")  # offline: nothing claimed
+
+    def test_a_failed_download_offers_to_try_the_same_again(self):
+        failed = mock.Mock(done=True, wanted="0.9", error="GitHub did not answer", release=None)
+        shown = self.footer({"channel": "stable", "tag": "v1.0"}, {"later": self.stable}, download=failed)
+        self.assertEqual(
+            (shown.status, shown.error, shown.action, shown.action_choice),
+            ("Download failed", "GitHub did not answer", "Try again", "0.9"),
+        )
+
+    def test_nothing_downloaded_offers_the_support_and_says_the_headset_stays_as_it_is(self):
+        absent = headsets.Entry("later", "Later", "", installer=False, downloaded=False)
+        shown = headsets.footer(absent, {}, {}, checking=False)
+        self.assertEqual((shown.title, shown.action), ("Not downloaded yet", "Download Later support"))
+        self.assertIn("Nothing on your headset changes", shown.caption)
+        first = mock.Mock(done=True, wanted=headsets.NEWEST, error="", release=self.stable, first=True)
+        self.assertEqual(
+            headsets.footer(self.entry, {}, {}, checking=False, download=first).caption,
+            "Ready: open the Later to install.",
+        )
+        refused = headsets.Entry("later", "Later", "", installer=False, release="release 2.0", refused="needs 2.0")
+        cannot = headsets.footer(refused, {"channel": "stable"}, {"later": None}, checking=False)
+        self.assertEqual((cannot.status, cannot.picker), ("Needs a newer overpressure", True))
+
+    def test_the_headsets_own_line_and_button_say_what_opening_it_does(self):
+        self.assertEqual(
+            headsets.status_line(self.entry, None)[0], "Install, update or restore it with the guided installer"
+        )
+        stopped = self.probed(task("computer", "tools", "done"))
+        self.assertEqual(
+            headsets.status_line(self.entry, stopped)[0], "Unfinished: continue from Install where you left off"
+        )
+        self.assertEqual(headsets.open_label(self.entry, stopped), "Continue")
+        everything = [task("computer", "tools", "done")] + [task("install", t, "done") for t in ("wifi", "system")]
+        finished = self.probed(*everything)
+        self.assertEqual(headsets.status_line(self.entry, finished), ("Installed with overpressure", headsets.SUCCESS))
+        self.assertEqual(headsets.open_label(self.entry, finished), "Open")
+        bare = headsets.Entry("bare", "Bare", "", installer=False)
+        self.assertEqual(headsets.status_line(bare, None)[0], "No guided installer yet: expert tools only")
+
+
 class LastTimeTests(unittest.TestCase):
     """The headset page's line on where a headset stopped, from its plan probe."""
 
@@ -412,7 +499,7 @@ class WindowTests(Folder):
         self.assertEqual(shown.subtitle.cget("text"), "")
         self.assertNotIn(headsets.LAST_USED, texts(shown.headset_cards["planned"]))
         self.pump(shown, lambda: shown.probes["planned"].done)
-        self.assertIn("Last time: stopped in Install", texts(shown.headset_cards["planned"]))
+        self.assertIn("Unfinished: continue from Install where you left off", texts(shown.headset_cards["planned"]))
 
         self.assertTrue(shown.choose("planned"))
         self.assertEqual(shown.view, app.INSTALLER_VIEW)
@@ -431,7 +518,7 @@ class WindowTests(Folder):
         self.assertEqual(list(shown.headset_cards), ["planned", "bare"])
         self.assertIn(headsets.LAST_USED, texts(shown.headset_cards["planned"]))
         self.assertNotIn(headsets.LAST_USED, texts(shown.headset_cards["bare"]))
-        self.assertNotIn("Last time", " ".join(texts(shown.headset_cards["bare"])))  # no installer, no plan
+        self.assertNotIn("Unfinished", " ".join(texts(shown.headset_cards["bare"])))  # no installer, no plan
         buttons = {
             codename: next(w for w in card.winfo_children() if type(w).__name__ == "CTkButton")
             for codename, card in shown.headset_cards.items()
@@ -509,7 +596,7 @@ class WindowTests(Folder):
 
         self.assertTrue(shown.to_headsets())
         self.pump(shown, lambda: shown.probes["planned"].done)
-        self.assertIn("Last time: every stage was done", texts(shown.headset_cards["planned"]))
+        self.assertIn("Installed with overpressure", texts(shown.headset_cards["planned"]))
         self.assertTrue(shown.choose("planned"))
         self.assertFalse(shown.probing)  # read on the page already
         self.assertEqual(shown.title.cget("text"), "Welcome back")

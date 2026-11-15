@@ -39,8 +39,8 @@ PREFS = Path("out") / "window.json"
 LAST = "last_headset"
 QUESTION = "Which headset do you have?"
 INTRO = (
-    "The installer and Advanced mode work on the headset you choose here. "
-    "\N{SINGLE LEFT-POINTING ANGLE QUOTATION MARK} Headsets at the top of the window comes back to this page."
+    "Open your headset to install, update or restore it. "
+    "\N{SINGLE LEFT-POINTING ANGLE QUOTATION MARK} Headsets at the top of the window brings you back here."
 )
 LAST_USED = "Last used"
 NOT_DOWNLOADED = "Not downloaded yet: Download gets the release chosen beside it"
@@ -266,6 +266,155 @@ def update_line(newer: catalogue.Release | None) -> str:
     if newer is None:
         return ""
     return "Update available: main has changed" if newer.tag == "main" else f"Update available: release {newer.version}"
+
+
+#: The status pills' tones (overpressure/window/theme.py's names).
+NEUTRAL, INFO, SUCCESS, WARNING, DANGER = "neutral", "info", "success", "warning", "danger"
+OTHER_VERSIONS, HIDE_VERSIONS = "Other versions", "Hide versions"
+#: What the release choice says about its choices, under it.
+VERSIONS_NOTE = "Newest stable is recommended. Beta and preview versions are for testing and can break things."
+
+
+def support_name(entry: Entry) -> str:
+    """Return what the page calls ENTRY's files on this computer: "PICO 4 support"."""
+    return f"{entry.name} support"
+
+
+@dataclass(frozen=True)
+class Footer:
+    """A headset card's support panel, in plain words: the headset's support on this computer, not the headset.
+
+    What overpressure downloads for a headset (its release in devices/) lives on this computer; the
+    headset itself only changes when the installer runs. So the panel is titled as the support on this
+    computer, and each download says what it changes and what it does not. It shows at most one status
+    and one action: an update to download, the download running, or trying again; other versions stay
+    behind OTHER_VERSIONS unless nothing is there to choose otherwise.
+    """
+
+    heading: str  #: "PICO 4 support on this computer"
+    title: str  #: "Version 1.0-beta2", "Not downloaded yet", "Developer copy"
+    detail: str = ""  #: beside the title: "kept at this version", "updated with Git"
+    status: str = ""  #: the pill: up to date, a new version, downloading, downloaded, failed
+    tone: str = NEUTRAL
+    action: str = ""  #: the one button: "Download 1.0-beta3", "Download PICO 4 support", "Try again"
+    action_choice: str = ""  #: what that button downloads (a release choice), "" for the card's release choice
+    caption: str = ""  #: under it: what the download changes, or what to do next
+    busy: bool = False  #: a download runs: a progress bar, the buttons off
+    error: str = ""  #: why the last download failed
+    picker: bool = False  #: the release choice shows without asking
+    versions: bool = True  #: other versions can be downloaded (not into a developer copy)
+
+
+def offered(record: dict) -> str:
+    """Return the release choice an update downloads: the newest of the download's recorded channel."""
+    return {channel: label for label, channel in CHANNEL_OF.items()}.get(str(record.get("channel")), NEWEST)
+
+
+def downloading(download: Download, newer: catalogue.Release | None, update: str) -> str:
+    """Return what DOWNLOAD fetches: the version of the update NEWER when it is that (UPDATE), else its choice."""
+    if newer is not None and download.wanted == update:
+        return "main" if newer.tag == "main" else newer.version
+    return download.wanted.lower() if download.wanted in CHANNEL_OF else download.wanted
+
+
+def footer(  # noqa: C901, PLR0911, PLR0912  # one return per state the card can be in
+    entry: Entry,
+    record: dict,
+    updates: dict[str, catalogue.Release | None],
+    *,
+    checking: bool,
+    download: Download | None = None,
+) -> Footer:
+    """Return ENTRY's support panel from its download's RECORD (.release.json), the UPDATES read so far.
+
+    CHECKING: the releases are still being read. DOWNLOAD: the card's download, running or ended.
+    """
+    heading = f"{support_name(entry)} on this computer"
+    upgrade = f"Afterwards, open the {entry.name} and choose Upgrade to update the headset."
+    if entry.release == catalogue.CHECKOUT:
+        return Footer(heading, "Developer copy", "updated with Git", versions=False)
+    if not entry.downloaded:
+        title, detail = "Not downloaded yet", ""
+    else:
+        version = entry.release.removeprefix("release ").removeprefix("preview ")
+        title = f"Version {version}" if entry.release else "Version unknown"
+        detail = "kept at this version" if record.get("pinned") else ""
+    picker = bool(entry.refused)
+    if download is not None and not download.done:
+        what = downloading(download, updates.get(entry.codename), offered(record))
+        caption = "Only this computer changes." if not entry.downloaded else f"Only this computer changes. {upgrade}"
+        return Footer(heading, title, detail, f"Downloading {what}", INFO, caption=caption, busy=True, versions=False)
+    if download is not None and download.error:
+        return Footer(
+            heading, title, detail, "Download failed", DANGER, "Try again", download.wanted, error=download.error
+        )
+    if download is not None and download.release is not None:
+        if getattr(download, "first", False):  # the first download: the installer can start
+            caption = f"Ready: open the {entry.name} to install."
+        else:
+            caption = f"Your headset has not changed yet: open the {entry.name} and choose Upgrade to update it."
+        return Footer(heading, title, detail, "Downloaded", SUCCESS, caption=caption, picker=picker)
+    if not entry.downloaded:
+        return Footer(
+            heading,
+            title,
+            action=f"Download {support_name(entry)}",
+            action_choice=offered(record),
+            caption="Needed before you can install. Nothing on your headset changes.",
+        )
+    if entry.refused:
+        return Footer(
+            heading, title, detail, "Needs a newer overpressure", WARNING,
+            caption="Download a version that works with this overpressure:", picker=True,
+        )  # fmt: skip
+    newer = updates.get(entry.codename)
+    if newer is not None:
+        version = "the newest main" if newer.tag == "main" else newer.version
+        return Footer(
+            heading,
+            title,
+            detail,
+            f"New version {'available' if newer.tag == 'main' else newer.version}",
+            INFO,
+            f"Download {version}",
+            offered(record),
+            caption=f"Only this computer changes. {upgrade}",
+        )
+    if entry.codename in updates and record and not record.get("pinned"):
+        return Footer(heading, title, detail, "Up to date", SUCCESS)
+    if checking and record and not record.get("pinned"):
+        return Footer(heading, title, detail, "Checking for updates", NEUTRAL)
+    return Footer(heading, title, detail)
+
+
+def status_line(entry: Entry, model: Model | None) -> tuple[str, str]:  # noqa: PLR0911  # one line per state
+    """Return a card's line on the headset itself, in plain words, and its tone; ("", "") for none.
+
+    MODEL: the headset's install plan as read on the page (its recorded run), None while unread.
+    """
+    if not entry.downloaded:
+        return "", ""
+    if entry.refused:
+        return "This version cannot run with this overpressure", WARNING
+    if not entry.installer:
+        return "No guided installer yet: expert tools only", NEUTRAL
+    if model is None or not model.recorded():
+        return "Install, update or restore it with the guided installer", NEUTRAL
+    stage = model.stage()
+    if stage is None or stage.status == DONE:
+        return "Installed with overpressure", SUCCESS
+    if stage.status == FAILED:
+        return f"The last run stopped with a problem in {stage.title}: open it to see what happened", WARNING
+    return f"Unfinished: continue from {stage.title} where you left off", INFO
+
+
+def open_label(entry: Entry, model: Model | None) -> str:
+    """Return the card's button: Continue for an unfinished run, else Open."""
+    if entry.installer and model is not None and model.recorded():
+        stage = model.stage()
+        if stage is not None and stage.status != DONE:
+            return "Continue"
+    return "Open"
 
 
 class Releases:

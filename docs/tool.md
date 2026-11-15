@@ -164,18 +164,31 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
 - **The disclaimer.** On every start the window is covered by *Before you go on*: the warranty is void,
   nobody else is to blame, no warranty of any kind. *I accept* holds for every program the window starts;
   *Close* closes it. It shows even when the environment has accepted it ([below](#the-command-line)).
-- **The headset page.** One card per headset of the catalogue. A headset in `devices/` shows its name,
-  SoC and summary, its release and, for one with an installer, where its last run stopped (read with
-  `install --json --plan`, which runs nothing). Every card but a development checkout's has a release
-  choice (*Newest stable*, *Newest beta*, *Preview (main, untested)*, then each published release, read in
-  the background) and *Download*, which runs [`headset add`](#headsets-in-devices) on a thread and reads
-  `devices/` again when it ends. The choice starts on what the download recorded (its channel, or its pinned
-  version), else on *Newest stable*, or *Newest beta* while no stable release runs here; a newer release on
-  the recorded channel shows as *Update available*. A headset not downloaded yet, or held in a release this overpressure
-  cannot run (the card says why), only downloads. The headset chosen last is listed first, marked *Last
-  used*. It is kept in `out/window.json`
-  (`{"last_headset": CODENAME}`), not in `.env`. Only `--device` skips the page; `OVERPRESSURE_DEVICE`
-  does not.
+- **The headset page.** One card per headset of the catalogue, in plain words for owners who are not
+  technical, and with two things kept apart: the headset, and what overpressure keeps for it on this computer.
+  - **The headset:** its name, *Last used* on the one chosen last (listed first, with the page's main button),
+    and one line on it: *Install, update or restore it with the guided installer*, *Unfinished: continue from
+    Install where you left off* (read with `install --json --plan`, which runs nothing), *Installed with
+    overpressure*, or *No guided installer yet: expert tools only*. Its button is *Continue* for an unfinished
+    installation, else *Open*; a click on the card does the same.
+  - **Its support on this computer**, an inset panel titled *PICO 4 support on this computer*
+    ([`headsets.footer`](../overpressure/window/headsets.py)): the version there (*Version 1.0-beta2*, *kept at
+    this version* for a pinned one, *Developer copy · updated with Git* for a checkout), at most one status and
+    one action, and what that action changes. *Up to date*; *New version 1.0-beta3* with *Download 1.0-beta3*
+    (the recorded channel's newest; *Checking for updates* until read, nothing claimed offline, never for a
+    pinned version); *Downloading 1.0-beta3* with a progress bar; *Download failed* with the reason and *Try
+    again*. Every download says that only this computer changes: afterwards the headset is updated by opening
+    it and choosing *Upgrade*, and after a download the card says so again (*Your headset has not changed
+    yet*), or, after the first download, that the headset can be opened to install. A headset not downloaded
+    yet offers *Download PICO 4 support* (*Nothing on your headset changes*); one held in a version this
+    overpressure cannot run says *Needs a newer overpressure* and shows the version choice.
+
+  *Other versions* opens the version choice (*Newest stable*, *Newest beta*, *Preview (main, untested)*, then
+  each published release), with *Download* and a note that newest stable is recommended. A download runs
+  [`headset add`](#headsets-in-devices) on a thread and reads `devices/` again when it ends. The choice starts on
+  what the download recorded (its channel, or its pinned version), else on *Newest stable*, or *Newest beta*
+  while no stable release runs here. The headset chosen last is kept in `out/window.json`
+  (`{"last_headset": CODENAME}`), not in `.env`. Only `--device` skips the page; `OVERPRESSURE_DEVICE` does not.
 - **What to do.** A headset with more than the install ([workflows](#the-installer)) asks *What would you
   like to do?*: one card per workflow, with an *erases the headset* pill where it erases, where it stopped
   last time, or why it cannot run now (`Headset.workflow_problem`). Below them, *Your backup* says where

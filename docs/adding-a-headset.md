@@ -231,8 +231,8 @@ window's backup card work.
 
 **What the window says** comes from the headset; the generic window names no product, OS or store:
 
-- Its `Info` (name, SoC, summary) heads its card on the headset page and Advanced mode. A headset without
-  an installer opens in Advanced mode only.
+- Its `Info` names its card on the headset page (the name: the card speaks to owners in plain words) and heads
+  Advanced mode (name, SoC, summary). A headset without an installer opens in Advanced mode only.
 - The finished page: `Headset.after_install()` returns an `AfterInstall` (title, text, `Action`s), and
   `Headset.finished_page(workflow)` another workflow's. An `Action` is a label and either a workflow
   (`workflow=`, opened at its start page) or the key of a step, opened in Advanced mode. By default the
