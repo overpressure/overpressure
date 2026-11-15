@@ -251,17 +251,28 @@ def usb_check(  # noqa: PLR0913  # the host and the modes; where the rules and t
 ) -> list[Check]:
     """Linux only: check that the installed udev rules let this user open each of the headset's USB @p modes.
 
+    A mode that carries a drive also needs udev's watch on it off: the watch's loop on a drive the
+    headset changes keeps udev busy, and the headset's network link then never comes up.
     The fix installs the distribution's Android udev rules, or names the rules to add where none cover
     a mode; overpressure installs nothing itself.
     """
     if host.platform != "linux" or not modes:
         return []
     missing, files = usbaccess.missing_modes(modes, dirs=dirs, groups=groups)
+    watched = usbaccess.watched_modes(modes, files)
     name = "USB access to the headset"
-    if not missing:
-        return [Check(name, needed_for, OK, "udev rules let you use it in " + ", ".join(m.name for m in modes))]
-    detail = "no udev rule lets you use it in " + ", ".join(m.name for m in missing)
-    return [Check(name, needed_for, MISSING, detail, usbaccess.fix(missing, release=release, files=files))]
+    if not missing and not watched:
+        named = ", ".join(m.name for m in modes if m.access)
+        return [Check(name, needed_for, OK, "udev rules let you use it" + (f" in {named}" if named else ""))]
+    details = []
+    if missing:
+        details.append("no udev rule lets you use it in " + ", ".join(m.name for m in missing))
+    if watched:
+        details.append(
+            "udev watches its drive in " + ", ".join(m.name for m in watched) + ", which can keep its network link down"
+        )
+    fix = usbaccess.fix(missing, release=release, files=files, watched=watched)
+    return [Check(name, needed_for, MISSING, "; ".join(details), fix)]
 
 
 def window_check() -> Check:

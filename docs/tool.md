@@ -294,6 +294,13 @@ Where the package is there but lacks a mode (Ubuntu 24.04's lacks PICO OS), or n
 the rule to add. Before adb, fastboot or EDL uses a connected headset, the installer checks the device itself
 and stops with the same fix, before anything is sent to it.
 
+A mode that carries a drive (`UsbMode.storage`, the PICO 4's log drive in its own system) needs one rule more:
+udev watches every disk and processes it again whenever one is closed after a write, and on a drive the headset
+changes under it that loop can keep udev busy for good. NetworkManager waits for udev before it sets up a link,
+so the headset's USB network never comes up. The doctor checks that a rule turns that watch off
+(`OPTIONS+="nowatch"` for the mode's IDs and product string) and gives the rule to add to
+`/etc/udev/rules.d/70-overpressure.rules`.
+
 ## The installer
 
 ```sh

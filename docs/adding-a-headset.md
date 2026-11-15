@@ -204,7 +204,8 @@ headset, and its image holds every Linux tool of the builds. A headset with `Dev
 rest from the shared checks: `env_check`, `serial_checks`, `backup_check`, `loader_check`,
 `edl_tool_check`, `tool_checks` (adb, fastboot), `ncm_checks` (Windows' USB link) and `usb_check`
 (Linux's USB access to each of `Headset.usb_modes()`: the `UsbMode`s, vendor and product ID, its tools open,
-such as adb, fastboot and EDL; a USB network needs none). Example:
+such as adb, fastboot and EDL; a USB network needs none; a mode that carries a drive is `storage=True`, whose
+udev watch is turned off, and `access=False` when no tool opens it). Example:
 [devices/phoenix/tooling/doctor.py](https://github.com/overpressure/phoenix/blob/main/tooling/doctor.py).
 
 ## The installer

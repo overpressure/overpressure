@@ -172,6 +172,52 @@ class FixTests(Folder):
         (check,) = doctor.usb_check(linux, MODES, dirs=(self.etc, self.lib), release=release, groups=())
         self.assertEqual((check.status, check.fix), (doctor.OK, ""))
 
+    def test_the_doctor_names_the_nowatch_rule_for_a_drive(self) -> None:
+        release = self.release("ID=arch\n")
+        linux, modes = doctor.Host(platform="linux"), (*MODES, LINUX)
+        (check,) = doctor.usb_check(linux, modes, dirs=(self.etc, self.lib), release=release, groups=())
+        self.assertIn("udev watches its drive in its Linux", check.detail)
+        self.assertNotIn("lets you use it in its Linux", check.detail)  # no tool opens it
+        self.assertTrue(check.fix.startswith("sudo pacman -S android-udev, then printf"), check.fix)
+        self.assertIn(f"'{LINUX.storage_rule()}'", check.fix)
+        self.assertNotIn(LINUX.rule(), check.fix)
+        self.rules(self.lib, "51-android.rules", JUMPS)
+        (check,) = doctor.usb_check(linux, modes, dirs=(self.etc, self.lib), release=release, groups=())
+        self.assertEqual(check.status, doctor.MISSING)
+        self.assertTrue(check.fix.startswith("printf"), check.fix)
+        self.rules(self.etc, "70-overpressure.rules", LINUX.storage_rule() + "\n")
+        (check,) = doctor.usb_check(linux, modes, dirs=(self.etc, self.lib), release=release, groups=())
+        self.assertEqual((check.status, check.fix), (doctor.OK, ""))
+
+
+#: A mode no tool opens whose drive udev must not watch, on the generic gadget IDs.
+LINUX = UsbMode("its Linux", "1d6b", "0104", access=False, storage=True, label="PICO 4 Linux")
+
+
+class WatchTests(Folder):
+    def unwatched(self, mode: UsbMode = LINUX) -> bool:
+        return usbaccess.unwatched(mode, usbaccess.rule_files((self.etc, self.lib)))
+
+    def test_the_storage_rule_turns_off_the_watch_on_its_headset_only(self) -> None:
+        self.assertFalse(self.unwatched())
+        self.rules(self.etc, "70-overpressure.rules", LINUX.storage_rule() + "\n")
+        self.assertTrue(self.unwatched())
+        other = UsbMode("another gadget", "1d6b", "0104", access=False, storage=True, label="Raspberry Pi")
+        self.assertFalse(self.unwatched(other))
+
+    def test_a_usb_rule_or_a_later_watch_does_not_count(self) -> None:
+        self.rules(self.lib, "60-x.rules", 'SUBSYSTEM=="usb", ATTRS{idVendor}=="1d6b", OPTIONS+="nowatch"\n')
+        self.assertFalse(self.unwatched())
+        self.rules(self.etc, "70-overpressure.rules", LINUX.storage_rule() + "\n")
+        self.rules(self.lib, "99-watch.rules", 'SUBSYSTEM=="block", OPTIONS+="watch"\n')
+        self.assertFalse(self.unwatched())
+
+    def test_only_storage_modes_need_it_and_only_access_modes_a_grant(self) -> None:
+        files = usbaccess.rule_files((self.etc, self.lib))
+        self.assertEqual(usbaccess.watched_modes((*MODES, LINUX), files), [LINUX])
+        missing, _ = usbaccess.missing_modes((*MODES, LINUX), dirs=(self.etc, self.lib), groups=())
+        self.assertEqual(missing, list(MODES))
+
 
 class DeviceTests(Folder):
     def device(self, name: str, vendor: str, product: str, bus: int, number: int) -> None:

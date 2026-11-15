@@ -8,6 +8,11 @@ Arch, android-udev-rules on Debian) grant the logged-in user every device they l
 package to install (or which rule to add where no package covers a mode), and checks a connected
 device before a tool needs it. Other systems need no rule: Windows has its drivers, macOS lets
 every user open USB devices.
+
+A mode that carries a drive (a headset's log drive) needs one more rule on Linux: udev watches every
+disk and, when one is closed after a write, processes it again. On a drive the headset changes under
+it, that loop can keep udev busy for good, and a network link of the same device then never gets set
+up (NetworkManager waits for udev). The rule turns the watch off for that mode's drives (nowatch).
 """
 
 from __future__ import annotations
@@ -57,16 +62,32 @@ OWN_RULES = "/etc/udev/rules.d/70-overpressure.rules"
 
 @dataclass(frozen=True)
 class UsbMode:
-    """One way a headset appears on USB: a name for the owner, its vendor and product IDs (hex)."""
+    """One way a headset appears on USB: a name for the owner, its vendor and product IDs (hex).
+
+    @p access: a tool opens the device itself (adb, fastboot, edl-ng), so the user needs access to it.
+    @p storage: it carries a drive, whose udev watch is turned off; @p label, its USB product string,
+    narrows that rule to the headset where the IDs are generic ones.
+    """
 
     name: str
     vendor: str
     product: str
+    access: bool = True
+    storage: bool = False
+    label: str = ""
 
     def rule(self) -> str:
         """Return the udev rule that grants the logged-in user this mode's device."""
         return (
             f'SUBSYSTEM=="usb", ATTR{{idVendor}}=="{self.vendor}", ATTR{{idProduct}}=="{self.product}", TAG+="uaccess"'
+        )
+
+    def storage_rule(self) -> str:
+        """Return the udev rule that turns off udev's watch on this mode's drives."""
+        label = f', ATTRS{{product}}=="{self.label}"' if self.label else ""
+        return (
+            f'SUBSYSTEM=="block", ATTRS{{idVendor}}=="{self.vendor}", ATTRS{{idProduct}}=="{self.product}"{label}, '
+            'OPTIONS+="nowatch"'
         )
 
 
@@ -118,22 +139,29 @@ def _matches(value: str, pattern: str) -> bool:
 
 @dataclass
 class _Device:
-    """What udev knows of a USB device when it is added, and what the rules have set so far."""
+    """What udev knows of a USB device, or of a disk on one, when it is added, and what the rules have set so far.
+
+    A disk's ATTRS see its USB device's attributes; its own (ATTR) count as unknown.
+    """
 
     attrs: dict[str, str]
     env: dict[str, str] = field(default_factory=dict)
+    subsystem: str = "usb"
     uaccess: bool = False
     mode: str = ""
     group: str = ""
+    watch: bool = True
 
     def known(self, key: str) -> str | None:
         """Return the value a match key sees, or None for a key this reader does not evaluate."""
         if key == "ACTION":
             return "add"
-        if key in ("SUBSYSTEM", "SUBSYSTEMS"):
+        if key == "SUBSYSTEM":
+            return self.subsystem
+        if key == "SUBSYSTEMS":
             return "usb"
         found = re.fullmatch(r"(ATTRS?|ENV)\{([^}]*)\}", key)
-        if found is None:
+        if found is None or (found.group(1) == "ATTR" and self.subsystem != "usb"):
             return None
         if found.group(1) == "ENV":
             return self.env.get(found.group(2), "")
@@ -166,6 +194,10 @@ def _assign(rule: list[tuple[str, str, str]], device: _Device, *, before_seat: b
             device.mode = value
         elif key == "GROUP" and op in ("=", ":="):
             device.group = value
+        elif key == "OPTIONS" and op in ("+=", "=", ":="):
+            for option in (part.strip() for part in value.split(",")):
+                if option in ("watch", "nowatch"):
+                    device.watch = option == "watch"
         elif key == "GOTO":
             target = value
     return target
@@ -205,6 +237,19 @@ def granted(mode: UsbMode, files: Iterable[Path], groups: Iterable[str] = ()) ->
     return bool(bits & 0o002) or (bool(bits & 0o020) and device.group in set(groups))
 
 
+def unwatched(mode: UsbMode, files: Iterable[Path]) -> bool:
+    """Tell whether the rules in @p files turn off udev's watch on @p mode's drives."""
+    attrs = {"idVendor": mode.vendor, "idProduct": mode.product, "product": mode.label}
+    device = _Device(attrs, {"DEVTYPE": "disk"}, subsystem="block")
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        _apply(_rules(text), device, before_seat=False)
+    return not device.watch
+
+
 def user_groups() -> list[str]:
     """Return the names of this process's groups; none where there are no POSIX groups (Windows)."""
     try:
@@ -226,31 +271,50 @@ def distribution(path: Path = OS_RELEASE) -> list[str]:
     return [values.get("ID", ""), *values.get("ID_LIKE", "").split()]
 
 
-def fix(missing: Sequence[UsbMode], *, release: Path = OS_RELEASE, files: Sequence[Path] = ()) -> str:
-    """Return what the owner runs so that @p missing modes are granted.
-
-    The distribution's Android rules package when it is not installed yet; otherwise (installed but
-    not covering a mode, or no package known) the rules to add.
-    """
-    installed = {p.name for p in files}
-    for name in distribution(release):
-        package = PACKAGES.get(name)
-        if package is not None and package[1] not in installed:
-            return f"{package[0]}, then {TRIGGER} (or plug the headset in again)"
-    lines = " ".join(f"'{mode.rule()}'" for mode in missing)
+def _append(rules: Sequence[str]) -> str:
+    """Return the command that adds @p rules to overpressure's own rules file and applies them."""
+    lines = " ".join(f"'{rule}'" for rule in rules)
     return (
         f"printf '%s\\n' {lines} | sudo tee -a {OWN_RULES} >/dev/null && sudo udevadm control --reload-rules "
         f"&& {TRIGGER}"
     )
 
 
+def fix(
+    missing: Sequence[UsbMode],
+    *,
+    release: Path = OS_RELEASE,
+    files: Sequence[Path] = (),
+    watched: Sequence[UsbMode] = (),
+) -> str:
+    """Return what the owner runs so that @p missing modes are granted and @p watched modes' drives unwatched.
+
+    The distribution's Android rules package when it is not installed yet; otherwise (installed but
+    not covering a mode, or no package known) the rules to add. The nowatch rules no package has are added.
+    """
+    installed = {p.name for p in files}
+    own = [mode.storage_rule() for mode in watched]
+    for name in distribution(release):
+        package = PACKAGES.get(name)
+        if missing and package is not None and package[1] not in installed:
+            then = _append(own) if own else f"{TRIGGER} (or plug the headset in again)"
+            return f"{package[0]}, then {then}"
+    return _append([mode.rule() for mode in missing] + own)
+
+
 def missing_modes(
     modes: Sequence[UsbMode], *, dirs: Sequence[Path] = RULE_DIRS, groups: Iterable[str] | None = None
 ) -> tuple[list[UsbMode], list[Path]]:
-    """Return the modes no installed rule grants this user, and the rule files read."""
+    """Return the modes a tool opens that no installed rule grants this user, and the rule files read."""
     files = rule_files(dirs)
     names = list(groups) if groups is not None else user_groups()
-    return [mode for mode in modes if not granted(mode, files, names)], files
+    return [mode for mode in modes if mode.access and not granted(mode, files, names)], files
+
+
+def watched_modes(modes: Sequence[UsbMode], files: Iterable[Path]) -> list[UsbMode]:
+    """Return the modes carrying a drive whose udev watch no installed rule turns off."""
+    read = list(files)
+    return [mode for mode in modes if mode.storage and not unwatched(mode, read)]
 
 
 # -- a connected device ----------------------------------------------------------------------------
