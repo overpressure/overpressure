@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Unlicense
-"""overpressure refuses administrator rights, except inside the build container."""
+"""overpressure refuses administrator rights, except inside the build container and on GitHub Actions."""
 
 from __future__ import annotations
 
 import contextlib
 import ctypes
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,9 +22,13 @@ class ElevatedTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.marker = Path(self.tmp.name) / ".dockerenv"
-        patcher = mock.patch.object(elevated, "CONTAINER_MARKERS", (self.marker,))
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for patcher in (
+            mock.patch.object(elevated, "CONTAINER_MARKERS", (self.marker,)),
+            mock.patch.dict(os.environ),  # these tests run on GitHub Actions too
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        os.environ.pop(elevated.GITHUB_ACTIONS, None)
 
     def posix(self, euid: int) -> bool:
         with (
@@ -53,6 +58,11 @@ class ElevatedTests(unittest.TestCase):
     def test_run_as_administrator_is_refused(self) -> None:
         self.assertTrue(self.windows(1))
         self.assertFalse(self.windows(0))
+
+    def test_github_actions_runs_as_administrator(self) -> None:
+        os.environ[elevated.GITHUB_ACTIONS] = "true"  # its Windows runners always have the rights
+        self.assertFalse(self.windows(1))
+        self.assertFalse(self.posix(0))
 
     def test_the_message_says_how_to_start_instead(self) -> None:
         self.assertIn("Install.cmd", elevated.message("win32"))

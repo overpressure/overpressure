@@ -36,7 +36,7 @@ asking, for unattended runs (overpressure/disclaimer.py). It also refuses to sta
 that runs on its battery below 30 %.
 
 overpressure refuses to run with administrator rights (Run as administrator, sudo, root), except
-inside the build container (overpressure/elevated.py).
+inside the build container and on GitHub Actions (overpressure/elevated.py).
 """
 
 from __future__ import annotations

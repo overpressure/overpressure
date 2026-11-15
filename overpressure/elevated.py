@@ -4,8 +4,9 @@
 Nothing it does needs them. The headset's USB access comes from the platform's drivers or udev rules
 (python -m overpressure doctor names them), and what a run writes into this folder (cache/, out/,
 backup/, devices/) would belong to the administrator, so the next ordinary run could not change it. The
-start scripts refuse the same way before they write anything. The build container is the exception:
-its builds run as root inside it (overpressure/linux.py).
+start scripts refuse the same way before they write anything. Two places are exempt, where nobody runs
+it by hand: the build container, whose builds run as root inside it (overpressure/linux.py), and
+GitHub Actions, whose Windows runners always run as an administrator.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from pathlib import Path
 
 #: Files a container engine puts at the root of a container (Docker, Podman).
 CONTAINER_MARKERS = (Path("/.dockerenv"), Path("/run/.containerenv"))
+#: The variable GitHub Actions sets to "true" in every step.
+GITHUB_ACTIONS = "GITHUB_ACTIONS"
 #: The exit status of a refused start.
 REFUSED = 1
 
@@ -27,7 +30,12 @@ def in_container() -> bool:
 
 
 def elevated() -> bool:
-    """Return whether this process has administrator rights: an elevated token, or root outside a container."""
+    """Return whether this process has administrator rights where they are refused.
+
+    That is an elevated token on Windows, or root outside a container; on GitHub Actions never.
+    """
+    if os.environ.get(GITHUB_ACTIONS) == "true":
+        return False
     if sys.platform == "win32":
         shell32 = getattr(getattr(ctypes, "windll", None), "shell32", None)
         try:
