@@ -29,6 +29,12 @@ fail() {
     exit 1
 }
 
+# Administrator rights are refused before anything is written, as overpressure itself refuses them
+# (overpressure/elevated.py): what it wrote here would belong to root.
+if [ "$(id -u)" -eq 0 ]; then
+    fail "the installer does not run with administrator rights (sudo or root): nothing it does needs them, and what it writes into its folder would belong to root. Start it again as your own user, without sudo: sh install.sh"
+fi
+
 cd "$(dirname "$0")"
 
 case "$(uname -s)-$(uname -m)" in

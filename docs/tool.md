@@ -422,6 +422,14 @@ The same commands refuse to start (exit status 1) on a computer that runs on its
 `/sys/class/power_supply`, macOS's `pmset -g batt`). On mains, without a battery, or when the state cannot
 be read, they go on.
 
+**Never with administrator rights.** Every command, and the window, refuses to start (exit status 1)
+with administrator rights: Run as administrator on Windows (an elevated token), `sudo` or root on Linux
+and macOS ([overpressure/elevated.py](../overpressure/elevated.py)). The error says how to start it
+instead; the window shows it in a dialog too. Nothing overpressure does needs those rights (the headset's
+USB access comes from drivers or udev rules, `doctor`), and what it writes into its folder would belong
+to the administrator. The start scripts (`Install.cmd`, `install.sh`, `Install.command`) refuse the same
+way before they write anything. Inside the build container, where its builds run as root, it runs.
+
 ## How it fits together
 
 | Module | Role |
@@ -431,6 +439,7 @@ be read, they go on.
 | [overpressure/headset.py](../overpressure/headset.py) | `SUPPORTED`, `API` and `RETIRED`, the headset interface's versions; `headset.json` read and checked; `Headset` (`Info`, `commands()`, `steps()`, `dependencies()`, `usb_modes()`, `ram_boot()`, `install_plan()`, `workflows()`, `plan()`, `workflow_problem()`, `after_install()`, `finished_page()`, `backup_set()`, `adopt_backup()`, `touches()`), `Command`, `Step`, `Param`, `Workflow`, `BackupSet`, `AfterInstall`, `Action`, the registry |
 | [overpressure/install.py](../overpressure/install.py) | the install engine: `Stage`, `Task`, `Ask`, the `Context` a task gets, the state, the lock, the events, `install`, `upgrade` and `restore` |
 | [overpressure/disclaimer.py](../overpressure/disclaimer.py), [power.py](../overpressure/power.py) | the disclaimer and the gate before a command that touches the headset (`--accept-disclaimer`, `OVERPRESSURE_ACCEPT_DISCLAIMER`); this computer's power: a battery below 30 % refuses those commands (Windows, Linux and macOS readers) |
+| [overpressure/elevated.py](../overpressure/elevated.py) | administrator rights (an elevated token, root outside a container) refuse every command and the window |
 | [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (a Linux-root step's in the build container), its display, running and stopping it |
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
 | [overpressure/window/](../overpressure/window/__init__.py) | the window (CustomTkinter). Models without widgets: `installer.py` (the engine's events as stages and asks; the child and demo engines), `advanced.py` (the steps, their values and command lines, the checks), `headsets.py` (the headset page, its plan probes, `out/window.json`, the demo's second headset). Widgets: `app.py` (the header, the installer view, the panels), `advanced_view.py`; `theme.py` the design tokens and fonts, `kit.py` the components, `logo.py` the logo's renderings (`icons/`) |

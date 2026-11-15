@@ -8,6 +8,11 @@ rem is installed on the computer, and no administrator rights are needed.
 setlocal EnableExtensions
 cd /d "%~dp0"
 
+rem Administrator rights are refused before anything is written, as overpressure itself refuses them
+rem (overpressure\elevated.py): net session succeeds only with them.
+net session >nul 2>&1
+if not errorlevel 1 goto elevated
+
 set "UV_VERSION=0.13.4"
 set "UV_ASSET=uv-x86_64-pc-windows-msvc.zip"
 set "UV_SHA256=ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225"
@@ -33,6 +38,11 @@ set "UV_PROJECT_ENVIRONMENT=%CD%\cache\venv"
 "%UV_DIR%\uv.exe" run --locked --no-dev --extra gui --managed-python --python 3.12 python -m overpressure gui
 if errorlevel 1 goto failed
 exit /b 0
+
+:elevated
+echo error: the installer does not run with administrator rights, Run as administrator: nothing it does
+echo needs them, and what it writes into its folder would belong to the administrators. Close this window
+echo and start it again as your own user: double-click Install.cmd.
 
 :failed
 echo.

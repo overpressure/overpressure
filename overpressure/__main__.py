@@ -34,6 +34,9 @@ A command that touches the headset (the installer, ram-boot, a headset command s
 not the builds) first shows the disclaimer and asks y or n; --accept-disclaimer accepts it without
 asking, for unattended runs (overpressure/disclaimer.py). It also refuses to start on a computer
 that runs on its battery below 30 %.
+
+overpressure refuses to run with administrator rights (Run as administrator, sudo, root), except
+inside the build container (overpressure/elevated.py).
 """
 
 from __future__ import annotations
@@ -43,7 +46,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from . import backup, catalogue, disclaimer, doctor, fastboot, install, linux, localconfig, runner, tools
+from . import backup, catalogue, disclaimer, doctor, elevated, fastboot, install, linux, localconfig, runner, tools
 from .headset import Headset, Registry, discover
 
 
@@ -244,6 +247,12 @@ def _dispatch(registry: Registry, headset: Headset | None, argv: list[str]) -> i
 def main(argv: list[str] | None = None) -> int:
     """Run the command line."""
     argv = list(sys.argv[1:] if argv is None else argv)
+    if elevated.elevated():
+        text = elevated.message()
+        print(f"error: {text}", file=sys.stderr)
+        if "gui" in argv:  # the window may have been started without a terminal
+            elevated.show(text)
+        return elevated.REFUSED
     if disclaimer.FLAG in argv:  # anywhere: no command has an option of that name
         argv.remove(disclaimer.FLAG)
         disclaimer.accept()
