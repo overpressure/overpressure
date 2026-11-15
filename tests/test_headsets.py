@@ -274,6 +274,8 @@ class CommandLineTests(Folder):
         with contextlib.ExitStack() as stack:  # Python 3.9: no with (...)
             stack.enter_context(mock.patch.object(cli.localconfig, "ROOT", self.root))
             stack.enter_context(mock.patch.dict("os.environ", environ or {}, clear=True))
+            # Not about the rights: the cleared environment drops GitHub Actions' exemption on its runners.
+            stack.enter_context(mock.patch.object(cli.elevated, "elevated", return_value=False))
             stack.enter_context(mock.patch.object(cli, "discover", return_value=registry))
             stack.enter_context(mock.patch.object(window, "available", return_value=""))
             opened = stack.enter_context(mock.patch.object(window, "main", return_value=0))
