@@ -743,6 +743,34 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse((self.out / "fake" / "state.json").exists())  # the way back forgets the install's
         self.assertTrue((self.out / "fake" / "restore" / "restore-task.log").is_file())
 
+    def test_what_the_headset_runs_is_the_release_of_its_last_finished_install_or_upgrade(self):
+        headset = Workflows()
+
+        def finish(workflow: str, release: str) -> None:
+            others = ("install", "upgrade", "restore")  # as install.main passes them
+            Engine(
+                INFO,
+                headset.plan(workflow),
+                Recorder(),
+                root=self.out,
+                workflow=workflow,
+                others=others,
+                release=release,
+            ).run()
+
+        self.assertEqual(install.installed_release("fake", self.out), "")
+        finish("install", "v1.0 aaaa")
+        self.assertEqual(install.installed_release("fake", self.out), "v1.0 aaaa")
+        engine = Engine(INFO, headset.plan("upgrade"), Recorder(), root=self.out, workflow="upgrade", release="v1.1 b")
+        engine.load_state()
+        engine.state["tasks"]["upgrade-task"] = {"status": "failed"}
+        engine.save_state()  # an upgrade under way: the headset still runs what the install put there
+        self.assertEqual(install.installed_release("fake", self.out), "v1.0 aaaa")
+        finish("upgrade", "v1.1 bbbb")
+        self.assertEqual(install.installed_release("fake", self.out), "v1.1 bbbb")
+        finish("restore", "v1.1 bbbb")  # back to the headset's own system: none of overpressure's
+        self.assertEqual(install.installed_release("fake", self.out), "")
+
     def test_a_refused_or_unknown_workflow_runs_nothing(self):
         headset = Workflows()
         headset.problem = "install it first"

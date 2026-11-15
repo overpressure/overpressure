@@ -387,10 +387,53 @@ def footer(  # noqa: C901, PLR0911, PLR0912  # one return per state the card can
     return Footer(heading, title, detail)
 
 
-def status_line(entry: Entry, model: Model | None) -> tuple[str, str]:  # noqa: PLR0911  # one line per state
+@dataclass(frozen=True)
+class Offer:
+    """What an upgrade would bring the headset: the version it runs, and the one on this computer."""
+
+    have: str  #: "1.0-beta2", "a preview of main"
+    new: str  #: "1.0-beta3", "a newer preview of main"
+    newer: bool  #: the version here is newer, not an older one chosen on purpose
+
+
+def version_words(identity: str) -> str:
+    """Return a headset tooling's identity (catalogue.identity: "v1.0-beta2 0123abcd", "main 0123abcd") as a version."""
+    if identity.startswith("release "):  # catalogue.installed's words, without a download's record
+        return identity.removeprefix("release ")
+    tag = identity.split(" ", 1)[0]
+    return "a preview of main" if tag == "main" else tag.removeprefix("v")
+
+
+def upgrade_offer(installed: str, current: str) -> Offer | None:
+    """Return what an upgrade brings when the headset runs another version (INSTALLED) than this computer has.
+
+    INSTALLED is install.installed_release: what the headset's last finished install or upgrade ran with;
+    CURRENT is catalogue.identity: the tooling on this computer now. None when they are the same, either
+    is unknown, or either is a development checkout (its identity does not follow its commits).
+    """
+    if not installed or not current or installed == current or catalogue.CHECKOUT in (installed, current):
+        return None
+    have, new = version_words(installed), version_words(current)
+    if have == new:  # main again, or the same tag rebuilt: what is here came later
+        later = f"a newer {new.removeprefix('a ')}" if new.startswith("a ") else f"a newer {new}"
+        return Offer(have, later, newer=True)
+    old_key, new_key = catalogue.version_key(have), catalogue.version_key(new)
+    return Offer(have, new, newer=old_key is None or new_key is None or new_key > old_key)
+
+
+def upgrade_line(offer: Offer) -> str:
+    """Return the Upgrade card's line on what it brings."""
+    return f"Your headset runs {offer.have}. Upgrade brings it to {offer.new}, the version on this computer."
+
+
+def status_line(  # noqa: PLR0911  # one line per state
+    entry: Entry, model: Model | None, offer: Offer | None = None, *, installed: bool = False
+) -> tuple[str, str]:
     """Return a card's line on the headset itself, in plain words, and its tone; ("", "") for none.
 
-    MODEL: the headset's install plan as read on the page (its recorded run), None while unread.
+    MODEL: the headset's install plan as read on the page (its recorded run), None while unread. OFFER:
+    what an upgrade would bring (upgrade_offer). INSTALLED: a finished install or upgrade put overpressure's
+    system on it (install.installed_release).
     """
     if not entry.downloaded:
         return "", ""
@@ -398,14 +441,16 @@ def status_line(entry: Entry, model: Model | None) -> tuple[str, str]:  # noqa: 
         return "This version cannot run with this overpressure", WARNING
     if not entry.installer:
         return "No guided installer yet: expert tools only", NEUTRAL
-    if model is None or not model.recorded():
-        return "Install, update or restore it with the guided installer", NEUTRAL
-    stage = model.stage()
-    if stage is None or stage.status == DONE:
-        return "Installed with overpressure", SUCCESS
-    if stage.status == FAILED:
+    stage = model.stage() if model is not None and model.recorded() else None
+    if stage is not None and stage.status == FAILED:
         return f"The last run stopped with a problem in {stage.title}: open it to see what happened", WARNING
-    return f"Unfinished: continue from {stage.title} where you left off", INFO
+    if stage is not None and stage.status != DONE:
+        return f"Unfinished: continue from {stage.title} where you left off", INFO
+    if offer is not None and offer.newer:
+        return f"Upgrade ready: your headset runs {offer.have}, this computer has {offer.new}", INFO
+    if installed or (model is not None and model.recorded()):
+        return "Installed with overpressure", SUCCESS
+    return "Install, update or restore it with the guided installer", NEUTRAL
 
 
 def open_label(entry: Entry, model: Model | None) -> str:

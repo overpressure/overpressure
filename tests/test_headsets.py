@@ -322,6 +322,42 @@ class CardTests(unittest.TestCase):
         self.assertEqual(headsets.status_line(bare, None)[0], "No guided installer yet: expert tools only")
 
 
+class UpgradeOfferTests(unittest.TestCase):
+    """An upgrade is advertised when the headset runs another version than the support on this computer."""
+
+    def test_a_newer_version_here_is_offered_in_versions_an_owner_reads(self):
+        offer = headsets.upgrade_offer("v1.0-beta2 aaaa", "v1.0-beta3 bbbb")
+        assert offer is not None
+        self.assertEqual(offer, headsets.Offer("1.0-beta2", "1.0-beta3", newer=True))
+        self.assertEqual(
+            headsets.upgrade_line(offer),
+            "Your headset runs 1.0-beta2. Upgrade brings it to 1.0-beta3, the version on this computer.",
+        )
+        preview = headsets.upgrade_offer("main aaaa", "main bbbb")
+        assert preview is not None
+        self.assertEqual(preview.new, "a newer preview of main")
+        older = headsets.upgrade_offer("v1.1 aaaa", "v1.0 bbbb")  # an older version chosen on purpose
+        assert older is not None
+        self.assertFalse(older.newer)
+
+    def test_nothing_is_offered_without_both_versions_or_for_the_same_or_a_checkout(self):
+        self.assertIsNone(headsets.upgrade_offer("", "v1.0 aaaa"))  # never installed with overpressure
+        self.assertIsNone(headsets.upgrade_offer("v1.0 aaaa", "v1.0 aaaa"))
+        self.assertIsNone(headsets.upgrade_offer(catalogue.CHECKOUT, "v1.0 aaaa"))
+        self.assertIsNone(headsets.upgrade_offer("v1.0 aaaa", catalogue.CHECKOUT))
+
+    def test_the_headset_page_says_an_upgrade_is_ready_after_an_unfinished_run(self):
+        entry = headsets.Entry("later", "Later", "", installer=True, release="release 1.1")
+        offer = headsets.Offer("1.0", "1.1", newer=True)
+        self.assertEqual(
+            headsets.status_line(entry, None, offer, installed=True),
+            ("Upgrade ready: your headset runs 1.0, this computer has 1.1", headsets.INFO),
+        )
+        self.assertEqual(headsets.status_line(entry, None, None, installed=True)[0], "Installed with overpressure")
+        older = headsets.Offer("1.1", "1.0", newer=False)  # not advertised on the headset page
+        self.assertEqual(headsets.status_line(entry, None, older, installed=True)[0], "Installed with overpressure")
+
+
 class LastTimeTests(unittest.TestCase):
     """The headset page's line on where a headset stopped, from its plan probe."""
 
@@ -750,6 +786,29 @@ class WhatToDoTests(Folder):
         self.assertEqual(shown.view, app.ACTIONS_VIEW)
         self.assertTrue(shown.back())
         self.assertEqual(shown.view, app.CHOOSER_VIEW)
+
+    def test_an_upgrade_the_headset_has_not_had_yet_is_advertised_and_becomes_the_main_button(self):
+        offer = headsets.Offer("1.0-beta2", "1.0-beta3", newer=True)
+        with mock.patch.object(app.Window, "upgrade_offer", staticmethod(lambda _codename: offer)):
+            shown = self.open_choosy()
+            shown.choose("choosy")
+        upgrade = texts(shown.action_cards["upgrade"])
+        self.assertIn("New version", upgrade)
+        self.assertIn(headsets.upgrade_line(offer), upgrade)
+
+        def colour(workflow: str) -> object:
+            card = shown.action_cards[workflow]
+            return next(w for w in all_widgets(card) if type(w).__name__ == "CTkButton").cget("fg_color")
+
+        self.assertEqual((colour("upgrade"), colour("install")), (app.ACCENT, "transparent"))
+
+        headset = Choosy()
+        headset.upgrade_problem = "install it first"  # an upgrade that cannot run is no main button
+        with mock.patch.object(app.Window, "upgrade_offer", staticmethod(lambda _codename: offer)):
+            shown = self.open_choosy(headset)
+            shown.choose("choosy")
+        self.assertNotIn("New version", texts(shown.action_cards["upgrade"]))
+        self.assertEqual((colour("upgrade"), colour("install")), ("transparent", app.ACCENT))
 
     def test_a_workflow_that_cannot_run_says_why(self):
         headset = Choosy()

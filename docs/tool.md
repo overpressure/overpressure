@@ -191,7 +191,12 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
   (`{"last_headset": CODENAME}`), not in `.env`. Only `--device` skips the page; `OVERPRESSURE_DEVICE` does not.
 - **What to do.** A headset with more than the install ([workflows](#the-installer)) asks *What would you
   like to do?*: one card per workflow, with an *erases the headset* pill where it erases, where it stopped
-  last time, or why it cannot run now (`Headset.workflow_problem`). Below them, *Your backup* says where
+  last time, or why it cannot run now (`Headset.workflow_problem`). When the headset runs another version than
+  the support on this computer (`installed_release` against `catalogue.identity`, never for a development
+  checkout), the *Upgrade* card says so: a *New version* pill, *Your headset runs 1.0-beta2. Upgrade brings it to
+  1.0-beta3, the version on this computer.*, and, when the upgrade can run, the page's main button; the headset
+  page's line then reads *Upgrade ready: your headset runs 1.0-beta2, this computer has 1.0-beta3* (an
+  unfinished run comes first). Below them, *Your backup* says where
   the headset's backup is (`Headset.backup_set`) with *Export backup…* and *Import backup…*, which run
   `python -m overpressure backup export|import FILE` as a child.
 - **The way back.** Every page after the headset page has a back link in the header (*‹ PICO 4* to the
@@ -316,10 +321,12 @@ the plan). A headset without one has no installer (exit status 2). The engine is
   another workflow (`{"schema": 1, "tasks": {ID: {"status": ..., "finished": UTC}}}`, and `"choices"`: what
   a task recorded with `ctx.remember`, never a secret, such as a skipped ask), the tasks' logs beside it. A task done earlier is skipped unless its done check says its result is gone; a done check
   also skips a task whose output is already there (`skipped`). `--restart STAGE` forgets that stage and
-  every later one. A finished workflow forgets the other workflows' state. The state records the headset's
+  every later one. A finished workflow forgets the other workflows' state and records `"completed":
+  {"release": ..., "at": UTC}` in its own. The state records the headset's
   tooling (`"release"`: its tag and zip, or the development checkout); progress another release made starts
   over, the choices kept, so a changed plan never resumes in the middle, and each task's done check skips
-  what is there already.
+  what is there already. `install.installed_release` reads what the headset runs: the release of its last
+  finished install or upgrade (none after a restore).
 - **Child programs** run from the repository root (Linux-root steps in the build container); their output,
   and what a task prints, goes to log events and `out/install/<codename>/<task>.log`, so stdout carries only
   events.

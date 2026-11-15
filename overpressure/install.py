@@ -62,6 +62,10 @@ S = TypeVar("S", bound=localconfig.Settings)
 OUT = REPO / "out" / "install"
 STATE = "state.json"
 SCHEMA = 1
+#: The upgrade workflow (python -m overpressure upgrade runs it).
+UPGRADE = "upgrade"
+#: The workflows whose finished run leaves overpressure's system on the headset (installed_release).
+SYSTEM_WORKFLOWS = (INSTALL, UPGRADE)
 PENDING, RUNNING, DONE, SKIPPED, FAILED, STOPPED = "pending", "running", "done", "skipped", "failed", "stopped"
 #: The statuses of a task that needs no run.
 COMPLETE = (DONE, SKIPPED)
@@ -464,6 +468,21 @@ def workflow_folder(root: Path, codename: str, workflow: str) -> Path:
 
 def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def installed_release(codename: str, root: Path = OUT) -> str:
+    """Return the headset's tooling (catalogue.identity) its last finished install or upgrade ran with, "" for none.
+
+    That is what the headset runs: a finished run records it (Engine.run) and forgets the other workflows'
+    states, so a later restore leaves none. A run that has not finished yet changes nothing here.
+    """
+    found = []
+    for workflow in SYSTEM_WORKFLOWS:
+        state = _read_state(workflow_folder(root, codename, workflow) / STATE) or {}
+        completed = state.get("completed")
+        if isinstance(completed, dict) and completed.get("release"):
+            found.append((str(completed.get("at", "")), str(completed["release"])))
+    return max(found)[1] if found else ""  # the latest, should both be there
 
 
 def _read_state(path: Path) -> dict | None:
@@ -1018,6 +1037,8 @@ class Engine:
                     if end is not None:
                         return end
             self.forget_others()
+            self.state["completed"] = {"release": self.release, "at": _now()}  # installed_release reads it
+            self.save_state()
             return self.finish(DONE, None)
         finally:
             self.close_logs()
@@ -1125,7 +1146,7 @@ def main(
 
 def upgrade(headset: Headset, argv: list[str]) -> int:
     """Run python -m overpressure upgrade: the installer's upgrade."""
-    return main(headset, ["--workflow", "upgrade", *argv])
+    return main(headset, ["--workflow", UPGRADE, *argv])
 
 
 def restore(headset: Headset, argv: list[str]) -> int:

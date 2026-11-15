@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from overpressure import backup, disclaimer
 from overpressure.backup import ARCHIVE_SUFFIX
-from overpressure.catalogue import record_of
+from overpressure.catalogue import identity, record_of
 from overpressure.headset import INSTALL, AfterInstall
-from overpressure.install import IMPORT_BACKUP
+from overpressure.install import IMPORT_BACKUP, UPGRADE, installed_release
 from overpressure.window import logo
 from overpressure.window.advanced import INSTALLER, busy
 from overpressure.window.advanced_view import AdvancedView
@@ -33,10 +33,13 @@ from overpressure.window.headsets import (
     Choice,
     Download,
     Entry,
+    Offer,
     Probe,
     footer,
     open_label,
     status_line,
+    upgrade_line,
+    upgrade_offer,
 )
 from overpressure.window.installer import (
     DONE,
@@ -473,7 +476,8 @@ class Window:
             for i, mark in enumerate(marks):
                 mark.pack(side="left", padx=(Space.S if i else 0, 0))
             parts = [heading, *marks]
-            text, tone = status_line(entry, model)
+            installed = installed_release(entry.codename) if entry.usable else ""
+            text, tone = status_line(entry, model, self.upgrade_offer(entry.codename), installed=bool(installed))
             if text:
                 colour = {WARNING_TONE: WARNING, SUCCESS_TONE: SUCCESS}.get(tone, TEXT_SECONDARY)
                 line = kit.label(card, text, size=LABEL, colour=colour)
@@ -641,6 +645,10 @@ class Window:
             return
         self.actions_title.configure(text=ACTIONS_QUESTION)
         codename = headset.info.codename
+        offer = self.upgrade_offer(codename)
+        keys = [w.key for w in headset.workflows()]
+        advertised = offer is not None and offer.newer and UPGRADE in keys and not headset.workflow_problem(UPGRADE)
+        lead = UPGRADE if advertised else keys[0] if keys else ""
         row = 0
         for workflow in headset.workflows():
             problem = headset.workflow_problem(workflow.key)
@@ -653,23 +661,25 @@ class Window:
             marks = [kit.label(heading, workflow.title, size=HEADING, strong=True)]
             if workflow.erases:
                 marks.append(kit.pill(heading, "erases the headset", WARNING_TONE))
+            brings = offer if workflow.key == UPGRADE and not problem else None
+            if brings is not None:
+                marks.append(kit.pill(heading, "New version" if brings.newer else "Other version", INFO))
             for i, mark in enumerate(marks):
                 mark.pack(side="left", padx=(Space.S if i else 0, 0))
             about = kit.label(card, workflow.summary, size=LABEL, colour=TEXT_SECONDARY)
             parts = [heading, about]
-            if problem:
-                parts.append(kit.label(card, problem, size=LABEL, colour=WARNING))
-            elif line:
-                parts.append(kit.label(card, line, size=SMALL, colour=TEXT_MUTED))
+            note = self._workflow_note(card, problem, brings, line)
+            if note is not None:
+                parts.append(note)
             self.place_parts(parts)
             self.actions_flow.wrap(about, inset=2 * Space.XL + PRIMARY_WIDTH + 2 * Space.L)
-            if problem:
+            if problem or brings is not None:
                 self.actions_flow.wrap(parts[-1], inset=2 * Space.XL + PRIMARY_WIDTH + 2 * Space.L)
             button = kit.button(
                 card,
                 "Choose",
                 lambda w=workflow.key: self.choose_workflow(w),
-                kind=PRIMARY if row == 0 else SECONDARY,
+                kind=PRIMARY if workflow.key == lead else SECONDARY,
             )
             button.grid(row=0, column=1, rowspan=len(parts), padx=(Space.L, Space.XL))
             if problem:
@@ -677,6 +687,19 @@ class Window:
             self.action_cards[workflow.key] = card
             row += 1
         self.render_backup_card(row)
+
+    def _workflow_note(self, card: Any, problem: str, brings: Offer | None, line: str) -> Any:  # noqa: ANN401  # Tk widgets
+        """Return a workflow card's line: why it cannot run, what an upgrade brings, or where it stopped (or None)."""
+        if problem:
+            return self.kit.label(card, problem, size=LABEL, colour=WARNING)
+        if brings is not None:
+            return self.kit.label(card, upgrade_line(brings), size=LABEL, colour=ACCENT_TEXT)
+        return self.kit.label(card, line, size=SMALL, colour=TEXT_MUTED) if line else None
+
+    @staticmethod
+    def upgrade_offer(codename: str) -> Offer | None:
+        """Return what an upgrade brings CODENAME's headset: the support here against what it last got (or None)."""
+        return upgrade_offer(installed_release(codename), identity(codename))
 
     def place_parts(self, parts: list[Any]) -> None:
         """Grid a card's PARTS down its first column, with the cards' spacing."""
