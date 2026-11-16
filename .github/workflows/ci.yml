@@ -10,7 +10,7 @@ on:
   workflow_call:
     inputs:
       fresh:
-        description: Run the headsets' checks even when the tree passed (a release: the headsets move).
+        description: "Run the headsets' checks even when the tree passed (a release, as the headsets move)."
         type: boolean
         default: false
 
