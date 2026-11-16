@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 #: The build image: overpressure/builder's release, its tag for people and its digest for the engine.
 IMAGE = (
-    "ghcr.io/overpressure/builder:2026.11.12@sha256:ba4a5ec8adb886b60b873b28d7d6454abd40c1a58d08a6f6fd7d5efc65d8e4b2"
+    "ghcr.io/overpressure/builder:2026.11.16@sha256:28a94d24c806a861406a7b462f3da5e19df1b120cf5964ed641340855911712d"
 )
 #: The environment variable that names another image instead.
 IMAGE_OVERRIDE = "OVERPRESSURE_BUILDER"
