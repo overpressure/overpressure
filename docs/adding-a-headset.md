@@ -15,7 +15,7 @@ overpressure devices` and `--device CODENAME steps`. Once it has a release, an e
 devices/<codename>/   a clone of overpressure/<codename>
   headset.json     codename, name, version, the headset interface (api), commit and date (git archive's)
   __init__.py      makes devices.<codename> importable
-  README.md        what runs on the headset, its status, its quick start
+  README.md        what works and what doesn't, and how to install it: headset-readme-template.md's form
   CLAUDE.md        its rules and hardware workflow
   env.example      its keys in .env, with their comments (a new .env starts with them)
   tooling/         its host tooling: HEADSET in __init__.py, the command modules
@@ -24,6 +24,10 @@ devices/<codename>/   a clone of overpressure/<codename>
   .github/         its CI (against overpressure's main) and its release workflow
   ...              whatever its images need (stage 1, userspace, sources, scripts)
 ```
+
+Its `README.md` is for owners, not developers, and follows [the template](headset-readme-template.md): the same
+sections and rows of what works for every headset, so that they read alike. `python scripts/check-docs.py --repo
+devices/<codename>`, which the headset's CI runs, checks it against the template.
 
 `headset.json`:
 

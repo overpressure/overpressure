@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import re
 import shutil
 import subprocess
 import sys
@@ -120,6 +121,51 @@ class LinkTests(unittest.TestCase):
                 docs.broken(root / "inner" / "a.md", "[up](../b.md)", root / "inner"),
                 ["../b.md: outside the repository"],
             )
+
+
+class HeadsetReadmeTests(unittest.TestCase):
+    ISSUE = "([#7](https://github.com/overpressure/example/issues/7))"
+
+    def setUp(self):
+        self.template = docs.TEMPLATE.read_text(encoding="utf-8")
+        # Filled in as a headset would: every status works, every other placeholder some text.
+        status = re.sub(r"^(\| [^|]+ \| )\{\{\}\}", r"\1✅", self.template, flags=re.MULTILINE)
+        self.readme = docs.PLACEHOLDER.sub("x", docs.COMMENT.sub("", status))
+
+    def problems(self, readme: str) -> list[str]:
+        return docs.readme_problems(readme, self.template)
+
+    def test_a_readme_filled_in_from_the_template_passes(self):
+        self.assertEqual(self.problems(self.readme), [])
+
+    def test_the_headsets_own_rows_come_after_the_templates(self):
+        own = self.readme.replace("| Cooling | ✅ | x |\n", "| Cooling | ✅ | x |\n| Fan noise | ✅ | x |\n")
+        self.assertEqual(self.problems(own), [])
+        early = self.readme.replace("| Both displays |", "| Fan noise | ✅ | x |\n| Both displays |")
+        self.assertEqual(
+            self.problems(early), ["Display and comfort: row 2 is not 'Both displays' (the template's rows come first)"]
+        )
+
+    def test_a_missing_or_moved_section_is_found(self):
+        gone = self.readme.replace("### Sound\n", "")
+        self.assertIn("its sections are", self.problems(gone)[0])
+        moved = self.readme.replace("## What you need", "## Needed")
+        self.assertIn("the template's are", self.problems(moved)[0])
+
+    def test_a_row_needs_one_status_and_a_broken_one_its_issue(self):
+        expected = [
+            f"Controllers: Vibration: the status is 'yes', not one of {' '.join(docs.STATUS)}",
+            "Sound: Microphone: doesn't work, and links no issue",
+        ]
+        broken = self.readme.replace("| Vibration | ✅ | x |", "| Vibration | yes | x |")
+        broken = broken.replace("| Microphone | ✅ | x |", "| Microphone | ❌ | x |")
+        self.assertEqual(self.problems(broken), expected)
+        linked = self.readme.replace("| Microphone | ✅ | x |", f"| Microphone | ❌ | Not yet {self.ISSUE} |")
+        self.assertEqual(self.problems(linked), [])
+
+    def test_a_left_placeholder_is_found(self):
+        left = self.readme.replace("| Wi-Fi | ✅ | x |", "| Wi-Fi | ✅ | {{notes}} |")
+        self.assertEqual(self.problems(left), ["a placeholder is left: {{notes}}"])
 
 
 class ReleaseTests(unittest.TestCase):
