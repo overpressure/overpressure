@@ -8,7 +8,7 @@
 <h1 align="center">overpressure</h1>
 
 <p align="center">
-  <b>Linux and Valve's SteamOS VR session on standalone VR headsets.</b>
+  <b>Linux and a SteamOS-compatible userspace for standalone VR headsets, on Valve's Steam Frame kernel.</b>
 </p>
 
 <p align="center">
@@ -54,7 +54,10 @@ connection (the PICO 4 builds its own system through it). On Linux also your dis
 `tk`), or the window looks rough, and its Android udev rules (Arch `android-udev`, Debian `android-udev-rules`)
 for USB access to the headset; the installer's first stage checks both and says what to install. The disk space and time the install takes are in the headset's README.
 
-1. Download the release zip and unpack it.
+1. Download the newest release's zip from [the releases](https://github.com/overpressure/overpressure/releases)
+   and unpack it (while there is no stable release, the newest is a beta, marked *Pre-release*). A newer
+   overpressure unpacks beside the one before: on its first start it offers to bring your settings, your
+   headset's backup and what the installer knows over ([how](docs/tool.md#a-newer-overpressure)).
 2. Start the installer: double-click `Install.cmd` (Windows) or `Install.command` (macOS; the first time
    right-click, *Open*), or run `sh install.sh` (Linux). It fetches its own Python into `cache/`; nothing is
    installed on the computer.

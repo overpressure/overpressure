@@ -1,11 +1,12 @@
-# Files that end up inside the Linux ramdisk must keep LF line endings,
-# even on Windows checkouts (the image build also strips CRs as a safety net).
+# LF everywhere, also on Windows checkouts: the start scripts and the build container's scripts run on Linux and
+# macOS from the same tree.
 * text=auto eol=lf
 tests/** text eol=lf
 *.sh text eol=lf
 *.py text eol=lf
-*.ps1 text eol=lf
 # cmd.exe misreads labels in LF-only batch files.
 *.cmd text eol=crlf
 *.md text eol=lf
 *.json text eol=lf
+# The release zip's commit and its time (git archive), for --version.
+overpressure/version.py export-subst

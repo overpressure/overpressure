@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: Unlicense
 """overpressure's command line: python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS...].
 
+  --version            this overpressure: its version, channel (stable, beta, preview) and commit
+  carry-over [FOLDER]  bring the backup, settings and installer records over from the earlier
+                       overpressure folder beside this one (the window asks on its first start)
+
   devices              the headsets in devices/
-  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V]
-                       the headsets overpressure knows, their releases, one downloaded into devices/
+  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V] | update CODENAME
+                       the headsets overpressure knows, their releases, one downloaded into devices/,
+                       its newer release on the channel it came from
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
                        the window: the installer, and every step of the headset in its Advanced mode;
                        it opens on the page that asks which headset, unless --device names one
@@ -22,7 +27,7 @@
                        the installer's upgrade: a new system, the headset's data kept
   restore [--json] [--plan] [--restart STAGE]
                        the installer's way back to the headset's own system, from its backup
-  backup export FILE | backup import FILE
+  backup export FILE | backup import FILE | backup compact
                        the headset's backup into one checked file, or from one onto this computer
   COMMAND [ARGS...]    a command of the headset (listed below once a headset is known)
 
@@ -46,7 +51,21 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from . import backup, catalogue, disclaimer, doctor, elevated, fastboot, install, linux, localconfig, runner, tools
+from . import (
+    backup,
+    carryover,
+    catalogue,
+    disclaimer,
+    doctor,
+    elevated,
+    fastboot,
+    install,
+    linux,
+    localconfig,
+    runner,
+    tools,
+    version,
+)
 from .headset import Headset, Registry, discover
 
 
@@ -106,6 +125,60 @@ def _devices(registry: Registry, _headset: Headset | None, _args: list[str]) -> 
     return 0
 
 
+def _headset_files() -> list[Path]:
+    """Return the files each headset's way back needs (its backup set), once the headsets are in devices/."""
+    found: list[Path] = []
+    for headset in discover().headsets.values():
+        try:
+            bundle = headset.backup_set()
+        except (OSError, ValueError, KeyError):
+            continue  # no backup named yet
+        if bundle is not None:
+            found += [bundle.identity, *bundle.files.values()]
+    return found
+
+
+def _carry_over(_registry: Registry, _headset: Headset | None, args: list[str]) -> int:
+    old = Path(args[0]) if args else carryover.previous()
+    if old is None:
+        print("no earlier overpressure folder beside this one to bring the backup and settings from")
+        return 1
+    try:
+        brought = carryover.carry(old, headset_files=_headset_files)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"From {old}: " + (", ".join(brought) if brought else "nothing this folder lacks"))
+    return 0
+
+
+def offer_carry_over() -> bool:
+    """Ask in a small window, before the main one, whether to bring an earlier folder's data over.
+
+    Return whether anything came (the headsets in devices/ are then looked for again).
+    """
+    old = carryover.previous()
+    if old is None:
+        return False
+    import tkinter as tk  # noqa: PLC0415  # only for this question
+    from tkinter import messagebox  # noqa: PLC0415  # only for this question
+
+    root = tk.Tk()
+    root.withdraw()
+    brought: list[str] = []
+    try:
+        if messagebox.askyesno("overpressure: your earlier folder", carryover.question(old), parent=root):
+            brought = carryover.carry(old, headset_files=_headset_files)
+            messagebox.showinfo("overpressure", "Brought over: " + (", ".join(brought) or "nothing"), parent=root)
+        else:
+            carryover.decline(old)
+    except (OSError, ValueError) as exc:
+        messagebox.showerror("overpressure", f"Could not bring everything over: {exc}", parent=root)
+    finally:
+        root.destroy()
+    return bool(brought)
+
+
 def _headset_command(_registry: Registry, _headset: Headset | None, args: list[str]) -> int:
     return catalogue.main(args)
 
@@ -141,6 +214,8 @@ def _gui(registry: Registry, headset: Headset | None, args: list[str]) -> int:
         return 1
     fresh = "--demo-fresh" in args
     demo = fresh or "--demo" in args or "--demo-headsets" in args
+    if not demo and offer_carry_over():
+        registry = discover()  # the headsets it brought into devices/
     return window.main(registry, headset, demo=demo, fresh=fresh, advanced="--advanced" in args)
 
 
@@ -186,6 +261,8 @@ def _run(headset: Headset, args: list[str]) -> int:
 
 #: The commands of overpressure itself, with or without a headset.
 GENERIC: dict[str, Callable[[Registry, Headset | None, list[str]], int]] = {
+    "--version": lambda _registry, _headset, _rest: print(version.describe()) or 0,
+    "carry-over": _carry_over,
     "devices": _devices,
     "headset": _headset_command,
     "gui": _gui,

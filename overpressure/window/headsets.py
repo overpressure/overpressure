@@ -292,11 +292,11 @@ class Footer:
     """
 
     heading: str  #: "PICO 4 support on this computer"
-    title: str  #: "Version 1.0-beta2", "Not downloaded yet", "Developer copy"
+    title: str  #: "Version 1.0-beta.2", "Not downloaded yet", "Developer copy"
     detail: str = ""  #: beside the title: "kept at this version", "updated with Git"
     status: str = ""  #: the pill: up to date, a new version, downloading, downloaded, failed
     tone: str = NEUTRAL
-    action: str = ""  #: the one button: "Download 1.0-beta3", "Download PICO 4 support", "Try again"
+    action: str = ""  #: the one button: "Download 1.0-beta.3", "Download PICO 4 support", "Try again"
     action_choice: str = ""  #: what that button downloads (a release choice), "" for the card's release choice
     caption: str = ""  #: under it: what the download changes, or what to do next
     busy: bool = False  #: a download runs: a progress bar, the buttons off
@@ -391,13 +391,13 @@ def footer(  # noqa: C901, PLR0911, PLR0912  # one return per state the card can
 class Offer:
     """What an upgrade would bring the headset: the version it runs, and the one on this computer."""
 
-    have: str  #: "1.0-beta2", "a preview of main"
-    new: str  #: "1.0-beta3", "a newer preview of main"
+    have: str  #: "1.0-beta.2", "a preview of main"
+    new: str  #: "1.0-beta.3", "a newer preview of main"
     newer: bool  #: the version here is newer, not an older one chosen on purpose
 
 
 def version_words(identity: str) -> str:
-    """Return a headset tooling's identity (catalogue.identity: "v1.0-beta2 0123abcd", "main 0123abcd") as a version."""
+    """Return a headset tooling's identity (catalogue.identity: "v1.0-beta.2 0123abcd", "main 0123abcd") in words."""
     if identity.startswith("release "):  # catalogue.installed's words, without a download's record
         return identity.removeprefix("release ")
     tag = identity.split(" ", 1)[0]

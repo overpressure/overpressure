@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Unlicense
 """Shellcheck over every tracked shell script, down to its warnings (its style notes are not a verdict).
 
-Stage 1 runs on BusyBox ash, so its scripts are checked as such (shellcheck's dash is the closest).
+A script's shell is its first line's (#!/bin/sh as dash, the closest to BusyBox's ash a headset's scripts may run
+on), else a `# shellcheck shell=NAME` line near its top; a sourced `.sh` without either is checked as sh.
 """
 
 from __future__ import annotations
@@ -15,15 +16,22 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
-def shell(data: bytes) -> str | None:
-    """Return the shell of a script by its first line, or None for anything else."""
+def shell(data: bytes, *, sourced: bool = False) -> str | None:
+    """Return the shell of a script by its first line or a shellcheck directive, or None for anything else.
+
+    @p sourced: a .sh file, which without a shebang is a sourced script, checked as sh.
+    """
     first = data.split(b"\n", 1)[0]
     if first.startswith(b"#!"):
         if b"bash" in first:
             return "bash"
         if first.rstrip().endswith((b"/sh", b" sh", b"ash")):
             return "dash"
-    return None
+        return None
+    for line in data.split(b"\n")[:10]:
+        if line.startswith(b"# shellcheck shell="):
+            return line.split(b"=", 1)[1].split()[0].decode()
+    return "sh" if sourced else None
 
 
 def main(argv: list[str]) -> int:
@@ -41,7 +49,7 @@ def main(argv: list[str]) -> int:
         # .command: macOS's start script (Install.command)
         if not name or not path.is_file() or path.suffix not in ("", ".sh", ".command"):
             continue
-        kind = shell(path.read_bytes()[:200])
+        kind = shell(path.read_bytes()[:1000], sourced=path.suffix == ".sh")
         if not kind:
             continue
         count += 1

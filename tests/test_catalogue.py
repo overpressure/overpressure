@@ -121,6 +121,16 @@ class CatalogueTests(unittest.TestCase):
         self.assertIn("update overpressure", lines[0])
         self.assertEqual((lines[1].split()[-2:], lines[-1]), (["runs", "here"], "v0.5"))
 
+    def test_releases_are_ordered_by_version_not_by_when_they_came_out(self):
+        # A fix to an older line published after a newer release is not the newest.
+        self.github = Published(
+            ("v1.0-beta.3", True, archive("1.0-beta.3")),
+            ("v1.1", False, archive("1.1")),
+            ("v1.0", False, archive("1.0")),
+        )
+        found = catalogue.releases(catalogue.CATALOGUE["phoenix"], self.github.get)
+        self.assertEqual([r.tag for r in found], ["v1.1", "v1.0", "v1.0-beta.3"])
+
     def test_a_development_checkout_is_never_replaced(self):
         (self.root / "devices/phoenix/.git").mkdir(parents=True)
         with self.assertRaisesRegex(RuntimeError, "development checkout"):

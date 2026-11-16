@@ -11,7 +11,9 @@ repository (the PICO 4's: [docs/releasing.md](https://github.com/overpressure/ph
 `MAJOR.MINOR[-beta[.N]]`, as a Git tag `vMAJOR.MINOR...`. `pyproject.toml` holds the same version in Python's
 spelling (`1.0-beta` is `1.0b1`, `1.0-beta.2` is `1.0b2`). A headset's version is its own, in its
 `headset.json`; the image it builds reports both (the PICO 4's `/usr/share/pico4/version`: the headset's
-version and commit, and `overpressure=` this version).
+version and commit, and `overpressure=` this version). A stable release is a GitHub release, a beta a
+pre-release, `main` the preview between them; `python -m overpressure --version` says which one runs
+([tool.md](tool.md#a-newer-overpressure)).
 
 A release keeps every headset release it ran before running
 ([adding-a-headset.md](adding-a-headset.md#the-headset-interface)): an addition to the headset interface
@@ -22,7 +24,10 @@ release of overpressure retires a major (`RETIRED`, with this version).
 
 What changed is in each release's notes and in the `CHANGELOG.md` inside its zip, both generated from the
 conventional commits by [git-cliff](https://git-cliff.org/) as [cliff.toml](../cliff.toml) sets it up: features
-and fixes by their subjects, everything else as a count. What the next release brings:
+and fixes by their subjects, everything else as a count (`python scripts/release.py notes TAG`). The changelog
+starts at the first release, whose entry is its tag's own words. A beta's notes list what changed since the
+release before it; a stable release's what changed since the stable release before it (or the first release),
+its betas included. What the next release brings:
 
 ```sh
 uvx git-cliff@2.14.2 --unreleased
@@ -35,10 +40,13 @@ A pushed tag makes the release; nothing is uploaded by hand.
 1. **Ready.** Everything is on `main`, CI is green (each headset's `main` and its oldest supported release too,
    which the `headsets` job runs against it), and no issue the release depends on is open.
 2. **The version.** Set it in `pyproject.toml`, by pull request like every change to `main`.
-3. **The headsets.** Each supported headset's current release runs its checklist with this commit (the
+3. **The headsets.** Each supported headset has a published release (a beta at least: the window offers a
+   headset's newest stable release first, which falls back to its newest beta, and a headset without any
+   release can only be downloaded as a preview), and that release runs its checklist with this commit (the
    PICO 4's: [release-checklist.md](https://github.com/overpressure/phoenix/blob/main/docs/release-checklist.md)).
-4. **The tag.** An annotated tag on that commit of `main`: its first line the title, the rest the release's own
-   words, the checklist's results and what is known not to work. Then push it.
+4. **The tag.** An annotated tag on that commit of `main`: its first line the release's title, the rest the
+   release's own words, the checklist's results and what is known not to work. Then push it. The first beta of a
+   version is `-beta`, the next `-beta.2` (`-beta.1` is refused: it would name the first again).
 
    ```sh
    git tag -a v1.0-beta -F tag-message.md
@@ -48,16 +56,24 @@ A pushed tag makes the release; nothing is uploaded by hand.
 5. **CI** ([.github/workflows/release.yml](../.github/workflows/release.yml), on GitHub):
    - runs every check of [ci.yml](../.github/workflows/ci.yml) on the tagged commit, the private-data scan over
      the whole history among them, unless the same tree passed already (on its pull request or on `main`): CI runs
-     once per content;
+     once per content. The headsets' checks run again in any case, against each headset's `main` and oldest
+     supported release as they are now;
    - refuses a tag that is not annotated, not on `main`, or names another version than `pyproject.toml`
      (`python scripts/release.py check TAG`);
-   - writes the notes: the tag's own words, then the changelog's section of this release (`git-cliff --latest`);
+   - writes the notes and the zip's `CHANGELOG.md` (`python scripts/release.py notes TAG`, [Changelog](#changelog)),
+     and scans both for private data before anything is published;
    - makes the zip with `git archive`: the tagged tree under `overpressure-VERSION/`, with `CHANGELOG.md`, the
      start scripts executable and `Install.cmd` with Windows line endings; and its SHA-256;
-   - creates the GitHub release with the notes, the zip and its checksum, as a pre-release for a beta.
+   - creates the GitHub release titled by the tag's first line, with the notes, the zip and its checksum, as a
+     pre-release for a beta.
 
    No headset, image, package or vendor file is attached: the installer downloads the headset's release, and
    everything is built from public downloads on the owner's computer or the headset.
 
+6. **The next version.** Right after the release, `pyproject.toml` on `main` gets the next pre-release as a
+   development version, by pull request (after `1.0b1`, `1.0b2.dev0`; after `1.0`, `1.1b1.dev0`): a preview of
+   `main` then says so (`python -m overpressure --version`, the window) and is never taken for the release.
+
 A failed check stops the release before anything is published. Fix it on `main`, then delete the tag
-(`git push origin :refs/tags/v1.0-beta` and `git tag -d v1.0-beta`) and tag the fixed commit.
+(`git push origin :refs/tags/v1.0-beta` and `git tag -d v1.0-beta`) and tag the fixed commit. Only a tag that never
+got a release is deleted: a published version never moves.

@@ -101,7 +101,7 @@ def compatibility(known: Known, tag: str, get: Callable[[str], bytes] = fetch) -
 
 
 def releases(known: Known, get: Callable[[str], bytes] = fetch) -> list[Release]:
-    """Return KNOWN's published releases with a zip and its checksum, newest first, each marked runnable or not."""
+    """Return KNOWN's published releases with a zip and checksum, newest version first, marked runnable or not."""
     found = json.loads(get(f"{GITHUB}/repos/{known.repository}/releases?per_page=100"))
     out = []
     for item in found:
@@ -112,7 +112,8 @@ def releases(known: Known, get: Callable[[str], bytes] = fetch) -> list[Release]
         tag = item["tag_name"]
         zip_url, sha_url = assets[zips[0]], assets[zips[0] + ".sha256"]
         out.append(Release(tag, bool(item.get("prerelease")), zip_url, sha_url, compatibility(known, tag, get)))
-    return out
+    # By version, not by when each was published: a fix to an older line may come out after a newer release.
+    return sorted(out, key=lambda r: version_key(r.version) or (-1, -1, -1, -1), reverse=True)
 
 
 def oldest_supported(found: list[Release]) -> Release | None:

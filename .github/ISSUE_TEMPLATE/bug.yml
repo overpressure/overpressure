@@ -28,7 +28,9 @@ body:
     id: version
     attributes:
       label: Version
-      description: overpressure's version or commit, and the headset's release (`python -m overpressure headset list`).
+      description: >-
+        `python -m overpressure --version` (overpressure's version, channel and commit), and the headset's
+        release (`python -m overpressure devices` or the window's headset page).
     validations:
       required: true
   - type: input
@@ -41,7 +43,8 @@ body:
     attributes:
       label: Support bundle
       description: >-
-        Attach the archive from `python -m overpressure dev support-bundle`. Identifiers are masked; it is plain text,
-        so read it before attaching it. If the headset cannot be reached, say so.
+        The headset's support bundle, where it has one (the PICO 4: `python -m overpressure dev support-bundle`, or
+        the window's finished page). Identifiers are masked; it is plain text, so read it before attaching it. If
+        the headset cannot be reached, or the problem comes before a headset is downloaded, say so.
     validations:
-      required: true
+      required: false

@@ -9,9 +9,12 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 rem Administrator rights are refused before anything is written, as overpressure itself refuses them
-rem (overpressure\elevated.py): net session succeeds only with them.
+rem (overpressure\elevated.py): net session succeeds only with them. GitHub Actions' Windows runners always
+rem have them, as overpressure's exemption knows; CI starts this script there (OVERPRESSURE_START_CHECK).
+if defined GITHUB_ACTIONS goto rights
 net session >nul 2>&1
 if not errorlevel 1 goto elevated
+:rights
 
 set "UV_VERSION=0.13.4"
 set "UV_ASSET=uv-x86_64-pc-windows-msvc.zip"
@@ -32,10 +35,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference =
 if errorlevel 1 goto failed
 set "PSModulePath=%OUTER_PSMODULEPATH%"
 
+rem CI checks this script up to overpressure itself: --version instead of the window.
+set "COMMAND=gui"
+if defined OVERPRESSURE_START_CHECK set "COMMAND=--version"
 set "UV_CACHE_DIR=%CD%\cache\uv-cache"
 set "UV_PYTHON_INSTALL_DIR=%CD%\cache\python"
 set "UV_PROJECT_ENVIRONMENT=%CD%\cache\venv"
-"%UV_DIR%\uv.exe" run --locked --no-dev --extra gui --managed-python --python 3.12 python -m overpressure gui
+"%UV_DIR%\uv.exe" run --locked --no-dev --extra gui --managed-python --python 3.12 python -m overpressure %COMMAND%
 if errorlevel 1 goto failed
 exit /b 0
 

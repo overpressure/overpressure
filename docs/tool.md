@@ -50,7 +50,7 @@ it.
 [adding-a-headset.md](adding-a-headset.md#the-headset-interface)). `headset releases` marks each release this
 overpressure cannot run, with the reason, and the channels take the newest that runs. The registry loads only
 a headset this overpressure runs; `python -m overpressure devices` lists the others as refused, with the
-reason (update overpressure, use an older one, or download another release). A new `.env` starts as `.env.example` and each headset's `env.example`.
+reason (update overpressure, use an older one, or download another release).
 
 ## Dependencies
 
@@ -172,11 +172,11 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
     overpressure*, or *No guided installer yet: expert tools only*. Its button is *Continue* for an unfinished
     installation, else *Open*; a click on the card does the same.
   - **Its support on this computer**, an inset panel titled *PICO 4 support on this computer*
-    ([`headsets.footer`](../overpressure/window/headsets.py)): the version there (*Version 1.0-beta2*, *kept at
+    ([`headsets.footer`](../overpressure/window/headsets.py)): the version there (*Version 1.0-beta.2*, *kept at
     this version* for a pinned one, *Developer copy · updated with Git* for a checkout), at most one status and
-    one action, and what that action changes. *Up to date*; *New version 1.0-beta3* with *Download 1.0-beta3*
+    one action, and what that action changes. *Up to date*; *New version 1.0-beta.3* with *Download 1.0-beta.3*
     (the recorded channel's newest; *Checking for updates* until read, nothing claimed offline, never for a
-    pinned version); *Downloading 1.0-beta3* with a progress bar; *Download failed* with the reason and *Try
+    pinned version); *Downloading 1.0-beta.3* with a progress bar; *Download failed* with the reason and *Try
     again*. Every download says that only this computer changes: afterwards the headset is updated by opening
     it and choosing *Upgrade*, and after a download the card says so again (*Your headset has not changed
     yet*), or, after the first download, that the headset can be opened to install. A headset not downloaded
@@ -193,9 +193,9 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
   like to do?*: one card per workflow, with an *erases the headset* pill where it erases, where it stopped
   last time, or why it cannot run now (`Headset.workflow_problem`). When the headset runs another version than
   the support on this computer (`installed_release` against `catalogue.identity`, never for a development
-  checkout), the *Upgrade* card says so: a *New version* pill, *Your headset runs 1.0-beta2. Upgrade brings it to
-  1.0-beta3, the version on this computer.*, and, when the upgrade can run, the page's main button; the headset
-  page's line then reads *Upgrade ready: your headset runs 1.0-beta2, this computer has 1.0-beta3* (an
+  checkout), the *Upgrade* card says so: a *New version* pill, *Your headset runs 1.0-beta.2. Upgrade brings it to
+  1.0-beta.3, the version on this computer.*, and, when the upgrade can run, the page's main button; the headset
+  page's line then reads *Upgrade ready: your headset runs 1.0-beta.2, this computer has 1.0-beta.3* (an
   unfinished run comes first). Below them, *Your backup* says where
   the headset's backup is (`Headset.backup_set`) with *Export backup…* and *Import backup…*, which run
   `python -m overpressure backup export|import FILE` as a child.
@@ -282,6 +282,35 @@ draws with Xft (Tk 9 names its font system; a Tk 8.6 with Xft has `libXft` loade
 `python3-tk` (Debian, Ubuntu, openSUSE), `python3-tkinter` (Fedora) or `tk` (Arch). The window prints the same
 note when its Tk draws without Xft.
 
+CI starts each script on its own system up to overpressure itself: with `OVERPRESSURE_START_CHECK` set it runs
+`python -m overpressure --version` instead of the window (GitHub Actions' Windows runners have administrator
+rights, which `Install.cmd` then does not refuse there).
+
+### A newer overpressure
+
+overpressure comes in three channels, as each headset does ([Headsets in devices/](#headsets-in-devices)):
+
+| Channel | What | Where |
+| --- | --- | --- |
+| stable | `vMAJOR.MINOR` | the release GitHub marks *Latest*, once there is one |
+| beta | `vMAJOR.MINOR-beta[.N]`, a pre-release | the newest release marked *Pre-release* |
+| preview | `main` | *Download ZIP* on the repository's page, or a clone |
+
+`python -m overpressure --version` says which one runs: its version in the tags' spelling, the channel and
+the commit (a release zip carries it, [overpressure/version.py](../overpressure/version.py); a checkout asks git).
+Between releases `main` carries the next one's development version (`1.0b2.dev0`), so a preview is never taken
+for the release before it ([releasing.md](releasing.md#a-release)).
+
+A newer release unpacks into a folder of its own, beside the one before. What the owner made is in the earlier
+folder: the settings (`.env`), the headset's backup (`backup/`, the way back to its own system), the installer's
+records (`out/install/`, which say what the headset runs), the headsets downloaded into `devices/`, and the
+files a headset's way back also needs (`Headset.backup_set`: the PICO 4's SSH key for its maintenance system).
+On its first start in a fresh folder the window finds the earlier one beside it and asks before it opens; *Yes*
+moves the backup (a rename on the same disk) and copies the rest, replacing nothing the new folder has, and
+the earlier folder gets a `MOVED.txt` that says where its backup went. *No* is remembered
+(`out/carried-over.json`), and a checkout is never asked. `python -m overpressure carry-over [FOLDER]` does the
+same from a terminal ([overpressure/carryover.py](../overpressure/carryover.py)).
+
 ### USB access on Linux
 
 adb, fastboot and edl-ng open the headset's USB device, which Linux lets a user
@@ -296,10 +325,10 @@ and stops with the same fix, before anything is sent to it.
 
 A mode that carries a drive (`UsbMode.storage`) needs one rule more: udev watches every disk and processes it
 again whenever one is closed after a write, and on a drive the headset changes under it that loop can keep udev
-busy for good. Better still, a headset offers no such drive (the PICO 4 offers none). NetworkManager waits for udev before it sets up a link,
+busy for good. NetworkManager waits for udev before it sets up a link,
 so the headset's USB network never comes up. The doctor checks that a rule turns that watch off
 (`OPTIONS+="nowatch"` for the mode's IDs and product string) and gives the rule to add to
-`/etc/udev/rules.d/70-overpressure.rules`.
+`/etc/udev/rules.d/70-overpressure.rules`. Better still, a headset offers no such drive (the PICO 4 offers none).
 
 ## The installer
 
@@ -403,9 +432,11 @@ with asks through `input()` and `getpass()`.
 ```text
 python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS...]
 
+  --version            this overpressure: its version, channel and commit
+  carry-over [FOLDER]  the settings, backup and installer records from the earlier overpressure folder
   devices              the headsets in devices/, and those this version cannot run
-  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V]
-                       the headsets there are, their releases, one downloaded into devices/
+  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V] | update CODENAME
+                       the headsets there are, their releases, one downloaded into devices/, its newer one
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
                        the window: the installer, and every step in its Advanced mode
   steps                the headset's steps and their command lines
@@ -415,7 +446,7 @@ python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS..
   install [--workflow KEY] [--json] [--plan] [--restart STAGE]
                        the installer: the headset's stages in order, resumable
   upgrade | restore    the installer's other workflows, where the headset has them
-  backup export FILE | backup import FILE
+  backup export FILE | backup import FILE | backup compact
                        the headset's backup as one checked file, and back
   doctor               what this computer has and lacks for the headset, with fixes
   tools [NAME...]      fetch the pinned host tools (platform-tools, edl-ng)
@@ -472,6 +503,10 @@ an administrator.
 | [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (a Linux-root step's in the build container), its display, running and stopping it |
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
 | [overpressure/window/](../overpressure/window/__init__.py) | the window (CustomTkinter). Models without widgets: `installer.py` (the engine's events as stages and asks; the child and demo engines), `advanced.py` (the steps, their values and command lines, the checks), `headsets.py` (the headset page, its plan probes, `out/window.json`, the demo's second headset). Widgets: `app.py` (the header, the installer view, the panels), `advanced_view.py`; `theme.py` the design tokens and fonts, `kit.py` the components, `logo.py` the logo's renderings (`icons/`) |
+| [overpressure/carryover.py](../overpressure/carryover.py) | A newer overpressure's folder takes the owner's data from the one beside it |
+| [overpressure/lp.py](../overpressure/lp.py) | `super`'s logical partitions: the metadata Android's dynamic partitions use |
+| [overpressure/progress.py](../overpressure/progress.py) | The progress lines a child program prints, which the installer and the window show as bars |
+| [overpressure/version.py](../overpressure/version.py) | This overpressure's version in the tags' spelling, its channel and commit (`--version`) |
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix; `DeviceSettings`, what every Qualcomm Android headset names |
 | [overpressure/fastboot.py](../overpressure/fastboot.py) | flashing an image sparse above a size, raw below; the RAM boot: `fastboot boot` with the headset's checks, never a write |
 | [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, the build container's, then the headset's (`Headset.dependencies()`) from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link, Linux's USB access) |
@@ -518,7 +553,7 @@ fallback. Working on it uses [uv](https://docs.astral.sh/uv/), [ruff](https://do
 ```sh
 uv sync                        # .venv with the tool (editable) and its packages, ruff and ty
 uv run python -m unittest      # the host tests
-make lint                      # as CI: ruff format --check, ruff check, ty check (Python 3.9, every platform)
+make lint                      # as CI, and the headsets in devices/: ruff format --check, ruff check, ty check
 make format                    # ruff format, ruff check --fix
 ```
 

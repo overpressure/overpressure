@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "overpressure"
 version = "1.0b1"
 license = {text = "Unlicense"}
-description = "Linux and a SteamOS-compatible userspace on standalone VR headsets: image, device and test tooling"
+description = "Linux and a SteamOS-compatible userspace for standalone VR headsets, on Valve's Steam Frame kernel: the installer and the host tooling"
 readme = "README.md"
 requires-python = ">=3.9"
 # The tooling uses the standard library, plus pinned packages where they save the owner an outside
@@ -35,7 +35,7 @@ exclude = ["devices.*.tests"]
 [tool.setuptools.package-data]
 "overpressure.window" = ["icons/*.png", "icons/*.ico"]
 
-# Development: uv, ruff and ty (docs/development.md in the repository root's docs).
+# Development: uv, ruff and ty (docs/tool.md#development).
 [dependency-groups]
 dev = [
     "ruff==0.17.4",

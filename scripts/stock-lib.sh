@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Unlicense
+# shellcheck shell=bash
 # Shared by the headsets' Linux build scripts (sourced): files out of a stock ext4 image, such as
 # a vendor image from a headset's backup, read by overpressure's own
 # ext4 reader (overpressure/ext4.py), which needs only python3; the assets themselves are

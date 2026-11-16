@@ -140,7 +140,7 @@ Two rules keep the window the core's own:
 [`overpressure.headset.Headset`](../overpressure/headset.py):
 
 ```python
-from overpressure.headset import Command, Headset, Info, Param, Step
+from overpressure.api.v1.headset import Command, Headset, Info, Param, Step
 
 
 class Example(Headset):
@@ -184,7 +184,8 @@ HEADSET = Example()
 - **Steps** are what the window offers, in the groups `Setup`, `Image` and `Headset`. `{name}` in a word
   takes a parameter's value. `script=True` runs a program from the headset's folder; `linux_root=True` runs
   as root in the build container ([tool.md](tool.md#linux-root-steps)): its paths lie in the repository or
-  under `/var/tmp`, and a tool it needs goes into the container's Dockerfile. `writes=True` makes the
+  under `/var/tmp`, and a tool it needs goes into the build image, by pull request to
+  [overpressure/builder](https://github.com/overpressure/builder), then a new pin in `overpressure/linux.py`. `writes=True` makes the
   window ask first.
 - **Settings** in `.env` are a dataclass derived from `overpressure.localconfig.Settings` with the
   headset's own key prefix, so headsets share one `.env`. A headset on a stock Android bootloader derives
@@ -204,8 +205,9 @@ headset, and its image holds every Linux tool of the builds. A headset with `Dev
 rest from the shared checks: `env_check`, `serial_checks`, `backup_check`, `loader_check`,
 `edl_tool_check`, `tool_checks` (adb, fastboot), `ncm_checks` (Windows' USB link) and `usb_check`
 (Linux's USB access to each of `Headset.usb_modes()`: the `UsbMode`s, vendor and product ID, its tools open,
-such as adb, fastboot and EDL; a USB network needs none; a mode that carries a drive is `storage=True`, whose
-udev watch is turned off, and `access=False` when no tool opens it). Example:
+such as adb, fastboot and EDL; a USB network needs none; since interface 1.1 a mode that carries a drive is
+`storage=True`, whose udev watch is turned off, `label` its USB product string, and `access=False` when no tool
+opens it: a headset that uses them declares `"api": "1.1"`). Example:
 [devices/phoenix/tooling/doctor.py](https://github.com/overpressure/phoenix/blob/main/tooling/doctor.py).
 
 ## The installer
@@ -240,7 +242,7 @@ window's backup card work.
   page says *Installed*, "Your headset is ready.", and offers nothing. The PICO 4's:
 
 ```python
-from overpressure.headset import Action, AfterInstall
+from overpressure.api.v1.headset import Action, AfterInstall
 
 
 def after_install(self):
@@ -266,8 +268,8 @@ by returning a target from `Headset.ram_boot()`, a subclass of
 `ram_boot_step(default_image)` among its steps.
 
 ```python
-from overpressure import REPO
-from overpressure.fastboot import Fastboot, RamBootTarget
+from overpressure.api.v1 import REPO
+from overpressure.api.v1.fastboot import Fastboot, RamBootTarget
 
 
 class ExampleRamBoot(RamBootTarget):

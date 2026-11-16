@@ -9,7 +9,7 @@ package to install (or which rule to add where no package covers a mode), and ch
 device before a tool needs it. Other systems need no rule: Windows has its drivers, macOS lets
 every user open USB devices.
 
-A mode that carries a drive (a headset's log drive) needs one more rule on Linux: udev watches every
+A mode that carries a drive (one the headset changes under the host) needs one more rule on Linux: udev watches every
 disk and, when one is closed after a write, processes it again. On a drive the headset changes under
 it, that loop can keep udev busy for good, and a network link of the same device then never gets set
 up (NetworkManager waits for udev). The rule turns the watch off for that mode's drives (nowatch).

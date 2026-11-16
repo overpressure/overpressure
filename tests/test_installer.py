@@ -577,7 +577,7 @@ class FontSystemTests(unittest.TestCase):
         script = (Path(__file__).resolve().parents[1] / "install.sh").read_text(encoding="utf-8")
         self.assertIn('set -- --no-managed-python --python "$found"', script)
         self.assertIn('"libXft" in open("/proc/self/maps").read()', script)
-        self.assertIn('"$uv" run --locked --no-dev --extra gui "$@" python -m overpressure gui', script)
+        self.assertIn('"$uv" run --locked --no-dev --extra gui "$@" python -m overpressure "$command"', script)
 
 
 class GuiCommandTests(unittest.TestCase):

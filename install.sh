@@ -123,4 +123,7 @@ root.destroy()'
             "      openSUSE), python3-tkinter (Fedora), tk (Arch)." >&2
     fi
 fi
-"$uv" run --locked --no-dev --extra gui "$@" python -m overpressure gui
+# CI checks this script up to overpressure itself (OVERPRESSURE_START_CHECK): --version instead of the window.
+command=gui
+[ -z "${OVERPRESSURE_START_CHECK:-}" ] || command=--version
+"$uv" run --locked --no-dev --extra gui "$@" python -m overpressure "$command"

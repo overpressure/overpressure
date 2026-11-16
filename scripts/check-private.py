@@ -5,6 +5,7 @@
     python scripts/check-private.py            the tracked files and new, not ignored ones
     python scripts/check-private.py --history  every version of every file, and every commit message
     python scripts/check-private.py --repo DIR  another clone
+    python scripts/check-private.py --files FILE...  only these files (a release's notes before they are published)
 
 It looks for what never belongs in the repository: MAC addresses, Steam IDs, private network addresses,
 personal paths, private keys, register tables of a vendor's parts and binary files. With a local .env
@@ -152,7 +153,12 @@ def main(argv: list[str]) -> int:
     secrets = local_secrets()
     repo = Path(argv[argv.index("--repo") + 1]).resolve() if "--repo" in argv else REPO
     found: list[str] = []
-    for name, data in history(repo) if "--history" in argv else tracked(repo):
+    if "--files" in argv:
+        named = argv[argv.index("--files") + 1 :]
+        scanned = [(name, Path(name).read_bytes()) for name in named]
+    else:
+        scanned = history(repo) if "--history" in argv else tracked(repo)
+    for name, data in scanned:
         path = name.split("@")[0]
         found += (
             findings(path, data, secrets)

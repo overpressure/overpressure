@@ -130,7 +130,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(release.python_version("v1.0-beta.2"), "1.0b2")
         self.assertEqual(release.python_version("v1.0"), "1.0")
         self.assertEqual(release.python_version("v2.13"), "2.13")
-        for tag in ("1.0", "v1", "v1.0.1", "v1.0-rc1", "v1.0-beta.0", "v1.0-beta2", "v1.0-beta."):
+        for tag in ("1.0", "v1", "v1.0.1", "v1.0-rc1", "v1.0-beta.0", "v1.0-beta.1", "v1.0-beta2", "v1.0-beta."):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 release.python_version(tag)
 
@@ -144,8 +144,30 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.project_version('[tool.x]\nversion = "1.0"\n')
 
+    def test_a_headsets_tag_names_headset_json(self):
+        self.assertEqual(release.check("v1.0-beta.2", '{"version": "1.0-beta.2"}', headset=True), "prerelease")
+        with self.assertRaises(ValueError):
+            release.check("v1.0-beta", '{"version": "1.0-beta.2"}', headset=True)
+
+    def test_releases_in_version_order_a_beta_before_its_stable(self):
+        tags = ["v1.0", "v1.0-beta.2", "v1.1-beta", "v1.0-beta", "phoenix/7.2-1", "v1.1"]
+        self.assertEqual(
+            sorted((t for t in tags if t.startswith("v")), key=release.key),
+            ["v1.0-beta", "v1.0-beta.2", "v1.0", "v1.1-beta", "v1.1"],
+        )
+
+    def test_the_changelog_starts_at_the_first_release(self):
+        tags = ["v1.0-beta", "v1.0-beta.2", "v1.0", "v1.1-beta", "other"]
+        self.assertEqual(release.ranges("v1.0-beta", tags), (None, "v1.0-beta"))  # its own words only
+        self.assertEqual(release.ranges("v1.0-beta.2", tags), ("v1.0-beta..v1.0-beta.2", "v1.0-beta"))
+        # A stable release: everything since the stable one before it, here none: the first release.
+        self.assertEqual(release.ranges("v1.0", tags), ("v1.0-beta..v1.0", "v1.0-beta"))
+        self.assertEqual(release.ranges("v1.1-beta", tags), ("v1.0..v1.1-beta", "v1.0-beta"))
+        self.assertEqual(release.ranges("v1.1", [*tags, "v1.1"]), ("v1.0..v1.1", "v1.0-beta"))
+
     def test_the_repositorys_version_has_a_tag_spelling(self):
         version = release.project_version((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+        version = version.split(".dev")[0]  # main between releases: the next one's development version
         base, _, beta = version.partition("b")
         tag = f"v{base}" + (f"-beta.{beta}" if beta and beta != "1" else "-beta" if beta else "")
         self.assertEqual(release.python_version(tag), version)
@@ -153,7 +175,8 @@ class ReleaseTests(unittest.TestCase):
     def test_the_release_workflow_checks_the_tag_and_attaches_no_image(self):
         workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
         self.assertIn("scripts/release.py check", workflow)
-        self.assertIn("git-cliff@", workflow)
+        self.assertIn("scripts/release.py notes", workflow)
+        self.assertIn("check-private.py --files", workflow)
         self.assertIn("git archive", workflow)
         for private_suffix in (".img", ".tar.zst", ".bin", ".elf", ".mbn"):
             self.assertNotIn(private_suffix, workflow)

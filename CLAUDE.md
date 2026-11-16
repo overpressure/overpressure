@@ -137,7 +137,7 @@ CLAUDE.md lists its build and hardware commands.
   with a fallback. ruff (line length 120, every rule) and `ty check` pass (`make lint`): full
   annotations, imperative docstrings, exception messages through a variable, keyword-only
   booleans; a `# ty: ignore[rule]` or `# noqa: RULE` names its rule and says why. A new
-  extensionless Python program goes into both file lists in `pyproject.toml`. Shell scripts use
+  extensionless Python program goes into `[tool.ty.src] include` in `pyproject.toml`. Shell scripts use
   `set -euo pipefail`. C sources carry SPDX headers (BSL-1.0 for Monado code).
 - **Generic or headset.** Code that only one headset uses lives in its repository; a format or a
   helper a second headset needs moves into `overpressure/` with its tests and joins the headset

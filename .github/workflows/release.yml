@@ -1,7 +1,9 @@
 # A release from its tag (docs/releasing.md): a pushed tag vMAJOR.MINOR[-beta[.N]] runs every CI check on the
-# tagged commit (skipped when its tree passed on main already), then makes the GitHub release: the tag's own message and the changelog section as its notes,
-# the source zip the start scripts install from, and its checksum. No image, package or vendor file is
-# attached: each headset is its own repository with its own releases (overpressure/catalogue.py).
+# tagged commit (skipped when its tree passed on main already, except the headsets', whose own main and
+# releases move), then makes the GitHub release: the tag's subject as its title, the tag's own words and the
+# changelog since the release before as its notes, the source zip the start scripts install from, and its
+# checksum. No image, package or vendor file is attached: each headset is its own repository with its own
+# releases (overpressure/catalogue.py).
 name: Release
 on:
   push:
@@ -18,6 +20,8 @@ jobs:
   checks:
     if: github.server_url == 'https://github.com'
     uses: ./.github/workflows/ci.yml
+    with:
+      fresh: true
     permissions:
       contents: read
       actions: read # an earlier pass of the same tree
@@ -36,7 +40,7 @@ jobs:
         run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
       - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
-          version: "0.9.26"
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
       - name: The tag names pyproject.toml's version
         id: version
         run: |
@@ -48,14 +52,16 @@ jobs:
           [ "$(git cat-file -t "$GITHUB_REF_NAME")" = tag ] || { echo "::error::$GITHUB_REF_NAME is not annotated: git tag -a"; exit 1; }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
       - name: Notes and changelog
+        id: notes
         run: |
-          {
-            git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME"
-            echo
-            uvx git-cliff@2.14.2 --latest --strip header
-          } > notes.md
-          uvx git-cliff@2.14.2 --output CHANGELOG.md
+          title=$(python3 scripts/release.py notes "$GITHUB_REF_NAME" --title overpressure)
+          echo "title=$title" >> "$GITHUB_OUTPUT"
           cat notes.md
+      # The tag's own words are published as they are: nothing private in them (the history scan reads commits).
+      - name: Nothing private in the notes
+        run: |
+          mkdir -p published && cp notes.md CHANGELOG.md published/
+          python3 scripts/check-private.py --files published/notes.md published/CHANGELOG.md
       - name: The source zip
         run: |
           name=${{ steps.version.outputs.name }}
@@ -65,10 +71,11 @@ jobs:
       - name: The release
         env:
           GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.notes.outputs.title }}
         run: |
           name=${{ steps.version.outputs.name }}
           flag=""
           [ "${{ steps.version.outputs.kind }}" = prerelease ] && flag=--prerelease
           gh release create "$GITHUB_REF_NAME" $flag --verify-tag \
-            --title "overpressure ${GITHUB_REF_NAME#v}" --notes-file notes.md \
+            --title "$TITLE" --notes-file notes.md \
             "$name.zip" "$name.zip.sha256"

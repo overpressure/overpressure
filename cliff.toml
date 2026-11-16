@@ -1,5 +1,5 @@
-# The changelog, from the conventional commits, by git-cliff (docs/releasing.md):
-#   uvx git-cliff@2.14.2                     the whole changelog
+# The changelog, from the conventional commits, by git-cliff (docs/releasing.md); scripts/release.py notes writes
+# a release's notes and CHANGELOG.md with it, starting at the first release:
 #   uvx git-cliff@2.14.2 --unreleased        what the next release brings
 # Features and fixes for users, each commit's subject; everything else in one count.
 
@@ -24,7 +24,8 @@ body = """
 - {{ commit.message | split(pat="\n") | first | trim }}{% if commit.breaking %} (breaking){% endif %}
 {%- endfor %}
 {% endif %}
-{%- endfor -%}
+{%- endfor %}
+
 """
 trim = false
 footer = ""

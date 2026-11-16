@@ -14,4 +14,4 @@ it doesn't is in [its security.md](https://github.com/overpressure/phoenix/blob/
 bootloader is unlocked by design: someone holding the headset can reach its data. A headset's release is checked
 against its published SHA-256 when downloaded; a preview of its `main` has no checksum.
 
-Only the latest release gets fixes.
+Fixes go into the newest release: the newest stable one, and while there is none, the newest beta.

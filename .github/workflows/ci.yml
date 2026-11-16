@@ -1,12 +1,18 @@
 # Every pull request, every push to main, and every release before it is made (release.yml): nothing here
 # needs vendor files or a headset. One run per content: a tree that passed once (a pull request's) is not
-# tested again when it lands on main or is tagged; its checks are skipped, which counts as passed.
+# tested again when it lands on main or is tagged; its checks are skipped. The last job, ci, is the one
+# check the rulesets require: it passes only when every job passed, or was skipped because its tree passed.
 name: CI
 on:
   push:
     branches: [main]
   pull_request:
   workflow_call:
+    inputs:
+      fresh:
+        description: Run the headsets' checks even when the tree passed (a release: the headsets move).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -52,10 +58,14 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
-          version: "0.9.26"
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
           python-version: ${{ matrix.python }}
-      - run: uv sync --locked
-      - run: uv run python -m unittest
+      - name: A display for the window's tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+      - run: uv sync --locked --extra gui
+      - run: xvfb-run -a uv run python -m unittest
         env:
           PYTHONIOENCODING: utf-8
 
@@ -72,12 +82,36 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
-          version: "0.9.26"
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
           python-version: "3.12"
-      - run: uv sync --locked
+      - run: uv sync --locked --extra gui
       - run: uv run python -m unittest
         env:
           PYTHONIOENCODING: utf-8
+
+  # The start scripts, the owners' way in, up to overpressure itself: the pinned uv, its checksum, Python and
+  # the packages (OVERPRESSURE_START_CHECK: --version instead of the window).
+  start-scripts:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true' && github.server_url == 'https://github.com'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: install.sh
+        if: runner.os != 'Windows'
+        env:
+          OVERPRESSURE_START_CHECK: "1"
+        run: sh install.sh | tee start.txt && grep -q '^overpressure ' start.txt
+      - name: Install.cmd
+        if: runner.os == 'Windows'
+        shell: cmd
+        env:
+          OVERPRESSURE_START_CHECK: "1"
+        run: call Install.cmd > start.txt 2>&1 & type start.txt & findstr /b /c:"overpressure " start.txt
 
   lint:
     needs: tree
@@ -87,7 +121,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
-          version: "0.9.26"
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
       - run: uv sync --locked
       - name: Formatting
         run: uv run ruff format --check .
@@ -108,6 +142,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends shellcheck
       - name: Shellcheck
         run: python3 scripts/run-shellcheck.py
+      - name: The workflows (actionlint)
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          curl -fsSL -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v$VERSION/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "$SHA256  actionlint.tar.gz" | sha256sum --check --quiet
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -color
 
   repository:
     needs: tree
@@ -127,7 +170,7 @@ jobs:
   # docs/adding-a-headset.md#the-headset-interface). Its own CI tests its changes against overpressure's main.
   headsets:
     needs: tree
-    if: needs.tree.outputs.passed != 'true'
+    if: needs.tree.outputs.passed != 'true' || inputs.fresh
     strategy:
       fail-fast: false
       matrix:
@@ -138,7 +181,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
-          version: "0.9.26"
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
       - run: uv sync --locked
       - name: Which state
         id: ref
@@ -178,7 +221,7 @@ jobs:
 
   # The marker that this tree passed, for the runs after this one.
   passed:
-    needs: [tree, host-tests, host-tests-windows-macos, lint, shell, repository, headsets]
+    needs: [tree, host-tests, host-tests-windows-macos, start-scripts, lint, shell, repository, headsets]
     if: ${{ !cancelled() && !failure() && needs.tree.outputs.passed != 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -188,3 +231,25 @@ jobs:
           name: ${{ needs.tree.outputs.marker }}
           path: passed.txt
           retention-days: 90
+
+  # The one required check. A skipped job counts as passed on GitHub, so a failed tree job (which skips
+  # everything) or a skipped matrix (whose checks then never report under their own names) cannot merge a
+  # change; this job can: every job passed, or was skipped because this very tree passed before.
+  ci:
+    needs: [tree, host-tests, host-tests-windows-macos, start-scripts, lint, shell, repository, headsets, passed]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed, or its tree did before
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          REUSED: ${{ needs.tree.outputs.passed }}
+        run: |
+          [ "$(jq -r .tree.result <<< "$NEEDS")" = success ] || { echo "::error::the tree job did not pass"; exit 1; }
+          bad=$(jq -r --arg reused "$REUSED" 'to_entries[] | select(.key != "tree")
+            | select(.value.result != "success" and (.value.result != "skipped" or $reused != "true"))
+            | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          # The marker job is skipped when nothing new passed (a reused tree).
+          bad=$(grep -v -e '^passed: skipped$' <<< "$bad" || true)
+          [ -z "$bad" ] || { echo "::error::not passed: $bad"; exit 1; }
+          echo "every check passed$([ "$REUSED" = true ] && echo ', on an earlier run of this tree')"

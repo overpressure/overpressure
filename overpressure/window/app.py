@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import collections
 import contextlib
-import importlib.metadata
 import sys
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from overpressure import backup, disclaimer
+from overpressure import version as own_version
 from overpressure.backup import ARCHIVE_SUFFIX
 from overpressure.catalogue import identity, record_of
 from overpressure.headset import INSTALL, AfterInstall
@@ -148,11 +148,12 @@ LIGHT = "Light"
 
 
 def version() -> str:
-    """Return overpressure's version as installed (the start scripts install it), or "" when it is not."""
-    try:
-        return importlib.metadata.version("overpressure")
-    except importlib.metadata.PackageNotFoundError:
+    """Return overpressure's version in the release tags' spelling (a preview says so), or "" when unknown."""
+    python = own_version.python_version()
+    if not python:
         return ""
+    spelled = own_version.tag_spelling(python.split(".dev")[0])
+    return f"preview of {spelled}" if own_version.channel(python) == own_version.PREVIEW else spelled
 
 
 class Window:
