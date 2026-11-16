@@ -56,7 +56,7 @@ headset's documents are in `devices/<codename>/docs/`, its overview in its `READ
 state facts, short, with a TL;DR first: what the system is, how it works, how to build, run and
 verify it, verified results and open work. No work logs: no dated entries, no history of
 attempts, no evidence file paths, no test counts, no issue keys; git history is the log. When a
-result changes, update the fact in place, and keep each headset's roadmap and README current.
+result changes, update the fact in place, and keep each headset's README current.
 `python scripts/check-docs.py` checks every link and anchor (`--repo devices/<codename>` a headset's); a
 link may not leave its repository, so links between this repository and a headset's are GitHub URLs.
 
