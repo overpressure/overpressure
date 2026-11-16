@@ -74,7 +74,8 @@ def _record(root: Path, data: dict) -> None:
     """Write ROOT's decision about an earlier folder."""
     path = root / RECORD
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as out:  # write_text takes newline= from Python 3.10 on
+        out.write(json.dumps(data, indent=1) + "\n")
 
 
 def decline(old: Path, root: Path = REPO) -> None:
