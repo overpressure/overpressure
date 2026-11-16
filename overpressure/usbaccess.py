@@ -141,12 +141,14 @@ def _matches(value: str, pattern: str) -> bool:
 class _Device:
     """What udev knows of a USB device, or of a disk on one, when it is added, and what the rules have set so far.
 
-    A disk's ATTRS see its USB device's attributes; its own (ATTR) count as unknown.
+    A disk's ATTRS see its USB device's attributes; its own (ATTR) count as unknown. A disk has the kernel
+    name a USB disk gets (sda), so the rules other disks skip on (KERNEL!="dm-*") skip it as udev does.
     """
 
     attrs: dict[str, str]
     env: dict[str, str] = field(default_factory=dict)
     subsystem: str = "usb"
+    kernel: str = ""
     uaccess: bool = False
     mode: str = ""
     group: str = ""
@@ -154,12 +156,9 @@ class _Device:
 
     def known(self, key: str) -> str | None:
         """Return the value a match key sees, or None for a key this reader does not evaluate."""
-        if key == "ACTION":
-            return "add"
-        if key == "SUBSYSTEM":
-            return self.subsystem
-        if key == "SUBSYSTEMS":
-            return "usb"
+        plain = {"ACTION": "add", "SUBSYSTEM": self.subsystem, "SUBSYSTEMS": "usb", "KERNEL": self.kernel or None}
+        if key in plain:
+            return plain[key]
         found = re.fullmatch(r"(ATTRS?|ENV)\{([^}]*)\}", key)
         if found is None or (found.group(1) == "ATTR" and self.subsystem != "usb"):
             return None
@@ -240,7 +239,7 @@ def granted(mode: UsbMode, files: Iterable[Path], groups: Iterable[str] = ()) ->
 def unwatched(mode: UsbMode, files: Iterable[Path]) -> bool:
     """Tell whether the rules in @p files turn off udev's watch on @p mode's drives."""
     attrs = {"idVendor": mode.vendor, "idProduct": mode.product, "product": mode.label}
-    device = _Device(attrs, {"DEVTYPE": "disk"}, subsystem="block")
+    device = _Device(attrs, {"DEVTYPE": "disk"}, subsystem="block", kernel="sda")
     for path in files:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")

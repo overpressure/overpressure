@@ -190,6 +190,14 @@ class FixTests(Folder):
         self.assertEqual((check.status, check.fix), (doctor.OK, ""))
 
 
+#: device-mapper's way: rules that jump past every disk that is not theirs, then turn the watch off.
+DM = """\
+SUBSYSTEM!="block", GOTO="dm_end"
+KERNEL!="dm-[0-9]*", GOTO="dm_end"
+OPTIONS+="nowatch"
+LABEL="dm_end"
+"""
+
 #: A mode no tool opens whose drive udev must not watch, on the generic gadget IDs.
 LINUX = UsbMode("its Linux", "1d6b", "0104", access=False, storage=True, label="PICO 4 Linux")
 
@@ -210,6 +218,11 @@ class WatchTests(Folder):
         self.assertFalse(self.unwatched())
         self.rules(self.etc, "70-overpressure.rules", LINUX.storage_rule() + "\n")
         self.rules(self.lib, "99-watch.rules", 'SUBSYSTEM=="block", OPTIONS+="watch"\n')
+        self.assertFalse(self.unwatched())
+
+    def test_rules_for_other_disks_skip_it_as_udev_does(self) -> None:
+        # device-mapper's rules jump past every disk that is not theirs before they turn the watch off.
+        self.rules(self.lib, "10-dm.rules", DM)
         self.assertFalse(self.unwatched())
 
     def test_only_storage_modes_need_it_and_only_access_modes_a_grant(self) -> None:
