@@ -146,6 +146,10 @@ CLAUDE.md lists its build and hardware commands.
   next to their recipe, and regenerate their `sha256sums` after any change.
 - **Tests.** New behaviour gets host tests (fakes for hardware, golden data for protocols).
 - **Commits.** Conventional commits (`feat:`, `docs:`, ...) on a step branch. `main` changes only by pull
-  request, merged by rebase or squash once its required checks pass (`gh pr merge --auto --rebase`); every
-  repository of the organization has that rule, a headset's too. Commit and push only when asked. Remote:
+  request, merged by rebase or squash once its required checks pass and its code owners approved; every
+  repository of the organization has that rule, a headset's too
+  ([GOVERNANCE.md](https://github.com/overpressure/.github/blob/main/GOVERNANCE.md)). A pull request that needs
+  no review merges with `gh pr merge --auto --rebase`; while `core` has one member, an owner merges their own
+  that needs one with `gh pr merge --admin --rebase` once its checks pass (the green `ci` stays required).
+  linux's layer branches merge with `--merge --admin` by their team. Commit and push only when asked. Remote:
   `origin`.
