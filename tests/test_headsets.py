@@ -16,7 +16,7 @@ from typing import Any, Callable
 from unittest import mock
 
 from overpressure import __main__ as cli
-from overpressure import catalogue, disclaimer, window
+from overpressure import catalogue, disclaimer, support, window
 from overpressure.headset import Action, AfterInstall, BackupSet, Command, Headset, Info, Registry, Step, Workflow
 from overpressure.install import Stage, Task
 from overpressure.window import advanced, app, headsets, installer
@@ -772,7 +772,7 @@ class WhatToDoTests(Folder):
         shown = self.open_choosy()
         self.assertTrue(shown.choose("choosy"))
         self.assertEqual(shown.view, app.ACTIONS_VIEW)
-        self.assertEqual(list(shown.action_cards), ["install", "upgrade", "restore", "backup"])
+        self.assertEqual(list(shown.action_cards), ["install", "upgrade", "restore", "backup", "logs"])
         self.assertIn("erases the headset", texts(shown.action_cards["restore"]))
         self.assertIn(app.BACKUP_NONE, texts(shown.action_cards["backup"]))
         self.assertEqual(self.links(shown), ("pack", "pack"))
@@ -847,6 +847,17 @@ class WhatToDoTests(Folder):
         self.assertTrue(any("Keep the file private" in t for t in panel_texts(shown)))
         press_panel(shown, "OK")
         self.assertEqual(shown.view, app.ACTIONS_VIEW)
+
+    def test_the_logs_are_saved_for_a_bug_report_from_their_own_card(self):
+        shown = self.open_choosy()
+        shown.choose("choosy")
+        self.assertIn(app.LOGS_TEXT, texts(shown.action_cards["logs"]))
+        self.assertIn(support.SAVE_LABEL, texts(shown.action_cards["logs"]))
+        shown.start_job("logs", "choosy-logs.zip")
+        self.assertTrue(panel_texts(shown)[0].startswith("Saving your logs"))
+        self.pump(shown, lambda: shown.job is None)
+        self.assertEqual(panel_texts(shown)[0], "Logs saved")
+        self.assertTrue(any(app.LOGS_SAVED in t for t in panel_texts(shown)))
 
 
 class DisclaimerTests(Folder):

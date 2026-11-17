@@ -14,7 +14,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from overpressure import backup, disclaimer
+from overpressure import backup, disclaimer, support
 from overpressure import version as own_version
 from overpressure.backup import ARCHIVE_SUFFIX
 from overpressure.catalogue import identity, record_of
@@ -134,9 +134,16 @@ ACTIONS_INTRO = "Each choice opens its own steps, and each can be stopped and st
 BACKUP_TITLE = "Your backup"
 BACKUP_THERE = "On this computer: {folder}. It is your way back: export a copy and keep it somewhere safe."
 BACKUP_NONE = "No backup on this computer yet: the install makes one, or import the one you exported."
-#: What the backup panel says while a job runs and when it has ended.
-JOB_TITLES = {"export": "Exporting your backup", "import": "Importing a backup"}
+LOGS_TITLE = "Something went wrong?"
+LOGS_TEXT = (
+    "Save the installer's logs into one file and attach it to a bug report. Your headset's serial numbers and "
+    "your home folder are masked."
+)
+#: What the panel says while a backup's job or the logs' runs, and when it has ended.
+JOB_TITLES = {"export": "Exporting your backup", "import": "Importing a backup", "logs": "Saving your logs"}
 JOB_TEXT = "This reads every file of the backup and checks it; it takes a few minutes."
+JOB_TEXTS = {"logs": "This collects the installer's logs and the headset's own; it takes a moment."}
+LOGS_SAVED = "Read it before you attach it to a bug report: it says what the installer did on your headset."
 #: The header's way back to the headset page, on every other page.
 BACK = "\N{SINGLE LEFT-POINTING ANGLE QUOTATION MARK} Headsets"
 #: The stepper's caption over the stages.
@@ -688,6 +695,7 @@ class Window:
             self.action_cards[workflow.key] = card
             row += 1
         self.render_backup_card(row)
+        self.render_logs_card(row + 1)
 
     def _workflow_note(self, card: Any, problem: str, brings: Offer | None, line: str) -> Any:  # noqa: ANN401  # Tk widgets
         """Return a workflow card's line: why it cannot run, what an upgrade brings, or where it stopped (or None)."""
@@ -739,6 +747,20 @@ class Window:
         buttons.grid_configure(pady=(Space.M, Space.L + Space.XS))
         self.actions_flow.wrap(about, inset=2 * Space.XL)
         self.action_cards["backup"] = card
+
+    def render_logs_card(self, row: int) -> None:
+        """Add the logs' card at ROW: what a bug report needs, saved into one file (support-bundle)."""
+        kit = self.kit
+        card = kit.card(self.action_list)
+        card.grid(row=row, column=0, sticky="ew", pady=(0, Space.M))
+        card.grid_columnconfigure(0, weight=1)
+        about = kit.label(card, LOGS_TEXT, size=LABEL, colour=TEXT_SECONDARY)
+        buttons = kit.frame(card)
+        kit.button(buttons, support.SAVE_LABEL, self.save_logs).pack(side="left")
+        self.place_parts([kit.label(card, LOGS_TITLE, size=HEADING, strong=True), about, buttons])
+        buttons.grid_configure(pady=(Space.M, Space.L + Space.XS))
+        self.actions_flow.wrap(about, inset=2 * Space.XL)
+        self.action_cards["logs"] = card
 
     def hover_card(self, card: Any, parts: tuple[Any, ...], codename: str) -> None:  # noqa: ANN401  # Tk widgets
         """Outline CARD more strongly under the pointer; a click on it (or its PARTS) chooses CODENAME."""
@@ -1560,6 +1582,24 @@ class Window:
         if path:
             self.start_job("export", path)
 
+    def save_logs(self) -> None:
+        """Ask where to, then save the chosen headset's logs there (python -m overpressure support-bundle)."""
+        headset = self.choice.headset
+        if headset is None or self.refused():
+            return
+        from tkinter import filedialog  # noqa: PLC0415  # Tk's own dialogs, only here
+
+        stamp = time.strftime("%Y%m%d-%H%M")
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Save the logs",
+            initialfile=f"{headset.info.codename}-logs-{stamp}{support.SUFFIX}",
+            defaultextension=support.SUFFIX,
+            filetypes=[("Zip archive", "*.zip"), ("All files", "*")],
+        )
+        if path:
+            self.start_job("logs", path)
+
     def import_backup(self) -> None:
         """Ask which file, then import it as the chosen headset's backup (python -m overpressure backup import)."""
         headset = self.choice.headset
@@ -1592,7 +1632,7 @@ class Window:
         title = JOB_TITLES.get(job.action, "Your backup")
         if job.running:
             line = job.last()
-            text = JOB_TEXT + (f"\n\n{line}" if line else "")
+            text = JOB_TEXTS.get(job.action, JOB_TEXT) + (f"\n\n{line}" if line else "")
             if self.panel_progress is None:
                 self.show_panel(
                     title + "\N{HORIZONTAL ELLIPSIS}",
@@ -1612,14 +1652,14 @@ class Window:
                 self.render_actions()  # the backup's card says where it is now
 
         if job.code == 0:
-            text = job.last() + (
-                "\n\nKeep the file private: it holds your headset's backup and what reaches its maintenance system."
-                if job.action == "export"
-                else ""
-            )
+            after = {
+                "export": "\n\nKeep the file private: it holds your headset's backup and what reaches its maintenance "
+                "system.",
+                "logs": f"\n\n{LOGS_SAVED}",
+            }
             self.show_panel(
-                "Exported" if job.action == "export" else "Imported",
-                text,
+                {"export": "Exported", "logs": "Logs saved"}.get(job.action, "Imported"),
+                job.last() + after.get(job.action, ""),
                 fields=[],
                 accept="OK",
                 decline="",
@@ -1627,7 +1667,9 @@ class Window:
             )
         else:
             self.show_panel(
-                "The backup was not " + ("exported" if job.action == "export" else "imported"),
+                {"export": "The backup was not exported", "logs": "The logs were not saved"}.get(
+                    job.action, "The backup was not imported"
+                ),
                 job.error() or "It stopped with an error.",
                 fields=[],
                 accept="OK",

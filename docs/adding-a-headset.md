@@ -236,6 +236,12 @@ the `.env` settings the way back needs on another computer (`BackupSet`), and `H
 names an imported one in `.env`; with them `python -m overpressure backup export|import FILE` and the
 window's backup card work.
 
+**Logs for a bug report.** The window's *Save logs…* (`python -m overpressure support-bundle FILE`) writes one
+zip with the installer's records of the headset (each step's log, every workflow's state) and this computer's
+system, the serial settings' values and the home folder masked in every text file. Since interface 1.2,
+`Headset.support_files(folder)` adds the headset's own files there: its tools' logs, its device's own bundle
+(a headset that adds them declares `"api": "1.2"`).
+
 **What the window says** comes from the headset; the generic window names no product, OS or store:
 
 - Its `Info` names its card on the headset page (the name: the card speaks to owners in plain words) and heads

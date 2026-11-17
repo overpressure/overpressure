@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 #: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this
 #: overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new
 #: major, and the old one stays, as its module overpressure.api.vMAJOR, until overpressure's next major release.
-SUPPORTED: dict[int, int] = {1: 1}
+SUPPORTED: dict[int, int] = {1: 2}
 #: The newest interface: what a new headset is made for.
 API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"
 #: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
@@ -282,6 +282,13 @@ class Headset(ABC):
         """Make an imported backup this computer's: the .env settings that name it and its serials."""
         msg = f"the {self.info.name} keeps no backup in overpressure"
         raise ValueError(msg)
+
+    def support_files(self, folder: Path) -> None:  # noqa: B027  # optional: a headset's own adds its files there
+        """Add the headset's own files for a bug report into FOLDER (since 1.2): its logs, its device's bundle.
+
+        overpressure's support bundle (overpressure/support.py) already holds the installer's records and masks
+        this computer's identifiers in every text file; the headset adds what only it knows. None by default.
+        """
 
     def touches(self, argv: list[str]) -> bool:
         """Tell whether the command line ARGV (argv[0] its command word) touches the headset; help never does."""

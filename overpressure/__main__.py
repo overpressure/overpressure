@@ -29,6 +29,8 @@
                        the installer's way back to the headset's own system, from its backup
   backup export FILE | backup import FILE | backup compact
                        the headset's backup into one checked file, or from one onto this computer
+  support-bundle FILE  the installer's logs and the headset's own in one zip for a bug report,
+                       this computer's identifiers masked (the window's Save logs...)
   COMMAND [ARGS...]    a command of the headset (listed below once a headset is known)
 
 The headset is --device, else OVERPRESSURE_DEVICE (environment or .env), else the only one in
@@ -63,6 +65,7 @@ from . import (
     linux,
     localconfig,
     runner,
+    support,
     tools,
     version,
 )
@@ -279,6 +282,7 @@ ON_HEADSET: dict[str, Callable[[Headset, list[str]], int]] = {
     "upgrade": install.upgrade,
     "restore": install.restore,
     "backup": backup.main,
+    "support-bundle": support.main,
 }
 
 

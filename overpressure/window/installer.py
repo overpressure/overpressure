@@ -769,16 +769,17 @@ Engine = Union[ChildEngine, DemoEngine]
 
 
 class BackupJob:
-    """A backup's export or import as a child process (python -m overpressure backup): its lines, then its end.
+    """A backup's export or import, or the logs for a bug report, as a child process: its lines, then its end.
 
     The window shows its last line while it runs and its result when it has ended; like the
-    engine, the command line does the same.
+    engine, the command line does the same (python -m overpressure backup, support-bundle).
     """
 
     def __init__(self, codename: str, action: str, path: str) -> None:
-        """Export the headset CODENAME's backup to PATH, or import PATH (ACTION export or import)."""
+        """Export CODENAME's backup to PATH, import PATH, or save its logs to PATH (ACTION export, import, logs)."""
         self.action = action
-        self.argv = [sys.executable, "-m", "overpressure", "--device", codename, "backup", action, path]
+        command = ["support-bundle"] if action == "logs" else ["backup", action]
+        self.argv = [sys.executable, "-m", "overpressure", "--device", codename, *command, path]
         self.items: queue.Queue[Item] = queue.Queue()
         self.lines: list[str] = []
         self.code: int | None = None
@@ -861,15 +862,21 @@ class DemoBackupJob(BackupJob):
     def start(self) -> None:
         """Send the demo's lines on a thread."""
         self.started, self.begun = True, time.monotonic()
-        verb = "Exporting" if self.action == "export" else "Importing"
-        lines = [f"Checking the backup ({self.argv[-1]})"] + [f"{verb} lun{n}/demo.bin ({n} of 3)" for n in (1, 2, 3)]
+        if self.action == "logs":
+            lines = ["Collecting the installer's logs and the headset's own", "  about.txt", "  installer/install.log"]
+            last = f"Saved to {self.argv[-1]}"
+        else:
+            verb = "Exporting" if self.action == "export" else "Importing"
+            lines = [f"Checking the backup ({self.argv[-1]})"]
+            lines += [f"{verb} lun{n}/demo.bin ({n} of 3)" for n in (1, 2, 3)]
+            last = f"{'Exported to' if self.action == 'export' else 'Imported:'} {self.argv[-1]}"
 
         def work() -> None:
             for n, line in enumerate(lines):
                 time.sleep(0.4 * self.pace)
                 self.items.put(("line", line))
                 self.items.put(("line", progress.line(line, (n + 1) / (len(lines) + 1))))
-            self.items.put(("line", f"{'Exported to' if self.action == 'export' else 'Imported:'} {self.argv[-1]}"))
+            self.items.put(("line", last))
             self.items.put(("exit", 0))
 
         threading.Thread(target=work, daemon=True).start()

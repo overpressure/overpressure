@@ -14,6 +14,7 @@ headset.
 | open the window | `python -m overpressure gui [--advanced]` |
 | install, upgrade or restore in a terminal | `python -m overpressure install`, `upgrade`, `restore` |
 | export or import the headset's backup | `python -m overpressure backup export\|import FILE` |
+| save the logs for a bug report | the window's *Save logs…*, or `python -m overpressure support-bundle FILE` |
 | run a build's Linux side | `python -m overpressure container run -- CMD` |
 | list a headset's steps and commands | `python -m overpressure steps`, `python -m overpressure --help` |
 
@@ -198,7 +199,8 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
   page's line then reads *Upgrade ready: your headset runs 1.0-beta.2, this computer has 1.0-beta.3* (an
   unfinished run comes first). Below them, *Your backup* says where
   the headset's backup is (`Headset.backup_set`) with *Export backup…* and *Import backup…*, which run
-  `python -m overpressure backup export|import FILE` as a child.
+  `python -m overpressure backup export|import FILE` as a child. Last, *Something went wrong?* with *Save logs…*
+  runs `python -m overpressure support-bundle FILE`: one zip for a bug report.
 - **The way back.** Every page after the headset page has a back link in the header (*‹ PICO 4* to the
   headset's page of what to do, *‹ Headsets* to the headset page). It stops nothing and loses nothing.
 - **One thing at a time.** A step and the installer never run at once; starting one while the other runs,
@@ -448,6 +450,8 @@ python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS..
   upgrade | restore    the installer's other workflows, where the headset has them
   backup export FILE | backup import FILE | backup compact
                        the headset's backup as one checked file, and back
+  support-bundle FILE  the logs for a bug report in one zip: the installer's records of the headset
+                       and its own files (Headset.support_files), the serial settings and home folder masked
   doctor               what this computer has and lacks for the headset, with fixes
   tools [NAME...]      fetch the pinned host tools (platform-tools, edl-ng)
   container pull|run -- CMD|shell|binfmt
@@ -517,6 +521,7 @@ an administrator.
 | [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), a member's parts over eight connections at once and resumed after an interruption, checked against the zip, brotli by the package or the command; a pinned file out of a remote zip, checked by its hash |
 | [overpressure/android.py](../overpressure/android.py), [qualcomm.py](../overpressure/qualcomm.py) | adb and fastboot, fail-closed, the wait for Android's boot, a partition's size from `getvar all`; the SoC ID, EDL devices counted through pyusb (PowerShell, ioreg or sysfs without it), EDL (edl-ng, bkerler/edl), partition maps, a full backup and a write verified by readback |
 | [overpressure/backup.py](../overpressure/backup.py) | verified backups and a partition's image in them; the backup archive (`backup export`, `import` and `compact`) |
+| [overpressure/support.py](../overpressure/support.py) | the logs for a bug report (`support-bundle`): the installer's records and the headset's own files in one zip, this computer's identifiers masked |
 | [overpressure/holes.py](../overpressure/holes.py) | a file's zero runs handed back to the file system (sparse files on NTFS, ext4, APFS), its content unchanged |
 | [overpressure/process.py](../overpressure/process.py), [ssh.py](../overpressure/ssh.py) | programs and bounded waits; SSH with the project's key, the keys an image enrolls |
 | [overpressure/evidence.py](../overpressure/evidence.py), [storage.py](../overpressure/storage.py) | a run that records every step and command in its results folder, bounded waits and HTTP fetches; the read-only storage policy a headset's Linux stages enforce |
