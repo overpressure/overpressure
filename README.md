@@ -31,7 +31,8 @@ builds its own, through your computer's connection); the way back to the headset
 
 Each headset is its own repository with its own releases, dropped into `devices/` of one shared tool: the
 installer downloads the one you choose. The PICO 4 is the first; more are welcome
-([adding a headset](docs/adding-a-headset.md)).
+([adding a headset](docs/adding-a-headset.md), starting from
+[the headset template](https://github.com/overpressure/headset-template)).
 
 > [!WARNING]
 > A beta for owners who accept the risk. It replaces the headset's system, erases its data and ends what is left of

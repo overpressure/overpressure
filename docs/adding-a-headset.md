@@ -1,7 +1,9 @@
 # Adding a headset
 
 **TL;DR.** A headset is a repository of its own, `overpressure/<codename>` (the vendor's internal name, a
-Python identifier), cloned into `devices/<codename>/` of an overpressure checkout while it is developed. Its
+Python identifier), cloned into `devices/<codename>/` of an overpressure checkout while it is developed.
+It starts from [overpressure/headset-template](https://github.com/overpressure/headset-template), which loads,
+passes its CI and offers one step from the first commit. Its
 `headset.json` names it and the headset interface it was made for; its package `tooling` exports `HEADSET`,
 a `Headset` subclass that names its commands and its window's steps. Add an installer plan, dependency
 checks and a RAM boot where it has them, build on the generic modules below, and check it with `python -m
@@ -10,6 +12,21 @@ overpressure devices` and `--device CODENAME steps`. Once it has a release, an e
 ([overpressure/phoenix](https://github.com/overpressure/phoenix)) is the worked example.
 
 ## The repository
+
+An owner of the organization creates `overpressure/<codename>` from
+[the headset template](https://github.com/overpressure/headset-template) (*Use this template*), together with the
+headset's team and its rulesets ([GOVERNANCE.md](https://github.com/overpressure/.github/blob/main/GOVERNANCE.md)).
+The team clones it into the overpressure checkout and gives it its names, once:
+
+```sh
+git clone https://github.com/overpressure/<codename> devices/<codename>
+python devices/<codename>/scripts/new-headset.py <codename> "<Name>" "<SoC>"
+python -m overpressure devices
+```
+
+That commit is a headset with everything below except its images: `headset.json`, `HEADSET` with one command
+(`dev status`) and two steps, its `.env` settings and doctor checks, host tests, a README in the template's
+form, `CLAUDE.md`, `docs/`, CI, the release workflow, issue forms and CODEOWNERS.
 
 ```text
 devices/<codename>/   a clone of overpressure/<codename>
