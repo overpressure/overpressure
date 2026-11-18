@@ -100,7 +100,7 @@ class BundleTests(unittest.TestCase):
 
     def test_what_the_headset_names_is_masked_in_every_text_file(self):
         log = self.records / "owned" / "unlock.log"
-        log.write_text(f">> fastboot -s {SERIAL} oem {CODE} unlock\nab\n", encoding="utf-8", newline="\n")
+        log.write_bytes(f">> fastboot -s {SERIAL} oem {CODE} unlock\nab\n".encode())  # LF on every host
         with self.bundle(Owned()) as archive:
             text = archive.read("installer/unlock.log").decode()
         self.assertEqual(text, f">> fastboot -s {support.SERIAL} oem <code> unlock\nab\n")  # "ab": too short
