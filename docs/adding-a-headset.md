@@ -246,7 +246,10 @@ headset's steps' command lines. Example:
 **More than the install.** `Headset.workflows()` returns the installer's workflows (`Workflow`: key,
 title, summary, whether it erases the headset), the install alone by default, and `Headset.plan(key)`
 each one's stages; with more than one, the window asks which. `Headset.workflow_problem(key)` says why one
-cannot run now. The PICO 4 has an upgrade and the way back to stock.
+cannot run now. Since interface 1.3, `Workflow.changes=False` marks one that only looks, such as a check: it
+starts afresh on every run and leaves the other workflows' progress and the record of what was installed as
+they are (a headset that marks one declares `"api": "1.3"`, or offers it only where `Workflow` has the
+field). The PICO 4 has an upgrade, the way back to stock and a check of the headset.
 
 **The backup as one file.** `Headset.backup_set()` returns the backup, the identity, the other files and
 the `.env` settings the way back needs on another computer (`BackupSet`), and `Headset.adopt_backup()`

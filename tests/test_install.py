@@ -712,6 +712,18 @@ class Workflows(Fake):
         return self.problem if workflow == "upgrade" else ""
 
 
+class LookingWorkflows(Workflows):
+    """The same, with a check that only looks (interface 1.3)."""
+
+    def workflows(self):
+        return (*super().workflows(), Workflow("check", "Check", "d", changes=False))
+
+    def plan(self, workflow: str) -> tuple[Stage, ...]:
+        if workflow != "check":
+            return super().plan(workflow)
+        return (Stage("check", "Check", "", (Task("look", "Look", lambda ctx: ctx.log("looked")),)),)
+
+
 class WorkflowTests(unittest.TestCase):
     """Each workflow its own plan and state; one that finishes forgets the others' progress."""
 
@@ -770,6 +782,25 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(install.installed_release("fake", self.out), "v1.1 bbbb")
         finish("restore", "v1.1 bbbb")  # back to the headset's own system: none of overpressure's
         self.assertEqual(install.installed_release("fake", self.out), "")
+
+    def test_a_workflow_that_only_looks_runs_afresh_and_leaves_the_others_alone(self):
+        headset = LookingWorkflows()
+        quiet = io.StringIO
+        self.assertEqual(install.main(headset, ["--workflow", "install"], stdout=quiet(), root=self.out), 0)
+        record = (self.out / "fake" / "state.json").read_text(encoding="utf-8")
+        self.assertIn('"completed"', record)
+        for _ in range(2):
+            self.assertEqual(install.main(headset, ["--workflow", "check"], stdout=quiet(), root=self.out), 0)
+        # The install's record stays as it was: the headset still runs what it put there.
+        self.assertEqual((self.out / "fake" / "state.json").read_text(encoding="utf-8"), record)
+        self.assertNotIn("completed", json.loads((self.out / "fake" / "check" / "state.json").read_text()))
+        # The window's plan probe shows it from its start, not as a finished run to continue.
+        code, events = self.run_main(headset, ["--workflow", "check", "--plan"])
+        self.assertEqual(code, 0)
+        self.assertEqual([e["status"] for e in events if e["event"] == "task"], ["pending"])
+        # Each run of the check ran its task again instead of skipping it as done.
+        log = (self.out / "fake" / "check" / "look.log").read_text(encoding="utf-8")
+        self.assertEqual(log.count("looked"), 2)
 
     def test_a_refused_or_unknown_workflow_runs_nothing(self):
         headset = Workflows()

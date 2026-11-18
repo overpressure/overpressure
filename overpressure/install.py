@@ -713,12 +713,15 @@ class Engine:
         others: Sequence[str] = (),
         battery: Callable[[], str] | None = None,
         release: str = "",
+        changes: bool = True,
     ) -> None:
         """Run @p stages of the headset @p info through @p ui; tests pass the root folder, .env and fakes.
 
         The lock is @p root/lock, the state and the logs are in @p root/<codename> for the install and
         in @p root/<codename>/<workflow> for another @p workflow; finished, it forgets the state of the
         @p others. Before each task that writes, @p battery (this computer's, overpressure.power) may refuse it.
+        A workflow that @p changes nothing (Workflow.changes) starts afresh on every run and, finished, leaves
+        the others' state and the record of what was installed alone.
         """
         check_plan(stages)
         self.info = info
@@ -729,6 +732,7 @@ class Engine:
         self.others = tuple(o for o in others if o != workflow)
         self.battery = battery or power.battery_problem
         self.release = release  #: the headset's tooling (catalogue.identity): progress made by another starts over
+        self.changes = changes
         self.folder = workflow_folder(root, info.codename, workflow)
         self.env = env if env is not None else localconfig.ROOT / ".env"
         self.spawn: Spawn = spawn or self._spawn
@@ -1026,6 +1030,10 @@ class Engine:
             )
         try:
             self.load_state()
+            if not self.changes:
+                # It only looks: what an earlier run saw says nothing about the headset now.
+                self.state = {"schema": SCHEMA, "tasks": {}}
+                self.save_state()
             if restart:
                 self.forget(restart)
             for stage in self.stages:
@@ -1036,19 +1044,25 @@ class Engine:
                         return self.finish(STOPPED, task, "", STOPPED_BETWEEN)
                     if end is not None:
                         return end
-            self.forget_others()
-            self.state["completed"] = {"release": self.release, "at": _now()}  # installed_release reads it
-            self.save_state()
+            if self.changes:
+                self.forget_others()
+                self.state["completed"] = {"release": self.release, "at": _now()}  # installed_release reads it
+                self.save_state()
             return self.finish(DONE, None)
         finally:
             self.close_logs()
             lock.release()
 
     def show_plan(self) -> None:
-        """Emit the plan and every task's recorded status (--plan): nothing runs."""
+        """Emit the plan and every task's recorded status (--plan): nothing runs.
+
+        A workflow that changes nothing has no progress to show: its next run starts afresh, so every task is
+        still to come and the window offers it from its start, not as a run to continue.
+        """
         self.ui.start(lambda: None)
         self.emit(self.plan_event())
-        self.load_state()
+        if self.changes:
+            self.load_state()
         for stage in self.stages:
             for task in stage.tasks:
                 self.emit({"event": "task", "stage": stage.id, "task": task.id, "status": self.status(task.id)})
@@ -1123,7 +1137,8 @@ def main(
             print(f"error: {error}", file=stdout, flush=True)
         return EXIT_USAGE
 
-    workflows = [w.key for w in headset.workflows()]
+    known = {w.key: w for w in headset.workflows()}
+    workflows = list(known)
     if not workflows:
         return refuse(f"The {headset.info.name} has no installer: its steps are in the window's Advanced mode.")
     if args.workflow not in workflows:
@@ -1137,7 +1152,16 @@ def main(
         return refuse(problem)
     ui: UI = JsonUI(stdout, stdin if stdin is not None else sys.stdin) if args.json else TextUI(stdout)
     release = catalogue.identity(headset.info.codename)  # progress another release made starts over
-    engine = Engine(headset.info, stages, ui, root=root, workflow=args.workflow, others=workflows, release=release)
+    engine = Engine(
+        headset.info,
+        stages,
+        ui,
+        root=root,
+        workflow=args.workflow,
+        others=workflows,
+        release=release,
+        changes=known[args.workflow].changes,
+    )
     if args.plan:
         engine.show_plan()
         return 0

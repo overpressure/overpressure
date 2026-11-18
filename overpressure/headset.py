@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 #: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this
 #: overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new
 #: major, and the old one stays, as its module overpressure.api.vMAJOR, until overpressure's next major release.
-SUPPORTED: dict[int, int] = {1: 2}
+SUPPORTED: dict[int, int] = {1: 3}
 #: The newest interface: what a new headset is made for.
 API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"
 #: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
@@ -146,6 +146,9 @@ class Workflow:
     title: str  #: the window's card and the stepper's caption
     summary: str  #: what it does and what it keeps or erases, in one or two sentences
     erases: bool = False  #: it erases the headset's data
+    #: It changes the headset (interface 1.3). One that only looks, such as a check, starts afresh every time and
+    #: leaves the other workflows' progress, and the record of what was installed, as they are.
+    changes: bool = True
 
 
 @dataclass(frozen=True)
