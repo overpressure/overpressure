@@ -787,6 +787,18 @@ class WhatToDoTests(Folder):
         self.assertTrue(shown.back())
         self.assertEqual(shown.view, app.CHOOSER_VIEW)
 
+    def test_leaving_a_workflow_and_opening_it_again_reads_its_plan_again(self):
+        shown = self.open_choosy()
+        shown.choose("choosy")
+        for _ in range(3):
+            for workflow in ("restore", "install"):
+                self.assertTrue(shown.choose_workflow(workflow))
+                self.pump(shown, lambda: not shown.probing)
+                self.assertEqual((shown.view, shown.model.workflow), (app.INSTALLER_VIEW, workflow))
+                self.assertTrue(shown.back())
+                # The page reads each card's plan afresh; its probes see their engines' ends.
+                self.pump(shown, lambda: all(p.done for p in shown.workflow_probes.values()))
+
     def test_an_upgrade_the_headset_has_not_had_yet_is_advertised_and_becomes_the_main_button(self):
         offer = headsets.Offer("1.0-beta2", "1.0-beta3", newer=True)
         with mock.patch.object(app.Window, "upgrade_offer", staticmethod(lambda _codename: offer)):

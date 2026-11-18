@@ -394,14 +394,20 @@ class Model:
             task.status = FAILED
 
     # -- the window's side ---------------------------------------------------------------
-    def begin(self) -> None:
-        """Mark a new run: the last one's end and its notes go."""
+    def begin(self, restart: str = "") -> None:
+        """Mark a new run: the last one's end and its notes go.
+
+        A run that continues keeps what is finished; one that starts over from the stage @p restart
+        (install --restart) has everything from that stage on to do again, as the engine forgets it.
+        """
         self.running, self.started, self.finished, self.ask = True, True, None, None
         self.start_page = self.stopping = self.stop_after_write = False
+        ids = [s.id for s in self.stages]
+        again = set(ids[ids.index(restart) :]) if restart in ids else set()
         for stage in self.stages:
             stage.notes.clear()
             for task in stage.tasks:
-                if task.status not in FINISHED:
+                if task.status not in FINISHED or stage.id in again:
                     task.status = PENDING
 
     def exited(self, code: int) -> None:

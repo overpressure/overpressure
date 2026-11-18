@@ -111,6 +111,18 @@ class ModelTests(unittest.TestCase):
         feed(m, task("install", "wifi", "skipped"), task("install", "system", "failed"))
         self.assertEqual(m.stages[1].status, "failed")
 
+    def test_starting_over_from_a_stage_has_it_and_the_later_ones_to_do_again(self):
+        m = installer.Model()
+        feed(m, PLAN)
+        m.begin()
+        feed(m, task("computer", "tools", "done"), task("install", "wifi", "done"))
+        m.begin()  # continue: what is finished stays
+        self.assertEqual((get(m, "tools").status, get(m, "wifi").status), ("done", "done"))
+        m.begin("install")  # start over from Install: its tasks are to do, the stage before stays
+        self.assertEqual((get(m, "tools").status, get(m, "wifi").status), ("done", "pending"))
+        m.begin("computer")
+        self.assertEqual(get(m, "tools").status, "pending")
+
     def test_progress_notes_and_log_lines(self):
         m = installer.Model()
         feed(m, PLAN, task("computer", "tools", "running"))

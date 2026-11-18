@@ -1493,7 +1493,7 @@ class Window:
         if refusal:
             self.notice("One thing at a time", refusal)
             return
-        self.model.begin()
+        self.model.begin(extra[1] if extra and extra[0] == "--restart" and len(extra) > 1 else "")
         self.stopped_at = 0.0
         self.engine.start(extra or [])
         self.render()
@@ -1700,10 +1700,12 @@ class Window:
     def receive(self) -> tuple[bool, bool]:
         """Apply what the engine has sent; return whether to redraw and whether lines were logged.
 
-        On the headset page the engines belong to its probes (with ENGINES): nothing is taken here.
+        On the headset page and the page of what to do the engines belong to their probes (with ENGINES):
+        nothing is taken here, or the card of the workflow just left would never see its plan's end and
+        opening it again would wait for good.
         """
         changed = logged = False
-        if self.view == CHOOSER_VIEW and self.engines is not None:
+        if self.view in (CHOOSER_VIEW, ACTIONS_VIEW) and self.engines is not None:
             return changed, logged
         for kind, value in drain(self.engine.items):
             if kind == "exit" and self.probing:
