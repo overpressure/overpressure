@@ -1,6 +1,6 @@
 name: Bug report
 description: The installer, the window, the command line or the build tooling does not work as documented (a headset's own system goes to its repository).
-labels: [bug]
+type: Bug
 body:
   - type: dropdown
     id: area

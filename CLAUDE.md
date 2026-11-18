@@ -34,12 +34,15 @@ repository, the installer's, the window's and the generic tooling's here. Every 
 (something unverified or unmeasured) or missing feature found during work gets an issue there, in
 the active milestone, when it is found; search the issues first so that nothing is filed twice.
 
-- **Kind.** A label: `story` for features and gaps, `bug` for defects, `task` for technical work.
+- **Type.** The issue's native type, not a label: Bug for defects, Feature for new things, Task
+  for gaps and technical work.
+- **Priority and Effort.** The organization's native issue fields, not labels: Priority Urgent,
+  High, Medium or Low; Effort High, Medium or Low.
 - **Description.** A user story ("As a ... I want ... so that ..."), a "Now:" line with the
   measured state, and short, exact acceptance criteria.
-- **Labels.** The area (graphics, tracking, controllers, cooling, steam, tooling, ...) and,
-  except for bugs, the category: `gap`, `feature`, `limitation` or `disabled`. Link blocking
-  issues as dependencies.
+- **Labels.** Only what the type and fields don't say: the area (installer, kernel, graphics,
+  tracking, network, power, steam, ...), the host (`linux-host`, `windows-host`, `macos-host`) where
+  it matters, and `gap` for something unverified or unmeasured. Link blocking issues as dependencies.
 
 Keeping the issues current is mandatory whenever work touches one, not a wrap-up step:
 

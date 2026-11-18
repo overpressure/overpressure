@@ -1,6 +1,6 @@
 name: Feature request
 description: Something the headset, the installer or the tools should do.
-labels: [story, feature]
+type: Feature
 body:
   - type: textarea
     id: story
