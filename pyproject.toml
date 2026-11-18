@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "overpressure"
-version = "1.0b3.dev0"
+version = "1.0b3"
 license = {text = "Unlicense"}
 description = "Linux and a SteamOS-compatible userspace for standalone VR headsets, on Valve's Steam Frame kernel: the installer and the host tooling"
 readme = "README.md"
