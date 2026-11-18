@@ -77,6 +77,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
+        # The organisation variables LINUX_RUNNERS, WINDOWS_RUNNERS and MACOS_RUNNERS set to off leave that
+        # runner out of this matrix while GitHub's runners of that kind don't come up; unset, they're all in. The
+        # jobs that run on Linux alone (lint, the gate, the releases) always run.
+        exclude:
+          - os: ${{ vars.WINDOWS_RUNNERS == 'off' && 'windows-latest' || 'none' }}
+          - os: ${{ vars.MACOS_RUNNERS == 'off' && 'macos-latest' || 'none' }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,6 +104,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        # The organisation variables LINUX_RUNNERS, WINDOWS_RUNNERS and MACOS_RUNNERS set to off leave that
+        # runner out of this matrix while GitHub's runners of that kind don't come up; unset, they're all in. The
+        # jobs that run on Linux alone (lint, the gate, the releases) always run.
+        exclude:
+          - os: ${{ vars.LINUX_RUNNERS == 'off' && 'ubuntu-latest' || 'none' }}
+          - os: ${{ vars.WINDOWS_RUNNERS == 'off' && 'windows-latest' || 'none' }}
+          - os: ${{ vars.MACOS_RUNNERS == 'off' && 'macos-latest' || 'none' }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
