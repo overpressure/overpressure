@@ -451,7 +451,8 @@ python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS..
   backup export FILE | backup import FILE | backup compact
                        the headset's backup as one checked file, and back
   support-bundle FILE  the logs for a bug report in one zip: the installer's records of the headset
-                       and its own files (Headset.support_files), the serial settings and home folder masked
+                       and its own files (Headset.support_files), the serial settings, what the headset
+                       names (Headset.support_masks) and the home folder masked
   doctor               what this computer has and lacks for the headset, with fixes
   tools [NAME...]      fetch the pinned host tools (platform-tools, edl-ng)
   container pull|run -- CMD|shell|binfmt

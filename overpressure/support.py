@@ -6,9 +6,9 @@
 The zip holds about.txt (this overpressure, the headset's release, this computer's system), the installer's
 records of the headset under installer/ (out/install/<codename>/: each step's log and every workflow's state)
 and what the headset adds under headset/ (Headset.support_files: its own logs, its device's bundle). Every text
-file is masked: the values of the serial settings (.env and the environment) and this computer's home folder; a
-binary file goes in as it is (a headset's own bundle masks itself). Nothing is sent anywhere: the owner reads the
-file and attaches it to a bug report.
+file is masked: the values of the serial settings (.env and the environment), what the headset names
+(Headset.support_masks) and this computer's home folder; a binary file goes in as it is (a headset's own bundle
+masks itself). Nothing is sent anywhere: the owner reads the file and attaches it to a bug report.
 """
 
 from __future__ import annotations
@@ -91,8 +91,15 @@ def bundle(  # noqa: PLR0913  # the headset and the file; where things are keywo
     found = identifiers(
         env if env is not None else localconfig.ROOT / ".env", os.environ if environ is None else environ
     )
+    unmasked = None
+    try:
+        found.update({value: text for value, text in headset.support_masks().items() if len(value) >= SHORTEST})
+    except Exception as exc:  # noqa: BLE001  # the logs are still worth saving: the owner is told to read them
+        unmasked = f"the headset's own identifiers could not be listed, so they are not masked: {exc}\n"
     with tempfile.TemporaryDirectory() as folder:
         work = Path(folder)
+        if unmasked is not None:
+            (work / "unmasked.txt").write_text(unmasked, encoding="utf-8")
         (work / "about.txt").write_text(about(headset, root), encoding="utf-8")
         logs = records / headset.info.codename
         if logs.is_dir():
@@ -130,6 +137,6 @@ def main(headset: Headset, argv: list[str]) -> int:
         return 1
     for name in members:
         print(f"  {name}")
-    print("Your headset's serial numbers and your home folder are masked; read it before you attach it.")
+    print("Your headset's serial numbers and other identifiers and your home folder are masked; read it first.")
     print(f"Saved to {target}")
     return 0

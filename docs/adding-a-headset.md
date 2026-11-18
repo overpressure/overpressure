@@ -260,7 +260,10 @@ window's backup card work.
 zip with the installer's records of the headset (each step's log, every workflow's state) and this computer's
 system, the serial settings' values and the home folder masked in every text file. Since interface 1.2,
 `Headset.support_files(folder)` adds the headset's own files there: its tools' logs, its device's own bundle
-(a headset that adds them declares `"api": "1.2"`).
+(a headset that adds them declares `"api": "1.2"`). Since interface 1.4, `Headset.support_masks()` names what else
+the zip must not show, each value with what it becomes, such as a code derived from the headset's chip that its
+tools log: masked in every text file as the serials are (an older overpressure never asks, so a headset can
+offer it on `"api": "1.2"`).
 
 **What the window says** comes from the headset; the generic window names no product, OS or store:
 

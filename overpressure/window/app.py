@@ -137,7 +137,7 @@ BACKUP_NONE = "No backup on this computer yet: the install makes one, or import 
 LOGS_TITLE = "Something went wrong?"
 LOGS_TEXT = (
     "Save the installer's logs into one file and attach it to a bug report. Your headset's serial numbers and "
-    "your home folder are masked."
+    "other identifiers and your home folder are masked."
 )
 #: What the panel says while a backup's job or the logs' runs, and when it has ended.
 JOB_TITLES = {"export": "Exporting your backup", "import": "Importing a backup", "logs": "Saving your logs"}

@@ -15,6 +15,7 @@ from overpressure import support
 from overpressure.headset import Command, Headset, Info
 
 SERIAL = "PA8250FAKE0001"  # a made-up serial, the shape of a real one
+CODE = "codeFAKE0002"  # a made-up code a headset's tools derive from its chip
 
 
 class Owned(Headset):
@@ -31,12 +32,23 @@ class Owned(Headset):
         (folder / "tool.log").write_text(f"adb -s {SERIAL} shell\n", encoding="utf-8")
         (folder / "blob.bin").write_bytes(b"\xff\xfe" + SERIAL.encode())
 
+    def support_masks(self) -> dict[str, str]:
+        """Name its code, and a value too short to mask."""
+        return {CODE: "<code>", "ab": "<short>"}
+
 
 class Broken(Owned):
     def support_files(self, folder: Path) -> None:  # noqa: ARG002  # it fails before it adds anything
         """Fail as a headset's own collection may."""
         msg = "the headset did not answer"
         raise RuntimeError(msg)
+
+
+class Unlisted(Owned):
+    def support_masks(self) -> dict[str, str]:
+        """Fail as reading the headset's identity may."""
+        msg = "no identity record"
+        raise OSError(msg)
 
 
 class BundleTests(unittest.TestCase):
@@ -85,6 +97,22 @@ class BundleTests(unittest.TestCase):
         self.assertIn(f"device '{support.SERIAL}' not found", text)
         self.assertIn(f"backup in {support.HOME}/overpressure/backup", text)
         self.assertIn(SERIAL.encode(), blob)  # a headset's own binary bundle masks itself
+
+    def test_what_the_headset_names_is_masked_in_every_text_file(self):
+        log = self.records / "owned" / "unlock.log"
+        log.write_text(f">> fastboot -s {SERIAL} oem {CODE} unlock\nab\n", encoding="utf-8", newline="\n")
+        with self.bundle(Owned()) as archive:
+            text = archive.read("installer/unlock.log").decode()
+        self.assertEqual(text, f">> fastboot -s {support.SERIAL} oem <code> unlock\nab\n")  # "ab": too short
+
+    def test_the_headset_s_identifiers_failing_saves_the_logs_and_says_they_are_not_masked(self):
+        with self.bundle(Unlisted()) as archive:
+            names = archive.namelist()
+            note = archive.read("unmasked.txt").decode()
+            text = archive.read("installer/stage-abl.log").decode()
+        self.assertIn("headset/tool.log", names)
+        self.assertIn("not masked: no identity record", note)
+        self.assertNotIn(SERIAL, text)  # the serials still are
 
     def test_a_short_or_empty_serial_setting_masks_nothing(self):
         found = support.identifiers(self.env, {"PICO4_EDL_SERIAL": "1a2b"})

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 #: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this
 #: overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new
 #: major, and the old one stays, as its module overpressure.api.vMAJOR, until overpressure's next major release.
-SUPPORTED: dict[int, int] = {1: 3}
+SUPPORTED: dict[int, int] = {1: 4}
 #: The newest interface: what a new headset is made for.
 API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"
 #: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
@@ -292,6 +292,14 @@ class Headset(ABC):
         overpressure's support bundle (overpressure/support.py) already holds the installer's records and masks
         this computer's identifiers in every text file; the headset adds what only it knows. None by default.
         """
+
+    def support_masks(self) -> dict[str, str]:
+        """Return what else a bug report must not show, each value with what it becomes (since 1.4).
+
+        Identifiers only the headset knows, such as a code derived from its chip, which its tools write into
+        their logs: the support bundle masks them in every text file as it masks the serials. None by default.
+        """
+        return {}
 
     def touches(self, argv: list[str]) -> bool:
         """Tell whether the command line ARGV (argv[0] its command word) touches the headset; help never does."""
