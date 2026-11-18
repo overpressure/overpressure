@@ -221,8 +221,13 @@ class ContainerTests(unittest.TestCase):
     def test_this_process_is_alive_and_a_finished_one_is_not(self):
         self.assertTrue(linux.pid_alive(os.getpid()))
         self.assertFalse(linux.pid_alive(0))
+        # No inherited stdin: on Windows a child waits behind another thread's pending read on it for good.
         done = subprocess.run(
-            [sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True, check=True
+            [sys.executable, "-c", "import os; print(os.getpid())"],
+            capture_output=True,
+            text=True,
+            check=True,
+            stdin=subprocess.DEVNULL,
         )  # this Python
         self.assertFalse(linux.pid_alive(int(done.stdout)))
 

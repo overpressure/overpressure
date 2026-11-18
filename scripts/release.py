@@ -4,6 +4,7 @@
 
     python scripts/release.py check TAG [--version-file pyproject.toml|headset.json]
     python scripts/release.py notes TAG [--title NAME]     in the repository's root: notes.md, CHANGELOG.md
+    python scripts/release.py close TAG --repo OWNER/NAME [--dry-run]
 
 Tags are `vMAJOR.MINOR` and `vMAJOR.MINOR-beta[.N]`, N from 2: `-beta` is the first beta. pyproject.toml holds
 the same version in Python's spelling (`v1.0-beta` is `1.0b1`, `v1.0-beta.2` is `1.0b2`), a headset's
@@ -15,16 +16,26 @@ repository's cliff.toml). The changelog starts at the first release: its notes a
 After it, a beta's notes list what changed since the release before it, a stable release's what changed since
 the stable release before it (or the first release), betas included. CHANGELOG.md holds every release after
 the first by git-cliff, then the first release's own words.
+
+`close` runs after the release is published: every open issue of the repository whose Stage is
+"Awaiting release" (fixed on main, docs: CLAUDE.md's Backlog) gets a comment naming the release and is
+closed as completed. It reads the token from GH_TOKEN or GITHUB_TOKEN; --dry-run only lists the issues.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 REPO = Path(__file__).resolve().parent.parent
 GIT_CLIFF = ("uvx", "git-cliff@2.14.2")
@@ -129,6 +140,79 @@ def notes(tag: str) -> tuple[str, str]:
     return f"{body}\n\n{changes}", f"{HEADER}\n{later.strip()}\n\n{first_entry}"
 
 
+#: The organisation's issue field for where an issue stands, and the value of a fix that waits for a release.
+STAGE = "Stage"
+AWAITING_RELEASE = "Awaiting release"
+API = "https://api.github.com"
+
+
+def github(token: str) -> Callable[[str, str, dict | None], Any]:
+    """Return a GitHub REST caller authenticated with @p token."""
+
+    def call(method: str, path: str, body: dict | None = None) -> Any:  # noqa: ANN401  # GitHub's JSON as it is
+        url = path if path.startswith("https://") else f"{API}/{path}"
+        request = urllib.request.Request(  # noqa: S310  # only GitHub's API, built from a fixed https prefix
+            url,
+            data=None if body is None else json.dumps(body).encode(),
+            method=method,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=60) as answer:  # noqa: S310  # the request above
+            data = answer.read()
+        return json.loads(data) if data else None
+
+    return call
+
+
+def environment_token() -> str:
+    """Return the GitHub token from GH_TOKEN or GITHUB_TOKEN; refuse without one."""
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        msg = "no token: set GH_TOKEN or GITHUB_TOKEN"
+        raise ValueError(msg)
+    return token
+
+
+def awaiting_release(repo: str, call: Callable[[str, str, dict | None], Any]) -> list[int]:
+    """Return the open issues of @p repo whose Stage is Awaiting release, oldest first."""
+    found = []
+    page = 1
+    while True:
+        issues = call("GET", f"repos/{repo}/issues?state=open&per_page=100&page={page}", None)
+        for issue in issues:
+            if "pull_request" in issue:
+                continue
+            values = call("GET", f"repos/{repo}/issues/{issue['number']}/issue-field-values", None)
+            if any(
+                v.get("issue_field_name") == STAGE
+                and (v.get("single_select_option") or {}).get("name") == AWAITING_RELEASE
+                for v in values
+            ):
+                found.append(issue["number"])
+        if len(issues) < 100:  # noqa: PLR2004  # GitHub's largest page
+            return sorted(found)
+        page += 1
+
+
+def close_released(
+    tag: str, repo: str, call: Callable[[str, str, dict | None], Any], *, dry_run: bool = False
+) -> list[int]:
+    """Comment the release @p tag on every issue that awaited it and close it as completed; return them."""
+    numbers = awaiting_release(repo, call)
+    url = f"https://github.com/{repo}/releases/tag/{tag}"
+    for number in numbers:
+        print(f"#{number}: released in {tag}" + (" (dry run)" if dry_run else ""))
+        if dry_run:
+            continue
+        call("POST", f"repos/{repo}/issues/{number}/comments", {"body": f"Released in [{tag}]({url})."})
+        call("PATCH", f"repos/{repo}/issues/{number}", {"state": "closed", "state_reason": "completed"})
+    return numbers
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command named on the command line."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -139,8 +223,16 @@ def main(argv: list[str] | None = None) -> int:
     noting = sub.add_parser("notes", help="notes.md and CHANGELOG.md, in the current repository")
     noting.add_argument("tag")
     noting.add_argument("--title", default="overpressure", help="the title's name when the tag has no subject")
+    closing = sub.add_parser("close", help="close the issues awaiting this release, with a comment naming it")
+    closing.add_argument("tag")
+    closing.add_argument("--repo", required=True, help="OWNER/NAME")
+    closing.add_argument("--dry-run", action="store_true", help="only list the issues")
     args = parser.parse_args(argv)
     try:
+        if args.command == "close":
+            closed = close_released(args.tag, args.repo, github(environment_token()), dry_run=args.dry_run)
+            print(f"{len(closed)} issue(s) awaited {args.tag}")
+            return 0
         if args.command == "check":
             path = Path(args.version_file)
             print(check(args.tag, path.read_text(encoding="utf-8"), headset=path.name == "headset.json"))
@@ -150,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
         Path("CHANGELOG.md").write_text(changelog, encoding="utf-8", newline="\n")
         # The release's title: the tag's first line (docs/releasing.md), else the name and version.
         print(own_words(args.tag)[0] or f"{args.title} {args.tag.removeprefix('v')}")
-    except (ValueError, subprocess.CalledProcessError) as error:
+    except (ValueError, subprocess.CalledProcessError, OSError) as error:
         print(f"release: {error}", file=sys.stderr)
         return 1
     return 0

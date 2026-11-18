@@ -36,8 +36,9 @@ the active milestone, when it is found; search the issues first so that nothing 
 
 - **Type.** The issue's native type, not a label: Bug for defects, Feature for new things, Task
   for gaps and technical work.
-- **Priority and Effort.** The organization's native issue fields, not labels: Priority Urgent,
-  High, Medium or Low; Effort High, Medium or Low.
+- **Priority, Effort and Stage.** The organization's native issue fields, not labels: Priority Urgent,
+  High, Medium or Low; Effort High, Medium or Low; Stage (where it stands, public) Backlog, In
+  progress, Blocked, In review or Awaiting release.
 - **Description.** A user story ("As a ... I want ... so that ..."), a "Now:" line with the
   measured state, and short, exact acceptance criteria.
 - **Labels.** Only what the type and fields don't say: the area (installer, kernel, graphics,
@@ -46,9 +47,13 @@ the active milestone, when it is found; search the issues first so that nothing 
 
 Keeping the issues current is mandatory whenever work touches one, not a wrap-up step:
 
-- **Status.** "In progress" when work starts, back to "To do" when it pauses; "In review" when
-  only a check by the user or on hardware is left; "Done" only when every acceptance criterion is
-  verified. Check the states of all issues the work touched before ending a task.
+- **Stage.** Backlog when filed; In progress when work starts, back to Backlog when it pauses;
+  Blocked while it waits on a reporter, another issue (linked as a dependency) or an upstream
+  project; In review when only a check by the user, a reporter or on hardware is left; Awaiting
+  release once the fix is on `main` and every acceptance criterion is verified. The issue stays open
+  until then: the release workflow (`scripts/release.py close`) comments the release on every
+  Awaiting release issue and closes it. An issue closed without a change (not planned, a duplicate)
+  closes at once. Check the stages of all issues the work touched before ending a task.
 - **Comments.** As results come in: what landed (commit), what was measured, which criteria are
   met and which are still open. A partial result keeps the issue open.
 

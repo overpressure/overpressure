@@ -79,3 +79,17 @@ jobs:
           gh release create "$GITHUB_REF_NAME" $flag --verify-tag \
             --title "$TITLE" --notes-file notes.md \
             "$name.zip" "$name.zip.sha256"
+
+  # The fixes the release brings: every issue whose Stage is Awaiting release gets the release's link and is
+  # closed (CLAUDE.md's Backlog). After the release, so a failure here leaves it published.
+  issues:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Close the issues it releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release.py close "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"

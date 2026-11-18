@@ -66,6 +66,9 @@ A pushed tag makes the release; nothing is uploaded by hand.
      start scripts executable and `Install.cmd` with Windows line endings; and its SHA-256;
    - creates the GitHub release titled by the tag's first line, with the notes, the zip and its checksum, as a
      pre-release for a beta.
+   - then closes the issues the release brings: every open issue whose Stage is Awaiting release gets a comment
+     linking the release and is closed as completed (`python scripts/release.py close TAG --repo OWNER/NAME`,
+     `--dry-run` lists them; [CLAUDE.md](../CLAUDE.md#backlog)). A failure there leaves the release published.
 
    No headset, image, package or vendor file is attached: the installer downloads the headset's release, and
    everything is built from public downloads on the owner's computer or the headset.
