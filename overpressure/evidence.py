@@ -101,7 +101,12 @@ class Runner:
         )
         try:
             process = subprocess.run(  # noqa: S603  # adb, fastboot, ssh and the NCM helper by name, no shell
-                list(map(str, argv)), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False
+                list(map(str, argv)),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                timeout=timeout,
+                check=False,
             )
         except subprocess.TimeoutExpired as exc:
             Path(str(prefix) + ".log").write_bytes((exc.stdout or b"") + b"\nTIMEOUT\n")

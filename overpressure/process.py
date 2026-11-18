@@ -38,14 +38,16 @@ def run(
 ) -> str:
     """Run a program from the repository root; its output goes to LOG too.
 
-    A nonzero exit raises unless check is off.
+    A nonzero exit raises unless check is off. Without @p stdin it reads nothing: it does not inherit this
+    process's stdin, which on Windows can be the installer's answer pipe with a read pending (the window's
+    engine), and a program that inherits it, such as ssh, then waits behind that read for good.
     """
     process = subprocess.run(  # noqa: S603  # the host tools' fixed command lines, no shell
         [str(a) for a in argv],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         timeout=timeout,
-        stdin=stdin,
+        stdin=subprocess.DEVNULL if stdin is None else stdin,
         cwd=REPO,
         check=False,
     )

@@ -29,7 +29,7 @@ def run(command: list[str], timeout: int = 60) -> str:
     """Adb or fastboot, logged to stderr; a nonzero exit, FAILED or ERROR raises ValueError."""
     print(">> " + subprocess.list2cmdline(command), file=sys.stderr)
     result = subprocess.run(  # noqa: S603  # adb or fastboot with the step's arguments, no shell
-        command, capture_output=True, text=True, timeout=timeout, check=False
+        command, capture_output=True, text=True, timeout=timeout, check=False, stdin=subprocess.DEVNULL
     )
     output = result.stdout + "\n" + result.stderr
     if result.returncode or re.search(r"\b(?:FAILED|ERROR)\b", output, re.IGNORECASE):

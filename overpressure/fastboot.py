@@ -47,7 +47,12 @@ class Refused(RuntimeError):  # noqa: N818  # a result of its own, not a failure
 def run(argv: list[str], timeout: float) -> str:
     """Return a program's combined output; a nonzero exit or a FAILED line raises RuntimeError with it."""
     process = subprocess.run(  # noqa: S603  # fastboot with the sequence's fixed words, no shell
-        [str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False
+        [str(a) for a in argv],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        timeout=timeout,
+        check=False,
     )
     output = process.stdout.decode("utf-8", "replace").strip()
     if process.returncode or re.search(r"\bFAILED\b", output):
