@@ -117,6 +117,9 @@ class DoctorTests(unittest.TestCase):
         # Without pyusb the system's own listing counts EDL devices.
         self.assertEqual(missing["pyusb and libusb-package"].status, doctor.OPTIONAL)
         self.assertIn("brotli (Python)", [c.name for c in doctor.host_checks(FakeHost())])
+        # Without truststore Python's own verifier checks HTTPS (Python 3.9 has no truststore).
+        self.assertEqual(missing["truststore (Python)"].status, doctor.OPTIONAL)
+        self.assertEqual(checks(modules=("truststore",))["truststore (Python)"].status, doctor.OK)
 
     def test_the_window_needs_customtkinter_and_the_command_line_does_not(self):
         with mock.patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError):

@@ -144,7 +144,7 @@ Interface 1 is exactly what this list names, each in `overpressure.api.v1`; a he
 | The installer: `Stage`, `Task`, `Ask`, `Field`, `Failed`, `NoBackup` and the `Context` a task runs in (`run`, `output`, `progress`, `note`, `log`, `ask`, `settings`, `set_setting`, `remember`, `recall`, `clock`, `memory`, `completed`) | `overpressure.install` |
 | Words for the window's backup controls: `HOW_TO_IMPORT`, `HOW_TO_EXPORT`, `missing(folder, needed_for)` | `overpressure.backup` |
 | Settings and checks: `DeviceSettings`, `load`, `update`; `Check`, `Host` and the check states; `UsbMode` | `overpressure.localconfig`, `overpressure.doctor`, `overpressure.usbaccess` |
-| Paths and programs: `REPO`, bounded waits and running tools, progress lines, a step's command line, the pinned host tools | `overpressure.api.v1` itself, `.process`, `.progress`, `.runner`, `.tools` |
+| Paths and programs: `REPO`, bounded waits and running tools, progress lines, a step's command line, the pinned host tools, HTTPS downloads (`read`, `urlopen`, `answers`, `DownloadError`; since 1.5) | `overpressure.api.v1` itself, `.process`, `.progress`, `.runner`, `.tools`, `.web` |
 | Formats and devices: everything in the table above, and `avb`, `compress`, `cpio`, `kernelinfo`, `payload` | the modules named there |
 
 Two rules keep the window the core's own:

@@ -18,13 +18,12 @@ import hashlib
 import io
 import re
 import tarfile
-import urllib.request
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from . import apksign
+from . import apksign, web
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -83,9 +82,7 @@ def _download(url: str, dest: str, log: Callable[[str], None] = print, *, fresh:
         return dest
     target.parent.mkdir(parents=True, exist_ok=True)
     log(f"  downloading {url}")
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310  # URLs below MIRROR, https
-    with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310  # URLs below MIRROR, https
-        data = resp.read()
+    data = web.read(web.Request(url, headers={"User-Agent": USER_AGENT}), 120, web.Retry(log=log))
     tmp = Path(dest + ".part")
     tmp.write_bytes(data)
     tmp.replace(target)

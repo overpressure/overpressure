@@ -19,8 +19,9 @@ headset.
 | list a headset's steps and commands | `python -m overpressure steps`, `python -m overpressure --help` |
 
 It is Python 3.9+ on the standard library, with pinned packages where they spare the owner an outside
-tool: brotli (the stock OTA), pyusb with libusb-package (EDL devices, Windows' USB network link), and Tk
-with CustomTkinter for the window. It runs on Windows, Linux and macOS, from the repository root, where
+tool: brotli (the stock OTA), pyusb with libusb-package (EDL devices, Windows' USB network link), truststore
+(HTTPS verified by the system's own verifier, [Downloads](#downloads)), and Tk with CustomTkinter for the
+window. It runs on Windows, Linux and macOS, from the repository root, where
 `.env` and the private folders (`out/`, `cache/`, `assets/`, `backup/`) live.
 
 ## Headsets in devices/
@@ -62,7 +63,7 @@ python -m overpressure doctor
 lists what this computer has and lacks for the headset's workflow, grouped by what each part is needed
 for (the window, the headset, EDL, the builds, the extracted stock files), with a fix for anything
 missing. The exit status is 1 while something needed is missing; optional parts (Tk and CustomTkinter,
-pyusb and libusb-package, brotli while the brotli command is there) and warnings do not fail it. The
+pyusb and libusb-package, truststore, brotli while the brotli command is there) and warnings do not fail it. The
 checks only look: they install, build and change nothing. The window has the same as *Check dependencies*
 in Advanced mode.
 
@@ -89,6 +90,24 @@ fetches the pinned platform-tools (adb, fastboot) and edl-ng into `cache/tools`,
 its SHA-256 ([overpressure/tools.py](../overpressure/tools.py)). A headset's settings that name its own
 copies take precedence, then the fetched ones, then PATH. Only this command downloads them; the window has
 it as *Fetch the host tools*. Windows' USB network link needs no tool: it uses pyusb and libusb-package.
+
+## Downloads
+
+Every download of overpressure and its headsets (the host tools, the headsets' releases, Alpine's packages,
+the stock OTA, a headset's kernel and packages) goes through [overpressure/web.py](../overpressure/web.py):
+
+- **TLS** is verified by the system's own verifier through truststore, as pip does: CryptoAPI on Windows, the
+  Security framework on macOS, OpenSSL with the system's roots on Linux. Python's own verifier on Windows
+  trusts only the roots already in Windows' store, while Windows fetches a missing root the first time it
+  needs one; GitHub's download hosts end at roots a computer may not have fetched yet (ISRG Root YR under ISRG
+  Root X1, Sectigo's E46 under USERTrust ECC), and those downloads failed with "unable to get issuer
+  certificate". Python 3.9 has no truststore and verifies with the standard library; `doctor` says which one
+  runs. Every certificate is verified either way.
+- **A short outage** is tried again for two minutes, 2 s apart at first and up to 30 s: a failed or dropped
+  connection, TLS, a name that doesn't resolve, and the answers 408, 429 and 5xx. Each try again is logged with
+  its reason; any other answer fails at once.
+- **A failure says why**: the URL and the HTTP status, the certificate's problem, the name, the timeout or the
+  connection.
 
 ## Linux-root steps
 
@@ -517,6 +536,7 @@ an administrator.
 | [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, the build container's, then the headset's (`Headset.dependencies()`) from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link, Linux's USB access) |
 | [overpressure/usbaccess.py](../overpressure/usbaccess.py) | Linux's USB access: what the installed udev rules grant for each USB mode, the fix per distribution, a connected device's access |
 | [overpressure/tools.py](../overpressure/tools.py) | the pinned host tools in `cache/tools` |
+| [overpressure/web.py](../overpressure/web.py) | every download over HTTP(S): TLS verified by the system's own verifier (truststore), a short outage tried again, a failure that says why ([Downloads](#downloads)) |
 | [overpressure/linux.py](../overpressure/linux.py) | the build container: its pinned image ([overpressure/builder](https://github.com/overpressure/builder)), one named build at a time, stopping it, the aarch64 handler, ownership |
 | [overpressure/stage1.py](../overpressure/stage1.py) | a stage 1: an Alpine ramdisk in the stock Android boot image, from a headset's `Spec` |
 | [overpressure/ota.py](../overpressure/ota.py) | stock boot images and partitions from a vendor OTA (block OTAs and `payload.bin`), a member's parts over eight connections at once and resumed after an interruption, checked against the zip, brotli by the package or the command; a pinned file out of a remote zip, checked by its hash |

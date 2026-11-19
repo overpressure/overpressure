@@ -143,8 +143,8 @@ CLAUDE.md lists its build and hardware commands.
 
 - **Match the code around you.** Python: standard library, dataclasses, type hints, short
   docstrings that say why. Beyond the standard library only what `pyproject.toml` pins: `brotli`,
-  `pyusb` with `libusb-package`, and CustomTkinter for the window, each imported where it is used
-  with a fallback. ruff (line length 120, every rule) and `ty check` pass (`make lint`): full
+  `pyusb` with `libusb-package`, `truststore` and CustomTkinter for the window, each imported where it is
+  used with a fallback. Every download goes through `overpressure/web.py`. ruff (line length 120, every rule) and `ty check` pass (`make lint`): full
   annotations, imperative docstrings, exception messages through a variable, keyword-only
   booleans; a `# ty: ignore[rule]` or `# noqa: RULE` names its rule and says why. A new
   extensionless Python program goes into `[tool.ty.src] include` in `pyproject.toml`. Shell scripts use

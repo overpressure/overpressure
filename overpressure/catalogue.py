@@ -28,13 +28,12 @@ import os
 import re
 import shutil
 import sys
-import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
-from . import REPO
+from . import REPO, web
 from .headset import MANIFEST, api_problem, manifest, refusal
 
 STABLE, BETA, PREVIEW = "stable", "beta", "preview"
@@ -86,9 +85,8 @@ def fetch(url: str, timeout: float = 60) -> bytes:
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if token and url.startswith(GITHUB + "/"):  # CI's own token, for GitHub's API only: its limit without one is low
         headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(url, headers=headers)  # noqa: S310  # https only
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310  # https only, above
-        return response.read()
+    request = web.Request(url, headers=headers)
+    return web.read(request, timeout)
 
 
 def compatibility(known: Known, tag: str, get: Callable[[str], bytes] = fetch) -> str:

@@ -19,12 +19,11 @@ import platform
 import shutil
 import stat
 import sys
-import urllib.request
 import zipfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
-from . import REPO
+from . import REPO, web
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -137,13 +136,13 @@ def program(name: str) -> Path | None:
     return None
 
 
-def download(
-    url: str, sha256: str, log: Callable[[str], None] = print, opener: Callable = urllib.request.urlopen
-) -> bytes:
-    """@p url's content, which must hash to @p sha256 (else ValueError; nothing is kept)."""
+def download(url: str, sha256: str, log: Callable[[str], None] = print, opener: Callable = web.open_once) -> bytes:
+    """@p url's content, which must hash to @p sha256 (else ValueError; nothing is kept).
+
+    A short outage is tried again (overpressure.web); a download that fails for good says why.
+    """
     log(f">> {url}")
-    with opener(url, timeout=60) as response:
-        data = response.read()
+    data = web.read(url, 60, web.Retry(log=log), opener)
     digest = hashlib.sha256(data).hexdigest()
     if digest != sha256:
         msg = f"{url}: sha256 {digest} is not the pinned {sha256}"
@@ -152,7 +151,7 @@ def download(
     return data
 
 
-def fetch(tool: Tool, log: Callable[[str], None] = print, opener: Callable = urllib.request.urlopen) -> Path:
+def fetch(tool: Tool, log: Callable[[str], None] = print, opener: Callable = web.open_once) -> Path:
     """Download and unpack @p tool for this host unless it is there; return its folder."""
     archive = tool.archive()
     if archive is None:

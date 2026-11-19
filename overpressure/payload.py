@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from . import web
+
 if TYPE_CHECKING:
     from _typeshed import WriteableBuffer
 
@@ -113,7 +115,7 @@ class HttpSource(Source):
         )
         for attempt in range(ATTEMPTS):
             try:
-                return urllib.request.urlopen(req, timeout=60)  # noqa: S310  # open_source passes only http(s) URLs
+                return web.open_once(req, 60)
             except urllib.error.HTTPError as exc:  # noqa: PERF203  # a retry loop
                 if exc.code < HTTP_SERVER_ERROR or attempt == ATTEMPTS - 1:  # 4xx will not get better by retrying
                     raise

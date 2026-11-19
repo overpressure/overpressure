@@ -298,7 +298,7 @@ PACKAGE_FIX = (
 
 
 def package_checks(host: Host) -> list[Check]:
-    """Check the pinned Python packages: brotli for the stock OTA, pyusb with libusb for EDL devices.
+    """Check the pinned Python packages: brotli for the stock OTA, pyusb with libusb for EDL devices, truststore.
 
     Without brotli the brotli command decompresses (missing only when neither is there); without
     pyusb this system's own listing counts EDL devices.
@@ -327,6 +327,19 @@ def package_checks(host: Host) -> list[Check]:
             OK if usb else OPTIONAL,
             "count EDL devices" if usb else "not installed; EDL devices are counted by this system's own listing",
             "" if usb else PACKAGE_FIX,
+        )
+    )
+    trusted = host.has_module("truststore")
+    checks.append(
+        Check(
+            "truststore (Python)",
+            "downloads",
+            OK if trusted else OPTIONAL,
+            "HTTPS is verified by this system's own verifier"
+            if trusted
+            else "not installed (none for Python 3.9): Python's own verifier, which on Windows trusts only the roots"
+            " already in its certificate store",
+            "" if trusted else PACKAGE_FIX,
         )
     )
     return checks
