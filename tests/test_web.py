@@ -55,7 +55,7 @@ class Opener:
         self.outcomes = list(outcomes)
         self.calls = 0
 
-    def __call__(self, _request: Any, _timeout: float) -> io.BytesIO:  # noqa: ANN401  # a URL or a Request
+    def __call__(self, _request: Any, timeout: float) -> io.BytesIO:  # noqa: ANN401, ARG002  # a URL or a Request; urlopen's keyword
         self.calls += 1
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
@@ -85,8 +85,21 @@ class RetryTests(unittest.TestCase):
 
         bodies = [Broken(), io.BytesIO(b"the kernel")]
         clock = Clock()
-        self.assertEqual(web.read(URL, 60, clock.retry(), lambda *_: bodies.pop(0)), b"the kernel")
+        self.assertEqual(web.read(URL, 60, clock.retry(), lambda *_, **__: bodies.pop(0)), b"the kernel")
         self.assertEqual(len(clock.lines), 1)
+
+    def test_an_opener_shaped_like_urlopen_gets_the_timeout_by_keyword(self):
+        # A headset passes urllib.request.urlopen (its second parameter is data): the timeout must not land there.
+        asked = []
+
+        def urlopen(url: str, data: bytes | None = None, timeout: float | None = None) -> io.BytesIO:
+            asked.append((url, data, timeout))
+            return io.BytesIO(b"the kernel")
+
+        self.assertEqual(web.read(URL, 60, Clock().retry(), urlopen), b"the kernel")
+        with web.urlopen(URL, 30, Clock().retry(), urlopen) as response:
+            self.assertEqual(response.read(), b"the kernel")
+        self.assertEqual(asked, [(URL, None, 60), (URL, None, 30)])
 
     def test_an_answer_a_try_again_cannot_change_fails_at_once(self):
         clock = Clock()

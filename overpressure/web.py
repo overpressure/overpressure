@@ -149,7 +149,7 @@ def urlopen(
 
     For a response that is read in parts; read() also tries a body that breaks off again.
     """
-    return _retrying(_url(request), lambda: opener(request, timeout), retry)
+    return _retrying(_url(request), lambda: opener(request, timeout=timeout), retry)
 
 
 def read(
@@ -158,7 +158,7 @@ def read(
     """Return the body of @p request, a transient failure (also of the body) tried again; else DownloadError."""
 
     def once() -> bytes:
-        with opener(request, timeout) as response:
+        with opener(request, timeout=timeout) as response:
             return response.read()
 
     return _retrying(_url(request), once, retry)
