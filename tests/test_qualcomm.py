@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Unlicense
 """overpressure.qualcomm: the SoC ID, EDL's partition maps, backups, verified writes and the EDL steps."""
 
+import argparse
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Callable
 from unittest import mock
 
 from overpressure import qualcomm
@@ -228,6 +230,91 @@ class EdlTests(unittest.TestCase):
             self.capture(self.root / "no-gpt", ("abl.bin", "boot.bin", "devinfo.bin"))
         other = ("vbmeta.bin", "gpt_main0.bin", "rawprogram0.xml")
         self.assertIn("vbmeta.bin", self.capture(self.root / "other", other, required=("vbmeta",))["files"])
+
+    def test_a_stopped_dump_counts_the_partitions_it_read_whole(self):
+        directory = self.root / "lun4"
+        directory.mkdir()
+        rows = "".join(
+            f'<program filename="{name}" label="{label}" num_partition_sectors="1" SECTOR_SIZE_IN_BYTES="4096" '
+            'physical_partition_number="4" />'
+            for label, name in (("abl", "abl.bin"), ("xbl", "xbl.bin"), ("tz", "tz.bin"), ("out", "../out.bin"))
+        )
+        (directory / "rawprogram4.xml").write_text(f"<data>{rows}</data>")
+        (directory / "abl.bin").write_bytes(b"x" * 4096)
+        (directory / "xbl.bin").write_bytes(b"x" * 100)  # cut short
+        (self.root / "out.bin").write_bytes(b"x" * 4096)  # outside the LUN's folder
+        self.assertEqual(qualcomm.dumped(self.root, 4), ["abl"])
+        self.assertEqual(qualcomm.dumped(self.root, 5), [])  # no map: nothing counts
+
+    def test_the_commands_skip_what_a_stopped_backup_holds(self):
+        (self.root / "loader.elf").write_bytes(b"loader")
+        args = argparse.Namespace(
+            edl_backend="edl-ng",
+            edl="edl-ng",
+            edl_script=None,
+            edl_python=None,
+            loader=self.root / "loader.elf",
+            backup=self.root / "backup",
+            edl_luns=[0, 4],
+            include_userdata=False,
+        )
+        commands = qualcomm.backup_commands(args, {4: ["abl", "xbl"]})
+        skips = [command[command.index("--skip") + 1] for command in commands]
+        self.assertEqual(skips, ["cache,rawdump,logdump,userdata", "cache,rawdump,logdump,userdata,abl,xbl"])
+        self.assertEqual(qualcomm.backup_commands(args), qualcomm.backup_commands(args, {}))
+
+    def test_an_unfinished_backup_goes_on_and_another_is_never_written_to(self):
+        folder = self.root / "backup"
+        complete = ("abl_a.bin", "boot.img", "devinfo.bin", "gpt_main0.bin", "rawprogram0.xml")
+
+        def stops(command: list[str], timeout: float = 60) -> str:  # noqa: ARG001  # the runner's signature
+            (folder / "abl_a.bin").write_bytes(b"abl")
+            msg = r"Command failed: \.\COM5 timed out."
+            raise ValueError(msg)
+
+        def capture(runner: Callable[..., str], identity: dict, *, resume: bool) -> dict:
+            return qualcomm.capture_backup(
+                folder,
+                [["edl", "rl", str(folder)]],
+                identity,
+                backend="bkerler",
+                luns=None,
+                include_userdata=False,
+                runner=runner,
+                resume=resume,
+            )
+
+        with self.assertRaisesRegex(ValueError, "timed out"):
+            capture(stops, {"serial": "A"}, resume=True)
+        self.assertEqual(qualcomm.unfinished(folder), {"serial": "A"})
+        self.assertFalse((folder / "manifest.json").exists())
+        with self.assertRaisesRegex(ValueError, "new backup directory"):
+            capture(stops, {"serial": "A"}, resume=False)
+        with self.assertRaisesRegex(ValueError, "not an unfinished backup of this headset"):
+            capture(stops, {"serial": "B"}, resume=True)
+
+        def finishes(command: list[str], timeout: float = 60) -> str:  # noqa: ARG001  # the runner's signature
+            for name in complete[1:]:
+                (folder / name).write_bytes(b"data of " + name.encode())
+            return "went on"
+
+        manifest = capture(finishes, {"serial": "A"}, resume=True)
+        self.assertEqual(sorted(manifest["files"]), sorted(complete))
+        self.assertIsNone(qualcomm.unfinished(folder))
+        self.assertFalse((folder / qualcomm.UNFINISHED).exists())
+        self.assertIn("went on", (folder / "edl.log").read_text())
+        with self.assertRaisesRegex(ValueError, "new backup directory"):  # a complete backup stays as it is
+            capture(finishes, {"serial": "A"}, resume=True)
+
+    def test_a_transfer_that_timed_out_mid_session_is_told_apart(self):
+        for output in (
+            r"09:24:52.672 [ERROR] Error dumping partition 'metadata': QUD write to \\.\COM5 timed out.",
+            r"error: Command failed: \.\COM5 timed out.",
+            "LibUsb bulk read timed out.",
+        ):
+            self.assertTrue(qualcomm.link_lost(output), output)
+        self.assertFalse(qualcomm.link_lost("Handshake failed: Expected Sahara HELLO"))
+        self.assertIn("has to restart", qualcomm.LINK_LOST)
 
     def test_a_write_is_read_back_outside_the_backup(self):
         image = self.root / "abl.elf"

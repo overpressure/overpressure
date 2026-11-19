@@ -11,6 +11,7 @@ from Android, and edl-ng's serial says it is the configured one.
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -160,9 +161,13 @@ def skipped(*, include_userdata: bool) -> list[str]:
     return [*NOT_KEPT, *(() if include_userdata else ("userdata",))]
 
 
-def backup_commands(args: argparse.Namespace) -> list[list[str]]:
-    """Return the EDL command lines of a full backup (ARGS as edl_command's, with the backup's)."""
-    skip = ",".join(skipped(include_userdata=args.include_userdata))
+def backup_commands(args: argparse.Namespace, done: dict[int, list[str]] | None = None) -> list[list[str]]:
+    """Return the EDL command lines of a full backup (ARGS as edl_command's, with the backup's).
+
+    @p done (since interface 1.5) names, per LUN, the partitions a stopped edl-ng backup already read whole
+    (dumped()): they are skipped as well, so that the backup goes on from where it stopped.
+    """
+    skip = skipped(include_userdata=args.include_userdata)
     if args.edl_backend == "edl-ng":
         if not args.edl_luns or len(set(args.edl_luns)) != len(args.edl_luns):
             msg = "edl-ng backup requires distinct --edl-luns from the device's GPT scan"
@@ -170,14 +175,63 @@ def backup_commands(args: argparse.Namespace) -> list[list[str]]:
         # The skipped partitions stay in the rawprogram maps (their sizes), without an image.
         return [
             edl_command(
-                args, "dump-rawprogram", str((args.backup / f"lun{lun}").resolve()), "--lun", str(lun), "--skip", skip
+                args,
+                "dump-rawprogram",
+                str((args.backup / f"lun{lun}").resolve()),
+                "--lun",
+                str(lun),
+                "--skip",
+                ",".join([*skip, *(done or {}).get(lun, [])]),
             )
             for lun in args.edl_luns
         ]
     if args.edl_luns:
         msg = "--edl-luns applies only to the edl-ng backend"
         raise ValueError(msg)
-    return [edl_command(args, "rl", str(args.backup.resolve()), "--genxml", f"--skip={skip}")]
+    return [edl_command(args, "rl", str(args.backup.resolve()), "--genxml", f"--skip={','.join(skip)}")]
+
+
+#: In a backup folder while its capture is unfinished: whose backup it is (the identity), so that a later try
+#: goes on with it. The manifest takes its place once the backup is complete.
+UNFINISHED = "unfinished.json"
+
+
+def unfinished(folder: Path) -> dict | None:
+    """Return the identity whose unfinished backup @p folder holds, None for anything else (since 1.5)."""
+    if (folder / "manifest.json").exists():
+        return None
+    try:
+        record = json.loads((folder / UNFINISHED).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    identity = record.get("identity") if isinstance(record, dict) else None
+    return identity if isinstance(identity, dict) else None
+
+
+def dumped(folder: Path, lun: int) -> list[str]:
+    """Return the partitions of @p lun a stopped edl-ng backup in @p folder read whole (since 1.5).
+
+    edl-ng writes a LUN's rawprogram map before it reads any partition, and deletes the file of a read that
+    fails: a partition counts as read when its file has the map's size. Without the map, none does.
+    """
+    directory = (folder / f"lun{lun}").resolve()
+    try:
+        rows = ET.parse(directory / f"rawprogram{lun}.xml").getroot().findall("program")  # noqa: S314  # the EDL client's own map
+    except (OSError, ET.ParseError):
+        return []
+    found = []
+    for row in rows:
+        label, name = row.get("label"), row.get("filename")
+        if not label or not name or label in found:
+            continue
+        path = (directory / name).resolve()
+        try:
+            size = int(row.attrib["num_partition_sectors"]) * int(row.attrib["SECTOR_SIZE_IN_BYTES"])
+        except (KeyError, ValueError):
+            continue
+        if directory in path.parents and size > 0 and path.is_file() and path.stat().st_size == size:
+            found.append(label)
+    return found
 
 
 def validate_native_dump(folder: Path, luns: list[int], *, include_userdata: bool) -> None:
@@ -232,6 +286,20 @@ class DumpProgress:
             self.out(f"reading {name}" + (f" ({tenth * 10}%)" if tenth else ""))
 
 
+def _backup_folder(folder: Path, identity: dict, *, resume: bool) -> None:
+    """Make @p folder a new backup's, or with @p resume take this identity's unfinished one; refuse the rest."""
+    if (folder / "manifest.json").exists() or (folder.exists() and not resume):
+        msg = "Use a new backup directory; existing or partial backups are never overwritten"
+        raise ValueError(msg)
+    if folder.exists():
+        if unfinished(folder) != identity:
+            msg = f"{folder} is not an unfinished backup of this headset; it is never written to"
+            raise ValueError(msg)
+        return
+    folder.mkdir(parents=True)
+    save_new(folder / UNFINISHED, {"identity": identity})
+
+
 def capture_backup(  # noqa: PLR0913  # the backup's folder, commands and identity; how it was taken keyword-only
     folder: Path,
     commands: list[list[str]],
@@ -242,19 +310,19 @@ def capture_backup(  # noqa: PLR0913  # the backup's folder, commands and identi
     include_userdata: bool,
     runner: Callable[..., str],
     required: Sequence[str] = REQUIRED_PARTITIONS,
+    resume: bool = False,
 ) -> dict:
     """Take a full EDL backup into the new folder @p folder and write its manifest; return the manifest.
 
     @p commands are backup_commands' (with @p backend, @p luns and @p include_userdata as they
     were made); @p runner runs each, its output going to edl.log. No manifest is written unless
     the dump is complete: edl-ng's files against its rawprogram maps, an image of every @p required
-    partition, the GPT and rawprogram metadata, and userdata when asked for.
+    partition, the GPT and rawprogram metadata, and userdata when asked for. With @p resume (since 1.5)
+    the folder may hold this identity's unfinished backup (unfinished()), which goes on: the commands then skip
+    what it holds (backup_commands' done). A complete backup, or another headset's, is never written to.
     """
-    if folder.exists():
-        msg = "Use a new backup directory; existing or partial backups are never overwritten"
-        raise ValueError(msg)
-    folder.mkdir(parents=True)
-    with (folder / "edl.log").open("w", encoding="utf-8") as log:
+    _backup_folder(folder, identity, resume=resume)
+    with (folder / "edl.log").open("a", encoding="utf-8") as log:
         for command in commands:
             output = runner(command, timeout=86400)
             log.write(output + "\n")
@@ -289,6 +357,7 @@ def capture_backup(  # noqa: PLR0913  # the backup's folder, commands and identi
         "files": files,
     }
     save_new(folder / "manifest.json", manifest)
+    (folder / UNFINISHED).unlink(missing_ok=True)
     # The images' zero runs go back to the file system: the same bytes, about half the space.
     for name in files:
         holes.free_zeros(folder / name)
@@ -366,6 +435,21 @@ NO_ANSWER = (
     "The headset is in EDL mode but does not answer: it opens the conversation only right after it enters "
     "EDL mode, and that moment has passed (it waited too long, or an earlier attempt failed)."
 )
+
+
+# Windows' serial driver: "QUD write to \\.\COM5 timed out" (the device command keeps only the error's end:
+# "\.\COM5 timed out"); libusb: "LibUsb bulk write timed out".
+_LINK_LOST = re.compile(r"(?:write to|read from) \S+ timed out|COM\d+ timed out|LibUsb [\w ]+ timed out")
+#: What a timeout in the middle of edl-ng's session means: its loader keeps running, but answers no new session.
+LINK_LOST = (
+    "The USB link to the headset in EDL mode stopped answering in the middle of the backup (edl-ng's transfer "
+    "timed out). The headset has to restart before EDL mode works again."
+)
+
+
+def link_lost(output: str) -> bool:
+    """Tell whether edl-ng's @p output says a transfer timed out mid-session (since 1.5)."""
+    return _LINK_LOST.search(output) is not None
 
 
 def unanswered(output: str) -> bool:
