@@ -14,9 +14,16 @@
   python scripts/check-docs.py --repo devices/<codename> checks a README against this template: its sections in
   order, each table's rows (the template's first, in order; the headset's own after them), one status symbol
   per row of "What works", an issue linked from every ❌, and no {{...}} left.
+
+  The badges under the title: the newest release (betas included), CI on main and the headset's room on Matrix.
+  Keep them to these three, in this order.
 -->
 
 # {{Headset name}}
+
+[![Newest release](https://img.shields.io/github/v/release/overpressure/{{codename}}?include_prereleases&label=release&color=2a66ec)](https://github.com/overpressure/{{codename}}/releases)
+[![CI on main](https://github.com/overpressure/{{codename}}/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/overpressure/{{codename}}/actions/workflows/ci.yml?query=branch%3Amain)
+[![Chat: the {{headset name}} room on Matrix](https://img.shields.io/badge/chat-{{headset name, spaces as %20}}%20room-2a66ec?logo=matrix&logoColor=white)](https://matrix.to/#/#overpressure-{{codename}}:matrix.org)
 
 **Linux and Valve's SteamVR on the {{headset name}} ({{year}}, {{chip}}), installed with
 [overpressure](https://github.com/overpressure/overpressure).** It replaces {{stock system}} with a system built

@@ -25,6 +25,13 @@
   <a href="LICENSE">Unlicense</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/overpressure/overpressure/releases"><img src="https://img.shields.io/github/v/release/overpressure/overpressure?include_prereleases&amp;label=release&amp;color=2a66ec" alt="Newest release"></a>
+  <a href="https://github.com/overpressure/overpressure/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/overpressure/overpressure/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI on main"></a>
+  <a href="https://matrix.to/#/#overpressure:matrix.org"><img src="https://img.shields.io/badge/chat-%23overpressure%3Amatrix.org-2a66ec?logo=matrix&amp;logoColor=white" alt="Chat on Matrix: #overpressure:matrix.org"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Unlicense-2a66ec" alt="License: Unlicense"></a>
+</p>
+
 overpressure turns standalone VR headsets into SteamOS headsets: Valve's Steam Frame kernel and VR session
 (SteamVR in gamescope) with drivers for each headset's own lenses, cameras, sensors and controllers. Your Steam
 library runs on it, Windows games through Proton and FEX, Android games through Valve's Lepton, and PC games over
