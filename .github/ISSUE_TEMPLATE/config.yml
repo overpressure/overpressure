@@ -12,3 +12,6 @@ contact_links:
   - name: Documentation
     url: https://github.com/overpressure/overpressure#readme
     about: How to install, upgrade and go back to stock.
+  - name: Games and apps from a headset's store or other stores
+    url: https://github.com/overpressure/.github/blob/main/THIRD-PARTY-CONTENT.md
+    about: What the project does and doesn't do with other people's games, apps and files.
