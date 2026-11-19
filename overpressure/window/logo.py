@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Unlicense
-"""The logo in the window: PNG renderings of docs/logo's drawings, picked for the display's scaling.
+"""The logo in the window: PNG renderings of the logo's drawings, picked for the display's scaling.
 
-Tk draws no SVG and scales no image, so icons/ holds each picture at the sizes the window asks for
-(docs/logo/README.md says how they are rendered): the app icon for the title bar, the taskbar and
-the dock (the small drawing up to 48 px), the header's mark, and the app icon on the headset page in
-its light and dark tiles. A size in points becomes the rendering nearest to it in pixels. No widgets
-here, so the tests check the files and the choice without a display.
+Tk draws no SVG and scales no image, so icons/ holds each picture at the sizes the window asks for,
+copied from overpressure/brand, where they are rendered (docs/logo/README.md): the app icon for the
+title bar, the taskbar and the dock (the small drawing up to 48 px), the header's mark, and the app
+icon on the headset page in its light and dark tiles. A size in points becomes the rendering nearest
+to it in pixels. No widgets here, so the tests check the files and the choice without a display.
 """
 
 from __future__ import annotations

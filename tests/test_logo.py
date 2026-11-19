@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""The logo: its drawings in docs/logo, and the window's PNG renderings picked for the display's scaling."""
+"""The logo: the copies of overpressure/brand's drawings in docs/logo, and the window's PNG renderings."""
 
 from __future__ import annotations
 
@@ -13,27 +13,25 @@ DRAWINGS = REPO / "docs" / "logo"
 
 
 class DrawingTests(unittest.TestCase):
-    def test_every_drawing_is_an_svg_with_its_frame(self):
+    def test_every_copy_is_an_svg_with_its_frame(self):
+        # The README's logo (dark and light) and the mark the PICO 4's boot screen is checked against.
         frames = {
             "overpressure.svg": "0 0 512 512",
             "overpressure-light.svg": "0 0 512 512",
-            "overpressure-small.svg": "0 0 512 512",
-            "overpressure-light-small.svg": "0 0 512 512",
             "overpressure-mark.svg": "48 162 416 208",
-            "overpressure-mono.svg": "48 162 416 208",
         }
         for name, frame in frames.items():
             text = (DRAWINGS / name).read_text(encoding="utf-8")
             self.assertTrue(text.startswith(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{frame}">'), name)
 
-    def test_the_one_colour_drawing_takes_the_text_colour(self):
-        text = (DRAWINGS / "overpressure-mono.svg").read_text(encoding="utf-8")
-        self.assertIn('fill="currentColor"', text)
-        self.assertNotIn("#ff7849", text)  # no red zone in one colour: it is cut out
+    def test_only_the_copies_and_their_readme(self):
+        # Everything else lives in overpressure/brand (docs/logo/README.md).
+        self.assertEqual({p.name for p in DRAWINGS.iterdir()}, {*self.copies(), "README.md"})
 
-    def test_the_social_cards_are_github_sized(self):
-        for name in ("overpressure-social.png", "overpressure-social-light.png"):
-            self.assertEqual(logo.png_size(DRAWINGS / name), (1280, 640), name)
+    @staticmethod
+    def copies() -> set[str]:
+        """Return the drawings this repository keeps a copy of."""
+        return {"overpressure.svg", "overpressure-light.svg", "overpressure-mark.svg"}
 
 
 class RenderingTests(unittest.TestCase):

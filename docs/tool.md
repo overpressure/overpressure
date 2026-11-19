@@ -175,7 +175,8 @@ anything a terminal cannot: the installer is the engine's command line, and each
 line. The look comes from design tokens in [theme.py](../overpressure/window/theme.py) (light and dark,
 body text at a contrast of at least 4.5:1, the system's UI font) and components in
 [kit.py](../overpressure/window/kit.py); the window opens at 1120×760 where the screen has room, at least
-900×600. The logo ([docs/logo](logo/README.md)) is its icon, from PNG renderings at the display's scaling.
+900×600. The logo is its icon, from PNG renderings at the display's scaling, copied from
+[overpressure/brand](https://github.com/overpressure/brand) ([docs/logo](logo/README.md)).
 
 It needs Tk and [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) (`customtkinter==6.0.0`,
 the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --extra gui` too. Without them
