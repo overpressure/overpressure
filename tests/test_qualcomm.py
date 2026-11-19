@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable
 from unittest import mock
 
-from overpressure import qualcomm
+from overpressure import process, qualcomm
 
 
 class QualcommTests(unittest.TestCase):
@@ -286,6 +286,7 @@ class EdlTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "timed out"):
             capture(stops, {"serial": "A"}, resume=True)
+        self.assertIn(r"COM5 timed out", (folder / "edl.log").read_text())  # the failure is in the log too
         self.assertEqual(qualcomm.unfinished(folder), {"serial": "A"})
         self.assertFalse((folder / "manifest.json").exists())
         with self.assertRaisesRegex(ValueError, "new backup directory"):
@@ -306,15 +307,47 @@ class EdlTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "new backup directory"):  # a complete backup stays as it is
             capture(finishes, {"serial": "A"}, resume=True)
 
-    def test_a_transfer_that_timed_out_mid_session_is_told_apart(self):
+    def test_a_link_that_broke_mid_session_is_told_apart(self):
         for output in (
             r"09:24:52.672 [ERROR] Error dumping partition 'metadata': QUD write to \\.\COM5 timed out.",
             r"error: Command failed: \.\COM5 timed out.",
             "LibUsb bulk read timed out.",
+            # A garbled reply: the loader's XML came back as zeros (Windows, a resumed backup's partition table).
+            (
+                "20:17:51.626 [ERROR] Error reading/saving main GPT: '.', hexadecimal value 0x00, is an invalid "
+                "character. Line 11, position 47."
+            ),
         ):
             self.assertTrue(qualcomm.link_lost(output), output)
         self.assertFalse(qualcomm.link_lost("Handshake failed: Expected Sahara HELLO"))
         self.assertIn("has to restart", qualcomm.LINK_LOST)
+        self.assertIn("port or the cable", qualcomm.LINK_LOST)
+
+    def test_a_failed_dump_goes_into_the_log_whole(self):
+        folder = self.root / "backup"
+        whole = "first error line\n" + "x" * 2000
+
+        def fails(command: list[str], timeout: float = 60) -> str:  # noqa: ARG001  # the runner's signature
+            # A headset's runner turns the tool's error into its own (raise ... from exc).
+            cause = process.CommandFailed("edl-ng failed (1): " + whole[-800:], whole)
+            error = ValueError(str(cause))
+            error.__cause__ = cause
+            raise error
+
+        with self.assertRaises(ValueError):
+            qualcomm.capture_backup(
+                folder,
+                [["edl", "rl", str(folder)]],
+                {"serial": "A"},
+                backend="bkerler",
+                luns=None,
+                include_userdata=False,
+                runner=fails,
+            )
+        log = (folder / "edl.log").read_text()
+        self.assertIn("first error line", log)
+        self.assertIn("ValueError: edl-ng failed (1)", log)
+        self.assertEqual(qualcomm.failed_output(ValueError("only text")), "only text")
 
     def test_a_write_is_read_back_outside_the_backup(self):
         image = self.root / "abl.elf"

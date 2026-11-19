@@ -28,6 +28,15 @@ class Final(Exception):  # noqa: N818  # a marker mixed into the errors it appli
     """An error that waiting does not cure: until() raises it at once instead of retrying."""
 
 
+class CommandFailed(RuntimeError):  # noqa: N818  # a RuntimeError, as the callers catch it
+    """A program that exited nonzero: the message ends with its output's last part, @p output holds all of it."""
+
+    def __init__(self, msg: str, output: str) -> None:
+        """Keep the whole @p output for a log; the message stays short."""
+        super().__init__(msg)
+        self.output = output
+
+
 def run(
     argv: Sequence[str | os.PathLike[str]],
     timeout: float = 60,
@@ -57,7 +66,7 @@ def run(
     if check and process.returncode:
         where = f"; see {Path(log).name}" if log is not None else f": {output[-800:]}"
         msg = f"{Path(str(argv[0])).name} failed ({process.returncode}){where}"
-        raise RuntimeError(msg)
+        raise CommandFailed(msg, output)
     return output
 
 
@@ -112,7 +121,7 @@ def run_streamed(
     output = b"".join(chunks).decode("utf-8", "replace").strip()
     if check and proc.returncode:
         msg = f"{Path(str(argv[0])).name} failed ({proc.returncode}): {output[-800:]}"
-        raise RuntimeError(msg)
+        raise CommandFailed(msg, output)
     return output
 
 

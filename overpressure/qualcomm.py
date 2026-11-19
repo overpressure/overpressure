@@ -324,7 +324,13 @@ def capture_backup(  # noqa: PLR0913  # the backup's folder, commands and identi
     _backup_folder(folder, identity, resume=resume)
     with (folder / "edl.log").open("a", encoding="utf-8") as log:
         for command in commands:
-            output = runner(command, timeout=86400)
+            try:
+                output = runner(command, timeout=86400)
+            except Exception as exc:
+                # The failure goes into the log whole: the error keeps only its end, the log shows where it began.
+                log.write(f"{failed_output(exc)}\n{type(exc).__name__}: {exc}\n")
+                log.flush()
+                raise
             log.write(output + "\n")
             log.flush()
     if backend == "edl-ng":
@@ -438,18 +444,42 @@ NO_ANSWER = (
 
 
 # Windows' serial driver: "QUD write to \\.\COM5 timed out" (the device command keeps only the error's end:
-# "\.\COM5 timed out"); libusb: "LibUsb bulk write timed out".
-_LINK_LOST = re.compile(r"(?:write to|read from) \S+ timed out|COM\d+ timed out|LibUsb [\w ]+ timed out")
-#: What a timeout in the middle of edl-ng's session means: its loader keeps running, but answers no new session.
+# "\.\COM5 timed out"); libusb: "LibUsb bulk write timed out". A garbled reply: the loader's XML arrives as zeros,
+# which .NET's XML reader refuses ("'.', hexadecimal value 0x00, is an invalid character").
+_LINK_LOST = re.compile(
+    r"(?:write to|read from) \S+ timed out|COM\d+ timed out|LibUsb [\w ]+ timed out"
+    r"|hexadecimal value 0x[0-9A-Fa-f]+, is an invalid character"
+)
+#: What a broken link in the middle of edl-ng's session means: its loader keeps running, but answers no new session.
 LINK_LOST = (
-    "The USB link to the headset in EDL mode stopped answering in the middle of the backup (edl-ng's transfer "
-    "timed out). The headset has to restart before EDL mode works again."
+    "The USB link to the headset in EDL mode broke in the middle of the backup (edl-ng's transfer timed out, or "
+    "its answer arrived garbled). That is almost always the USB port or the cable. The headset has to restart "
+    "before EDL mode works again."
 )
 
 
 def link_lost(output: str) -> bool:
-    """Tell whether edl-ng's @p output says a transfer timed out mid-session (since 1.5)."""
+    """Tell whether edl-ng's @p output says the link broke mid-session (since 1.5): a timeout or a garbled reply."""
     return _LINK_LOST.search(output) is not None
+
+
+def failed_output(exc: BaseException) -> str:
+    """Return the whole output of the command behind @p exc: an `output` on it or on what caused it, else its text.
+
+    process.CommandFailed carries it, as subprocess.CalledProcessError does; a headset's runner may raise its own
+    error from one (`raise ... from exc`) or carry `output` itself.
+    """
+    seen: BaseException | None = exc
+    for _ in range(8):  # a chain is short; this bounds a cycle
+        if seen is None:
+            break
+        output = getattr(seen, "output", None)
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", "replace")
+        if isinstance(output, str) and output:
+            return output
+        seen = seen.__cause__ or seen.__context__
+    return str(exc)
 
 
 def unanswered(output: str) -> bool:

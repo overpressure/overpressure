@@ -120,6 +120,14 @@ class StreamedTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             process.run_streamed([sys.executable, "-c", "import sys; sys.exit(3)"], 60, lambda _line: None)
 
+    def test_a_failure_keeps_its_whole_output(self):
+        # The message ends with the output's last 800 characters; a log takes all of it from the error.
+        script = "import sys; print('first line'); print('x' * 2000); sys.exit(3)"
+        with self.assertRaises(process.CommandFailed) as caught:
+            process.run_streamed([sys.executable, "-c", script], 60, lambda _line: None)
+        self.assertIn("first line", caught.exception.output)
+        self.assertNotIn("first line", str(caught.exception))
+
 
 class DumpProgressTests(unittest.TestCase):
     def test_each_partition_and_each_tenth(self):
