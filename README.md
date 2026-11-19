@@ -20,6 +20,8 @@
   &nbsp;&middot;&nbsp;
   <a href="docs/adding-a-headset.md">Add a headset</a>
   &nbsp;&middot;&nbsp;
+  <a href="https://matrix.to/#/#overpressure:matrix.org">Chat</a>
+  &nbsp;&middot;&nbsp;
   <a href="LICENSE">Unlicense</a>
 </p>
 
@@ -66,6 +68,9 @@ for USB access to the headset; the installer's first stage checks both and says 
    release (or a beta, a preview of its development state, an older release) into `devices/`.
 4. Choose what to do: **Install**, **Upgrade** or **Restore to stock**. Each is a few stages with one button
    each, and goes on where it stopped when started again.
+
+Stuck, or not sure? Ask in the [Help room](https://matrix.to/#/#overpressure-help:matrix.org) of the project's
+Matrix space. A bug goes to its headset's issues (the headset's README says how), with the logs the window saves.
 
 ## For developers
 

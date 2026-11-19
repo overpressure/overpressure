@@ -3,6 +3,9 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/overpressure/overpressure/security/advisories/new
     about: Report it privately, not in a public issue.
+  - name: A question, or help with installing
+    url: https://matrix.to/#/#overpressure-help:matrix.org
+    about: Ask in the Help room of the project's Matrix space; issues are for bugs and features.
   - name: A headset's own system, drivers or install steps
     url: https://github.com/overpressure/phoenix/issues/new/choose
     about: The PICO 4's issues go to its repository.

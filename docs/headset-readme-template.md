@@ -133,6 +133,9 @@ The window says what state the headset is in and what to do next; starting it ag
 [open an issue]({{link to new issue}}) and attach the bundle **{{how to make the support bundle}}** makes; it
 leaves out your headset's serial numbers.
 
+Questions and quick help: the [{{headset name}} room]({{link to the headset's Matrix room}}) and the
+[Help room](https://matrix.to/#/#overpressure-help:matrix.org) of the project's Matrix space.
+
 ## For developers
 
 How it works, how it is built and how it is tested: [docs/]({{link to docs/}}), starting with

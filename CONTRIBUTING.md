@@ -3,6 +3,10 @@
 Welcome. Two things help most right now: a new headset, and reports from other units of a supported one (so far
 everything has run on one PICO 4).
 
+To talk first, about a headset you'd like to bring or a change you have in mind: the
+[Development room](https://matrix.to/#/#overpressure-dev:matrix.org) on Matrix. Decisions are made in issues and
+pull requests.
+
 ## A new headset
 
 overpressure is built for more than one headset: the installer, the window, the build container and the formats
