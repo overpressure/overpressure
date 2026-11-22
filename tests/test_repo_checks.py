@@ -252,12 +252,24 @@ class ReleaseTests(unittest.TestCase):
         self.assertRegex("v1.0-beta.2", release.BETA_TAGS)
         self.assertNotRegex("2026.12.0", release.BETA_TAGS)
 
-    def test_the_repositorys_version_is_a_calendar_development_version(self):
-        found = version.parse(release.project_version((REPO / "pyproject.toml").read_text(encoding="utf-8")))
+    def test_the_repositorys_version_is_a_calendar_version_a_release_could_be_tagged_with(self):
+        text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+        found = version.parse(release.project_version(text))
         self.assertIsNotNone(found)
         assert found is not None  # for the type checker
         self.assertTrue(found.calendar)
-        self.assertEqual(found.channel, version.PREVIEW)  # main between releases: the next one's development version
+        if found.channel != version.PREVIEW:  # a version pull request: the release it names passes the tag check
+            self.assertIn(release.check(found.machine(), text), ("prerelease", "release"))
+
+    def test_git_cliff_takes_both_schemes_tags_as_releases(self):
+        cliff = (REPO / "cliff.toml").read_text(encoding="utf-8")
+        match = re.search(r"^tag_pattern = '([^']+)'$", cliff, re.MULTILINE)
+        self.assertIsNotNone(match)
+        assert match is not None  # for the type checker
+        for tag in ("2026.11.0b0", "2026.12.0", "2027.1.3b2", "v1.0-beta.4"):
+            self.assertRegex(tag, match[1])
+        for tag in ("phoenix/7.2-6", "main"):
+            self.assertNotRegex(tag, match[1])
 
     def test_the_release_workflow_checks_the_tag_and_attaches_no_image(self):
         workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
