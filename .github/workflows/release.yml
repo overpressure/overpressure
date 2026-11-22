@@ -1,4 +1,4 @@
-# A release from its tag (docs/releasing.md): a pushed tag vMAJOR.MINOR[-beta[.N]] runs every CI check on the
+# A release from its tag (docs/releasing.md): a pushed tag YYYY.M.PATCH[bN] runs every CI check on the
 # tagged commit (skipped when its tree passed on main already, except the headsets', whose own main and
 # releases move), then makes the GitHub release: the tag's subject as its title, the tag's own words and the
 # changelog since the release before as its notes, the source zip the start scripts install from, and its
@@ -7,7 +7,7 @@
 name: Release
 on:
   push:
-    tags: ["v*"]
+    tags: ["20[0-9][0-9].*"] # calendar versions (docs/releasing.md); the v1.0-beta.N releases were before them
 
 permissions:
   contents: read

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import importlib.util
 import io
 import re
@@ -14,6 +15,8 @@ import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
+
+from overpressure import version
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -169,54 +172,92 @@ class HeadsetReadmeTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
-    PYPROJECT = '[build-system]\nrequires = []\n\n[project]\nname = "x"\nversion = "1.0b1"\n\n[tool.x]\nversion = "9"\n'
+    PYPROJECT = (
+        '[build-system]\nrequires = []\n\n[project]\nname = "x"\nversion = "2026.12.0b0"\n\n[tool.x]\nversion = "9"\n'
+    )
+    HEADSET = '{\n "codename": "x",\n "version": "2026.12.0b0",\n "api": "1.5",\n "commit": "$Format:%H$"\n}\n'
+    TODAY = dt.date(2026, 12, 3)
 
-    def test_tags_in_pythons_spelling(self):
-        self.assertEqual(release.python_version("v1.0-beta"), "1.0b1")
-        self.assertEqual(release.python_version("v1.0-beta.2"), "1.0b2")
-        self.assertEqual(release.python_version("v1.0"), "1.0")
-        self.assertEqual(release.python_version("v2.13"), "2.13")
-        for tag in ("1.0", "v1", "v1.0.1", "v1.0-rc1", "v1.0-beta.0", "v1.0-beta.1", "v1.0-beta2", "v1.0-beta."):
+    def test_the_tag_must_be_a_calendar_release_and_the_projects_version(self):
+        self.assertEqual(release.check("2026.12.0b0", self.PYPROJECT), "prerelease")
+        self.assertEqual(release.check("2026.12.0", self.PYPROJECT.replace("2026.12.0b0", "2026.12.0")), "release")
+        for tag in ("2026.12.0", "2026.12.0b1", "v1.0-beta", "2026.12.0.dev0", "2026.12.0-beta", "2026.012.0", "main"):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
-                release.python_version(tag)
-
-    def test_the_tag_must_name_the_projects_version(self):
-        self.assertEqual(release.check("v1.0-beta", self.PYPROJECT), "prerelease")
-        self.assertEqual(release.check("v1.0", self.PYPROJECT.replace("1.0b1", "1.0")), "release")
-        with self.assertRaises(ValueError):
-            release.check("v1.0", self.PYPROJECT)
-        with self.assertRaises(ValueError):
-            release.check("v1.0-beta.2", self.PYPROJECT)
+                release.check(tag, self.PYPROJECT)
         with self.assertRaises(ValueError):
             release.project_version('[tool.x]\nversion = "1.0"\n')
 
     def test_a_headsets_tag_names_headset_json(self):
-        self.assertEqual(release.check("v1.0-beta.2", '{"version": "1.0-beta.2"}', headset=True), "prerelease")
+        self.assertEqual(release.check("2026.12.0b0", self.HEADSET, headset=True), "prerelease")
         with self.assertRaises(ValueError):
-            release.check("v1.0-beta", '{"version": "1.0-beta.2"}', headset=True)
+            release.check("2026.12.0b1", self.HEADSET, headset=True)
 
-    def test_releases_in_version_order_a_beta_before_its_stable(self):
-        tags = ["v1.0", "v1.0-beta.2", "v1.1-beta", "v1.0-beta", "phoenix/7.2-1", "v1.1"]
+    def test_releases_in_version_order_a_beta_before_its_stable_the_old_scheme_first(self):
+        tags = ["2026.12.0", "v1.0-beta.2", "2026.12.0b0", "v1.0-beta", "phoenix/7.2-1", "2026.11.0", "2026.12.0.dev0"]
         self.assertEqual(
-            sorted((t for t in tags if t.startswith("v")), key=release.key),
-            ["v1.0-beta", "v1.0-beta.2", "v1.0", "v1.1-beta", "v1.1"],
+            sorted((t for t in tags if release.release_version(t)), key=release.key),
+            ["v1.0-beta", "v1.0-beta.2", "2026.11.0", "2026.12.0b0", "2026.12.0"],
+        )
+
+    def test_bump_names_the_next_version(self):
+        tags = ["v1.0-beta", "v1.0-beta.5", "2026.11.0b0", "2026.11.0", "2026.12.0b0"]
+        for kind, have, today, new in (
+            ("beta", "1.0b6.dev0", self.TODAY, "2026.12.1b0"),  # 2026.12.0 is taken by a beta series already
+            ("beta", "2026.12.0b1.dev0", self.TODAY, "2026.12.0b1"),  # a running series: its next beta
+            ("stable", "2026.12.0b1.dev0", dt.date(2027, 1, 2), "2026.12.0"),  # keeps its name past the month
+            ("beta", "2026.11.1.dev0", dt.date(2027, 1, 2), "2027.1.0b0"),  # a new series: the month's first patch
+            ("stable", "2026.11.1.dev0", dt.date(2026, 11, 30), "2026.11.1"),
+            ("next", "2026.12.0b0", self.TODAY, "2026.12.0b1.dev0"),
+            ("next", "2026.12.0", self.TODAY, "2026.12.1.dev0"),
+        ):
+            with self.subTest(kind=kind, have=have):
+                self.assertEqual(release.bump(kind, have, tags, today), new)
+        for kind, have in (("next", "2026.12.0.dev0"), ("next", "1.0b5"), ("rc", "2026.12.0"), ("beta", "main")):
+            with self.subTest(kind=kind, have=have), self.assertRaises(ValueError):
+                release.bump(kind, have, tags, self.TODAY)
+
+    def test_a_headset_release_names_the_oldest_overpressure_that_runs_its_interface(self):
+        self.assertEqual(release.supported("x = 1\nSUPPORTED: dict[int, int] = {1: 5, 2: 0}\n"), {1: 5, 2: 0})
+        self.assertEqual(release.supported("no table"), {})
+        headset_py = {
+            "v1.0-beta.4": "SUPPORTED: dict[int, int] = {1: 4}",
+            "2026.12.0b0": "SUPPORTED: dict[int, int] = {1: 5}",
+            "2026.12.0": "SUPPORTED: dict[int, int] = {1: 5}",
+        }
+        tags = [*headset_py, "phoenix/7.2-6"]
+        self.assertEqual(release.needs("1.5", tags, headset_py.__getitem__), "2026.12.0b0")
+        self.assertEqual(release.needs("1.2", tags, headset_py.__getitem__), "v1.0-beta.4")
+        self.assertEqual(release.needs("1.6", tags, headset_py.__getitem__), "")
+        with self.assertRaises(ValueError):
+            release.needs("one", tags, headset_py.__getitem__)
+
+    def test_bump_changes_only_the_version_in_its_file(self):
+        self.assertEqual(
+            release.write_version(self.PYPROJECT, "2026.12.0"), self.PYPROJECT.replace("2026.12.0b0", "2026.12.0")
+        )
+        self.assertEqual(
+            release.write_version(self.HEADSET, "2026.12.0b1.dev0", headset=True),
+            self.HEADSET.replace("2026.12.0b0", "2026.12.0b1.dev0"),
         )
 
     def test_the_changelog_starts_at_the_first_release(self):
-        tags = ["v1.0-beta", "v1.0-beta.2", "v1.0", "v1.1-beta", "other"]
+        tags = ["v1.0-beta", "v1.0-beta.2", "2026.12.0b0", "2026.12.0b1", "2026.12.0", "2027.1.0b0", "other"]
         self.assertEqual(release.ranges("v1.0-beta", tags), (None, "v1.0-beta"))  # its own words only
         self.assertEqual(release.ranges("v1.0-beta.2", tags), ("v1.0-beta..v1.0-beta.2", "v1.0-beta"))
+        self.assertEqual(release.ranges("2026.12.0b0", tags), ("v1.0-beta.2..2026.12.0b0", "v1.0-beta"))
         # A stable release: everything since the stable one before it, here none: the first release.
-        self.assertEqual(release.ranges("v1.0", tags), ("v1.0-beta..v1.0", "v1.0-beta"))
-        self.assertEqual(release.ranges("v1.1-beta", tags), ("v1.0..v1.1-beta", "v1.0-beta"))
-        self.assertEqual(release.ranges("v1.1", [*tags, "v1.1"]), ("v1.0..v1.1", "v1.0-beta"))
+        self.assertEqual(release.ranges("2026.12.0", tags), ("v1.0-beta..2026.12.0", "v1.0-beta"))
+        self.assertEqual(release.ranges("2027.1.0b0", tags), ("2026.12.0..2027.1.0b0", "v1.0-beta"))
+        self.assertRegex("2026.12.0b3", release.BETA_TAGS)
+        self.assertRegex("v1.0-beta.2", release.BETA_TAGS)
+        self.assertNotRegex("2026.12.0", release.BETA_TAGS)
 
-    def test_the_repositorys_version_has_a_tag_spelling(self):
-        version = release.project_version((REPO / "pyproject.toml").read_text(encoding="utf-8"))
-        version = version.split(".dev")[0]  # main between releases: the next one's development version
-        base, _, beta = version.partition("b")
-        tag = f"v{base}" + (f"-beta.{beta}" if beta and beta != "1" else "-beta" if beta else "")
-        self.assertEqual(release.python_version(tag), version)
+    def test_the_repositorys_version_is_a_calendar_development_version(self):
+        found = version.parse(release.project_version((REPO / "pyproject.toml").read_text(encoding="utf-8")))
+        self.assertIsNotNone(found)
+        assert found is not None  # for the type checker
+        self.assertTrue(found.calendar)
+        self.assertEqual(found.channel, version.PREVIEW)  # main between releases: the next one's development version
 
     def test_the_release_workflow_checks_the_tag_and_attaches_no_image(self):
         workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")

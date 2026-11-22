@@ -24,7 +24,8 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import REPO, catalogue, install, localconfig, version
+from . import REPO, catalogue, install, linux, localconfig, version
+from .headset import manifest
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -65,12 +66,24 @@ def mask(text: str, found: Mapping[str, str]) -> str:
     return text
 
 
+def headset_version(codename: str, root: Path) -> str:
+    """Return the headset release in devices/CODENAME in the machine spelling, a preview's with its commit's time."""
+    data = manifest(root / "devices" / codename)
+    found = str(data.get("version", ""))
+    if version.channel(found) == version.PREVIEW:
+        found = version.preview_of(found, version.committed_at(str(data.get("date", ""))))
+    commit = str(data.get("commit", ""))
+    return found + (f", commit {commit[:12]}" if commit and not commit.startswith("$") else "")
+
+
 def about(headset: Headset, root: Path) -> str:
-    """Return the bundle's about.txt: this overpressure, the headset's release and this computer's system."""
+    """Return the bundle's about.txt: this overpressure, the headset's release and build image, this system."""
     codename = headset.info.codename
     lines = [
         version.describe(root),
-        f"headset: {headset.info.name} ({codename}), {catalogue.identity(codename, root) or 'not downloaded'}",
+        f"headset: {headset.info.name} ({codename}) {headset_version(codename, root) or 'version unknown'}",
+        f"headset download: {catalogue.identity(codename, root) or 'not downloaded'}",
+        f"build image: {linux.IMAGE}",
         f"installed with: {install.installed_release(codename) or 'no finished install on this computer'}",
         f"computer: {platform.platform()} ({platform.machine()})",
         f"Python: {platform.python_version()}",

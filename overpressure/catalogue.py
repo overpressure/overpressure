@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: Unlicense
 """The headsets overpressure knows, their releases, and one of them downloaded into devices/<codename>/.
 
-Each headset is its own repository (overpressure/<codename>) with its own releases: tags
-vMAJOR.MINOR[-beta[.N]], each with a source zip and its SHA-256, as overpressure's own. "headset add"
+Each headset is its own repository (overpressure/<codename>) with its own releases: tags that are calendar
+versions (2026.12.0, a beta 2026.12.0b3; docs/releasing.md), each with a source zip and its SHA-256, as
+overpressure's own. "headset add"
 puts one into devices/<codename>/, checked against its checksum and its headset.json:
 
   stable    the newest release that is not a beta and that this overpressure runs (the default); until
             there is one, the newest beta
   beta      the newest release this overpressure runs, betas included
   preview   the newest commit of main: development state, untested on the headset, no checksum
-  VERSION   a release by its version (--version 1.0-beta), also an older one
+  VERSION   a release by its version (--version 2026.12.0b3), also an older one
 
 A development checkout (a Git clone in devices/<codename>/) is never replaced: Git updates it. What
 was downloaded is recorded in devices/<codename>/.release.json: its tag, its channel (or that a version was
@@ -25,7 +26,6 @@ import hashlib
 import io
 import json
 import os
-import re
 import shutil
 import sys
 import zipfile
@@ -34,6 +34,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from . import REPO, web
+from . import version as own_version
 from .headset import MANIFEST, api_problem, manifest, refusal
 
 STABLE, BETA, PREVIEW = "stable", "beta", "preview"
@@ -72,7 +73,7 @@ class Release:
 
     @property
     def version(self) -> str:
-        """Return the version the tag names (v1.0-beta: 1.0-beta), or the tag (main)."""
+        """Return the version the tag names (2026.12.0b3; the old v1.0-beta: 1.0-beta), or the tag (main)."""
         return self.tag.removeprefix("v")
 
 
@@ -111,7 +112,7 @@ def releases(known: Known, get: Callable[[str], bytes] = fetch) -> list[Release]
         zip_url, sha_url = assets[zips[0]], assets[zips[0] + ".sha256"]
         out.append(Release(tag, bool(item.get("prerelease")), zip_url, sha_url, compatibility(known, tag, get)))
     # By version, not by when each was published: a fix to an older line may come out after a newer release.
-    return sorted(out, key=lambda r: version_key(r.version) or (-1, -1, -1, -1), reverse=True)
+    return sorted(out, key=lambda r: version_key(r.version) or OLDEST, reverse=True)
 
 
 def oldest_supported(found: list[Release]) -> Release | None:
@@ -165,10 +166,29 @@ def installed(codename: str, root: Path = REPO) -> str:
         return CHECKOUT
     record = record_of(codename, root)
     if not record:
-        version = manifest(folder).get("version")
-        return f"release {version}" if version else ""
+        found = manifest(folder).get("version")
+        return f"release {found}" if found else ""
     tag = str(record.get("tag", ""))
-    return "preview (main)" if tag == "main" else f"release {tag.removeprefix('v')}"
+    if tag == "main":
+        words = preview_words(codename, root)
+        return f"preview {words}" if words else "preview (main)"
+    return f"release {tag.removeprefix('v')}"
+
+
+def preview_words(codename: str, root: Path = REPO) -> str:
+    """Return a downloaded preview in words, from its headset.json: "2026.12.0 preview from 3 December 2026 (4d8f977)".
+
+    "" when devices/CODENAME is no preview or its headset.json names no development version.
+    """
+    folder = root / "devices" / codename
+    data = manifest(folder)
+    found = str(data.get("version", ""))
+    parsed = own_version.parse(found)
+    if record_of(codename, root).get("tag") != "main" or parsed is None or parsed.dev is None:
+        return ""
+    when = own_version.committed_at(str(data.get("date", "")))
+    commit = str(data.get("commit", ""))
+    return own_version.preview_words(found, when, "" if commit.startswith("$") else commit)
 
 
 def identity(codename: str, root: Path = REPO) -> str:
@@ -184,13 +204,16 @@ def identity(codename: str, root: Path = REPO) -> str:
     return installed(codename, root)
 
 
-def version_key(version: str) -> tuple[int, int, int, int] | None:
-    """Return a release version (1.0-beta.2) as a key that sorts it among the others, None for none."""
-    match = re.fullmatch(r"v?(\d+)\.(\d+)(?:-beta(?:\.(\d+))?)?", version)
-    if match is None:
-        return None
-    beta = "-beta" in version
-    return int(match[1]), int(match[2]), 0 if beta else 1, int(match[3] or 1) if beta else 0
+#: Where a release without a version sorts: after every one with a version, read newest first.
+OLDEST: own_version.Key = ((-1,), (0, 0), 0.0)
+
+
+def version_key(version: str) -> own_version.Key | None:
+    """Return a release version (2026.12.0b3, the old 1.0-beta.2) as a key that sorts it among the others, or None.
+
+    The calendar versions sort after the releases before the switch (overpressure/version.py).
+    """
+    return own_version.key(version)
 
 
 def update(codename: str, root: Path = REPO, get: Callable[[str], bytes] = fetch) -> Release | None:

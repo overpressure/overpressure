@@ -155,12 +155,8 @@ LIGHT = "Light"
 
 
 def version() -> str:
-    """Return overpressure's version in the release tags' spelling (a preview says so), or "" when unknown."""
-    python = own_version.python_version()
-    if not python:
-        return ""
-    spelled = own_version.tag_spelling(python.split(".dev")[0])
-    return f"preview of {spelled}" if own_version.channel(python) == own_version.PREVIEW else spelled
+    """Return overpressure's version in the display spelling (a preview with its date), or "" when unknown."""
+    return own_version.words()
 
 
 class Window:
