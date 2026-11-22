@@ -16,7 +16,8 @@ beta (a new series takes this month and its next free patch; a running one its n
 `check` prints `prerelease` for a beta, `release` otherwise, and fails when the tag is not a calendar release or
 names another version than the version file. The releases before the switch (v1.0-beta.N) still sort first.
 `notes --api` (a headset's release) names in the notes the oldest overpressure release that runs that headset
-interface, from this overpressure checkout's tags, and fails while none does: overpressure is released first.
+interface and, for a calendar-versioned headset release, is calendar-versioned itself (an older one never offers
+it), from this overpressure checkout's tags, and fails while none does: overpressure is released first.
 
 `notes` writes the release's notes and the zip's CHANGELOG.md from the conventional commits (git-cliff, the
 repository's cliff.toml). The changelog starts at the first release: its notes are its tag's own words.
@@ -186,22 +187,31 @@ def supported(headset_py: str) -> dict[int, int]:
     return {int(major): int(minor) for major, minor in pairs}
 
 
-def needs(api: str, tags: list[str], headset_py_at: Callable[[str], str]) -> str:
-    """Return the oldest overpressure release (of @p tags) whose headset.py runs interface @p api, "" for none."""
+def needs(api: str, tags: list[str], headset_py_at: Callable[[str], str], *, release: str = "") -> str:
+    """Return the oldest overpressure release (of @p tags) that runs headset release @p release, "" for none.
+
+    It runs its interface @p api, and for a calendar-versioned @p release it is calendar-versioned itself: an
+    overpressure from before the switch sorts calendar versions before its own and never offers them as newer.
+    """
     major, _, minor = api.partition(".")
     if not (major.isdigit() and minor.isdigit()):
         message = f"{api} is not a headset interface: MAJOR.MINOR"
         raise ValueError(message)
+    own = release_version(release) if release else None
+    calendar = own is not None and own.calendar
     for tag in sorted((t for t in tags if release_version(t) is not None), key=key):
+        found = release_version(tag)
+        if calendar and not (found is not None and found.calendar):
+            continue
         if supported(headset_py_at(tag)).get(int(major), -1) >= int(minor):
             return tag
     return ""
 
 
-def needs_line(api: str) -> str:
-    """Return the notes' line on the overpressure a headset release needs (interface @p api), from REPO's tags."""
+def needs_line(api: str, release: str) -> str:
+    """Return the notes' line on the overpressure headset release @p release (interface @p api) needs (REPO's tags)."""
     tags = git("-C", str(REPO), "tag", "-l").split()
-    tag = needs(api, tags, lambda t: git("-C", str(REPO), "show", f"{t}:overpressure/headset.py"))
+    tag = needs(api, tags, lambda t: git("-C", str(REPO), "show", f"{t}:overpressure/headset.py"), release=release)
     if not tag:
         message = f"no overpressure release runs headset interface {api} yet: release overpressure first"
         raise ValueError(message)
@@ -353,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         text, changelog = notes(args.tag)
         if args.api:
-            text = f"{needs_line(args.api)}\n\n{text}"
+            text = f"{needs_line(args.api, args.tag)}\n\n{text}"
         Path("notes.md").write_text(text, encoding="utf-8", newline="\n")
         Path("CHANGELOG.md").write_text(changelog, encoding="utf-8", newline="\n")
         # The release's title: the tag's first line (docs/releasing.md), else the name and version.

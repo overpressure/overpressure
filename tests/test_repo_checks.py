@@ -228,6 +228,12 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(release.needs("1.5", tags, headset_py.__getitem__), "2026.12.0b0")
         self.assertEqual(release.needs("1.2", tags, headset_py.__getitem__), "v1.0-beta.4")
         self.assertEqual(release.needs("1.6", tags, headset_py.__getitem__), "")
+        # An overpressure from before the calendar versions never offers a calendar-versioned headset release.
+        headset_py["v1.0-beta.4"] = "SUPPORTED: dict[int, int] = {1: 5}"
+        self.assertEqual(release.needs("1.5", tags, headset_py.__getitem__), "v1.0-beta.4")
+        self.assertEqual(release.needs("1.5", tags, headset_py.__getitem__, release="v1.0-beta.6"), "v1.0-beta.4")
+        self.assertEqual(release.needs("1.5", tags, headset_py.__getitem__, release="2026.12.0b0"), "2026.12.0b0")
+        self.assertEqual(release.needs("1.2", tags, headset_py.__getitem__, release="2026.12.1"), "2026.12.0b0")
         with self.assertRaises(ValueError):
             release.needs("one", tags, headset_py.__getitem__)
 
