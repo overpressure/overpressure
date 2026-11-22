@@ -41,5 +41,6 @@ commit_parsers = [
   { message = ".*", group = "<!-- 9 -->Other" },
 ]
 filter_commits = false
-tag_pattern = "v[0-9].*"
+# The releases: the calendar versions (2026.11.0b0), and the v1.0-beta.N before them.
+tag_pattern = '^(v[0-9]|20[0-9]{2}\.[0-9])'
 sort_commits = "newest"
