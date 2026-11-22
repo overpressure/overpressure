@@ -40,6 +40,12 @@ class AndroidToolTests(unittest.TestCase):
         noise = "libusb: warning [darwin_transfer_status] transfer error: timed out\nSuccessfully wrote 0.14 MiB"
         with patch.object(android.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", noise)):
             self.assertIn("Successfully wrote", android.run(["fake"]))
+        stalled = "libusb: error [submit_bulk_transfer] bulk transfer failed (dir = In): pipe is stalled"
+        with (
+            patch.object(android.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", stalled)),
+            self.assertRaises(ValueError),
+        ):
+            android.run(["fake"])
         with (
             patch.object(
                 android.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", noise + "\nERROR: x")
