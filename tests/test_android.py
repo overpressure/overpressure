@@ -35,6 +35,19 @@ class AndroidToolTests(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired):
                 android.run(["fake"])
 
+    def test_libusb_warnings_are_not_failures(self):
+        # macOS' libusb prints "transfer error: timed out" for a transfer that edl-ng retries and completes
+        noise = "libusb: warning [darwin_transfer_status] transfer error: timed out\nSuccessfully wrote 0.14 MiB"
+        with patch.object(android.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", noise)):
+            self.assertIn("Successfully wrote", android.run(["fake"]))
+        with (
+            patch.object(
+                android.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", noise + "\nERROR: x")
+            ),
+            self.assertRaises(ValueError),
+        ):
+            android.run(["fake"])
+
     def test_device_selection(self):
         def listing(_argv: list[str]) -> str:
             return "List of devices attached\na device\nb unauthorized"

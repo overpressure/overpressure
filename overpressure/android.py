@@ -32,7 +32,8 @@ def run(command: list[str], timeout: int = 60) -> str:
         command, capture_output=True, text=True, timeout=timeout, check=False, stdin=subprocess.DEVNULL
     )
     output = result.stdout + "\n" + result.stderr
-    if result.returncode or re.search(r"\b(?:FAILED|ERROR)\b", output, re.IGNORECASE):
+    # libusb's macOS warnings ("transfer error: timed out") are harmless noise, not a failed command
+    if result.returncode or re.search(r"\b(?:FAILED|ERROR)\b", re.sub(r"(?m)^libusb:.*$", "", output), re.IGNORECASE):
         msg = f"Command failed ({result.returncode}): {output.strip()}"
         raise ValueError(msg)
     return output.strip()
