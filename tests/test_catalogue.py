@@ -81,7 +81,7 @@ class CatalogueTests(unittest.TestCase):
         ):
             self.add(**options)
             self.assertEqual(self.version(), version, options)
-        self.assertEqual(catalogue.installed("phoenix", self.root), "preview (main)")
+        self.assertEqual(catalogue.installed("phoenix", self.root), "preview (main)")  # 1.2-dev: no development version
         self.add(version="v1.0")
         self.assertEqual(catalogue.installed("phoenix", self.root), "release 1.0")
         self.assertTrue((self.root / "devices/phoenix/scripts/run.sh").is_file())

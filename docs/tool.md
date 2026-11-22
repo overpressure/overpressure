@@ -36,7 +36,7 @@ python -m overpressure headset releases phoenix     # its published releases, ne
 python -m overpressure headset add phoenix          # its newest stable release (until there is one, beta)
 python -m overpressure headset add phoenix --channel beta      # the newest, betas included
 python -m overpressure headset add phoenix --channel preview   # its main: development state, untested
-python -m overpressure headset add phoenix --version 1.0-beta  # a release by its version, older ones too
+python -m overpressure headset add phoenix --version 2026.12.0b0  # a release by its version, older ones too
 python -m overpressure headset update phoenix       # what its recorded channel offers now, when newer
 ```
 
@@ -193,11 +193,12 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
     overpressure*, or *No guided installer yet: expert tools only*. Its button is *Continue* for an unfinished
     installation, else *Open*; a click on the card does the same.
   - **Its support on this computer**, an inset panel titled *PICO 4 support on this computer*
-    ([`headsets.footer`](../overpressure/window/headsets.py)): the version there (*Version 1.0-beta.2*, *kept at
+    ([`headsets.footer`](../overpressure/window/headsets.py)): the version there in the display spelling (*Version 2026.12.0 beta 2*, a preview's
+    *Version 2026.12.0 preview from 3 December 2026 (4d8f977)*, *kept at
     this version* for a pinned one, *Developer copy · updated with Git* for a checkout), at most one status and
-    one action, and what that action changes. *Up to date*; *New version 1.0-beta.3* with *Download 1.0-beta.3*
+    one action, and what that action changes. *Up to date*; *New version 2026.12.0 beta 3* with *Download 2026.12.0 beta 3*
     (the recorded channel's newest; *Checking for updates* until read, nothing claimed offline, never for a
-    pinned version); *Downloading 1.0-beta.3* with a progress bar; *Download failed* with the reason and *Try
+    pinned version); *Downloading 2026.12.0 beta 3* with a progress bar; *Download failed* with the reason and *Try
     again*. Every download says that only this computer changes: afterwards the headset is updated by opening
     it and choosing *Upgrade*, and after a download the card says so again (*Your headset has not changed
     yet*), or, after the first download, that the headset can be opened to install. A headset not downloaded
@@ -214,9 +215,9 @@ the `gui` extra in `pyproject.toml`); the start scripts bring both, `uv sync --e
   like to do?*: one card per workflow, with an *erases the headset* pill where it erases, where it stopped
   last time, or why it cannot run now (`Headset.workflow_problem`). When the headset runs another version than
   the support on this computer (`installed_release` against `catalogue.identity`, never for a development
-  checkout), the *Upgrade* card says so: a *New version* pill, *Your headset runs 1.0-beta.2. Upgrade brings it to
-  1.0-beta.3, the version on this computer.*, and, when the upgrade can run, the page's main button; the headset
-  page's line then reads *Upgrade ready: your headset runs 1.0-beta.2, this computer has 1.0-beta.3* (an
+  checkout), the *Upgrade* card says so: a *New version* pill, *Your headset runs 2026.12.0 beta 2. Upgrade brings it to
+  2026.12.0 beta 3, the version on this computer.*, and, when the upgrade can run, the page's main button; the headset
+  page's line then reads *Upgrade ready: your headset runs 2026.12.0 beta 2, this computer has 2026.12.0 beta 3* (an
   unfinished run comes first). Below them, *Your backup* says where
   the headset's backup is (`Headset.backup_set`) with *Export backup…* and *Import backup…*, which run
   `python -m overpressure backup export|import FILE` as a child. Last, *Something went wrong?* with *Save logs…*
@@ -314,14 +315,16 @@ overpressure comes in three channels, as each headset does ([Headsets in devices
 
 | Channel | What | Where |
 | --- | --- | --- |
-| stable | `vMAJOR.MINOR` | the release GitHub marks *Latest*, once there is one |
-| beta | `vMAJOR.MINOR-beta[.N]`, a pre-release | the newest release marked *Pre-release* |
+| stable | `YYYY.M.PATCH` (`2026.12.0`) | the release GitHub marks *Latest*, once there is one |
+| beta | `YYYY.M.PATCHbN` (`2026.12.0b3`), a pre-release | the newest release marked *Pre-release* |
 | preview | `main` | *Download ZIP* on the repository's page, or a clone |
 
-`python -m overpressure --version` says which one runs: its version in the tags' spelling, the channel and
-the commit (a release zip carries it, [overpressure/version.py](../overpressure/version.py); a checkout asks git).
-Between releases `main` carries the next one's development version (`1.0b2.dev0`), so a preview is never taken
-for the release before it ([releasing.md](releasing.md#a-release)).
+`python -m overpressure --version` says which one runs, in both spellings and with its commit:
+*overpressure 2026.12.0 beta 3 (2026.12.0b3, commit 0123abcd4567)*; a preview with its commit's time
+(*2026.12.0 preview from 3 December 2026 (4d8f977)*, `2026.12.0.dev202612031154`). A release zip carries the commit
+and its time ([overpressure/version.py](../overpressure/version.py)); a checkout asks git. Between releases `main`
+carries the next one's development version (`2026.12.0.dev0`), so a preview is never taken for the release before
+it ([releasing.md](releasing.md#versions)).
 
 A newer release unpacks into a folder of its own, beside the one before. What the owner made is in the earlier
 folder: the settings (`.env`), the headset's backup (`backup/`, the way back to its own system), the installer's

@@ -52,8 +52,8 @@ devices/<codename>`, which the headset's CI runs, checks it against the template
 {
  "codename": "example",
  "name": "Example VR 1",
- "version": "1.0-beta",
- "api": "1.0",
+ "version": "2026.12.0.dev0",
+ "api": "1.5",
  "commit": "$Format:%H$",
  "date": "$Format:%ct$"
 }
@@ -64,7 +64,12 @@ interface](#the-headset-interface)): `discover()` loads only a headset this over
 others as refused with the reason (`python -m overpressure devices`).
 `.gitattributes` marks `headset.json` `export-subst`, so a release zip carries its commit and time.
 
-**Releases.** A tag `vMAJOR.MINOR[-beta[.N]]` naming `headset.json`'s version makes a GitHub release with
+`version` is the headset's calendar version ([releasing.md](releasing.md#versions)): `main` carries the next
+release as a development version, which a release's version pull request turns into the release
+(`python .overpressure/scripts/release.py bump beta --version-file headset.json`, from an overpressure checkout in
+`.overpressure`).
+
+**Releases.** An annotated tag that is `headset.json`'s version (`2026.12.0b0`) makes a GitHub release with
 the source zip (`git archive`, one top folder) and its `.sha256`, as overpressure's own releases have
 ([the PICO 4's release workflow](https://github.com/overpressure/phoenix/blob/main/.github/workflows/release.yml)).
 `python -m overpressure headset add CODENAME` and the window's Download take it from there
@@ -118,7 +123,7 @@ backwards compatible, so an older headset release keeps installing:
   on every overpressure that runs `1.2` or a later `1.x`.
 - **A change that breaks anything makes a new major.** `overpressure.api.v2` gets the new interface, and
   `v1`'s modules become adapters that keep interface 1's names and behaviour on top of it. Both stay in
-  `SUPPORTED` until overpressure's next major release.
+  `SUPPORTED` until the old major is retired, at the earliest in the release after its headsets moved on.
 - **A retired major** leaves `SUPPORTED` for `RETIRED`, with the last overpressure version that ran it: a
   release made for it is refused with that version to use.
 - **CI keeps it true.** overpressure's `headsets` job runs each headset's `main` and the oldest of its

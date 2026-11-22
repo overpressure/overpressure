@@ -51,6 +51,24 @@ class Unlisted(Owned):
         raise OSError(msg)
 
 
+class AboutTests(unittest.TestCase):
+    def test_the_headsets_version_a_previews_with_its_commits_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / "devices" / "phoenix"
+            folder.mkdir(parents=True)
+            (folder / "headset.json").write_text(
+                '{"codename": "phoenix", "version": "2026.12.0.dev0", "api": "1.5",'
+                ' "commit": "4d8f977012345678", "date": "1796298840"}',
+                encoding="utf-8",
+            )
+            self.assertEqual(support.headset_version("phoenix", root), "2026.12.0.dev202612031154, commit 4d8f97701234")
+            (folder / "headset.json").write_text(
+                '{"version": "2026.12.0b3", "commit": "$Format:%H$"}', encoding="utf-8"
+            )
+            self.assertEqual(support.headset_version("phoenix", root), "2026.12.0b3")
+
+
 class BundleTests(unittest.TestCase):
     def setUp(self):
         self.folder = Path(tempfile.mkdtemp())

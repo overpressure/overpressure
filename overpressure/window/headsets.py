@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from overpressure import REPO, catalogue
+from overpressure import version as own_version
 from overpressure.headset import Command, Headset, Info, Step, discover, tools_step
 from overpressure.window.advanced import HEADSET, busy
 from overpressure.window.installer import DONE, FAILED, Model, drain
@@ -242,7 +243,7 @@ class Download:
             return f"Downloading {what}..."
         if self.error:
             return f"The download failed: {self.error}"
-        return f"Downloaded release {self.release.version}" if self.release else ""
+        return f"Downloaded release {own_version.display(self.release.version)}" if self.release else ""
 
 
 def default_choice(found: list[catalogue.Release] | None, record: dict) -> str:
@@ -265,7 +266,9 @@ def update_line(newer: catalogue.Release | None) -> str:
     """Return a card's line on an update its recorded channel offers, "" for none."""
     if newer is None:
         return ""
-    return "Update available: main has changed" if newer.tag == "main" else f"Update available: release {newer.version}"
+    if newer.tag == "main":
+        return "Update available: main has changed"
+    return f"Update available: release {own_version.display(newer.version)}"
 
 
 #: The status pills' tones (overpressure/window/theme.py's names).
@@ -313,8 +316,8 @@ def offered(record: dict) -> str:
 def downloading(download: Download, newer: catalogue.Release | None, update: str) -> str:
     """Return what DOWNLOAD fetches: the version of the update NEWER when it is that (UPDATE), else its choice."""
     if newer is not None and download.wanted == update:
-        return "main" if newer.tag == "main" else newer.version
-    return download.wanted.lower() if download.wanted in CHANNEL_OF else download.wanted
+        return "main" if newer.tag == "main" else own_version.display(newer.version)
+    return download.wanted.lower() if download.wanted in CHANNEL_OF else own_version.display(download.wanted)
 
 
 def footer(  # noqa: C901, PLR0911, PLR0912  # one return per state the card can be in
@@ -336,7 +339,7 @@ def footer(  # noqa: C901, PLR0911, PLR0912  # one return per state the card can
     if not entry.downloaded:
         title, detail = "Not downloaded yet", ""
     else:
-        version = entry.release.removeprefix("release ").removeprefix("preview ")
+        version = own_version.display(entry.release.removeprefix("release ").removeprefix("preview "))
         title = f"Version {version}" if entry.release else "Version unknown"
         detail = "kept at this version" if record.get("pinned") else ""
     picker = bool(entry.refused)
@@ -369,12 +372,12 @@ def footer(  # noqa: C901, PLR0911, PLR0912  # one return per state the card can
         )  # fmt: skip
     newer = updates.get(entry.codename)
     if newer is not None:
-        version = "the newest main" if newer.tag == "main" else newer.version
+        version = "the newest main" if newer.tag == "main" else own_version.display(newer.version)
         return Footer(
             heading,
             title,
             detail,
-            f"New version {'available' if newer.tag == 'main' else newer.version}",
+            f"New version {'available' if newer.tag == 'main' else version}",
             INFO,
             f"Download {version}",
             offered(record),
@@ -399,9 +402,9 @@ class Offer:
 def version_words(identity: str) -> str:
     """Return a headset tooling's identity (catalogue.identity: "v1.0-beta.2 0123abcd", "main 0123abcd") in words."""
     if identity.startswith("release "):  # catalogue.installed's words, without a download's record
-        return identity.removeprefix("release ")
+        return own_version.display(identity.removeprefix("release "))
     tag = identity.split(" ", 1)[0]
-    return "a preview of main" if tag == "main" else tag.removeprefix("v")
+    return "a preview of main" if tag == "main" else own_version.display(tag.removeprefix("v"))
 
 
 def upgrade_offer(installed: str, current: str) -> Offer | None:
