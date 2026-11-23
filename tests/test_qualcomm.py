@@ -153,6 +153,25 @@ class UnansweredTests(unittest.TestCase):
         self.assertFalse(qualcomm.unanswered("Serial Number: 0A1B2C3D\n--- Partitions LUN 0 ---"))
         self.assertIn("only right after it enters EDL mode", qualcomm.NO_ANSWER)
 
+    def test_a_sahara_handshake_that_fails_again_after_the_reset(self):
+        # edl-ng 1.6 on macOS, a session that no longer answers: libusb fails the handshake with a stalled pipe.
+        first = (
+            "[ERROR] Handshake failed: LibUsbDotNet error: Pipe\n"
+            "[WARN] Initial Sahara handshake failed, attempting reset and retry...\n"
+        )
+        for last in (
+            "[ERROR] An unexpected error occurred in 'printgpt': Sahara handshake failed even after reset.",
+            (
+                "[ERROR] Sahara reset/retry failed: Pipe\n"
+                "[ERROR] An unexpected error occurred in 'reset': Sahara handshake failed."
+            ),
+        ):
+            with self.subTest(last=last):
+                self.assertTrue(qualcomm.unanswered(first + last))
+        # The first try's failure alone is not one: the retry answered.
+        answered = first + "[INFO] Sahara handshake successful after reset.\nSerial Number: 0A1B2C3D"
+        self.assertFalse(qualcomm.unanswered(answered))
+
 
 class EdlTests(unittest.TestCase):
     def setUp(self):

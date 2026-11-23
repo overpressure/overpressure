@@ -434,8 +434,14 @@ def edl_ng(program: str | Path, loader: str | Path, *words: str | Path, memory: 
     return [program, "--loader", loader, "--memory", memory, *words]
 
 
-#: edl-ng's words when the device in EDL mode gives it no answer it can place (its mode stays Unknown or Error).
-_UNANSWERED = re.compile(r"Device mode is \w+ or could not be determined")
+#: edl-ng's words when the device in EDL mode gives it no answer it can place: its mode stays Unknown or Error,
+#: or the device looks like Sahara but its handshake fails again after edl-ng's reset (1.6's last words in
+#: UploadLoaderViaSaharaAsync; on macOS libusb fails it with a stalled pipe). The first failure, "Initial Sahara
+#: handshake failed, attempting reset and retry...", is not one: the retry may still answer.
+_UNANSWERED = re.compile(
+    r"Device mode is \w+ or could not be determined"  # no mode found
+    r"|Sahara handshake failed(?: even after reset)?\."  # the handshake failed again after the reset
+)
 #: What that means, in plain words: a device in EDL mode opens the conversation once, right after it appears.
 NO_ANSWER = (
     "The headset is in EDL mode but does not answer: it opens the conversation only right after it enters "
