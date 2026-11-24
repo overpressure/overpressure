@@ -1,7 +1,8 @@
 # The changelog, from the conventional commits, by git-cliff (docs/releasing.md); scripts/release.py notes writes
 # a release's notes and CHANGELOG.md with it, starting at the first release:
 #   uvx git-cliff@2.14.2 --unreleased        what the next release brings
-# Features and fixes for users, each commit's subject; everything else in one count.
+# Features and fixes for users, each commit's subject; everything else in one count. scripts/release.py names
+# the contributors (commit.extra.author and .pr, the release's extra.contributors) when it has a token.
 
 [changelog]
 header = """
@@ -22,9 +23,14 @@ body = """
 ### {{ group | striptags | trim }}
 {% for commit in commits %}
 - {{ commit.message | split(pat="\n") | first | trim }}{% if commit.breaking %} (breaking){% endif %}
+{%- if commit.extra and commit.extra.author %} by @{{ commit.extra.author }}{% endif %}
+{%- if commit.extra and commit.extra.pr %} in #{{ commit.extra.pr }}{% endif %}
 {%- endfor %}
 {% endif %}
 {%- endfor %}
+{%- if extra and extra.contributors %}
+Contributors: {% for name in extra.contributors %}@{{ name }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
 
 """
 trim = false

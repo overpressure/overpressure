@@ -4,8 +4,8 @@
 
     python scripts/release.py bump beta|stable|next [--version-file pyproject.toml|headset.json] [--today DATE]
     python scripts/release.py check TAG [--version-file pyproject.toml|headset.json]
-    python scripts/release.py notes TAG [--title NAME] [--api MAJOR.MINOR]    in the repository's root: notes.md,
-                                                                                   CHANGELOG.md
+    python scripts/release.py notes TAG [--title NAME] [--api MAJOR.MINOR] [--repo OWNER/NAME]
+                                                          in the repository's root: notes.md, CHANGELOG.md
     python scripts/release.py close TAG --repo OWNER/NAME [--dry-run]
 
 Versions are calendar versions as Home Assistant's (overpressure/version.py): a release YYYY.M.PATCH, a beta
@@ -23,7 +23,10 @@ it), from this overpressure checkout's tags, and fails while none does: overpres
 repository's cliff.toml). The changelog starts at the first release: its notes are its tag's own words.
 After it, a beta's notes list what changed since the release before it, a stable release's what changed since
 the stable release before it (or the first release), betas included. CHANGELOG.md holds every release after
-the first by git-cliff, then the first release's own words.
+the first by git-cliff, then the first release's own words. With a token (GH_TOKEN or GITHUB_TOKEN) and the
+repository (--repo, else GITHUB_REPOSITORY) both name the contributors: each feature and fix the account of its
+pull request's author and the pull request, each release everyone whose pull requests it brings; without them
+the names are left out.
 
 `close` runs after the release is published: every open issue of the repository whose Stage is
 "Awaiting release" (fixed on main, docs: CLAUDE.md's Backlog) gets a comment naming the release and is
@@ -34,11 +37,13 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -235,8 +240,49 @@ def own_words(tag: str) -> tuple[str, str]:
     return subject, body
 
 
-def notes(tag: str) -> tuple[str, str]:
-    """Return @p tag's release notes and the zip's CHANGELOG.md."""
+def contributors(context: list[dict], repo: str, call: Callable[[str, str, dict | None], Any]) -> list[dict]:
+    """Name in git-cliff's @p context who brought each commit of @p repo, and each release's contributors.
+
+    The pull request a commit came from names its author's account (its commit may carry a name and an address
+    GitHub links to no one); a commit without one, its GitHub author. A commit gets `extra.author` and `extra.pr`,
+    a release `extra.contributors`, sorted.
+    """
+    found: dict[str, tuple[str, int | None] | None] = {}
+    for release in context:
+        names: set[str] = set()
+        for commit in release["commits"]:
+            sha = commit["id"]
+            if sha not in found:
+                pulls = call("GET", f"repos/{repo}/commits/{sha}/pulls", None) or []
+                merged = [p for p in pulls if p.get("merged_at")] or pulls
+                if merged:
+                    found[sha] = (merged[0]["user"]["login"], merged[0]["number"])
+                else:
+                    author = (call("GET", f"repos/{repo}/commits/{sha}", None) or {}).get("author") or {}
+                    found[sha] = (author["login"], None) if author.get("login") else None
+            named = found[sha]
+            if named is None:
+                continue
+            login, number = named
+            commit["extra"] = {**(commit.get("extra") or {}), "author": login, "pr": number}
+            names.add(login)
+        release["extra"] = {**(release.get("extra") or {}), "contributors": sorted(names, key=str.lower)}
+    return context
+
+
+def changelog(*args: str, named: Callable[[list[dict]], list[dict]] | None = None) -> str:
+    """Return git-cliff's changelog for @p args, its commits and releases named by @p named when given."""
+    if named is None:
+        return cliff(*args, "--strip", "header")
+    context = named(json.loads(cliff(*args, "--context")))
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "context.json"
+        path.write_text(json.dumps(context), encoding="utf-8")
+        return cliff("--strip", "header", "--from-context", str(path))
+
+
+def notes(tag: str, named: Callable[[list[dict]], list[dict]] | None = None) -> tuple[str, str]:
+    """Return @p tag's release notes and the zip's CHANGELOG.md, its contributors named by @p named."""
     notes_range, first = ranges(tag, git("tag", "-l").split())
     _, body = own_words(tag)
     first_subject, first_body = own_words(first)
@@ -245,8 +291,8 @@ def notes(tag: str) -> tuple[str, str]:
         return f"{body}\n", f"{HEADER}\n{first_entry}"
     # One section for a release: its betas' commits are its own.
     ignore = () if version.channel(tag) == version.BETA else (f"--ignore-tags={BETA_TAGS}",)
-    changes = cliff(*ignore, "--strip", "header", notes_range)
-    later = cliff("--strip", "header", f"{first}..{tag}")
+    changes = changelog(*ignore, notes_range, named=named)
+    later = changelog(f"{first}..{tag}", named=named)
     return f"{body}\n\n{changes}", f"{HEADER}\n{later.strip()}\n\n{first_entry}"
 
 
@@ -338,6 +384,11 @@ def main(argv: list[str] | None = None) -> int:
     noting.add_argument("tag")
     noting.add_argument("--title", default="overpressure", help="the title's name when the tag has no subject")
     noting.add_argument("--api", help="a headset release's interface: the notes name the overpressure it needs")
+    noting.add_argument(
+        "--repo",
+        default=os.environ.get("GITHUB_REPOSITORY"),
+        help="OWNER/NAME, whose pull requests name the contributors (GitHub Actions' repository; with a token)",
+    )
     closing = sub.add_parser("close", help="close the issues awaiting this release, with a comment naming it")
     closing.add_argument("tag")
     closing.add_argument("--repo", required=True, help="OWNER/NAME")
@@ -361,11 +412,17 @@ def main(argv: list[str] | None = None) -> int:
             path = Path(args.version_file)
             print(check(args.tag, path.read_text(encoding="utf-8"), headset=path.name == "headset.json"))
             return 0
-        text, changelog = notes(args.tag)
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        named = None
+        if args.repo and token:
+            named = functools.partial(contributors, repo=args.repo, call=github(token))
+        else:
+            print("release: the contributors are left out: no repository or no token", file=sys.stderr)
+        text, changes = notes(args.tag, named)
         if args.api:
             text = f"{needs_line(args.api, args.tag)}\n\n{text}"
         Path("notes.md").write_text(text, encoding="utf-8", newline="\n")
-        Path("CHANGELOG.md").write_text(changelog, encoding="utf-8", newline="\n")
+        Path("CHANGELOG.md").write_text(changes, encoding="utf-8", newline="\n")
         # The release's title: the tag's first line (docs/releasing.md), else the name and version.
         print(own_words(args.tag)[0] or f"{args.title} {version.display(args.tag)}")
     except (ValueError, subprocess.CalledProcessError, OSError) as error:
