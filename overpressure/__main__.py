@@ -359,10 +359,26 @@ def main(argv: list[str] | None = None) -> int:
     return _dispatch(registry, headset, argv)
 
 
+def utf8_output(*streams: object) -> None:
+    """Write @p streams (standard output and error by default) as UTF-8 on every host.
+
+    Redirected to a file or a pipe, Python on Windows writes the system's code page (cp1252), which
+    has no character for much of what the tools pass on (a build's arrows, PICO OS's names): print
+    would raise mid-command. A stream without reconfigure (none at all under pythonw, a test's
+    StringIO) is left as it is.
+    """
+    for stream in streams or (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def gui() -> int:
     """Open the window: the overpressure-gui launcher."""
+    utf8_output()
     return main(["gui"])
 
 
 if __name__ == "__main__":
+    utf8_output()
     sys.exit(main())

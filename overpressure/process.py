@@ -70,6 +70,40 @@ def run(
     return output
 
 
+class _Lines:
+    """run_streamed's reader: a program's output, its lines handed on until the handler fails, then only drained."""
+
+    def __init__(self, proc: subprocess.Popen[bytes], on_line: Callable[[str], None]) -> None:
+        """Read @p proc's output for @p on_line."""
+        self.proc, self.on_line = proc, on_line
+        self.chunks: list[bytes] = []
+        self.failed: list[Exception] = []
+
+    def deliver(self, raw: bytes) -> None:
+        """Hand one line on; a handler that raises ends the program, and the caller raises its error."""
+        if self.failed or not raw.strip():
+            return
+        try:
+            self.on_line(raw.decode("utf-8", "replace").rstrip())
+        except Exception as exc:  # noqa: BLE001  # any failure of the caller's handling: raised in run_streamed
+            self.failed.append(exc)
+            self.proc.kill()
+
+    def read(self) -> None:
+        """Read the output to its end; a carriage return ends a line too."""
+        if self.proc.stdout is None:
+            return
+        pending = b""
+        pipe = self.proc.stdout.fileno()
+        for block in iter(lambda: os.read(pipe, 1 << 16), b""):
+            self.chunks.append(block)
+            pending += block
+            *done, pending = re.split(rb"[\r\n]", pending)
+            for raw in done:
+                self.deliver(raw)
+        self.deliver(pending)
+
+
 def run_streamed(
     argv: Sequence[str | os.PathLike[str]],
     timeout: float,
@@ -81,7 +115,9 @@ def run_streamed(
     """Run a program as run() does, handing each line to @p on_line as it comes; return its output.
 
     A carriage return ends a line too: a progress display redraws its line with one. @p stdin is
-    its standard input (none by default).
+    its standard input (none by default). An @p on_line that raises ends the program and raises a
+    RuntimeError from it here: the reader goes on emptying the pipe, so the program never waits on
+    a full one (a line the console's encoding cannot write hung an install that way).
     """
     proc = subprocess.Popen(  # noqa: S603  # the host tools' fixed command lines, no shell
         [str(a) for a in argv],
@@ -90,24 +126,8 @@ def run_streamed(
         stdin=stdin or subprocess.DEVNULL,
         cwd=REPO,
     )
-    chunks: list[bytes] = []
-
-    def read() -> None:
-        pending = b""
-        if proc.stdout is None:
-            return
-        pipe = proc.stdout.fileno()
-        for block in iter(lambda: os.read(pipe, 1 << 16), b""):
-            chunks.append(block)
-            pending += block
-            *done, pending = re.split(rb"[\r\n]", pending)
-            for raw in done:
-                if raw.strip():
-                    on_line(raw.decode("utf-8", "replace").rstrip())
-        if pending.strip():
-            on_line(pending.decode("utf-8", "replace").rstrip())
-
-    reader = threading.Thread(target=read, daemon=True)
+    lines = _Lines(proc, on_line)
+    reader = threading.Thread(target=lines.read, daemon=True)
     reader.start()
     with proc:  # closes its pipe
         try:
@@ -118,7 +138,10 @@ def run_streamed(
             raise
         finally:
             reader.join(10)
-    output = b"".join(chunks).decode("utf-8", "replace").strip()
+    if lines.failed:
+        msg = f"{Path(str(argv[0])).name}'s output could not be handled: {lines.failed[0]}"
+        raise RuntimeError(msg) from lines.failed[0]
+    output = b"".join(lines.chunks).decode("utf-8", "replace").strip()
     if check and proc.returncode:
         msg = f"{Path(str(argv[0])).name} failed ({proc.returncode}): {output[-800:]}"
         raise CommandFailed(msg, output)

@@ -7,6 +7,7 @@ import io
 import os
 import sys
 import threading
+import time
 import unittest
 
 from overpressure import process, progress, qualcomm
@@ -119,6 +120,25 @@ class StreamedTests(unittest.TestCase):
     def test_a_failure_raises(self):
         with self.assertRaises(RuntimeError):
             process.run_streamed([sys.executable, "-c", "import sys; sys.exit(3)"], 60, lambda _line: None)
+
+    def test_a_line_that_cannot_be_handled_ends_the_program_and_raises(self):
+        # The handler of an install's lines raised on a character, and the build waited on a full pipe for good:
+        # now the program ends at once and the caller gets the handler's error, long before the timeout.
+        # The program writes bytes: its own print would fail on the arrow in a cp1252 pipe.
+        script = (
+            "import sys, time; out = sys.stdout.buffer; out.write('built \\u2192 out\\n'.encode()); out.flush();"
+            " out.write(b'x' * 200000); out.flush(); time.sleep(60)"
+        )
+
+        def handle(line: str) -> None:
+            line.encode("cp1252")
+
+        started = time.monotonic()
+        with self.assertRaises(RuntimeError) as caught:
+            process.run_streamed([sys.executable, "-c", script], 60, handle)
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertIsInstance(caught.exception.__cause__, UnicodeEncodeError)
+        self.assertIn("could not be handled", str(caught.exception))
 
     def test_a_failure_keeps_its_whole_output(self):
         # The message ends with the output's last 800 characters; a log takes all of it from the error.

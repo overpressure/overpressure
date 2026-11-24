@@ -317,6 +317,29 @@ class CommandLineTests(unittest.TestCase):
             self.assertEqual(code, expected)
             self.assertEqual(boot.call_args[0][1], Path("out/x.img"))
 
+    def test_the_output_is_utf8_whatever_the_streams_were(self):
+        # Redirected on Windows, Python writes cp1252, which has no arrow: print raised mid-install.
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="\n")
+        cli.utf8_output(stream)
+        print("built → out", file=stream)
+        stream.flush()
+        self.assertEqual(stream.buffer.getvalue(), "built → out\n".encode())
+        cli.utf8_output(io.StringIO())  # nothing to reconfigure: left as it is
+
+    def test_the_command_line_writes_utf8_into_a_cp1252_pipe(self):
+        # A real pipe in cp1252, as a redirected run on Windows has it: the helper's output arrives as UTF-8.
+        probe = "import overpressure.__main__ as m; m.utf8_output(); print('\\u2192')"
+        done = subprocess.run(  # noqa: S603  # this Python, a fixed script
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            cwd=REPO,
+            env=dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0"),
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), "→".encode())
+
 
 if __name__ == "__main__":
     unittest.main()

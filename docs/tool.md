@@ -493,6 +493,11 @@ python -m overpressure build --firmware 5.13.7-global-seko      # the same throu
 python -m overpressure dev check
 ```
 
+**Its output is UTF-8** on every host, also redirected to a file or a pipe, where Python on Windows would
+write the system's code page and stop at a character it lacks (a build's `→`). A program whose lines a
+command passes on (`process.run_streamed`) ends when handling a line fails, and the command raises that
+error: it never waits on a program blocked on a full pipe.
+
 **Before anything touches the headset.** A command that touches the headset shows the disclaimer and asks
 `y` or `n` ([overpressure/disclaimer.py](../overpressure/disclaimer.py)): `install`, `upgrade`, `restore`,
 `ram-boot`, `run` of a step that touches it, and the headset's own commands marked so
