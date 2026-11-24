@@ -185,7 +185,7 @@ wheels = [
 
 [[package]]
 name = "overpressure"
-version = "2026.11.0b1"
+version = "2026.11.0b2.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "brotli" },
