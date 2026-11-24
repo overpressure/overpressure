@@ -52,7 +52,10 @@ that repository's CI enforces.
 
 What changed is in each release's notes and in the `CHANGELOG.md` inside its zip, both generated from the
 conventional commits by [git-cliff](https://git-cliff.org/) as [cliff.toml](../cliff.toml) sets it up: features
-and fixes by their subjects, everything else as a count (`python scripts/release.py notes TAG`). The changelog
+and fixes by their subjects, everything else as a count (`python scripts/release.py notes TAG`). Both name the
+contributors: each feature and fix the account that opened its pull request, and the pull request (a commit's own
+name and address may belong to no GitHub account), each release everyone whose pull requests it brings. The names
+come from GitHub, with the release workflow's token; without one (`GH_TOKEN`, a local run) they are left out. The changelog
 starts at the first release, whose entry is its tag's own words. A beta's notes list what changed since the
 release before it; a stable release's what changed since the stable release before it (or the first release),
 its betas included. What the next release brings:
