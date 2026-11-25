@@ -16,6 +16,10 @@ on:
         description: "The headset pins a release of overpressure/linux (kernel/release.json): fetch it and check the contracts."
         type: boolean
         default: false
+      overpressure:
+        description: "The branch of overpressure the headset is tested against: main, or a pull request's while a change both need is in review."
+        type: string
+        default: main
 
 permissions:
   contents: read
@@ -34,12 +38,13 @@ jobs:
       overpressure: ${{ steps.tree.outputs.overpressure }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: The tree, and overpressure's main it is tested against
+      - name: The tree, and the commit of overpressure it is tested against
         id: tree
         env:
           GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.overpressure }}
         run: |
-          main=$(gh api repos/overpressure/overpressure/commits/main --jq '.sha + " " + .commit.tree.sha')
+          main=$(gh api "repos/overpressure/overpressure/commits/$BRANCH" --jq '.sha + " " + .commit.tree.sha')
           commit=${main% *} main_tree=${main#* }
           [ -n "$commit" ] && [ -n "$main_tree" ] && [ "$commit" != "$main_tree" ]
           echo "overpressure=$commit" >> "$GITHUB_OUTPUT"
