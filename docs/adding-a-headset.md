@@ -197,8 +197,9 @@ reaches every caller.
 A headset declares; overpressure draws and runs. A headset has no UI code: it never imports
 `overpressure.window`, Tk or CustomTkinter. The window builds every page from what the headset declares:
 its steps, its plan's stages and tasks, the questions it asks, the notes it writes and its finished page.
-Interface 1 is exactly what this list names, each in `overpressure.api.v1`; a headset's tests use the same
-(the command line and the window are overpressure's to test).
+Interface 1 is what `overpressure.api.v1` exports: this list groups it by purpose and names the minor that added
+each part, and [the reference](api.md) lists every module and name with its signature. A headset's tests use the
+same (the command line and the window are overpressure's to test).
 
 | What | Where |
 | --- | --- |
