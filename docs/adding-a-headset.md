@@ -88,11 +88,8 @@ tree that passed against the same `main` is not tested again. overpressure's CI 
 its releases that overpressure still runs, against every change of the generic code (the `headsets` job, its
 codename in the matrix and a required check of each). For a change both sides need, the headset's pull request
 passes `overpressure:` with the branch of overpressure's pull request while both are in review, and drops it
-before it merges, once overpressure's has.
-
-**The organisation's actions.** Every workflow of the organisation takes uv from
-[.github/actions/uv](../.github/actions/uv/action.yml) (the start scripts' version, which a test keeps equal) and
-actionlint from [.github/actions/actionlint](../.github/actions/actionlint/action.yml): one pin each.
+before it merges, once overpressure's has. The workflows' pins agree: uv is the start scripts' version, and
+setup-uv and actionlint are pinned the same in each ([tests/test_workflows.py](../tests/test_workflows.py)).
 
 How the images are built is the headset's own business. The PICO 4 keeps an Alpine stage 1 on its stock
 kernel as the maintenance environment and boots its userspace, built from Valve's Holo packages, on

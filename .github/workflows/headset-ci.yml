@@ -84,8 +84,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: devices/${{ inputs.codename }}
-      - uses: ./.github/actions/uv
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
           python-version: "3.12"
       - run: uv sync --locked
       # As overpressure's own CI loads each headset (its headsets job): a refused one would never show.
@@ -132,7 +133,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: devices/${{ inputs.codename }}
-      - uses: ./.github/actions/uv
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
       - run: uv sync --locked
       - name: Formatting
         run: uv run ruff format --check "devices/$CODENAME"
@@ -194,10 +197,17 @@ jobs:
         run: python3 scripts/check-docs.py --repo "devices/$CODENAME"
       - name: Private data, in every commit
         run: python3 scripts/check-private.py --repo "devices/$CODENAME" --history
-      - name: The workflows
-        uses: ./.github/actions/actionlint
-        with:
-          working-directory: devices/${{ inputs.codename }}
+      - name: The workflows (actionlint, pinned by its release's SHA-256)
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          release="https://github.com/rhysd/actionlint/releases/download/v$VERSION"
+          curl -fsSL -o "$archive" "$release/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "$SHA256  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          cd "devices/$CODENAME" && "$RUNNER_TEMP/actionlint" -color
       - name: The pinned kernel release, downloaded and checked against the pin
         if: inputs.kernel
         run: python3 -m overpressure --device "$CODENAME" kernel fetch

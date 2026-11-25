@@ -56,8 +56,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/uv
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
           python-version: ${{ matrix.python }}
       - name: A display for the window's tests
         run: |
@@ -85,8 +86,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/uv
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
           python-version: "3.12"
       - run: uv sync --locked --extra gui
       - run: uv run python -m unittest
@@ -130,7 +132,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/uv
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
       - run: uv sync --locked
       - name: Formatting
         run: uv run ruff format --check .
@@ -151,8 +155,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends shellcheck
       - name: Shellcheck
         run: python3 scripts/run-shellcheck.py
-      - name: The workflows
-        uses: ./.github/actions/actionlint
+      - name: The workflows (actionlint)
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          curl -fsSL -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v$VERSION/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "$SHA256  actionlint.tar.gz" | sha256sum --check --quiet
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -color
 
   repository:
     needs: tree
@@ -181,7 +192,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/uv
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
       - run: uv sync --locked
       - name: Which state
         id: ref
