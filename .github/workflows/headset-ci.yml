@@ -1,0 +1,238 @@
+# A headset repository's checks (docs/adding-a-headset.md#ci), called from its own ci.yml: its tooling dropped
+# into overpressure's main (devices/CODENAME), as an owner's computer has it. Nothing here needs vendor files or a
+# headset. One run per content: a tree that passed once against overpressure's main of the time (a pull
+# request's) is not tested again when it lands on main or is tagged; its checks are skipped. The last job, gate,
+# passes only when every check passed or was skipped for that reason; the caller's own ci job, the check its
+# rulesets require, passes when this workflow did.
+name: Headset CI
+on:
+  workflow_call:
+    inputs:
+      codename:
+        description: "The headset's codename: its folder in devices/ and its --device."
+        type: string
+        required: true
+      kernel:
+        description: "The headset pins a release of overpressure/linux (kernel/release.json): fetch it and check the contracts."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Whether this tree passed against overpressure's main as it is now, in an earlier run of this repository
+  # (never a fork's): the artifact its last job leaves. The checks below test that commit of overpressure's.
+  tree:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      passed: ${{ steps.earlier.outputs.id != '' }}
+      marker: ${{ steps.tree.outputs.marker }}
+      overpressure: ${{ steps.tree.outputs.overpressure }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The tree, and overpressure's main it is tested against
+        id: tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main=$(gh api repos/overpressure/overpressure/commits/main --jq '.sha + " " + .commit.tree.sha')
+          commit=${main% *} main_tree=${main#* }
+          [ -n "$commit" ] && [ -n "$main_tree" ] && [ "$commit" != "$main_tree" ]
+          echo "overpressure=$commit" >> "$GITHUB_OUTPUT"
+          echo "marker=ci-passed-$(git rev-parse 'HEAD^{tree}')-$main_tree" >> "$GITHUB_OUTPUT"
+      - name: An earlier pass
+        id: earlier
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MARKER: ${{ steps.tree.outputs.marker }}
+          OURS: "[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == ${{ github.repository_id }})][0].id // empty"
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$MARKER&per_page=30" --jq "$OURS")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          [ -z "$id" ] || echo "$MARKER passed before (artifact $id): the checks are skipped"
+
+  # The host tests, on each system the installer runs on.
+  tests:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # The organisation variables LINUX_RUNNERS, WINDOWS_RUNNERS and MACOS_RUNNERS set to off leave that
+        # runner out of this matrix while GitHub's runners of that kind don't come up; unset, they're all in. The
+        # jobs that run on Linux alone (lint, the gate, the releases) always run.
+        exclude:
+          - os: ${{ vars.LINUX_RUNNERS == 'off' && 'ubuntu-latest' || 'none' }}
+          - os: ${{ vars.WINDOWS_RUNNERS == 'off' && 'windows-latest' || 'none' }}
+          - os: ${{ vars.MACOS_RUNNERS == 'off' && 'macos-latest' || 'none' }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: overpressure/overpressure
+          ref: ${{ needs.tree.outputs.overpressure }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: devices/${{ inputs.codename }}
+      - uses: ./.github/actions/uv
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      # As overpressure's own CI loads each headset (its headsets job): a refused one would never show.
+      - name: It loads
+        shell: bash
+        run: |
+          found=$(uv run python -m overpressure devices)
+          echo "$found"
+          ! grep -q refused <<< "$found"
+      - run: uv run python -m unittest discover -t . -s "devices/$CODENAME/tests"
+        env:
+          CODENAME: ${{ inputs.codename }}
+          PYTHONIOENCODING: utf-8
+      - name: The PowerShell scripts parse
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CODENAME: ${{ inputs.codename }}
+        run: |
+          $failed = $false
+          foreach ($script in Get-ChildItem -Recurse -Filter *.ps1 "devices/$env:CODENAME") {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors)
+            foreach ($e in $errors) {
+              Write-Output "$($script.Name):$($e.Extent.StartLineNumber): $($e.Message)"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+  lint:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true'
+    runs-on: ubuntu-latest
+    env:
+      CODENAME: ${{ inputs.codename }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: overpressure/overpressure
+          ref: ${{ needs.tree.outputs.overpressure }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: devices/${{ inputs.codename }}
+      - uses: ./.github/actions/uv
+      - run: uv sync --locked
+      - name: Formatting
+        run: uv run ruff format --check "devices/$CODENAME"
+      - name: Lint
+        run: uv run ruff check "devices/$CODENAME"
+      - name: Types
+        run: uv run ty check "devices/$CODENAME"
+
+  # Its shell scripts and C sources: shellcheck always; the shell tests (tests/test_*.sh) and scripts/c-tests.sh
+  # where it has them.
+  shell-and-c:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true'
+    runs-on: ubuntu-latest
+    env:
+      CODENAME: ${{ inputs.codename }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: overpressure/overpressure
+          ref: ${{ needs.tree.outputs.overpressure }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: devices/${{ inputs.codename }}
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck dash
+      # A headset's stage 1 runs on BusyBox ash: dash is the closest shell here.
+      - name: Shell tests
+        run: |
+          for test in "devices/$CODENAME"/tests/test_*.sh; do
+            [ -e "$test" ] || continue
+            echo "== $test"
+            dash "$test"
+          done
+      - name: Shellcheck
+        run: python3 scripts/run-shellcheck.py --repo "devices/$CODENAME"
+      - name: C tests
+        run: |
+          if [ -f "devices/$CODENAME/scripts/c-tests.sh" ]; then bash "devices/$CODENAME/scripts/c-tests.sh"; else echo "no scripts/c-tests.sh"; fi
+
+  repository:
+    needs: tree
+    if: needs.tree.outputs.passed != 'true'
+    runs-on: ubuntu-latest
+    env:
+      CODENAME: ${{ inputs.codename }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: overpressure/overpressure
+          ref: ${{ needs.tree.outputs.overpressure }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: devices/${{ inputs.codename }}
+          fetch-depth: 0
+      - name: Links in the documents
+        run: python3 scripts/check-docs.py --repo "devices/$CODENAME"
+      - name: Private data, in every commit
+        run: python3 scripts/check-private.py --repo "devices/$CODENAME" --history
+      - name: The workflows
+        uses: ./.github/actions/actionlint
+        with:
+          working-directory: devices/${{ inputs.codename }}
+      - name: The pinned kernel release, downloaded and checked against the pin
+        if: inputs.kernel
+        run: python3 -m overpressure --device "$CODENAME" kernel fetch
+      - name: What the pinned kernel and this repository share (contracts)
+        if: inputs.kernel
+        run: python3 -m overpressure --device "$CODENAME" kernel contracts
+
+  # The marker that this tree passed, for the runs after this one.
+  passed:
+    needs: [tree, tests, lint, shell-and-c, repository]
+    if: ${{ !cancelled() && !failure() && needs.tree.outputs.passed != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.sha }}" > passed.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ needs.tree.outputs.marker }}
+          path: passed.txt
+          retention-days: 90
+
+  # A failed or cancelled tree job fails it; any other check counts only when it passed, or was skipped because
+  # this tree passed before (the per-tree reuse above).
+  gate:
+    needs: [tree, tests, lint, shell-and-c, repository, passed]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every check passed or was reused
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          REUSED: ${{ needs.tree.outputs.passed }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          reused = os.environ["REUSED"] == "true"
+          bad = []
+          for job, state in needs.items():
+              result = state["result"]
+              fine = result == "success" or (job != "tree" and result == "skipped" and reused)
+              print(f"{job}: {result}" + ("" if fine else "  <- fails the gate"))
+              bad += [] if fine else [job]
+          sys.exit(1 if bad else 0)
+          EOF

@@ -71,17 +71,26 @@ release as a development version, which a release's version pull request turns i
 `.overpressure`).
 
 **Releases.** An annotated tag that is `headset.json`'s version (`2026.12.0b0`) makes a GitHub release with
-the source zip (`git archive`, one top folder) and its `.sha256`, as overpressure's own releases have
-([the PICO 4's release workflow](https://github.com/overpressure/phoenix/blob/main/.github/workflows/release.yml)).
+the source zip (`git archive`, one top folder) and its `.sha256`, as overpressure's own releases have. A headset's
+`release.yml` runs its CI on the tag, then calls overpressure's
+[headset-release.yml](../.github/workflows/headset-release.yml), which takes the codename and the name from
+`headset.json`, checks the tag, writes the notes, makes the release and closes the issues it brings.
 `python -m overpressure headset add CODENAME` and the window's Download take it from there
 ([tool.md](tool.md#headsets-in-devices)).
 
-**CI.** Its CI checks out overpressure's `main`, itself into `devices/<codename>`, and runs its tests,
-`ruff`/`ty` on its folder, `scripts/check-docs.py --repo devices/<codename>`,
-`scripts/check-private.py --repo devices/<codename> --history` and `scripts/run-shellcheck.py --repo
-devices/<codename>`. overpressure's CI runs its `main`, and the oldest of its releases that overpressure still
-runs, against every change of the generic code (the `headsets` job, its codename in the matrix and a required
-check of each).
+**CI.** A headset's `ci.yml` calls overpressure's [headset-ci.yml](../.github/workflows/headset-ci.yml) with its
+codename (and `kernel: true` when it pins a release of overpressure/linux), and keeps one job of its own, `ci`,
+the check its rulesets require, which passes when that run did. The shared run checks out overpressure's `main`,
+the headset into `devices/<codename>`, and runs its tests on Linux, Windows and macOS, `ruff`/`ty` on its folder,
+its shell tests (`tests/test_*.sh`, in dash) and `scripts/c-tests.sh` where it has them, shellcheck, the documents'
+links, the private-data scan over its history, actionlint, and with `kernel` the kernel's pin and contracts; a
+tree that passed against the same `main` is not tested again. overpressure's CI runs its `main`, and the oldest of
+its releases that overpressure still runs, against every change of the generic code (the `headsets` job, its
+codename in the matrix and a required check of each).
+
+**The organisation's actions.** Every workflow of the organisation takes uv from
+[.github/actions/uv](../.github/actions/uv/action.yml) (the start scripts' version, which a test keeps equal) and
+actionlint from [.github/actions/actionlint](../.github/actions/actionlint/action.yml): one pin each.
 
 How the images are built is the headset's own business. The PICO 4 keeps an Alpine stage 1 on its stock
 kernel as the maintenance environment and boots its userspace, built from Valve's Holo packages, on
