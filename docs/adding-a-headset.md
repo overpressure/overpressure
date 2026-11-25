@@ -54,7 +54,7 @@ devices/<codename>`, which the headset's CI runs, checks it against the template
  "codename": "example",
  "name": "Example VR 1",
  "version": "2026.12.0.dev0",
- "api": "1.6",
+ "api": "1.8",
  "commit": "$Format:%H$",
  "date": "$Format:%ct$"
 }
@@ -62,7 +62,8 @@ devices/<codename>`, which the headset's CI runs, checks it against the template
 
 `api` is the headset interface it was made for, `MAJOR.MINOR` ([the headset
 interface](#the-headset-interface)): `discover()` loads only a headset this overpressure runs, and lists the
-others as refused with the reason (`python -m overpressure devices`).
+others as refused with the reason (`python -m overpressure devices`). A new headset is made for the newest
+interface: from 1.8 its stage 1 and installed system run on the [headset runtime](runtime.md).
 `.gitattributes` marks `headset.json` `export-subst`, so a release zip carries its commit and time.
 
 `version` is the headset's calendar version ([releasing.md](releasing.md#versions)): `main` carries the next
@@ -97,7 +98,10 @@ with its folder, its `userspace/build.sh` gives its prefix (`PREFIX`, `SUPER_MIB
 it leaves out and its adaptation hooks (`headset_snapshot`, `headset_files`, `headset_system`, `headset_session`),
 its `scripts/build-on-headset-hook.sh` what runs beside the build on the headset (`before_build`, `after_build`),
 and its `kernel/build-tree.sh` sets its device tree, config fragment and host name and sources
-`build-kernel-tree.sh`. How the images are built is otherwise the headset's own business. The PICO 4 keeps an
+`build-kernel-tree.sh`. Made for interface 1.8 or newer, its system takes the
+[headset runtime](runtime.md)'s share: `overpressure-base` from overpressure/packages and the runtime's library and
+recovery files, and its `etc/overpressure/headset`. How the images are built is otherwise the headset's own
+business. The PICO 4 keeps an
 Alpine stage 1 on its stock kernel as the maintenance environment and boots its userspace, built from Valve's Holo packages, on
 Valve's kernel, which it builds under `kernel/`.
 
@@ -149,6 +153,7 @@ Most of what a headset on its stock Android kernel needs is generic:
 | Stock firmware: a boot image or partitions from the vendor's OTA, checked against the zip | `overpressure.ota` |
 | A file pinned by size and SHA-256 out of a vendor's remote zip (a loader, say), over HTTP ranges | `overpressure.ota.PinnedMember`, `fetch_pinned` |
 | A stage 1: Alpine Linux in the stock boot image, kernel and device trees untouched | `overpressure.stage1` (a `Spec`: packages, overlay, prebuilt files) |
+| The maintenance system in that stage 1 and the installed system's first process and policies: init, PID 1, services, the USB link, the read-only storage, the recovery deadline, preinit with the headset's hooks, boot attempts ([runtime.md](runtime.md)) | `overpressure/runtime/`, overpressure/packages' `overpressure-base`, `overpressure.contract` |
 | A boot image's ramdisk and command line changed, the result checked | `overpressure.bootimg.ramdisk_tree`, `with_ramdisk` |
 | adb and fastboot, fail-closed, every command naming the serial; the wait for Android's boot; a partition's size | `overpressure.android` |
 | Flashing through fastboot, big images sparse; the RAM boot | `overpressure.fastboot` (`flash`, `ram_boot`) |
@@ -206,6 +211,7 @@ Interface 1 is exactly what this list names, each in `overpressure.api.v1`; a he
 | The owner's answers, since 1.6: Wi-Fi (`ask`, `remember`, `held`, `problem`, `keyfile`, `COMMAND`: a NetworkManager keyfile over SSH's stdin), the owner's SSH key (`ask_public_key`); the headset's own battery before writes (`headset_refusal`) | `overpressure.wifi`, `overpressure.ssh`, `overpressure.power` |
 | Valve's kernel, since 1.7: the pinned release (`Release`, `release`, `fetch`, `current`, `mismatches`, `build`) and the contracts (`Contract`, `check`, `source_file`, `IN_PACKAGES`); a boot image with it (`command_line`, `keyed_words`, `appended`, `with_kernel`, `DEBUG`, `trace_words`) | `overpressure.kernelpin`, `overpressure.kernelimage` |
 | The image's packages, since 1.7: pacman's databases and closures (`Database`, `closure`, `repositories`, `lock`), the downloads before the install (`Prefetch`, `manifest`, `local`) | `overpressure.pacman`, `overpressure.prefetch` |
+| The headset runtime, since 1.8 ([runtime.md](runtime.md)): stage 1 and the installed system on it for a headset made for 1.8 or newer (`Spec.runtime` and `RUNTIME` decide otherwise), the PC's side of its contract (`RUN`, `LIB`, `ETC`, `CONTACT`, `TEST_RUN`, `TEST_AUTHENTICATED`, `TEST_CONNECT_TIMEOUT`, `TEST_TIMEOUT`, `BUILD_INFO`, `HEADSET`, `WORD`, `word`) | `overpressure.stage1`, `overpressure.contract` |
 | Paths and programs: `REPO`, bounded waits and running tools (a failed one raises `CommandFailed`, a `RuntimeError` with the whole `output`; since 1.5), progress lines, a step's command line, the pinned host tools, HTTPS downloads (`read`, `urlopen`, `answers`, `DownloadError`; since 1.5) | `overpressure.api.v1` itself, `.process`, `.progress`, `.runner`, `.tools`, `.web` |
 | Formats and devices: everything in the table above, and `avb`, `compress`, `cpio`, `kernelinfo`, `payload` | the modules named there |
 

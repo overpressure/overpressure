@@ -1,0 +1,12 @@
+# Services of overpressure's maintenance system, run by /usr/libexec/overpressure/overpressure-init
+# (busybox inittab syntax; see also /usr/libexec/overpressure/svc).
+# /init has already done all one-time setup before exec'ing init.
+::respawn:/usr/libexec/overpressure/svc udhcpd
+::respawn:/usr/libexec/overpressure/svc telnetd
+::respawn:/usr/libexec/overpressure/svc dropbear
+::respawn:/usr/libexec/overpressure/svc httpd
+::respawn:/usr/libexec/overpressure/svc serial
+::respawn:/usr/libexec/overpressure/svc usb-watch
+::respawn:/usr/libexec/overpressure/svc recovery-watch
+::ctrlaltdel:/sbin/reboot
+::shutdown:/usr/libexec/overpressure/svc shutdown

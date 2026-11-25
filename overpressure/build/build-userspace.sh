@@ -74,10 +74,21 @@ done
 headset_field() { python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$source_dir/headset.json" "$1"; }
 codename=$(headset_field codename)
 headset_name=$(headset_field name)
-PREFIX="" HEADSET_MASKS=() HEADSET_ELF_OPTIONAL=""
+PREFIX="" HEADSET_MASKS=() HEADSET_ELF_OPTIONAL="" RUNTIME=""
 # shellcheck source=/dev/null
 source "$source_dir/userspace/build.sh"
 [[ -n $PREFIX ]] || { echo "$source_dir/userspace/build.sh names no PREFIX" >&2; exit 2; }
+# overpressure's runtime (docs/runtime.md): as the headset's interface has it unless its build.sh sets RUNTIME (1 or
+# 0); on from 1.8 (overpressure.headset.RUNTIME_SINCE), while a headset made for an older one brings its own.
+if [[ -z $RUNTIME ]]; then
+    RUNTIME=$(python3 -c '
+import json, re, sys
+api = str(json.load(open(sys.argv[1])).get("api", ""))
+version = tuple(int(n) for n in api.split(".")) if re.fullmatch(r"[0-9]+(\.[0-9]+)?", api) else ()
+print(1 if version + (0,) * (2 - len(version)) >= (1, 8) else 0)
+' "$source_dir/headset.json")
+fi
+[[ $RUNTIME == [01] ]] || { echo "$source_dir/userspace/build.sh: RUNTIME is $RUNTIME, not 1 or 0" >&2; exit 2; }
 for hook in headset_snapshot headset_files headset_system headset_session; do
     declare -F "$hook" >/dev/null || eval "$hook() { :; }"
 done
@@ -435,6 +446,14 @@ overlay() {
     [[ "$(head -c 2 "$1")" == '#!' ]] && mode=0755
     install -D -o 0 -g 0 -m "$mode" "$1" "$2"
 }
+# overpressure's runtime shared with the maintenance system, at the same paths: its library (the installed system's
+# preinit sources it), the recovery policy and the recovery deadline (docs/runtime.md), for a headset that takes
+# the runtime (RUNTIME, above).
+if [[ $RUNTIME == 1 ]]; then
+    for f in lib.sh recovery-policy.sh recovery-watch; do
+        overlay "$project/overpressure/runtime/usr/libexec/overpressure/$f" "$T/usr/libexec/overpressure/$f"
+    done
+fi
 headset_files
 # SteamVR's English keyboard has no underscore: its shift plane repeats the number row, and its symbols
 # plane has two tildes (docs/session.md#first-run-setup). The underscore takes the second tilde's
@@ -491,12 +510,15 @@ fi
 # The wheel group, the session user's, runs sudo with that user's own password, as on SteamOS.
 install -m 0440 /dev/stdin "$T/etc/sudoers.d/10-$PREFIX-wheel" <<< '%wheel ALL=(ALL:ALL) ALL'
 # SteamOS's steamos-readonly handles a btrfs root only (the image's pacman.conf does not extract it):
-# the headset's base package's, for its ext4 image in super, in its place (a headset's docs/userspace.md).
-[[ -x "$T/usr/libexec/$PREFIX/steamos-readonly" && ! -e "$T/usr/bin/steamos-readonly" ]] || {
-    echo "no $PREFIX steamos-readonly, or Valve's was extracted" >&2
+# overpressure-base's for the ext4 image in super, in its place (docs/runtime.md); a headset without the runtime
+# ships its own in its base package.
+readonly_owner=$PREFIX
+[[ $RUNTIME != 1 ]] || readonly_owner=overpressure
+[[ -x "$T/usr/libexec/$readonly_owner/steamos-readonly" && ! -e "$T/usr/bin/steamos-readonly" ]] || {
+    echo "no $readonly_owner steamos-readonly, or Valve's was extracted" >&2
     exit 1
 }
-ln -s "../libexec/$PREFIX/steamos-readonly" "$T/usr/bin/steamos-readonly"
+ln -s "../libexec/$readonly_owner/steamos-readonly" "$T/usr/bin/steamos-readonly"
 echo "$PREFIX-steamos" > "$T/etc/hostname"
 echo LANG=C.UTF-8 > "$T/etc/locale.conf"
 rm -f "$T/etc/machine-id"   # written from the headset serial during the handoff
@@ -509,10 +531,16 @@ find "$T/tmp" -mindepth 1 -delete
 # /var/tmp, /root, ... (steamos-offload.target, before tmpfiles runs). On the
 # Frame the sources persist; here they are created in the image.
 in_t systemd-tmpfiles --create steamos-offload.conf
-# The units the project packages' presets (usr/lib/systemd/system-preset/50-PREFIX-*.preset) enable, Valve's
-# among them (sshd, networkd, NetworkManager, timesyncd, bluetooth, the codec links).
-mapfile -t preset_units < <(cat "$T"/usr/lib/systemd/system-preset/50-"$PREFIX"-*.preset 2>/dev/null |
-    sed -n 's/^enable[[:space:]]\+\([^[:space:]]\+\).*/\1/p')
+# The units the project packages' presets enable, Valve's among them (sshd, networkd, NetworkManager, timesyncd,
+# bluetooth, the codec links): each layer's packages carry its prefix (overpressure- for common, the layer's name for
+# the others, the headset's PREFIX for its own), so usr/lib/systemd/system-preset/50-NAME-*.preset of each.
+preset_names=(overpressure "$PREFIX")
+for layer in "${layers[@]}"; do
+    [[ $layer == common ]] || preset_names+=("$layer")
+done
+mapfile -t preset_units < <(for name in "${preset_names[@]}"; do
+    cat "$T"/usr/lib/systemd/system-preset/50-"$name"-*.preset 2>/dev/null || true  # a layer may have none
+done | sed -n 's/^enable[[:space:]]\+\([^[:space:]]\+\).*/\1/p' | sort -u)
 [[ ${#preset_units[@]} == 0 ]] || in_t systemctl preset "${preset_units[@]}"
 # Units that would wait for console input, erase the previous boot's evidence from pstore,
 # or manage boot partitions the system never touches.
