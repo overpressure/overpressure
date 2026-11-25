@@ -111,6 +111,8 @@ PICO 4's (`phoenix`) is the model for every setting; `<codename>` is the headset
 | overpressure/`<codename>` | the naming commit (`scripts/new-headset.py`), unless the team makes it |
 | [overpressure/linux](https://github.com/overpressure/linux) | the branch `<codename>/7.2` from `<soc>/7.2`; its line in `.github/layers` and its row in `.github/README.md`, by a pull request into `common/7.2` that moves up the layers; rulesets as phoenix's: the branch in *Layers change by pull request*, *`<codename>/7.2` is merged by `<codename>`*, *`<codename>`'s kernels are tagged by `<codename>`* (`refs/tags/<codename>/*`), and those tags left out of *Other tags are made by core*. Until the headset's repository has `kernel/build-tree.sh`, its branch builds nothing and passes |
 | [overpressure/packages](https://github.com/overpressure/packages) | the folders `<codename>/` (its layer) and `headsets/<codename>/` (its image definition), each with a `.gitkeep` until its first packages; their CODEOWNERS entries (`@overpressure/<codename> @overpressure/core`); its row in the README |
+| [overpressure/.github](https://github.com/overpressure/.github) | its row in the organization's profile, [`profile/README.md`](https://github.com/overpressure/.github/blob/main/profile/README.md), the page GitHub shows for the organization: the repository, and the headset as in development |
+| [overpressure](https://github.com/overpressure/overpressure) | its row in the README's *Headsets* table (in development, until its first release) and in [CLAUDE.md](../CLAUDE.md)'s table of headsets |
 
 **Later**, when the headset gets there:
 
@@ -118,7 +120,7 @@ PICO 4's (`phoenix`) is the model for every setting; `<codename>` is the headset
 | --- | --- |
 | Its first packages | its image definition in `headsets/<codename>/` (the `.gitkeep`s go), its codename in packages.yml's `HEADSETS`, its packages' name prefix in the layout tests |
 | Its `kernel/build-tree.sh` | its branch in overpressure/linux builds; the ccache it starts from (another headset's on the same SoC, if they share enough) |
-| Its first release | its entry in `overpressure/catalogue.py` and its codename in the `headsets` job of [ci.yml](../.github/workflows/ci.yml), whose checks become required |
+| Its first release | its entry in `overpressure/catalogue.py` and its codename in the `headsets` job of [ci.yml](../.github/workflows/ci.yml), whose checks become required; the profile names it among the supported headsets |
 
 ## What overpressure already does
 

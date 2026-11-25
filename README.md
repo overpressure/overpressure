@@ -53,6 +53,7 @@ installer downloads the one you choose. The PICO 4 is the first; more are welcom
 | Codename | Headset | Status |
 | --- | --- | --- |
 | [phoenix](https://github.com/overpressure/phoenix) | PICO 4 (2022, Snapdragon XR2) | Installs and runs on the tested unit: both lenses at 90 and 72 Hz, head and controller tracking, the room view, sound, Wi-Fi and Bluetooth, sleep, Steam with Proton and FEX, Android games, Steam Link, the way back to PICO OS. Heavy games run at what the GPU allows ([session.md](https://github.com/overpressure/phoenix/blob/main/docs/session.md#performance-and-heat)) |
+| [hollywood](https://github.com/overpressure/hollywood) | Meta Quest 2 (2020, Snapdragon XR2) | In development: nothing to install yet |
 
 Each headset's README says which units and firmware have run it, what it needs and what is open. The project
 publishes no image and no vendor file: you build your own from the makers' public downloads.
