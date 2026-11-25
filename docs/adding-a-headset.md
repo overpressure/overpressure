@@ -86,7 +86,9 @@ its shell tests (`tests/test_*.sh`, in dash) and `scripts/c-tests.sh` where it h
 links, the private-data scan over its history, actionlint, and with `kernel` the kernel's pin and contracts; a
 tree that passed against the same `main` is not tested again. overpressure's CI runs its `main`, and the oldest of
 its releases that overpressure still runs, against every change of the generic code (the `headsets` job, its
-codename in the matrix and a required check of each).
+codename in the matrix and a required check of each). For a change both sides need, the headset's pull request
+passes `overpressure:` with the branch of overpressure's pull request while both are in review, and drops it
+before it merges, once overpressure's has.
 
 **The organisation's actions.** Every workflow of the organisation takes uv from
 [.github/actions/uv](../.github/actions/uv/action.yml) (the start scripts' version, which a test keeps equal) and
