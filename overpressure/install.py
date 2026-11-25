@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, ClassVar, Protocol, TypeVar
 
-from . import REPO, catalogue, localconfig, power, runner
+from . import REPO, catalogue, localconfig, power, process, runner, usbaccess
 from . import backup as backups
 from . import progress as progress_lines
 from .headset import INSTALL
@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from .process import Timing
 
 S = TypeVar("S", bound=localconfig.Settings)
+T = TypeVar("T")
 
 #: Where the lock lives, and each headset's folder with its state and its tasks' logs.
 OUT = REPO / "out" / "install"
@@ -683,6 +684,61 @@ class Context:
     def completed(self, task: str) -> bool:
         """Tell whether the task @p task is done or skipped, in this run or an earlier one."""
         return self.engine.status(task) in COMPLETE
+
+
+# -- waits for the headset in a new USB mode (since interface 1.6) ---------------------------------
+def replug(what: str, seconds: float) -> Ask:
+    """Return the ask after a wait for @p what that ran out after @p seconds: plug the headset in again."""
+    return Ask(
+        "replug",
+        "action",
+        "Plug the headset in again",
+        f"This computer has not seen the headset ({what}) for {seconds:.0f} s. Unplug the USB cable from the "
+        "headset, wait a few seconds and plug it in again (another USB port of this computer may help), then press "
+        "Done: the installer waits for it again. Cancel stops here; starting the installer again goes on from this "
+        "step.",
+    )
+
+
+def link_ask(problem: str) -> Ask:
+    """Return the ask for a USB link that is up without the headset's address (usblink.problem's @p problem)."""
+    return Ask(
+        "usb-link",
+        "action",
+        "Give the headset's USB link its address",
+        f"{problem}\n\nThen press Done: the installer waits for the headset again. Cancel stops here; starting the "
+        "installer again goes on from this step.",
+    )
+
+
+def replug_until(  # noqa: PLR0913  # the wait, and what the headset is on USB
+    ctx: Context,
+    what: str,
+    seconds: float,
+    operation: Callable[[], T],
+    *,
+    modes: Sequence[usbaccess.UsbMode] = (),
+    link: Callable[[], str] | None = None,
+) -> T:
+    """Wait for @p what as process.until() does; when @p seconds run out, ask for a replug, then wait anew.
+
+    The log says what the USB bus holds of the headset's @p modes (Linux). A USB link that is up without the
+    headset's address (Linux: another NetworkManager profile took it; @p link tells, usblink.problem with the
+    headset's gadget) asks for its fix instead: a replug would not help. A Final error ends the wait at once;
+    declining the ask stops the run.
+    """
+    while True:
+        try:
+            return process.until(what, seconds, operation, ctx.clock)
+        except process.Final:  # noqa: PERF203  # a wait loop: until() ends it, or the owner's answer to the ask
+            raise
+        except RuntimeError as exc:
+            seen = usbaccess.seen(modes) if modes else ""
+            ctx.log(f"{exc}" + (f"; {seen}" if seen else ""))
+            wrong = link() if link else ""
+            if wrong:
+                ctx.log(wrong.splitlines()[0])
+            ctx.ask(link_ask(wrong) if wrong else replug(what, seconds))
 
 
 def _error_line(lines: Sequence[str]) -> str:
