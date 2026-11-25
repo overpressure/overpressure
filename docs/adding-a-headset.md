@@ -15,7 +15,8 @@ overpressure devices` and `--device CODENAME steps`. Once it has a release, an e
 
 An owner of the organization creates `overpressure/<codename>` from
 [the headset template](https://github.com/overpressure/headset-template) (*Use this template*), together with the
-headset's team and its rulesets ([GOVERNANCE.md](https://github.com/overpressure/.github/blob/main/GOVERNANCE.md)).
+headset's team and its rulesets ([GOVERNANCE.md](https://github.com/overpressure/.github/blob/main/GOVERNANCE.md),
+[the organization's part](#the-organizations-part)).
 The team clones it into the overpressure checkout and gives it its names, once:
 
 ```sh
@@ -85,6 +86,39 @@ check of each).
 How the images are built is the headset's own business. The PICO 4 keeps an Alpine stage 1 on its stock
 kernel as the maintenance environment and boots its userspace, built from Valve's Holo packages, on
 Valve's kernel, which it builds under `kernel/`.
+
+## The organization's part
+
+What the owners and `core` set up for a new headset, so that its team can start with its first pull request
+([GOVERNANCE.md](https://github.com/overpressure/.github/blob/main/GOVERNANCE.md), *A new headset joins*). The
+PICO 4's (`phoenix`) is the model for every setting; `<codename>` is the headset's codename, `<soc>` its SoC's layer.
+
+**The owners**, in the organization's settings, in this order:
+
+| Step | What |
+| --- | --- |
+| The tracking issue | `[Headset] <Name>` in overpressure's issues: the headset, its SoC, the people, where their work is today |
+| The repository | `overpressure/<codename>` from the headset template, public; its settings as phoenix's: squash and rebase merges only, auto-merge, branches deleted after merging, no wiki, projects or discussions, overpressure as its homepage, topics for the headset and its SoC |
+| Its rulesets | `main` only by pull request with a green `ci` (no deletion, no force push, linear history, review threads resolved); the shared files, which its CODEOWNERS gives `core` (`.github/`, `headset.json`), by a code owner's review; release tags (`refs/tags/v*`, `refs/tags/20*`) never move, and only the team `<codename>` creates them |
+| The team `<codename>` | closed; *maintain* on `overpressure/<codename>`, *write* on overpressure/linux and overpressure/packages; on the new repository `core` gets *write* and `triage` *triage*. A new SoC also gets its team `soc-<soc>`; maintainers of a headset on an existing SoC join that team only once they maintain its layer |
+| The headset's room | `#overpressure-<codename>:matrix.org` in the overpressure space on Matrix, which the README's chat badge links |
+| The invitation | last, with the welcome, since GitHub mails it at once: into the organization (two-factor authentication) and into the team `<codename>` |
+
+**`core`**, by pull request (branches and rulesets through the API), as soon as the repository exists:
+
+| Repository | What |
+| --- | --- |
+| overpressure/`<codename>` | the naming commit (`scripts/new-headset.py`), unless the team makes it |
+| [overpressure/linux](https://github.com/overpressure/linux) | the branch `<codename>/7.2` from `<soc>/7.2`; its line in `.github/layers` and its row in `.github/README.md`, by a pull request into `common/7.2` that moves up the layers; rulesets as phoenix's: the branch in *Layers change by pull request*, *`<codename>/7.2` is merged by `<codename>`*, *`<codename>`'s kernels are tagged by `<codename>`* (`refs/tags/<codename>/*`), and those tags left out of *Other tags are made by core*. Until the headset's repository has `kernel/build-tree.sh`, its branch builds nothing and passes |
+| [overpressure/packages](https://github.com/overpressure/packages) | the folders `<codename>/` (its layer) and `headsets/<codename>/` (its image definition), each with a `.gitkeep` until its first packages; their CODEOWNERS entries (`@overpressure/<codename> @overpressure/core`); its row in the README |
+
+**Later**, when the headset gets there:
+
+| When | What |
+| --- | --- |
+| Its first packages | its image definition in `headsets/<codename>/` (the `.gitkeep`s go), its codename in packages.yml's `HEADSETS`, its packages' name prefix in the layout tests |
+| Its `kernel/build-tree.sh` | its branch in overpressure/linux builds; the ccache it starts from (another headset's on the same SoC, if they share enough) |
+| Its first release | its entry in `overpressure/catalogue.py` and its codename in the `headsets` job of [ci.yml](../.github/workflows/ci.yml), whose checks become required |
 
 ## What overpressure already does
 
