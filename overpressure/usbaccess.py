@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from . import android
 from .process import Final
 
 if TYPE_CHECKING:
@@ -349,6 +350,29 @@ def denied(
 def listing_denied(output: str) -> bool:
     """Tell whether adb's or fastboot's device list shows a device it may not open."""
     return NO_PERMISSIONS in output
+
+
+def unusable(output: str, mode: UsbMode) -> bool:
+    """Tell whether adb's or fastboot's listing (@p output) leaves out a device of @p mode this user may not use.
+
+    A device the tool may open read-only is listed as "no permissions"; one it may not even read is not listed
+    at all, so the USB bus is asked too (Linux: before udev grants it, or without a rule). Since interface 1.6.
+    """
+    listed = android.device_rows(output, ("device", "fastboot"))
+    return listing_denied(output) or (not listed and bool(denied(mode)))
+
+
+def seen(modes: Sequence[UsbMode], *, platform: str = sys.platform, sysfs: Path = SYSFS, dev: Path = DEV) -> str:
+    """Return what this computer's USB bus holds of a headset's @p modes (Linux), for a log; else empty.
+
+    It tells a headset that is not on the bus from one that is, but which adb or fastboot does not list yet.
+    Since interface 1.6.
+    """
+    if platform != "linux":
+        return ""
+    return "devices on USB: " + ", ".join(
+        f"{mode.name} {len(device_files(mode.vendor, mode.product, sysfs, dev))}" for mode in modes
+    )
 
 
 def message(

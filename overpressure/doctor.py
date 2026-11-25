@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from . import REPO, linux, usbaccess, windows_ncm
+from . import REPO, linux, usbaccess, usblink, windows_ncm
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -238,6 +238,27 @@ def ncm_checks(host: Host, settings: DeviceSettings) -> list[Check]:
         versions = ", ".join(f"{k} {v}" for k, v in (state.get("dependencies") or {}).items())
         return [Check("NCM Python and UsbDk", needed_for, OK, versions)]
     return [Check("NCM Python and UsbDk", needed_for, MISSING, (out.splitlines() or ["no answer"])[-1][:120], fix)]
+
+
+def link_check(
+    host: Host, gadget: usblink.Gadget, needed_for: str = HEADSET, found: Sequence[usblink.Link] | None = None
+) -> list[Check]:
+    """Linux only, while the headset's own system is plugged in: its USB network link has the headset's lease.
+
+    Another NetworkManager profile can take the headset's interface (usblink); nothing to check without it.
+    Since interface 1.6.
+    """
+    if host.platform != "linux":
+        return []
+    found = usblink.links(gadget) if found is None else found
+    if not found:
+        return []
+    name = "the headset's USB network link"
+    wrong = usblink.problem(gadget, found, platform=host.platform, nmcli=host.which("nmcli") is not None)
+    if not wrong:
+        return [Check(name, needed_for, OK, f"{found[0].name} has {gadget.host_ip}")]
+    detail, _, commands = wrong.partition("\n\n")
+    return [Check(name, needed_for, MISSING, detail, commands.replace("\n", " && "))]
 
 
 def usb_check(  # noqa: PLR0913  # the host and the modes; where the rules and the distribution are keyword-only

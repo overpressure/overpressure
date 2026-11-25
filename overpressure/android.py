@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Callable
 from .process import until
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .process import Timing
 
 #: The fields of a `devices` line that matter: the serial and the state.
@@ -55,15 +57,23 @@ def release_usb(adb: str, runner: Callable[[list[str]], object], platform: str |
         runner([adb, "kill-server"])
 
 
+def device_rows(output: str, states: Sequence[str] = ("device", "unauthorized", "offline")) -> dict[str, str]:
+    """Return the serial and state of each device that adb's or fastboot's devices lists in @p states, in its order.
+
+    Since interface 1.6.
+    """
+    rows = {}
+    for line in output.splitlines():
+        words = line.split()
+        if len(words) >= DEVICE_ROW_FIELDS and words[1] in states:
+            rows[words[0]] = words[1]
+    return rows
+
+
 def select_device(tool: str, serial: str | None, runner: Callable[[list[str]], str] | None = None) -> str:
     """Return the serial to use: @p serial when it is attached and usable, else the only attached device."""
     runner = runner or run
-    rows = [line.split() for line in runner([tool, "devices"]).splitlines()]
-    devices = {
-        row[0]: row[1]
-        for row in rows
-        if len(row) >= DEVICE_ROW_FIELDS and row[1] in ("device", "fastboot", "unauthorized", "offline")
-    }
+    devices = device_rows(runner([tool, "devices"]), ("device", "fastboot", "unauthorized", "offline"))
     if serial is None:
         if len(devices) != 1:
             msg = "Connect exactly one headset or specify --serial"

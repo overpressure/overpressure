@@ -9,6 +9,12 @@ An image enrolls this PC's key and, when the owner names one, the owner's own (a
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from .install import Ask, Field
+
+if TYPE_CHECKING:
+    from .install import Context
 
 
 def argv(  # noqa: PLR0913  # the ssh setup, the target and the command; the timeout keyword-only
@@ -68,3 +74,30 @@ def authorized_keys(this_pc: bytes, extra: Path | None, setting: str) -> bytes:
                 raise ValueError(msg)
         keys += own
     return b"\n".join(keys) + b"\n"
+
+
+# -- the owner's own key, asked by an installer (since interface 1.6) -------------------------------
+#: The ask for the owner's own public key, which a headset's install enrolls beside this computer's.
+PUBLIC_KEY = Ask(
+    "ssh-key",
+    "form",
+    "Your SSH key",
+    "To log in to the headset from your own computer over SSH, paste your public key: the one line of your "
+    "id_ed25519.pub (or another .pub file) in your .ssh folder, starting with ssh-ed25519, ssh-rsa or "
+    "ecdsa-sha2. The headset takes it besides this computer's own key; it takes no password. Leave it empty "
+    "to skip.",
+    (Field("key", "Public key", optional=True),),
+)
+NO_PUBLIC_KEY = (
+    "That is no public key: paste the one line of a .pub file, starting with ssh-ed25519, ssh-rsa or ecdsa-sha2. "
+    "Never the private key."
+)
+
+
+def ask_public_key(ctx: Context) -> str:
+    """Ask for the owner's own public key until the answer is one; return its line, empty for none."""
+    while True:
+        line = ctx.ask(PUBLIC_KEY)["key"].strip()
+        if not line or (is_public_key(line.encode()) and len(line.split()) >= 2):  # noqa: PLR2004  # kind and key
+            return line
+        ctx.note(NO_PUBLIC_KEY, "warning")

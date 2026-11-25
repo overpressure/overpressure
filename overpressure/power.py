@@ -119,3 +119,25 @@ def problem(found: Power, minimum: int = MIN_BATTERY) -> str:
 def battery_problem() -> str:
     """Return why this computer's power is too little for a write to the headset, or ""."""
     return problem(read())
+
+
+#: The least charge a headset may have for partition writes when it does not charge (since interface 1.6).
+MIN_HEADSET_WRITE = 20
+
+
+def headset_refusal(reading: str, minimum: int = MIN_HEADSET_WRITE) -> str:
+    """Return why partition writes may not start on a headset's battery @p reading, or "" if they may.
+
+    @p reading is its power_supply battery's capacity and status ("54 Discharging"), as a headset's Linux system
+    reports them. A reading that is not a percentage refuses nothing: the caller warns instead. Since interface 1.6.
+    """
+    words = reading.split()
+    if not words or not words[0].isdigit():
+        return ""
+    percent, status = int(words[0]), (words[1] if len(words) > 1 else "")
+    if percent >= minimum or status in ("Charging", "Full"):
+        return ""
+    return (
+        f"the battery is at {percent} % ({status or 'status unknown'}): charge the headset to {minimum} % "
+        "first, or connect it to a port that charges it"
+    )
