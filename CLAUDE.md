@@ -12,6 +12,7 @@ rules (what must never be written, what crashes its kernel) and its hardware wor
 | Codename | Headset | Repository | Guidance |
 | --- | --- | --- | --- |
 | phoenix | PICO 4 (2022, Snapdragon XR2) | [overpressure/phoenix](https://github.com/overpressure/phoenix) | [CLAUDE.md](https://github.com/overpressure/phoenix/blob/main/CLAUDE.md) |
+| hollywood | Meta Quest 2 (2020, Snapdragon XR2) | [overpressure/hollywood](https://github.com/overpressure/hollywood) | [CLAUDE.md](https://github.com/overpressure/hollywood/blob/main/CLAUDE.md) |
 
 **A development checkout** of a headset is a Git clone in its folder, which `headset add` never replaces:
 
