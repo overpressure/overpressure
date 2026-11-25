@@ -15,6 +15,7 @@
 # aarch64-linux-gnu-gcc in the build container. Incremental: a second run rebuilds only what changed. With
 # CCACHE_DIR set, the compiler runs through ccache (the build image's), which keeps compiled objects in that folder
 # for the next build, also from another checkout. ccache gives the objects the compiler would.
+# shellcheck disable=SC2154  # tree, work, out and the headset's values: its kernel/build-tree.sh sets them first
 fragment=$tree/arch/arm64/configs/$FRAGMENT
 [ -f "$fragment" ] || { echo "$tree has no arch/arm64/configs/$FRAGMENT" >&2; exit 1; }
 # uname names the commit, so the tracked files must be the commit's (a headset's prepared files are untracked).
