@@ -129,7 +129,7 @@ PICO 4's (`phoenix`) is the model for every setting; `<codename>` is the headset
 | When | What |
 | --- | --- |
 | Its first packages | its image definition in `headsets/<codename>/` (the `.gitkeep`s go), its codename in packages.yml's `HEADSETS`, its packages' name prefix in the layout tests |
-| Its `kernel/build-tree.sh` | its branch in overpressure/linux builds; the ccache it starts from (another headset's on the same SoC, if they share enough) |
+| Its `kernel/build-tree.sh` | its branch in overpressure/linux builds. Its first build starts by itself from the ccache of another headset on its SoC's layer, as long as its `build-tree.sh` compiles in the same paths and with the same compiler as theirs (a copy of phoenix's does); the build's ccache statistics show how much the two configurations share |
 | Its first release | its entry in `overpressure/catalogue.py` and its codename in the `headsets` job of [ci.yml](../.github/workflows/ci.yml), whose checks become required; the profile names it among the supported headsets |
 
 ## What overpressure already does
