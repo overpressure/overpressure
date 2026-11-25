@@ -62,8 +62,9 @@ Keeping the issues current is mandatory whenever work touches one, not a wrap-up
 
 ## Documentation
 
-`docs/` documents the generic tool ([tool.md](docs/tool.md)), adding a headset and releasing; each
-headset's documents are in `devices/<codename>/docs/`, its overview in its `README.md`. Documents
+`docs/` documents the generic tool ([tool.md](docs/tool.md)), adding a headset, the headset interface
+([api.md](docs/api.md)) and releasing; each headset's documents are in `devices/<codename>/docs/`, its overview in
+its `README.md`. Documents
 state facts, short, with a TL;DR first: what the system is, how it works, how to build, run and
 verify it, verified results and open work. No work logs: no dated entries, no history of
 attempts, no evidence file paths, no test counts, no issue keys; git history is the log. When a
@@ -82,7 +83,8 @@ link may not leave its repository, so links between this repository and a headse
   `device.mk`. `overpressure/catalogue.py` lists the headsets there are.
 - `tests/`: host tests of the generic package. `scripts/`: the repositories' checks
   (`check-private.py`, `check-docs.py`, `run-shellcheck.py`, each with `--repo DIR` for a headset's;
-  `release.py`).
+  `release.py`; `api-reference.py`, which writes [docs/api.md](docs/api.md) from the code: rerun it when a module of
+  the headset interface changes, a test fails until then).
 - `Install.cmd`, `Install.command`, `install.sh`: the start scripts (a pinned uv, a managed Python and
   CustomTkinter into `cache/`, then the window).
 - Private and generated, ignored: `backup/`, `assets/`, `cache/`, `out/`, `.env`.
