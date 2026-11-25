@@ -96,6 +96,7 @@ jobs:
           echo "$found"
           ! grep -q refused <<< "$found"
       - run: uv run python -m unittest discover -t . -s "devices/$CODENAME/tests"
+        shell: bash # Windows' default is PowerShell, where $CODENAME is no environment variable
         env:
           CODENAME: ${{ inputs.codename }}
           PYTHONIOENCODING: utf-8
