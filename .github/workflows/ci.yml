@@ -152,9 +152,16 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends shellcheck
+          sudo apt-get install -y --no-install-recommends shellcheck dash
       - name: Shellcheck
         run: python3 scripts/run-shellcheck.py
+      # overpressure/build's POSIX parts run on a headset's stage 1 (BusyBox ash): dash is the closest shell here.
+      - name: Shell tests
+        run: |
+          for test in tests/test_*.sh; do
+            echo "== $test"
+            dash "$test"
+          done
       - name: The workflows (actionlint)
         env:
           VERSION: 1.7.12

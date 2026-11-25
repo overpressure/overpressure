@@ -559,6 +559,9 @@ an administrator.
 | [overpressure/assets.py](../overpressure/assets.py) | a headset's assets out of its stock folder: the folder checked against its manifest, files out of its ext4 and FAT images, the assets manifest |
 | [overpressure/ext4.py](../overpressure/ext4.py), [fat.py](../overpressure/fat.py) | read-only readers of stock file system images: ext4 (32- and 64-bit, extents, block maps, holes, links) and FAT12/16/32 with long names; `python3 -m overpressure.ext4 cat IMAGE PATH` for the Linux build scripts |
 | [scripts/stock-lib.sh](../scripts/stock-lib.sh) | for a headset's Linux build scripts: a file out of a stock ext4 image |
+| [overpressure/kernelpin.py](../overpressure/kernelpin.py), [kernelimage.py](../overpressure/kernelimage.py) | a headset on Valve's kernel: its pinned release of overpressure/linux (download, hashes, the build in its image, the contracts with the kernel's names), and a boot image with that kernel (the stock header's, command line rewritten by key, archives appended, checked) |
+| [overpressure/pacman.py](../overpressure/pacman.py), [prefetch.py](../overpressure/prefetch.py) | pacman's repositories on any host (Valve's databases, what a package depends on, pacman.conf, packages.lock), and a headset's downloads into a cache before the install writes it, each checked by its pin |
+| [overpressure/build/](../overpressure/build/) | a headset's builds, called by its own scripts with its folder: the userspace (`build-userspace.sh`, its prefix and hooks in the headset's `userspace/build.sh`), the system image, the build on the headset (`build-on-headset.sh`, a hook for what it runs beside), the kernel tree's reproducible core (`build-kernel-tree.sh`, sourced by the headset's `kernel/build-tree.sh`) and the kernel step; the downloads' retries (`fetch.sh`), the base root's databases and the package lock |
 
 ## RAM boot
 

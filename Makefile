@@ -12,7 +12,7 @@ help: ## list the targets
 
 test: ## host tests of the package and every headset: no hardware, seconds
 	$(PYTHON) -m unittest
-	@for t in devices/*/tests/test_*.sh; do echo "$$t"; bash "$$t" || exit 1; done
+	@for t in tests/test_*.sh devices/*/tests/test_*.sh; do echo "$$t"; bash "$$t" || exit 1; done
 
 container-test: ## the same tests in the build container, as root (any host with Docker or Podman)
 	$(PYTHON) -m overpressure container run -- make test
