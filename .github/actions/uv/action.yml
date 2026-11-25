@@ -1,0 +1,16 @@
+# uv as owners get it: the version the start scripts pin (install.sh, Install.cmd; tests/test_workflows.py checks
+# they agree), for every workflow of the organisation that runs overpressure or its tools.
+name: uv
+description: setup-uv with the start scripts' uv version
+inputs:
+  python-version:
+    description: The Python uv provides (empty for uv's default)
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+      with:
+        version: "0.13.4"
+        python-version: ${{ inputs.python-version }}

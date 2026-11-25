@@ -1,0 +1,96 @@
+# A headset repository's release from its tag (docs/adding-a-headset.md#releases), called from its own release.yml
+# once its checks passed: the tag must be headset.json's version, annotated and on main. It makes the GitHub
+# release overpressure downloads (python -m overpressure headset add CODENAME): the tag's first line as its title,
+# the tag's own words and the changelog since the release before as its notes (scripts/release.py, as
+# overpressure's own release), the source zip (git archive: headset.json carries the commit and its time) and its
+# checksum. No image, package or vendor file is attached. Then every issue whose Stage is Awaiting release gets
+# the release's link and is closed. The codename and the headset's name come from headset.json.
+name: Headset release
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read # the notes name each change's pull request and its author
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # The checkout's tag is a lightweight copy; the annotated tag carries the release's own words.
+      - name: The tag itself
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+      # overpressure's release tooling: the tag check, the notes and the private-data scan.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: overpressure/overpressure
+          path: .overpressure
+          fetch-depth: 0 # its releases' tags: the notes name the oldest one that runs this headset's api
+      - uses: ./.overpressure/.github/actions/uv
+      - name: The tag names headset.json's version
+        id: version
+        run: |
+          kind=$(python3 .overpressure/scripts/release.py check "$GITHUB_REF_NAME" --version-file headset.json)
+          codename=$(python3 -c 'import json; print(json.load(open("headset.json"))["codename"])')
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "name=$codename-${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Annotated, on main
+        run: |
+          [ "$(git cat-file -t "$GITHUB_REF_NAME")" = tag ] || { echo "::error::$GITHUB_REF_NAME is not annotated: git tag -a"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+      - name: Notes and changelog
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }} # the contributors: each commit's pull request and its author
+        run: |
+          api=$(python3 -c 'import json; print(json.load(open("headset.json"))["api"])')
+          headset=$(python3 -c 'import json; print(json.load(open("headset.json"))["name"])')
+          title=$(python3 .overpressure/scripts/release.py notes "$GITHUB_REF_NAME" --title "$headset" --api "$api")
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          cat notes.md
+      # The tag's own words are published as they are: nothing private in them (the history scan reads commits).
+      - name: Nothing private in the notes
+        run: |
+          mkdir -p published && cp notes.md CHANGELOG.md published/
+          python3 .overpressure/scripts/check-private.py --files published/notes.md published/CHANGELOG.md
+      - name: The source zip
+        env:
+          NAME: ${{ steps.version.outputs.name }}
+        run: |
+          git archive --format=zip --prefix="$NAME/" --add-file=CHANGELOG.md -o "$NAME.zip" "$GITHUB_REF_NAME"
+          sha256sum "$NAME.zip" > "$NAME.zip.sha256"
+          unzip -p "$NAME.zip" "$NAME/headset.json"
+      - name: The release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.notes.outputs.title }}
+          NAME: ${{ steps.version.outputs.name }}
+          KIND: ${{ steps.version.outputs.kind }}
+        run: |
+          flag=""
+          [ "$KIND" = prerelease ] && flag=--prerelease
+          gh release create "$GITHUB_REF_NAME" $flag --verify-tag \
+            --title "$TITLE" --notes-file notes.md \
+            "$NAME.zip" "$NAME.zip.sha256"
+
+  # The fixes the release brings: every issue whose Stage is Awaiting release gets the release's link and is
+  # closed (overpressure's CLAUDE.md, Backlog). After the release, so a failure here leaves it published.
+  issues:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: overpressure/overpressure
+          path: .overpressure
+      - name: Close the issues it releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .overpressure/scripts/release.py close "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"
