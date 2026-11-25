@@ -19,11 +19,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from . import alpine, bootimg, compress, cpio, kernelinfo
+from . import alpine, bootimg, compress, cpio, headset, kernelinfo
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
+#: overpressure's headset runtime: the files a stage 1 takes under its headset's overlay (Spec.runtime).
+RUNTIME = Path(__file__).resolve().parent / "runtime"
 #: Kernel options every stage 1 relies on (checked against the stock kernel's IKCONFIG).
 REQUIRED_CONFIG = {
     "BLK_DEV_INITRD": "initramfs support",
@@ -63,6 +65,16 @@ class Spec:
     alpine_version: str = "3.24.2"
     alpine_repos: tuple[str, ...] = ("main", "community")
     arch: str = "aarch64"
+    #: overpressure's runtime (RUNTIME) under the overlay: the maintenance system's /init, PID 1, services, USB
+    #: gadget, block policy, recovery deadline and shared library. The headset's overlay then gives its own files
+    #: and its values in etc/overpressure/headset (docs/runtime.md). None: as the headset's interface has it (on
+    #: from 1.8, headset.RUNTIME_SINCE, by the headset.json at or above the overlay); True or False decides.
+    runtime: bool | None = None
+
+
+def takes_runtime(spec: Spec) -> bool:
+    """Return whether SPEC's stage 1 takes overpressure's runtime: as it says, else by its headset's interface."""
+    return headset.runs_on_runtime(spec.overlay) if spec.runtime is None else spec.runtime
 
 
 def analyse(
@@ -176,8 +188,9 @@ def build_rootfs(  # noqa: PLR0913  # the build's inputs, its options keyword-on
     """Build the stage-1 root.
 
     The Alpine minirootfs, @p spec's packages (none if @p minimal), the stock ramdisk's kernel
-    modules, the headset's overlay and files, device nodes and the base directories, root without a
-    password (the link is USB-only). The headset adds its own files to the tree it gets back.
+    modules, overpressure's runtime (with Spec.runtime), the headset's overlay and files, device nodes and the
+    base directories, root without a password (the link is USB-only). The headset adds its own files to the tree
+    it gets back.
     """
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
     tree = cpio.Tree(mtime=epoch)
@@ -205,6 +218,9 @@ def build_rootfs(  # noqa: PLR0913  # the build's inputs, its options keyword-on
     if mods:
         log(f">> kept {len(mods)} files from the stock ramdisk's lib/modules")
 
+    if takes_runtime(spec):
+        log(f">> overpressure's runtime ({RUNTIME})")
+        add_overlay(tree, RUNTIME)
     log(f">> overlay ({spec.overlay})")
     add_overlay(tree, spec.overlay)
     for target, source in spec.files.items():

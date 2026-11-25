@@ -1,0 +1,72 @@
+#!/bin/sh
+# SPDX-License-Identifier: Unlicense
+# Service runner for the respawn entries of /etc/inittab (overpressure-init): waits for whatever the
+# service needs, then execs it in the foreground. Output goes to
+# /run/overpressure/svc-<name>.log.
+. /usr/libexec/overpressure/lib.sh
+
+name=$1
+# Keep a crashing service from respawning in a tight loop.
+sleep 1
+exec >>"$OP_RUN/svc-$name.log" 2>&1
+
+idle() { exec sleep 2147483647; }
+
+case "$name" in
+udhcpd)
+	# DHCP for the PC on the USB link: hands out exactly one address and
+	# deliberately no router/DNS, so the PC keeps its normal internet route.
+	wait_for "$OP_RUN/net.env"
+	. "$OP_RUN/net.env"
+	[ -n "$IFACE" ] || idle
+	cat > "$OP_RUN/udhcpd.conf" <<-EOF
+	interface $IFACE
+	start $HOST_IP
+	end $HOST_IP
+	max_leases 1
+	lease_file $OP_RUN/udhcpd.leases
+	option subnet $NETMASK
+	option lease 86400
+	EOF
+	touch "$OP_RUN/udhcpd.leases"
+	exec udhcpd -f "$OP_RUN/udhcpd.conf"
+	;;
+telnetd)
+	exec telnetd -F -l "$OP_LIB/login-shell"
+	;;
+dropbear)
+	mkdir -p /etc/dropbear
+	# -R: generate host keys on first connection. -W: a 4 MiB receive window: with the default
+	# 24 KiB, uploads over the USB link (the system image) stopped at about 4.4 MB/s.
+	# -B: the empty root password, on the USB cable (docs/security.md).
+	exec dropbear -F -E -R -B -p 22 -W 4194304
+	;;
+httpd)
+	exec httpd -f -p 80 -h /srv/www
+	;;
+serial)
+	# Shell on the USB serial function (CDC-ACM), when the kernel has one.
+	# getty asks for a login name first (any name works, there is no
+	# password): until the PC's terminal has switched off echo, whatever it
+	# reflects back lands in that prompt instead of being run as commands.
+	wait_for "$OP_RUN/serial.env"
+	. "$OP_RUN/serial.env"
+	[ -n "$TTY" ] || idle
+	wait_for "/dev/$TTY" 30 || idle
+	exec getty -i -l "$OP_LIB/login-shell" -L 115200 "$TTY" vt100
+	;;
+usb-watch)
+	exec "$OP_LIB/usb-gadget" watch
+	;;
+recovery-watch)
+	exec "$OP_LIB/recovery-watch"
+	;;
+shutdown)
+	log "shutting down"
+	sync
+	;;
+*)
+	log "svc: unknown service $name"
+	idle
+	;;
+esac

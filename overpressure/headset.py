@@ -41,13 +41,16 @@ if TYPE_CHECKING:
 #: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this
 #: overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new
 #: major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
-SUPPORTED: dict[int, int] = {1: 7}
+SUPPORTED: dict[int, int] = {1: 8}
 #: The newest interface: what a new headset is made for.
 API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"
 #: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
 RETIRED: dict[int, str] = {}
 #: A headset folder's description of itself: devices/<codename>/headset.json.
 MANIFEST = "headset.json"
+#: The interface from which a headset runs on overpressure's runtime (docs/runtime.md) unless it says otherwise:
+#: one made for an older interface brings its own /init, PID 1 and preinit.
+RUNTIME_SINCE = (1, 8)
 
 
 @dataclass(frozen=True)
@@ -358,6 +361,18 @@ def api_version(value: object) -> tuple[int, int] | None:
         major, minor = value.split(".")
         return int(major), int(minor)
     return None
+
+
+def runs_on_runtime(folder: Path) -> bool:
+    """Return whether FOLDER's headset is made for an interface on overpressure's runtime (RUNTIME_SINCE).
+
+    The headset is the nearest folder at or above FOLDER with a headset.json; without one, False.
+    """
+    for candidate in (folder, *folder.parents):
+        if (candidate / MANIFEST).is_file():
+            version = api_version(manifest(candidate).get("api"))
+            return version is not None and version >= RUNTIME_SINCE
+    return False
 
 
 def runs() -> str:
