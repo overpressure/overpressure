@@ -31,7 +31,9 @@ jobs:
           repository: overpressure/overpressure
           path: .overpressure
           fetch-depth: 0 # its releases' tags: the notes name the oldest one that runs this headset's api
-      - uses: ./.overpressure/.github/actions/uv
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          version: "0.13.4" # the start scripts' (install.sh, Install.cmd)
       - name: The tag names headset.json's version
         id: version
         run: |
