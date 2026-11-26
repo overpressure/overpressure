@@ -34,7 +34,7 @@ import threading
 from typing import IO, TYPE_CHECKING, Any, Callable, ClassVar, Union
 
 from . import catalogue, disclaimer, localconfig, version
-from .headset import INSTALL, Registry, discover
+from .headset import INSTALL, Headset, Registry, discover
 from .window.installer import ChildEngine, DemoEngine
 
 if TYPE_CHECKING:
@@ -211,20 +211,25 @@ class Server:
                     "channel": str(record.get("channel", "")),
                     "pinned": bool(record.get("pinned")),
                     "refused": self.registry.refused.get(codename, ""),
-                    "workflows": [
-                        {
-                            "key": w.key,
-                            "title": w.title,
-                            "summary": w.summary,
-                            "erases": w.erases,
-                            "changes": w.changes,
-                            "problem": headset.workflow_problem(w.key),  # why it cannot run now, or ""
-                        }
-                        for w in (headset.workflows() if headset is not None else ())
-                    ],
+                    "workflows": self.workflows(headset) if headset is not None else [],
                 }
             )
         return {"headsets": found}
+
+    @staticmethod
+    def workflows(headset: Headset) -> list[dict[str, Any]]:
+        """Return HEADSET's workflows for the app, each with why it cannot run now ("" when it can)."""
+        return [
+            {
+                "key": w.key,
+                "title": w.title,
+                "summary": w.summary,
+                "erases": w.erases,
+                "changes": w.changes,
+                "problem": headset.workflow_problem(w.key),
+            }
+            for w in headset.workflows()
+        ]
 
     # -- runs -------------------------------------------------------------------------------
     def _start(self, message: dict[str, Any]) -> dict[str, Any]:
