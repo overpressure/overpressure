@@ -541,7 +541,7 @@ an administrator.
 | [overpressure/progress.py](../overpressure/progress.py) | The progress lines a child program prints, which the installer and the window show as bars |
 | [overpressure/version.py](../overpressure/version.py) | This overpressure's version in the tags' spelling, its channel and commit (`--version`) |
 | [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix; `DeviceSettings`, what every Qualcomm Android headset names |
-| [overpressure/fastboot.py](../overpressure/fastboot.py) | flashing an image sparse above a size, raw below; the RAM boot: `fastboot boot` with the headset's checks, never a write |
+| [overpressure/fastboot.py](../overpressure/fastboot.py) | flashing an image sparse above a size, raw below; a restart into the bootloader that returns once its new session is listed; the RAM boot: `fastboot boot` with the headset's checks, never a write |
 | [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, the build container's, then the headset's (`Headset.dependencies()`) from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link, Linux's USB access) |
 | [overpressure/usbaccess.py](../overpressure/usbaccess.py) | Linux's USB access: what the installed udev rules grant for each USB mode, the fix per distribution, a connected device's access |
 | [overpressure/tools.py](../overpressure/tools.py) | the pinned host tools in `cache/tools` |

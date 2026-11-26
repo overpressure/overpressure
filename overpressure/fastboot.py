@@ -89,6 +89,30 @@ class Fastboot:
             raise RuntimeError(msg)
         return serials == [self.serial]
 
+    def restart_bootloader(self, clock: Timing, leave: float = 30, back: float = 120) -> bool:
+        """Restart the headset into its bootloader; return once it has left fastboot and is listed again.
+
+        fastboot's reboot returns as soon as the bootloader has the command. On macOS the next fastboot
+        still finds the leaving headset and fails writing to it ("could not clear input pipe"), so nothing
+        may be sent before the new session is listed. A restart too quick to be seen leaving goes on once
+        @p leave seconds have passed: the return value says whether it was seen. A headset not back within
+        @p back seconds raises RuntimeError. Since interface 1.9.
+        """
+        self("reboot", "bootloader", timeout=120)
+        end = clock.monotonic() + leave
+        while self.present():
+            if clock.monotonic() >= end:
+                return False
+            clock.sleep(0.5)
+
+        def listed() -> None:
+            if not self.present():
+                msg = "the headset is not back in fastboot"
+                raise RuntimeError(msg)
+
+        until("the headset's bootloader", back, listed, clock, interval=2)
+        return True
+
 
 #: Images above this size go to fastboot as sparse images: ABLs crash on large raw downloads (an
 #: engineering ABL on a 100 MiB recovery image).

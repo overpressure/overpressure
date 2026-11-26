@@ -1,6 +1,6 @@
 # Headset interface reference
 
-**TL;DR.** Every name a headset may use in headset interface 1.8, `overpressure.api.v1`: its
+**TL;DR.** Every name a headset may use in headset interface 1.9, `overpressure.api.v1`: its
 modules, and in each its functions and classes with their signatures, dataclass fields and constants, each
 with the first paragraph of its documentation. A headset imports only these
 (`from overpressure.api.v1 import REPO, qualcomm`, `from overpressure.api.v1.headset import Headset, Step`).
@@ -391,6 +391,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
   - `serial: str`
   - `runner: Callable[[list[str], float], str] = run`
   - `present(self) -> bool`: Tell whether the headset is in fastboot: listed with its serial, and nothing else is.
+  - `restart_bootloader(self, clock: Timing, leave: float = 30, back: float = 120) -> bool`: Restart the headset into its bootloader; return once it has left fastboot and is listed again.
 - `SPARSE_ABOVE = 64 << 20`: Images above this size go to fastboot as sparse images: ABLs crash on large raw downloads (an engineering ABL on a 100 MiB recovery image).
 - `flash(fastboot: Callable[..., str], partition: str, image: Path, *, above: int = SPARSE_ABOVE, sparse_path: Path | None = None) -> None`: Write @p image to @p partition: as a sparse image above @p above bytes, else raw.
 - class `RamBootTarget`: What a headset supplies for a RAM boot (Headset.ram_boot).
@@ -442,7 +443,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 
 `overpressure.api.v1.headset`: the headset, its steps, workflows and finished page ([source](../overpressure/headset.py)).
 
-- `SUPPORTED: dict[int, int] = {1: 8}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
+- `SUPPORTED: dict[int, int] = {1: 9}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
 - `API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"`: The newest interface: what a new headset is made for.
 - `RETIRED: dict[int, str] = {}`: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
 - `MANIFEST = "headset.json"`: A headset folder's description of itself: devices/<codename>/headset.json.
