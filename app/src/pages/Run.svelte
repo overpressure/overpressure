@@ -1,21 +1,21 @@
 <!-- SPDX-License-Identifier: Unlicense -->
 <!-- A run: the ring, the stages, the active stage's tasks and notes, the engine's questions as dialogs, the
-     log under Details, and Stop, which stops at once or after a write under way (never cuts one off). -->
+     log under Details, and Stop, which stops at once or after a write under way (never cuts one off). Its end:
+     the headset's own words and next steps, or why it failed and what to do (Retry, Import backup). -->
 <script lang="ts">
   import { tick } from "svelte";
+  import Badge from "../components/Badge.svelte";
   import Icon from "../components/Icon.svelte";
+  import JobStatus from "../components/JobStatus.svelte";
   import Ring from "../components/Ring.svelte";
-  import type { Client } from "../lib/bridge";
-  import { overall, stageStatus, type RunState } from "../lib/run";
+  import { app } from "../lib/app.svelte";
+  import { pickPath } from "../lib/bridge";
+  import type { JobState } from "../lib/job";
+  import type { FinishedPage } from "../lib/protocol";
+  import type { RunState } from "../lib/run";
+  import { overall, stageStatus } from "../lib/run";
 
-  interface Props {
-    run: RunState;
-    client: Client;
-    onleave: () => void;
-    onretry: (workflow: string, restart: string) => void;
-  }
-
-  let { run = $bindable(), client, onleave, onretry }: Props = $props();
+  const run = $derived(app.run as RunState);
 
   const TITLES: Record<string, string> = {
     install: "Installing overpressure",
@@ -38,6 +38,32 @@
   let askDialog = $state<HTMLDialogElement>();
   let stopDialog = $state<HTMLDialogElement>();
   let log = $state<HTMLPreElement>();
+  let page = $state<FinishedPage | null>(null);
+  let importJob = $state<JobState | null>(null);
+
+  $effect(() => {
+    if (outcome === "done" && page === null) {
+      void app.engine
+        .request<FinishedPage>("finished_page", { codename: app.codename, workflow: run.workflow })
+        .then((found) => (page = found));
+    }
+  });
+
+  function act(action: FinishedPage["actions"][number]): void {
+    app.run = null;
+    if (action.workflow) void app.choose(action.workflow);
+    else app.openAdvanced(action.step);
+  }
+
+  async function importBackup(): Promise<void> {
+    const path = await pickPath({ title: "Import a backup", filters: [{ name: "overpressure backup", extensions: ["tar"] }] });
+    if (!path) return;
+    try {
+      importJob = await app.startJob("import", "backup_import", { codename: app.codename, path });
+    } catch (error) {
+      app.say(error instanceof Error ? error.message : String(error));
+    }
+  }
 
   $effect(() => {
     if (run.ask && askDialog && !askDialog.open) {
@@ -58,13 +84,13 @@
     run.ask = null;
     values = {};
     askDialog?.close();
-    await client.request("answer", { run: run.run, answer: ask.id, accepted, values: reply });
+    await app.engine.request("answer", { run: run.run, answer: ask.id, accepted, values: reply });
   }
 
   async function stop(): Promise<void> {
     stopDialog?.close();
     stopping = true;
-    await client.request("stop", { run: run.run });
+    await app.engine.request("stop", { run: run.run });
   }
 </script>
 
@@ -102,12 +128,30 @@
   {/each}
 </ol>
 
-{#if run.finished && run.finished.status !== "done"}
+{#if outcome === "done" && page}
+  <section class="end">
+    <h2>{page.title}</h2>
+    <p class="muted">{page.text}</p>
+    {#if page.actions.length}
+      <div class="next">
+        {#each page.actions as action (action.label)}
+          <button class="btn secondary" onclick={() => act(action)}>{action.label}</button>
+        {/each}
+      </div>
+    {/if}
+  </section>
+{:else if run.finished && run.finished.status !== "done"}
   <div class="callout" class:bad={run.finished.status === "failed"} class:info={run.finished.status === "stopped"}>
     <Icon name={run.finished.status === "failed" ? "alert" : "info"} />
     <div>
       {#if run.finished.error}<h3>{run.finished.error}</h3>{/if}
       {#if run.finished.where}<p>{run.finished.where}</p>{/if}
+      {#if run.finished.offer === "import-backup"}
+        <div class="offer">
+          {#if importJob}<JobStatus job={importJob} />{/if}
+          <button class="btn secondary" disabled={app.jobRunning} onclick={importBackup}>Import backup…</button>
+        </div>
+      {/if}
     </div>
   </div>
 {:else if stage && !outcome}
@@ -119,7 +163,7 @@
           {:else if t.status === "failed"}<Icon name="alert" size={12} />{/if}
         </span>
         <span class="name">{t.title}</span>
-        {#if t.writes}<span class="pill warn">writes to the headset</span>{/if}
+        {#if t.writes}<Badge icon="alert" tone="warn" tip="Writes to the headset" />{/if}
         <span class="state muted">
           {#if t.status === "running"}{t.progress || "Working…"}{:else if t.status === "skipped"}already there{:else if t.status === "done"}done{:else}{t.estimate}{/if}
         </span>
@@ -142,10 +186,10 @@
         ><Icon name="stop" /> Stop</button
       >
     {:else if run.finished.status === "done"}
-      <button class="btn primary" onclick={onleave}>Done <Icon name="check" /></button>
+      <button class="btn primary" onclick={() => app.leaveRun()}>Done <Icon name="check" /></button>
     {:else}
-      <button class="btn secondary" onclick={onleave}>Back</button>
-      <button class="btn primary" onclick={() => onretry(run.workflow, "")}
+      <button class="btn secondary" onclick={() => app.leaveRun()}>Back</button>
+      <button class="btn primary" onclick={() => app.begin(run.workflow)}
         >{run.finished.status === "failed" ? "Retry" : "Start again"}</button
       >
     {/if}
@@ -299,6 +343,30 @@
 
   .callout {
     margin-top: 16px;
+  }
+
+  .end {
+    margin-top: 16px;
+    padding: 16px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    display: grid;
+    gap: 6px;
+  }
+
+  .next {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .offer {
+    display: grid;
+    gap: 8px;
+    justify-items: start;
+    margin-top: 10px;
   }
 
   .note {

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Unlicense
 //! The app's core: it starts the engine (`python -m overpressure serve --json`) and passes lines both ways,
-//! nothing else. The web view has no shell or file access of its own: its one command is `engine_send`, and
-//! each line the engine writes arrives as an "engine-line" event. Closing the window closes the engine's
+//! nothing else. The web view has no shell or file access of its own: its one command is `engine_send`, each
+//! line the engine writes arrives as an "engine-line" event, and the system's file dialogs hand it the paths
+//! the owner picks (the backup's export and import, the logs, a step's paths). Closing the window closes the engine's
 //! stdin, which stops a run under way (after a write, never in one) and ends the engine.
 
 use std::io::{BufRead, BufReader, Write};
@@ -96,6 +97,7 @@ fn engine_send(line: String, engine: State<'_, Engine>) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let engine = start(app.handle())?;
             app.manage(engine);

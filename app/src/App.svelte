@@ -1,115 +1,60 @@
 <!-- SPDX-License-Identifier: Unlicense -->
-<!-- The window: the top bar, the breadcrumb on inner pages, the page, and the status bar. A run keeps going
-     while the pages change: only Stop stops it, and the status bar leads back to it. -->
+<!-- The window: the top bar, the breadcrumb on inner pages, the page, and the status bar. A run or a job keeps
+     going while the pages change: only Stop stops it, and the status bar leads back to a run. -->
 <script lang="ts">
   import { onMount } from "svelte";
   import logo from "../../docs/logo/overpressure.svg?url";
-  import { connect, type Client } from "./lib/bridge";
-  import { PROTOCOL_MAJOR, type Appearance, type HeadsetEntry, type Hello, type RunEvent, type Settings } from "./lib/protocol";
-  import { apply, initial, overall, type RunState } from "./lib/run";
+  import { app } from "./lib/app.svelte";
+  import { jobLine } from "./lib/job";
+  import type { Appearance } from "./lib/protocol";
+  import { overall } from "./lib/run";
+  import CarryOver from "./components/CarryOver.svelte";
   import Icon from "./components/Icon.svelte";
-  import Welcome from "./pages/Welcome.svelte";
-  import Library from "./pages/Library.svelte";
+  import StartSheet from "./components/StartSheet.svelte";
+  import Advanced from "./pages/Advanced.svelte";
   import Headset from "./pages/Headset.svelte";
+  import Library from "./pages/Library.svelte";
   import Run from "./pages/Run.svelte";
+  import Welcome from "./pages/Welcome.svelte";
 
-  type Page = "loading" | "welcome" | "library" | "headset" | "run";
-
-  let client = $state.raw<Client>();
-  let hello = $state<Hello>();
-  let settings = $state<Settings>();
-  let headsets = $state<HeadsetEntry[]>([]);
-  let page = $state<Page>("loading");
-  let codename = $state("");
-  let run = $state<RunState | null>(null);
-  let problem = $state("");
   let menuOpen = $state(false);
-  // Events of a run whose id has not been set yet (its answer and its first events can cross).
-  const early: RunEvent[] = [];
 
-  const headset = $derived(headsets.find((h) => h.codename === codename));
-  const running = $derived(run !== null && run.finished === null);
-  const progress = $derived(run ? Math.round(overall(run).fraction * 100) : 0);
+  const progress = $derived(app.run ? Math.round(overall(app.run).fraction * 100) : 0);
+  const job = $derived(app.job ? app.jobs[app.job] : undefined);
+  const inner = $derived(app.page === "headset" || app.page === "run" || app.page === "advanced");
 
   const systemDark = matchMedia("(prefers-color-scheme: dark)");
   function paint(appearance: Appearance): void {
     document.documentElement.dataset.theme =
       appearance === "system" ? (systemDark.matches ? "dark" : "light") : appearance;
   }
-  systemDark.addEventListener("change", () => paint(settings?.appearance ?? "system"));
-  paint("system");
+  systemDark.addEventListener("change", () => paint(app.settings?.appearance ?? "system"));
+  $effect(() => paint(app.settings?.appearance ?? "system"));
 
-  async function refresh(): Promise<void> {
-    if (!client) return;
-    headsets = (await client.request<{ headsets: HeadsetEntry[] }>("headsets")).headsets;
+  onMount(() => void app.start());
+
+  function back(): void {
+    if (app.page === "run") app.leaveRun();
+    else if (app.page === "advanced") app.page = "headset";
+    else app.page = "library";
   }
 
-  onMount(async () => {
-    try {
-      client = await connect();
-      client.onEnded = () => (problem = "The engine has ended. Close overpressure and start it again.");
-      client.onEvent((event) => {
-        if (run && event.run === run.run) apply(run, event);
-        else early.push(event);
-        if (event.event === "exited") void refresh(); // a run changes what the workflows can do
-      });
-      hello = await client.request<Hello>("hello");
-      const major = Number(hello.protocol.split(".")[0]);
-      if (major > PROTOCOL_MAJOR) {
-        problem = `This app is older than its engine (protocol ${hello.protocol}): update the app.`;
-        return;
-      }
-      settings = await client.request<Settings>("settings");
-      paint(settings.appearance);
-      await refresh();
-      if (hello.disclaimer.due) page = "welcome";
-      else {
-        // Not due on this start: accepted as before, for this engine and what it starts.
-        settings = await client.request<Settings>("accept_disclaimer", { every_start: settings.disclaimer_every_start });
-        page = "library";
-      }
-    } catch (error) {
-      problem = String(error instanceof Error ? error.message : error);
-    }
-  });
-
-  async function accept(everyStart: boolean): Promise<void> {
-    settings = await client!.request<Settings>("accept_disclaimer", { every_start: everyStart });
-    page = "library";
-  }
-
-  async function setAppearance(appearance: Appearance): Promise<void> {
-    settings = await client!.request<Settings>("set_settings", { appearance });
-    paint(appearance);
-  }
-
-  async function start(workflow: string, restart = ""): Promise<void> {
-    if (!headset || running) return;
-    const { run: id } = await client!.request<{ run: string }>("start", {
-      codename: headset.codename,
-      workflow,
-      ...(restart ? { restart } : {}),
-    });
-    const state = initial(id);
-    for (const event of early.splice(0)) apply(state, event);
-    run = state;
-    page = "run";
-  }
-
-  function open(entry: HeadsetEntry): void {
-    codename = entry.codename;
-    page = "headset";
-  }
-
-  function leaveRun(): void {
-    if (run && !running) run = null; // a finished run is closed; a running one keeps going
-    page = headset ? "headset" : "library";
+  function menu(action: () => void): void {
+    menuOpen = false;
+    action();
   }
 </script>
 
+<svelte:window onclick={(e) => menuOpen && !(e.target as HTMLElement).closest(".menu-wrap") && (menuOpen = false)} />
+
 <div class="shell">
   <header class="topbar">
-    <button class="brand" onclick={() => page !== "loading" && page !== "welcome" && (page = "library")}>
+    <button
+      class="brand"
+      onclick={() => {
+        if (app.page !== "loading" && app.page !== "welcome") app.page = "library";
+      }}
+    >
       <img src={logo} alt="" width="26" height="26" />overpressure
     </button>
     <div class="actions">
@@ -124,13 +69,13 @@
         <button class="iconbtn" title="Settings" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}
           ><Icon name="settings" /></button
         >
-        {#if menuOpen && settings}
+        {#if menuOpen && app.settings}
           <div class="menu" role="menu">
             <label class="row"
               >Appearance
               <select
-                value={settings.appearance}
-                onchange={(e) => setAppearance(e.currentTarget.value as Appearance)}
+                value={app.settings.appearance}
+                onchange={(e) => app.setAppearance(e.currentTarget.value as Appearance)}
               >
                 <option value="system">System</option>
                 <option value="light">Light</option>
@@ -138,57 +83,72 @@
               </select></label
             >
             <hr />
-            <button
-              role="menuitem"
-              onclick={() => {
-                menuOpen = false;
-                page = "welcome";
-              }}>Show the welcome page</button
-            >
+            {#if app.headset?.has_steps}
+              <button role="menuitem" onclick={() => menu(() => app.openAdvanced())}>Advanced mode</button>
+            {/if}
+            <button role="menuitem" onclick={() => menu(() => (app.page = "welcome"))}>Show the welcome page</button>
           </div>
         {/if}
       </div>
     </div>
   </header>
 
-  {#if page === "headset" || page === "run"}
+  {#if inner}
     <nav class="crumbs" aria-label="Where you are">
-      <button class="iconbtn" title="Back" onclick={() => (page === "run" ? leaveRun() : (page = "library"))}
-        ><Icon name="left" /></button
-      >
-      <button class="crumb" onclick={() => (page === "run" ? leaveRun() : (page = "library"))}>Headsets</button>
+      <button class="iconbtn" title="Back" onclick={back}><Icon name="left" /></button>
+      <button class="crumb" onclick={() => (app.page === "run" ? app.leaveRun() : (app.page = "library"))}>Headsets</button>
       <span class="muted">›</span>
-      <button class="crumb current" onclick={() => page === "run" && leaveRun()}>{headset?.name ?? run?.headset}</button>
+      <button
+        class="crumb"
+        class:current={app.page === "headset"}
+        onclick={() => (app.page === "run" ? app.leaveRun() : (app.page = "headset"))}
+        >{app.headset?.name ?? app.run?.headset}</button
+      >
+      {#if app.page === "advanced"}<span class="muted">›</span><span class="crumb current">Advanced mode</span>{/if}
     </nav>
   {/if}
 
   <main class="page">
-    {#if problem}
-      <div class="callout bad"><Icon name="alert" /><div><h3>The engine did not answer</h3><p>{problem}</p></div></div>
-    {:else if page === "loading"}
+    {#if app.problem}
+      <div class="callout bad"><Icon name="alert" /><div><h3>The engine did not answer</h3><p>{app.problem}</p></div></div>
+    {:else if app.page === "loading"}
       <p class="muted">Starting…</p>
-    {:else if page === "welcome" && hello && settings}
-      <Welcome disclaimer={hello.disclaimer} everyStart={settings.disclaimer_every_start} {logo} onaccept={accept} />
-    {:else if page === "library"}
-      <Library {headsets} onopen={open} />
-    {:else if page === "headset" && headset}
-      <Headset {headset} {running} onstart={(w) => start(w)} onshowrun={() => (page = "run")} />
-    {:else if page === "run" && run && client}
-      <Run bind:run {client} onleave={leaveRun} onretry={(w, restart) => { run = null; void start(w, restart); }} />
+    {:else if app.page === "welcome" && app.hello && app.settings}
+      <Welcome
+        disclaimer={app.hello.disclaimer}
+        everyStart={app.settings.disclaimer_every_start}
+        {logo}
+        onaccept={(every) => app.accept(every)}
+      />
+    {:else if app.page === "library"}
+      <Library />
+    {:else if app.page === "headset" && app.headset}
+      <Headset headset={app.headset} />
+    {:else if app.page === "advanced" && app.headset}
+      <Advanced headset={app.headset} />
+    {:else if app.page === "run" && app.run}
+      <Run />
     {/if}
   </main>
 
   <footer class="status">
-    {#if running}
-      <button class="status-run" onclick={() => (page = "run")}
-        ><span class="dot"></span>{run?.headset}: {progress}% · Open</button
+    {#if app.running}
+      <button class="status-run" onclick={() => (app.page = "run")}
+        ><span class="dot"></span>{app.run?.headset}: {progress}% · Open</button
       >
+    {:else if job && job.code === null}
+      <span class="status-run"><span class="dot"></span>{jobLine(job)}</span>
+    {:else if app.notice}
+      <span role="status">{app.notice}</span>
     {:else}
       <span>Ready</span>
     {/if}
-    {#if hello?.demo}<span class="muted">Demo · nothing touches a headset</span>{/if}
+    {#if app.hello?.demo}<span class="muted">Demo · nothing touches a headset</span>{/if}
   </footer>
 </div>
+
+{#if app.sheet}<StartSheet sheet={app.sheet} />{/if}
+{#if app.carryOver}<CarryOver offer={app.carryOver} />{/if}
 
 <style>
   .shell {
@@ -286,7 +246,7 @@
     font-size: 13px;
   }
 
-  .crumb:hover {
+  button.crumb:hover {
     color: var(--blue);
   }
 
@@ -310,9 +270,17 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 16px;
     padding: 0 24px;
     font-size: 11px;
     border-top: 1px solid var(--line);
+  }
+
+  .status > :first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .status-run {
@@ -323,13 +291,14 @@
     padding: 0;
   }
 
-  .status-run:hover {
+  button.status-run:hover {
     color: var(--blue);
   }
 
   .dot {
     width: 7px;
     height: 7px;
+    flex-shrink: 0;
     border-radius: 50%;
     background: var(--blue);
   }

@@ -371,12 +371,27 @@ pnpm tauri dev           # the app's window: needs rustup (app/src-tauri/rust-to
 pnpm tauri build --bundles nsis   # Windows' per-user installer, in src-tauri/target/release/bundle/
 ```
 
-Pages: the welcome page with the disclaimer (*Show this on every start*; unticked, it comes back with a new
-overpressure), the headsets on this computer, a headset's workflows as tiles (each with what it does, whether it
-erases the headset and why it cannot run now), and a run: a ring with a segment per stage, the active stage's
-tasks, the notes, the engine's questions as dialogs, the log under *Details*, and *Stop*. Leaving a run's page
-leaves the run going; the status bar leads back to it. Downloading headsets, the backup, *Save logs…*, Advanced
-mode and the packaged apps are not there yet.
+Its pages, each in light and dark and down to its smallest window:
+
+- **Welcome:** the disclaimer, with *Show this on every start*; unticked, it comes back with a new overpressure.
+  An earlier overpressure folder beside this one is offered for carry-over.
+- **Headsets:** the headsets on this computer as tiles, a newer release marked, a search once there are several.
+  *+* adds one from the catalogue (headsets in development listed, not offered) with its version: the newest
+  stable, the newest beta, the preview, or one release.
+- **A headset:** its short facts, *Change version*, a plain tile per workflow (an icon and a name; what it does
+  in its tooltip, badges for erasing the headset and for why it cannot run now), and a row of tools: the backup's
+  export and import, *Save logs* and Advanced mode. A workflow an earlier run began asks first: continue, or
+  start over from a stage.
+- **A run:** a ring with a segment per stage, the active stage's tasks, the notes, the engine's questions as
+  dialogs, the log under *Details*, and *Stop*. Its end shows the headset's own words and next steps, or why it
+  failed with *Retry* and, where offered, *Import backup…*. Leaving the page leaves the run going; the status bar
+  leads back to it.
+- **Advanced mode:** the steps by group (a drop-down in a narrow window), a step's parameters with *Browse…*, its
+  command line with *Copy*, *Run* (a step that writes asks first) or *Stop*, its output; the dependency checks.
+
+Tiles stay plain, as in the mockup: details go into tooltips and small icon badges, which show on hover and on
+keyboard focus. Paths come from the system's file dialogs in the app and from a prompt in a browser. The headsets' pictures are
+placeholders until overpressure/brand has them; the packaged apps are not there yet.
 
 ## The installer
 
@@ -477,23 +492,44 @@ with asks through `input()` and `getpass()`.
 
 ### The app's server
 
-`python -m overpressure serve --json [--demo]` is the engine for the app in development: one long-lived
-process, JSON lines both ways. A request is `{"id": N, "request": NAME, ...}` on stdin and gets one answer
-on stdout, `{"id": N, "result": {...}}` or `{"id": N, "error": TEXT}`. A run's [events](#events) follow
-its answer, each with `"run"`, then `{"event": "exited", "run": ID, "code": N}`; a line of the engine that is
-no event arrives as `output`. `--demo` runs the window's demo engine: nothing touches a headset.
+`python -m overpressure serve --json [--demo | --demo-fresh]` is the engine for the app in development: one
+long-lived process, JSON lines both ways. A request is `{"id": N, "request": NAME, ...}` on stdin and gets one
+answer on stdout, `{"id": N, "result": {...}}` or `{"id": N, "error": TEXT}`; an answer that takes time (the
+network, the checks, the plan) comes later, and the other requests are answered meanwhile. A run's
+[events](#events) follow its answer, each with `"run"`, then `{"event": "exited", "run": ID, "code": N}`; a line
+of the engine that is no event arrives as `output`. A job (a download, the backup's export or import, the logs,
+a step) sends `job-line` {`line`}, `job-progress` {`fraction`, `text`} and last `job-ended` {`kind`, `code`,
+`error`}, each with `"job"`. One thing at a time: a run or a job refuses the next until it has ended.
+
+`--demo` runs nothing: the window's demo engine, steps, checks and backup jobs, a download that fetches nothing,
+releases of its own, and an install as if an earlier run had done all but its last stage (`--demo-fresh`:
+nothing done). It treats a development checkout as a downloaded release, and offers carry-over from an earlier
+folder with `OVERPRESSURE_DEMO_CARRY_OVER=1`.
 
 | Request | Fields | Answer |
 | --- | --- | --- |
 | `hello` | | `protocol` (major.minor; an app refuses a newer major), `version`, `platform`, `demo`, `disclaimer` {`title`, `text`, `accept`, `due`, `accepted`} |
 | `settings`, `set_settings` | `appearance`: `system`, `light` or `dark` | the settings, kept in `out/app.json` |
 | `accept_disclaimer` | `every_start` | the settings; the disclaimer is accepted for the server and every program it starts. Unticked, it is due again with a new overpressure |
-| `headsets` | | `headsets` [{`codename`, `name`, `soc`, `repository`, `downloaded`, `channel`, `pinned`, `refused`, `workflows` [{`key`, `title`, `summary`, `erases`, `changes`, `problem` (why it cannot run now, or empty)}]}]: the catalogue's and those in `devices/` |
-| `start` | `codename`, `workflow`, `restart` (a stage) | `run`; refused without the disclaimer, while another run is under way, or when the workflow cannot run now |
+| `headsets` | | `headsets` [{`codename`, `name`, `soc`, `year`, `repository`, `development` (no release yet), `downloaded`, `checkout`, `channel`, `pinned`, `refused`, `has_steps`, `workflows` [{`key`, `title`, `summary`, `erases`, `changes`, `problem` (why it cannot run now, or empty)}]}]: the catalogue's, those in development and those in `devices/` |
+| `releases` | `codename` | later: `releases` [{`version`, `prerelease`, `problem`}], `record` (what its download recorded) |
+| `download` | `codename`, `channel`, `version` | `job`: the release into `devices/` (`headset add`); refused for a checkout and a headset in development |
+| `updates` | | later: `updates` {codename: newer version} |
+| `plan` | `codename`, `workflow` | later: `stages`, each task with the status an earlier run left (`install --plan`) |
+| `start` | `codename`, `workflow`, `restart` (a stage) | `run`; refused without the disclaimer, while something runs, or when the workflow cannot run now |
 | `answer` | `run`, `answer` (the ask's id), `accepted`, `values` | {} |
 | `stop` | `run` | {}; the run stops at once, or after a write under way |
+| `finished_page` | `codename`, `workflow` | `title`, `text`, `actions` [{`label`, `workflow`, `step`}]: the headset's own, those it can offer |
+| `backup` | `codename` | `supported`, `present`, `folder` |
+| `backup_export`, `backup_import`, `save_logs` | `codename`, `path` | `job` (`backup export`, `backup import`, `support-bundle`) |
+| `steps` | `codename` | `groups` [{`group`, `steps` [{`key`, `title`, `checks` (the dependency checks), `help`, `writes`, `linux_root`, `params` [{`name`, `label`, `kind`, `choices`, `help`, `value`, `browse`}]}]}] |
+| `command` | `codename`, `step`, `values` | `command` (as typed in a terminal), `problem`; the values stay for the step |
+| `run_step` | `codename`, `step`, `values` | `job`, whose first line is the command |
+| `stop_job` | `job` | {}; a step ends, a download or backup job finishes by itself |
+| `checks` | `codename` | later: `checks` [{`name`, `needed_for`, `status`, `detail`, `fix`}] |
+| `carry_over`, `carry`, `decline_carry_over` | `from` | the earlier folder and its question; what came over |
 
-The end of stdin stops a run under way and ends the server.
+The end of stdin stops a run or a step under way and ends the server.
 
 ## The command line
 
@@ -580,7 +616,7 @@ an administrator.
 | [overpressure/elevated.py](../overpressure/elevated.py) | administrator rights (an elevated token, root outside a container; not on GitHub Actions) refuse every command and the window |
 | [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (a Linux-root step's in the build container), its display, running and stopping it |
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
-| [overpressure/serve.py](../overpressure/serve.py) | the engine as a server for the app ([The app's server](#the-apps-server)): its requests, the settings, the disclaimer, a run's events with its id |
+| [overpressure/serve.py](../overpressure/serve.py) | the engine as a server for the app ([The app's server](#the-apps-server)): its requests, the settings, the disclaimer, runs and jobs (downloads, the backup, the logs, steps) with their events, the demo's fakes |
 | [overpressure/window/](../overpressure/window/__init__.py) | the window (CustomTkinter). Models without widgets: `installer.py` (the engine's events as stages and asks; the child and demo engines), `advanced.py` (the steps, their values and command lines, the checks), `headsets.py` (the headset page, its plan probes, `out/window.json`, the demo's second headset). Widgets: `app.py` (the header, the installer view, the panels), `advanced_view.py`; `theme.py` the design tokens and fonts, `kit.py` the components, `logo.py` the logo's renderings (`icons/`) |
 | [overpressure/carryover.py](../overpressure/carryover.py) | A newer overpressure's folder takes the owner's data from the one beside it |
 | [overpressure/lp.py](../overpressure/lp.py) | `super`'s logical partitions: the metadata Android's dynamic partitions use |

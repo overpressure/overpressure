@@ -1,61 +1,107 @@
 <!-- SPDX-License-Identifier: Unlicense -->
-<!-- The headsets on this computer as tiles, and + to add one from the catalogue. -->
+<!-- The headsets on this computer as tiles (a newer release marked), a search once there are several, and +
+     to add one from the catalogue. -->
 <script lang="ts">
+  import { app } from "../lib/app.svelte";
+  import AddDialog from "../components/AddDialog.svelte";
+  import Badge from "../components/Badge.svelte";
   import HeadsetArt from "../components/HeadsetArt.svelte";
   import Icon from "../components/Icon.svelte";
-  import type { HeadsetEntry } from "../lib/protocol";
+  import { versionLine } from "../lib/words";
 
-  let { headsets, onopen }: { headsets: HeadsetEntry[]; onopen: (h: HeadsetEntry) => void } = $props();
+  let adding = $state(false);
+  let search = $state("");
+  let field = $state<HTMLInputElement>();
 
-  const here = $derived(headsets.filter((h) => h.downloaded));
-  let dialog = $state<HTMLDialogElement>();
+  const here = $derived(app.headsets.filter((h) => h.downloaded));
+  const shown = $derived(
+    here.filter((h) => `${h.name} ${h.codename}`.toLowerCase().includes(search.trim().toLowerCase())),
+  );
+
+  function keys(event: KeyboardEvent): void {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !adding) {
+      event.preventDefault();
+      field?.focus();
+    }
+  }
 </script>
+
+<svelte:window onkeydown={keys} />
 
 <h1>Headsets</h1>
 
+{#if here.length > 1}
+  <label class="search">
+    <Icon name="search" />
+    <input bind:this={field} bind:value={search} placeholder="Search your headsets…" aria-label="Search your headsets" />
+    <span class="key">Ctrl K</span>
+  </label>
+{/if}
+
 <div class="cards">
-  {#each here as h (h.codename)}
-    <button class="tile" onclick={() => onopen(h)} disabled={Boolean(h.refused)} title={h.refused || undefined}>
-      {#if h.refused}<span class="pill bad">Needs a newer overpressure</span>{/if}
-      <div class="art"><HeadsetArt name={h.name} width={150} /></div>
-      <div>
-        <h3>{h.name}</h3>
-        <p class="muted">{h.downloaded}{h.channel ? ` · ${h.channel}` : ""}</p>
-      </div>
-    </button>
+  {#each shown as h (h.codename)}
+    <div class="cell">
+      <button class="tile" onclick={() => app.open(h.codename)} disabled={Boolean(h.refused)} aria-label="Open the {h.name}">
+        <div class="art"><HeadsetArt name={h.name} width={150} /></div>
+        <div>
+          <h3>{h.name}</h3>
+          <p class="muted">{versionLine(h.downloaded, h.channel)}</p>
+        </div>
+      </button>
+      <span class="badges">
+        {#if h.refused}<Badge icon="alert" tone="bad" place="end" tip={`Needs a newer overpressure: ${h.refused}`} />
+        {:else if app.updates[h.codename]}<Badge icon="up" tone="warn" place="end" tip={`Update available: ${app.updates[h.codename]}`} />{/if}
+      </span>
+    </div>
   {/each}
-  <button class="tile add" title="Add a headset" aria-label="Add a headset" onclick={() => dialog?.showModal()}>
+  <button class="tile add" title="Add a headset" aria-label="Add a headset" onclick={() => (adding = true)}>
     <Icon name="plus" size={28} />
   </button>
 </div>
-{#if here.length === 0}<p class="muted hint">No headset on this computer yet. Choose + to add one.</p>{/if}
+{#if here.length === 0}
+  <p class="muted hint">No headset on this computer yet. Choose + to add one.</p>
+{:else if shown.length === 0}
+  <p class="muted hint">No headset matches your search.</p>
+{/if}
 
-<dialog bind:this={dialog} aria-labelledby="add-title">
-  <div class="title">
-    <h2 id="add-title">Add a headset</h2>
-    <button class="iconbtn" aria-label="Close" onclick={() => dialog?.close()}><Icon name="close" /></button>
-  </div>
-  <div class="list">
-    {#each headsets as h (h.codename)}
-      <div class="option">
-        <div class="thumb"><HeadsetArt name={h.name} width={64} /></div>
-        <div class="text">
-          <h3>{h.name}</h3>
-          <p class="muted">{h.soc || h.repository}</p>
-        </div>
-        {#if h.downloaded}<span class="pill good">On this computer</span>{:else}<span class="pill">Not downloaded</span>{/if}
-      </div>
-    {/each}
-  </div>
-  <p class="foot muted">
-    Downloading from here comes next. Until then:
-    <code>python -m overpressure headset add CODENAME</code>
-  </p>
-</dialog>
+{#if adding}<AddDialog onclose={() => (adding = false)} />{/if}
 
 <style>
   h1 {
+    margin-bottom: 16px;
+  }
+
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    height: 40px;
+    padding: 0 12px;
     margin-bottom: 20px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--inset);
+    color: var(--muted);
+  }
+
+  .search:focus-within {
+    border-color: var(--blue);
+  }
+
+  .search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--text);
+  }
+
+  .key {
+    font-size: 11px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
   }
 
   .cards {
@@ -85,10 +131,21 @@
     border-color: var(--blue);
   }
 
-  .tile .pill {
+  .cell {
+    position: relative;
+    display: grid;
+  }
+
+  .badges {
     position: absolute;
     top: 10px;
     right: 10px;
+    display: flex;
+    gap: 4px;
+  }
+
+  .badges:empty {
+    display: none;
   }
 
   .tile p {
@@ -118,50 +175,6 @@
   .hint {
     margin-top: 16px;
     font-size: 12px;
-  }
-
-  .title {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px 12px;
-  }
-
-  .list {
-    padding: 0 12px 12px;
-  }
-
-  .option {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 8px;
-    border-radius: 8px;
-  }
-
-  .option .text {
-    flex: 1;
-  }
-
-  .option p {
-    font-size: 12px;
-    margin-top: 2px;
-  }
-
-  .thumb {
-    width: 72px;
-    display: grid;
-    place-items: center;
-  }
-
-  .foot {
-    border-top: 1px solid var(--line);
-    padding: 12px 20px;
-    font-size: 12px;
-  }
-
-  code {
-    font-size: 11px;
   }
 
   @media (max-width: 680px) {

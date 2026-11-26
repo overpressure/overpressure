@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
-// The front end's one way to the engine: requests answered by id, and a run's events. Two transports carry
-// the same lines: the Tauri core in the app, the Vite dev server's WebSocket in a plain browser (the demo).
-import type { Message, RunEvent } from "./protocol";
+// The front end's one way to the engine: requests answered by id, and runs' and jobs' events. Two transports
+// carry the same lines: the Tauri core in the app, the Vite dev server's WebSocket in a plain browser (the demo).
+import type { EngineEvent, Message } from "./protocol";
 
 /** Carries one message each way; the engine's lines arrive parsed. */
 export interface Transport {
@@ -14,7 +14,7 @@ export class EngineError extends Error {}
 export class Client {
   private next = 1;
   private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-  private listeners = new Set<(event: RunEvent) => void>();
+  private listeners = new Set<(event: EngineEvent) => void>();
   /** Called when the engine's process has ended. */
   onEnded: () => void = () => {};
 
@@ -31,8 +31,8 @@ export class Client {
     });
   }
 
-  /** Call LISTENER with every run event; return what stops it. */
-  onEvent(listener: (event: RunEvent) => void): () => void {
+  /** Call LISTENER with every run's and job's event; return what stops it. */
+  onEvent(listener: (event: EngineEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -50,6 +50,8 @@ export class Client {
     else waiting.resolve(message.result);
   }
 }
+
+const underTauri = (): boolean => "__TAURI_INTERNALS__" in window;
 
 /** The Vite dev server's WebSocket: `pnpm dev` in a plain browser. */
 function viteTransport(): Transport {
@@ -80,6 +82,28 @@ async function tauriTransport(): Promise<Transport> {
 }
 
 export async function connect(): Promise<Client> {
-  const underTauri = "__TAURI_INTERNALS__" in window;
-  return new Client(underTauri ? await tauriTransport() : viteTransport());
+  return new Client(underTauri() ? await tauriTransport() : viteTransport());
+}
+
+export interface Pick {
+  /** A file to write (a save dialog) rather than one to read. */
+  save?: boolean;
+  /** A folder rather than a file. */
+  folder?: boolean;
+  title: string;
+  /** The suggested file name (save) or the starting path. */
+  suggested?: string;
+  /** File types: a name and its extensions without dots. */
+  filters?: { name: string; extensions: string[] }[];
+}
+
+/** Ask the owner for a path: the system's dialog in the app, a prompt in a browser. "" when cancelled. */
+export async function pickPath(pick: Pick): Promise<string> {
+  if (!underTauri()) return window.prompt(`${pick.title}: a path on this computer`, pick.suggested ?? "") ?? "";
+  const dialog = await import("@tauri-apps/plugin-dialog");
+  const options = { title: pick.title, defaultPath: pick.suggested, filters: pick.filters };
+  const found = pick.save
+    ? await dialog.save(options)
+    : await dialog.open({ ...options, directory: Boolean(pick.folder), multiple: false });
+  return typeof found === "string" ? found : "";
 }

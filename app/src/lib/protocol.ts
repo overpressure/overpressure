@@ -34,13 +34,31 @@ export interface HeadsetEntry {
   codename: string;
   name: string;
   soc: string;
+  year: number;
   repository: string;
+  /** In development: listed, nothing to download yet. */
+  development: boolean;
   /** What is downloaded, in words ("release 2026.11.0b0", "development checkout"), or "". */
   downloaded: string;
+  /** A Git clone: updated with git, never replaced by a download. */
+  checkout: boolean;
   channel: string;
   pinned: boolean;
   refused: string;
   workflows: Workflow[];
+  has_steps: boolean;
+}
+
+export interface Release {
+  version: string;
+  prerelease: boolean;
+  /** Why this overpressure cannot run it, or "". */
+  problem: string;
+}
+
+export interface Releases {
+  releases: Release[];
+  record: { tag?: string | null; channel?: string | null; pinned?: boolean | null };
 }
 
 export type TaskStatus = "pending" | "running" | "done" | "skipped" | "failed";
@@ -58,6 +76,58 @@ export interface PlanStage {
   title: string;
   summary: string;
   tasks: PlanTask[];
+}
+
+/** A plan as an earlier run left it (the plan request). */
+export interface RecordedStage extends PlanStage {
+  tasks: (PlanTask & { status: TaskStatus })[];
+}
+
+export interface FinishedPage {
+  title: string;
+  text: string;
+  actions: { label: string; workflow: string; step: string }[];
+}
+
+export interface Backup {
+  supported: boolean;
+  present: boolean;
+  folder: string;
+}
+
+export interface Param {
+  name: string;
+  label: string;
+  kind: "text" | "path" | "choice" | "flag";
+  choices: string[];
+  help: string;
+  value: string;
+  /** What Browse picks: "file", "folder", or "" for none. */
+  browse: "file" | "folder" | "";
+}
+
+export interface StepInfo {
+  key: string;
+  title: string;
+  /** The dependency checks rather than a step. */
+  checks: boolean;
+  help?: string;
+  writes?: boolean;
+  linux_root?: boolean;
+  params?: Param[];
+}
+
+export interface StepGroup {
+  group: string;
+  steps: StepInfo[];
+}
+
+export interface Check {
+  name: string;
+  needed_for: string;
+  status: "ok" | "missing" | "optional" | "warning";
+  detail: string;
+  fix: string;
 }
 
 export interface AskField {
@@ -96,7 +166,18 @@ export type RunEvent = { run: string } & (
   | { event: "exited"; code: number }
 );
 
-export type Answer = { id: number | null; result: unknown } | { id: number | null; error: string };
+export type JobKind = "download" | "export" | "import" | "logs" | "step";
+
+/** A job's event: a download, the backup's export or import, the logs, a step. */
+export type JobEvent = { job: string } & (
+  | { event: "job-line"; line: string }
+  | { event: "job-progress"; fraction: number | null; text: string }
+  | { event: "job-ended"; kind: JobKind; code: number; error: string }
+);
+
 /** The engine's process has ended (the app's core or the dev bridge says so): the app has to start again. */
 export type EngineEnded = { event: "engine-ended"; run: "" };
-export type Message = Answer | RunEvent | EngineEnded;
+
+export type Answer = { id: number | null; result: unknown } | { id: number | null; error: string };
+export type EngineEvent = RunEvent | JobEvent;
+export type Message = Answer | EngineEvent | EngineEnded;
