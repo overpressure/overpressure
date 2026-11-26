@@ -13,8 +13,10 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import struct
 import sys
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -655,3 +657,178 @@ def partition_size(backup: Path, label: str) -> int:
         msg = f"the backup's partition maps hold {len(sizes)} partitions named {label}"
         raise ValueError(msg)
     return sizes[0]
+
+
+# -- a whole backup written back over EDL ----------------------------------------------------------
+#: The partitions a write-back zeroes at their start instead of writing them from the backup, as an Android
+#: restore leaves them: the system makes its data anew. userdata is not in a backup; metadata belongs to the
+#: data that is gone (since interface 1.10).
+WIPED = ("userdata", "metadata")
+#: How much of a WIPED partition's start is zeroed (all of a smaller one).
+WIPE_BYTES = 64 << 20
+
+
+@dataclass(frozen=True)
+class Write:
+    """One write of a backup's write-back: an image at a start sector of a LUN (since interface 1.10).
+
+    @p image is a file of the backup, or None for @p sectors sectors of zeros (a WIPED partition's start).
+    """
+
+    lun: int
+    label: str
+    start: int
+    sectors: int
+    sector_size: int
+    image: Path | None
+
+    @property
+    def size(self) -> int:
+        """Return the write's size in bytes."""
+        return self.sectors * self.sector_size
+
+
+def _rows(folder: Path, lun: int) -> list[ET.Element]:
+    """Return a backup LUN's rawprogram rows."""
+    return ET.parse(folder / f"lun{lun}" / f"rawprogram{lun}.xml").getroot().findall("program")  # noqa: S314  # the EDL client's own map
+
+
+def backup_lun_sectors(folder: Path, lun: int) -> int:
+    """Return a backup LUN's size in sectors from its primary GPT: the backup header's position, plus one.
+
+    The LUN the backup was read from had this size; a LUN of another size cannot take its backup GPT, nor
+    the partitions as they lie (since interface 1.10).
+    """
+    primary = next((row for row in _rows(folder, lun) if row.get("label") == "PrimaryGPT"), None)
+    if primary is None:
+        msg = f"the backup's map of LUN {lun} has no primary GPT"
+        raise ValueError(msg)
+    with (folder / f"lun{lun}" / primary.attrib["filename"]).open("rb") as gpt:
+        gpt.seek(int(primary.attrib["SECTOR_SIZE_IN_BYTES"]))
+        header = gpt.read(92)
+    if header[:8] != b"EFI PART":
+        msg = f"the backup's primary GPT of LUN {lun} has no GPT header"
+        raise ValueError(msg)
+    return struct.unpack_from("<Q", header, 32)[0] + 1
+
+
+def _start(value: str, sectors: int) -> int:
+    """Return a rawprogram start sector: a number, or NUM_DISK_SECTORS-N. counted from the LUN's end."""
+    found = re.fullmatch(r"NUM_DISK_SECTORS-(\d+)\.?", value.strip())
+    return sectors - int(found.group(1)) if found else int(value.strip().rstrip("."))
+
+
+def write_back_plan(folder: Path, manifest: dict) -> list[Write]:
+    """Return a verified backup's write-back: LUN by LUN in the backup's order, each in its map's order.
+
+    Every partition the backup holds goes back from its image, the GPTs and the boot chain included; the
+    WIPED ones get zeros at their start instead, and the others a backup leaves out (NOT_KEPT) are not
+    written. Each write lies inside its LUN, and each image has its partition's size (since interface 1.10).
+    """
+    files = manifest["files"]
+    plan = []
+    for lun in manifest["luns"]:
+        total = backup_lun_sectors(folder, lun)
+        for row in _rows(folder, lun):
+            label = row.get("label", "")
+            size = int(row.attrib["SECTOR_SIZE_IN_BYTES"])
+            sectors = int(row.attrib["num_partition_sectors"])
+            start = _start(row.attrib["start_sector"], total)
+            if sectors <= 0 or start < 0 or start + sectors > total:
+                msg = f"{label} lies outside LUN {lun} ({total} sectors)"
+                raise ValueError(msg)
+            name = f"lun{lun}/{row.attrib['filename']}"
+            if label in WIPED:
+                plan.append(Write(lun, label, start, min(sectors, WIPE_BYTES // size), size, None))
+            elif name in files:
+                if files[name]["size"] != sectors * size:
+                    msg = f"{name} does not have its partition's size"
+                    raise ValueError(msg)
+                plan.append(Write(lun, label, start, sectors, size, folder / name))
+            elif label not in NOT_KEPT:
+                msg = f"the backup holds no image of {label} (LUN {lun})"
+                raise ValueError(msg)
+    return plan
+
+
+def storage_sectors(output: str) -> dict[int, int]:
+    """Return each LUN's size in sectors as the loader reports it (getstorageinfo) in edl-ng's debug output.
+
+    These are the LUNs' own sizes, which do not depend on their partition tables (since interface 1.10).
+    """
+    found: dict[int, int] = {}
+    total = None
+    for line in output.splitlines():
+        blocks = re.search(r'"total_blocks":\s*(\d+)', line)
+        if blocks:
+            total = int(blocks.group(1))
+            continue
+        lun = re.search(r"UFS Current LUN Number: = 0x([0-9a-fA-F]+)", line)
+        if lun and total is not None:
+            found.setdefault(int(lun.group(1), 16), total)
+            total = None
+    return found
+
+
+def check_storage(backup: dict[int, int], device: dict[int, int]) -> None:
+    """Refuse a device whose LUNs differ from the backup's in number or size (since interface 1.10)."""
+    if set(backup) != set(device):
+        msg = f"the headset has the LUNs {sorted(device)}, the backup {sorted(backup)}: nothing was written"
+        raise ValueError(msg)
+    other = [
+        f"LUN {lun}: {device[lun]} sectors, the backup's {backup[lun]}" for lun in backup if backup[lun] != device[lun]
+    ]
+    if other:
+        msg = "the headset's LUNs have other sizes than the backup's (" + "; ".join(other) + "): nothing was written"
+        raise ValueError(msg)
+
+
+def _same(a: Path, b: Path, size: int) -> bool:
+    """Tell whether the first @p size bytes of @p a and @p b are equal, and @p b is that long."""
+    with a.open("rb") as one, b.open("rb") as other:
+        left = size
+        while left:
+            block = one.read(min(left, 1 << 20))
+            if not block or other.read(len(block)) != block:
+                return False
+            left -= len(block)
+    return b.stat().st_size >= size
+
+
+def write_back(
+    plan: Sequence[Write],
+    program: str | Path,
+    loader: str | Path,
+    work: Path,
+    runner: Callable[[list[str | Path], float], object],
+) -> None:
+    """Write @p plan through edl-ng (write-sector), each write read back into @p work and compared before the next.
+
+    A write that reads back other bytes raises, the device left in EDL mode with everything before it
+    written. Progress lines count the bytes (since interface 1.10).
+    """
+    work.mkdir(parents=True, exist_ok=True)
+    readback, zeros = work / "readback.bin", work / "zeros.bin"
+    total = sum(w.size for w in plan) or 1
+    done = 0
+    for write in plan:
+        image = write.image
+        if image is None:
+            zeros.write_bytes(bytes(write.size))
+            image = zeros
+        progress.say(f"writing {write.label} (LUN {write.lun})", done / total)
+        timeout = 120 + write.size / (10 << 20)
+        runner(edl_ng(program, loader, "write-sector", str(write.start), image, "--lun", str(write.lun)), timeout)
+        readback.unlink(missing_ok=True)
+        read = ["read-sector", str(write.start), str(write.sectors), readback, "--lun", str(write.lun)]
+        runner(edl_ng(program, loader, *read), timeout)
+        if not _same(image, readback, write.size):
+            msg = (
+                f"{write.label} (LUN {write.lun}) reads back other bytes than written; the headset stays in EDL mode "
+                "with the partitions before it written"
+            )
+            raise RuntimeError(msg)
+        readback.unlink()
+        done += write.size
+    zeros.unlink(missing_ok=True)
+    progress.say("written and read back", 1.0)
