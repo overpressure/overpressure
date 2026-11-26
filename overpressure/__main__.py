@@ -12,6 +12,9 @@
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
                        the window: the installer, and every step of the headset in its Advanced mode;
                        it opens on the page that asks which headset, unless --device names one
+  serve --json [--demo]
+                       the engine as a server for the app: requests, answers and the installer's
+                       events as JSON lines (overpressure/serve.py)
   steps                the headset's workflow steps and their command lines
   run STEP [NAME=VALUE...]
                        run a step as the window does, with parameters
@@ -230,6 +233,12 @@ def demo_headsets(registry: Registry) -> Registry:
     return Registry({**registry.headsets, fake.info.codename: fake})
 
 
+def _serve(registry: Registry, _headset: Headset | None, args: list[str]) -> int:
+    from . import serve  # noqa: PLC0415  # only the app needs it
+
+    return serve.main(args, registry)
+
+
 def _container(_registry: Registry, _headset: Headset | None, args: list[str]) -> int:
     return linux.main(args)
 
@@ -269,6 +278,7 @@ GENERIC: dict[str, Callable[[Registry, Headset | None, list[str]], int]] = {
     "devices": _devices,
     "headset": _headset_command,
     "gui": _gui,
+    "serve": _serve,
     "container": _container,
     "tools": _tools,
     "doctor": _doctor,

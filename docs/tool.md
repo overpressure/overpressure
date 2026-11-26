@@ -452,6 +452,26 @@ headset's state and what to do next. `--plan --json` prints the `plan` event and
 task's recorded status, and runs nothing. In a terminal the plan prints as stage headings and task lines,
 with asks through `input()` and `getpass()`.
 
+### The app's server
+
+`python -m overpressure serve --json [--demo]` is the engine for the app in development: one long-lived
+process, JSON lines both ways. A request is `{"id": N, "request": NAME, ...}` on stdin and gets one answer
+on stdout, `{"id": N, "result": {...}}` or `{"id": N, "error": TEXT}`. A run's [events](#events) follow
+its answer, each with `"run"`, then `{"event": "exited", "run": ID, "code": N}`; a line of the engine that is
+no event arrives as `output`. `--demo` runs the window's demo engine: nothing touches a headset.
+
+| Request | Fields | Answer |
+| --- | --- | --- |
+| `hello` | | `protocol` (major.minor; an app refuses a newer major), `version`, `platform`, `demo`, `disclaimer` {`title`, `text`, `accept`, `due`, `accepted`} |
+| `settings`, `set_settings` | `appearance`: `system`, `light` or `dark` | the settings, kept in `out/app.json` |
+| `accept_disclaimer` | `every_start` | the settings; the disclaimer is accepted for the server and every program it starts. Unticked, it is due again with a new overpressure |
+| `headsets` | | `headsets` [{`codename`, `name`, `soc`, `repository`, `downloaded`, `channel`, `pinned`, `refused`, `workflows` [{`key`, `title`, `summary`, `erases`, `changes`}]}]: the catalogue's and those in `devices/` |
+| `start` | `codename`, `workflow`, `restart` (a stage) | `run`; refused without the disclaimer, while another run is under way, or when the workflow cannot run now |
+| `answer` | `run`, `answer` (the ask's id), `accepted`, `values` | {} |
+| `stop` | `run` | {}; the run stops at once, or after a write under way |
+
+The end of stdin stops a run under way and ends the server.
+
 ## The command line
 
 ```text
@@ -464,6 +484,8 @@ python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS..
                        the headsets there are, their releases, one downloaded into devices/, its newer one
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
                        the window: the installer, and every step in its Advanced mode
+  serve --json [--demo]
+                       the engine as a server for the app: requests, answers and events as JSON lines
   steps                the headset's steps and their command lines
   run STEP [NAME=VALUE...]
                        a step with parameters, as the window runs it
@@ -535,6 +557,7 @@ an administrator.
 | [overpressure/elevated.py](../overpressure/elevated.py) | administrator rights (an elevated token, root outside a container; not on GitHub Actions) refuse every command and the window |
 | [overpressure/runner.py](../overpressure/runner.py) | the process a step is on this host (a Linux-root step's in the build container), its display, running and stopping it |
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
+| [overpressure/serve.py](../overpressure/serve.py) | the engine as a server for the app ([The app's server](#the-apps-server)): its requests, the settings, the disclaimer, a run's events with its id |
 | [overpressure/window/](../overpressure/window/__init__.py) | the window (CustomTkinter). Models without widgets: `installer.py` (the engine's events as stages and asks; the child and demo engines), `advanced.py` (the steps, their values and command lines, the checks), `headsets.py` (the headset page, its plan probes, `out/window.json`, the demo's second headset). Widgets: `app.py` (the header, the installer view, the panels), `advanced_view.py`; `theme.py` the design tokens and fonts, `kit.py` the components, `logo.py` the logo's renderings (`icons/`) |
 | [overpressure/carryover.py](../overpressure/carryover.py) | A newer overpressure's folder takes the owner's data from the one beside it |
 | [overpressure/lp.py](../overpressure/lp.py) | `super`'s logical partitions: the metadata Android's dynamic partitions use |
