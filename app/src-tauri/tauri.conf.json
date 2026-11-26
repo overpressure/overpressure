@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "overpressure",
+  "version": "0.0.0",
+  "identifier": "io.github.overpressure.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "overpressure",
+        "width": 1000,
+        "height": 720,
+        "minWidth": 640,
+        "minHeight": 520
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src ipc: http://ipc.localhost",
+      "freezePrototype": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "deb", "appimage", "app", "dmg"],
+    "icon": [
+      "../../overpressure/window/icons/app-32.png",
+      "../../overpressure/window/icons/app-128.png",
+      "../../overpressure/window/icons/app-256.png",
+      "../../overpressure/window/icons/overpressure.ico"
+    ],
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  }
+}

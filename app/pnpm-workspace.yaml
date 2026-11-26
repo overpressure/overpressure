@@ -1,0 +1,2 @@
+# Only releases at least two weeks old (in minutes): a compromised release is usually pulled within days.
+minimumReleaseAge: 20160

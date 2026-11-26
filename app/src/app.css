@@ -1,0 +1,323 @@
+/* SPDX-License-Identifier: Unlicense */
+/* The app's design tokens and base styles, after the desktop mockup: one surface hierarchy (background,
+   panel, surface, line), a 4/8 px rhythm, tones for warning, good, info and failure, dark and light. */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #181a1f;
+  --panel: #202329;
+  --surface: #25282f;
+  --chrome: #181a1f;
+  --line: #343840;
+  --text: #e9eaed;
+  --muted: #a0a6b1;
+  --blue: #77a2ff;
+  --green: #44ce93;
+  --orange: #ffb56b;
+  --red: #ff8a80;
+  --hover: #292e37;
+  --inset: #14161a;
+  --selected: #26354f;
+  --track: #3b4048;
+  --callout: #272b31;
+  --callout-line: #59616e;
+  --good: #6ee7ac;
+  --shadow: #0006;
+  --warn-bg: #332a23;
+  --warn-line: #66513d;
+  --warn-text: #e0c3a6;
+  --warn-heading: #ffd09c;
+  --bad-bg: #3a2326;
+  --bad-line: #6b3a3f;
+  --bad-text: #ffc9c4;
+  --pill-bg: #373c44;
+  --pill-text: #d2d7de;
+  --update-bg: #483725;
+  --update-text: #ffc084;
+  --good-bg: #203d32;
+  --good-text: #8ce4b5;
+  --blue-bg: #2c3e60;
+  --blue-text: #b7ceff;
+  --button: #353941;
+  --button-hover: #414650;
+  --primary: #346bdc;
+  --primary-hover: #447cf0;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f8fa;
+  --panel: #fff;
+  --surface: #eef0f3;
+  --chrome: #f7f8fa;
+  --line: #dde0e5;
+  --text: #20242a;
+  --muted: #606773;
+  --blue: #245fc9;
+  --green: #198653;
+  --orange: #a45a11;
+  --red: #b3261e;
+  --hover: #f1f5fb;
+  --inset: #fff;
+  --selected: #eaf1ff;
+  --track: #d9dde4;
+  --callout: #fff;
+  --callout-line: #b3bdcc;
+  --good: #198653;
+  --shadow: #24304422;
+  --warn-bg: #fff7e6;
+  --warn-line: #e6c99c;
+  --warn-text: #6e5330;
+  --warn-heading: #8b4b12;
+  --bad-bg: #fdecea;
+  --bad-line: #f1b8b3;
+  --bad-text: #7a1d16;
+  --pill-bg: #e5e8ed;
+  --pill-text: #4f5763;
+  --update-bg: #fff0d6;
+  --update-text: #8a4c10;
+  --good-bg: #dff3e8;
+  --good-text: #176d43;
+  --blue-bg: #e2ebff;
+  --blue-text: #245fc9;
+  --button: #f9f9fa;
+  --button-hover: #e8ebf0;
+  --primary: #3068d6;
+  --primary-hover: #2359c3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.65px;
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: 16px;
+  letter-spacing: -0.2px;
+}
+
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.icon {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 7px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.btn.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.btn.secondary {
+  background: var(--button);
+}
+
+.btn.secondary:hover:not(:disabled) {
+  background: var(--button-hover);
+}
+
+.btn.ghost {
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.btn.ghost:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.iconbtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border: 1px solid transparent;
+}
+
+.iconbtn:hover:not(:disabled) {
+  background: var(--button-hover);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 10px;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+  background: var(--pill-bg);
+  color: var(--pill-text);
+}
+
+.pill.update,
+.pill.warn {
+  background: var(--update-bg);
+  color: var(--update-text);
+}
+
+.pill.good {
+  background: var(--good-bg);
+  color: var(--good-text);
+}
+
+.pill.info {
+  background: var(--blue-bg);
+  color: var(--blue-text);
+}
+
+.pill.bad {
+  background: var(--bad-bg);
+  color: var(--bad-text);
+}
+
+.callout {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--warn-line);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.callout h3 {
+  color: var(--warn-heading);
+  margin-bottom: 4px;
+}
+
+.callout.bad {
+  border-color: var(--bad-line);
+  background: var(--bad-bg);
+  color: var(--bad-text);
+}
+
+.callout.bad h3 {
+  color: var(--bad-text);
+}
+
+.callout.info {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0;
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  box-shadow: 0 20px 70px var(--shadow);
+}
+
+dialog::backdrop {
+  background: #0007;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

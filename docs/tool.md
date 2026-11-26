@@ -355,6 +355,27 @@ so the headset's USB network never comes up. The doctor checks that a rule turns
 (`OPTIONS+="nowatch"` for the mode's IDs and product string) and gives the rule to add to
 `/etc/udev/rules.d/70-overpressure.rules`. Better still, a headset offers no such drive (the PICO 4 offers none).
 
+## The app (in development)
+
+`app/` holds the window that replaces the CustomTkinter one: a web front end (Svelte 5, TypeScript, Vite; Inter
+bundled) in a Tauri 2 shell. Its Rust core starts [the app's server](#the-apps-server) and passes lines both
+ways; the web view has no shell or file access of its own. It runs the demo engine unless
+`OVERPRESSURE_APP_REAL=1`; `OVERPRESSURE_PYTHON` names the Python, `OVERPRESSURE_ROOT` the overpressure folder.
+
+```sh
+cd app && pnpm install --frozen-lockfile
+pnpm dev                 # the front end in a browser at http://127.0.0.1:1420, the demo engine behind it
+pnpm check && pnpm test  # types and unit tests
+pnpm tauri dev           # the app's window: needs Rust and, on Windows, the MSVC build tools
+```
+
+Pages: the welcome page with the disclaimer (*Show this on every start*; unticked, it comes back with a new
+overpressure), the headsets on this computer, a headset's workflows as tiles (each with what it does, whether it
+erases the headset and why it cannot run now), and a run: a ring with a segment per stage, the active stage's
+tasks, the notes, the engine's questions as dialogs, the log under *Details*, and *Stop*. Leaving a run's page
+leaves the run going; the status bar leads back to it. Downloading headsets, the backup, *Save logs…*, Advanced
+mode and the packaged apps are not there yet.
+
 ## The installer
 
 ```sh
@@ -465,7 +486,7 @@ no event arrives as `output`. `--demo` runs the window's demo engine: nothing to
 | `hello` | | `protocol` (major.minor; an app refuses a newer major), `version`, `platform`, `demo`, `disclaimer` {`title`, `text`, `accept`, `due`, `accepted`} |
 | `settings`, `set_settings` | `appearance`: `system`, `light` or `dark` | the settings, kept in `out/app.json` |
 | `accept_disclaimer` | `every_start` | the settings; the disclaimer is accepted for the server and every program it starts. Unticked, it is due again with a new overpressure |
-| `headsets` | | `headsets` [{`codename`, `name`, `soc`, `repository`, `downloaded`, `channel`, `pinned`, `refused`, `workflows` [{`key`, `title`, `summary`, `erases`, `changes`}]}]: the catalogue's and those in `devices/` |
+| `headsets` | | `headsets` [{`codename`, `name`, `soc`, `repository`, `downloaded`, `channel`, `pinned`, `refused`, `workflows` [{`key`, `title`, `summary`, `erases`, `changes`, `problem` (why it cannot run now, or empty)}]}]: the catalogue's and those in `devices/` |
 | `start` | `codename`, `workflow`, `restart` (a stage) | `run`; refused without the disclaimer, while another run is under way, or when the workflow cannot run now |
 | `answer` | `run`, `answer` (the ask's id), `accepted`, `values` | {} |
 | `stop` | `run` | {}; the run stops at once, or after a write under way |

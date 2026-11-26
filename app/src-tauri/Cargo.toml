@@ -1,0 +1,26 @@
+[package]
+name = "overpressure-app"
+version = "0.0.0"
+description = "overpressure's app: the window over the engine"
+license = "Unlicense"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[lib]
+name = "overpressure_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Cargo.lock pins every crate; these are the ranges it resolves from.
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
