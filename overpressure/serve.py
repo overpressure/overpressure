@@ -212,7 +212,14 @@ class Server:
                     "pinned": bool(record.get("pinned")),
                     "refused": self.registry.refused.get(codename, ""),
                     "workflows": [
-                        {"key": w.key, "title": w.title, "summary": w.summary, "erases": w.erases, "changes": w.changes}
+                        {
+                            "key": w.key,
+                            "title": w.title,
+                            "summary": w.summary,
+                            "erases": w.erases,
+                            "changes": w.changes,
+                            "problem": headset.workflow_problem(w.key),  # why it cannot run now, or ""
+                        }
                         for w in (headset.workflows() if headset is not None else ())
                     ],
                 }

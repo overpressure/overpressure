@@ -119,6 +119,8 @@ class ServeTest(unittest.TestCase):
         self.assertIn("phoenix", found)  # the catalogue's, downloaded or not
         self.assertEqual(found["planned"]["soc"], "SoC A")
         self.assertEqual([w["key"] for w in found["planned"]["workflows"]], ["install"])
+        self.assertEqual(found["planned"]["workflows"][0]["problem"], "")
+        self.assertEqual(found["blocked"]["workflows"][0]["problem"], "install cannot run now")
 
     def test_unknown_requests_and_bad_lines_are_answered(self):
         self.assertIn("error", self.request("nonsense"))
