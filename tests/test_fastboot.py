@@ -164,6 +164,47 @@ class RamBootTests(unittest.TestCase):
             fastboot.Fastboot("fastboot", "", lambda *_: "")("boot", "x")
 
 
+class RestartingHeadset:
+    """A fake fastboot whose headset leaves the listing for @p gone listings after each restart."""
+
+    def __init__(self, gone: int) -> None:
+        self.gone, self.left, self.calls = gone, 0, []
+
+    def __call__(self, argv: list[str], timeout: float) -> str:  # noqa: ARG002  # Fastboot.runner's signature
+        self.calls.append(argv[1:])
+        if argv[1:] == ["devices"]:
+            if self.left:
+                self.left -= 1
+                return ""
+            return "ABC\tfastboot\n"
+        if argv[-2:] == ["reboot", "bootloader"]:
+            self.left = self.gone
+        return "OKAY"
+
+
+class RestartTests(unittest.TestCase):
+    def test_returns_once_the_headset_has_left_and_is_back(self):
+        # macOS: the reboot returns while the leaving headset is still listed; a command sent to it then
+        # fails ("could not clear input pipe"). Nothing goes out before the new session is listed.
+        fake, clock = RestartingHeadset(gone=3), FakeClock()
+        self.assertTrue(fastboot.Fastboot("fastboot", "ABC", fake).restart_bootloader(clock))
+        self.assertEqual(fake.calls, [["-s", "ABC", "reboot", "bootloader"], *[["devices"]] * 4])
+        self.assertEqual(fake.left, 0)
+
+    def test_a_restart_too_quick_to_be_seen_goes_on_after_the_bound(self):
+        fake, clock = RestartingHeadset(gone=0), FakeClock()
+        self.assertFalse(fastboot.Fastboot("fastboot", "ABC", fake).restart_bootloader(clock, leave=30))
+        self.assertGreaterEqual(clock.now, 30)
+        self.assertLess(clock.now, 31)
+
+    def test_a_headset_that_does_not_come_back_raises(self):
+        fake, clock = RestartingHeadset(gone=10**6), FakeClock()
+        with self.assertRaisesRegex(RuntimeError, "not back in fastboot"):
+            fastboot.Fastboot("fastboot", "ABC", fake).restart_bootloader(clock, back=120)
+        self.assertGreaterEqual(clock.now, 120)
+        self.assertNotIn("reboot", [word for call in fake.calls[1:] for word in call])
+
+
 class FlashTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
