@@ -21,6 +21,7 @@ OP_USB_MANUFACTURER=overpressure
 OP_USB_PRODUCT="overpressure Linux"
 OP_REBOOT=reboot
 OP_PROBE=true
+OP_RECOVERY_UI=
 # The installed system's data partition: its name, its file system label, the marker of its first boot (preinit).
 OP_DATA_PART=userdata
 OP_DATA_LABEL=overpressure-data

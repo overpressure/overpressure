@@ -54,6 +54,8 @@ repo=$(cd "$here/../.." && pwd)                  # overpressure (its package, ca
 source_dir=$(cd "${1:?specify the headset folder}" && pwd)   # devices/CODENAME
 # shellcheck source=fetch.sh
 source "$here/fetch.sh"
+# shellcheck source=progress.sh
+source "$here/progress.sh"
 # shellcheck source=databases.sh
 source "$here/databases.sh"
 build_root=${2:?specify an isolated Linux-filesystem build directory}
@@ -226,6 +228,7 @@ kernel=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["tag"]
 definition=$project/packages/headsets/$codename
 mapfile -t layers < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$definition/layers")
 repos=$build_root/packages/repositories
+build_event repos running
 step "the build environment and the project packages"
 if [[ $packages_release == 1 ]]; then
     # The release's packages, each checked against its SHA256SUMS, kept in cache/packages-release/TAG;
@@ -297,6 +300,33 @@ project_packages() {
 }
 
 # -- 2. base root ------------------------------------------------------------------------
+base_package_progress() {
+    local line hello=0 applied=0 total=0 seen=0 changed_lines=0
+    while IFS= read -r line || [[ -n $line ]]; do
+        printf '%s\n' "$line"
+        if [[ $line =~ ^Packages[[:space:]]+\(([0-9]+)\)[[:space:]] ]]; then
+            total=${BASH_REMATCH[1]}
+        elif [[ $line == ':: Processing package changes...' && $hello == 0 ]]; then
+            build_event package-fetch 'done'
+            build_event package-install running
+            hello=1
+        fi
+        if [[ $hello == 1 && $total -gt 0 && $line =~ ^(installing|upgrading|reinstalling|downgrading)[[:space:]] ]]; then
+            ((changed_lines+=1))
+            if ((changed_lines == 1 || changed_lines % 12 == 0)); then
+                # Pacman's console announces work before it happens. ALPM's
+                # transaction log records the package only after the operation.
+                applied=$(grep -Ec '\[ALPM\] (installed|upgraded|reinstalled|downgraded) ' \
+                    "$base/var/log/pacman.log" 2>/dev/null) || true
+                if [[ ${applied:-0} -gt $seen && $applied -le $total ]]; then
+                    build_event package-install running "$applied" "$total" packages local-package-count
+                    seen=$applied
+                fi
+            fi
+        fi
+    done
+}
+
 step "the base root"
 mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^!/d' "$definition/packages.txt")
 # "!name": dependencies on name count as satisfied, name is not installed.
@@ -338,11 +368,21 @@ if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null
         sync=""
     fi
     mount_api "$base"
+    build_event repos 'done'
+    build_event package-fetch running
     # The session user, whom steamos-customizations' tmpfiles entries name, comes from the headset's session
     # package's sysusers file in the same transaction: pacman's sysusers hook runs before its tmpfiles hook.
     # Valve's server is the only one in pacman.conf: a download it cuts short is tried again (fetch.sh).
-    fetch_pacman in_b pacman --config /etc/$PREFIX/pacman.conf -r /base --cachedir /var/cache/$PREFIX-pkgs \
-        "-S$sync" --noconfirm --needed "${valve_session[@]}" "${assumed[@]}" "${packages[@]}"
+    if [[ ${OVERPRESSURE_BUILD_PROGRESS:-0} == 1 ]]; then
+        FETCH_BASE_PACKAGE_PROGRESS=1 fetch_pacman in_b pacman --config /etc/$PREFIX/pacman.conf \
+            -r /base --cachedir /var/cache/$PREFIX-pkgs \
+            "-S$sync" --noconfirm --needed "${valve_session[@]}" "${assumed[@]}" "${packages[@]}" | base_package_progress
+    else
+        fetch_pacman in_b pacman --config /etc/$PREFIX/pacman.conf -r /base --cachedir /var/cache/$PREFIX-pkgs \
+            "-S$sync" --noconfirm --needed "${valve_session[@]}" "${assumed[@]}" "${packages[@]}"
+    fi
+    build_event package-fetch 'done'
+    build_event package-install running
     fetch_pacman in_b pacman --config /etc/$PREFIX/pacman.conf -r /base --cachedir /var/cache/$PREFIX-pkgs \
         -S --noconfirm "${valve_session[@]}" "${assumed[@]}" deckard-arch-hotfixes-release-0.3/deckard-steamvr-session
     owner=$(chroot "$base" /usr/bin/pacman -Qqo /usr/share/wayland-sessions/plasma.desktop)
@@ -353,9 +393,15 @@ if [[ $refresh == 1 || ! -d "$base" || "$(cat "$build_root/base.key" 2>/dev/null
     # The project packages in the base root, by package file hash.
     project_packages | (cd "$B" && sed 's|^/||' | xargs -r sha256sum) > "$build_root/base.project"
     echo "$base_key" > "$build_root/base.key"
+    build_event package-install 'done'
+else
+    build_event repos 'done'
+    build_event package-cache skipped
+    build_event package-install skipped
 fi
 
 # -- 3. image root -----------------------------------------------------------------------
+build_event image-root running
 step "assembling the image root"
 phase "assembling the image root"
 unmount_below "$T"
@@ -373,6 +419,8 @@ changed=()
 while read -r sum file; do
     grep -qxF "$sum  $file" "$build_root/base.project" || changed+=("/$file")
 done < <(project_packages | (cd "$B" && sed 's|^/||' | xargs -r sha256sum))
+build_event image-root 'done'
+build_event project-pkgs running
 step "the image's project packages"
 if [[ ${#changed[@]} -gt 0 ]]; then
     phase "installing ${#changed[@]} changed project packages"
@@ -400,12 +448,14 @@ in_b bsdtar -xf "/var/cache/$PREFIX-pkgs/$protobuf" -C /target/usr/lib/aarch64/a
 # Same repositories on the headset, but an upgrade must never pull systemd 258+.
 sed -e '/^\[options\]/a IgnorePkg = systemd systemd-libs systemd-sysvcompat systemd-resolvconf' \
     -e '/^\[overpressure-/,/^$/d' "$definition/pacman.conf" > "$T/etc/pacman.conf"
+build_event project-pkgs 'done'
 
 # Packages from the Frame repository and our own were built against other library
 # versions than the preview base: their programs and public libraries must resolve, and so must
 # the packages that depend on them, which load the Frame's libraries in place of the preview's.
 # A program's every symbol must be defined in what it loads: the library check alone does not see
 # a single function that a newer version of a library has (the Frame's Xwayland and libei).
+build_event elf running
 step "checking ELF dependencies"
 phase "checking ELF dependencies of Frame and project packages"
 mapfile -t foreign < <(in_b pacman --config /etc/$PREFIX/pacman.conf -r /target -Sl deckard-arch-hotfixes-release-0.3 \
@@ -437,6 +487,8 @@ PYTHONPATH=$project python3 -m overpressure.elfdeps "$T" "${foreign[@]}" --depen
     { echo "unresolved ELF dependencies (above)" >&2; exit 1; }
 log "${#foreign[@]} Frame/project packages and their dependents: all ELF dependencies and symbols resolve"
 
+build_event elf 'done'
+build_event adapt running
 step "applying the $headset_name adaptation layer"
 phase "applying the $headset_name adaptation layer"
 # overlay FILE DEST: root-owned; scripts executable, everything else 0644
@@ -607,6 +659,8 @@ in_t ldconfig
 rm -f "$T/var/cache/ldconfig/aux-cache"
 
 # -- manifest and archive --------------------------------------------------------------
+build_event adapt 'done'
+build_event archive running
 step "writing archive and manifest"
 phase "writing archive and manifest"
 in_t pacman -Q > "$build_root/packages.txt"
@@ -695,5 +749,6 @@ print(json.dumps({
         if os.path.exists(links) else {},
 }, indent=1, sort_keys=True))
 EOF
+build_event archive 'done'
 step "done"
 phase "done: $archive ($(du -h "$archive" | cut -f1), installed $((installed_bytes >> 20)) MiB)"

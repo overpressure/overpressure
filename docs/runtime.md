@@ -53,6 +53,7 @@ installs the same file at the same path. A value the file leaves out keeps the l
 | `OP_USB_MANUFACTURER`, `OP_USB_PRODUCT` | `overpressure`, `overpressure Linux` | the gadget's strings, which the PC's tooling finds the headset by |
 | `OP_REBOOT` | `reboot` | the reboot program; takes `bootloader`, `recovery`, `poweroff` or nothing |
 | `OP_PROBE` | `true` | the hardware probe the maintenance system runs after the USB setup (`--boot`) |
+| `OP_RECOVERY_UI` | empty | optional Recovery interface executable, started independently after DRM is available |
 | `OP_DATA_PART`, `OP_DATA_LABEL`, `OP_DATA_MARKER` | `userdata`, `overpressure-data`, `.overpressure-initialized` | the installed system's data partition, its ext4 label, the marker of its first boot |
 
 ## The maintenance system
@@ -78,6 +79,9 @@ must outlive every stop. Each service runs through [svc](../overpressure/runtime
 which waits for its prerequisites and rate-limits restarts. SIGTERM to PID 1 stops and reboots; SIGUSR1 and
 SIGUSR2 stop, then halt or power off. `overpressure-mount-ro PARTITION` mounts a stock partition read-only for
 inspection.
+
+When the headset sets `OP_RECOVERY_UI` and includes that executable in the ramdisk, the
+`recovery-ui` service starts it after `/dev/dri/card0` appears. Charger mode skips this service.
 
 The maintenance system logs every step to the kernel log, to `/run/overpressure/boot.log` and to pstore's `pmsg`,
 which survives a warm reboot. Its services log to `/run/overpressure/svc-NAME.log`.

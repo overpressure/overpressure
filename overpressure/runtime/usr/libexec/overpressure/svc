@@ -61,6 +61,17 @@ usb-watch)
 recovery-watch)
 	exec "$OP_LIB/recovery-watch"
 	;;
+recovery-ui)
+	[ -n "$OP_RECOVERY_UI" ] && [ -x "$OP_RECOVERY_UI" ] || idle
+	[ -f "$OP_RUN/charger" ] && idle
+	log "Recovery UI: waiting for DRM"
+	until wait_for /dev/dri/card0 60; do
+		log "Recovery UI: DRM still unavailable; continuing to wait"
+	done
+	[ -f "$OP_RUN/charger" ] && idle
+	log "Recovery UI: DRM node available; starting renderer"
+	exec "$OP_RECOVERY_UI"
+	;;
 shutdown)
 	log "shutting down"
 	sync

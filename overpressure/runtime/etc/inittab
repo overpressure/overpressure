@@ -8,5 +8,6 @@
 ::respawn:/usr/libexec/overpressure/svc serial
 ::respawn:/usr/libexec/overpressure/svc usb-watch
 ::respawn:/usr/libexec/overpressure/svc recovery-watch
+::respawn:/usr/libexec/overpressure/svc recovery-ui
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/usr/libexec/overpressure/svc shutdown

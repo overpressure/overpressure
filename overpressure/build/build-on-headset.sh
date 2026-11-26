@@ -39,6 +39,8 @@ log() { printf '>> %s\n' "$*"; }
 die() { echo "build-on-headset: $*" >&2; exit 1; }
 # shellcheck source=fetch.sh
 . "$(dirname "$0")/fetch.sh"
+# shellcheck source=progress.sh
+. "$(dirname "$0")/progress.sh"
 
 # One build at a time: the build roots are shared.
 exec 9> "$base/.lock"
@@ -82,6 +84,7 @@ api() {
 in_host() {
 	chroot "$host" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin LANG=C.UTF-8 HOME=/root \
 		SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" OVERPRESSURE_COMMIT="$OVERPRESSURE_COMMIT" \
+		OVERPRESSURE_BUILD_PROGRESS="${OVERPRESSURE_BUILD_PROGRESS:-0}" \
 		${ALL_PROXY:+ALL_PROXY="$ALL_PROXY"} "$@"
 }
 
@@ -118,11 +121,17 @@ mkdir -p "$base/cache" "$base/root/packages" "$base/out"
 unmount_below "$host"
 # Where packages.sh looks for the archive: the build environment unpacks the same one.
 archive=$base/root/packages/holo-$snapshot.rootfs.zst
+build_event host-env 'done'
 if [ "$(cat "$host/.overpressure-host" 2>/dev/null)" != "$sha" ]; then
 	if [ "$(sha256sum "$archive" 2>/dev/null | cut -d' ' -f1)" != "$sha" ]; then
 		log "downloading Holo Core aarch64 $snapshot"
-		fetch "$url" "$archive" || die "could not download Holo Core aarch64 $snapshot"
+		build_event holo running
+		fetch "$url" "$archive" holo || die "could not download Holo Core aarch64 $snapshot"
+		build_event holo 'done'
+	else
+		build_event holo skipped
 	fi
+	build_event holo-verify running
 	[ "$(sha256sum "$archive" | cut -d' ' -f1)" = "$sha" ] || die "$archive is not the pinned Holo rootfs"
 	log "making the build host: Holo Core aarch64 $snapshot with python"
 	rm -rf "$host"
@@ -145,6 +154,9 @@ if [ "$(cat "$host/.overpressure-host" 2>/dev/null)" != "$sha" ]; then
 	fi
 	cleanup
 	echo "$sha" > "$host/.overpressure-host"
+	build_event holo-verify 'done'
+else
+	build_event holo-cache skipped
 fi
 
 # The tree, its cache, the build root and the output as /build in the build host.

@@ -14,6 +14,19 @@ if [ -s /etc/overpressure/test-run ]; then
 	test_limit=$(cat /etc/overpressure/test-timeout)
 fi
 reachable=0
+ui_enabled=0
+saved_connect=-1
+saved_idle=-1
+if [ -n "$OP_RECOVERY_UI" ] && [ -x "$OP_RECOVERY_UI" ]; then
+	ui_enabled=1
+	# A slow settings partition must not stall the recovery deadline.
+	saved=$(timeout 3 "$OP_RECOVERY_UI" --timeout-preferences 2>/dev/null) || saved=
+	if [ -n "$saved" ]; then
+		read -r saved_connect saved_idle <<EOF
+$saved
+EOF
+	fi
+fi
 while :; do
 	if [ -e "$OP_RUN/no-autoreboot" ]; then
 		reachable=1
@@ -31,8 +44,23 @@ while :; do
 	contact=$(cat "$OP_RUN/host-contact" 2>/dev/null)
 	case "$contact" in '' | *[!0-9]*) contact=0 ;; esac
 	[ "$contact" -le "$now" ] || contact=0
-	reason=$(recovery_reason "$now" "$connect_limit" \
-		"$test_limit" "$test_mode" "$reachable" "$acknowledged" "$contact")
+	effective_connect=$connect_limit
+	effective_test=$test_limit
+	test_disabled=0
+	if [ "$ui_enabled" = 1 ]; then
+		if [ -s "$OP_RUN/timeout-settings" ]; then
+			read -r saved_connect saved_idle < "$OP_RUN/timeout-settings"
+		fi
+		effective_connect=$(recovery_limit "$connect_limit" "$saved_connect")
+		effective_test=$(recovery_limit "$test_limit" "$saved_idle")
+		[ "$saved_idle" != 0 ] || test_disabled=1
+		(umask 077
+			printf '%s %s %s %s %s %s %s %s\n' "$now" "$connect_limit" "$test_limit" \
+				"$test_mode" "$reachable" "$acknowledged" "$contact" "$effective_connect" > "$OP_RUN/.timeout-state.$$" &&
+				mv -f "$OP_RUN/.timeout-state.$$" "$OP_RUN/timeout-state")
+	fi
+	reason=$(recovery_reason "$now" "$effective_connect" \
+		"$effective_test" "$test_mode" "$reachable" "$acknowledged" "$contact" "$test_disabled")
 	if [ -n "$reason" ]; then
 		log "Recovery: $reason; rebooting to fastboot"
 		sync

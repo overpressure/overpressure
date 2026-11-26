@@ -23,4 +23,12 @@ cd "$(dirname "$0")/.."
 [ "$(recovery_reason 3600 600 3600 1 1 1)" = "hardware test exceeded 3600s" ]
 # Contact never cancels the connection deadline of an unauthenticated run.
 [ -n "$(recovery_reason 600 600 3600 1 1 0 590)" ]
-echo 'Recovery policy: 14 checks passed'
+# Only an explicit UI opt-out suppresses the maximum test deadline.
+[ -n "$(recovery_reason 600 600 0 1 1 0 590)" ]
+[ -z "$(recovery_reason 3600 600 0 1 1 1 0 1)" ]
+[ -n "$(recovery_reason 600 600 0 1 1 0 590 1)" ]
+[ "$(recovery_limit 600 -1)" = 600 ]
+[ "$(recovery_limit 600 900)" = 900 ]
+[ "$(recovery_limit 600 00000000)" = 600 ]
+[ "$(recovery_limit 600 0)" = 0 ]
+echo 'Recovery policy: 21 checks passed'

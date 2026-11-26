@@ -13,6 +13,9 @@
 # IMAGE.zst.sha256 the hash of the image it holds and IMAGE.json the image's size, hash and its first MiB's hash.
 # The image itself and the archive go, unless --keep: the install needs neither, and an upgrade builds both again.
 set -euo pipefail
+here=$(dirname "$0")
+# shellcheck source=progress.sh
+source "$here/progress.sh"
 
 source_dir=$(cd "${1:?specify the headset folder}" && pwd)
 archive=${2:?archive}
@@ -26,6 +29,7 @@ source "$source_dir/userspace/build.sh"
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 [ -s "$archive" ] || { echo "no archive $archive" >&2; exit 1; }
 
+build_event filesystem running
 work=$(mktemp -d "/var/tmp/$PREFIX-system.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 tree=$work/tree
@@ -63,12 +67,29 @@ find "$tree" -mindepth 1 -printf '%P\n' |
 	awk -v t="@$epoch" '{ printf "sif \"/%s\" ctime %s\nsif \"/%s\" atime %s\n", $0, t, $0, t }' > "$work/times"
 errors=$(E2FSPROGS_FAKE_TIME=$epoch debugfs -w -f "$work/times" "$image" 2>&1 >/dev/null | grep -v '^debugfs [0-9]' || true)
 [ -z "$errors" ] || { echo "debugfs: $errors" | head -n 5 >&2; exit 1; }
-e2fsck -fn "$image" > /dev/null
-image_sha=$(sha256sum "$image" | cut -d' ' -f1)
+build_event filesystem 'done'
+build_event fsck running
+if [[ ${OVERPRESSURE_BUILD_PROGRESS:-0} == 1 ]]; then
+	# -C reports work within each pass. Count only passes the checker reports
+	# complete; this is a work fraction, not an elapsed-time estimate.
+	LC_ALL=C e2fsck -fn -C 4 "$image" 4>&1 >/dev/null | awk '
+		$1 ~ /^[1-5]$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[1-9][0-9]*$/ && $2 == $3 && $1 > seen {
+			seen=$1
+			printf "fsck running %d 100 percent local-check-progress\n", $1 * 20
+			fflush()
+		}' >&3
+else
+	e2fsck -fn "$image" > /dev/null
+fi
+build_event fsck 'done'
+build_event image-hash running
+image_sha=$(build_meter_input image-hash "$image" sha256sum "$image" | cut -d' ' -f1)
+build_event image-hash 'done'
 # The install streams the image compressed over the USB link (dev install): about half the bytes.
 # Beside it the uncompressed image's hash, so that a stale copy is never sent for a newer image.
 rm -f "$image.zst" "$image.zst.sha256"
-zstd -q -T0 -3 "$image" -o "$image.zst"
+build_event compress running
+build_meter_input compress "$image" zstd -q -T0 -3 "$image" -o "$image.zst"
 echo "$image_sha" > "$image.zst.sha256"
 prefix_sha=$(head -c 1048576 "$image" | sha256sum | cut -d' ' -f1)
 printf '{"image": "%s", "bytes": %s, "sha256": "%s", "prefix_bytes": 1048576, "prefix_sha256": "%s", "archive_sha256": "%s"}\n' \
@@ -78,3 +99,4 @@ if [ "$keep" = 0 ]; then
 	rm -f "$image" "$archive"
 	echo "kept $image.zst and its record; the image and the archive are removed (--keep keeps them)"
 fi
+build_event compress 'done'
