@@ -57,6 +57,11 @@ installs the same file at the same path. A value the file leaves out keeps the l
 
 ## The maintenance system
 
+The maintenance system installs, upgrades and restores the installed system, and nothing else. It does that without
+anyone at the headset: the PC's tooling drives it. On the headset it offers no more than its state and a small
+recovery menu: restart, the bootloader, a staged update, a reset of the owner's data, power off. Any other use of
+the headset belongs to the installed system or the stock system.
+
 The stage-1 build puts [overpressure/runtime/](../overpressure/runtime/) into the ramdisk under the headset's
 overlay, and the headset's files replace the runtime's where both have one. The headset's overlay holds
 at least `etc/overpressure/headset`. It also holds its writer (the PICO 4's `pico4-install`), its probe, its

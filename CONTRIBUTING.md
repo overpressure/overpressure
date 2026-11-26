@@ -23,6 +23,10 @@ window, the command line or the generic tooling here. Attach the headset's suppo
 
 ## A change
 
+- A larger change starts with an issue or a word in the Development room, before the code: a new feature or
+  component, and any change to a headset's maintenance system, the installer's writes or the headset interface.
+  A pull request that arrives without that and does not fit the project's direction is closed without a review.
+  Fixes and small changes need no announcement.
 - Work on a branch and open a pull request against `main` of the repository you change (this one, or a
   headset's such as [overpressure/phoenix](https://github.com/overpressure/phoenix)), titled as a conventional
   commit; it is merged by rebase or squash, and `main` takes no direct pushes. CI has to pass: here the host
