@@ -1,0 +1,5 @@
+# The Rust release the core builds with (the one before the newest, settled), with the checks CI runs.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

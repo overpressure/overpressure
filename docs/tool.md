@@ -366,7 +366,9 @@ ways; the web view has no shell or file access of its own. It runs the demo engi
 cd app && pnpm install --frozen-lockfile
 pnpm dev                 # the front end in a browser at http://127.0.0.1:1420, the demo engine behind it
 pnpm check && pnpm test  # types and unit tests
-pnpm tauri dev           # the app's window: needs Rust and, on Windows, the MSVC build tools
+pnpm tauri dev           # the app's window: needs rustup (app/src-tauri/rust-toolchain.toml pins Rust) and, on
+                         # Windows, the Visual Studio Build Tools' C++ workload
+pnpm tauri build --bundles nsis   # Windows' per-user installer, in src-tauri/target/release/bundle/
 ```
 
 Pages: the welcome page with the disclaimer (*Show this on every start*; unticked, it comes back with a new

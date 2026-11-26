@@ -23,7 +23,11 @@ struct Engine {
 fn root() -> PathBuf {
     std::env::var_os("OVERPRESSURE_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join(".."))
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+        })
 }
 
 /// The engine's command line. The demo unless OVERPRESSURE_APP_REAL=1: until the app is trusted, a real run
@@ -70,7 +74,10 @@ fn start(app: &AppHandle) -> std::io::Result<Engine> {
             eprintln!("engine: {line}");
         }
     });
-    Ok(Engine { stdin: Mutex::new(child.stdin.take()), child: Mutex::new(Some(child)) })
+    Ok(Engine {
+        stdin: Mutex::new(child.stdin.take()),
+        child: Mutex::new(Some(child)),
+    })
 }
 
 /// Write one request line (JSON, as the front end made it) to the engine.
@@ -81,7 +88,9 @@ fn engine_send(line: String, engine: State<'_, Engine>) -> Result<(), String> {
     }
     let mut stdin = engine.stdin.lock().map_err(|e| e.to_string())?;
     let pipe = stdin.as_mut().ok_or("the engine has ended")?;
-    writeln!(pipe, "{line}").and_then(|()| pipe.flush()).map_err(|e| e.to_string())
+    writeln!(pipe, "{line}")
+        .and_then(|()| pipe.flush())
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -99,11 +108,12 @@ pub fn run() {
             if let RunEvent::Exit = event {
                 let engine = app.state::<Engine>();
                 // A closed stdin stops a run under way and ends the engine; wait for it.
-                engine.stdin.lock().map(|mut s| s.take()).ok();
-                if let Ok(mut child) = engine.child.lock() {
-                    if let Some(mut child) = child.take() {
-                        let _ = child.wait();
-                    }
+                if let Ok(mut stdin) = engine.stdin.lock() {
+                    stdin.take();
+                }
+                let child = engine.child.lock().ok().and_then(|mut c| c.take());
+                if let Some(mut child) = child {
+                    let _ = child.wait();
                 }
             }
         });
