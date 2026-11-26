@@ -2,12 +2,14 @@
 """overpressure.qualcomm: the SoC ID, EDL's partition maps, backups, verified writes and the EDL steps."""
 
 import argparse
+import contextlib
+import io
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Callable
+from typing import Callable, ClassVar
 from unittest import mock
 
 from overpressure import process, qualcomm
@@ -428,6 +430,158 @@ class EdlTests(unittest.TestCase):
         for output in ("Serial Number: 0x1A2b3", "no serial", "Serial Number: 0x9999"):
             with self.assertRaisesRegex(RuntimeError, "not the configured headset"):
                 qualcomm.check_edl_serial(output, "0x1A2b")
+
+
+SECTOR = 4096
+
+
+def gpt(total: int) -> bytes:
+    """Return a primary GPT of 6 sectors whose header names the backup header's position (the LUN's last sector)."""
+    header = b"EFI PART" + bytes(24) + (total - 1).to_bytes(8, "little")
+    return bytes(SECTOR) + header.ljust(SECTOR, b"\0") + bytes(4 * SECTOR)
+
+
+class WriteBackTests(unittest.TestCase):
+    """A two-LUN backup written back through a fake edl-ng that holds each LUN's bytes."""
+
+    LUNS: ClassVar[dict[int, int]] = {1: 64, 0: 256}  # sectors, in the backup's order
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.backup = self.root / "backup"
+        self.files: dict[str, dict] = {}
+        self.lun(
+            1,
+            [
+                ("PrimaryGPT", "gpt_main1.bin", "0", 6),
+                ("BackupGPT", "gpt_backup1.bin", "NUM_DISK_SECTORS-5.", 5),
+                ("xbl", "xbl.bin", "6", 8),
+            ],
+        )
+        self.lun(
+            0,
+            [
+                ("PrimaryGPT", "gpt_main0.bin", "0", 6),
+                ("BackupGPT", "gpt_backup0.bin", "NUM_DISK_SECTORS-5.", 5),
+                ("persist", "persist.bin", "6", 4),
+                ("metadata", "metadata.bin", "10", 2),
+                ("cache", "cache.bin", "12", 8),
+                ("userdata", "userdata.bin", "20", 200),
+            ],
+            left_out=("cache", "userdata"),
+        )
+        self.manifest = {"luns": list(self.LUNS), "files": self.files}
+        self.disk = {lun: bytearray(b"\xff" * sectors * SECTOR) for lun, sectors in self.LUNS.items()}
+        self.commands: list[list[str]] = []
+
+    def lun(self, lun: int, rows: list[tuple[str, str, str, int]], left_out: tuple[str, ...] = ()) -> None:
+        folder = self.backup / f"lun{lun}"
+        folder.mkdir(parents=True)
+        xml = "".join(
+            f'<program filename="{name}" label="{label}" start_sector="{start}" num_partition_sectors="{sectors}" '
+            f'SECTOR_SIZE_IN_BYTES="{SECTOR}" physical_partition_number="{lun}" />'
+            for label, name, start, sectors in rows
+        )
+        (folder / f"rawprogram{lun}.xml").write_text(f"<data>{xml}</data>")
+        for label, name, _start, sectors in rows:
+            if label in left_out:
+                continue
+            data = gpt(self.LUNS[lun]) if label == "PrimaryGPT" else bytes([len(label)]) * sectors * SECTOR
+            (folder / name).write_bytes(data)
+            self.files[f"lun{lun}/{name}"] = {"size": len(data)}
+
+    def edl(self, argv: list, _timeout: float, *, corrupt: str = "") -> None:
+        words = [str(a) for a in argv]
+        self.commands.append(words)
+        lun = int(words[words.index("--lun") + 1])
+        disk = self.disk[lun]
+        if "write-sector" in words:
+            at = words.index("write-sector")
+            start, data = int(words[at + 1]), Path(words[at + 2]).read_bytes()
+            disk[start * SECTOR : start * SECTOR + len(data)] = data
+        else:
+            at = words.index("read-sector")
+            start, count, path = int(words[at + 1]), int(words[at + 2]), Path(words[at + 3])
+            data = bytes(disk[start * SECTOR : (start + count) * SECTOR])
+            if corrupt and corrupt in str(self.commands[-2]):
+                data = b"x" + data[1:]
+            path.write_bytes(data)
+
+    def test_the_plan_goes_lun_by_lun_in_map_order_and_wipes_instead_of_writing_data(self):
+        plan = qualcomm.write_back_plan(self.backup, self.manifest)
+        self.assertEqual(
+            [(w.lun, w.label, w.start, w.sectors, w.image is None) for w in plan],
+            [
+                (1, "PrimaryGPT", 0, 6, False),
+                (1, "BackupGPT", 64 - 5, 5, False),  # NUM_DISK_SECTORS-5. from the backup's own GPT
+                (1, "xbl", 6, 8, False),  # the boot chain too
+                (0, "PrimaryGPT", 0, 6, False),
+                (0, "BackupGPT", 256 - 5, 5, False),
+                (0, "persist", 6, 4, False),
+                (0, "metadata", 10, 2, True),  # zeros, not the backup's metadata
+                (0, "userdata", 20, min(200, qualcomm.WIPE_BYTES // SECTOR), True),
+            ],
+        )  # cache, which a backup leaves out, is not written
+
+    def test_the_plan_refuses_a_missing_image_a_wrong_size_and_a_partition_outside_its_lun(self):
+        (self.backup / "lun0/persist.bin").unlink()
+        del self.files["lun0/persist.bin"]
+        with self.assertRaisesRegex(ValueError, "no image of persist"):
+            qualcomm.write_back_plan(self.backup, self.manifest)
+        self.files["lun0/persist.bin"] = {"size": 3}
+        with self.assertRaisesRegex(ValueError, "partition's size"):
+            qualcomm.write_back_plan(self.backup, self.manifest)
+        self.files["lun0/persist.bin"] = {"size": 4 * SECTOR}
+        (self.backup / "lun1/gpt_main1.bin").write_bytes(gpt(10))  # a LUN too small for xbl
+        with self.assertRaisesRegex(ValueError, "outside LUN 1"):
+            qualcomm.write_back_plan(self.backup, self.manifest)
+
+    def test_the_luns_own_sizes_come_from_the_loader_and_must_be_the_backups(self):
+        lines = (
+            '{"storage_info": {"total_blocks":256, "block_size":4096}}',
+            "UFS Current LUN Number: = 0x0",
+            '{"storage_info": {"total_blocks":256, "block_size":4096}}',
+            "UFS Current LUN Number: = 0x0",  # the first answer per LUN counts
+            '{"storage_info": {"total_blocks":64, "block_size":4096}}',
+            "UFS Current LUN Number: = 0x1",
+        )
+        output = "\n".join(lines)
+        device = qualcomm.storage_sectors(output)
+        self.assertEqual(device, {0: 256, 1: 64})
+        backup = {lun: qualcomm.backup_lun_sectors(self.backup, lun) for lun in self.LUNS}
+        qualcomm.check_storage(backup, device)
+        with self.assertRaisesRegex(ValueError, "LUNs \\[0\\], the backup"):
+            qualcomm.check_storage(backup, {0: 256})
+        with self.assertRaisesRegex(ValueError, "LUN 1: 128 sectors, the backup's 64"):
+            qualcomm.check_storage(backup, {0: 256, 1: 128})
+
+    def test_each_write_is_read_back_before_the_next(self):
+        plan = qualcomm.write_back_plan(self.backup, self.manifest)
+        with contextlib.redirect_stdout(io.StringIO()):
+            qualcomm.write_back(plan, "edl-ng", "firehose.elf", self.root / "work", self.edl)
+        self.assertEqual(len(self.commands), 2 * len(plan))
+        for n, write in enumerate(plan):
+            written, read = self.commands[2 * n], self.commands[2 * n + 1]
+            self.assertIn("write-sector", written)
+            self.assertEqual(written[written.index("--lun") + 1], str(write.lun))
+            self.assertIn("read-sector", read)
+            self.assertEqual(read[read.index("read-sector") + 2], str(write.sectors))
+        disk = self.disk[0]
+        self.assertEqual(disk[6 * SECTOR : 10 * SECTOR], (self.backup / "lun0/persist.bin").read_bytes())
+        self.assertEqual(disk[10 * SECTOR : 12 * SECTOR], bytes(2 * SECTOR))  # metadata zeroed
+        self.assertEqual(disk[12 * SECTOR : 20 * SECTOR], b"\xff" * 8 * SECTOR)  # cache left alone
+        self.assertFalse((self.root / "work/readback.bin").exists())
+
+    def test_a_readback_that_differs_stops_before_the_next_write(self):
+        plan = qualcomm.write_back_plan(self.backup, self.manifest)
+        quiet = contextlib.redirect_stdout(io.StringIO())
+        with quiet, self.assertRaisesRegex(RuntimeError, "xbl \\(LUN 1\\) reads back other bytes.*stays in EDL mode"):
+            qualcomm.write_back(
+                plan, "edl-ng", "firehose.elf", self.root / "work", lambda a, t: self.edl(a, t, corrupt="xbl.bin")
+            )
+        self.assertEqual(len(self.commands), 6)  # the GPTs and xbl of LUN 1, nothing of LUN 0
 
 
 if __name__ == "__main__":

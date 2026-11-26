@@ -1,6 +1,6 @@
 # Headset interface reference
 
-**TL;DR.** Every name a headset may use in headset interface 1.9, `overpressure.api.v1`: its
+**TL;DR.** Every name a headset may use in headset interface 1.10, `overpressure.api.v1`: its
 modules, and in each its functions and classes with their signatures, dataclass fields and constants, each
 with the first paragraph of its documentation. A headset imports only these
 (`from overpressure.api.v1 import REPO, qualcomm`, `from overpressure.api.v1.headset import Headset, Step`).
@@ -443,7 +443,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 
 `overpressure.api.v1.headset`: the headset, its steps, workflows and finished page ([source](../overpressure/headset.py)).
 
-- `SUPPORTED: dict[int, int] = {1: 9}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
+- `SUPPORTED: dict[int, int] = {1: 10}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
 - `API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"`: The newest interface: what a new headset is made for.
 - `RETIRED: dict[int, str] = {}`: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
 - `MANIFEST = "headset.json"`: A headset folder's description of itself: devices/<codename>/headset.json.
@@ -990,6 +990,21 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - `wait_fresh_edl(edl_count: Callable[[], int], clock: Timing, *, seconds: float = RESTART_SECONDS) -> None`: Wait until the device restarted by fresh_edl_argv has left USB, then is back as the one EDL device.
 - `check_edl_serial(output: str, serial: str) -> None`: Raise unless edl-ng's @p output names @p serial: only the configured headset may be written.
 - `partition_size(backup: Path, label: str) -> int`: Return a partition's size from the backup's rawprogram maps.
+- `WIPED = ("userdata", "metadata")`: The partitions a write-back zeroes at their start instead of writing them from the backup, as an Android restore leaves them: the system makes its data anew. userdata is not in a backup; metadata belongs to the data that is gone (since interface 1.10).
+- `WIPE_BYTES = 64 << 20`: How much of a WIPED partition's start is zeroed (all of a smaller one).
+- class `Write` (@dataclass(frozen=True)): One write of a backup's write-back: an image at a start sector of a LUN (since interface 1.10).
+  - `lun: int`
+  - `label: str`
+  - `start: int`
+  - `sectors: int`
+  - `sector_size: int`
+  - `image: Path | None`
+  - property `size(self) -> int`: Return the write's size in bytes.
+- `backup_lun_sectors(folder: Path, lun: int) -> int`: Return a backup LUN's size in sectors from its primary GPT: the backup header's position, plus one.
+- `write_back_plan(folder: Path, manifest: dict) -> list[Write]`: Return a verified backup's write-back: LUN by LUN in the backup's order, each in its map's order.
+- `storage_sectors(output: str) -> dict[int, int]`: Return each LUN's size in sectors as the loader reports it (getstorageinfo) in edl-ng's debug output.
+- `check_storage(backup: dict[int, int], device: dict[int, int]) -> None`: Refuse a device whose LUNs differ from the backup's in number or size (since interface 1.10).
+- `write_back(plan: Sequence[Write], program: str | Path, loader: str | Path, work: Path, runner: Callable[[list[str | Path], float], object]) -> None`: Write @p plan through edl-ng (write-sector), each write read back into @p work and compared before the next.
 
 ## runner
 
