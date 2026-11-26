@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Unlicense
-"""overpressure.serve: the app's requests, the settings, the disclaimer, and a run's events with its id."""
+"""overpressure.serve: the app's requests, the settings, the disclaimer, runs and jobs with their events."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from overpressure import disclaimer, serve
-from overpressure.headset import Headset, Info, Registry
+from overpressure.headset import Action, AfterInstall, Headset, Info, Param, Registry, Step
 from overpressure.install import Stage, Task
 
 if TYPE_CHECKING:
@@ -34,6 +34,18 @@ class Planned(Headset):
     def install_plan(self):
         return (Stage("s", "Stage", "", (Task("t", "Task", lambda _ctx: None),)),)
 
+    def steps(self):
+        return (
+            Step("build", "Build", "Image", ("x", "{target}"), "Builds.", params=(Param("target", "Target", "a"),)),
+        )
+
+    def after_install(self):
+        return AfterInstall(
+            "Put it on",
+            "Ready.",
+            (Action("Again", workflow="install"), Action("Build", step="build"), Action("Gone", step="nope")),
+        )
+
 
 class Blocked(Planned):
     """A headset whose install cannot run now."""
@@ -50,6 +62,7 @@ class Lines(io.StringIO):
     def __init__(self) -> None:
         super().__init__()
         self.lines: queue.Queue[dict] = queue.Queue()
+        self.kept: list[dict] = []  # messages a wait passed over, for the next waits
 
     def write(self, text: str) -> int:
         for line in text.splitlines():
@@ -57,14 +70,20 @@ class Lines(io.StringIO):
         return len(text)
 
     def next(self, predicate: Callable[[dict], bool] = lambda _m: True) -> dict:
-        """Return the next message PREDICATE accepts, skipping the others."""
+        """Return the first message PREDICATE accepts, in order; the others stay for the next waits."""
+        for i, message in enumerate(self.kept):
+            if predicate(message):
+                return self.kept.pop(i)
         while True:
             message = self.lines.get(timeout=TIMEOUT)
             if predicate(message):
                 return message
+            self.kept.append(message)
 
 
-class ServeTest(unittest.TestCase):
+class Base(unittest.TestCase):
+    """A demo server on a queue of lines, with a fresh settings folder."""
+
     def setUp(self) -> None:
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -76,6 +95,7 @@ class ServeTest(unittest.TestCase):
             self.out,
             demo=True,
             engines=serve.demo_engines(pace=0),
+            pace=0,
             root=self.root,
             environ=self.environ,
         )
@@ -87,6 +107,8 @@ class ServeTest(unittest.TestCase):
         self.server.respond(json.dumps({"id": self.ids, "request": name, **fields}))
         return self.out.next(lambda m: m.get("id") == self.ids)
 
+
+class ServeTest(Base):
     def test_hello_names_the_protocol_and_the_disclaimer_due(self):
         result = self.request("hello")["result"]
         self.assertEqual(result["protocol"], "{}.{}".format(*serve.PROTOCOL))
@@ -166,6 +188,97 @@ class ServeTest(unittest.TestCase):
         threading.Thread(target=lambda: (self.server.serve(io.StringIO("")), done.set()), daemon=True).start()
         self.assertEqual(self.out.next(lambda m: m.get("event") == "finished")["status"], "stopped")
         self.assertTrue(done.wait(TIMEOUT))
+
+
+class JobsTest(Base):
+    """The requests besides a run, in the demo: nothing is fetched, written or run."""
+
+    def job(self, answer: dict) -> tuple[list[dict], dict]:
+        """Return a job's events up to its end, and its end."""
+        job = answer["result"]["job"]
+        seen = []
+        while True:
+            message = self.out.next(lambda m: m.get("job") == job)
+            seen.append(message)
+            if message["event"] == "job-ended":
+                return seen, message
+
+    def test_the_catalogue_names_headsets_in_development(self):
+        found = {h["codename"]: h for h in self.request("headsets")["result"]["headsets"]}
+        self.assertTrue(found["hollywood"]["development"])
+        self.assertEqual(found["phoenix"]["year"], 2022)
+        self.assertIn("error", self.request("download", codename="hollywood"))
+
+    def test_releases_come_later_from_a_thread(self):
+        result = self.request("releases", codename="phoenix")["result"]
+        self.assertEqual(result["releases"][0]["version"], serve.DEMO_RELEASES[0][0])
+
+    def test_a_download_is_a_job_and_the_headset_has_it_after(self):
+        answer = self.request("download", codename="phoenix", channel="beta")
+        events, end = self.job(answer)
+        self.assertEqual(end["code"], 0)
+        self.assertIn("job-progress", {e["event"] for e in events})
+        found = {h["codename"]: h for h in self.request("headsets")["result"]["headsets"]}
+        self.assertEqual(found["phoenix"]["downloaded"], f"release {serve.DEMO_RELEASES[0][0]}")
+        self.assertEqual(found["phoenix"]["channel"], "beta")
+        self.assertEqual(self.request("updates")["result"]["updates"], {})
+
+    def test_one_thing_at_a_time(self):
+        self.request("accept_disclaimer", every_start=True)
+        self.request("start", codename="planned")
+        self.out.next(lambda m: m.get("event") == "ask")  # the run waits
+        self.assertIn("installer is running", self.request("download", codename="phoenix")["error"])
+        self.assertIn("error", self.request("run_step", codename="planned", step="build"))
+        self.assertIn("error", self.request("save_logs", codename="planned", path="logs.zip"))
+
+    def test_the_plan_tells_what_an_earlier_run_did(self):
+        stages = self.request("plan", codename="planned")["result"]["stages"]
+        statuses = [t["status"] for s in stages for t in s["tasks"]]
+        self.assertIn("done", statuses)  # the demo starts as if all but the last stage were done
+        self.assertEqual(statuses[-1], "pending")
+
+    def test_the_finished_page_keeps_the_actions_it_can_offer(self):
+        page = self.request("finished_page", codename="planned", workflow="install")["result"]
+        self.assertEqual(page["title"], "Put it on")
+        self.assertEqual([a["label"] for a in page["actions"]], ["Again", "Build"])
+
+    def test_the_backup_export_and_the_logs_are_jobs(self):
+        self.assertTrue(self.request("backup", codename="planned")["result"]["present"])
+        self.assertIn("error", self.request("backup_export", codename="planned", path=""))
+        _events, end = self.job(self.request("backup_export", codename="planned", path="b.tar"))
+        self.assertEqual(end["code"], 0)
+        _events, end = self.job(self.request("save_logs", codename="planned", path="logs.zip"))
+        self.assertEqual(end["kind"], "logs")
+
+    def test_steps_their_command_and_a_run(self):
+        groups = self.request("steps", codename="planned")["result"]["groups"]
+        self.assertEqual(groups[0]["steps"][0]["checks"], True)  # the dependency checks first
+        build = next(s for g in groups for s in g["steps"] if s["key"] == "build")
+        self.assertEqual(build["params"][0]["value"], "a")
+        command = self.request("command", codename="planned", step="build", values={"target": "b"})["result"]
+        self.assertTrue(command["command"].endswith("x b"))
+        self.assertIn("error", self.request("command", codename="planned", step="nope"))
+        events, end = self.job(self.request("run_step", codename="planned", step="build", values={}))
+        self.assertTrue(events[0]["line"].startswith("$ "))
+        self.assertTrue(events[0]["line"].endswith("x b"))  # the values stay
+        self.assertEqual(end["code"], 0)
+
+    def test_a_step_can_be_stopped(self):
+        answer = self.request("run_step", codename="planned", step="build")
+        self.assertIn("error", self.request("stop_job", job="another"))
+        self.assertEqual(self.request("stop_job", job=answer["result"]["job"])["result"], {})
+        self.job(answer)
+
+    def test_checks_come_later(self):
+        checks = self.request("checks", codename="planned")["result"]["checks"]
+        self.assertIn("missing", {c["status"] for c in checks})
+
+    def test_carry_over_is_offered_in_the_demo_only_when_asked(self):
+        self.assertEqual(self.request("carry_over")["result"]["from"], "")
+        self.environ["OVERPRESSURE_DEMO_CARRY_OVER"] = "1"
+        offered = self.request("carry_over")["result"]
+        self.assertTrue(offered["from"].endswith(serve.DEMO_EARLIER))
+        self.assertTrue(self.request("carry", **{"from": offered["from"]})["result"]["brought"])
 
 
 class MainTest(unittest.TestCase):

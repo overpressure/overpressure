@@ -55,10 +55,19 @@ class Known:
     codename: str
     name: str
     repository: str
+    soc: str = ""  #: its SoC, for the app's list before anything is downloaded
+    year: int = 0  #: the year it came out
 
 
 #: Every headset there is; a new one is added here once its repository has a release.
-CATALOGUE = {k.codename: k for k in (Known("phoenix", "PICO 4", "overpressure/phoenix"),)}
+CATALOGUE = {
+    k.codename: k for k in (Known("phoenix", "PICO 4", "overpressure/phoenix", "Qualcomm Snapdragon XR2", 2022),)
+}
+#: Headsets in development: their repository has no release yet. The app lists them; nothing downloads them.
+IN_DEVELOPMENT = {
+    k.codename: k
+    for k in (Known("hollywood", "Meta Quest 2", "overpressure/hollywood", "Qualcomm Snapdragon XR2", 2020),)
+}
 
 
 @dataclass(frozen=True)
