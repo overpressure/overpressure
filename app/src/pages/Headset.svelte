@@ -41,7 +41,7 @@
   const waiting = $derived(headset.assesses && !present && !skipped);
   const kind = $derived(found?.state ? STATES[found.state] : undefined);
   const offered = $derived.by((): Workflow[] => {
-    if (!headset.assesses || !present || !found?.workflows.length) return headset.workflows;
+    if (!headset.assesses || !present || !found) return headset.workflows;
     return found.workflows.flatMap((key) => headset.workflows.filter((w) => w.key === key));
   });
   const recommended = $derived(present && found?.workflows.length ? offered[0]?.key : "");
@@ -207,7 +207,9 @@
         </span>
       </div>
     {:else}
-      <p class="muted">No installer yet: Advanced mode has its steps.</p>
+      <p class="muted">
+        {present ? "Nothing fits the headset as it is." : "No installer yet: Advanced mode has its steps."}
+      </p>
     {/each}
   </div>
 {/if}

@@ -61,7 +61,7 @@ export interface Found {
   system: string;
   version: string;
   facts: [string, string][];
-  /** The workflows that fit, the recommended one first; empty: all of them. */
+  /** The workflows that fit, the recommended one first; none when nothing fits as it is (note says why). */
   workflows: string[];
   note: string;
   assesses: boolean;

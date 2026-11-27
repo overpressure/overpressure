@@ -180,8 +180,9 @@ class Found:
 
     state is one of STATES; system and version name what runs ("PICO OS", "5.13.8"); facts are short
     label-value pairs for the owner ("Bootloader", "Locked"). workflows are the workflows that fit this
-    state, the recommended one first; an empty tuple leaves the headset's every workflow offered. note says,
-    in one sentence, what the owner does next when the look could not finish (accept USB debugging).
+    state, the recommended one first: none when nothing fits the headset as it is. note says, in one
+    sentence, what the owner does next then, or why nothing fits (USB debugging to allow, a build not
+    supported).
     """
 
     state: str
