@@ -33,7 +33,7 @@ lists the headsets there are.
 ```sh
 python -m overpressure headset list                 # every headset, what devices/ holds of it, its update
 python -m overpressure headset releases phoenix     # its published releases, newest first
-python -m overpressure headset add phoenix          # its newest stable release (until there is one, beta)
+python -m overpressure headset add phoenix          # its newest stable release (never a beta: none until one is out)
 python -m overpressure headset add phoenix --channel beta      # the newest, betas included
 python -m overpressure headset add phoenix --channel preview   # its main: development state, untested
 python -m overpressure headset add phoenix --branch feat/x      # another branch's newest commit, untested

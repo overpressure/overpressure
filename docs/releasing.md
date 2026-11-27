@@ -74,9 +74,9 @@ A pushed tag makes the release; nothing is uploaded by hand.
    `pyproject.toml` and prints it: a new beta series takes this month and its first free patch, a running one its
    next `bN`, and `stable` the running series' release. That change goes to `main` by pull request, like every
    change.
-3. **The headsets.** Each supported headset has a published release (a beta at least: the window offers a
-   headset's newest stable release first, which falls back to its newest beta, and a headset without any
-   release can only be downloaded as a preview), and that release runs its checklist with this commit (the
+3. **The headsets.** Each supported headset has a published release (a beta at least; *Newest stable* never takes
+   a beta, so a headset with betas only is downloaded as a beta, and one without any release only as a preview of
+   a branch), and that release runs its checklist with this commit (the
    PICO 4's: [release-checklist.md](https://github.com/overpressure/phoenix/blob/main/docs/release-checklist.md)).
 4. **The tag.** An annotated tag on that commit of `main`, named exactly as the version: its first line the
    release's title, the rest the release's own words, the checklist's results and what is known not to work.

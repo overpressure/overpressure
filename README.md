@@ -87,7 +87,7 @@ repository root:
 
 ```sh
 python -m overpressure headset list  # the headsets there are, and which release devices/ holds
-python -m overpressure headset add phoenix  # download its newest stable release, a beta until there is one (--channel beta|preview, --version V)
+python -m overpressure headset add phoenix  # download its newest stable release, never a beta (--channel beta|preview, --version V, --branch NAME)
 python -m overpressure headset update phoenix  # what its channel offers now, when newer
 python -m overpressure devices       # the headsets in devices/, and those this version cannot run
 python -m overpressure doctor        # what this computer lacks, with fixes

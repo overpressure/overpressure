@@ -149,10 +149,16 @@ class CatalogueTests(unittest.TestCase):
         self.assertEqual(release.tag, "main")
         self.assertEqual(catalogue.record_of("hollywood", self.root)["channel"], catalogue.PREVIEW)
 
-    def test_stable_takes_the_newest_beta_until_there_is_a_stable_release(self):
+    def test_stable_never_takes_a_beta_not_even_before_the_first_stable_release(self):
         self.github = Published(("v1.0-beta.2", True, archive("1.0-beta.2")), ("v1.0-beta", True, archive("1.0-beta")))
-        self.assertEqual(self.add().version, "1.0-beta.2")
-        self.assertEqual(catalogue.record_of("phoenix", self.root)["channel"], "stable")
+        with self.assertRaisesRegex(LookupError, "no stable release.*--channel beta"):
+            self.add()
+        self.assertFalse((self.root / "devices" / "phoenix").exists())
+        self.assertEqual(self.add(channel=catalogue.BETA).version, "1.0-beta.2")
+        record = catalogue.record_of("phoenix", self.root)
+        record["channel"] = catalogue.STABLE  # one downloaded as stable before, when stable fell back to a beta
+        (self.root / "devices" / "phoenix" / catalogue.RECORD).write_text(json.dumps(record), encoding="utf-8")
+        self.assertIsNone(catalogue.update("phoenix", self.root, self.github.get))  # no beta offered as stable
 
     def test_an_update_follows_the_recorded_channel_and_a_pinned_release_stays(self):
         self.add(version="0.9")  # pinned: asked for by version

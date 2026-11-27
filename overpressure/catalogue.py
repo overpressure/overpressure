@@ -6,8 +6,8 @@ versions (2026.12.0, a beta 2026.12.0b3; docs/releasing.md), each with a source 
 overpressure's own. "headset add"
 puts one into devices/<codename>/, checked against its checksum and its headset.json:
 
-  stable    the newest release that is not a beta and that this overpressure runs (the default); until
-            there is one, the newest beta
+  stable    the newest release that is not a beta and that this overpressure runs (the default); never a
+            beta, not even while there is no stable release yet: then there is nothing to download
   beta      the newest release this overpressure runs, betas included
   preview   the newest commit of main, or of another branch (--branch NAME): development state, untested on the
             headset, no checksum
@@ -177,6 +177,11 @@ def preview_branch(record: dict) -> str:
     return str(record.get("branch") or MAIN)
 
 
+def runs_any_beta(found: list[Release]) -> bool:
+    """Tell whether FOUND has a beta this overpressure runs."""
+    return any(r.prerelease and not r.problem for r in found)
+
+
 def pick(found: list[Release], channel: str = STABLE, version: str = "") -> Release:
     """Return the release of FOUND that CHANNEL (its newest that runs here) or VERSION names.
 
@@ -189,13 +194,12 @@ def pick(found: list[Release], channel: str = STABLE, version: str = "") -> Rele
             raise LookupError(msg)
     else:
         runs = [r for r in found if not r.problem]
-        chosen = [r for r in runs if channel == BETA or not r.prerelease]
-        if not chosen and channel == STABLE:
-            chosen = runs  # no stable release yet: the newest beta
+        chosen = [r for r in runs if channel == BETA or not r.prerelease]  # stable is never a beta
     if not chosen:
         wanted = f"release {version}" if version else f"{channel} release this overpressure runs"
         known = ", ".join(r.version + (" (cannot run here)" if r.problem else "") for r in found) or "none"
-        msg = f"no {wanted} (published: {known})"
+        hint = "; betas only with --channel beta" if channel == STABLE and not version and runs_any_beta(found) else ""
+        msg = f"no {wanted} (published: {known}){hint}"
         raise LookupError(msg)
     return chosen[0]
 
@@ -392,9 +396,9 @@ USAGE = """usage: python -m overpressure headset list | releases CODENAME | upda
 
   list                 every headset overpressure knows, what devices/ holds of it, and its update
   releases CODENAME    its published releases, newest first, and whether this overpressure runs each
-  add CODENAME         download it into devices/CODENAME: the newest stable release (until there is
-                       one, the newest beta), a channel's newest (beta: betas too, preview: main,
-                       untested), a release by version (pinned: update keeps it), or a branch's newest
+  add CODENAME         download it into devices/CODENAME: the newest stable release (never a beta: none
+                       while there is no stable release), a channel's newest (beta: betas too, preview:
+                       main, untested), a release by version (pinned: update keeps it), or a branch's newest
                        commit (a preview of it, untested); a headset in development has only previews
   update CODENAME      download what its recorded channel offers now, when it is newer"""
 

@@ -60,6 +60,7 @@
         version = record.tag.replace(/^v/, "");
       } else if (record.channel === "beta") channel = "beta";
       else channel = "stable";
+      if (channel === "stable" && !newestStable) channel = "beta"; // stable is never a beta: nothing to take yet
       developer = channel === "branch";
       version ||= runs[0]?.version ?? "";
     } catch (error) {
@@ -178,10 +179,14 @@
       {:else}
         <fieldset class="channels" disabled={job !== null && job.code === null}>
           <legend class="sr-only">Version</legend>
-          <label class="channel">
-            <input type="radio" bind:group={channel} value="stable" />
-            <span><b>Newest stable</b><small>{newestStable ? "Recommended." : "No stable release yet: the newest beta."}</small></span>
-            <span class="version">{newestStable?.version ?? newest?.version ?? ""}</span>
+          <label class="channel" class:none={!newestStable}>
+            <input type="radio" bind:group={channel} value="stable" disabled={!newestStable} />
+            <span
+              ><b>Newest stable</b><small
+                >{#if newestStable}Recommended.{:else}<Icon name="info" size={13} /> No stable release is out yet.{/if}</small
+              ></span
+            >
+            <span class="version">{newestStable?.version ?? ""}</span>
           </label>
           <label class="channel">
             <input type="radio" bind:group={channel} value="beta" />
@@ -200,7 +205,7 @@
           <details
             class="developer"
             bind:open={developer}
-            ontoggle={() => !developer && channel === "branch" && (channel = "stable")}
+            ontoggle={() => !developer && channel === "branch" && (channel = newestStable ? "stable" : "beta")}
           >
             <summary>Developer options</summary>
             {@render branches()}
@@ -333,6 +338,17 @@
     border-radius: 8px;
     border: 1px solid var(--line);
     cursor: pointer;
+  }
+
+  .channel.none {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .channel.none small {
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .channel:has(input:checked) {

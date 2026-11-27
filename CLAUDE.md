@@ -92,7 +92,7 @@ link may not leave its repository, so links between this repository and a headse
 ## Commands
 
 ```sh
-python -m overpressure headset add phoenix        # a headset's newest stable release (a beta until there is one) into devices/
+python -m overpressure headset add phoenix --channel beta  # a headset's newest beta into devices/ (stable: never a beta)
 python -m overpressure headset update phoenix     # what its recorded channel offers now, when newer
 python -m unittest                                # every host test (generic and each headset's), seconds
 uv run --extra gui python -m unittest tests.test_headsets tests.test_installer tests.test_advanced
