@@ -137,6 +137,18 @@ class CatalogueTests(unittest.TestCase):
             self.add()
         self.assertEqual(catalogue.installed("phoenix", self.root), "development checkout")
 
+    def test_a_headset_in_development_downloads_only_its_preview(self):
+        main = "https://codeload.github.com/overpressure/hollywood/zip/refs/heads/main"
+        self.github.files[main] = archive("0.1-dev", codename="hollywood")
+        for options in ({}, {"channel": catalogue.BETA}, {"version": "0.1"}):
+            with self.assertRaisesRegex(LookupError, "in development"):
+                catalogue.add("hollywood", root=self.root, get=self.github.get, log=self.lines.append, **options)
+        release = catalogue.add(
+            "hollywood", channel=catalogue.PREVIEW, root=self.root, get=self.github.get, log=self.lines.append
+        )
+        self.assertEqual(release.tag, "main")
+        self.assertEqual(catalogue.record_of("hollywood", self.root)["channel"], catalogue.PREVIEW)
+
     def test_stable_takes_the_newest_beta_until_there_is_a_stable_release(self):
         self.github = Published(("v1.0-beta.2", True, archive("1.0-beta.2")), ("v1.0-beta", True, archive("1.0-beta")))
         self.assertEqual(self.add().version, "1.0-beta.2")

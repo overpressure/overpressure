@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from overpressure import disclaimer, serve
-from overpressure.headset import Action, AfterInstall, Headset, Info, Param, Registry, Step
+from overpressure import headset as headsets
+from overpressure.headset import Action, AfterInstall, Found, Headset, Info, Param, Registry, Step
 from overpressure.install import Stage, Task
 
 if TYPE_CHECKING:
@@ -54,6 +55,15 @@ class Blocked(Planned):
 
     def workflow_problem(self, workflow: str) -> str:
         return f"{workflow} cannot run now"
+
+
+class Looks(Planned):
+    """A headset that looks at itself: in its maker's system, the install fitting it and a workflow it lacks."""
+
+    info = Info("looks", "Looking headset")
+
+    def assess(self) -> Found:
+        return Found(headsets.MAKER, "Maker OS", "1.2", (("Bootloader", "Locked"),), ("install", "nope"))
 
 
 class Lines(io.StringIO):
@@ -106,6 +116,28 @@ class Base(unittest.TestCase):
         self.ids += 1
         self.server.respond(json.dumps({"id": self.ids, "request": name, **fields}))
         return self.out.next(lambda m: m.get("id") == self.ids)
+
+
+class AssessTest(Base):
+    def test_the_demo_finds_the_headset_after_its_plug_in_in_the_state_asked_for(self):
+        found = self.request("assess", codename="planned", first=True)["result"]
+        self.assertEqual((found["state"], found["system"]), (headsets.MAKER, "PICO OS"))
+        self.assertEqual(found["workflows"], ["install"])  # the demo's other workflows are not the headset's
+        self.environ["OVERPRESSURE_DEMO_STATE"] = headsets.EDL
+        self.assertEqual(self.request("assess", codename="planned")["result"]["state"], headsets.EDL)
+        self.server.pace = 100.0  # a plug-in that takes time: nothing there yet
+        self.assertEqual(self.request("assess", codename="planned", first=True)["result"]["state"], headsets.ABSENT)
+
+    def test_a_headset_looks_at_itself_and_one_that_cannot_says_so(self):
+        self.server.demo = False
+        self.server.registry = Registry({"looks": Looks(), "planned": Planned()})
+        found = {h["codename"]: h for h in self.request("headsets")["result"]["headsets"]}
+        self.assertTrue(found["looks"]["assesses"])
+        self.assertFalse(found["planned"]["assesses"])
+        looked = self.request("assess", codename="looks")["result"]
+        self.assertEqual(looked["facts"], [["Bootloader", "Locked"]])
+        self.assertEqual(looked["workflows"], ["install"])
+        self.assertFalse(self.request("assess", codename="planned")["result"]["assesses"])
 
 
 class ServeTest(Base):
@@ -207,7 +239,12 @@ class JobsTest(Base):
         found = {h["codename"]: h for h in self.request("headsets")["result"]["headsets"]}
         self.assertTrue(found["hollywood"]["development"])
         self.assertEqual(found["phoenix"]["year"], 2022)
-        self.assertIn("error", self.request("download", codename="hollywood"))
+        self.assertIn("error", self.request("download", codename="hollywood"))  # stable: it has no releases
+        self.assertEqual(self.request("releases", codename="hollywood")["result"]["releases"], [])
+        _events, end = self.job(self.request("download", codename="hollywood", channel="preview"))
+        self.assertEqual(end["code"], 0)
+        found = {h["codename"]: h for h in self.request("headsets")["result"]["headsets"]}
+        self.assertEqual(found["hollywood"]["downloaded"], "preview (main)")
 
     def test_releases_come_later_from_a_thread(self):
         result = self.request("releases", codename="phoenix")["result"]

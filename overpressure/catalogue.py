@@ -63,11 +63,16 @@ class Known:
 CATALOGUE = {
     k.codename: k for k in (Known("phoenix", "PICO 4", "overpressure/phoenix", "Qualcomm Snapdragon XR2", 2022),)
 }
-#: Headsets in development: their repository has no release yet. The app lists them; nothing downloads them.
+#: Headsets in development: their repository has no release yet, so only their preview (main) downloads.
 IN_DEVELOPMENT = {
     k.codename: k
     for k in (Known("hollywood", "Meta Quest 2", "overpressure/hollywood", "Qualcomm Snapdragon XR2", 2020),)
 }
+
+
+def lookup(codename: str) -> Known | None:
+    """Return the headset CODENAME names, with releases or in development, or None."""
+    return CATALOGUE.get(codename) or IN_DEVELOPMENT.get(codename)
 
 
 @dataclass(frozen=True)
@@ -231,7 +236,7 @@ def update(codename: str, root: Path = REPO, get: Callable[[str], bytes] = fetch
     None too for a development checkout, a pinned release (a version was asked for) and nothing recorded.
     A preview is newer when main has another commit than the one downloaded.
     """
-    record, known = record_of(codename, root), CATALOGUE.get(codename)
+    record, known = record_of(codename, root), lookup(codename)
     if known is None or not record or record.get("pinned") or (root / "devices" / codename / ".git").exists():
         return None
     channel = str(record.get("channel", STABLE))
@@ -302,11 +307,15 @@ def add(  # noqa: PLR0913  # what to download, from where, into where
     """Download CODENAME's release (CHANNEL, else VERSION) into ROOT/devices/CODENAME; return it.
 
     The zip is checked against its SHA-256 and its headset.json against this overpressure's
-    interface before it replaces what was there; a development checkout is refused.
+    interface before it replaces what was there; a development checkout is refused. A headset in
+    development has no releases: only its preview.
     """
-    known = CATALOGUE.get(codename)
+    known = lookup(codename)
     if known is None:
-        msg = f"no headset {codename!r} (known: {', '.join(sorted(CATALOGUE))})"
+        msg = f"no headset {codename!r} (known: {', '.join(sorted(CATALOGUE | IN_DEVELOPMENT))})"
+        raise LookupError(msg)
+    if codename in IN_DEVELOPMENT and (channel != PREVIEW or version):
+        msg = f"the {known.name} is in development: it has no releases yet, only its preview (--channel preview)"
         raise LookupError(msg)
     folder = root / "devices" / codename
     if (folder / ".git").exists():
@@ -336,13 +345,16 @@ USAGE = """usage: python -m overpressure headset list | releases CODENAME | upda
   releases CODENAME    its published releases, newest first, and whether this overpressure runs each
   add CODENAME         download it into devices/CODENAME: the newest stable release (until there is
                        one, the newest beta), a channel's newest (beta: betas too, preview: main,
-                       untested), or a release by version (pinned: update keeps it)
+                       untested), or a release by version (pinned: update keeps it); a headset in
+                       development has only its preview
   update CODENAME      download what its recorded channel offers now, when it is newer"""
 
 
 def _list(root: Path, get: Callable[[str], bytes]) -> int:
-    for known in CATALOGUE.values():
-        line = f"{known.codename:<12} {known.name:<12} {installed(known.codename, root) or 'not downloaded'}"
+    for known in (*CATALOGUE.values(), *IN_DEVELOPMENT.values()):
+        here = installed(known.codename, root) or "not downloaded"
+        line = f"{known.codename:<12} {known.name:<12} {here}"
+        line += ", in development: preview only" if known.codename in IN_DEVELOPMENT else ""
         with contextlib.suppress(LookupError, ValueError, OSError):  # offline: what is here, without updates
             newer = update(known.codename, root, get)
             line += f", update: {newer.version}" if newer else ""
@@ -351,7 +363,8 @@ def _list(root: Path, get: Callable[[str], bytes]) -> int:
 
 
 def _releases(codename: str, get: Callable[[str], bytes], *, oldest: bool) -> int:
-    found = releases(CATALOGUE[codename], get)
+    known = lookup(codename)
+    found = releases(known, get) if codename in CATALOGUE and known else []
     if oldest:  # for CI: the tag of the oldest release this overpressure keeps running
         first = oldest_supported(found)
         print(first.tag if first else "")
@@ -376,7 +389,7 @@ def main(argv: list[str], root: Path = REPO, get: Callable[[str], bytes] = fetch
         return _list(root, get)
     parser = argparse.ArgumentParser(prog="python -m overpressure headset", usage=USAGE)
     parser.add_argument("action", choices=("releases", "add", "update"))
-    parser.add_argument("codename", choices=sorted(CATALOGUE))
+    parser.add_argument("codename", choices=sorted(CATALOGUE | IN_DEVELOPMENT))
     parser.add_argument("--channel", choices=CHANNELS, default=STABLE)
     parser.add_argument("--version", default="")
     parser.add_argument("--oldest-supported", action="store_true", help=argparse.SUPPRESS)

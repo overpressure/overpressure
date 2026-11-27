@@ -34,12 +34,13 @@ from pathlib import Path
 from typing import IO, Any, Callable, ClassVar, Union
 
 from . import carryover, catalogue, disclaimer, doctor, localconfig, progress, version
-from .headset import INSTALL, Headset, Registry, discover
+from . import headset as headsets
+from .headset import INSTALL, Found, Headset, Registry, discover
 from .window.advanced import DemoProcess, StepProcess, Steps, browse, demo_checks
 from .window.installer import BackupJob, ChildEngine, DemoBackupJob, DemoEngine
 
 #: The protocol's major and minor version: a new request or field raises the minor, a change the major.
-PROTOCOL = (0, 2)
+PROTOCOL = (0, 3)
 #: The app's settings, beside the window's (out/window.json).
 SETTINGS = "out/app.json"
 APPEARANCES = ("system", "light", "dark")
@@ -48,6 +49,32 @@ DEFAULTS: dict[str, Any] = {"appearance": "system", "disclaimer_every_start": Tr
 Engines = Callable[[str, str, str], Union[ChildEngine, DemoEngine]]
 #: What the demo offers as published releases, newest first: (version, prerelease).
 DEMO_RELEASES = (("2026.11.0b1", True), ("2026.11.0b0", True), ("1.0-beta.5", True), ("1.0-beta.4", True))
+#: How long the demo's headset takes to show up after the app's first look, in seconds (times the pace).
+DEMO_PLUG_IN = 2.5
+#: What the demo's look finds, by OVERPRESSURE_DEMO_STATE (maker by default): a headset as it may be plugged in.
+DEMO_FOUND = {
+    headsets.MAKER: Found(
+        headsets.MAKER,
+        "PICO OS",
+        "5.13.8",
+        (("Developer mode", "On"), ("Bootloader", "Locked"), ("Battery", "84 %")),
+        ("install",),
+    ),
+    headsets.OVERPRESSURE: Found(
+        headsets.OVERPRESSURE,
+        "overpressure",
+        "2026.11.0b0",
+        (("Installed by", "This computer"), ("Battery", "71 %")),
+        ("upgrade", "check", "restore"),
+    ),
+    headsets.BOOTLOADER: Found(
+        headsets.BOOTLOADER, "Bootloader", "", (("Bootloader", "Unlocked"),), ("install", "restore")
+    ),
+    headsets.EDL: Found(headsets.EDL, "Emergency download mode", "", (), ("restore",)),
+    headsets.UNKNOWN: Found(
+        headsets.UNKNOWN, note="Put the headset on and accept the USB debugging prompt, then look again."
+    ),
+}
 #: The demo's earlier overpressure folder, offered with OVERPRESSURE_DEMO_CARRY_OVER=1.
 DEMO_EARLIER = "overpressure-2026.11.0b0"
 #: What a job is, in the words of the refusal while it runs.
@@ -187,6 +214,7 @@ class Server:
         self.after: list[Callable[[], None]] = []  # what a request does once its answer is out (a run's start)
         self.values: dict[tuple[str, str], dict[str, str]] = {}  # (codename, step) -> its parameters' values
         self.demo_downloaded: dict[str, dict[str, Any]] = {}  # the demo's downloads: codename -> its record
+        self.demo_plugged: dict[str, float] = {}  # the demo's looks: codename -> when its headset shows up
 
     # -- the wire ---------------------------------------------------------------------------
     def write(self, message: dict[str, Any]) -> None:
@@ -370,6 +398,7 @@ class Server:
                     "refused": self.registry.refused.get(codename, ""),
                     "workflows": self.workflows(headset) if headset is not None else [],
                     "has_steps": bool(headset is not None and list(headset.steps())),
+                    "assesses": headset is not None and self.assesses(headset),
                 }
             )
         return {"headsets": found}
@@ -389,15 +418,54 @@ class Server:
             for w in headset.workflows()
         ]
 
-    def _releases(self, message: dict[str, Any]) -> Later:
-        codename = str(message.get("codename", ""))
-        known = catalogue.CATALOGUE.get(codename)
-        if known is None:
-            msg = f"{codename!r} has no releases to download"
-            raise RefusedError(msg)
+    def assesses(self, headset: Headset) -> bool:
+        """Tell whether HEADSET looks at itself on USB (Headset.assess); the demo's every headset with workflows."""
+        if self.demo:
+            return bool(list(headset.workflows()))
+        return type(headset).assess is not Headset.assess
+
+    def _assess(self, message: dict[str, Any]) -> Later:
+        headset = self.headset(message)
+        self.refuse_if_busy()  # a run or a step has the headset's USB
+        codename = headset.info.codename
+        if self.demo and (message.get("first") or codename not in self.demo_plugged):
+            self.demo_plugged[codename] = time.monotonic() + DEMO_PLUG_IN * self.pace
 
         def work() -> dict[str, Any]:
             if self.demo:
+                ready = time.monotonic() >= self.demo_plugged[codename]
+                wanted = self.environ.get("OVERPRESSURE_DEMO_STATE", headsets.MAKER)
+                found = DEMO_FOUND.get(wanted, DEMO_FOUND[headsets.MAKER]) if ready else Found(headsets.ABSENT)
+            else:
+                looked = headset.assess()
+                if looked is None:
+                    return {"state": "", "assesses": False}
+                found = looked
+            keys = {w.key for w in headset.workflows()}
+            return {
+                "state": found.state,
+                "system": found.system,
+                "version": found.version,
+                "facts": [list(fact) for fact in found.facts],
+                "workflows": [w for w in found.workflows if w in keys],
+                "note": found.note,
+                "assesses": True,
+            }
+
+        return Later(work)
+
+    def _releases(self, message: dict[str, Any]) -> Later:
+        codename = str(message.get("codename", ""))
+        known = catalogue.lookup(codename)
+        if known is None:
+            msg = f"{codename!r} has no releases to download"
+            raise RefusedError(msg)
+        development = codename in catalogue.IN_DEVELOPMENT
+
+        def work() -> dict[str, Any]:
+            if development:  # no releases yet: only its preview
+                found: list[dict[str, Any]] = []
+            elif self.demo:
                 found = [{"version": v, "prerelease": p, "problem": ""} for v, p in DEMO_RELEASES]
             else:
                 found = [
@@ -405,13 +473,17 @@ class Server:
                     for r in catalogue.releases(known)
                 ]
             record = self.record(codename)
-            return {"releases": found, "record": {k: record.get(k) for k in ("tag", "channel", "pinned")}}
+            return {
+                "releases": found,
+                "development": development,
+                "record": {k: record.get(k) for k in ("tag", "channel", "pinned")},
+            }
 
         return Later(work)
 
     def _download(self, message: dict[str, Any]) -> dict[str, Any]:
         codename = str(message.get("codename", ""))
-        known = catalogue.CATALOGUE.get(codename)
+        known = catalogue.lookup(codename)
         if known is None:
             msg = f"{codename!r} has no release to download yet"
             raise RefusedError(msg)
@@ -424,6 +496,9 @@ class Server:
             msg = f"channel is one of {', '.join(catalogue.CHANNELS)}"
             raise RefusedError(msg)
         wanted = str(message.get("version") or "")
+        if codename in catalogue.IN_DEVELOPMENT and (channel != catalogue.PREVIEW or wanted):
+            msg = f"the {known.name} is in development: it has no releases yet, only its preview"
+            raise RefusedError(msg)
         source: DemoDownload | Download
         if self.demo:
             tag = wanted or ("main" if channel == catalogue.PREVIEW else DEMO_RELEASES[0][0])
@@ -445,7 +520,7 @@ class Server:
     def _updates(self, _message: dict[str, Any]) -> Later:
         def work() -> dict[str, Any]:
             found: dict[str, str] = {}
-            for codename in catalogue.CATALOGUE:
+            for codename in (*catalogue.CATALOGUE, *catalogue.IN_DEVELOPMENT):
                 if self.demo:
                     if codename in self.registry.headsets and codename not in self.demo_downloaded:
                         found[codename] = DEMO_RELEASES[0][0]
@@ -763,6 +838,7 @@ class Server:
         "set_settings": _set_settings,
         "accept_disclaimer": _accept_disclaimer,
         "headsets": _headsets,
+        "assess": _assess,
         "releases": _releases,
         "download": _download,
         "updates": _updates,

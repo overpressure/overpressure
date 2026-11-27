@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 #: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this
 #: overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new
 #: major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
-SUPPORTED: dict[int, int] = {1: 10}
+SUPPORTED: dict[int, int] = {1: 11}
 #: The newest interface: what a new headset is made for.
 API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"
 #: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
@@ -163,6 +163,35 @@ class Action:
     workflow: str = ""  #: the workflow it starts instead (its start page)
 
 
+#: The states a look at the headset finds it in (Found.state, since 1.11).
+ABSENT = "absent"  #: nothing on USB that is this headset
+MAKER = "maker"  #: its maker's system runs (PICO OS, Horizon OS, ...)
+OVERPRESSURE = "overpressure"  #: overpressure's system runs: installed, or its maintenance system
+BOOTLOADER = "bootloader"  #: in its bootloader (fastboot)
+RECOVERY = "recovery"  #: its maker's recovery
+EDL = "edl"  #: the SoC's emergency download mode (Qualcomm EDL)
+UNKNOWN = "unknown"  #: there, but not readable: what it runs is not known
+STATES = (ABSENT, MAKER, OVERPRESSURE, BOOTLOADER, RECOVERY, EDL, UNKNOWN)
+
+
+@dataclass(frozen=True)
+class Found:
+    """What a look at the headset found, without changing it (Headset.assess, since 1.11).
+
+    state is one of STATES; system and version name what runs ("PICO OS", "5.13.8"); facts are short
+    label-value pairs for the owner ("Bootloader", "Locked"). workflows are the workflows that fit this
+    state, the recommended one first; an empty tuple leaves the headset's every workflow offered. note says,
+    in one sentence, what the owner does next when the look could not finish (accept USB debugging).
+    """
+
+    state: str
+    system: str = ""
+    version: str = ""
+    facts: tuple[tuple[str, str], ...] = ()
+    workflows: tuple[str, ...] = ()
+    note: str = ""
+
+
 @dataclass(frozen=True)
 class BackupSet:
     """A headset's backup on this computer: what an export carries and where an import puts it.
@@ -268,6 +297,15 @@ class Headset(ABC):
     def workflow_problem(self, workflow: str) -> str:  # noqa: ARG002  # a headset's own rule may use it
         """Return why WORKFLOW cannot run now, in plain words, or "" when it can."""
         return ""
+
+    def assess(self) -> Found | None:
+        """Look at the headset on USB without changing it (since 1.11): what it runs and what fits that.
+
+        Only reads: a device list, a property, a getvar, a file over SSH; never a write, a reboot or a session
+        that has to be ended (an EDL loader). It returns within seconds, ABSENT when no headset is there.
+        None: this headset cannot tell, and the app offers its workflows without a look.
+        """
+        return None
 
     def after_install(self) -> AfterInstall:
         """Return what the window's finished page says and offers once its installer has run."""

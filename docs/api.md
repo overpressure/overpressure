@@ -1,6 +1,6 @@
 # Headset interface reference
 
-**TL;DR.** Every name a headset may use in headset interface 1.10, `overpressure.api.v1`: its
+**TL;DR.** Every name a headset may use in headset interface 1.11, `overpressure.api.v1`: its
 modules, and in each its functions and classes with their signatures, dataclass fields and constants, each
 with the first paragraph of its documentation. A headset imports only these
 (`from overpressure.api.v1 import REPO, qualcomm`, `from overpressure.api.v1.headset import Headset, Step`).
@@ -443,7 +443,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 
 `overpressure.api.v1.headset`: the headset, its steps, workflows and finished page ([source](../overpressure/headset.py)).
 
-- `SUPPORTED: dict[int, int] = {1: 10}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
+- `SUPPORTED: dict[int, int] = {1: 11}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
 - `API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"`: The newest interface: what a new headset is made for.
 - `RETIRED: dict[int, str] = {}`: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
 - `MANIFEST = "headset.json"`: A headset folder's description of itself: devices/<codename>/headset.json.
@@ -488,6 +488,21 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
   - `label: str`
   - `step: str = ""`: the key of the step Advanced mode opens at
   - `workflow: str = ""`: the workflow it starts instead (its start page)
+- `ABSENT = "absent"`: The states a look at the headset finds it in (Found.state, since 1.11).
+- `MAKER = "maker"`: its maker's system runs (PICO OS, Horizon OS, ...)
+- `OVERPRESSURE = "overpressure"`: overpressure's system runs: installed, or its maintenance system
+- `BOOTLOADER = "bootloader"`: in its bootloader (fastboot)
+- `RECOVERY = "recovery"`: its maker's recovery
+- `EDL = "edl"`: the SoC's emergency download mode (Qualcomm EDL)
+- `UNKNOWN = "unknown"`: there, but not readable: what it runs is not known
+- `STATES`
+- class `Found` (@dataclass(frozen=True)): What a look at the headset found, without changing it (Headset.assess, since 1.11).
+  - `state: str`
+  - `system: str = ""`
+  - `version: str = ""`
+  - `facts: tuple[tuple[str, str], ...] = ()`
+  - `workflows: tuple[str, ...] = ()`
+  - `note: str = ""`
 - class `BackupSet` (@dataclass(frozen=True)): A headset's backup on this computer: what an export carries and where an import puts it.
   - `folder: Path`
   - `identity: Path`
@@ -511,6 +526,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
   - `workflows(self) -> Sequence[Workflow]`: Return what its installer does, in the window's order: the install alone unless it has more.
   - `plan(self, workflow: str) -> Sequence[Stage]`: Return the stages of WORKFLOW (python -m overpressure install --workflow WORKFLOW).
   - `workflow_problem(self, workflow: str) -> str`: Return why WORKFLOW cannot run now, in plain words, or "" when it can.
+  - `assess(self) -> Found | None`: Look at the headset on USB without changing it (since 1.11): what it runs and what fits that.
   - `after_install(self) -> AfterInstall`: Return what the window's finished page says and offers once its installer has run.
   - `finished_page(self, workflow: str) -> AfterInstall`: Return what the window's finished page says and offers once WORKFLOW has run (the install: after_install).
   - `backup_set(self) -> BackupSet | None`: Return its backup on this computer as .env names it (python -m overpressure backup), or None.

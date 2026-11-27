@@ -373,25 +373,33 @@ pnpm tauri build --bundles nsis   # Windows' per-user installer, in src-tauri/ta
 
 Its pages, each in light and dark and down to its smallest window:
 
+The top bar holds the way back, where you are as breadcrumbs ending in the page's heading, GitHub and the
+settings; the window's title bar names overpressure.
+
 - **Welcome:** the disclaimer, with *Show this on every start*; unticked, it comes back with a new overpressure.
   An earlier overpressure folder beside this one is offered for carry-over.
-- **Headsets:** the headsets on this computer as tiles, a newer release marked, a search once there are several.
-  *+* adds one from the catalogue (headsets in development listed, not offered) with its version: the newest
-  stable, the newest beta, the preview, or one release.
-- **A headset:** its short facts, *Change version*, a plain tile per workflow (an icon and a name; what it does
-  in its tooltip, badges for erasing the headset and for why it cannot run now), and a row of tools: the backup's
-  export and import, *Save logs* and Advanced mode. A workflow an earlier run began asks first: continue, or
-  start over from a stage.
-- **A run:** a ring with a segment per stage, the active stage's tasks, the notes, the engine's questions as
-  dialogs, the log under *Details*, and *Stop*. Its end shows the headset's own words and next steps, or why it
-  failed with *Retry* and, where offered, *Import backup…*. Leaving the page leaves the run going; the status bar
-  leads back to it.
+- **Headsets:** the headsets on this computer as tiles with their pictures from overpressure/brand, a newer
+  release marked, a search once there are several. *+* adds one from the catalogue with its version: the newest
+  stable, the newest beta, the preview, or one release; a headset in development only its preview, after a
+  warning.
+- **A headset:** a compact hero (its picture, one line of facts, *Update to …* when there is a newer release,
+  *Change version*). A headset that looks at itself (`assess`) asks to be plugged in first; the look changes
+  nothing, shows what runs on it, and offers the workflows that fit, the recommended one first (*Show every
+  action* skips the look). Each workflow is a plain tile (an icon and a name; what it does in its tooltip, badges
+  for erasing the headset and for why it cannot run now); the tools are tiles too: the backup (its export and
+  import), *Save logs* and Advanced mode. A workflow an earlier run began asks first: continue (chosen), or start
+  over from a stage.
+- **A run:** in two columns, the ring with a segment and the name of each stage, and beside it where it stands:
+  the active stage's tasks, the notes, *Details* (the log) and *Stop*; the engine's questions come as dialogs.
+  Its end shows the headset's own words and next steps, or why it failed with *Retry* and, where offered,
+  *Import backup…*. Leaving the page leaves the run going; the status bar leads back to it.
 - **Advanced mode:** the steps by group (a drop-down in a narrow window), a step's parameters with *Browse…*, its
   command line with *Copy*, *Run* (a step that writes asks first) or *Stop*, its output; the dependency checks.
 
 Tiles stay plain, as in the mockup: details go into tooltips and small icon badges, which show on hover and on
-keyboard focus. Paths come from the system's file dialogs in the app and from a prompt in a browser. The headsets' pictures are
-placeholders until overpressure/brand has them; the packaged apps are not there yet.
+keyboard focus, always whole inside the window. Paths come from the system's file dialogs in the app and from a
+prompt in a browser. The headsets' pictures are overpressure/brand's `matrix/` icons, copied unchanged into
+`app/src/assets/headsets/` ([docs/logo](logo/README.md)); the packaged apps are not there yet.
 
 ## The installer
 
@@ -504,16 +512,18 @@ a step) sends `job-line` {`line`}, `job-progress` {`fraction`, `text`} and last 
 `--demo` runs nothing: the window's demo engine, steps, checks and backup jobs, a download that fetches nothing,
 releases of its own, and an install as if an earlier run had done all but its last stage (`--demo-fresh`:
 nothing done). It treats a development checkout as a downloaded release, and offers carry-over from an earlier
-folder with `OVERPRESSURE_DEMO_CARRY_OVER=1`.
+folder with `OVERPRESSURE_DEMO_CARRY_OVER=1`. Its headset shows up on USB 2.5 s after the page's first look, in
+the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `bootloader`, `edl`, `unknown`).
 
 | Request | Fields | Answer |
 | --- | --- | --- |
 | `hello` | | `protocol` (major.minor; an app refuses a newer major), `version`, `platform`, `demo`, `disclaimer` {`title`, `text`, `accept`, `due`, `accepted`} |
 | `settings`, `set_settings` | `appearance`: `system`, `light` or `dark` | the settings, kept in `out/app.json` |
 | `accept_disclaimer` | `every_start` | the settings; the disclaimer is accepted for the server and every program it starts. Unticked, it is due again with a new overpressure |
-| `headsets` | | `headsets` [{`codename`, `name`, `soc`, `year`, `repository`, `development` (no release yet), `downloaded`, `checkout`, `channel`, `pinned`, `refused`, `has_steps`, `workflows` [{`key`, `title`, `summary`, `erases`, `changes`, `problem` (why it cannot run now, or empty)}]}]: the catalogue's, those in development and those in `devices/` |
-| `releases` | `codename` | later: `releases` [{`version`, `prerelease`, `problem`}], `record` (what its download recorded) |
-| `download` | `codename`, `channel`, `version` | `job`: the release into `devices/` (`headset add`); refused for a checkout and a headset in development |
+| `headsets` | | `headsets` [{`codename`, `name`, `soc`, `year`, `repository`, `development` (no release yet), `downloaded`, `checkout`, `channel`, `pinned`, `refused`, `has_steps`, `assesses` (it looks at itself on USB), `workflows` [{`key`, `title`, `summary`, `erases`, `changes`, `problem` (why it cannot run now, or empty)}]}]: the catalogue's, those in development and those in `devices/` |
+| `assess` | `codename`, `first` (the page has just opened) | later: what a look at the headset on USB found without changing it (`Headset.assess`): `state` (`absent`, `maker`, `overpressure`, `bootloader`, `recovery`, `edl`, `unknown`), `system`, `version`, `facts` [[label, value]], `workflows` (those that fit, the recommended one first), `note`; `assesses` false for a headset that cannot look. Refused while something runs |
+| `releases` | `codename` | later: `releases` [{`version`, `prerelease`, `problem`}] (none for a headset in development), `development`, `record` (what its download recorded) |
+| `download` | `codename`, `channel`, `version` | `job`: the release into `devices/` (`headset add`); refused for a checkout, and for a headset in development but its preview |
 | `updates` | | later: `updates` {codename: newer version} |
 | `plan` | `codename`, `workflow` | later: `stages`, each task with the status an earlier run left (`install --plan`) |
 | `start` | `codename`, `workflow`, `restart` (a stage) | `run`; refused without the disclaimer, while something runs, or when the workflow cannot run now |
@@ -540,7 +550,8 @@ python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS..
   carry-over [FOLDER]  the settings, backup and installer records from the earlier overpressure folder
   devices              the headsets in devices/, and those this version cannot run
   headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V] | update CODENAME
-                       the headsets there are, their releases, one downloaded into devices/, its newer one
+                       the headsets there are, their releases, one downloaded into devices/ (one in
+                       development: its preview only), its newer one
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
                        the window: the installer, and every step in its Advanced mode
   serve --json [--demo]
