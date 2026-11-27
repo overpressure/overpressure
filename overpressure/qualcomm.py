@@ -719,18 +719,19 @@ def unstick(  # noqa: PLR0913  # edl-ng, its loader, the runner and the clock; t
     read: Callable[[], int] | None = None,
     platform: str = sys.platform,
 ) -> int:
-    """Free a loader that a broken session left mid-transfer, and restart it into a fresh EDL session.
+    """Free a loader that a broken session left mid-transfer, and restart the device normally (reboot_argv).
 
     What the loader still sends is read first (drain_session): until then it takes no command, and every new
-    session meets the old transfer's bytes and times out. Then fresh_edl_argv restarts the chip; the caller
-    waits for the fresh session (drain_until_gone, wait_fresh_edl). Nothing is written to the device's storage.
-    Return the bytes read. Raises RuntimeError when the loader does not take the restart: then only a restart
-    by hand (the power button) frees it.
+    session meets the old transfer's bytes, times out or finds no mode at all. Then it restarts normally: a
+    restart into a fresh EDL session (fresh_edl_argv) is acknowledged but not carried out after such a session
+    (the PICO 4's loader), so the caller enters EDL mode again from the system that starts. Nothing is written
+    to the device's storage. Return the bytes read. Raises RuntimeError when the device takes no restart (no
+    loader runs: an EDL session whose greeting has passed): then only a restart by hand frees it.
     """
     if read is None:
         read = ComReader() if platform == "win32" else UsbReader().queued
     total = drain_session(read, clock)
-    runner(fresh_edl_argv(program, loader), 60)
+    runner(reboot_argv(program, loader), 60)
     return total
 
 

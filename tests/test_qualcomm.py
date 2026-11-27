@@ -157,7 +157,7 @@ class UnstickTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "still sends after 10 s"):
             qualcomm.drain_session(lambda: 4096, clock, seconds=10)
 
-    def test_the_restart_into_edl_comes_after_the_drain(self):
+    def test_the_restart_comes_after_the_drain(self):
         clock, steps = FakeClock(), []
 
         def read() -> int:
@@ -166,10 +166,10 @@ class UnstickTests(unittest.TestCase):
 
         def runner(argv: list, _timeout: float) -> str:
             steps.append(argv[-2:])
-            return "Power command 'Edl' sent successfully."
+            return "Power command 'Reset' sent successfully."
 
         self.assertEqual(qualcomm.unstick("edl-ng", "loader.elf", runner, clock, read=read), 0)
-        self.assertEqual(steps[-1], ["--mode", "Edl"])
+        self.assertEqual(steps[-1], ["--mode", "Reset"])  # a restart into EDL is left undone after such a session
         self.assertTrue(all(step == "read" for step in steps[:-1]))
         self.assertGreater(len(steps), 1)
 

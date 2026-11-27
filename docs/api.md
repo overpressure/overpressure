@@ -1011,7 +1011,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - class `ComReader`: Windows: read what an EDL device's loader still sends, through Qualcomm's serial driver (its COM port).
   - `find(self) -> str`: Return the EDL device's COM port, or "" when Windows lists none.
 - `drain_session(read: Callable[[], int], clock: Timing, *, quiet: float = QUIET_SECONDS, seconds: float = DRAIN_SECONDS) -> int`: Read what a broken session's loader still sends until it stays @p quiet seconds; return the bytes read.
-- `unstick(program: str | Path, loader: str | Path, runner: Callable[[list[str | Path], float], str], clock: Timing, *, read: Callable[[], int] | None = None, platform: str = sys.platform) -> int`: Free a loader that a broken session left mid-transfer, and restart it into a fresh EDL session.
+- `unstick(program: str | Path, loader: str | Path, runner: Callable[[list[str | Path], float], str], clock: Timing, *, read: Callable[[], int] | None = None, platform: str = sys.platform) -> int`: Free a loader that a broken session left mid-transfer, and restart the device normally (reboot_argv).
 - `wait_fresh_edl(edl_count: Callable[[], int], clock: Timing, *, seconds: float = RESTART_SECONDS) -> None`: Wait until the device restarted by fresh_edl_argv has left USB, then is back as the one EDL device.
 - `check_edl_serial(output: str, serial: str) -> None`: Raise unless edl-ng's @p output names @p serial: only the configured headset may be written.
 - `partition_size(backup: Path, label: str) -> int`: Return a partition's size from the backup's rawprogram maps.
