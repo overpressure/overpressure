@@ -9,8 +9,9 @@ installs its managed Python 3.12 (a python-build-standalone build, checked again
 carries) into OUT/python. uv.lock's packages (no development tools, no extras), exported with their hashes, go
 into that Python with every hash required. The files git tracks that the engine reads at run time
 (overpressure/, devices/__init__.py, pyproject.toml for the version, .env.example, the licences) go to
-OUT/root, compiled to bytecode with the bundled Python. The Python is relocatable: the app runs it from wherever
-it is installed (app/src-tauri/src/lib.rs). OUT/bundle.json says what went in.
+OUT/root, compiled to bytecode with the bundled Python, and marked as the app's engine (.bundled), whose data goes to
+the owner's own folder (overpressure.data_root). The Python is relocatable: the app runs it from wherever it is
+installed (app/src-tauri/src/lib.rs). OUT/bundle.json says what went in.
 """
 
 from __future__ import annotations
@@ -139,6 +140,8 @@ def bundle(out: Path) -> dict:
         target = out / "root" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, target)
+    # The mark that this root is the app's engine: its data goes to the owner's folder (overpressure.data_root).
+    (out / "root" / ".bundled").write_text("overpressure's engine inside the app\n", encoding="utf-8")
     run([python, "-m", "compileall", "-q", out / "root"])
     version = run([python, "-c", "import sys; print(sys.version.split()[0])"]).strip()
     packages = run([uv, "pip", "list", "--python", python, "--format", "json"], env=env)

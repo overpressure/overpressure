@@ -19,7 +19,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, TypeVar
 
-from . import REPO, tools
+from . import CODE, REPO, tools
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -150,7 +150,8 @@ def update(values: Mapping[str, str], path: Path | None = None, example: Path | 
     is written in place: .env may be a hard link shared by several checkouts.
     """
     path = ROOT / ".env" if path is None else path
-    examples = [ROOT / ".env.example", *sorted((ROOT / "devices").glob("*/env.example"))]
+    # overpressure's own template comes with its code; the headsets' with the headsets, in the data root.
+    examples = [CODE / ".env.example", *sorted((ROOT / "devices").glob("*/env.example"))]
     if path.exists():
         raw = path.read_bytes().decode("utf-8")
     else:

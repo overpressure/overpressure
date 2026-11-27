@@ -289,7 +289,7 @@ HEADSET = Example()
   `backup/device.json`), `backup` (`backup/stock`), `loader` (`assets/firehose.elf`), `edl`, `ncm_python`
   and `ssh_public_key`, with `edl_program()` and `ncm()` resolving the tools. The headset adds only its own
   fields ([the PICO 4's](https://github.com/overpressure/phoenix/blob/main/tooling/localconfig.py)).
-- Output goes to the repository's `out/`, downloads to `cache/` (`overpressure.REPO`).
+- Output goes to the data root's `out/`, downloads to `cache/` (`overpressure.REPO`: a checkout's or a release's own folder, the app's data folder, or `OVERPRESSURE_HOME`); the headset itself lies in its `devices/`. A headset names its own files relative to that root or by its own folder, never by overpressure's.
 
 ## Dependencies
 

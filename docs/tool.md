@@ -386,9 +386,19 @@ app's resources:
 
 The Python is relocatable, so the app runs it where it was installed, without the computer's own Python: no user
 site-packages, no `PYTHONPATH` or `PYTHONHOME`. On Windows: Python 3.12.15 with brotli, pyusb, libusb-package and
-truststore, 59 MB in 2,300 files, overpressure 3 MB. The engine still keeps its folders (`.env`, `backup/`,
-`cache/`, `out/`, `devices/`) below that root, inside the installed app: until they move to a data folder of their
-own, an uninstall removes them with the app.
+truststore, 59 MB in 2,300 files, overpressure 3 MB; the installer is about 16 MB.
+
+**Two roots.** overpressure's own files are `overpressure.CODE`; the owner's data (`.env`, `backup/`, `assets/`,
+`cache/`, `out/`, the headsets in `devices/`) is `overpressure.REPO`, the data root. In a checkout and a release's
+folder both are that folder, as ever. The app's engine is marked as such (`.bundled` in its root) and keeps its data
+where an update or an uninstall never reaches: on Windows `%LOCALAPPDATA%\overpressure-data` (the per-user installer
+installs into `%LOCALAPPDATA%\overpressure`, and its *delete app data* removes the app identifier's folder), on
+macOS `~/Library/Application Support/overpressure`, elsewhere `$XDG_DATA_HOME/overpressure`
+(`~/.local/share/overpressure`). `OVERPRESSURE_HOME` names another data root anywhere. Children run in the data root
+with `CODE` on `PYTHONPATH`; `devices` imports from both roots, the data root's first; the build container sees
+`/work` as a checkout (the data root, overpressure's own files mounted read-only into it). The headsets are
+downloaded into the data root and found only there: they name their files relative to it. Carry-over from an
+earlier release's folder into the app's data folder is not there yet.
 
 ```sh
 cd app && pnpm install --frozen-lockfile

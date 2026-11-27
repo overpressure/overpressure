@@ -24,15 +24,16 @@ from __future__ import annotations
 import importlib
 import json
 import re
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from . import REPO
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from .fastboot import RamBootTarget
     from .install import Stage
@@ -250,7 +251,11 @@ class Headset(ABC):
 
     @property
     def root(self) -> Path:
-        """Its folder, devices/<codename>."""
+        """Its folder, devices/<codename>: where its tooling package was found (the data root's, or CODE's)."""
+        module = sys.modules.get(type(self).__module__)
+        path = Path(getattr(module, "__file__", None) or "")
+        if path.name == "__init__.py" and path.parent.name == "tooling" and path.parent.parent.parent.name == "devices":
+            return path.parent.parent
         return REPO / "devices" / self.info.codename
 
     @abstractmethod
@@ -450,7 +455,11 @@ def refusal(codename: str, data: dict) -> str:
 
 
 def discover() -> Registry:
-    """Every devices/<codename>/tooling package that exports HEADSET, whose headset.json this interface runs."""
+    """Every devices/<codename>/tooling package that exports HEADSET, whose headset.json this interface runs.
+
+    The headsets live in the data root's devices/ (REPO; in a checkout its own folder): they name their files
+    relative to it, as the build container's /work does.
+    """
     registry = Registry()
     for folder in sorted((REPO / "devices").glob("*/tooling/__init__.py")):
         codename = folder.parent.parent.name

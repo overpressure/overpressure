@@ -59,7 +59,7 @@ uses only what that minor had. The source links lead to the code, which says mor
 
 The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 
-- `REPO`: The repository root: .env and the private, ignored folders (out/, cache/, assets/, backup/).
+- `REPO`: The data root: .env, the private, ignored folders (out/, cache/, assets/, backup/) and the headsets in devices/. In a checkout and a release's folder the same as CODE.
 
 ## android
 
@@ -517,7 +517,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - `ram_boot_step(image: str, help_text: str = "") -> Step`: Return the window's step for overpressure's RAM boot, with the headset's default image.
 - class `Headset(ABC)`: A supported headset.
   - `info: Info`
-  - property `root(self) -> Path`: Its folder, devices/<codename>.
+  - property `root(self) -> Path`: Its folder, devices/<codename>: where its tooling package was found (the data root's, or CODE's).
   - `commands(self) -> dict[str, Command]`: Its command line: command word -> module of its tooling package.
   - `steps(self) -> Sequence[Step]`: Its workflow for the window, in order: building its images, then working on it.
   - `dependencies(self) -> Sequence[Callable]`: Return its checks for python -m overpressure doctor.

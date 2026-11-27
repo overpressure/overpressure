@@ -38,7 +38,7 @@ import threading
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Callable, NamedTuple
 
-from . import REPO
+from . import CODE, REPO
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -161,6 +161,7 @@ def run_argv(  # noqa: PLR0913  # the command, and how its container runs keywor
         *options,
         "-v",
         f"{REPO}:/work",
+        *code_mounts(),
         *linked_mounts(),
         *git_mounts,
         "-w",
@@ -174,6 +175,18 @@ def run_argv(  # noqa: PLR0913  # the command, and how its container runs keywor
 
 #: The private folders at the repository root; a git worktree may link them to another checkout's.
 PRIVATE = ("assets", "backup", "cache", "out")
+#: overpressure's own files a build in the container reads, which a data root of its own lacks (the app's).
+CODE_FILES = ("overpressure", "devices/__init__.py", "pyproject.toml")
+
+
+def code_mounts(code: Path = CODE, root: Path = REPO) -> list[str]:
+    """Return read-only mounts of overpressure's own files under /work when the data root is not its folder.
+
+    The container then sees /work as a checkout: the data root with overpressure in it (the app keeps the two apart).
+    """
+    if code.resolve() == root.resolve():
+        return []
+    return [w for name in CODE_FILES if (code / name).exists() for w in ("-v", f"{code / name}:/work/{name}:ro")]
 
 
 def linked_mounts(root: Path = REPO) -> list[str]:
