@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: Unlicense -->
-<!-- Add a headset: the catalogue, then its version: the newest stable, the newest beta, the preview (main), or
-     one release; then the download. A headset in development has only its preview, with a warning. With CODENAME
-     it opens at that headset's version (Change version). -->
+<!-- Add a headset: the catalogue, then its version: the newest stable, the newest beta or one release; under
+     Developer options (folded away) a branch's newest commit, main first: a preview, untested. Then the download. A
+     headset in development has only branches, with a warning. With CODENAME it opens at that headset's version
+     (Change version). -->
 <script lang="ts">
   import { app } from "../lib/app.svelte";
   import type { JobState } from "../lib/job";
@@ -14,7 +15,7 @@
 
   let { codename = "", onclose }: { codename?: string; onclose: () => void } = $props();
 
-  type Channel = "stable" | "beta" | "preview" | "version";
+  type Channel = "stable" | "beta" | "version" | "branch";
 
   let dialog = $state<HTMLDialogElement>();
   let search = $state("");
@@ -23,6 +24,9 @@
   let failure = $state("");
   let channel = $state<Channel>("stable");
   let version = $state("");
+  let branch = $state("main");
+  /** Developer options unfolded: a branch to download. */
+  let developer = $state(false);
   let job = $state<JobState | null>(null);
   let understood = $state(false);
 
@@ -49,12 +53,14 @@
     try {
       found = await app.engine.request<Releases>("releases", { codename: headset.codename });
       const record = found.record;
-      if (found.development) channel = "preview";
+      branch = record.branch || found.branches?.[0] || "main";
+      if (found.development || record.channel === "preview") channel = "branch";
       else if (record.pinned && record.tag) {
         channel = "version";
         version = record.tag.replace(/^v/, "");
-      } else if (record.channel === "beta" || record.channel === "preview") channel = record.channel;
+      } else if (record.channel === "beta") channel = "beta";
       else channel = "stable";
+      developer = channel === "branch";
       version ||= runs[0]?.version ?? "";
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
@@ -67,8 +73,9 @@
     try {
       job = await app.startJob("download", "download", {
         codename: chosen.codename,
-        channel: channel === "version" ? "stable" : channel,
+        channel: channel === "branch" ? "preview" : channel === "version" ? "stable" : channel,
         version: channel === "version" ? version : "",
+        branch: channel === "branch" ? branch : "",
       });
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
@@ -91,6 +98,22 @@
     }
   });
 </script>
+
+{#snippet branches()}
+  <label class="channel">
+    <input type="radio" bind:group={channel} value="branch" />
+    <span
+      ><b>A branch</b><small>Its newest commit: development state, untested on the headset. main is the preview.</small>
+      <select
+        bind:value={branch}
+        disabled={channel !== "branch" || (job !== null && job.code === null)}
+        aria-label="Branch"
+      >
+        {#each found?.branches ?? ["main"] as b (b)}<option value={b}>{b}</option>{/each}
+      </select></span
+    >
+  </label>
+{/snippet}
 
 <dialog bind:this={dialog} aria-labelledby="add-title" onclose={onclose}>
   <div class="title">
@@ -146,10 +169,10 @@
             </p>
           </div>
         </div>
+        {@render branches()}
         <label class="channel ack">
           <input type="checkbox" bind:checked={understood} />
-          <span><b>I understand</b><small>Download the preview anyway.</small></span>
-          <span class="version">main</span>
+          <span><b>I understand</b><small>Download it anyway.</small></span>
         </label>
         {#if job}<JobStatus {job} />{/if}
       {:else}
@@ -166,11 +189,6 @@
             <span class="version">{newest?.version ?? ""}</span>
           </label>
           <label class="channel">
-            <input type="radio" bind:group={channel} value="preview" />
-            <span><b>Preview</b><small>The newest development state: untested on the headset.</small></span>
-            <span class="version">main</span>
-          </label>
-          <label class="channel">
             <input type="radio" bind:group={channel} value="version" />
             <span
               ><b>One release</b><small>Kept as it is: updates leave it.</small>
@@ -179,6 +197,14 @@
               </select></span
             >
           </label>
+          <details
+            class="developer"
+            bind:open={developer}
+            ontoggle={() => !developer && channel === "branch" && (channel = "stable")}
+          >
+            <summary>Developer options</summary>
+            {@render branches()}
+          </details>
         </fieldset>
         {#if job}<JobStatus {job} />{/if}
       {/if}
@@ -334,6 +360,27 @@
     font-size: 11px;
     color: var(--muted);
     white-space: nowrap;
+  }
+
+  .developer {
+    display: grid;
+    gap: 6px;
+  }
+
+  .developer summary {
+    width: fit-content;
+    padding: 6px 2px;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .developer summary:hover {
+    color: var(--blue);
+  }
+
+  .developer[open] summary {
+    margin-bottom: 6px;
   }
 
   select {

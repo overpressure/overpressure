@@ -98,7 +98,7 @@
   }
 
   function updateNow(): void {
-    void startJob("download", "download", { channel: headset.channel || "stable", version: "" });
+    void startJob("download", "download", { channel: headset.channel || "stable", version: "", branch: headset.branch });
   }
 
   async function saveLogs(): Promise<void> {

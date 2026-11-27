@@ -262,6 +262,19 @@ class JobsTest(Base):
         self.assertEqual(found["phoenix"]["channel"], "beta")
         self.assertEqual(self.request("updates")["result"]["updates"], {})
 
+    def test_releases_name_the_branches_and_a_branch_downloads(self):
+        result = self.request("releases", codename="phoenix")["result"]
+        self.assertEqual(result["branches"], list(serve.DEMO_BRANCHES))
+        self.assertIn("not a branch name", self.request("download", codename="phoenix", branch="../x")["error"])
+        _events, end = self.job(self.request("download", codename="phoenix", channel="stable", branch="feat/assess"))
+        self.assertEqual(end["code"], 0)
+        found = {h["codename"]: h for h in self.request("headsets")["result"]["headsets"]}
+        self.assertEqual(
+            (found["phoenix"]["downloaded"], found["phoenix"]["channel"]), ("branch feat/assess", "preview")
+        )
+        record = self.request("releases", codename="phoenix")["result"]["record"]
+        self.assertEqual(record["branch"], "feat/assess")
+
     def test_one_thing_at_a_time(self):
         self.request("accept_disclaimer", every_start=True)
         self.request("start", codename="planned")

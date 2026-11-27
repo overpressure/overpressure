@@ -6,11 +6,12 @@ export function shortSoc(soc: string): string {
   return soc.replace(/^Qualcomm\s+/i, "").replace(/\s*\(.*\)\s*$/, "") || "—";
 }
 
-/** What is downloaded, short: "release 2026.11.0b1" -> "2026.11.0b1"; a preview, a checkout; "" -> "—". */
+/** What is downloaded, short: "release 2026.11.0b1" -> "2026.11.0b1"; a preview, a branch, a checkout; "" -> "—". */
 export function shortVersion(downloaded: string): string {
   if (!downloaded) return "—";
   if (downloaded === "development checkout") return "Checkout";
   if (downloaded.startsWith("preview")) return "Preview";
+  if (downloaded.startsWith("branch ")) return downloaded.slice("branch ".length).split(":")[0] ?? "—";
   return downloaded.replace(/^release\s+/, "");
 }
 

@@ -174,6 +174,35 @@ class CatalogueTests(unittest.TestCase):
         self.github.files[commits] = json.dumps({"sha": "abc"}).encode()
         self.assertEqual(getattr(catalogue.update("phoenix", self.root, self.github.get), "tag", None), "main")
 
+    def test_a_branch_downloads_as_a_preview_of_it_and_updates_from_it(self):
+        branch = "feat/assess"
+        self.github.files[f"https://codeload.github.com/overpressure/phoenix/zip/refs/heads/{branch}"] = archive(
+            "1.3-dev"
+        )
+        release = self.add(branch=branch)
+        self.assertEqual((release.tag, self.version()), (branch, "1.3-dev"))
+        record = catalogue.record_of("phoenix", self.root)
+        self.assertEqual((record["channel"], record["branch"]), (catalogue.PREVIEW, branch))
+        self.assertEqual(catalogue.installed("phoenix", self.root), "branch feat/assess")
+        commits = f"{catalogue.GITHUB}/repos/overpressure/phoenix/commits/{branch}"
+        self.github.files[commits] = json.dumps({"sha": "def"}).encode()
+        self.assertEqual(getattr(catalogue.update("phoenix", self.root, self.github.get), "tag", None), branch)
+        self.add(channel=catalogue.PREVIEW)  # the preview channel is main's
+        self.assertEqual(catalogue.record_of("phoenix", self.root)["branch"], catalogue.MAIN)
+        with self.assertRaises(ValueError):
+            self.add(branch="../evil")
+
+    def test_branches_come_main_first_and_only_safe_names(self):
+        listing = [{"name": n} for n in ("zeta", "main", "Feat/x", "bad..name", "a b")]
+        self.github.files[f"{catalogue.GITHUB}/repos/overpressure/phoenix/branches?per_page=100"] = json.dumps(
+            listing
+        ).encode()
+        known = catalogue.CATALOGUE["phoenix"]
+        self.assertEqual(catalogue.branches(known, self.github.get), ["main", "Feat/x", "zeta"])
+        for bad in ("", "-x", "a..b", "a b", "x.lock", "x/", "a//b", "x?y"):
+            self.assertTrue(catalogue.branch_problem(bad), bad)
+        self.assertEqual(catalogue.branch_problem("fix/edl-2.1_b"), "")
+
     def test_versions_sort_betas_before_their_release(self):
         order = ["0.9", "1.0-beta", "1.0-beta.2", "1.0", "1.1-beta", "1.1", "2.0"]
         keys = [catalogue.version_key(v) for v in order]

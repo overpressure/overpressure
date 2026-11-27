@@ -40,13 +40,15 @@ from .window.advanced import DemoProcess, StepProcess, Steps, browse, demo_check
 from .window.installer import BackupJob, ChildEngine, DemoBackupJob, DemoEngine
 
 #: The protocol's major and minor version: a new request or field raises the minor, a change the major.
-PROTOCOL = (0, 7)
+PROTOCOL = (0, 8)
 #: The app's settings, beside the window's (out/window.json).
 SETTINGS = "out/app.json"
 APPEARANCES = ("system", "light", "dark")
 DEFAULTS: dict[str, Any] = {"appearance": "system", "disclaimer_every_start": True, "disclaimer_seen": ""}
 #: How a run's engine is made: (codename, name, workflow) -> an engine (ChildEngine, DemoEngine, a test's fake).
 Engines = Callable[[str, str, str], Union[ChildEngine, DemoEngine]]
+#: The demo's branches of a headset's repository, main first.
+DEMO_BRANCHES = ("main", "feat/assess", "fix/edl-drain")
 #: What the demo offers as published releases, newest first: (version, prerelease).
 DEMO_RELEASES = (("2026.11.0b1", True), ("2026.11.0b0", True), ("1.0-beta.5", True), ("1.0-beta.4", True))
 #: What the demo offers as the app's update (OVERPRESSURE_DEMO_APP_UPDATE=1): no manifest, nothing downloads.
@@ -133,10 +135,10 @@ def demo_engines(pace: float = 1.0, *, recorded: bool = True) -> Engines:
 class Download:
     """A headset's release downloaded into devices/ (catalogue.add) on a thread: its lines, then its exit."""
 
-    def __init__(self, codename: str, channel: str, wanted: str, root: Path) -> None:
-        """Download CODENAME's release WANTED, else the newest on CHANNEL, into ROOT/devices."""
+    def __init__(self, codename: str, channel: str, wanted: str, root: Path, branch: str = "") -> None:
+        """Download CODENAME's release WANTED, else the newest on CHANNEL, or BRANCH, into ROOT/devices."""
         self.items: queue.Queue[Item] = queue.Queue()
-        self.codename, self.channel, self.wanted, self.root = codename, channel, wanted, root
+        self.codename, self.channel, self.wanted, self.root, self.branch = codename, channel, wanted, root, branch
 
     def start(self) -> None:
         """Start it."""
@@ -147,7 +149,9 @@ class Download:
             self.items.put(("line", line))
 
         try:
-            catalogue.add(self.codename, channel=self.channel, version=self.wanted, root=self.root, log=log)
+            catalogue.add(
+                self.codename, channel=self.channel, version=self.wanted, branch=self.branch, root=self.root, log=log
+            )
         except (LookupError, RuntimeError, ValueError, OSError) as exc:
             log(f"error: {exc or type(exc).__name__}")
             self.items.put(("exit", 1))
@@ -440,7 +444,10 @@ class Server:
         """Return what is downloaded of CODENAME in words, or ""; in the demo its downloads, a checkout a release."""
         demo = self.demo_downloaded.get(codename)
         if demo is not None:
-            return f"release {demo['tag']}" if demo["tag"] != "main" else "preview (main)"
+            if not catalogue.is_preview(demo):
+                return f"release {demo['tag']}"
+            branch = catalogue.preview_branch(demo)
+            return "preview (main)" if branch == catalogue.MAIN else f"branch {branch}"
         found = catalogue.installed(codename, self.root)
         if self.demo and found == catalogue.CHECKOUT:
             return f"release {DEMO_RELEASES[1][0]}"
@@ -470,6 +477,7 @@ class Server:
                     "downloaded": self.downloaded(codename),
                     "checkout": self.checkout(codename),
                     "channel": str(record.get("channel") or ""),
+                    "branch": catalogue.preview_branch(record) if catalogue.is_preview(record) else "",
                     "pinned": bool(record.get("pinned")),
                     "refused": self.registry.refused.get(codename, ""),
                     "workflows": self.workflows(headset) if headset is not None else [],
@@ -539,6 +547,12 @@ class Server:
         development = codename in catalogue.IN_DEVELOPMENT
 
         def work() -> dict[str, Any]:
+            branches: list[str] = [catalogue.MAIN]
+            if self.demo:
+                branches = list(DEMO_BRANCHES)
+            else:
+                with contextlib.suppress(OSError, ValueError):  # offline: main, as ever
+                    branches = catalogue.branches(known) or branches
             if development:  # no releases yet: only its preview
                 found: list[dict[str, Any]] = []
             elif self.demo:
@@ -552,10 +566,29 @@ class Server:
             return {
                 "releases": found,
                 "development": development,
-                "record": {k: record.get(k) for k in ("tag", "channel", "pinned")},
+                "branches": branches,
+                "record": {k: record.get(k) for k in ("tag", "channel", "pinned", "branch")},
             }
 
         return Later(work)
+
+    def wanted(self, message: dict[str, Any], known: catalogue.Known) -> tuple[str, str, str]:
+        """Return what a download asks for: its channel, version and branch (a branch is a preview of it), or refuse."""
+        channel = str(message.get("channel") or catalogue.STABLE)
+        if channel not in catalogue.CHANNELS:
+            msg = f"channel is one of {', '.join(catalogue.CHANNELS)}"
+            raise RefusedError(msg)
+        wanted = str(message.get("version") or "")
+        branch = str(message.get("branch") or "")
+        if branch:
+            problem = catalogue.branch_problem(branch)
+            if problem:
+                raise RefusedError(problem)
+            channel, wanted = catalogue.PREVIEW, ""
+        if known.codename in catalogue.IN_DEVELOPMENT and (channel != catalogue.PREVIEW or wanted):
+            msg = f"the {known.name} is in development: it has no releases yet, only previews"
+            raise RefusedError(msg)
+        return channel, wanted, branch
 
     def _download(self, message: dict[str, Any]) -> dict[str, Any]:
         codename = str(message.get("codename", ""))
@@ -567,25 +600,22 @@ class Server:
             msg = f"devices/{codename} is a development checkout: update it with git, it is not replaced"
             raise RefusedError(msg)
         self.refuse_if_busy()
-        channel = str(message.get("channel") or catalogue.STABLE)
-        if channel not in catalogue.CHANNELS:
-            msg = f"channel is one of {', '.join(catalogue.CHANNELS)}"
-            raise RefusedError(msg)
-        wanted = str(message.get("version") or "")
-        if codename in catalogue.IN_DEVELOPMENT and (channel != catalogue.PREVIEW or wanted):
-            msg = f"the {known.name} is in development: it has no releases yet, only its preview"
-            raise RefusedError(msg)
+        channel, wanted, branch = self.wanted(message, known)
         source: DemoDownload | Download
         if self.demo:
-            tag = wanted or ("main" if channel == catalogue.PREVIEW else DEMO_RELEASES[0][0])
+            preview_of = branch or catalogue.MAIN
+            tag = wanted or (preview_of if channel == catalogue.PREVIEW else DEMO_RELEASES[0][0])
             source = DemoDownload(known.name, tag, pace=self.pace)
 
             def done(code: int) -> None:
                 if code == 0:
-                    self.demo_downloaded[codename] = {"tag": tag, "channel": channel, "pinned": bool(wanted)}
+                    record = {"tag": tag, "channel": channel, "pinned": bool(wanted)}
+                    if channel == catalogue.PREVIEW:
+                        record["branch"] = preview_of
+                    self.demo_downloaded[codename] = record
 
         else:
-            source = Download(codename, channel, wanted, self.root)
+            source = Download(codename, channel, wanted, self.root, branch)
 
             def done(_code: int) -> None:
                 self.registry = self.rediscover()

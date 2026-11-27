@@ -11,6 +11,7 @@ describe("short words", () => {
   it("shortens what is downloaded", () => {
     expect(shortVersion("release 2026.11.0b1")).toBe("2026.11.0b1");
     expect(shortVersion("preview 2026.12.0 preview from 3 December 2026 (4d8f977)")).toBe("Preview");
+    expect(shortVersion("branch feat/assess: 2026.12.0 preview from 3 December 2026 (4d8f977)")).toBe("feat/assess");
     expect(shortVersion("development checkout")).toBe("Checkout");
     expect(shortVersion("")).toBe("—");
   });

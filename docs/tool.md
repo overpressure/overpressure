@@ -9,7 +9,7 @@ headset.
 | To | Run |
 | --- | --- |
 | install, as an owner | `Install.cmd` (Windows), `Install.command` (macOS) or `sh install.sh` (Linux) |
-| download a headset's release into `devices/`, or its update | `python -m overpressure headset add CODENAME [--channel beta\|preview \| --version V]`, `headset update CODENAME` |
+| download a headset's release into `devices/`, or its update | `python -m overpressure headset add CODENAME [--channel beta\|preview \| --version V \| --branch NAME]`, `headset update CODENAME` |
 | see what this computer lacks | `python -m overpressure doctor` |
 | open the window | `python -m overpressure gui [--advanced]` |
 | install, upgrade or restore in a terminal | `python -m overpressure install`, `upgrade`, `restore` |
@@ -36,15 +36,16 @@ python -m overpressure headset releases phoenix     # its published releases, ne
 python -m overpressure headset add phoenix          # its newest stable release (until there is one, beta)
 python -m overpressure headset add phoenix --channel beta      # the newest, betas included
 python -m overpressure headset add phoenix --channel preview   # its main: development state, untested
+python -m overpressure headset add phoenix --branch feat/x      # another branch's newest commit, untested
 python -m overpressure headset add phoenix --version 2026.12.0b0  # a release by its version, older ones too
 python -m overpressure headset update phoenix       # what its recorded channel offers now, when newer
 ```
 
-A release is the tag's source zip, checked against its published SHA-256 (a preview of `main` has none),
+A release is the tag's source zip, checked against its published SHA-256 (a preview of a branch has none),
 unpacked into a new folder and checked against its `headset.json` before it replaces what was there.
-`devices/<codename>/.release.json` records which it is: its tag, its channel and its zip's SHA-256, or that
-it was asked for by version (pinned). `headset update` and the headset page follow the recorded channel: a
-newer release on it (for a preview, another commit of `main`) is an update; a pinned release has none. A
+`devices/<codename>/.release.json` records which it is: its tag, its channel (a preview's branch too) and its
+zip's SHA-256, or that it was asked for by version (pinned). `headset update` and the headset page follow the
+recorded channel: a newer release on it (for a preview, another commit of its branch) is an update; a pinned release has none. A
 development checkout, a Git clone of the headset's repository in its folder, is never replaced: Git updates
 it.
 
@@ -428,8 +429,9 @@ settings; the window's title bar names overpressure.
   release's folder has it only when an earlier folder is beside it.
 - **Headsets:** the headsets on this computer as tiles with their pictures from overpressure/brand, a newer
   release marked, a search once there are several. *+* adds one from the catalogue with its version: the newest
-  stable, the newest beta, the preview, or one release; a headset in development only its preview, after a
-  warning.
+  stable, the newest beta or one release; folded away under *Developer options*, *A branch*: the newest commit
+  of one of its repository's branches, `main` first (the preview). A headset in development has only branches,
+  after a warning.
 - **A headset:** a compact hero (its picture, one line of facts, *Update to …* when there is a newer release,
   *Change version*). A headset that looks at itself (`assess`) asks to be plugged in first; the look changes
   nothing, shows what runs on it, and offers the workflows that fit, the recommended one first (*Show every
@@ -590,10 +592,10 @@ the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `
 | `hello` | | `protocol` (major.minor; an app refuses a newer major), `version`, `platform`, `demo`, `first_setup` (the first setup follows the disclaimer), `disclaimer` {`title`, `text`, `accept`, `due`, `accepted`} |
 | `settings`, `set_settings` | `appearance`: `system`, `light` or `dark` | the settings, kept in `out/app.json` |
 | `accept_disclaimer` | `every_start` | the settings; the disclaimer is accepted for the server and every program it starts. Unticked, it is due again with a new overpressure |
-| `headsets` | | `headsets` [{`codename`, `name`, `soc`, `year`, `repository`, `development` (no release yet), `downloaded`, `checkout`, `channel`, `pinned`, `refused`, `has_steps`, `assesses` (it looks at itself on USB), `workflows` [{`key`, `title`, `summary`, `erases`, `changes`, `problem` (why it cannot run now, or empty)}]}]: the catalogue's, those in development and those in `devices/` |
+| `headsets` | | `headsets` [{`codename`, `name`, `soc`, `year`, `repository`, `development` (no release yet), `downloaded`, `checkout`, `channel`, `branch` (a preview's), `pinned`, `refused`, `has_steps`, `assesses` (it looks at itself on USB), `workflows` [{`key`, `title`, `summary`, `erases`, `changes`, `problem` (why it cannot run now, or empty)}]}]: the catalogue's, those in development and those in `devices/` |
 | `assess` | `codename`, `first` (the page has just opened) | later: what a look at the headset on USB found without changing it (`Headset.assess`): `state` (`absent`, `maker`, `overpressure`, `bootloader`, `recovery`, `edl`, `unknown`), `system`, `version`, `facts` [[label, value]], `workflows` (those that fit, the recommended one first; none when nothing fits as it is), `note` (what to do then, or why); `assesses` false for a headset that cannot look. Refused while something runs |
-| `releases` | `codename` | later: `releases` [{`version`, `prerelease`, `problem`}] (none for a headset in development), `development`, `record` (what its download recorded) |
-| `download` | `codename`, `channel`, `version` | `job`: the release into `devices/` (`headset add`); refused for a checkout, and for a headset in development but its preview |
+| `releases` | `codename` | later: `releases` [{`version`, `prerelease`, `problem`}] (none for a headset in development), `development`, `branches` (its repository's, `main` first; `main` alone offline), `record` (what its download recorded, a preview's `branch` too) |
+| `download` | `codename`, `channel`, `version`, `branch` | `job`: the release, or the branch's newest commit (a preview of it), into `devices/` (`headset add`); refused for a checkout, a name that is no branch, and for a headset in development but a branch |
 | `updates` | | later: `updates` {codename: newer version} |
 | `plan` | `codename`, `workflow` | later: `stages`, each task with the status an earlier run left (`install --plan`) |
 | `start` | `codename`, `workflow`, `restart` (a stage) | `run`; refused without the disclaimer, while something runs, or when the workflow cannot run now |
@@ -623,9 +625,10 @@ python -m overpressure [--device CODENAME] [--accept-disclaimer] COMMAND [ARGS..
   --version            this overpressure: its version, channel and commit
   carry-over [FOLDER]  the settings, backup and installer records from the earlier overpressure folder
   devices              the headsets in devices/, and those this version cannot run
-  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V] | update CODENAME
-                       the headsets there are, their releases, one downloaded into devices/ (one in
-                       development: its preview only), its newer one
+  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V | --branch NAME]
+  headset update CODENAME
+                       the headsets there are, their releases, one downloaded into devices/ (a branch: a preview
+                       of it; one in development: branches only), its newer one
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
                        the window: the installer, and every step in its Advanced mode
   serve --json [--demo]

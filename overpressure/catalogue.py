@@ -9,7 +9,8 @@ puts one into devices/<codename>/, checked against its checksum and its headset.
   stable    the newest release that is not a beta and that this overpressure runs (the default); until
             there is one, the newest beta
   beta      the newest release this overpressure runs, betas included
-  preview   the newest commit of main: development state, untested on the headset, no checksum
+  preview   the newest commit of main, or of another branch (--branch NAME): development state, untested on the
+            headset, no checksum
   VERSION   a release by its version (--version 2026.12.0b3), also an older one
 
 A development checkout (a Git clone in devices/<codename>/) is never replaced: Git updates it. What
@@ -26,6 +27,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import zipfile
@@ -134,11 +136,45 @@ def oldest_supported(found: list[Release]) -> Release | None:
     return next((r for r in reversed(found) if not r.problem), None)
 
 
-def preview(known: Known) -> Release:
-    """Return KNOWN's main as a download: GitHub's zip of the branch."""
+#: The branch a preview is of unless another is asked for.
+MAIN = "main"
+#: What a branch's name may be here: Git's rules, narrowed to what a URL takes as it is.
+_BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+
+
+def branch_problem(branch: str) -> str:
+    """Return why @p branch cannot be a branch to download, "" when it can."""
+    if not _BRANCH.fullmatch(branch) or ".." in branch or branch.endswith((".lock", "/", ".")) or "//" in branch:
+        return f"not a branch name: {branch!r}"
+    return ""
+
+
+def preview(known: Known, branch: str = MAIN) -> Release:
+    """Return KNOWN's BRANCH (main unless named) as a download: GitHub's zip of the branch."""
+    problem = branch_problem(branch)
+    if problem:
+        raise ValueError(problem)
     return Release(
-        "main", prerelease=True, zip_url=f"https://codeload.github.com/{known.repository}/zip/refs/heads/main"
+        branch, prerelease=True, zip_url=f"https://codeload.github.com/{known.repository}/zip/refs/heads/{branch}"
     )
+
+
+def branches(known: Known, get: Callable[[str], bytes] = fetch) -> list[str]:
+    """Return KNOWN's branches, main first, the others by name."""
+    found = json.loads(get(f"{GITHUB}/repos/{known.repository}/branches?per_page=100"))
+    names = [str(b.get("name", "")) for b in found if isinstance(b, dict)] if isinstance(found, list) else []
+    names = [n for n in names if n and not branch_problem(n)]
+    return sorted(names, key=lambda n: (n != MAIN, n.lower()))
+
+
+def is_preview(record: dict) -> bool:
+    """Tell whether a download's RECORD is a preview (a branch), not a release."""
+    return record.get("channel") == PREVIEW or record.get("tag") == MAIN
+
+
+def preview_branch(record: dict) -> str:
+    """Return the branch a preview's RECORD was downloaded from (main for those from before branches)."""
+    return str(record.get("branch") or MAIN)
 
 
 def pick(found: list[Release], channel: str = STABLE, version: str = "") -> Release:
@@ -183,8 +219,10 @@ def installed(codename: str, root: Path = REPO) -> str:
         found = manifest(folder).get("version")
         return f"release {found}" if found else ""
     tag = str(record.get("tag", ""))
-    if tag == "main":
-        words = preview_words(codename, root)
+    if is_preview(record):
+        branch, words = preview_branch(record), preview_words(codename, root)
+        if branch != MAIN:
+            return f"branch {branch}" + (f": {words}" if words else "")
         return f"preview {words}" if words else "preview (main)"
     return f"release {tag.removeprefix('v')}"
 
@@ -198,7 +236,7 @@ def preview_words(codename: str, root: Path = REPO) -> str:
     data = manifest(folder)
     found = str(data.get("version", ""))
     parsed = own_version.parse(found)
-    if record_of(codename, root).get("tag") != "main" or parsed is None or parsed.dev is None:
+    if not is_preview(record_of(codename, root)) or parsed is None or parsed.dev is None:
         return ""
     when = own_version.committed_at(str(data.get("date", "")))
     commit = str(data.get("commit", ""))
@@ -234,16 +272,18 @@ def update(codename: str, root: Path = REPO, get: Callable[[str], bytes] = fetch
     """Return what devices/CODENAME's recorded channel offers now when it is newer, else None.
 
     None too for a development checkout, a pinned release (a version was asked for) and nothing recorded.
-    A preview is newer when main has another commit than the one downloaded.
+    A preview is newer when its branch (main unless another was asked for) has another commit than the one
+    downloaded.
     """
     record, known = record_of(codename, root), lookup(codename)
     if known is None or not record or record.get("pinned") or (root / "devices" / codename / ".git").exists():
         return None
     channel = str(record.get("channel", STABLE))
-    if channel == PREVIEW:
-        head = json.loads(get(f"{GITHUB}/repos/{known.repository}/commits/main")).get("sha", "")
+    if is_preview(record):
+        branch = preview_branch(record)
+        head = json.loads(get(f"{GITHUB}/repos/{known.repository}/commits/{branch}")).get("sha", "")
         have = str(manifest(root / "devices" / codename).get("commit", ""))
-        return preview(known) if head and head != have else None
+        return preview(known, branch) if head and head != have else None
     try:
         newest = pick(releases(known, get), channel)
     except LookupError:
@@ -300,20 +340,23 @@ def add(  # noqa: PLR0913  # what to download, from where, into where
     *,
     channel: str = STABLE,
     version: str = "",
+    branch: str = "",
     root: Path = REPO,
     get: Callable[[str], bytes] = fetch,
     log: Callable[[str], object] = print,
 ) -> Release:
-    """Download CODENAME's release (CHANNEL, else VERSION) into ROOT/devices/CODENAME; return it.
+    """Download CODENAME's release (CHANNEL, else VERSION) or BRANCH into ROOT/devices/CODENAME; return it.
 
-    The zip is checked against its SHA-256 and its headset.json against this overpressure's
-    interface before it replaces what was there; a development checkout is refused. A headset in
-    development has no releases: only its preview.
+    A BRANCH is a preview of that branch (the preview channel is main's). The zip is checked against its SHA-256
+    and its headset.json against this overpressure's interface before it replaces what was there; a development
+    checkout is refused. A headset in development has no releases: only previews.
     """
     known = lookup(codename)
     if known is None:
         msg = f"no headset {codename!r} (known: {', '.join(sorted(CATALOGUE | IN_DEVELOPMENT))})"
         raise LookupError(msg)
+    if branch:
+        channel, version = PREVIEW, ""
     if codename in IN_DEVELOPMENT and (channel != PREVIEW or version):
         msg = f"the {known.name} is in development: it has no releases yet, only its preview (--channel preview)"
         raise LookupError(msg)
@@ -321,7 +364,11 @@ def add(  # noqa: PLR0913  # what to download, from where, into where
     if (folder / ".git").exists():
         msg = f"devices/{codename} is a development checkout: update it with git, it is not replaced"
         raise RuntimeError(msg)
-    release = preview(known) if channel == PREVIEW and not version else pick(releases(known, get), channel, version)
+    preview_of = branch or MAIN
+    if channel == PREVIEW and not version:
+        release = preview(known, preview_of)
+    else:
+        release = pick(releases(known, get), channel, version)
     log(f"downloading {known.name} {release.version} from {known.repository}")
     data = get(release.zip_url)
     digest = hashlib.sha256(data).hexdigest()
@@ -330,7 +377,9 @@ def add(  # noqa: PLR0913  # what to download, from where, into where
         if expected != [digest]:
             msg = f"{release.zip_url}: SHA-256 {digest} is not the published {expected[0] if expected else 'none'}"
             raise RuntimeError(msg)
-    record = {"tag": release.tag, "channel": PREVIEW if release.tag == "main" else channel, "sha256": digest}
+    record = {"tag": release.tag, "channel": channel, "sha256": digest}
+    if channel == PREVIEW and not version:
+        record["branch"] = preview_of
     if version:
         record["pinned"] = True  # asked for by version: kept until another is asked for
     _replace(folder, data, record)
@@ -339,14 +388,14 @@ def add(  # noqa: PLR0913  # what to download, from where, into where
 
 
 USAGE = """usage: python -m overpressure headset list | releases CODENAME | update CODENAME
-       python -m overpressure headset add CODENAME [--channel stable|beta|preview | --version V]
+       python -m overpressure headset add CODENAME [--channel stable|beta|preview | --version V | --branch NAME]
 
   list                 every headset overpressure knows, what devices/ holds of it, and its update
   releases CODENAME    its published releases, newest first, and whether this overpressure runs each
   add CODENAME         download it into devices/CODENAME: the newest stable release (until there is
                        one, the newest beta), a channel's newest (beta: betas too, preview: main,
-                       untested), or a release by version (pinned: update keeps it); a headset in
-                       development has only its preview
+                       untested), a release by version (pinned: update keeps it), or a branch's newest
+                       commit (a preview of it, untested); a headset in development has only previews
   update CODENAME      download what its recorded channel offers now, when it is newer"""
 
 
@@ -379,7 +428,9 @@ def _update(codename: str, root: Path, get: Callable[[str], bytes]) -> int:
     if update(codename, root, get) is None:
         print(f"devices/{codename}: {installed(codename, root) or 'nothing'}, nothing newer")
         return 0
-    add(codename, channel=str(record_of(codename, root).get("channel", STABLE)), root=root, get=get)
+    record = record_of(codename, root)
+    branch = preview_branch(record) if is_preview(record) else ""
+    add(codename, channel=str(record.get("channel", STABLE)), branch=branch, root=root, get=get)
     return 0
 
 
@@ -392,6 +443,7 @@ def main(argv: list[str], root: Path = REPO, get: Callable[[str], bytes] = fetch
     parser.add_argument("codename", choices=sorted(CATALOGUE | IN_DEVELOPMENT))
     parser.add_argument("--channel", choices=CHANNELS, default=STABLE)
     parser.add_argument("--version", default="")
+    parser.add_argument("--branch", default="")
     parser.add_argument("--oldest-supported", action="store_true", help=argparse.SUPPRESS)
     if not argv or argv[0] in ("-h", "--help"):
         print(USAGE)
@@ -402,7 +454,7 @@ def main(argv: list[str], root: Path = REPO, get: Callable[[str], bytes] = fetch
             return _releases(args.codename, get, oldest=args.oldest_supported)
         if args.action == "update":
             return _update(args.codename, root, get)
-        add(args.codename, channel=args.channel, version=args.version, root=root, get=get)
+        add(args.codename, channel=args.channel, version=args.version, branch=args.branch, root=root, get=get)
     except (LookupError, RuntimeError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

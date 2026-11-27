@@ -6,9 +6,10 @@
                        overpressure folder beside this one (the window asks on its first start)
 
   devices              the headsets in devices/
-  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V] | update CODENAME
-                       the headsets overpressure knows, their releases, one downloaded into devices/,
-                       its newer release on the channel it came from
+  headset list | releases CODENAME | add CODENAME [--channel stable|beta|preview | --version V | --branch NAME]
+  headset update CODENAME
+                       the headsets overpressure knows, their releases, one downloaded into devices/ (a branch:
+                       a preview of it), its newer release on the channel it came from
   gui [--advanced] [--demo | --demo-fresh] [--demo-headsets]
                        the window: the installer, and every step of the headset in its Advanced mode;
                        it opens on the page that asks which headset, unless --device names one

@@ -57,6 +57,8 @@ export interface HeadsetEntry {
   /** A Git clone: updated with git, never replaced by a download. */
   checkout: boolean;
   channel: string;
+  /** The branch a preview is of (main, or a developer's); "" for a release. */
+  branch: string;
   pinned: boolean;
   refused: string;
   workflows: Workflow[];
@@ -90,9 +92,11 @@ export interface Release {
 
 export interface Releases {
   releases: Release[];
-  /** In development: no releases yet, only its preview. */
+  /** In development: no releases yet, only previews of its branches. */
   development?: boolean;
-  record: { tag?: string | null; channel?: string | null; pinned?: boolean | null };
+  /** Its repository's branches, main first: a preview of one is a developer's download. */
+  branches?: string[];
+  record: { tag?: string | null; channel?: string | null; pinned?: boolean | null; branch?: string | null };
 }
 
 export type TaskStatus = "pending" | "running" | "done" | "skipped" | "failed";
