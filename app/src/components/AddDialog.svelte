@@ -10,6 +10,7 @@
   import HeadsetArt from "./HeadsetArt.svelte";
   import Icon from "./Icon.svelte";
   import JobStatus from "./JobStatus.svelte";
+  import Spinner from "./Spinner.svelte";
 
   let { codename = "", onclose }: { codename?: string; onclose: () => void } = $props();
 
@@ -133,7 +134,7 @@
       {:else if failure}
         <p class="callout bad">{failure}</p>
       {:else if !found}
-        <p class="muted">Looking for its releases…</p>
+        <p class="muted wait" role="status"><Spinner />Looking for its releases…</p>
       {:else if found.development}
         <div class="callout">
           <Icon name="alert" size={20} />
@@ -365,5 +366,10 @@
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
+  }
+  .wait {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 </style>

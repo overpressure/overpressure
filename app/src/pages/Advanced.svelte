@@ -9,6 +9,7 @@
   import type { JobState } from "../lib/job";
   import type { Check, HeadsetEntry, StepGroup, StepInfo } from "../lib/protocol";
   import Icon from "../components/Icon.svelte";
+  import Spinner from "../components/Spinner.svelte";
   import JobStatus from "../components/JobStatus.svelte";
 
   let { headset }: { headset: HeadsetEntry } = $props();
@@ -21,6 +22,7 @@
   };
 
   let groups = $state<StepGroup[]>([]);
+  let loaded = $state(false);
   let selected = $state(app.step || "doctor");
   let values = $state<Record<string, string>>({});
   let command = $state("");
@@ -46,6 +48,7 @@
     const codename = headset.codename;
     void app.engine.request<{ groups: StepGroup[] }>("steps", { codename }).then((found) => {
       groups = found.groups;
+      loaded = true;
       if (!groups.some((g) => g.steps.some((s) => s.key === selected))) selected = "doctor";
       select(selected);
     });
@@ -129,6 +132,7 @@
 
 <div class="advanced">
   <nav aria-label="Steps">
+    {#if !loaded}<p class="muted wait" role="status"><Spinner />Loading the steps…</p>{/if}
     {#each groups as g (g.group)}
       <h3>{g.group}</h3>
       {#each g.steps as s (s.key)}
@@ -157,7 +161,7 @@
         <button class="btn secondary" disabled={checking} onclick={runChecks}><Icon name="refresh" /> Check again</button>
       </div>
       {#if checking && !checks}
-        <p class="muted">Checking…</p>
+        <p class="muted wait" role="status"><Spinner />Checking…</p>
       {:else}
         {#each byNeed as [need, list] (need)}
           <h3 class="need">{need}</h3>
@@ -497,5 +501,10 @@
     .picker {
       display: block;
     }
+  }
+  .wait {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 </style>

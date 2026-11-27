@@ -7,6 +7,7 @@
   import { installUpdate } from "../lib/bridge";
   import type { AppUpdate } from "../lib/protocol";
   import Icon from "./Icon.svelte";
+  import Spinner from "./Spinner.svelte";
 
   let { update, installs }: { update: AppUpdate; installs: boolean } = $props();
 
@@ -67,7 +68,9 @@
   <div class="body">
     {#if update.notes}<pre class="notes">{update.notes}</pre>{/if}
     {#if update.page}<a href={update.page} target="_blank" rel="noreferrer">Everything in this release</a>{/if}
-    {#if working}
+    {#if working && total && done >= total}
+      <p class="muted wait" role="status"><Spinner />Installing… overpressure restarts when it is done.</p>
+    {:else if working}
       <div class="progress" role="status">
         <div class="bar" class:unknown={!total}><span style:width="{total ? (done / total) * 100 : 30}%"></span></div>
         <p>{line}</p>
@@ -165,5 +168,10 @@
     gap: 8px;
     padding: 12px 20px;
     border-top: 1px solid var(--line);
+  }
+  .wait {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 </style>

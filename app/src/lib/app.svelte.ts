@@ -59,6 +59,8 @@ export class AppState {
   problem = $state("");
   /** A short message at the bottom of the window. */
   notice = $state("");
+  /** What the app waits for now, in words (the status bar's spinner); "" for nothing. */
+  busy = $state("");
   private early: EngineEvent[] = [];
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -123,11 +125,14 @@ export class AppState {
 
   /** Look for a newer overpressure; SAY: tell the owner when there is none (they asked). */
   async checkAppUpdate(say = false): Promise<void> {
+    if (say) this.busy = "Checking for updates…";
     try {
       const found = await this.engine.request<{ update: AppUpdate | null; installs: boolean }>("app_update");
       this.appUpdate = found.update ? { update: found.update, installs: found.installs } : null;
     } catch {
       this.appUpdate = null; // offline: none known
+    } finally {
+      if (say) this.busy = "";
     }
     if (say) {
       if (this.appUpdate) this.updateOpen = true;
@@ -196,18 +201,21 @@ export class AppState {
   /** Choose WORKFLOW of the open headset: after an earlier run of it, ask first (continue or start over). */
   async choose(workflow: string): Promise<void> {
     const headset = this.headset;
-    if (!headset || this.running || this.jobRunning) return;
+    if (!headset || this.running || this.jobRunning || this.busy) return;
+    const title = headset.workflows.find((w) => w.key === workflow)?.title ?? workflow;
+    this.busy = `Preparing ${title}…`;
     try {
       const { stages } = await this.engine.request<{ stages: RecordedStage[] }>("plan", {
         codename: headset.codename,
         workflow,
       });
       const begun = stages.some((s) => s.tasks.some((t) => t.status === "done" || t.status === "skipped"));
-      const title = headset.workflows.find((w) => w.key === workflow)?.title ?? workflow;
       if (begun) this.sheet = { codename: headset.codename, workflow, title, stages };
       else await this.begin(workflow);
     } catch (error) {
       this.say(error instanceof Error ? error.message : String(error));
+    } finally {
+      this.busy = "";
     }
   }
 

@@ -448,6 +448,8 @@ Closing the window while a run or a job is under way asks first: *Keep it runnin
 the engine's stdin (a write under way finishes first). A second click on the window's close button closes it
 whatever the page does.
 
+Every wait shows that something runs: what can be measured with a bar (downloads, the backup's export and import, bringing an earlier overpressure's data over), what cannot with a spinner beside its words (a look, a search, an answer from the network, preparing a workflow, a stop that waits for a write).
+
 Tiles stay plain, as in the mockup: details go into tooltips and small icon badges, which show on hover and on
 keyboard focus, always whole inside the window. Paths come from the system's file dialogs in the app and from a
 prompt in a browser. The headsets' pictures are overpressure/brand's `matrix/` icons, copied unchanged into
@@ -573,7 +575,7 @@ answer on stdout, `{"id": N, "result": {...}}` or `{"id": N, "error": TEXT}`; an
 network, the checks, the plan) comes later, and the other requests are answered meanwhile. A run's
 [events](#events) follow its answer, each with `"run"`, then `{"event": "exited", "run": ID, "code": N}`; a line
 of the engine that is no event arrives as `output`. A job (a download, the backup's export or import, the logs,
-a step) sends `job-line` {`line`}, `job-progress` {`fraction`, `text`} and last `job-ended` {`kind`, `code`,
+a carry-over, a step) sends `job-line` {`line`}, `job-progress` {`fraction`, `text`} and last `job-ended` {`kind`, `code`,
 `error`}, each with `"job"`. One thing at a time: a run or a job refuses the next until it has ended.
 
 `--demo` runs nothing: the window's demo engine, steps, checks and backup jobs, a download that fetches nothing,
@@ -607,7 +609,8 @@ the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `
 | `checks` | `codename` | later: `checks` [{`name`, `needed_for`, `status`, `detail`, `fix`}] |
 | `carry_over` | | later: `from` (the earlier folder found, or empty), `question`, `ask` (a fresh app data folder: ask after the portable folder even when none was found) |
 | `carry_check` | `from` | `from`, `question`; refused, in the owner's words, for a folder that is no earlier overpressure or holds nothing to bring over |
-| `carry`, `decline_carry_over` | `from` | what came over; {} |
+| `carry` | `from` | `job` (`carry`): how far by bytes (a move on the same disk is a rename, done at once; to another disk a copy), then a `brought: WHAT` line for each thing that came; refused for a folder `carry_check` refuses |
+| `decline_carry_over` | `from` | {} |
 | `app_update` | | later: `update` (a newer overpressure with the app: `version`, `semver`, `words`, `manifest`, `page`, `notes`; null for none or offline), `installs` (the installed app replaces itself; overpressure from a folder shows the release's page) |
 
 The end of stdin stops a run or a step under way and ends the server.

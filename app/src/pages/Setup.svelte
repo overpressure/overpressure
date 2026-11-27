@@ -6,8 +6,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Icon from "../components/Icon.svelte";
+  import JobStatus from "../components/JobStatus.svelte";
+  import Spinner from "../components/Spinner.svelte";
   import { app, type CarryOffer } from "../lib/app.svelte";
   import { pickPath } from "../lib/bridge";
+  import type { JobState } from "../lib/job";
+  import { BROUGHT } from "../lib/protocol";
 
   let { logo }: { logo: string } = $props();
 
@@ -16,7 +20,12 @@
   /** The folder to bring over: the one found, or the one the owner chose (checked by the engine). */
   let chosen = $state<{ from: string; question: string } | null>(null);
   let working = $state(false);
-  let brought = $state<string[] | null>(null);
+  /** Bringing it over: a job, how far by bytes. */
+  let job = $state<JobState | null>(null);
+  const brought = $derived(
+    job?.code === 0 ? job.lines.filter((l) => l.startsWith(BROUGHT)).map((l) => l.slice(BROUGHT.length)) : null,
+  );
+  const carrying = $derived(job !== null && job.code === null);
   let failure = $state("");
   const paragraphs = $derived((chosen?.question ?? "").split("\n\n").filter(Boolean));
 
@@ -44,14 +53,11 @@
 
   async function carry(): Promise<void> {
     if (!chosen) return;
-    working = true;
     failure = "";
     try {
-      brought = (await app.engine.request<{ brought: string[] }>("carry", { from: chosen.from })).brought;
+      job = await app.startJob("carry", "carry", { from: chosen.from });
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
-    } finally {
-      working = false;
     }
   }
 
@@ -90,11 +96,12 @@
         and its installer makes a new backup first.
       </p>
       {#if !offer}
-        <p class="looking" role="status"><span class="spinner" aria-hidden="true"></span>Looking for it on this computer…</p>
+        <p class="looking" role="status"><Spinner />Looking for it on this computer…</p>
       {:else if offer.ask}
         <p class="muted">None was found in Downloads, on the desktop, in Documents or in your home folder.</p>
       {/if}
     {/if}
+    {#if job && !brought}<JobStatus {job} />{/if}
     {#if failure}<p class="callout bad"><Icon name="alert" /> {failure}</p>{/if}
   </div>
 
@@ -103,12 +110,13 @@
       <span class="grow"></span>
       <button class="btn primary" onclick={() => app.finishSetup()}>Continue</button>
     {:else}
-      <button class="btn ghost" disabled={working} onclick={fresh}>Start fresh</button>
+      <button class="btn ghost" disabled={working || carrying} onclick={fresh}>Start fresh</button>
       <span class="grow"></span>
       {#if chosen}
-        {#if offer?.ask}<button class="btn ghost" disabled={working} onclick={choose}>Another folder…</button>{/if}
-        <button class="btn primary" disabled={working} onclick={carry}
-          >{working ? "Bringing it over…" : "Bring it over"}</button
+        {#if offer?.ask}<button class="btn ghost" disabled={working || carrying} onclick={choose}>Another folder…</button
+          >{/if}
+        <button class="btn primary" disabled={working || carrying} onclick={carry}
+          >{carrying ? "Bringing it over…" : job?.code ? "Try again" : "Bring it over"}</button
         >
       {:else}
         <button class="btn primary" disabled={working} onclick={choose}>Choose its folder…</button>
@@ -165,21 +173,6 @@
     gap: 8px;
     color: var(--muted);
     font-size: 12px;
-  }
-
-  .spinner {
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--track);
-    border-top-color: var(--blue);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   .foot {

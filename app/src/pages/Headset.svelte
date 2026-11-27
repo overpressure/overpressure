@@ -14,6 +14,7 @@
   import Badge from "../components/Badge.svelte";
   import HeadsetArt from "../components/HeadsetArt.svelte";
   import Icon, { type IconName } from "../components/Icon.svelte";
+  import Spinner from "../components/Spinner.svelte";
   import JobStatus from "../components/JobStatus.svelte";
 
   let { headset }: { headset: HeadsetEntry } = $props();
@@ -152,7 +153,7 @@
       changing anything, and offers what fits.
     </p>
     {#if found?.note}<p class="callout info note"><Icon name="info" />{found.note}</p>{/if}
-    <p class="looking muted"><span class="spinner" aria-hidden="true"></span>Looking for it…</p>
+    <p class="looking muted"><Spinner size={14} />Looking for it…</p>
     <button
       class="btn ghost skip"
       data-tip="Offer every action without looking at the headset first"
@@ -346,21 +347,6 @@
     align-items: center;
     gap: 8px;
     font-size: 12px;
-  }
-
-  .spinner {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    border: 2px solid var(--track);
-    border-top-color: var(--blue);
-    animation: spin 0.9s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   .skip {

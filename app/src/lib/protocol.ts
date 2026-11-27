@@ -200,7 +200,10 @@ export type RunEvent = { run: string } & (
   | { event: "exited"; code: number }
 );
 
-export type JobKind = "download" | "export" | "import" | "logs" | "step";
+export type JobKind = "download" | "export" | "import" | "logs" | "step" | "carry";
+
+/** A carry job's line naming what came over. */
+export const BROUGHT = "brought: ";
 
 /** A job's event: a download, the backup's export or import, the logs, a step. */
 export type JobEvent = { job: string } & (

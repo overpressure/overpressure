@@ -13,17 +13,19 @@ are copied too. The window asks on its first start in a fresh folder; `python -m
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
-from . import REPO
+from . import REPO, progress
 from . import version as own_version
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Iterable
 
 #: What a fresh folder decided about an earlier one: brought over, or declined (then never asked again).
 RECORD = Path("out") / "carried-over.json"
@@ -143,50 +145,107 @@ def decline(old: Path, root: Path = REPO) -> None:
     _record(root, {"declined": str(old)})
 
 
-def _move(src: Path, dst: Path) -> None:
+#: How far bringing the data over is: bytes done, bytes in all, what it does now in words.
+Report = Callable[[int, int, str], None]
+#: How often a copy reports, at most, in seconds.
+REPORT_EVERY = 0.2
+
+
+class _Count:
+    """Bytes brought over so far, reported now and then."""
+
+    def __init__(self, total: int, report: Report | None) -> None:
+        self.done, self.total, self.report, self.what, self.last = 0, total, report, "", 0.0
+
+    def start(self, what: str) -> None:
+        """Say what comes next."""
+        self.what = what
+        self._tell()
+
+    def add(self, size: int, *, final: bool = False) -> None:
+        """Count SIZE more bytes as done."""
+        self.done += size
+        if final or time.monotonic() - self.last >= REPORT_EVERY:
+            self._tell()
+
+    def _tell(self) -> None:
+        self.last = time.monotonic()
+        if self.report is not None:
+            self.report(min(self.done, self.total), self.total, self.what)
+
+
+def _size(path: Path) -> int:
+    """Return the bytes the files at @p path hold (a file, or a folder's files); 0 for nothing."""
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for folder, _dirs, files in os.walk(path):
+        for name in files:
+            with contextlib.suppress(OSError):
+                total += (Path(folder) / name).stat().st_size
+    return total
+
+
+def _copy_file(src: str | Path, dst: str | Path, count: _Count) -> None:
+    """Copy one file in chunks, counting its bytes, with its times and mode."""
+    with open(src, "rb") as source, open(dst, "wb") as target:  # noqa: PTH123  # copytree hands over strings
+        while True:
+            chunk = source.read(progress.CHUNK)
+            if not chunk:
+                break
+            target.write(chunk)
+            count.add(len(chunk))
+    shutil.copystat(src, dst)
+
+
+def _move(src: Path, dst: Path, count: _Count) -> None:
     """Move SRC to DST: a rename on the same disk, else a copy that replaces SRC only once it is complete."""
     dst.parent.mkdir(parents=True, exist_ok=True)
+    size = _size(src)
     try:
         src.rename(dst)
     except OSError:
         partial = dst.with_name(dst.name + ".partial")
-        shutil.copytree(src, partial) if src.is_dir() else shutil.copy2(src, partial)
+        if src.is_dir():
+            shutil.copytree(src, partial, copy_function=lambda s, d: _copy_file(s, d, count))
+        else:
+            _copy_file(src, partial, count)
         partial.replace(dst)
         shutil.rmtree(src) if src.is_dir() else src.unlink()
+    else:
+        count.add(size)  # a rename: done at once
 
 
-def _copy(src: Path, dst: Path) -> None:
+def _copy(src: Path, dst: Path, count: _Count) -> None:
     """Copy SRC (a file or a folder) to DST, keeping what DST holds already."""
     dst.parent.mkdir(parents=True, exist_ok=True)
+
+    def keep_existing(source: str, target: str) -> None:
+        if Path(target).exists():
+            count.add(Path(source).stat().st_size)  # kept: counted as done
+        else:
+            _copy_file(source, target, count)
+
     if src.is_dir():
-        shutil.copytree(src, dst, dirs_exist_ok=True, copy_function=_keep_existing)
+        shutil.copytree(src, dst, dirs_exist_ok=True, copy_function=keep_existing)
     else:
-        shutil.copy2(src, dst)
+        _copy_file(src, dst, count)
 
 
-def _keep_existing(src: str, dst: str) -> None:
-    """Copy one file of a folder unless the target has it already."""
-    if not Path(dst).exists():
-        shutil.copy2(src, dst)
-
-
-def _settings_and_headsets(old: Path, root: Path) -> list[str]:
-    """Copy OLD's settings, downloaded headsets and installer records into ROOT; return what came."""
-    brought: list[str] = []
+def _plan(old: Path, root: Path) -> list[tuple[Path, Path, str]]:
+    """Return what of OLD's settings, downloaded headsets and installer records ROOT takes: (from, to, words)."""
+    plan: list[tuple[Path, Path, str]] = []
     if (old / SETTINGS).is_file() and not (root / SETTINGS).exists():
-        _copy(old / SETTINGS, root / SETTINGS)
-        brought.append("the settings (.env)")
+        plan.append((old / SETTINGS, root / SETTINGS, "the settings (.env)"))
     for folder in sorted((old / DEVICES).glob("*/")) if (old / DEVICES).is_dir() else []:
         # Downloaded headsets (a release or a preview); a development checkout is the developer's own.
         if not (folder / "headset.json").is_file() or (folder / ".git").exists():
             continue
         if not (root / DEVICES / folder.name).exists():
-            _copy(folder, root / DEVICES / folder.name)
-            brought.append(f"the headset {folder.name} (devices/{folder.name})")
+            plan.append((folder, root / DEVICES / folder.name, f"the headset {folder.name} (devices/{folder.name})"))
     if (old / INSTALLER).is_dir():
-        _copy(old / INSTALLER, root / INSTALLER)
-        brought.append("the installer's records (out/install)")
-    return brought
+        plan.append((old / INSTALLER, root / INSTALLER, "the installer's records (out/install)"))
+    return plan
 
 
 def carry(
@@ -195,32 +254,45 @@ def carry(
     *,
     headset_files: Callable[[], Iterable[Path]] = list,
     say: Callable[[str], None] = print,
+    report: Report | None = None,
 ) -> list[str]:
     """Bring the owner's data from OLD into ROOT; return what came, in words.
 
     The backup moves, the rest is copied; nothing ROOT has is replaced. HEADSET_FILES returns, once the
     headsets are here, the other files their way back needs (absolute, under ROOT): those come from the same
-    place in OLD.
+    place in OLD. REPORT hears how far it is, by bytes: a move on the same disk is a rename, done at once; to
+    another disk (the zip on a USB stick, say) it is a copy of every byte.
     """
     problem = check(old, root) if not is_overpressure(old) or old.resolve() == root.resolve() else ""
     if problem:
         raise ValueError(problem)
-    brought = _settings_and_headsets(old, root)
+    plan = _plan(old, root)
+    backup = (old / BACKUP).exists() and not (root / BACKUP).exists()
+    count = _Count(sum(_size(src) for src, _dst, _words in plan) + (_size(old / BACKUP) if backup else 0), report)
+    brought: list[str] = []
+    for src, dst, words in plan:
+        count.start(f"Copying {words}")
+        _copy(src, dst, count)
+        brought.append(words)
     for path in headset_files():
         relative = path.resolve().relative_to(root.resolve())
         if relative.parts[:1] == BACKUP.parts:
             continue  # it comes with the backup
         if (old / relative).exists() and not path.exists():
-            _copy(old / relative, path)
+            count.total += _size(old / relative)
+            count.start(f"Copying {relative.as_posix()}")
+            _copy(old / relative, path, count)
             brought.append(f"{relative.as_posix()}")
-    if (old / BACKUP).exists() and not (root / BACKUP).exists():
+    if backup:
         say(f"Moving the backup from {old / BACKUP} ...")
-        _move(old / BACKUP, root / BACKUP)
+        count.start("Moving the backup")
+        _move(old / BACKUP, root / BACKUP, count)
         (old / MOVED).write_text(
             f"This overpressure's backup (backup/) moved to {root / BACKUP}, with the newer overpressure.\n",
             encoding="utf-8",
         )
         brought.append("the backup (backup/, moved)")
+    count.add(0, final=True)
     _record(root, {"from": str(old), "version": own_version.describe(old), "brought": brought})
     return brought
 

@@ -7,6 +7,7 @@
   import type { JobState } from "../lib/job";
   import type { Backup, HeadsetEntry } from "../lib/protocol";
   import Icon from "./Icon.svelte";
+  import Spinner from "./Spinner.svelte";
   import JobStatus from "./JobStatus.svelte";
 
   let { headset, onclose }: { headset: HeadsetEntry; onclose: () => void } = $props();
@@ -69,7 +70,7 @@
   </div>
   <div class="body">
     {#if backup === null}
-      <p class="muted">Looking for it…</p>
+      <p class="muted wait" role="status"><Spinner />Looking for it…</p>
     {:else if backup.present}
       <div class="state good">
         <Icon name="check" />
@@ -156,5 +157,10 @@
     gap: 8px;
     padding: 12px 20px;
     border-top: 1px solid var(--line);
+  }
+  .wait {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 </style>

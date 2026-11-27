@@ -119,6 +119,16 @@ class Base(unittest.TestCase):
         self.server.respond(json.dumps({"id": self.ids, "request": name, **fields}))
         return self.out.next(lambda m: m.get("id") == self.ids)
 
+    def job(self, answer: dict) -> tuple[list[dict], dict]:
+        """Return a job's events up to its end, and its end."""
+        job = answer["result"]["job"]
+        seen = []
+        while True:
+            message = self.out.next(lambda m: m.get("job") == job)
+            seen.append(message)
+            if message["event"] == "job-ended":
+                return seen, message
+
 
 class AssessTest(Base):
     def test_the_demo_finds_the_headset_after_its_plug_in_in_the_state_asked_for(self):
@@ -227,16 +237,6 @@ class ServeTest(Base):
 class JobsTest(Base):
     """The requests besides a run, in the demo: nothing is fetched, written or run."""
 
-    def job(self, answer: dict) -> tuple[list[dict], dict]:
-        """Return a job's events up to its end, and its end."""
-        job = answer["result"]["job"]
-        seen = []
-        while True:
-            message = self.out.next(lambda m: m.get("job") == job)
-            seen.append(message)
-            if message["event"] == "job-ended":
-                return seen, message
-
     def test_the_catalogue_names_headsets_in_development(self):
         found = {h["codename"]: h for h in self.request("headsets")["result"]["headsets"]}
         self.assertTrue(found["hollywood"]["development"])
@@ -317,7 +317,12 @@ class JobsTest(Base):
         self.environ["OVERPRESSURE_DEMO_CARRY_OVER"] = "1"
         offered = self.request("carry_over")["result"]
         self.assertTrue(offered["from"].endswith(serve.DEMO_EARLIER))
-        self.assertTrue(self.request("carry", **{"from": offered["from"]})["result"]["brought"])
+        events, end = self.job(self.request("carry", **{"from": offered["from"]}))
+        self.assertEqual(end["code"], 0)
+        fractions = [e["fraction"] for e in events if e["event"] == "job-progress"]
+        self.assertEqual(fractions[-1], 1.0)  # a bar, not a wait
+        brought = [e["line"] for e in events if e["event"] == "job-line" and e["line"].startswith(serve.BROUGHT)]
+        self.assertIn(serve.BROUGHT + "the backup (backup/, moved)", brought)
         self.environ["OVERPRESSURE_DEMO_CARRY_OVER"] = "ask"
         self.assertEqual(self.request("carry_over")["result"]["ask"], True)  # the app asks for the folder
 
@@ -343,6 +348,12 @@ class AppCarryOverTest(Base):
         (old / ".env").write_text("x=1\n", encoding="utf-8")
         checked = self.request("carry_check", **{"from": str(old)})["result"]
         self.assertIn(str(old), checked["question"])
+        events, end = self.job(self.request("carry", **{"from": str(old)}))
+        self.assertEqual(end["code"], 0)
+        self.assertIn(serve.BROUGHT + "the settings (.env)", [e.get("line") for e in events])
+        self.assertTrue([e for e in events if e["event"] == "job-progress" and e["fraction"] == 1.0])
+        self.assertTrue((self.root / ".env").is_file())
+        self.assertIn("already", self.request("carry", **{"from": str(self.root)})["error"])  # refused, no job
 
 
 class AppUpdateTest(Base):

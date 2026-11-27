@@ -12,6 +12,7 @@
   let dialog = $state<HTMLDialogElement>();
 
   const JOBS: Record<string, string> = {
+    carry: "Bringing your earlier data over",
     download: "A download",
     export: "The backup's export",
     import: "The backup's import",

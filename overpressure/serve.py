@@ -40,7 +40,7 @@ from .window.advanced import DemoProcess, StepProcess, Steps, browse, demo_check
 from .window.installer import BackupJob, ChildEngine, DemoBackupJob, DemoEngine
 
 #: The protocol's major and minor version: a new request or field raises the minor, a change the major.
-PROTOCOL = (0, 6)
+PROTOCOL = (0, 7)
 #: The app's settings, beside the window's (out/window.json).
 SETTINGS = "out/app.json"
 APPEARANCES = ("system", "light", "dark")
@@ -91,6 +91,7 @@ JOB_WORDS = {
     "export": "The backup's export",
     "import": "The backup's import",
     "logs": "Saving the logs",
+    "carry": "Bringing the earlier overpressure's data over",
     "step": "A step of Advanced mode",
 }
 #: A job's item: ("line", text) or ("exit", code).
@@ -152,6 +153,72 @@ class Download:
             self.items.put(("exit", 1))
             return
         self.items.put(("exit", 0))
+
+
+#: How a carry job names what came over, one line each.
+BROUGHT = "brought: "
+
+
+def _amount(done: int, total: int) -> str:
+    """Return bytes done of all in words: "1.2 of 6.8 GB"."""
+    unit, size = next(((u, s) for u, s in (("GB", 1e9), ("MB", 1e6)) if total >= s), ("kB", 1e3))
+    return f"{done / size:.1f} of {total / size:.1f} {unit}"
+
+
+class CarryJob:
+    """An earlier overpressure's data brought into the root (carryover.carry) on a thread.
+
+    Its lines: how far it is by bytes, then what came (BROUGHT), then its exit.
+    """
+
+    def __init__(self, old: Path, root: Path) -> None:
+        """Bring OLD's data into ROOT."""
+        self.items: queue.Queue[Item] = queue.Queue()
+        self.old, self.root = old, root
+
+    def start(self) -> None:
+        """Start it."""
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _report(self, done: int, total: int, what: str) -> None:
+        fraction = done / total if total else None
+        self.items.put(("line", progress.line(f"{what}… {_amount(done, total)}" if total else f"{what}…", fraction)))
+
+    def _run(self) -> None:
+        try:
+            brought = carryover.carry(self.old, self.root, say=lambda _line: None, report=self._report)
+        except (ValueError, OSError) as exc:
+            self.items.put(("line", f"error: {exc or type(exc).__name__}"))
+            self.items.put(("exit", 1))
+            return
+        for words in brought:
+            self.items.put(("line", BROUGHT + words))
+        self.items.put(("exit", 0))
+
+
+class DemoCarry:
+    """--demo's carry: the backup copied as if to another disk; nothing is read or written."""
+
+    def __init__(self, *, pace: float = 1.0) -> None:
+        """Pretend to bring an earlier folder's data over; PACE scales the pauses (0 in tests)."""
+        self.items: queue.Queue[Item] = queue.Queue()
+        self.pace = pace
+
+    def start(self) -> None:
+        """Send the demo's lines on a thread."""
+
+        def work() -> None:
+            total = 6_800_000_000
+            self.items.put(("line", progress.line(f"Copying the settings (.env)… {_amount(0, total)}", 0)))
+            for n in range(1, 21):
+                time.sleep(0.12 * self.pace)
+                done = total * n // 20
+                self.items.put(("line", progress.line(f"Moving the backup… {_amount(done, total)}", done / total)))
+            for words in ("the settings (.env)", "the backup (backup/, moved)"):
+                self.items.put(("line", BROUGHT + words))
+            self.items.put(("exit", 0))
+
+        threading.Thread(target=work, daemon=True).start()
 
 
 class DemoDownload:
@@ -876,21 +943,23 @@ class Server:
             raise RefusedError(problem)
         return {"from": str(old), "question": carryover.question(old)}
 
-    def _carry(self, message: dict[str, Any]) -> Later:
+    def _carry(self, message: dict[str, Any]) -> dict[str, Any]:
         old = Path(str(message.get("from", "")))
         self.refuse_if_busy()
+        if self.demo:
+            source: CarryJob | DemoCarry = DemoCarry(pace=self.pace)
+        else:
+            problem = carryover.check(old, self.root)
+            if problem:
+                raise RefusedError(problem)
+            source = CarryJob(old, self.root)
 
-        def work() -> dict[str, Any]:
-            if self.demo:
-                return {"brought": ["the backup (backup/, moved)", "the settings (.env)"]}
-            try:
-                brought = carryover.carry(old, self.root, say=lambda _line: None)
-            except ValueError as exc:
-                raise RefusedError(str(exc)) from exc
-            self.registry = self.rediscover()
-            return {"brought": brought}
+        def done(code: int) -> None:
+            if code == 0 and not self.demo:
+                self.registry = self.rediscover()  # the headsets that came with it
 
-        return Later(work)
+        self.after.append(source.start)
+        return self.start_job("carry", "", source, done)
 
     def _decline_carry_over(self, message: dict[str, Any]) -> dict[str, Any]:
         if not self.demo:

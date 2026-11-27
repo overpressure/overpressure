@@ -13,6 +13,7 @@
   import { closeWindow, onCloseRequested } from "./lib/bridge";
   import CloseDialog from "./components/CloseDialog.svelte";
   import Icon from "./components/Icon.svelte";
+  import Spinner from "./components/Spinner.svelte";
   import StartSheet from "./components/StartSheet.svelte";
   import UpdateDialog from "./components/UpdateDialog.svelte";
   import Advanced from "./pages/Advanced.svelte";
@@ -166,7 +167,7 @@
     {#if app.problem}
       <div class="callout bad"><Icon name="alert" /><div><h3>The engine did not answer</h3><p>{app.problem}</p></div></div>
     {:else if app.page === "loading"}
-      <p class="muted">Starting…</p>
+      <p class="muted wait"><Spinner />Starting…</p>
     {:else if app.page === "welcome" && app.hello && app.settings}
       <Welcome
         disclaimer={app.hello.disclaimer}
@@ -194,6 +195,8 @@
       >
     {:else if job && job.code === null}
       <span class="status-run"><span class="dot"></span>{jobLine(job)}</span>
+    {:else if app.busy}
+      <span class="status-run" role="status"><Spinner size={11} />{app.busy}</span>
     {:else if app.notice}
       <span role="status">{app.notice}</span>
     {:else}
@@ -397,5 +400,10 @@
     .status {
       padding: 0 16px;
     }
+  }
+  .wait {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 </style>

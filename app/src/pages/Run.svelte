@@ -7,6 +7,7 @@
   import { tick } from "svelte";
   import Badge from "../components/Badge.svelte";
   import Icon from "../components/Icon.svelte";
+  import Spinner from "../components/Spinner.svelte";
   import JobStatus from "../components/JobStatus.svelte";
   import Ring from "../components/Ring.svelte";
   import { app } from "../lib/app.svelte";
@@ -100,7 +101,7 @@
       {#if outcome === "done"}<span class="pill good">Completed</span>
       {:else if outcome === "failed"}<span class="pill bad">Failed</span>
       {:else if outcome === "stopped"}<span class="pill">Stopped</span>
-      {:else if stopping}<span class="pill warn">Stopping</span>
+      {:else if stopping}<span class="pill warn"><Spinner size={10} /> Stopping</span>
       {:else}<span class="pill info">In progress</span>{/if}
       <span class="muted" data-tip="Unplugging it now can leave it half done">{run.headset}: keep it connected</span>
     </div>

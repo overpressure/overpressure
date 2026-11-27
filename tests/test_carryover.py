@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from overpressure import carryover
 
@@ -54,6 +55,29 @@ class CarryOverTests(unittest.TestCase):
         self.assertIsNone(carryover.previous(self.new))  # it has its data now: never asked again
         record = json.loads((self.new / carryover.RECORD).read_text(encoding="utf-8"))
         self.assertEqual(record["from"], str(self.old))
+
+    def test_it_reports_how_far_it_is_by_bytes(self):
+        (self.old / "backup" / "stock" / "image.bin").write_bytes(b"x" * 3000)
+        heard: list[tuple[int, int, str]] = []
+        carryover.carry(self.old, self.new, say=lambda _text: None, report=lambda *seen: heard.append(seen))
+        done, total, _what = heard[-1]
+        self.assertEqual(done, total)
+        self.assertGreater(total, 3000)  # the backup's bytes count, moved by a rename at once
+        self.assertIn("Moving the backup", {what for _d, _t, what in heard})
+
+    def test_a_move_to_another_disk_copies_every_byte_with_progress(self):
+        (self.old / "backup" / "stock" / "image.bin").write_bytes(b"x" * (3 * 1024 * 1024))
+        heard: list[tuple[int, int, str]] = []
+        with (
+            mock.patch.object(carryover, "REPORT_EVERY", 0),
+            mock.patch.object(Path, "rename", side_effect=OSError("another disk")),
+        ):
+            carryover.carry(self.old, self.new, say=lambda _text: None, report=lambda *seen: heard.append(seen))
+        moving = [done for done, _total, what in heard if what == "Moving the backup"]
+        self.assertGreater(len(set(moving)), 2)  # chunk by chunk
+        self.assertEqual(heard[-1][0], heard[-1][1])
+        self.assertEqual((self.new / "backup" / "stock" / "image.bin").stat().st_size, 3 * 1024 * 1024)
+        self.assertFalse((self.old / "backup").exists())
 
     def test_nothing_here_is_replaced(self):
         (self.new / ".env").write_text("OWN=1\n", encoding="utf-8")
