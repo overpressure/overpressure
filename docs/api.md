@@ -1025,6 +1025,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - `usb_count(vendor: int, product: int) -> int | None`: Return how many USB devices have @p vendor and @p product, None when pyusb or libusb is missing.
 - `ioreg_count(output: str, vendor: int, product: int) -> int`: Count the devices in macOS's `ioreg -p IOUSB -l` output with @p vendor and @p product.
 - `sysfs_count(root: Path, vendor: int, product: int) -> int`: Count the devices under Linux's /sys/bus/usb/devices with @p vendor and @p product.
+- `usb_ids(*, platform: str = sys.platform, command: Callable[[list[str], float], str] = run, sysfs: Path = Path("/sys/bus/usb/devices")) -> list[tuple[int, int]]`: Return the vendor and product of each USB device in this system's own listing (since interface 1.12).
 - `edl_devices(*, platform: str = sys.platform, usb: Callable[[int, int], int | None] = usb_count, command: Callable[[list[str], float], str] = run, sysfs: Path = Path("/sys/bus/usb/devices")) -> int`: Return the number of attached Qualcomm EDL (9008) devices.
 - `edl_command(args: argparse.Namespace, *words: str, memory: str = "ufs") -> list[str]`: Return an EDL command line for edl-ng or bkerler/edl, with the device's storage type.
 - `NOT_KEPT = ("cache", "rawdump", "logdump")`: Partitions a backup leaves out besides userdata: Android's cache and the crash-dump areas. No install or restore writes them back, and they hold nothing of the unit's own (2.7 GiB of a PICO 4's 12.5, 0.1 of it data).
@@ -1045,6 +1046,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - `link_lost(output: str) -> bool`: Tell whether edl-ng's @p output says the link broke mid-session (since 1.5): a timeout or a garbled reply.
 - `failed_output(exc: BaseException) -> str`: Return the whole output of the command behind @p exc: an `output` on it or on what caused it, else its text.
 - `unanswered(output: str) -> bool`: Tell whether edl-ng's @p output says the device in EDL mode did not answer (a stale EDL session).
+- `HANDSHAKE_SERIAL = r"(?<!Device )Serial Number:\s*"`: The serial edl-ng names from the device's Sahara handshake, not the loader's log of the storage's own serial ("Device Serial Number: 0x..."), which edl-ng's debug level shows in every session (since interface 1.12).
 - `serial_shown(output: str) -> bool`: Tell whether edl-ng's @p output names the device's serial.
 - `fresh_edl_argv(program: str | Path, loader: str | Path) -> list[str | Path]`: Return the edl-ng command that restarts the device into a fresh EDL session (Firehose's reset_to_edl).
 - `reboot_argv(program: str | Path, loader: str | Path) -> list[str | Path]`: Return the edl-ng command that leaves EDL with a normal restart (Firehose's reset): Android starts.

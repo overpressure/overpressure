@@ -469,6 +469,14 @@ class EdlTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not the configured headset"):
                 qualcomm.check_edl_serial(output, "0x1A2b")
 
+    def test_only_the_handshake_names_the_serial_not_the_loaders_log(self):
+        # At edl-ng's debug level every session shows the loader's log of the storage's own serial.
+        later = "[DEBUG] DEVPRG LOG: INFO: Device Serial Number: 0x4d2a\n--- Partitions LUN 0 ---"
+        self.assertFalse(qualcomm.serial_shown(later))
+        with self.assertRaisesRegex(RuntimeError, "not the configured headset"):
+            qualcomm.check_edl_serial(later, "0x4d2a")
+        self.assertTrue(qualcomm.serial_shown("[INFO]  Serial Number: B91A0000\n" + later))
+
 
 SECTOR = 4096
 

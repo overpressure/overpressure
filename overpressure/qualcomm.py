@@ -99,6 +99,43 @@ def sysfs_count(root: Path, vendor: int, product: int) -> int:
     return count
 
 
+def usb_ids(
+    *,
+    platform: str = sys.platform,
+    command: Callable[[list[str], float], str] = run,
+    sysfs: Path = Path("/sys/bus/usb/devices"),
+) -> list[tuple[int, int]]:
+    """Return the vendor and product of each USB device in this system's own listing (since interface 1.12).
+
+    For a look without pyusb: PowerShell's Get-PnpDevice on Windows (devices, not their interfaces), ioreg on
+    macOS, sysfs on Linux, in one call each. Enumeration only: no device is opened.
+    """
+    if platform == "win32":
+        output = command(["powershell", "-NoProfile", "-Command", "Get-PnpDevice -PresentOnly | % InstanceId"], 30)
+        found = re.findall(r"(?im)^USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})\\", output)
+        return [(int(v, 16), int(p, 16)) for v, p in found]
+    if platform == "darwin":
+        ids, devices = {}, []
+        for line in [*command(["ioreg", "-p", "IOUSB", "-l"], 30).splitlines(), "+-o end"]:
+            if "+-o " in line:
+                if {"idVendor", "idProduct"} <= set(ids):
+                    devices.append((ids["idVendor"], ids["idProduct"]))
+                ids = {}
+                continue
+            match = re.search(r'"(idVendor|idProduct)" = (\d+)', line)
+            if match:
+                ids[match.group(1)] = int(match.group(2))
+        return devices
+    devices = []
+    for folder in sysfs.glob("*"):
+        try:
+            ids = (int((folder / "idVendor").read_text(), 16), int((folder / "idProduct").read_text(), 16))
+        except (OSError, ValueError):
+            continue
+        devices.append(ids)
+    return devices
+
+
 def edl_devices(
     *,
     platform: str = sys.platform,
@@ -495,6 +532,11 @@ def unanswered(output: str) -> bool:
     return _UNANSWERED.search(output) is not None
 
 
+#: The serial edl-ng names from the device's Sahara handshake, not the loader's log of the storage's own serial
+#: ("Device Serial Number: 0x..."), which edl-ng's debug level shows in every session (since interface 1.12).
+HANDSHAKE_SERIAL = r"(?<!Device )Serial Number:\s*"
+
+
 def serial_shown(output: str) -> bool:
     """Tell whether edl-ng's @p output names the device's serial.
 
@@ -503,7 +545,7 @@ def serial_shown(output: str) -> bool:
     Windows' driver starts each afresh) names none: a reset into EDL (fresh_edl_argv) brings the
     handshake back.
     """
-    return re.search(r"Serial Number:\s*\S+", output) is not None
+    return re.search(HANDSHAKE_SERIAL + r"\S+", output) is not None
 
 
 def fresh_edl_argv(program: str | Path, loader: str | Path) -> list[str | Path]:
@@ -765,7 +807,7 @@ def check_edl_serial(output: str, serial: str) -> None:
 
     edl-ng reports the device's serial when it connects.
     """
-    if not re.search(rf"Serial Number:\s*{re.escape(serial)}\b", output, re.IGNORECASE):
+    if not re.search(HANDSHAKE_SERIAL + rf"{re.escape(serial)}\b", output, re.IGNORECASE):
         msg = "the EDL device is not the configured headset (headset in EDL)"
         raise RuntimeError(msg)
 
