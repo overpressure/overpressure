@@ -11,6 +11,8 @@ export interface Hello {
   version: string;
   platform: string;
   demo: boolean;
+  /** A first start: the first setup (an earlier overpressure's data) follows the disclaimer. */
+  first_setup: boolean;
   disclaimer: { title: string; text: string; accept: string; due: boolean; accepted: boolean };
 }
 

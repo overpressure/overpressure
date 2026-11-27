@@ -401,9 +401,11 @@ macOS `~/Library/Application Support/overpressure`, elsewhere `$XDG_DATA_HOME/ov
 with `CODE` on `PYTHONPATH`; `devices` imports from both roots, the data root's first; the build container sees
 `/work` as a checkout (the data root, overpressure's own files mounted read-only into it). The headsets are
 downloaded into the data root and found only there: they name their files relative to it. On its first start a
-fresh data root asks after the portable overpressure (the zip's folder): the one found in Downloads, on the desktop,
-in Documents or in the home folder (or a folder below one of them), or the one the owner chooses; its backup moves
-over, the rest is copied, as [from a release's folder](#a-newer-overpressure).
+fresh data root starts with its first setup, right after the disclaimer and before the headsets: it asks after the
+portable overpressure (the zip's folder), offering the one found in Downloads, on the desktop or in Documents (or a
+folder in one of them) or in the home folder, or the one the owner chooses; its backup moves over, the rest is
+copied, as [from a release's folder](#a-newer-overpressure). The search skips hidden folders and looks at one file
+per folder, well under a second in a full home folder, and runs beside the server's other requests.
 
 ```sh
 cd app && pnpm install --frozen-lockfile
@@ -421,8 +423,9 @@ The top bar holds the way back, where you are as breadcrumbs ending in the page'
 settings; the window's title bar names overpressure.
 
 - **Welcome:** the disclaimer, with *Show this on every start*; unticked, it comes back with a new overpressure.
-  An earlier overpressure folder beside this one is offered for carry-over; the app asks *Used overpressure
-  before?* and offers the folder it found, or *Choose its folder…*, or *Start fresh*.
+- **First setup** (a first start, after the disclaimer): *Used overpressure before?*, while it looks for an
+  earlier overpressure; the folder it found with *Bring it over*, or *Choose its folder…*, or *Start fresh*. A
+  release's folder has it only when an earlier folder is beside it.
 - **Headsets:** the headsets on this computer as tiles with their pictures from overpressure/brand, a newer
   release marked, a search once there are several. *+* adds one from the catalogue with its version: the newest
   stable, the newest beta, the preview, or one release; a headset in development only its preview, after a
@@ -582,7 +585,7 @@ the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `
 
 | Request | Fields | Answer |
 | --- | --- | --- |
-| `hello` | | `protocol` (major.minor; an app refuses a newer major), `version`, `platform`, `demo`, `disclaimer` {`title`, `text`, `accept`, `due`, `accepted`} |
+| `hello` | | `protocol` (major.minor; an app refuses a newer major), `version`, `platform`, `demo`, `first_setup` (the first setup follows the disclaimer), `disclaimer` {`title`, `text`, `accept`, `due`, `accepted`} |
 | `settings`, `set_settings` | `appearance`: `system`, `light` or `dark` | the settings, kept in `out/app.json` |
 | `accept_disclaimer` | `every_start` | the settings; the disclaimer is accepted for the server and every program it starts. Unticked, it is due again with a new overpressure |
 | `headsets` | | `headsets` [{`codename`, `name`, `soc`, `year`, `repository`, `development` (no release yet), `downloaded`, `checkout`, `channel`, `pinned`, `refused`, `has_steps`, `assesses` (it looks at itself on USB), `workflows` [{`key`, `title`, `summary`, `erases`, `changes`, `problem` (why it cannot run now, or empty)}]}]: the catalogue's, those in development and those in `devices/` |
@@ -602,7 +605,7 @@ the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `
 | `run_step` | `codename`, `step`, `values` | `job`, whose first line is the command |
 | `stop_job` | `job` | {}; a step ends, a download or backup job finishes by itself |
 | `checks` | `codename` | later: `checks` [{`name`, `needed_for`, `status`, `detail`, `fix`}] |
-| `carry_over` | | `from` (the earlier folder found, or empty), `question`, `ask` (a fresh app data folder: ask after the portable folder even when none was found) |
+| `carry_over` | | later: `from` (the earlier folder found, or empty), `question`, `ask` (a fresh app data folder: ask after the portable folder even when none was found) |
 | `carry_check` | `from` | `from`, `question`; refused, in the owner's words, for a folder that is no earlier overpressure or holds nothing to bring over |
 | `carry`, `decline_carry_over` | `from` | what came over; {} |
 | `app_update` | | later: `update` (a newer overpressure with the app: `version`, `semver`, `words`, `manifest`, `page`, `notes`; null for none or offline), `installs` (the installed app replaces itself; overpressure from a folder shows the release's page) |

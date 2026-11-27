@@ -40,7 +40,7 @@ from .window.advanced import DemoProcess, StepProcess, Steps, browse, demo_check
 from .window.installer import BackupJob, ChildEngine, DemoBackupJob, DemoEngine
 
 #: The protocol's major and minor version: a new request or field raises the minor, a change the major.
-PROTOCOL = (0, 5)
+PROTOCOL = (0, 6)
 #: The app's settings, beside the window's (out/window.json).
 SETTINGS = "out/app.json"
 APPEARANCES = ("system", "light", "dark")
@@ -333,6 +333,7 @@ class Server:
             "version": version.describe(),
             "platform": sys.platform,
             "demo": self.demo,
+            "first_setup": self.first_setup(),
             "disclaimer": {
                 "title": disclaimer.TITLE,
                 "text": disclaimer.TEXT,
@@ -826,25 +827,45 @@ class Server:
         return Later(work)
 
     # -- carry-over from an earlier folder ---------------------------------------------------
-    def _carry_over(self, _message: dict[str, Any]) -> dict[str, Any]:
-        if self.demo:  # OVERPRESSURE_DEMO_CARRY_OVER: 1 offers an earlier folder, ask asks for one (the app's)
-            wish = self.environ.get("OVERPRESSURE_DEMO_CARRY_OVER", "")
-            old = self.root.parent / DEMO_EARLIER
-            offered = wish == "1"
+    def first_setup(self) -> bool:
+        """Tell whether the app starts with its first setup (an earlier overpressure's data) after the disclaimer.
+
+        The app's data folder, fresh and undecided, always does: it asks for the earlier folder. A release's fresh
+        folder does when there is an earlier one beside it. The demo, with OVERPRESSURE_DEMO_CARRY_OVER 1 or ask.
+        """
+        if self.demo:
+            return self.environ.get("OVERPRESSURE_DEMO_CARRY_OVER", "") in ("1", "ask")
+        if not carryover.fresh(self.root):
+            return False
+        return self.app_data() or carryover.previous(self.root) is not None
+
+    def app_data(self) -> bool:
+        """Tell whether the root is the app's data folder, apart from overpressure's own files."""
+        return self.root.resolve() != CODE.resolve()
+
+    def _carry_over(self, _message: dict[str, Any]) -> Later:
+        def work() -> dict[str, Any]:
+            if self.demo:  # OVERPRESSURE_DEMO_CARRY_OVER: 1 offers an earlier folder, ask asks for one (the app's)
+                time.sleep(0.8 * self.pace)  # the search, as it takes in a full home folder
+                wish = self.environ.get("OVERPRESSURE_DEMO_CARRY_OVER", "")
+                old = self.root.parent / DEMO_EARLIER
+                offered = wish == "1"
+                return {
+                    "from": str(old) if offered else "",
+                    "question": carryover.question(old) if offered else "",
+                    "ask": wish == "ask",
+                }
+            # The app's data folder has no earlier folder beside it: it looks where a portable zip usually is, and
+            # asks for the folder (ask) when it finds none.
+            app = self.app_data()
+            found = carryover.previous(self.root, carryover.portable_places() if app else ())
             return {
-                "from": str(old) if offered else "",
-                "question": carryover.question(old) if offered else "",
-                "ask": wish == "ask",
+                "from": str(found) if found else "",
+                "question": carryover.question(found) if found else "",
+                "ask": app and carryover.fresh(self.root),
             }
-        # The app's data folder has no earlier folder beside it: it looks where a portable zip usually is, and asks
-        # for the folder (ask) when it finds none.
-        app = self.root.resolve() != CODE.resolve()
-        found = carryover.previous(self.root, carryover.portable_places() if app else ())
-        return {
-            "from": str(found) if found else "",
-            "question": carryover.question(found) if found else "",
-            "ask": app and carryover.fresh(self.root),
-        }
+
+        return Later(work)
 
     def _carry_check(self, message: dict[str, Any]) -> dict[str, Any]:
         old = Path(str(message.get("from", ""))).expanduser()

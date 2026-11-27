@@ -363,6 +363,35 @@ class AppUpdateTest(Base):
             self.assertIsNone(self.request("app_update")["result"]["update"])
 
 
+class FirstSetupTest(Base):
+    def test_hello_says_when_the_app_starts_with_its_first_setup(self):
+        self.assertFalse(self.request("hello")["result"]["first_setup"])
+        self.environ["OVERPRESSURE_DEMO_CARRY_OVER"] = "ask"
+        self.assertTrue(self.request("hello")["result"]["first_setup"])
+        self.server.demo = False  # a fresh app data folder (apart from overpressure's own files)
+        self.assertTrue(self.request("hello")["result"]["first_setup"])
+        (self.root / ".env").write_text("x=1\n", encoding="utf-8")
+        self.assertFalse(self.request("hello")["result"]["first_setup"])  # it has the owner's data
+
+    def test_the_search_answers_later_and_the_server_answers_meanwhile(self):
+        self.server.demo = False
+        searching, done = threading.Event(), threading.Event()
+
+        def search(*_args: object) -> None:
+            searching.set()
+            done.wait(10)
+
+        with mock.patch.object(serve.carryover, "previous", side_effect=search):
+            self.ids += 1
+            asked = self.ids
+            self.server.respond(json.dumps({"id": asked, "request": "carry_over"}))
+            self.assertTrue(searching.wait(5))
+            self.assertIn("result", self.request("settings"))  # not behind the search
+            done.set()
+            answer = self.out.next(lambda m: m.get("id") == asked)["result"]
+        self.assertEqual((answer["from"], answer["ask"]), ("", True))
+
+
 class MainTest(unittest.TestCase):
     def test_json_is_required(self):
         with contextlib.redirect_stderr(io.StringIO()):

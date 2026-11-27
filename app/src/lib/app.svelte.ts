@@ -17,7 +17,7 @@ import {
 } from "./protocol";
 import { apply, initial, type RunState } from "./run";
 
-export type Page = "loading" | "welcome" | "library" | "headset" | "run" | "advanced";
+export type Page = "loading" | "welcome" | "setup" | "library" | "headset" | "run" | "advanced";
 
 /** A workflow chosen after an earlier run of it: continue, or start over from a stage. */
 export interface Sheet {
@@ -54,7 +54,6 @@ export class AppState {
   /** The job under way, or the last one, by id. */
   job = $state<string | null>(null);
   sheet = $state<Sheet | null>(null);
-  carryOver = $state<CarryOffer | null>(null);
   /** The last look at each headset on USB, by codename. */
   looks = $state<Record<string, Found>>({});
   problem = $state("");
@@ -138,11 +137,17 @@ export class AppState {
 
   async accept(everyStart: boolean): Promise<void> {
     this.settings = await this.engine.request<Settings>("accept_disclaimer", { every_start: everyStart });
-    this.page = "library";
+    this.page = this.hello?.first_setup ? "setup" : "library";
     void this.checkUpdates();
     void this.checkAppUpdate();
-    const offer = await this.engine.request<CarryOffer>("carry_over");
-    if (offer.from || offer.ask) this.carryOver = offer;
+  }
+
+  /** The first setup is done (brought over, or started fresh): the headsets, which may have come with it. */
+  finishSetup(): void {
+    if (this.hello) this.hello.first_setup = false;
+    this.page = "library";
+    void this.refresh();
+    void this.checkUpdates();
   }
 
   async setAppearance(appearance: Appearance): Promise<void> {

@@ -111,6 +111,18 @@ class AppDataTests(unittest.TestCase):
         found = carryover.previous(self.data, carryover.portable_places(self.home))
         self.assertIn(found, {self.old, deeper})  # the one used last of the two
 
+    def test_the_home_folder_is_searched_one_level_and_hidden_folders_not_at_all(self):
+        (self.old / "backup").rename(self.old.parent / "moved-away")  # only the folders below hold data
+        places = carryover.portable_places(self.home)
+        deep = folder(self.home / "Projects", "overpressure-checkout")  # two levels into home: not looked at
+        (deep / ".env").write_text("x=1\n", encoding="utf-8")
+        hidden = folder(self.home / "Downloads" / ".cache", "overpressure-hidden")
+        (hidden / ".env").write_text("x=1\n", encoding="utf-8")
+        self.assertIsNone(carryover.previous(self.data, places))
+        top = folder(self.home, "overpressure-old")
+        (top / ".env").write_text("x=1\n", encoding="utf-8")
+        self.assertEqual(carryover.previous(self.data, places), top)
+
     def test_a_chosen_folder_is_checked_in_the_owners_words(self):
         self.assertEqual(carryover.check(self.old, self.data), "")
         self.assertIn("not an overpressure folder", carryover.check(self.home, self.data))

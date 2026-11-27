@@ -11,7 +11,6 @@
   import { overall } from "./lib/run";
   import { runTitle } from "./lib/words";
   import { closeWindow, onCloseRequested } from "./lib/bridge";
-  import CarryOver from "./components/CarryOver.svelte";
   import CloseDialog from "./components/CloseDialog.svelte";
   import Icon from "./components/Icon.svelte";
   import StartSheet from "./components/StartSheet.svelte";
@@ -20,6 +19,7 @@
   import Headset from "./pages/Headset.svelte";
   import Library from "./pages/Library.svelte";
   import Run from "./pages/Run.svelte";
+  import Setup from "./pages/Setup.svelte";
   import Welcome from "./pages/Welcome.svelte";
 
   let menuOpen = $state(false);
@@ -39,6 +39,8 @@
     switch (app.page) {
       case "welcome":
         return [{ label: "Welcome" }];
+      case "setup":
+        return [{ label: "First setup" }];
       case "library":
         return [{ label: "Headsets" }];
       case "headset":
@@ -172,6 +174,8 @@
         {logo}
         onaccept={(every) => app.accept(every)}
       />
+    {:else if app.page === "setup"}
+      <Setup {logo} />
     {:else if app.page === "library"}
       <Library />
     {:else if app.page === "headset" && app.headset}
@@ -200,7 +204,6 @@
 </div>
 
 {#if app.sheet}<StartSheet sheet={app.sheet} />{/if}
-{#if app.carryOver}<CarryOver offer={app.carryOver} />{/if}
 {#if app.updateOpen && app.appUpdate}<UpdateDialog {...app.appUpdate} />{/if}
 {#if closing}<CloseDialog onclose={() => (closing = false)} />{/if}
 

@@ -14,6 +14,7 @@ are copied too. The window asks on its first start in a fresh folder; `python -m
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -55,43 +56,67 @@ def _newest(folder: Path) -> float:
     return max((folder / part).stat().st_mtime for part in owners_data(folder))
 
 
-def previous(root: Path = REPO, places: Iterable[Path] = ()) -> Path | None:
+#: Where an earlier overpressure may be, and how deep: 1 for the folder's own folders, 2 for theirs too.
+Place = tuple[Path, int]
+
+
+def previous(root: Path = REPO, places: Iterable[Place] = ()) -> Path | None:
     """Return the earlier overpressure folder a fresh ROOT would take the data of, None for none.
 
     A release's folder looks beside itself (the zip unpacked next to the one before); the app's data folder,
-    which has no such neighbours, looks in @p places and one folder down in each (portable_places: where a
-    downloaded zip ends up). Of several, the one whose data changed last.
+    which has no such neighbours, looks in @p places too (portable_places: where a downloaded zip ends up). Hidden
+    folders are skipped, and a folder costs one look at its overpressure/__init__.py: the search stays well under
+    a second in a full home folder. Of several, the one whose data changed last.
     """
     if not fresh(root):
         return None
-    places = list(places)
-    folders = [root.parent, *places]
-    found = [p for p in _folders_in(folders, depth=2 if places else 1) if p.resolve() != root.resolve()]
-    found = [p for p in found if is_overpressure(p) and owners_data(p)]
-    return max(found, key=_newest) if found else None
+    here = root.resolve()
+    found: dict[Path, None] = {}  # in order, once each
+    for folder, depth in [(root.parent, 1), *places]:
+        found.update(dict.fromkeys(_folders_in(folder, depth)))
+    earlier = [p for p in found if is_overpressure(p) and owners_data(p) and p.resolve() != here]
+    return max(earlier, key=_newest) if earlier else None
 
 
-def _folders_in(places: Iterable[Path], depth: int) -> list[Path]:
-    """Return the folders in @p places, @p depth levels down (1: their children), skipping what cannot be read."""
-    level, found = [p for p in places if p.is_dir()], []
+def _folders_in(folder: Path, depth: int) -> list[Path]:
+    """Return the folders in @p folder, @p depth levels down (1: its own), skipping what cannot be read."""
+    level, found = [folder], []
     for _ in range(depth):
-        level = [child for folder in level for child in _children(folder)]
+        level = [child for parent in level for child in _children(parent)]
         found += level
     return found
 
 
 def _children(folder: Path) -> list[Path]:
-    """Return @p folder's folders but hidden ones; none when it cannot be read."""
+    """Return @p folder's folders but hidden ones (a dot, or Windows' hidden and system ones); none when unreadable."""
     try:
-        return [p for p in folder.iterdir() if p.is_dir() and not p.name.startswith(".")]
+        with os.scandir(folder) as entries:
+            return [Path(e.path) for e in entries if not e.name.startswith(".") and _visible_folder(e)]
     except OSError:
         return []
 
 
-def portable_places(home: Path | None = None) -> list[Path]:
-    """Return where an owner's portable overpressure (the zip) usually is: Downloads, the desktop, documents, home."""
+def _visible_folder(entry: os.DirEntry[str]) -> bool:
+    """Tell whether @p entry is a folder that is not hidden (Windows' attributes come with the listing)."""
+    try:
+        if not entry.is_dir():
+            return False
+        attributes = getattr(entry.stat(), "st_file_attributes", 0)
+    except OSError:
+        return False
+    return not attributes & (_HIDDEN | _SYSTEM)
+
+
+_HIDDEN, _SYSTEM = 0x2, 0x4  # FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM (stat's constants are Windows-only)
+
+
+def portable_places(home: Path | None = None) -> list[Place]:
+    """Return where an owner's portable overpressure (the zip) usually is, and how deep to look there.
+
+    In Downloads, on the desktop or in documents, or a folder in one of them; in the home folder itself.
+    """
     home = home or Path.home()
-    return [home / "Downloads", home / "Desktop", home / "Documents", home]
+    return [(home / "Downloads", 2), (home / "Desktop", 2), (home / "Documents", 2), (home, 1)]
 
 
 def check(old: Path, root: Path = REPO) -> str:
