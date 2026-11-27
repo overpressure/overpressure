@@ -88,6 +88,14 @@ class LibraryTests(unittest.TestCase):
         lib = text(LIB / "lib.sh")
         self.assertLess(lib.index("OP_DATA_MARKER="), lib.index(f". {contract.HEADSET}"))
 
+    def test_the_maintenance_system_arms_the_hardware_watchdog(self) -> None:
+        # A hang that stops every process stops recovery-watch too: the SoC's watchdog ends it, as in the
+        # installed system (RuntimeWatchdogSec=30s).
+        self.assertIn("::respawn:/usr/libexec/overpressure/svc watchdog\n", text(RUNTIME / "etc/inittab"))
+        svc = text(LIB / "svc")
+        self.assertIn("exec watchdog -F -T 30 -t 10 /dev/watchdog", svc)
+        self.assertLess(svc.index("[ -c /dev/watchdog ] || idle"), svc.index("exec watchdog"))
+
     def test_the_programs_use_the_headsets_reboot_and_probe(self) -> None:
         self.assertIn('"$OP_REBOOT" bootloader', text(LIB / "recovery-watch"))
         self.assertIn('"$OP_PROBE" --boot', text(RUNTIME / "init"))

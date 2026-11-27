@@ -61,6 +61,13 @@ usb-watch)
 recovery-watch)
 	exec "$OP_LIB/recovery-watch"
 	;;
+watchdog)
+	# The SoC's watchdog, as systemd arms it in the installed system (RuntimeWatchdogSec=30s): a hang that
+	# stops every process, which recovery-watch cannot see, ends in the kernel's reset. Pinged every 10 s;
+	# a kernel without a watchdog leaves it alone. Stopped by a signal, busybox disarms it.
+	[ -c /dev/watchdog ] || idle
+	exec watchdog -F -T 30 -t 10 /dev/watchdog
+	;;
 shutdown)
 	log "shutting down"
 	sync

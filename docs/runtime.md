@@ -104,6 +104,11 @@ every 2 s and calls `OP_REBOOT bootloader` when
 
 The installed system's boot image passes `overpressure.autoreboot=0`, so there the deadline only covers test runs.
 
+A hang that stops every process stops `recovery-watch` too. For that the maintenance system arms the SoC's
+watchdog as the installed system's systemd does (`RuntimeWatchdogSec=30s`): its `watchdog` service runs busybox's
+`watchdog -T 30 -t 10 /dev/watchdog`, pinging every 10 s, and the kernel resets the headset when the pings stop. A
+kernel without `/dev/watchdog` leaves the service idle.
+
 ## The installed system
 
 The installed system's image takes `overpressure-base`.
