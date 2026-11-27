@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "pnpm build && uv run --no-project --python 3.12 python ../scripts/bundle-app.py"
+  },
+  "bundle": {
+    "createUpdaterArtifacts": true
+  }
+}

@@ -4,7 +4,8 @@
 //! line the engine writes arrives as an "engine-line" event, and the system's file dialogs hand it the paths
 //! the owner picks (the backup's export and import, the logs, a step's paths). Closing the window first asks the front
 //! end ("close-requested"), which closes at once when nothing runs and asks the owner otherwise (`close_window`,
-//! `keep_window`); a second close goes through whatever the page does. Closing closes the engine's stdin, which stops
+//! `keep_window`); a second close goes through whatever the page does. `install_update` replaces the app with a
+//! newer release (update.rs). Closing closes the engine's stdin, which stops
 //! a run under way (after a write, never in one) and ends the engine.
 
 use std::io::{BufRead, BufReader, Write};
@@ -15,6 +16,8 @@ use std::sync::Mutex;
 use std::thread;
 
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+
+mod update;
 
 /// The engine's stdin, and the process to wait for when the app ends.
 struct Engine {
@@ -133,6 +136,28 @@ fn engine_send(line: String, engine: State<'_, Engine>) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// End the engine: a closed stdin stops a run under way (after a write, never in one) and ends it; wait for that.
+fn stop_engine(engine: &Engine) {
+    if let Ok(mut stdin) = engine.stdin.lock() {
+        stdin.take();
+    }
+    let child = engine.child.lock().ok().and_then(|mut c| c.take());
+    if let Some(mut child) = child {
+        let _ = child.wait();
+    }
+}
+
+/// Install the app's update the engine found (`app_update`): its manifest and its version (semver). The engine
+/// ends before the install, the app restarts with the new version; an error leaves everything as it was.
+#[tauri::command]
+async fn install_update(app: AppHandle, manifest: String, version: String) -> Result<(), String> {
+    let handle = app.clone();
+    update::install(app, manifest, version, move || {
+        stop_engine(&handle.state::<Engine>());
+    })
+    .await
+}
+
 /// Whether the window's close was put to the front end already: the next one closes, as a stuck page must not keep
 /// the window open.
 #[derive(Default)]
@@ -165,6 +190,7 @@ fn keep_window(closing: State<'_, Closing>) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let engine = start(app.handle())?;
             app.manage(engine);
@@ -182,21 +208,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             engine_send,
             close_window,
-            keep_window
+            keep_window,
+            install_update
         ])
         .build(tauri::generate_context!())
         .expect("the app could not start")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                let engine = app.state::<Engine>();
-                // A closed stdin stops a run under way and ends the engine; wait for it.
-                if let Ok(mut stdin) = engine.stdin.lock() {
-                    stdin.take();
-                }
-                let child = engine.child.lock().ok().and_then(|mut c| c.take());
-                if let Some(mut child) = child {
-                    let _ = child.wait();
-                }
+                stop_engine(&app.state::<Engine>());
             }
         });
 }

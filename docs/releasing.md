@@ -104,6 +104,7 @@ A pushed tag makes the release; nothing is uploaded by hand.
    - then closes the issues the release brings: every open issue whose Stage is Awaiting release gets a comment
      linking the release and is closed as completed (`python scripts/release.py close TAG --repo OWNER/NAME`,
      `--dry-run` lists them; [CLAUDE.md](../CLAUDE.md#backlog)). A failure there leaves the release published.
+   - builds [the app](#the-app) for Windows, macOS and Linux and attaches it with its updater's manifest.
 
    No headset, image, package or vendor file is attached: the installer downloads the headset's release, and
    everything is built from public downloads on the owner's computer or the headset.
@@ -112,6 +113,35 @@ A pushed tag makes the release; nothing is uploaded by hand.
    development version (after `2026.12.0b0`, `2026.12.0b1.dev0`; after `2026.12.0`, `2026.12.1.dev0`), by pull
    request: a preview of `main` then says so (`python -m overpressure --version`, the window) and is never taken
    for the release.
+
+## The app
+
+After the release, CI builds the app on each system with its bundled engine (`pnpm bundle`, with
+[tauri.release.json](../app/src-tauri/tauri.release.json) and the release's version in semver, `2026.12.0-beta.3`)
+and attaches each system's update file, signed, with the updater's manifest `overpressure-app.json`
+([scripts/app-manifest.py](../scripts/app-manifest.py)):
+
+| System | Runner | Update file | The installer people download |
+| --- | --- | --- | --- |
+| Windows x86-64 | `windows-latest` | `overpressure-app-windows-x86_64.setup.exe` | the same file (per-user NSIS) |
+| macOS arm64 | `macos-latest` | `overpressure-app-darwin-aarch64.app.tar.gz` | the same, unpacked (not notarized) |
+| Linux x86-64 | `ubuntu-22.04` | `overpressure-app-linux-x86_64.AppImage` | the same file |
+
+A system whose build fails is left out of the manifest; a release without the manifest offers the installed app
+no update ([tool.md](tool.md#the-apps-updates)). The build signs with the updater's key, the secret
+`TAURI_SIGNING_PRIVATE_KEY` (with `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`); the app checks each download against its
+public half, `plugins.updater.pubkey` in [tauri.conf.json](../app/src-tauri/tauri.conf.json), which it was built
+with, and refuses a file signed for another version than the manifest names (`requireSignedVersion`). Without the
+secret CI builds no app, and a build with an empty `pubkey` cannot update itself. The key is made once, by an owner of
+the repository, and kept apart from it:
+
+```sh
+cd app && pnpm tauri signer generate -w ~/.tauri/overpressure-updater.key
+```
+
+Its `.pub` file's text goes into `pubkey` by pull request; the private key and its password become the repository's
+secrets. A lost key cannot be replaced for the apps already installed: they then take the next release only from
+its page.
 
 A failed check stops the release before anything is published. Fix it on `main`, then delete the tag
 (`git push origin :refs/tags/2026.12.0b0` and `git tag -d 2026.12.0b0`) and tag the fixed commit. Only a tag that

@@ -36,5 +36,12 @@
       "../../overpressure/window/icons/overpressure.ico"
     ],
     "windows": { "nsis": { "installMode": "currentUser" } }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "requireSignedVersion": true,
+      "windows": { "installMode": "passive" }
+    }
   }
 }

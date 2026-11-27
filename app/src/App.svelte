@@ -15,6 +15,7 @@
   import CloseDialog from "./components/CloseDialog.svelte";
   import Icon from "./components/Icon.svelte";
   import StartSheet from "./components/StartSheet.svelte";
+  import UpdateDialog from "./components/UpdateDialog.svelte";
   import Advanced from "./pages/Advanced.svelte";
   import Headset from "./pages/Headset.svelte";
   import Library from "./pages/Library.svelte";
@@ -105,6 +106,14 @@
       </ol>
     </nav>
     <div class="actions">
+      {#if app.appUpdate}
+        <button
+          class="iconbtn tip-below update"
+          data-tip="overpressure {app.appUpdate.update.words} is out"
+          aria-label="overpressure {app.appUpdate.update.words} is out"
+          onclick={() => (app.updateOpen = true)}><Icon name="up" /></button
+        >
+      {/if}
       <a
         class="iconbtn tip-below"
         href="https://github.com/overpressure/overpressure"
@@ -143,6 +152,7 @@
             {#if app.headset?.has_steps}
               <button role="menuitem" onclick={() => menu(() => app.openAdvanced())}>Advanced mode</button>
             {/if}
+            <button role="menuitem" onclick={() => menu(() => void app.checkAppUpdate(true))}>Check for updates</button>
             <button role="menuitem" onclick={() => menu(() => (app.page = "welcome"))}>Show the welcome page</button>
           </div>
         {/if}
@@ -191,6 +201,7 @@
 
 {#if app.sheet}<StartSheet sheet={app.sheet} />{/if}
 {#if app.carryOver}<CarryOver offer={app.carryOver} />{/if}
+{#if app.updateOpen && app.appUpdate}<UpdateDialog {...app.appUpdate} />{/if}
 {#if closing}<CloseDialog onclose={() => (closing = false)} />{/if}
 
 <style>
@@ -272,6 +283,10 @@
     display: flex;
     gap: 4px;
     align-items: center;
+  }
+
+  .update {
+    color: var(--blue);
   }
 
   .menu-wrap {

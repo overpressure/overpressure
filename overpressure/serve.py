@@ -33,14 +33,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Callable, ClassVar, Union
 
-from . import CODE, carryover, catalogue, disclaimer, doctor, localconfig, progress, version
+from . import BUNDLED, CODE, appupdate, carryover, catalogue, disclaimer, doctor, localconfig, progress, version
 from . import headset as headsets
 from .headset import INSTALL, Found, Headset, Registry, discover
 from .window.advanced import DemoProcess, StepProcess, Steps, browse, demo_checks
 from .window.installer import BackupJob, ChildEngine, DemoBackupJob, DemoEngine
 
 #: The protocol's major and minor version: a new request or field raises the minor, a change the major.
-PROTOCOL = (0, 4)
+PROTOCOL = (0, 5)
 #: The app's settings, beside the window's (out/window.json).
 SETTINGS = "out/app.json"
 APPEARANCES = ("system", "light", "dark")
@@ -49,6 +49,14 @@ DEFAULTS: dict[str, Any] = {"appearance": "system", "disclaimer_every_start": Tr
 Engines = Callable[[str, str, str], Union[ChildEngine, DemoEngine]]
 #: What the demo offers as published releases, newest first: (version, prerelease).
 DEMO_RELEASES = (("2026.11.0b1", True), ("2026.11.0b0", True), ("1.0-beta.5", True), ("1.0-beta.4", True))
+#: What the demo offers as the app's update (OVERPRESSURE_DEMO_APP_UPDATE=1): no manifest, nothing downloads.
+DEMO_APP_UPDATE = appupdate.Update(
+    "2026.12.0",
+    "2026.12.0",
+    "",
+    "https://github.com/overpressure/overpressure/releases",
+    "Changes\n\n- The demo's update: nothing downloads.",
+)
 #: How long the demo's headset takes to show up after the app's first look, in seconds (times the pace).
 DEMO_PLUG_IN = 2.5
 #: What the demo's look finds, by OVERPRESSURE_DEMO_STATE (maker by default): a headset as it may be plugged in.
@@ -533,6 +541,21 @@ class Server:
 
         return Later(work)
 
+    def _app_update(self, _message: dict[str, Any]) -> Later:
+        installs = (CODE / BUNDLED).is_file()  # the installed app replaces itself; a folder shows the release
+
+        def work() -> dict[str, Any]:
+            if self.demo:
+                wanted = self.environ.get("OVERPRESSURE_DEMO_APP_UPDATE") == "1"
+                return {"update": DEMO_APP_UPDATE.as_dict() if wanted else None, "installs": True}
+            try:
+                found = appupdate.check()
+            except (OSError, ValueError):  # offline, or GitHub answered nonsense: no update known
+                found = None
+            return {"update": found.as_dict() if found else None, "installs": installs}
+
+        return Later(work)
+
     # -- a headset's workflows: the plan, runs, the finished page ----------------------------
     def _plan(self, message: dict[str, Any]) -> Later:
         headset = self.headset(message)
@@ -863,6 +886,7 @@ class Server:
         "releases": _releases,
         "download": _download,
         "updates": _updates,
+        "app_update": _app_update,
         "plan": _plan,
         "start": _start,
         "answer": _answer,

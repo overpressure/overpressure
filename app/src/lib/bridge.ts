@@ -126,3 +126,22 @@ export async function keepWindow(): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("keep_window");
 }
+
+/** How far the update's download is: bytes done, and of how many (null while unknown). */
+export type UpdateProgress = (done: number, total: number | null) => void;
+
+/** Install the update the engine found: its core downloads it, checks its signature, ends the engine, installs it
+ * and restarts the app. Resolves only when it failed (the app restarts otherwise); a browser cannot install. */
+export async function installUpdate(manifest: string, version: string, progress: UpdateProgress): Promise<void> {
+  if (!underTauri()) throw new Error("Only the installed app updates itself.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+  const stop = await listen<{ done: number; total: number | null }>("update-progress", (event) =>
+    progress(event.payload.done, event.payload.total),
+  );
+  try {
+    await invoke("install_update", { manifest, version });
+  } finally {
+    stop();
+  }
+}

@@ -14,6 +14,18 @@ export interface Hello {
   disclaimer: { title: string; text: string; accept: string; due: boolean; accepted: boolean };
 }
 
+/** A newer overpressure release that carries the app (app_update). */
+export interface AppUpdate {
+  version: string;
+  /** As the app's bundle spells it: what its core installs. */
+  semver: string;
+  words: string;
+  /** Its updater manifest; "" in the demo, where nothing downloads. */
+  manifest: string;
+  page: string;
+  notes: string;
+}
+
 export interface Settings {
   appearance: Appearance;
   disclaimer_every_start: boolean;

@@ -448,7 +448,22 @@ whatever the page does.
 Tiles stay plain, as in the mockup: details go into tooltips and small icon badges, which show on hover and on
 keyboard focus, always whole inside the window. Paths come from the system's file dialogs in the app and from a
 prompt in a browser. The headsets' pictures are overpressure/brand's `matrix/` icons, copied unchanged into
-`app/src/assets/headsets/` ([docs/logo](logo/README.md)); the packaged apps are not there yet.
+`app/src/assets/headsets/` ([docs/logo](logo/README.md)). Each release carries the app for Windows, macOS and
+Linux ([releasing.md](releasing.md#the-app)).
+
+### The app's updates
+
+On each start, once the disclaimer is accepted, the engine looks for a newer overpressure release that carries the
+app ([overpressure/appupdate.py](../overpressure/appupdate.py)): the newest on this one's channel, where a stable
+app takes stable releases only and a beta (or a preview) betas too, and a stable release once it is the newest. A
+release without the app's manifest is not offered. The top bar then shows an arrow, *overpressure 2026.12.0 is
+out*; the settings' *Check for updates* looks again and says when there is none. Its dialog shows the release's
+notes and *Update and restart*, which waits until nothing runs: the core
+([update.rs](../app/src-tauri/src/update.rs)) reads the release's manifest (only from overpressure's own
+releases), downloads this system's update file with its progress, checks its signature against the key the app was
+built with ([releasing.md](releasing.md#the-app)), ends the engine, installs it (on Windows the installer runs
+without questions) and restarts. The owner's data stays in the data root. overpressure run from its folder is told
+of the release and opens its page; a build without the update key says that it cannot update itself.
 
 ## The installer
 
@@ -561,7 +576,8 @@ a step) sends `job-line` {`line`}, `job-progress` {`fraction`, `text`} and last 
 `--demo` runs nothing: the window's demo engine, steps, checks and backup jobs, a download that fetches nothing,
 releases of its own, and an install as if an earlier run had done all but its last stage (`--demo-fresh`:
 nothing done). It treats a development checkout as a downloaded release, and offers carry-over from an earlier
-folder with `OVERPRESSURE_DEMO_CARRY_OVER=1`, and asks after one as the app's data folder does with `ask`. Its headset shows up on USB 2.5 s after the page's first look, in
+folder with `OVERPRESSURE_DEMO_CARRY_OVER=1`, and asks after one as the app's data folder does with `ask`. With
+`OVERPRESSURE_DEMO_APP_UPDATE=1` it offers an app update, whose install downloads nothing. Its headset shows up on USB 2.5 s after the page's first look, in
 the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `bootloader`, `edl`, `unknown`).
 
 | Request | Fields | Answer |
@@ -589,6 +605,7 @@ the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `
 | `carry_over` | | `from` (the earlier folder found, or empty), `question`, `ask` (a fresh app data folder: ask after the portable folder even when none was found) |
 | `carry_check` | `from` | `from`, `question`; refused, in the owner's words, for a folder that is no earlier overpressure or holds nothing to bring over |
 | `carry`, `decline_carry_over` | `from` | what came over; {} |
+| `app_update` | | later: `update` (a newer overpressure with the app: `version`, `semver`, `words`, `manifest`, `page`, `notes`; null for none or offline), `installs` (the installed app replaces itself; overpressure from a folder shows the release's page) |
 
 The end of stdin stops a run or a step under way and ends the server.
 
@@ -680,6 +697,7 @@ an administrator.
 | [overpressure/__main__.py](../overpressure/__main__.py) | the command line |
 | [overpressure/serve.py](../overpressure/serve.py) | the engine as a server for the app ([The app's server](#the-apps-server)): its requests, the settings, the disclaimer, runs and jobs (downloads, the backup, the logs, steps) with their events, the demo's fakes |
 | [overpressure/window/](../overpressure/window/__init__.py) | the window (CustomTkinter). Models without widgets: `installer.py` (the engine's events as stages and asks; the child and demo engines), `advanced.py` (the steps, their values and command lines, the checks), `headsets.py` (the headset page, its plan probes, `out/window.json`, the demo's second headset). Widgets: `app.py` (the header, the installer view, the panels), `advanced_view.py`; `theme.py` the design tokens and fonts, `kit.py` the components, `logo.py` the logo's renderings (`icons/`) |
+| [overpressure/appupdate.py](../overpressure/appupdate.py) | The app's own updates: the newest release on its channel that carries the app |
 | [overpressure/carryover.py](../overpressure/carryover.py) | A newer overpressure's folder takes the owner's data from the one beside it |
 | [overpressure/lp.py](../overpressure/lp.py) | `super`'s logical partitions: the metadata Android's dynamic partitions use |
 | [overpressure/progress.py](../overpressure/progress.py) | The progress lines a child program prints, which the installer and the window show as bars |

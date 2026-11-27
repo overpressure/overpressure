@@ -6,6 +6,7 @@ import { applyJob, newJob, type JobState } from "./job";
 import {
   PROTOCOL_MAJOR,
   type Appearance,
+  type AppUpdate,
   type EngineEvent,
   type Found,
   type HeadsetEntry,
@@ -40,6 +41,10 @@ export class AppState {
   headsets = $state<HeadsetEntry[]>([]);
   /** Newer releases by codename. */
   updates = $state<Record<string, string>>({});
+  /** A newer overpressure with the app in it, and whether this app installs it itself (else: its page). */
+  appUpdate = $state<{ update: AppUpdate; installs: boolean } | null>(null);
+  /** The update's dialog is open. */
+  updateOpen = $state(false);
   page = $state<Page>("loading");
   codename = $state("");
   /** The step Advanced mode opens at ("" for the checks). */
@@ -117,10 +122,25 @@ export class AppState {
     }
   }
 
+  /** Look for a newer overpressure; SAY: tell the owner when there is none (they asked). */
+  async checkAppUpdate(say = false): Promise<void> {
+    try {
+      const found = await this.engine.request<{ update: AppUpdate | null; installs: boolean }>("app_update");
+      this.appUpdate = found.update ? { update: found.update, installs: found.installs } : null;
+    } catch {
+      this.appUpdate = null; // offline: none known
+    }
+    if (say) {
+      if (this.appUpdate) this.updateOpen = true;
+      else this.say("overpressure is up to date.");
+    }
+  }
+
   async accept(everyStart: boolean): Promise<void> {
     this.settings = await this.engine.request<Settings>("accept_disclaimer", { every_start: everyStart });
     this.page = "library";
     void this.checkUpdates();
+    void this.checkAppUpdate();
     const offer = await this.engine.request<CarryOffer>("carry_over");
     if (offer.from || offer.ask) this.carryOver = offer;
   }

@@ -345,6 +345,24 @@ class AppCarryOverTest(Base):
         self.assertIn(str(old), checked["question"])
 
 
+class AppUpdateTest(Base):
+    def test_the_demo_offers_an_update_only_when_asked(self):
+        self.assertIsNone(self.request("app_update")["result"]["update"])
+        self.environ["OVERPRESSURE_DEMO_APP_UPDATE"] = "1"
+        answer = self.request("app_update")["result"]
+        self.assertEqual((answer["update"]["version"], answer["installs"]), ("2026.12.0", True))
+
+    def test_the_newest_release_with_the_app_and_whether_this_one_installs_it(self):
+        self.server.demo = False
+        newer = serve.appupdate.Update("2099.1.0", "2099.1.0", "https://example.invalid/m.json", "", "")
+        with mock.patch.object(serve.appupdate, "check", return_value=newer):
+            answer = self.request("app_update")["result"]
+        self.assertEqual(answer["update"]["manifest"], "https://example.invalid/m.json")
+        self.assertFalse(answer["installs"])  # a checkout: its release's page, not an install
+        with mock.patch.object(serve.appupdate, "check", side_effect=OSError("offline")):
+            self.assertIsNone(self.request("app_update")["result"]["update"])
+
+
 class MainTest(unittest.TestCase):
     def test_json_is_required(self):
         with contextlib.redirect_stderr(io.StringIO()):
