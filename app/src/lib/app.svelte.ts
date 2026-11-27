@@ -26,6 +26,13 @@ export interface Sheet {
   stages: RecordedStage[];
 }
 
+/** An earlier overpressure's data to bring over: a folder found (from, question), or the app asking for one (ask). */
+export interface CarryOffer {
+  from: string;
+  question: string;
+  ask?: boolean;
+}
+
 export class AppState {
   client = $state.raw<Client>();
   hello = $state<Hello>();
@@ -42,7 +49,7 @@ export class AppState {
   /** The job under way, or the last one, by id. */
   job = $state<string | null>(null);
   sheet = $state<Sheet | null>(null);
-  carryOver = $state<{ from: string; question: string } | null>(null);
+  carryOver = $state<CarryOffer | null>(null);
   /** The last look at each headset on USB, by codename. */
   looks = $state<Record<string, Found>>({});
   problem = $state("");
@@ -114,8 +121,8 @@ export class AppState {
     this.settings = await this.engine.request<Settings>("accept_disclaimer", { every_start: everyStart });
     this.page = "library";
     void this.checkUpdates();
-    const offer = await this.engine.request<{ from: string; question: string }>("carry_over");
-    if (offer.from) this.carryOver = offer;
+    const offer = await this.engine.request<CarryOffer>("carry_over");
+    if (offer.from || offer.ask) this.carryOver = offer;
   }
 
   async setAppearance(appearance: Appearance): Promise<void> {

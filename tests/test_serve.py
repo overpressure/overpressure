@@ -7,11 +7,13 @@ import contextlib
 import io
 import json
 import queue
+import shutil
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest import mock
 
 from overpressure import disclaimer, serve
 from overpressure import headset as headsets
@@ -316,6 +318,31 @@ class JobsTest(Base):
         offered = self.request("carry_over")["result"]
         self.assertTrue(offered["from"].endswith(serve.DEMO_EARLIER))
         self.assertTrue(self.request("carry", **{"from": offered["from"]})["result"]["brought"])
+        self.environ["OVERPRESSURE_DEMO_CARRY_OVER"] = "ask"
+        self.assertEqual(self.request("carry_over")["result"]["ask"], True)  # the app asks for the folder
+
+
+class AppCarryOverTest(Base):
+    """The app's data folder (a root apart from overpressure's own files): it asks for the earlier folder."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.server.demo = False
+
+    def test_a_fresh_data_folder_asks_and_a_chosen_folder_is_checked(self):
+        with mock.patch.object(serve.carryover, "portable_places", return_value=[]):
+            answer = self.request("carry_over")["result"]
+        self.assertEqual((answer["from"], answer["ask"]), ("", True))
+        refused = self.request("carry_check", **{"from": str(self.root)})
+        self.assertIn("already", refused["error"])
+        old = self.root.parent / "overpressure-earlier"
+        (old / "overpressure").mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(old, ignore_errors=True))
+        (old / "overpressure" / "__init__.py").write_text("", encoding="utf-8")
+        (old / "pyproject.toml").write_text("", encoding="utf-8")
+        (old / ".env").write_text("x=1\n", encoding="utf-8")
+        checked = self.request("carry_check", **{"from": str(old)})["result"]
+        self.assertIn(str(old), checked["question"])
 
 
 class MainTest(unittest.TestCase):

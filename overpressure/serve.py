@@ -33,14 +33,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Callable, ClassVar, Union
 
-from . import carryover, catalogue, disclaimer, doctor, localconfig, progress, version
+from . import CODE, carryover, catalogue, disclaimer, doctor, localconfig, progress, version
 from . import headset as headsets
 from .headset import INSTALL, Found, Headset, Registry, discover
 from .window.advanced import DemoProcess, StepProcess, Steps, browse, demo_checks
 from .window.installer import BackupJob, ChildEngine, DemoBackupJob, DemoEngine
 
 #: The protocol's major and minor version: a new request or field raises the minor, a change the major.
-PROTOCOL = (0, 3)
+PROTOCOL = (0, 4)
 #: The app's settings, beside the window's (out/window.json).
 SETTINGS = "out/app.json"
 APPEARANCES = ("system", "light", "dark")
@@ -804,12 +804,33 @@ class Server:
 
     # -- carry-over from an earlier folder ---------------------------------------------------
     def _carry_over(self, _message: dict[str, Any]) -> dict[str, Any]:
-        if self.demo:
-            offered = self.environ.get("OVERPRESSURE_DEMO_CARRY_OVER") == "1"
+        if self.demo:  # OVERPRESSURE_DEMO_CARRY_OVER: 1 offers an earlier folder, ask asks for one (the app's)
+            wish = self.environ.get("OVERPRESSURE_DEMO_CARRY_OVER", "")
             old = self.root.parent / DEMO_EARLIER
-            return {"from": str(old) if offered else "", "question": carryover.question(old) if offered else ""}
-        found = carryover.previous(self.root)
-        return {"from": str(found) if found else "", "question": carryover.question(found) if found else ""}
+            offered = wish == "1"
+            return {
+                "from": str(old) if offered else "",
+                "question": carryover.question(old) if offered else "",
+                "ask": wish == "ask",
+            }
+        # The app's data folder has no earlier folder beside it: it looks where a portable zip usually is, and asks
+        # for the folder (ask) when it finds none.
+        app = self.root.resolve() != CODE.resolve()
+        found = carryover.previous(self.root, carryover.portable_places() if app else ())
+        return {
+            "from": str(found) if found else "",
+            "question": carryover.question(found) if found else "",
+            "ask": app and carryover.fresh(self.root),
+        }
+
+    def _carry_check(self, message: dict[str, Any]) -> dict[str, Any]:
+        old = Path(str(message.get("from", ""))).expanduser()
+        if self.demo:
+            return {"from": str(old), "question": carryover.question(old)}
+        problem = carryover.check(old, self.root)
+        if problem:
+            raise RefusedError(problem)
+        return {"from": str(old), "question": carryover.question(old)}
 
     def _carry(self, message: dict[str, Any]) -> Later:
         old = Path(str(message.get("from", "")))
@@ -857,6 +878,7 @@ class Server:
         "run_step": _run_step,
         "checks": _checks,
         "carry_over": _carry_over,
+        "carry_check": _carry_check,
         "carry": _carry,
         "decline_carry_over": _decline_carry_over,
     }

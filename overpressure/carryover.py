@@ -55,19 +55,54 @@ def _newest(folder: Path) -> float:
     return max((folder / part).stat().st_mtime for part in owners_data(folder))
 
 
-def previous(root: Path = REPO) -> Path | None:
-    """Return the earlier overpressure folder beside a fresh ROOT whose data it would take, None for none.
+def previous(root: Path = REPO, places: Iterable[Path] = ()) -> Path | None:
+    """Return the earlier overpressure folder a fresh ROOT would take the data of, None for none.
 
-    Of several, the one whose data changed last.
+    A release's folder looks beside itself (the zip unpacked next to the one before); the app's data folder,
+    which has no such neighbours, looks in @p places and one folder down in each (portable_places: where a
+    downloaded zip ends up). Of several, the one whose data changed last.
     """
     if not fresh(root):
         return None
-    try:
-        siblings = [p for p in root.parent.iterdir() if p.is_dir() and p.resolve() != root.resolve()]
-    except OSError:
-        return None
-    found = [p for p in siblings if is_overpressure(p) and owners_data(p)]
+    places = list(places)
+    folders = [root.parent, *places]
+    found = [p for p in _folders_in(folders, depth=2 if places else 1) if p.resolve() != root.resolve()]
+    found = [p for p in found if is_overpressure(p) and owners_data(p)]
     return max(found, key=_newest) if found else None
+
+
+def _folders_in(places: Iterable[Path], depth: int) -> list[Path]:
+    """Return the folders in @p places, @p depth levels down (1: their children), skipping what cannot be read."""
+    level, found = [p for p in places if p.is_dir()], []
+    for _ in range(depth):
+        level = [child for folder in level for child in _children(folder)]
+        found += level
+    return found
+
+
+def _children(folder: Path) -> list[Path]:
+    """Return @p folder's folders but hidden ones; none when it cannot be read."""
+    try:
+        return [p for p in folder.iterdir() if p.is_dir() and not p.name.startswith(".")]
+    except OSError:
+        return []
+
+
+def portable_places(home: Path | None = None) -> list[Path]:
+    """Return where an owner's portable overpressure (the zip) usually is: Downloads, the desktop, documents, home."""
+    home = home or Path.home()
+    return [home / "Downloads", home / "Desktop", home / "Documents", home]
+
+
+def check(old: Path, root: Path = REPO) -> str:
+    """Return why @p old cannot be carried over into ROOT, in the owner's words; "" when it can."""
+    if old.resolve() == root.resolve():
+        return "That is the folder this overpressure uses already."
+    if not old.is_dir() or not is_overpressure(old):
+        return f"{old} is not an overpressure folder: choose the folder that has Install.cmd or install.sh in it."
+    if not owners_data(old):
+        return f"{old} holds no backup, settings or installer records: there is nothing to bring over."
+    return ""
 
 
 def _record(root: Path, data: dict) -> None:
@@ -142,12 +177,9 @@ def carry(
     headsets are here, the other files their way back needs (absolute, under ROOT): those come from the same
     place in OLD.
     """
-    if not is_overpressure(old):
-        msg = f"{old} is not an overpressure folder"
-        raise ValueError(msg)
-    if old.resolve() == root.resolve():
-        msg = "that is this folder"
-        raise ValueError(msg)
+    problem = check(old, root) if not is_overpressure(old) or old.resolve() == root.resolve() else ""
+    if problem:
+        raise ValueError(problem)
     brought = _settings_and_headsets(old, root)
     for path in headset_files():
         relative = path.resolve().relative_to(root.resolve())
@@ -169,7 +201,7 @@ def carry(
 
 
 def question(old: Path) -> str:
-    """Return the window's question about OLD, in the owner's words."""
+    """Return the window's question about OLD, in the owner's words (the app's data folder: the same words)."""
     return (
         f"Your earlier overpressure is in {old}.\n\n"
         "Bring your headset's backup, your settings and what the installer knows about your headset over to "

@@ -89,5 +89,44 @@ class CarryOverTests(unittest.TestCase):
             carryover.carry(self.new, self.new)
 
 
+class AppDataTests(unittest.TestCase):
+    """The app's data folder has no earlier folder beside it: the portable zip is where downloads end up."""
+
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.home = Path(temp.name) / "home"
+        self.data = Path(temp.name) / "AppData" / "Local" / "overpressure-data"
+        self.data.mkdir(parents=True)
+        self.old = folder(self.home / "Downloads", "overpressure-2026.11.0b1")
+        (self.old / "backup" / "stock").mkdir(parents=True)
+
+    def test_the_portable_zip_in_downloads_is_found(self):
+        self.assertIsNone(carryover.previous(self.data))  # nothing beside the data folder
+        self.assertEqual(carryover.previous(self.data, carryover.portable_places(self.home)), self.old)
+
+    def test_one_unpacked_a_folder_deeper_is_found_too(self):
+        deeper = folder(self.home / "Desktop" / "VR tools", "overpressure-2026.10.0")
+        (deeper / ".env").write_text("x=1\n", encoding="utf-8")
+        found = carryover.previous(self.data, carryover.portable_places(self.home))
+        self.assertIn(found, {self.old, deeper})  # the one used last of the two
+
+    def test_a_chosen_folder_is_checked_in_the_owners_words(self):
+        self.assertEqual(carryover.check(self.old, self.data), "")
+        self.assertIn("not an overpressure folder", carryover.check(self.home, self.data))
+        self.assertIn("already", carryover.check(self.data, self.data))
+        empty = folder(self.home, "overpressure-unused")
+        self.assertIn("nothing to bring over", carryover.check(empty, self.data))
+
+    def test_the_backup_moves_into_the_data_folder(self):
+        (self.old / "backup" / "stock" / "manifest.json").write_text("{}", encoding="utf-8")
+        brought = carryover.carry(self.old, self.data, say=lambda _text: None)
+        self.assertTrue((self.data / "backup" / "stock" / "manifest.json").is_file())
+        self.assertFalse((self.old / "backup").exists())
+        self.assertTrue((self.old / carryover.MOVED).is_file())
+        self.assertIn("the backup (backup/, moved)", brought)
+        self.assertIsNone(carryover.previous(self.data, carryover.portable_places(self.home)))  # asked once
+
+
 if __name__ == "__main__":
     unittest.main()

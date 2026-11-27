@@ -400,8 +400,10 @@ macOS `~/Library/Application Support/overpressure`, elsewhere `$XDG_DATA_HOME/ov
 (`~/.local/share/overpressure`). `OVERPRESSURE_HOME` names another data root anywhere. Children run in the data root
 with `CODE` on `PYTHONPATH`; `devices` imports from both roots, the data root's first; the build container sees
 `/work` as a checkout (the data root, overpressure's own files mounted read-only into it). The headsets are
-downloaded into the data root and found only there: they name their files relative to it. Carry-over from an
-earlier release's folder into the app's data folder is not there yet.
+downloaded into the data root and found only there: they name their files relative to it. On its first start a
+fresh data root asks after the portable overpressure (the zip's folder): the one found in Downloads, on the desktop,
+in Documents or in the home folder (or a folder below one of them), or the one the owner chooses; its backup moves
+over, the rest is copied, as [from a release's folder](#a-newer-overpressure).
 
 ```sh
 cd app && pnpm install --frozen-lockfile
@@ -419,7 +421,8 @@ The top bar holds the way back, where you are as breadcrumbs ending in the page'
 settings; the window's title bar names overpressure.
 
 - **Welcome:** the disclaimer, with *Show this on every start*; unticked, it comes back with a new overpressure.
-  An earlier overpressure folder beside this one is offered for carry-over.
+  An earlier overpressure folder beside this one is offered for carry-over; the app asks *Used overpressure
+  before?* and offers the folder it found, or *Choose its folder…*, or *Start fresh*.
 - **Headsets:** the headsets on this computer as tiles with their pictures from overpressure/brand, a newer
   release marked, a search once there are several. *+* adds one from the catalogue with its version: the newest
   stable, the newest beta, the preview, or one release; a headset in development only its preview, after a
@@ -437,6 +440,10 @@ settings; the window's title bar names overpressure.
   *Import backup…*. Leaving the page leaves the run going; the status bar leads back to it.
 - **Advanced mode:** the steps by group (a drop-down in a narrow window), a step's parameters with *Browse…*, its
   command line with *Copy*, *Run* (a step that writes asks first) or *Stop*, its output; the dependency checks.
+
+Closing the window while a run or a job is under way asks first: *Keep it running*, or *Stop and close*, which ends
+the engine's stdin (a write under way finishes first). A second click on the window's close button closes it
+whatever the page does.
 
 Tiles stay plain, as in the mockup: details go into tooltips and small icon badges, which show on hover and on
 keyboard focus, always whole inside the window. Paths come from the system's file dialogs in the app and from a
@@ -554,7 +561,7 @@ a step) sends `job-line` {`line`}, `job-progress` {`fraction`, `text`} and last 
 `--demo` runs nothing: the window's demo engine, steps, checks and backup jobs, a download that fetches nothing,
 releases of its own, and an install as if an earlier run had done all but its last stage (`--demo-fresh`:
 nothing done). It treats a development checkout as a downloaded release, and offers carry-over from an earlier
-folder with `OVERPRESSURE_DEMO_CARRY_OVER=1`. Its headset shows up on USB 2.5 s after the page's first look, in
+folder with `OVERPRESSURE_DEMO_CARRY_OVER=1`, and asks after one as the app's data folder does with `ask`. Its headset shows up on USB 2.5 s after the page's first look, in
 the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `bootloader`, `edl`, `unknown`).
 
 | Request | Fields | Answer |
@@ -579,7 +586,9 @@ the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `
 | `run_step` | `codename`, `step`, `values` | `job`, whose first line is the command |
 | `stop_job` | `job` | {}; a step ends, a download or backup job finishes by itself |
 | `checks` | `codename` | later: `checks` [{`name`, `needed_for`, `status`, `detail`, `fix`}] |
-| `carry_over`, `carry`, `decline_carry_over` | `from` | the earlier folder and its question; what came over |
+| `carry_over` | | `from` (the earlier folder found, or empty), `question`, `ask` (a fresh app data folder: ask after the portable folder even when none was found) |
+| `carry_check` | `from` | `from`, `question`; refused, in the owner's words, for a folder that is no earlier overpressure or holds nothing to bring over |
+| `carry`, `decline_carry_over` | `from` | what came over; {} |
 
 The end of stdin stops a run or a step under way and ends the server.
 
