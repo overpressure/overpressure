@@ -10,7 +10,9 @@
   import type { Appearance } from "./lib/protocol";
   import { overall } from "./lib/run";
   import { runTitle } from "./lib/words";
+  import { closeWindow, onCloseRequested } from "./lib/bridge";
   import CarryOver from "./components/CarryOver.svelte";
+  import CloseDialog from "./components/CloseDialog.svelte";
   import Icon from "./components/Icon.svelte";
   import StartSheet from "./components/StartSheet.svelte";
   import Advanced from "./pages/Advanced.svelte";
@@ -62,6 +64,15 @@
   $effect(() => paint(app.settings?.appearance ?? "system"));
 
   onMount(() => void app.start());
+
+  /** The window's ×: closes at once when nothing runs, else asks (CloseDialog). */
+  let closing = $state(false);
+  onMount(() =>
+    void onCloseRequested(() => {
+      if (app.running || app.jobRunning) closing = true;
+      else void closeWindow();
+    }),
+  );
 
   function back(): void {
     if (app.page === "run") app.leaveRun();
@@ -180,6 +191,7 @@
 
 {#if app.sheet}<StartSheet sheet={app.sheet} />{/if}
 {#if app.carryOver}<CarryOver offer={app.carryOver} />{/if}
+{#if closing}<CloseDialog onclose={() => (closing = false)} />{/if}
 
 <style>
   .shell {

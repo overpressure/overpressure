@@ -2,16 +2,19 @@
 //! The app's core: it starts the engine (`python -m overpressure serve --json`) and passes lines both ways,
 //! nothing else. The web view has no shell or file access of its own: its one command is `engine_send`, each
 //! line the engine writes arrives as an "engine-line" event, and the system's file dialogs hand it the paths
-//! the owner picks (the backup's export and import, the logs, a step's paths). Closing the window closes the engine's
-//! stdin, which stops a run under way (after a write, never in one) and ends the engine.
+//! the owner picks (the backup's export and import, the logs, a step's paths). Closing the window first asks the front
+//! end ("close-requested"), which closes at once when nothing runs and asks the owner otherwise (`close_window`,
+//! `keep_window`); a second close goes through whatever the page does. Closing closes the engine's stdin, which stops
+//! a run under way (after a write, never in one) and ends the engine.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
 
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 
 /// The engine's stdin, and the process to wait for when the app ends.
 struct Engine {
@@ -130,6 +133,34 @@ fn engine_send(line: String, engine: State<'_, Engine>) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Whether the window's close was put to the front end already: the next one closes, as a stuck page must not keep
+/// the window open.
+#[derive(Default)]
+struct Closing {
+    asked: AtomicBool,
+}
+
+/// Whether a close request goes through now; the first one is put to the front end instead, which answers with
+/// `close_window` or `keep_window`.
+fn close_goes_through(closing: &Closing) -> bool {
+    closing.asked.swap(true, Ordering::SeqCst)
+}
+
+/// Close the window: nothing runs, or the owner chose to stop what does.
+#[tauri::command]
+fn close_window(app: AppHandle, closing: State<'_, Closing>) {
+    closing.asked.store(true, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.close();
+    }
+}
+
+/// Keep the window: the owner chose to let what runs go on; the next close asks again.
+#[tauri::command]
+fn keep_window(closing: State<'_, Closing>) {
+    closing.asked.store(false, Ordering::SeqCst);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -137,9 +168,22 @@ pub fn run() {
         .setup(|app| {
             let engine = start(app.handle())?;
             app.manage(engine);
+            app.manage(Closing::default());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_send])
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if !close_goes_through(&window.state::<Closing>()) {
+                    api.prevent_close();
+                    let _ = window.emit("close-requested", ());
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            engine_send,
+            close_window,
+            keep_window
+        ])
         .build(tauri::generate_context!())
         .expect("the app could not start")
         .run(|app, event| {
@@ -159,7 +203,26 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::demo;
+    use super::{close_goes_through, demo, Closing};
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn the_first_close_asks_the_page_and_the_second_goes_through() {
+        let closing = Closing::default();
+        assert!(
+            !close_goes_through(&closing),
+            "the first close is put to the page"
+        );
+        assert!(
+            close_goes_through(&closing),
+            "a second close goes through, whatever the page does"
+        );
+        closing.asked.store(false, Ordering::SeqCst); // keep_window: the owner chose to stay
+        assert!(
+            !close_goes_through(&closing),
+            "after keep_window the next close asks again"
+        );
+    }
 
     #[test]
     fn the_installed_app_runs_for_real_and_a_development_build_its_demo() {

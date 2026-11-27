@@ -107,3 +107,22 @@ export async function pickPath(pick: Pick): Promise<string> {
     : await dialog.open({ ...options, directory: Boolean(pick.folder), multiple: false });
   return typeof found === "string" ? found : "";
 }
+
+/** Call ASK when the owner closes the app's window (nothing in a browser); it answers with closeWindow or keepWindow. */
+export async function onCloseRequested(ask: () => void): Promise<void> {
+  if (!underTauri()) return;
+  const { listen } = await import("@tauri-apps/api/event");
+  await listen("close-requested", ask);
+}
+
+/** Close the app's window: nothing runs, or the owner chose to stop it. */
+export async function closeWindow(): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("close_window");
+}
+
+/** Keep the app's window open: the next close asks again. */
+export async function keepWindow(): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("keep_window");
+}
