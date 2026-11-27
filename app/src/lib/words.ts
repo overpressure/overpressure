@@ -25,3 +25,16 @@ export function channelName(channel: string): string {
 export function versionLine(downloaded: string, channel: string): string {
   return [shortVersion(downloaded), channelName(channel)].filter((w) => w && w !== "—").join(" · ");
 }
+
+const RUN_TITLES: Record<string, string> = {
+  install: "Installing overpressure",
+  upgrade: "Upgrading overpressure",
+  restore: "Restoring the stock system",
+  check: "Checking the headset",
+  rescue: "Bringing the headset back",
+};
+
+/** A run's title by its workflow: "install" -> "Installing overpressure". */
+export function runTitle(workflow: string): string {
+  return RUN_TITLES[workflow] ?? workflow;
+}

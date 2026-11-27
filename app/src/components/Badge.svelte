@@ -9,8 +9,8 @@
     icon: IconName;
     tip: string;
     tone?: "" | "warn" | "good" | "info" | "bad";
-    /** Where the tooltip opens: "end" keeps it inside a tile's right edge. */
-    place?: "" | "end" | "below";
+    /** Open the tooltip below rather than above, when there is room. */
+    place?: "" | "below";
     /** False inside another button, which may not hold one. */
     focusable?: boolean;
   }
@@ -22,7 +22,6 @@
   <button
     type="button"
     class="badge {tone}"
-    class:tip-end={place === "end"}
     class:tip-below={place === "below"}
     data-tip={tip}
     aria-label={tip}><Icon name={icon} size={13} /></button
@@ -30,7 +29,6 @@
 {:else}
   <span
     class="badge {tone}"
-    class:tip-end={place === "end"}
     class:tip-below={place === "below"}
     data-tip={tip}
     role="img"

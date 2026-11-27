@@ -27,6 +27,9 @@
     lock: "M6 11h12v9H6zM9 11V8a3 3 0 0 1 6 0v3",
     branch: "M7 4v12M7 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM17 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM17 8c0 5-10 3-10 8",
     pin: "M9 4h6l-1 6 3 3H7l3-3-1-6ZM12 13v7",
+    plug: "M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7ZM12 16v5",
+    star: "m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8L12 3Z",
+    cpu: "M7 7h10v10H7zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4",
   } as const;
 
   export type IconName = keyof typeof PATHS;
@@ -40,6 +43,8 @@
   class="icon"
   width={size}
   height={size}
+  style:width="{size}px"
+  style:height="{size}px"
   viewBox="0 0 24 24"
   fill="none"
   stroke="currentColor"

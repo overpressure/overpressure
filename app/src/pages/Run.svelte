@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: Unlicense -->
-<!-- A run: the ring, the stages, the active stage's tasks and notes, the engine's questions as dialogs, the
-     log under Details, and Stop, which stops at once or after a write under way (never cuts one off). Its end:
-     the headset's own words and next steps, or why it failed and what to do (Retry, Import backup). -->
+<!-- A run in two columns: on the left the ring with its stages' names; on the right where it stands, the active
+     stage's tasks and notes, Stop (at once, or after a write under way: never cuts one off) and Details (the log).
+     The engine's questions come as dialogs. Its end: the headset's own words and next steps, or why it failed and
+     what to do (Retry, Import backup). The top bar names the run. -->
 <script lang="ts">
   import { tick } from "svelte";
   import Badge from "../components/Badge.svelte";
@@ -17,17 +18,12 @@
 
   const run = $derived(app.run as RunState);
 
-  const TITLES: Record<string, string> = {
-    install: "Installing overpressure",
-    upgrade: "Upgrading overpressure",
-    restore: "Restoring the stock system",
-    check: "Checking the headset",
-  };
   const STOP_NOW = "It stops now; nothing on the headset changes. Starting again picks up here.";
   const STOP_AFTER_WRITE = "This step writes to the headset and finishes first; the run stops right after.";
 
   const now = $derived(overall(run));
   const statuses = $derived(run.stages.map(stageStatus));
+  const ringStages = $derived(run.stages.map((s, i) => ({ title: s.title, status: statuses[i] ?? "pending" })));
   const stage = $derived(run.stages[now.stage]);
   const outcome = $derived(run.finished?.status ?? null);
   const writing = $derived(run.stages.some((s) => s.tasks.some((t) => t.status === "running" && t.writes)));
@@ -94,105 +90,89 @@
   }
 </script>
 
-<div class="heading">
-  <div>
-    <h1>{TITLES[run.workflow] ?? run.workflow}</h1>
-    <p class="muted">{run.headset}. Keep the headset connected until the run finishes.</p>
+<div class="run">
+  <div class="left">
+    <Ring stages={ringStages} fraction={now.fraction} active={now.stage} {outcome} />
   </div>
-  {#if outcome === "done"}<span class="pill good">Completed</span>
-  {:else if outcome === "failed"}<span class="pill bad">Failed</span>
-  {:else if outcome === "stopped"}<span class="pill">Stopped</span>
-  {:else if stopping}<span class="pill warn">Stopping</span>
-  {:else}<span class="pill info">In progress</span>{/if}
-</div>
 
-<Ring
-  stages={statuses}
-  fraction={now.fraction}
-  active={now.stage}
-  task={now.task?.title ?? stage?.title ?? ""}
-  detail={now.task?.progress || (now.task?.status === "running" ? "Working…" : "")}
-  {outcome}
-/>
-
-<ol class="legend">
-  {#each run.stages as s, i (s.id)}
-    <li class={statuses[i]}>
-      <span class="mark">
-        {#if statuses[i] === "done"}<Icon name="check" size={13} />
-        {:else if statuses[i] === "failed"}<Icon name="alert" size={13} />
-        {:else}{i + 1}{/if}
-      </span>
-      <b>{s.title}</b>
-    </li>
-  {/each}
-</ol>
-
-{#if outcome === "done" && page}
-  <section class="end">
-    <h2>{page.title}</h2>
-    <p class="muted">{page.text}</p>
-    {#if page.actions.length}
-      <div class="next">
-        {#each page.actions as action (action.label)}
-          <button class="btn secondary" onclick={() => act(action)}>{action.label}</button>
-        {/each}
-      </div>
-    {/if}
-  </section>
-{:else if run.finished && run.finished.status !== "done"}
-  <div class="callout" class:bad={run.finished.status === "failed"} class:info={run.finished.status === "stopped"}>
-    <Icon name={run.finished.status === "failed" ? "alert" : "info"} />
-    <div>
-      {#if run.finished.error}<h3>{run.finished.error}</h3>{/if}
-      {#if run.finished.where}<p>{run.finished.where}</p>{/if}
-      {#if run.finished.offer === "import-backup"}
-        <div class="offer">
-          {#if importJob}<JobStatus job={importJob} />{/if}
-          <button class="btn secondary" disabled={app.jobRunning} onclick={importBackup}>Import backup…</button>
-        </div>
-      {/if}
+  <div class="right">
+    <div class="where">
+      {#if outcome === "done"}<span class="pill good">Completed</span>
+      {:else if outcome === "failed"}<span class="pill bad">Failed</span>
+      {:else if outcome === "stopped"}<span class="pill">Stopped</span>
+      {:else if stopping}<span class="pill warn">Stopping</span>
+      {:else}<span class="pill info">In progress</span>{/if}
+      <span class="muted" data-tip="Unplugging it now can leave it half done">{run.headset}: keep it connected</span>
     </div>
-  </div>
-{:else if stage && !outcome}
-  <section class="tasks" aria-label="{stage.title}: tasks">
-    {#each stage.tasks as t (t.id)}
-      <div class="task {t.status}">
-        <span class="mark">
-          {#if t.status === "done" || t.status === "skipped"}<Icon name="check" size={12} />
-          {:else if t.status === "failed"}<Icon name="alert" size={12} />{/if}
-        </span>
-        <span class="name">{t.title}</span>
-        {#if t.writes}<Badge icon="alert" tone="warn" tip="Writes to the headset" />{/if}
-        <span class="state muted">
-          {#if t.status === "running"}{t.progress || "Working…"}{:else if t.status === "skipped"}already there{:else if t.status === "done"}done{:else}{t.estimate}{/if}
-        </span>
+
+    {#if outcome === "done" && page}
+      <section class="end">
+        <h2>{page.title}</h2>
+        <p class="muted">{page.text}</p>
+        {#if page.actions.length}
+          <div class="next">
+            {#each page.actions as action (action.label)}
+              <button class="btn secondary" onclick={() => act(action)}>{action.label}</button>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {:else if run.finished && run.finished.status !== "done"}
+      <div class="callout" class:bad={run.finished.status === "failed"} class:info={run.finished.status === "stopped"}>
+        <Icon name={run.finished.status === "failed" ? "alert" : "info"} />
+        <div>
+          {#if run.finished.error}<h3>{run.finished.error}</h3>{/if}
+          {#if run.finished.where}<p>{run.finished.where}</p>{/if}
+          {#if run.finished.offer === "import-backup"}
+            <div class="offer">
+              {#if importJob}<JobStatus job={importJob} />{/if}
+              <button class="btn secondary" disabled={app.jobRunning} onclick={importBackup}>Import backup…</button>
+            </div>
+          {/if}
+        </div>
       </div>
-    {/each}
-  </section>
-{/if}
-
-{#each run.notes.slice(-3) as note, i (i)}
-  <div class="callout note" class:info={note.level === "info"}><Icon name="info" /><p>{note.text}</p></div>
-{/each}
-
-<div class="footer">
-  <button class="btn ghost" aria-expanded={details} onclick={() => (details = !details)}
-    ><Icon name="terminal" /> {details ? "Hide details" : "Details"}</button
-  >
-  <div class="buttons">
-    {#if !run.finished}
-      <button class="btn secondary" disabled={stopping} onclick={() => stopDialog?.showModal()}
-        ><Icon name="stop" /> Stop</button
-      >
-    {:else if run.finished.status === "done"}
-      <button class="btn primary" onclick={() => app.leaveRun()}>Done <Icon name="check" /></button>
-    {:else}
-      <button class="btn secondary" onclick={() => app.leaveRun()}>Back</button>
-      <button class="btn primary" onclick={() => app.begin(run.workflow)}
-        >{run.finished.status === "failed" ? "Retry" : "Start again"}</button
-      >
+    {:else if stage && !outcome}
+      <section class="tasks" aria-label="{stage.title}: tasks">
+        <h2>{stage.title}</h2>
+        {#each stage.tasks as t (t.id)}
+          <div class="task {t.status}">
+            <span class="mark">
+              {#if t.status === "done" || t.status === "skipped"}<Icon name="check" size={12} />
+              {:else if t.status === "failed"}<Icon name="alert" size={12} />{/if}
+            </span>
+            <span class="name">{t.title}</span>
+            {#if t.writes}<Badge icon="alert" tone="warn" tip="Writes to the headset" />{/if}
+            <span class="state muted">
+              {#if t.status === "running"}{t.progress || "Working…"}{:else if t.status === "skipped"}already there{:else if t.status === "done"}done{:else}{t.estimate}{/if}
+            </span>
+          </div>
+        {/each}
+      </section>
     {/if}
+
+    {#each run.notes.slice(-3) as note, i (i)}
+      <div class="callout note" class:info={note.level === "info"}><Icon name="info" /><p>{note.text}</p></div>
+    {/each}
+
+    <div class="footer">
+      <button class="btn ghost" aria-expanded={details} onclick={() => (details = !details)}
+        ><Icon name="terminal" /> {details ? "Hide details" : "Details"}</button
+      >
+      <div class="buttons">
+        {#if !run.finished}
+          <button class="btn secondary" disabled={stopping} onclick={() => stopDialog?.showModal()}
+            ><Icon name="stop" /> Stop</button
+          >
+        {:else if run.finished.status === "done"}
+          <button class="btn primary" onclick={() => app.leaveRun()}>Done <Icon name="check" /></button>
+        {:else}
+          <button class="btn secondary" onclick={() => app.leaveRun()}>Back</button>
+          <button class="btn primary" onclick={() => app.begin(run.workflow)}
+            >{run.finished.status === "failed" ? "Retry" : "Start again"}</button
+          >
+        {/if}
+      </div>
+    </div>
   </div>
 </div>
 
@@ -242,37 +222,30 @@
 </dialog>
 
 <style>
-  .heading {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .heading h1 {
-    font-size: 23px;
-  }
-
-  .heading p {
-    margin-top: 3px;
-    font-size: 12px;
-  }
-
-  .legend {
-    list-style: none;
-    margin: 0;
-    padding: 16px 0 0;
-    border-top: 1px solid var(--line);
+  .run {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 12px;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: center;
   }
 
-  .legend li {
+  .right {
+    display: grid;
+    gap: 14px;
+    align-content: center;
+    min-width: 0;
+  }
+
+  .where {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     font-size: 12px;
+  }
+
+  .tasks h2 {
+    font-size: 14px;
+    padding: 8px 14px 4px;
   }
 
   .mark {
@@ -307,7 +280,6 @@
   }
 
   .tasks {
-    margin-top: 16px;
     border: 1px solid var(--line);
     border-radius: 10px;
     background: var(--panel);
@@ -341,12 +313,7 @@
     text-align: right;
   }
 
-  .callout {
-    margin-top: 16px;
-  }
-
   .end {
-    margin-top: 16px;
     padding: 16px;
     border-radius: 10px;
     border: 1px solid var(--line);
@@ -377,7 +344,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-top: 20px;
+    gap: 8px;
   }
 
   .buttons {
@@ -386,7 +353,7 @@
   }
 
   .log {
-    margin: 12px 0 0;
+    margin: 16px 0 0;
     max-height: 260px;
     overflow: auto;
     padding: 10px 12px;
@@ -420,6 +387,13 @@
     border: 1px solid var(--line);
     background: var(--inset);
     color: var(--text);
+  }
+
+  @media (max-width: 860px) {
+    .run {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+    }
   }
 
   .dfoot {

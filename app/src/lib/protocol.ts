@@ -47,6 +47,24 @@ export interface HeadsetEntry {
   refused: string;
   workflows: Workflow[];
   has_steps: boolean;
+  /** It looks at itself on USB (assess): its page asks for the headset first. */
+  assesses: boolean;
+}
+
+/** The states a look at the headset finds (overpressure.headset.STATES). */
+export type HeadsetState = "absent" | "maker" | "overpressure" | "bootloader" | "recovery" | "edl" | "unknown";
+
+/** What a look at the plugged-in headset found, without changing it. */
+export interface Found {
+  /** "" when the headset cannot look at itself (assesses false). */
+  state: HeadsetState | "";
+  system: string;
+  version: string;
+  facts: [string, string][];
+  /** The workflows that fit, the recommended one first; empty: all of them. */
+  workflows: string[];
+  note: string;
+  assesses: boolean;
 }
 
 export interface Release {
@@ -58,6 +76,8 @@ export interface Release {
 
 export interface Releases {
   releases: Release[];
+  /** In development: no releases yet, only its preview. */
+  development?: boolean;
   record: { tag?: string | null; channel?: string | null; pinned?: boolean | null };
 }
 

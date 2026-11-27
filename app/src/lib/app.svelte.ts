@@ -7,6 +7,7 @@ import {
   PROTOCOL_MAJOR,
   type Appearance,
   type EngineEvent,
+  type Found,
   type HeadsetEntry,
   type Hello,
   type JobKind,
@@ -42,6 +43,8 @@ export class AppState {
   job = $state<string | null>(null);
   sheet = $state<Sheet | null>(null);
   carryOver = $state<{ from: string; question: string } | null>(null);
+  /** The last look at each headset on USB, by codename. */
+  looks = $state<Record<string, Found>>({});
   problem = $state("");
   /** A short message at the bottom of the window. */
   notice = $state("");
@@ -135,6 +138,17 @@ export class AppState {
     this.page = "advanced";
   }
 
+  /** Look at CODENAME's headset on USB without changing it (FIRST: the page has just opened); null when refused. */
+  async look(codename: string, first = false): Promise<Found | null> {
+    try {
+      const found = await this.engine.request<Found>("assess", { codename, first });
+      this.looks[codename] = found;
+      return found;
+    } catch {
+      return null; // a run or a job has the headset: the last look stands
+    }
+  }
+
   /** Start a job with REQUEST; return its state, which its events keep up to date. */
   async startJob(kind: JobKind, request: string, fields: Record<string, unknown>): Promise<JobState> {
     const { job: id } = await this.engine.request<{ job: string }>(request, fields);
@@ -187,9 +201,10 @@ export class AppState {
     }
   }
 
-  leaveRun(): void {
-    if (this.run && !this.running) this.run = null; // a finished run is closed; a running one keeps going
-    this.page = this.headset ? "headset" : "library";
+  /** Leave the run's page for TO (the headset's page by default): a finished run is closed, a running one goes on. */
+  leaveRun(to: "headset" | "library" = "headset"): void {
+    if (this.run && !this.running) this.run = null;
+    this.page = to === "headset" && this.headset ? "headset" : "library";
   }
 }
 

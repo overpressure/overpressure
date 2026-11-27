@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: Unlicense -->
-<!-- The window: the top bar, the breadcrumb on inner pages, the page, and the status bar. A run or a job keeps
+<!-- The window: the top bar (back, where you are as breadcrumbs ending in the page's heading, GitHub and the
+     settings; the window's own title bar names overpressure), the page, and the status bar. A run or a job keeps
      going while the pages change: only Stop stops it, and the status bar leads back to a run. -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -8,6 +9,7 @@
   import { jobLine } from "./lib/job";
   import type { Appearance } from "./lib/protocol";
   import { overall } from "./lib/run";
+  import { runTitle } from "./lib/words";
   import CarryOver from "./components/CarryOver.svelte";
   import Icon from "./components/Icon.svelte";
   import StartSheet from "./components/StartSheet.svelte";
@@ -22,6 +24,34 @@
   const progress = $derived(app.run ? Math.round(overall(app.run).fraction * 100) : 0);
   const job = $derived(app.job ? app.jobs[app.job] : undefined);
   const inner = $derived(app.page === "headset" || app.page === "run" || app.page === "advanced");
+
+  interface Crumb {
+    label: string;
+    go?: () => void;
+  }
+  const toLibrary = () => (app.page === "run" ? app.leaveRun("library") : (app.page = "library"));
+  const toHeadset = () => (app.page === "run" ? app.leaveRun() : (app.page = "headset"));
+  const crumbs = $derived.by((): Crumb[] => {
+    const name = app.headset?.name ?? app.run?.headset ?? "";
+    switch (app.page) {
+      case "welcome":
+        return [{ label: "Welcome" }];
+      case "library":
+        return [{ label: "Headsets" }];
+      case "headset":
+        return [{ label: "Headsets", go: toLibrary }, { label: name }];
+      case "advanced":
+        return [{ label: "Headsets", go: toLibrary }, { label: name, go: toHeadset }, { label: "Advanced mode" }];
+      case "run":
+        return [
+          { label: "Headsets", go: toLibrary },
+          { label: name, go: toHeadset },
+          { label: app.run ? runTitle(app.run.workflow) : "" },
+        ];
+      default:
+        return [];
+    }
+  });
 
   const systemDark = matchMedia("(prefers-color-scheme: dark)");
   function paint(appearance: Appearance): void {
@@ -49,25 +79,41 @@
 
 <div class="shell">
   <header class="topbar">
-    <button
-      class="brand"
-      onclick={() => {
-        if (app.page !== "loading" && app.page !== "welcome") app.page = "library";
-      }}
-    >
-      <img src={logo} alt="" width="26" height="26" />overpressure
-    </button>
+    <nav class="where" aria-label="Where you are">
+      {#if inner}<button class="iconbtn back" data-tip="Back" class:tip-below={true} aria-label="Back" onclick={back}
+          ><Icon name="left" /></button
+        >{/if}
+      <ol>
+        {#each crumbs as crumb, i (i)}
+          <li class:current={i === crumbs.length - 1}>
+            {#if i > 0}<span class="sep" aria-hidden="true">›</span>{/if}
+            {#if crumb.go && i < crumbs.length - 1}<button class="crumb" onclick={crumb.go}>{crumb.label}</button>
+            {:else}<h1 class="crumb" aria-current="page">{crumb.label}</h1>{/if}
+          </li>
+        {/each}
+      </ol>
+    </nav>
     <div class="actions">
-      <a class="iconbtn" href="https://github.com/overpressure/overpressure" target="_blank" rel="noreferrer" title="GitHub"
-        ><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-label="GitHub"
+      <a
+        class="iconbtn tip-below"
+        href="https://github.com/overpressure/overpressure"
+        target="_blank"
+        rel="noreferrer"
+        data-tip="overpressure on GitHub"
+        aria-label="overpressure on GitHub"
+        ><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
           ><path
             d="M12 .9a11.1 11.1 0 0 0-3.5 21.7c.55.1.75-.24.75-.53v-2.07c-3.06.66-3.7-1.3-3.7-1.3-.5-1.28-1.23-1.62-1.23-1.62-1-.68.08-.67.08-.67 1.1.08 1.68 1.13 1.68 1.13.98 1.68 2.57 1.2 3.2.92.1-.7.38-1.2.7-1.48-2.45-.28-5.02-1.22-5.02-5.46 0-1.21.43-2.2 1.13-2.97-.11-.28-.49-1.4.11-2.92 0 0 .93-.3 3.04 1.13a10.5 10.5 0 0 1 5.54 0c2.1-1.43 3.03-1.13 3.03-1.13.6 1.52.22 2.64.11 2.92.7.77 1.13 1.76 1.13 2.97 0 4.25-2.58 5.18-5.04 5.45.4.34.75 1.02.75 2.05v3.05c0 .3.2.64.76.53A11.1 11.1 0 0 0 12 .9Z"
           /></svg
         ></a
       >
       <div class="menu-wrap">
-        <button class="iconbtn" title="Settings" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}
-          ><Icon name="settings" /></button
+        <button
+          class="iconbtn tip-below"
+          data-tip="Settings"
+          aria-label="Settings"
+          aria-expanded={menuOpen}
+          onclick={() => (menuOpen = !menuOpen)}><Icon name="settings" /></button
         >
         {#if menuOpen && app.settings}
           <div class="menu" role="menu">
@@ -92,21 +138,6 @@
       </div>
     </div>
   </header>
-
-  {#if inner}
-    <nav class="crumbs" aria-label="Where you are">
-      <button class="iconbtn" title="Back" onclick={back}><Icon name="left" /></button>
-      <button class="crumb" onclick={() => (app.page === "run" ? app.leaveRun() : (app.page = "library"))}>Headsets</button>
-      <span class="muted">›</span>
-      <button
-        class="crumb"
-        class:current={app.page === "headset"}
-        onclick={() => (app.page === "run" ? app.leaveRun() : (app.page = "headset"))}
-        >{app.headset?.name ?? app.run?.headset}</button
-      >
-      {#if app.page === "advanced"}<span class="muted">›</span><span class="crumb current">Advanced mode</span>{/if}
-    </nav>
-  {/if}
 
   <main class="page">
     {#if app.problem}
@@ -169,13 +200,60 @@
     border-bottom: 1px solid var(--line);
   }
 
-  .brand {
+  .where {
+    min-width: 0;
     display: flex;
     align-items: center;
-    gap: 9px;
-    font-size: 14px;
-    font-weight: 650;
+    gap: 6px;
+  }
+
+  .where ol {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    list-style: none;
+    margin: 0;
     padding: 0;
+  }
+
+  .where li {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .where li:not(.current) {
+    flex-shrink: 0;
+  }
+
+  .sep {
+    margin: 0 6px;
+    color: var(--muted);
+  }
+
+  .crumb {
+    padding: 4px 2px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  button.crumb:hover {
+    color: var(--blue);
+  }
+
+  h1.crumb {
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -0.2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .back {
+    margin-left: -8px;
   }
 
   .actions {
@@ -230,29 +308,6 @@
 
   .menu button:hover {
     background: var(--hover);
-  }
-
-  .crumbs {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 24px 0;
-    flex-shrink: 0;
-  }
-
-  .crumb {
-    padding: 4px 2px;
-    color: var(--muted);
-    font-size: 13px;
-  }
-
-  button.crumb:hover {
-    color: var(--blue);
-  }
-
-  .crumb.current {
-    color: var(--text);
-    font-weight: 600;
   }
 
   .page {
@@ -311,10 +366,6 @@
     .topbar,
     .status {
       padding: 0 16px;
-    }
-
-    .crumbs {
-      padding: 8px 16px 0;
     }
   }
 </style>

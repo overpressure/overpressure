@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Meta Quest 2 from the front: a soft, plain front with a camera at each corner, its side straps and its top strap</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b2e35"/><stop offset="1" stop-color="#0f1013"/></linearGradient>
+    <linearGradient id="blue" x1="0" y1="184" x2="0" y2="348" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5a92ff"/><stop offset="0.5" stop-color="#2a66ec"/><stop offset="1" stop-color="#1a43b8"/></linearGradient>
+    <linearGradient id="sheen" x1="0" y1="184" x2="0" y2="280" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ffffff" stop-opacity="0.3"/><stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="114.5" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="3"/>
+  <!-- Behind the front: the soft side straps round the head, the top strap over it, and the facial interface. -->
+  <path d="M110 266 A146 120 0 0 1 402 266" fill="none" stroke="#163a9e" stroke-width="24" stroke-linecap="round"/>
+  <rect x="234" y="140" width="44" height="70" rx="10" fill="#163a9e"/>
+  <rect x="118" y="176" width="276" height="160" rx="72" fill="#0b0d12"/>
+  <!-- Where the side straps meet the shell. -->
+  <rect x="86" y="236" width="30" height="58" rx="12" fill="#163a9e"/>
+  <rect x="396" y="236" width="30" height="58" rx="12" fill="#163a9e"/>
+  <!-- The front: one soft, plain cover with a camera in each corner, the lower two on its underside. -->
+  <rect x="104" y="184" width="304" height="164" rx="74" fill="url(#blue)"/>
+  <rect x="104" y="184" width="304" height="164" rx="74" fill="url(#sheen)"/>
+  <circle cx="144" cy="216" r="9" fill="#0b0d12"/>
+  <circle cx="368" cy="216" r="9" fill="#0b0d12"/>
+  <circle cx="160" cy="334" r="9" fill="#0b0d12"/>
+  <circle cx="352" cy="334" r="9" fill="#0b0d12"/>
+</svg>

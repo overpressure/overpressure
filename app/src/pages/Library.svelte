@@ -28,8 +28,6 @@
 
 <svelte:window onkeydown={keys} />
 
-<h1>Headsets</h1>
-
 {#if here.length > 1}
   <label class="search">
     <Icon name="search" />
@@ -42,15 +40,15 @@
   {#each shown as h (h.codename)}
     <div class="cell">
       <button class="tile" onclick={() => app.open(h.codename)} disabled={Boolean(h.refused)} aria-label="Open the {h.name}">
-        <div class="art"><HeadsetArt name={h.name} width={150} /></div>
+        <div class="art"><HeadsetArt codename={h.codename} name={h.name} size={88} /></div>
         <div>
           <h3>{h.name}</h3>
           <p class="muted">{versionLine(h.downloaded, h.channel)}</p>
         </div>
       </button>
       <span class="badges">
-        {#if h.refused}<Badge icon="alert" tone="bad" place="end" tip={`Needs a newer overpressure: ${h.refused}`} />
-        {:else if app.updates[h.codename]}<Badge icon="up" tone="warn" place="end" tip={`Update available: ${app.updates[h.codename]}`} />{/if}
+        {#if h.refused}<Badge icon="alert" tone="bad" tip={`Needs a newer overpressure: ${h.refused}`} />
+        {:else if app.updates[h.codename]}<Badge icon="up" tone="warn" tip={`Update available: ${app.updates[h.codename]}`} />{/if}
       </span>
     </div>
   {/each}
@@ -67,10 +65,6 @@
 {#if adding}<AddDialog onclose={() => (adding = false)} />{/if}
 
 <style>
-  h1 {
-    margin-bottom: 16px;
-  }
-
   .search {
     display: flex;
     align-items: center;
@@ -106,7 +100,7 @@
 
   .cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(168px, 200px));
     gap: 16px;
   }
 

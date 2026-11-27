@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Unlicense
 import { describe, expect, it } from "vitest";
-import { channelName, shortSoc, shortVersion, versionLine } from "./words";
+import { channelName, runTitle, shortSoc, shortVersion, versionLine } from "./words";
 
 describe("short words", () => {
   it("shortens the SoC", () => {
@@ -19,5 +19,10 @@ describe("short words", () => {
     expect(channelName("beta")).toBe("Beta");
     expect(versionLine("release 2026.11.0b1", "beta")).toBe("2026.11.0b1 · Beta");
     expect(versionLine("development checkout", "")).toBe("Checkout");
+  });
+
+  it("names a run by its workflow", () => {
+    expect(runTitle("install")).toBe("Installing overpressure");
+    expect(runTitle("other")).toBe("other");
   });
 });

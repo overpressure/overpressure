@@ -21,8 +21,10 @@
 </script>
 
 <section class="welcome">
-  <img src={logo} alt="" width="56" height="56" />
-  <h1>Welcome to overpressure</h1>
+  <header>
+    <img src={logo} alt="" width="64" height="64" />
+    <h2 class="title">Welcome to overpressure!</h2>
+  </header>
   <div class="callout">
     <Icon name="alert" size={22} />
     <div>
@@ -30,25 +32,31 @@
       {#each paragraphs as paragraph, i (i)}<p>{paragraph}</p>{/each}
     </div>
   </div>
-  <label class="check"><input type="checkbox" bind:checked={every} />Show this on every start</label>
-  <button class="btn primary" onclick={() => onaccept(every)}>{disclaimer.accept} &amp; continue</button>
+  <div class="foot">
+    <label class="check"><input type="checkbox" bind:checked={every} />Show this on every start</label>
+    <button class="btn primary" onclick={() => onaccept(every)}>{disclaimer.accept} &amp; continue</button>
+  </div>
 </section>
 
 <style>
   .welcome {
-    max-width: 500px;
-    margin: 24px auto;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
+    max-width: 520px;
+    margin: 16px auto;
+    display: grid;
+    gap: 24px;
   }
 
-  img {
-    margin-bottom: 20px;
+  header {
+    display: grid;
+    justify-items: center;
+    gap: 16px;
+    text-align: center;
   }
 
-  .callout {
-    margin: 24px 0 20px;
+  .title {
+    font-size: 26px;
+    font-weight: 650;
+    letter-spacing: -0.65px;
   }
 
   .callout p {
@@ -60,11 +68,18 @@
     margin-top: 8px;
   }
 
+  .foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
   .check {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 24px;
   }
 
   .check input {
@@ -72,9 +87,5 @@
     height: 15px;
     margin: 0;
     accent-color: var(--primary);
-  }
-
-  .btn {
-    align-self: flex-end;
   }
 </style>

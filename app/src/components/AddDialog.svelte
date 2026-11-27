@@ -1,11 +1,12 @@
 <!-- SPDX-License-Identifier: Unlicense -->
-<!-- Add a headset: the catalogue (headsets in development listed, not offered), then its version: the newest
-     stable, the newest beta, the preview (main), or one release; then the download. With CODENAME it opens at
-     that headset's version (Change version). -->
+<!-- Add a headset: the catalogue, then its version: the newest stable, the newest beta, the preview (main), or
+     one release; then the download. A headset in development has only its preview, with a warning. With CODENAME
+     it opens at that headset's version (Change version). -->
 <script lang="ts">
   import { app } from "../lib/app.svelte";
   import type { JobState } from "../lib/job";
   import type { HeadsetEntry, Releases } from "../lib/protocol";
+  import { shortSoc } from "../lib/words";
   import HeadsetArt from "./HeadsetArt.svelte";
   import Icon from "./Icon.svelte";
   import JobStatus from "./JobStatus.svelte";
@@ -22,6 +23,7 @@
   let channel = $state<Channel>("stable");
   let version = $state("");
   let job = $state<JobState | null>(null);
+  let understood = $state(false);
 
   const matches = $derived(
     app.headsets.filter((h) =>
@@ -42,10 +44,12 @@
     chosen = headset;
     found = null;
     failure = "";
+    understood = false;
     try {
       found = await app.engine.request<Releases>("releases", { codename: headset.codename });
       const record = found.record;
-      if (record.pinned && record.tag) {
+      if (found.development) channel = "preview";
+      else if (record.pinned && record.tag) {
         channel = "version";
         version = record.tag.replace(/^v/, "");
       } else if (record.channel === "beta" || record.channel === "preview") channel = record.channel;
@@ -101,15 +105,15 @@
     </label>
     <div class="list">
       {#each matches as h (h.codename)}
-        <button class="option" disabled={h.development} onclick={() => choose(h)}>
-          <span class="thumb"><HeadsetArt name={h.name} width={64} /></span>
+        <button class="option" onclick={() => choose(h)}>
+          <HeadsetArt codename={h.codename} name={h.name} size={52} />
           <span class="text">
             <b>{h.name}</b>
-            <span class="muted">{[h.soc, h.year || ""].filter(Boolean).join(" · ")}</span>
+            <span class="muted" data-tip={h.soc || undefined}>{[shortSoc(h.soc), h.year || ""].filter(Boolean).join(" · ")}</span>
           </span>
-          {#if h.development}<span class="pill">In development</span>
-          {:else if h.downloaded}<span class="pill good">Added</span>{/if}
-          {#if !h.development}<Icon name="right" />{/if}
+          {#if h.downloaded}<span class="pill good">Added</span>
+          {:else if h.development}<span class="pill warn">In development</span>{/if}
+          <Icon name="right" />
         </button>
       {:else}
         <p class="muted empty">No headset matches.</p>
@@ -118,7 +122,7 @@
   {:else}
     <div class="body">
       <div class="selected">
-        <span class="thumb"><HeadsetArt name={chosen.name} width={64} /></span>
+        <HeadsetArt codename={chosen.codename} name={chosen.name} size={52} />
         <div>
           <b>{chosen.name}</b>
           <p class="muted">{chosen.downloaded || "Not on this computer yet"}</p>
@@ -130,6 +134,23 @@
         <p class="callout bad">{failure}</p>
       {:else if !found}
         <p class="muted">Looking for its releases…</p>
+      {:else if found.development}
+        <div class="callout">
+          <Icon name="alert" size={20} />
+          <div>
+            <h3>In development</h3>
+            <p>
+              Not one release yet: only the newest development state, untested. It may not run at all, and a run
+              may leave the headset needing its restore. For testing and development only.
+            </p>
+          </div>
+        </div>
+        <label class="channel ack">
+          <input type="checkbox" bind:checked={understood} />
+          <span><b>I understand</b><small>Download the preview anyway.</small></span>
+          <span class="version">main</span>
+        </label>
+        {#if job}<JobStatus {job} />{/if}
       {:else}
         <fieldset class="channels" disabled={job !== null && job.code === null}>
           <legend class="sr-only">Version</legend>
@@ -167,7 +188,12 @@
       {:else}<span></span>{/if}
       <button
         class="btn primary"
-        disabled={!found || chosen.checkout || (job !== null && job.code === null) || app.running || app.jobRunning}
+        disabled={!found ||
+          chosen.checkout ||
+          (found.development && !understood) ||
+          (job !== null && job.code === null) ||
+          app.running ||
+          app.jobRunning}
         onclick={download}><Icon name="download" /> Download</button
       >
     </div>
@@ -240,12 +266,6 @@
 
   .text .muted {
     font-size: 12px;
-  }
-
-  .thumb {
-    width: 72px;
-    display: grid;
-    place-items: center;
   }
 
   .empty {
@@ -332,6 +352,11 @@
 
   .callout {
     font-size: 12px;
+  }
+
+  .callout p {
+    margin-top: 2px;
+    line-height: 1.5;
   }
 
   .sr-only {
