@@ -9,7 +9,8 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "bundle": "tauri build --config src-tauri/tauri.bundle.json"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",

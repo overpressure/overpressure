@@ -368,7 +368,27 @@ so the headset's USB network never comes up. The doctor checks that a rule turns
 `app/` holds the window that replaces the CustomTkinter one: a web front end (Svelte 5, TypeScript, Vite; Inter
 bundled) in a Tauri 2 shell. Its Rust core starts [the app's server](#the-apps-server) and passes lines both
 ways; the web view has no shell or file access of its own. It runs the demo engine unless
-`OVERPRESSURE_APP_REAL=1`; `OVERPRESSURE_PYTHON` names the Python, `OVERPRESSURE_ROOT` the overpressure folder.
+`OVERPRESSURE_APP_REAL=1`. Its engine is the one it was installed with, else the `python` on PATH in the checkout it
+was built in; `OVERPRESSURE_PYTHON` and `OVERPRESSURE_ROOT` name another Python and overpressure folder.
+
+**The bundled engine.** `pnpm bundle` (`tauri build` with `src-tauri/tauri.bundle.json`) runs
+[scripts/bundle-app.py](../scripts/bundle-app.py) first, which fills `src-tauri/engine/`, and ships it as the
+app's resources:
+
+- `python/`: uv's managed Python 3.12 (a python-build-standalone build), from the uv the start scripts pin
+  (Install.cmd, install.sh: its version and each system's SHA-256), with `uv.lock`'s packages, exported with
+  their hashes and installed with every hash required; without the standard library's tests, IDLE and Tk, which
+  the engine does not need (the doctor's Tk check then says the window's Tk is missing, which the app does not
+  use);
+- `root/`: what git tracks under `overpressure/`, `devices/__init__.py`, `pyproject.toml` (the version),
+  `.env.example` and the licences, compiled to bytecode;
+- `bundle.json`: the Python's and the packages' versions, overpressure's commit, the files and bytes.
+
+The Python is relocatable, so the app runs it where it was installed, without the computer's own Python: no user
+site-packages, no `PYTHONPATH` or `PYTHONHOME`. On Windows: Python 3.12.15 with brotli, pyusb, libusb-package and
+truststore, 59 MB in 2,300 files, overpressure 3 MB. The engine still keeps its folders (`.env`, `backup/`,
+`cache/`, `out/`, `devices/`) below that root, inside the installed app: until they move to a data folder of their
+own, an uninstall removes them with the app.
 
 ```sh
 cd app && pnpm install --frozen-lockfile
@@ -377,6 +397,7 @@ pnpm check && pnpm test  # types and unit tests
 pnpm tauri dev           # the app's window: needs rustup (app/src-tauri/rust-toolchain.toml pins Rust) and, on
                          # Windows, the Visual Studio Build Tools' C++ workload
 pnpm tauri build --bundles nsis   # Windows' per-user installer, in src-tauri/target/release/bundle/
+pnpm bundle --bundles nsis        # the same with the bundled engine (scripts/bundle-app.py first; needs a python)
 ```
 
 Its pages, each in light and dark and down to its smallest window:

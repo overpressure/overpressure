@@ -19,29 +19,55 @@ struct Engine {
     child: Mutex<Option<Child>>,
 }
 
-/// Where `python -m overpressure` runs: OVERPRESSURE_ROOT, else the checkout this core was built in.
-/// The bundled app's own root (its Python and overpressure inside it) replaces this with the packaging.
-fn root() -> PathBuf {
-    std::env::var_os("OVERPRESSURE_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("..")
-        })
+/// The engine the app was installed with (scripts/bundle-app.py, shipped by `pnpm bundle`): its own Python and
+/// overpressure's root in the resources' `engine/`. None for a development build, which has neither.
+fn bundled(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
+    let dir = app.path().resource_dir().ok()?.join("engine");
+    let python = if cfg!(windows) {
+        dir.join("python").join("python.exe")
+    } else {
+        dir.join("python").join("bin").join("python3")
+    };
+    let root = dir.join("root");
+    (python.is_file() && root.join("overpressure").is_dir()).then_some((python, root))
+}
+
+/// Which Python runs `python -m overpressure`, and where: OVERPRESSURE_PYTHON and OVERPRESSURE_ROOT when set,
+/// else the bundled engine, else the `python` on PATH in the checkout this core was built in.
+fn engine(app: &AppHandle) -> (PathBuf, PathBuf, bool) {
+    let python = std::env::var_os("OVERPRESSURE_PYTHON").map(PathBuf::from);
+    let root = std::env::var_os("OVERPRESSURE_ROOT").map(PathBuf::from);
+    let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
+    match (python, root, bundled(app)) {
+        (None, None, Some((python, root))) => (python, root, true),
+        (python, root, _) => (
+            python.unwrap_or_else(|| "python".into()),
+            root.unwrap_or(checkout),
+            false,
+        ),
+    }
 }
 
 /// The engine's command line. The demo unless OVERPRESSURE_APP_REAL=1: until the app is trusted, a real run
-/// is something a developer asks for.
-fn command() -> Command {
-    let python = std::env::var("OVERPRESSURE_PYTHON").unwrap_or_else(|_| "python".into());
+/// is something a developer asks for. The bundled Python sees nothing of the computer's own Python: no user
+/// site-packages, no PYTHONPATH or PYTHONHOME.
+fn command(app: &AppHandle) -> Command {
+    let (python, root, bundled) = engine(app);
     let mut command = Command::new(python);
     command.args(["-m", "overpressure", "serve", "--json"]);
     if std::env::var("OVERPRESSURE_APP_REAL").as_deref() != Ok("1") {
         command.arg("--demo");
     }
+    if bundled {
+        command
+            .env("PYTHONNOUSERSITE", "1")
+            .env_remove("PYTHONPATH")
+            .env_remove("PYTHONHOME");
+    }
     command
-        .current_dir(root())
+        .current_dir(root)
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::piped())
@@ -58,7 +84,7 @@ fn command() -> Command {
 
 /// Start the engine and pass each line of its stdout to the web view; its stderr goes to this process's.
 fn start(app: &AppHandle) -> std::io::Result<Engine> {
-    let mut child = command().spawn()?;
+    let mut child = command(app).spawn()?;
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
     let handle = app.clone();
