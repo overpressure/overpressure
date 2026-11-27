@@ -367,9 +367,12 @@ so the headset's USB network never comes up. The doctor checks that a rule turns
 
 `app/` holds the window that replaces the CustomTkinter one: a web front end (Svelte 5, TypeScript, Vite; Inter
 bundled) in a Tauri 2 shell. Its Rust core starts [the app's server](#the-apps-server) and passes lines both
-ways; the web view has no shell or file access of its own. It runs the demo engine unless
-`OVERPRESSURE_APP_REAL=1`. Its engine is the one it was installed with, else the `python` on PATH in the checkout it
-was built in; `OVERPRESSURE_PYTHON` and `OVERPRESSURE_ROOT` name another Python and overpressure folder.
+ways; the web view has no shell or file access of its own. Its engine is the one it was installed with, else the
+`python` on PATH in the checkout it was built in; `OVERPRESSURE_PYTHON` and `OVERPRESSURE_ROOT` name another Python
+and overpressure folder. The installed app runs for real, the demo only with `OVERPRESSURE_APP_DEMO=1`; a
+development build (`pnpm tauri dev`, the checkout's engine) runs the demo unless `OVERPRESSURE_APP_REAL=1`, so that a
+developer's own headset is touched only on request. The window says *Demo · nothing touches a headset* while the demo
+runs.
 
 **The bundled engine.** `pnpm bundle` (`tauri build` with `src-tauri/tauri.bundle.json`) runs
 [scripts/bundle-app.py](../scripts/bundle-app.py) first, which fills `src-tauri/engine/`, and ships it as the

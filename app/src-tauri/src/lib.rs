@@ -50,14 +50,24 @@ fn engine(app: &AppHandle) -> (PathBuf, PathBuf, bool) {
     }
 }
 
-/// The engine's command line. The demo unless OVERPRESSURE_APP_REAL=1: until the app is trusted, a real run
-/// is something a developer asks for. The bundled Python sees nothing of the computer's own Python: no user
-/// site-packages, no PYTHONPATH or PYTHONHOME.
+/// Whether the engine runs its demo, where nothing touches a headset. The installed app (its bundled engine) runs
+/// for real unless OVERPRESSURE_APP_DEMO=1; a development build from a checkout runs the demo unless
+/// OVERPRESSURE_APP_REAL=1, so that a developer's own headset is touched only on request.
+fn demo(bundled: bool, flag: impl Fn(&str) -> bool) -> bool {
+    if bundled {
+        flag("OVERPRESSURE_APP_DEMO")
+    } else {
+        !flag("OVERPRESSURE_APP_REAL")
+    }
+}
+
+/// The engine's command line (demo decides about --demo). The bundled Python sees nothing of the computer's own
+/// Python: no user site-packages, no PYTHONPATH or PYTHONHOME.
 fn command(app: &AppHandle) -> Command {
     let (python, root, bundled) = engine(app);
     let mut command = Command::new(python);
     command.args(["-m", "overpressure", "serve", "--json"]);
-    if std::env::var("OVERPRESSURE_APP_REAL").as_deref() != Ok("1") {
+    if demo(bundled, |name| std::env::var(name).as_deref() == Ok("1")) {
         command.arg("--demo");
     }
     if bundled {
@@ -145,4 +155,24 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::demo;
+
+    #[test]
+    fn the_installed_app_runs_for_real_and_a_development_build_its_demo() {
+        let none = |_: &str| false;
+        assert!(!demo(true, none), "the installed app: real by default");
+        assert!(
+            demo(false, none),
+            "a development build: the demo by default"
+        );
+        assert!(demo(true, |name| name == "OVERPRESSURE_APP_DEMO"));
+        assert!(!demo(false, |name| name == "OVERPRESSURE_APP_REAL"));
+        // Each build answers only its own variable.
+        assert!(!demo(true, |name| name == "OVERPRESSURE_APP_REAL"));
+        assert!(demo(false, |name| name == "OVERPRESSURE_APP_DEMO"));
+    }
 }
