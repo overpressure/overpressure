@@ -2,6 +2,7 @@
 """overpressure.android: adb and fastboot run fail-closed, the device choice, the bootloader's state."""
 
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -34,6 +35,11 @@ class AndroidToolTests(unittest.TestCase):
         with patch.object(android.subprocess, "run", side_effect=subprocess.TimeoutExpired("fake", 60)):
             with self.assertRaises(subprocess.TimeoutExpired):
                 android.run(["fake"])
+
+    def test_output_that_is_not_utf8_is_kept(self):
+        # edl-ng on Windows writes in the console's code page; a byte UTF-8 cannot decode must not end the step.
+        script = "import sys; sys.stdout.buffer.write(bytes([0x82]) + b'Successfully wrote')"
+        self.assertIn("Successfully wrote", android.run([sys.executable, "-c", script]))
 
     def test_libusb_warnings_are_not_failures(self):
         # macOS' libusb prints "transfer error: timed out" for a transfer that edl-ng retries and completes

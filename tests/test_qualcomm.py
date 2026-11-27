@@ -143,6 +143,44 @@ class DrainTests(unittest.TestCase):
         self.assertEqual(clock.now, 0)
 
 
+class UnstickTests(unittest.TestCase):
+    """A loader a broken session left mid-transfer: read what it still sends, then restart it into EDL."""
+
+    def test_reads_until_the_loader_stays_quiet(self):
+        clock, reads = FakeClock(), iter([3693, 512, 0])
+        self.assertEqual(qualcomm.drain_session(lambda: next(reads, 0), clock, quiet=3), 4205)
+        self.assertGreaterEqual(clock.now, 3)
+        self.assertLess(clock.now, 4)
+
+    def test_a_loader_that_keeps_sending_is_reported(self):
+        clock = FakeClock()
+        with self.assertRaisesRegex(RuntimeError, "still sends after 10 s"):
+            qualcomm.drain_session(lambda: 4096, clock, seconds=10)
+
+    def test_the_restart_into_edl_comes_after_the_drain(self):
+        clock, steps = FakeClock(), []
+
+        def read() -> int:
+            steps.append("read")
+            return 0
+
+        def runner(argv: list, _timeout: float) -> str:
+            steps.append(argv[-2:])
+            return "Power command 'Edl' sent successfully."
+
+        self.assertEqual(qualcomm.unstick("edl-ng", "loader.elf", runner, clock, read=read), 0)
+        self.assertEqual(steps[-1], ["--mode", "Edl"])
+        self.assertTrue(all(step == "read" for step in steps[:-1]))
+        self.assertGreater(len(steps), 1)
+
+    def test_the_port_of_qualcomms_serial_driver(self):
+        self.assertEqual(qualcomm.com_port("Qualcomm HS-USB QDLoader 9008 (COM8)\r\n"), "COM8")
+        self.assertEqual(qualcomm.com_port(""), "")
+        reader = qualcomm.ComReader(lambda _argv, _timeout: "Qualcomm HS-USB QDLoader 9008 (COM12)")
+        self.assertEqual(reader.find(), "COM12")
+        self.assertEqual(qualcomm.ComReader(lambda _argv, _timeout: "")(), 0)  # no port: nothing read
+
+
 class UnansweredTests(unittest.TestCase):
     def test_edl_ngs_words_for_a_device_that_does_not_answer(self):
         for mode in ("Unknown", "Error"):

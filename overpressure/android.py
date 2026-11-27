@@ -30,8 +30,17 @@ DEVICE_ROW_FIELDS = 2
 def run(command: list[str], timeout: int = 60) -> str:
     """Adb or fastboot, logged to stderr; a nonzero exit, FAILED or ERROR raises ValueError."""
     print(">> " + subprocess.list2cmdline(command), file=sys.stderr)
+    # Their output is not always UTF-8 (edl-ng's on Windows is in the console's code page): a byte it cannot
+    # decode becomes U+FFFD, not an exception that loses the output and leaves the program's session cut off.
     result = subprocess.run(  # noqa: S603  # adb or fastboot with the step's arguments, no shell
-        command, capture_output=True, text=True, timeout=timeout, check=False, stdin=subprocess.DEVNULL
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        check=False,
+        stdin=subprocess.DEVNULL,
     )
     output = result.stdout + "\n" + result.stderr
     # macOS' libusb warns about transfers its caller retries and completes ("transfer error: timed out")

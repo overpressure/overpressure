@@ -1,6 +1,6 @@
 # Headset interface reference
 
-**TL;DR.** Every name a headset may use in headset interface 1.11, `overpressure.api.v1`: its
+**TL;DR.** Every name a headset may use in headset interface 1.12, `overpressure.api.v1`: its
 modules, and in each its functions and classes with their signatures, dataclass fields and constants, each
 with the first paragraph of its documentation. A headset imports only these
 (`from overpressure.api.v1 import REPO, qualcomm`, `from overpressure.api.v1.headset import Headset, Step`).
@@ -443,7 +443,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 
 `overpressure.api.v1.headset`: the headset, its steps, workflows and finished page ([source](../overpressure/headset.py)).
 
-- `SUPPORTED: dict[int, int] = {1: 11}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
+- `SUPPORTED: dict[int, int] = {1: 12}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
 - `API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"`: The newest interface: what a new headset is made for.
 - `RETIRED: dict[int, str] = {}`: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
 - `MANIFEST = "headset.json"`: A headset folder's description of itself: devices/<codename>/headset.json.
@@ -1002,7 +1002,16 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - `reboot_argv(program: str | Path, loader: str | Path) -> list[str | Path]`: Return the edl-ng command that leaves EDL with a normal restart (Firehose's reset): Android starts.
 - `RESTART_SECONDS = 60`: Seconds a loader may take to carry out fresh_edl_argv's restart (the PICO 4's: about 12 s, whatever the delay asked).
 - class `UsbReader`: Read what a device's loader still sends on its USB pipe: a computer's reading lets it carry out a reset.
+  - `queued(self) -> int`: Read what the device's loader still sends; return the bytes read (0: nothing, or the device is gone).
+  - `read(self) -> int | None`: Read the device's pipe until a read times out; return the bytes read, None once it has left USB.
 - `drain_until_gone(clock: Timing, *, seconds: float = 60, reader: Callable[[], bool] | None = None, platform: str = sys.platform) -> bool`: After a power command, read the device's pipe until it leaves USB; return whether it left in @p seconds.
+- `QUIET_SECONDS = 3.0`: Seconds a broken session's loader may stay silent before what it still sends counts as read (drain_session).
+- `DRAIN_SECONDS = 300.0`: The most a broken session's loader is read: a whole partition's readback is at most a few hundred MB.
+- `com_port(output: str) -> str`: Return the COM port in Get-PnpDevice's FriendlyName output ("Qualcomm HS-USB QDLoader 9008 (COM8)"), or "".
+- class `ComReader`: Windows: read what an EDL device's loader still sends, through Qualcomm's serial driver (its COM port).
+  - `find(self) -> str`: Return the EDL device's COM port, or "" when Windows lists none.
+- `drain_session(read: Callable[[], int], clock: Timing, *, quiet: float = QUIET_SECONDS, seconds: float = DRAIN_SECONDS) -> int`: Read what a broken session's loader still sends until it stays @p quiet seconds; return the bytes read.
+- `unstick(program: str | Path, loader: str | Path, runner: Callable[[list[str | Path], float], str], clock: Timing, *, read: Callable[[], int] | None = None, platform: str = sys.platform) -> int`: Free a loader that a broken session left mid-transfer, and restart it into a fresh EDL session.
 - `wait_fresh_edl(edl_count: Callable[[], int], clock: Timing, *, seconds: float = RESTART_SECONDS) -> None`: Wait until the device restarted by fresh_edl_argv has left USB, then is back as the one EDL device.
 - `check_edl_serial(output: str, serial: str) -> None`: Raise unless edl-ng's @p output names @p serial: only the configured headset may be written.
 - `partition_size(backup: Path, label: str) -> int`: Return a partition's size from the backup's rawprogram maps.

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 #: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this
 #: overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new
 #: major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
-SUPPORTED: dict[int, int] = {1: 11}
+SUPPORTED: dict[int, int] = {1: 12}
 #: The newest interface: what a new headset is made for.
 API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"
 #: The majors this overpressure no longer runs, each with the last overpressure version that ran it.

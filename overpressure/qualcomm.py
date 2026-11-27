@@ -547,22 +547,34 @@ class UsbReader:
         A device back at another address is the restarted one: it is never read, so that a fresh
         EDL session keeps its greeting for edl-ng.
         """
+        return self.read() is None
+
+    def queued(self) -> int:
+        """Read what the device's loader still sends; return the bytes read (0: nothing, or the device is gone)."""
+        return self.read() or 0
+
+    def read(self) -> int | None:
+        """Read the device's pipe until a read times out; return the bytes read, None once it has left USB.
+
+        Without pyusb nothing is read (0). A device back at another address is the restarted one (None).
+        """
         try:
             import libusb_package  # noqa: PLC0415  # pinned in pyproject.toml; imported where used
             import usb.core  # noqa: PLC0415  # pinned in pyproject.toml; imported where used
             import usb.util  # noqa: PLC0415  # pinned in pyproject.toml; imported where used
         except ImportError:
-            return False
+            return 0
         backend = libusb_package.get_libusb1_backend()
         device = usb.core.find(idVendor=self.vendor, idProduct=self.product, backend=backend)
         if device is None:
-            return True
+            return None
         where = (int(device.bus or 0), int(device.address or 0))
         if self.seen is None:
             self.seen = where
         elif where != self.seen:
             usb.util.dispose_resources(device)
-            return True  # the restarted device: left alone
+            return None  # the restarted device: left alone
+        total = 0
         try:
             with contextlib.suppress(NotImplementedError, usb.core.USBError):
                 if device.is_kernel_driver_active(0):
@@ -573,15 +585,15 @@ class UsbReader:
                 custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN,
             )
             if endpoint is None:
-                return False
+                return 0
             usb.util.claim_interface(device, 0)
             for _ in range(64):  # what is queued, a packet at a time, until a read times out
-                device.read(endpoint.bEndpointAddress, 16384, timeout=250)
+                total += len(device.read(endpoint.bEndpointAddress, 16384, timeout=250))
         except usb.core.USBError:  # a timeout (nothing more queued), or the device left while reading
             pass
         finally:
             usb.util.dispose_resources(device)
-        return False
+        return total
 
 
 def drain_until_gone(
@@ -604,6 +616,122 @@ def drain_until_gone(
             return True
         clock.sleep(0.2)
     return False
+
+
+#: Seconds a broken session's loader may stay silent before what it still sends counts as read (drain_session).
+QUIET_SECONDS = 3.0
+#: The most a broken session's loader is read: a whole partition's readback is at most a few hundred MB.
+DRAIN_SECONDS = 300.0
+
+
+def com_port(output: str) -> str:
+    """Return the COM port in Get-PnpDevice's FriendlyName output ("Qualcomm HS-USB QDLoader 9008 (COM8)"), or ""."""
+    match = re.search(r"\((COM\d+)\)", output)
+    return match.group(1) if match else ""
+
+
+class ComReader:
+    """Windows: read what an EDL device's loader still sends, through Qualcomm's serial driver (its COM port).
+
+    The driver keeps the device's pipe moving, but what the loader sent after its session ended waits in the
+    port's buffer, in front of the next session's answers; edl-ng then reads the old transfer's bytes as its
+    answers and its writes time out. Reading the port empties it. Only reads: nothing is sent to the device.
+    """
+
+    def __init__(self, command: Callable[[list[str], float], str] = run) -> None:
+        """Find the port with @p command (PowerShell's Get-PnpDevice) at the first read."""
+        self.command = command
+        self.port = ""
+
+    def find(self) -> str:
+        """Return the EDL device's COM port, or "" when Windows lists none."""
+        pattern = "USB\\VID_{}&PID_{}*".format(*EDL_USB).upper()
+        script = f"Get-PnpDevice -PresentOnly | Where-Object {{ $_.InstanceId -like '{pattern}' }} | % FriendlyName"
+        return com_port(self.command(["powershell", "-NoProfile", "-Command", script], 30))
+
+    def __call__(self) -> int:
+        """Read the port until it gives nothing for half a second; return the bytes read (0: none waited)."""
+        self.port = self.port or self.find()
+        if not self.port or sys.platform != "win32":
+            return 0
+        import ctypes  # noqa: PLC0415  # Windows only
+        from ctypes import wintypes  # noqa: PLC0415  # Windows only
+
+        class Timeouts(ctypes.Structure):
+            _fields_ = (  # ctypes reads the class attribute
+                ("ReadIntervalTimeout", wintypes.DWORD),
+                ("ReadTotalTimeoutMultiplier", wintypes.DWORD),
+                ("ReadTotalTimeoutConstant", wintypes.DWORD),
+                ("WriteTotalTimeoutMultiplier", wintypes.DWORD),
+                ("WriteTotalTimeoutConstant", wintypes.DWORD),
+            )
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.CreateFileW.argtypes = (
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+            wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+        )  # fmt: skip
+        generic_read, generic_write, open_existing = 0x80000000, 0x40000000, 3
+        handle = kernel32.CreateFileW(
+            f"\\\\.\\{self.port}", generic_read | generic_write, 0, None, open_existing, 0, None
+        )
+        if handle in (None, ctypes.c_void_p(-1).value):
+            return 0  # in use, or gone
+        total = 0
+        try:
+            kernel32.SetCommTimeouts(handle, ctypes.byref(Timeouts(50, 0, 500, 0, 1000)))
+            buffer, got = ctypes.create_string_buffer(1 << 20), wintypes.DWORD()
+            while kernel32.ReadFile(handle, buffer, len(buffer), ctypes.byref(got), None) and got.value:
+                total += got.value
+        finally:
+            kernel32.CloseHandle(handle)
+        return total
+
+
+def drain_session(
+    read: Callable[[], int], clock: Timing, *, quiet: float = QUIET_SECONDS, seconds: float = DRAIN_SECONDS
+) -> int:
+    """Read what a broken session's loader still sends until it stays @p quiet seconds; return the bytes read.
+
+    @p read reads what is queued and returns its size (ComReader on Windows, UsbReader.queued elsewhere).
+    Raises RuntimeError when the loader still sends after @p seconds.
+    """
+    total, end, last = 0, clock.monotonic() + seconds, clock.monotonic()
+    while clock.monotonic() < end:
+        got = read()
+        total += got
+        if got:
+            last = clock.monotonic()
+        elif clock.monotonic() - last >= quiet:
+            return total
+        clock.sleep(0.2)
+    msg = f"the headset in EDL mode still sends after {seconds:.0f} s"
+    raise RuntimeError(msg)
+
+
+def unstick(  # noqa: PLR0913  # edl-ng, its loader, the runner and the clock; the reader keyword-only
+    program: str | Path,
+    loader: str | Path,
+    runner: Callable[[list[str | Path], float], str],
+    clock: Timing,
+    *,
+    read: Callable[[], int] | None = None,
+    platform: str = sys.platform,
+) -> int:
+    """Free a loader that a broken session left mid-transfer, and restart it into a fresh EDL session.
+
+    What the loader still sends is read first (drain_session): until then it takes no command, and every new
+    session meets the old transfer's bytes and times out. Then fresh_edl_argv restarts the chip; the caller
+    waits for the fresh session (drain_until_gone, wait_fresh_edl). Nothing is written to the device's storage.
+    Return the bytes read. Raises RuntimeError when the loader does not take the restart: then only a restart
+    by hand (the power button) frees it.
+    """
+    if read is None:
+        read = ComReader() if platform == "win32" else UsbReader().queued
+    total = drain_session(read, clock)
+    runner(fresh_edl_argv(program, loader), 60)
+    return total
 
 
 def wait_fresh_edl(edl_count: Callable[[], int], clock: Timing, *, seconds: float = RESTART_SECONDS) -> None:
