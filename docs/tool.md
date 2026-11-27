@@ -108,6 +108,14 @@ the stock OTA, a headset's kernel and packages) goes through [overpressure/web.p
   its reason; any other answer fails at once.
 - **A failure says why**: the URL and the HTTP status, the certificate's problem, the name, the timeout or the
   connection.
+- **A vendor's archive in ranges** ([overpressure/payload.py](../overpressure/payload.py)): a connection the
+  server ends in the middle of a range keeps what came and asks for the rest; only tries that bring nothing count
+  against the five attempts (PICO's CDN ends connections a few megabytes into a range).
+- **Mirrors**: a catalog build may list `mirrors`, the same archive on the vendor's other hosts. `ota.fastest`
+  reads 4 MB from the archive's middle on each, for at most 15 s, leaves out a host that answers with another size
+  or not at all, and takes the fastest; what comes from it is checked as from any other (each member's CRC-32,
+  and pins where a headset has them). A host is fast for an archive its edge has cached: PICO's US host gave 16 to
+  22 MB/s for one, under 1 MB/s for one it had not served.
 
 ## Linux-root steps
 

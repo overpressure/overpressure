@@ -35,6 +35,7 @@ uses only what that minor had. The source links lead to the code, which says mor
 | [`kernelinfo`](#kernelinfo) | a kernel image's version and configuration |
 | [`kernelpin`](#kernelpin) | a headset's pin of overpressure/linux and its contracts, since 1.7 |
 | [`localconfig`](#localconfig) | a headset's settings in .env |
+| [`lp`](#lp) | dynamic partitions: super's logical partitions, a new layout's metadata |
 | [`ota`](#ota) | a vendor's OTA: boot images and partitions, pinned members |
 | [`pacman`](#pacman) | pacman's repositories on any host, since 1.7 |
 | [`payload`](#payload) | Android A/B OTA payloads |
@@ -770,6 +771,49 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - `update(values: Mapping[str, str], path: Path | None = None, example: Path | None = None) -> None`: Set KEY=VALUE lines in .env, keeping every other line and comment.
 - `load(cls: type[S] = Settings, path: Path | None = None, environ: Mapping[str, str] | None = None) -> S`: Return the settings of class @p cls from .env and the environment.
 
+## lp
+
+`overpressure.api.v1.lp`: dynamic partitions: super's logical partitions, a new layout's metadata ([source](../overpressure/lp.py)).
+
+- `SECTOR = 512`
+- `RESERVED = 4096`
+- `GEOMETRY_SIZE = 4096`
+- `GEOMETRY_MAGIC = 0x616C4467`
+- `HEADER_MAGIC = 0x414C5030`
+- `HEADER_MAJOR = 10`
+- `HEADER = struct.Struct("<IHHI32sI32s")`: The header's fixed part, up to its table descriptors: magic, versions, size, checksum, tables' size and checksum.
+- `DESCRIPTOR = struct.Struct("<III")`
+- `PARTITION = struct.Struct("<36sIIII")`
+- `EXTENT = struct.Struct("<QIQI")`
+- class `LpError(ValueError)`: Not a super image, or metadata this reader refuses to guess about.
+- class `Extent` (@dataclass(frozen=True)): A run of a logical partition: @p size bytes at @p start in super, or zeros.
+  - `start: int`
+  - `size: int`
+  - `zero: bool = False`
+- `partitions(file: IO[bytes]) -> dict[str, tuple[Extent, ...]]`: Return the logical partitions of the super image in @p file (slot 0) and their extents.
+- class `LogicalPartition(io.RawIOBase)`: A logical partition of a super image as one seekable read-only file.
+  - `readable(self) -> bool`: Tell io that it reads.
+  - `seekable(self) -> bool`: Tell io that it seeks.
+  - `tell(self) -> int`: Return the position in the logical partition.
+  - `seek(self, offset: int, whence: int = io.SEEK_SET) -> int`: Move to @p offset (from the start, the position or the end, as @p whence says).
+  - `readinto(self, buffer: bytearray | memoryview) -> int`: Read into @p buffer from the position on, across extents; 0 at the end.
+- `GEOMETRY = struct.Struct("<II32sIII")`
+- `GROUP = struct.Struct("<36sIQ")`
+- `BLOCK_DEVICE = struct.Struct("<QIIQ36sI")`
+- `HEADER_SIZE = HEADER.size + 4 * DESCRIPTOR.size`
+- `READONLY = 1`: A partition's attribute: mounted read-only.
+- class `Layout` (@dataclass(frozen=True)): A super partition's fixed shape: its metadata, where its logical partitions may start, its size.
+  - `size: int`: the super partition's size in bytes
+  - `alignment: int`
+  - `alignment_offset: int`
+  - `metadata_max_size: int = 65536`
+  - `slots: int = 2`
+  - `block_size: int = 4096`
+  - `first_logical_sector: int = 2048`: 1 MiB: the metadata's region and the first extent's lower bound
+  - `name: str = "super"`
+- `op_list(text: str) -> tuple[str, int, list[tuple[str, int]]]`: Return a full OTA's dynamic_partitions_op_list as its group, the group's maximum and its partitions' sizes.
+- `build(layout: Layout, group: str, maximum: int, sizes: list[tuple[str, int]]) -> tuple[bytes, dict[str, tuple[Extent, ...]]]`: Lay out @p sizes (name, bytes, in order) in one group and return super's metadata region and the extents.
+
 ## ota
 
 `overpressure.api.v1.ota`: a vendor's OTA: boot images and partitions, pinned members ([source](../overpressure/ota.py)).
@@ -781,6 +825,10 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - `TRANSFER_LIST_VERSIONS = range(1, 5)`: The transfer list versions AOSP's block OTAs write.
 - `TRANSFER_LIST_STASH_VERSION = 2`: From this version on, two more header lines count the stash.
 - `load_catalog(path: str | os.PathLike[str]) -> dict`: Return a headset's catalog of its vendor's builds: name -> {"url": ..., ...}.
+- `PROBE = 4 << 20`: How much of each host fastest() reads, from the archive's middle: enough to tell 3 MB/s from 20 MB/s.
+- `PROBE_SECONDS = 15`: How long a host may take to answer the probe at all.
+- `sources(build: Mapping[str, Any]) -> list[str]`: Return a catalog build's URLs: its url, then its mirrors (the same archive on the vendor's other hosts).
+- `fastest(urls: Sequence[str], size: int, log: Callable[[str], None] = print, *, probe: int = PROBE, clock: Callable[[], float] = time.monotonic) -> str`: Return the URL of @p urls that serves the archive fastest, by one range of @p probe bytes from its middle.
 - `stream_member(src: payload.Source, info: zipfile.ZipInfo, out: IO[bytes], log: Callable[[str], None] = print, meter: progress.Meter | None = None) -> None`: Write a zip member's data into @p out, checked against its CRC-32; @p meter counts what is downloaded.
 - `zip_infos(src: payload.Source) -> dict[str, zipfile.ZipInfo]`: Return a zip's members by name, from its central directory.
 - `read_member(src: payload.Source, name: str, log: Callable[[str], None] = print) -> bytes`: Return a zip member's data, checked against its CRC-32.

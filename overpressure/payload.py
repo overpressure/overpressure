@@ -141,20 +141,36 @@ class HttpSource(Source):
         return data
 
     def _fetch(self, start: int, length: int) -> bytes:
-        for attempt in range(ATTEMPTS):
+        """Return @p length bytes from @p start; a connection cut in the middle keeps what came and asks for the rest.
+
+        Only tries that bring nothing count against ATTEMPTS: a server that ends every connection after a few
+        megabytes (PICO's CDN) still delivers the whole range.
+        """
+        data = bytearray()
+        failures = 0
+        while len(data) < length:
             try:
-                data = self._fetch_once(start, length)
-            except (OSError, http.client.HTTPException) as exc:  # noqa: PERF203  # a retry loop
-                if attempt == ATTEMPTS - 1:
-                    raise
-                self.log(f"  download error ({exc!r}); retrying...")
-                time.sleep(2 * (attempt + 1))
-            else:
-                with self._lock:
-                    self.downloaded += len(data)
-                return data
-        msg = "unreachable"
-        raise AssertionError(msg)
+                data += self._fetch_once(start + len(data), length - len(data))
+            except http.client.IncompleteRead as exc:  # noqa: PERF203  # a retry loop
+                if exc.partial:
+                    data += exc.partial
+                    failures = 0
+                    continue
+                failures = self._failed(failures, exc)
+            except (OSError, http.client.HTTPException) as exc:
+                failures = self._failed(failures, exc)
+        with self._lock:
+            self.downloaded += len(data)
+        return bytes(data)
+
+    def _failed(self, failures: int, exc: BaseException) -> int:
+        """Count a try that brought nothing; raise @p exc after ATTEMPTS of them, else wait before the next."""
+        failures += 1
+        if failures >= ATTEMPTS:
+            raise exc
+        self.log(f"  download error ({exc!r}); retrying...")
+        time.sleep(2 * failures)
+        return failures
 
     def read_at(self, offset: int, length: int) -> bytes:
         """Return LENGTH bytes from OFFSET (fewer at the end), small reads through a block cache."""

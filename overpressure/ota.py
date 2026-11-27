@@ -18,11 +18,14 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import http.client
 import io
 import json
 import shutil
 import struct
 import subprocess
+import time
+import urllib.request
 import zipfile
 import zlib
 from concurrent import futures
@@ -30,11 +33,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Callable, TypeVar, cast
 
-from . import payload, progress
+from . import payload, progress, web
 
 if TYPE_CHECKING:
     import os
-    from collections.abc import Generator, Iterable, Mapping
+    from collections.abc import Generator, Iterable, Mapping, Sequence
 
 CHUNK = 8 * 1024 * 1024
 #: Range requests one member downloads with at once: PICO's server gives each connection about 3 MB/s.
@@ -51,6 +54,64 @@ TRANSFER_LIST_STASH_VERSION = 2
 def load_catalog(path: str | os.PathLike[str]) -> dict:
     """Return a headset's catalog of its vendor's builds: name -> {"url": ..., ...}."""
     return json.loads(Path(path).read_text(encoding="utf-8"))["builds"]
+
+
+#: How much of each host fastest() reads, from the archive's middle: enough to tell 3 MB/s from 20 MB/s.
+PROBE = 4 << 20
+#: How long a host may take to answer the probe at all.
+PROBE_SECONDS = 15
+
+
+def sources(build: Mapping[str, Any]) -> list[str]:
+    """Return a catalog build's URLs: its url, then its mirrors (the same archive on the vendor's other hosts)."""
+    return [build["url"], *build.get("mirrors", ())]
+
+
+def fastest(
+    urls: Sequence[str],
+    size: int,
+    log: Callable[[str], None] = print,
+    *,
+    probe: int = PROBE,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
+    """Return the URL of @p urls that serves the archive fastest, by one range of @p probe bytes from its middle.
+
+    A host that answers with another size than @p size (another archive), an error or no answer within
+    PROBE_SECONDS is left out; what is read from the one chosen is checked as everywhere else (CRC-32, pins).
+    Raises OSError when no host answers. Since interface 1.12.
+    """
+    best, best_rate = "", 0.0
+    start = max(0, size // 2 - probe // 2)
+    for url in urls:
+        request = urllib.request.Request(  # noqa: S310  # the catalog's https URLs
+            url, headers={"Range": f"bytes={start}-{start + probe - 1}", "User-Agent": payload.USER_AGENT}
+        )
+        began = clock()
+        read = 0
+        try:
+            with web.open_once(request, PROBE_SECONDS) as answer:
+                total = answer.headers.get("Content-Range", "").rpartition("/")[2]
+                # A slow host is measured by what it sends within PROBE_SECONDS, not waited for to the end.
+                while read < probe and clock() - began < PROBE_SECONDS:
+                    chunk = answer.read(min(256 << 10, probe - read))
+                    if not chunk:
+                        break
+                    read += len(chunk)
+        except (OSError, http.client.HTTPException) as exc:
+            log(f"  {url.split('/')[2]}: {web.describe(exc)}")
+            continue
+        if total != str(size) or not read:
+            log(f"  {url.split('/')[2]}: another archive ({total} bytes), left out")
+            continue
+        rate = read / max(clock() - began, 1e-6)
+        log(f"  {url.split('/')[2]}: {rate / 1e6:.1f} MB/s")
+        if rate > best_rate:
+            best, best_rate = url, rate
+    if not best:
+        msg = f"none of the archive's {len(urls)} hosts answers"
+        raise OSError(msg)
+    return best
 
 
 def _member_start(src: payload.Source, info: zipfile.ZipInfo) -> int:
@@ -207,6 +268,21 @@ def parse_rangeset(text: str) -> list[tuple[int, int]]:
     return [(values[i], values[i + 1]) for i in range(1, len(values), 2)]
 
 
+def _highest_block(commands: list[str]) -> int:
+    """Return the end of the highest block range @p commands name.
+
+    A transfer list's header counts the blocks the update writes, not the partition: a list that erases blocks it
+    does not write counts fewer, and its last blocks (dm-verity's FEC, the AVB footer) lie beyond the count.
+    """
+    ends = [
+        end
+        for line in commands
+        if line.partition(" ")[2].strip()
+        for _first, end in parse_rangeset(line.partition(" ")[2])
+    ]
+    return max(ends, default=0)
+
+
 def apply_transfer_list(transfer_list: str, new_data: IO[bytes], out: IO[bytes]) -> int:
     """Rebuild a partition image from a full OTA's transfer list and its decompressed new data.
 
@@ -239,7 +315,7 @@ def apply_transfer_list(transfer_list: str, new_data: IO[bytes], out: IO[bytes])
         else:
             msg = f"a full OTA's transfer list has no {cmd!r} command"
             raise ValueError(msg)
-    size = total * BLOCK
+    size = max(total, _highest_block(commands)) * BLOCK
     out.seek(0, io.SEEK_END)
     if out.tell() < size:  # trailing zero blocks: extend (truncate need not)
         out.seek(size - 1)

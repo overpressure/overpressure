@@ -14,11 +14,64 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest import mock
 
 from overpressure import ota
 
+if TYPE_CHECKING:
+    from typing_extensions import Self
+
 B = ota.BLOCK
+
+
+class Host:
+    """A host's answer to fastest()'s range: the archive's size, the seconds it takes, or a failure."""
+
+    def __init__(self, size: int, seconds: float, clock: list[float], error: Exception | None = None) -> None:
+        self.size, self.seconds, self.clock, self.error = size, seconds, clock, error
+
+    def __enter__(self) -> Self:
+        if self.error is not None:
+            raise self.error
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        pass
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"Content-Range": f"bytes 0-0/{self.size}"}
+
+    def read(self, amount: int) -> bytes:
+        self.clock[0] += self.seconds * amount / ota.PROBE  # the probe in pieces, at the host's rate
+        return bytes(amount)
+
+
+class MirrorTests(unittest.TestCase):
+    def test_the_fastest_host_with_the_same_archive_wins(self):
+        clock = [0.0]
+        hosts = {
+            "https://slow.example/a.zip": Host(1000, 1.2, clock),  # 3.5 MB/s
+            "https://fast.example/a.zip": Host(1000, 0.2, clock),  # 21 MB/s
+            "https://other.example/a.zip": Host(999, 0.1, clock),  # another archive, faster still
+            "https://down.example/a.zip": Host(1000, 0, clock, TimeoutError("timed out")),
+            "https://crawling.example/a.zip": Host(1000, 200, clock),  # 0.02 MB/s: measured for PROBE_SECONDS only
+        }
+        with mock.patch.object(ota.web, "open_once", lambda request, _timeout: hosts[request.full_url]):
+            self.assertEqual(ota.fastest(list(hosts), 1000, lambda _m: None, clock=lambda: clock[0]), list(hosts)[1])
+        self.assertLess(
+            clock[0], 1.5 + 2 * ota.PROBE_SECONDS
+        )  # the crawling host: its time and one more piece, not 200 s
+        with (
+            mock.patch.object(ota.web, "open_once", lambda request, _timeout: hosts[request.full_url]),
+            self.assertRaises(OSError),
+        ):
+            ota.fastest(["https://down.example/a.zip"], 1000, lambda _m: None)
+
+    def test_a_builds_sources_are_its_url_then_its_mirrors(self):
+        self.assertEqual(ota.sources({"url": "a"}), ["a"])
+        self.assertEqual(ota.sources({"url": "a", "mirrors": ["b", "c"]}), ["a", "b", "c"])
 
 
 class TransferListTests(unittest.TestCase):
@@ -40,6 +93,15 @@ class TransferListTests(unittest.TestCase):
         self.assertEqual(image[2 * B : 3 * B], b"\x03" * B)
         self.assertEqual(image[0 : 2 * B], bytes(2 * B))
         self.assertEqual(image[7 * B :], bytes(B))
+
+    def test_blocks_beyond_the_headers_count_stay_in_the_image(self):
+        # The header counts the blocks the update writes; a list that erases others ends further out (PICO OS
+        # 5.13.7's system: dm-verity's FEC and the AVB footer in the partition's last blocks).
+        data = bytes([1]) * B + bytes([2]) * B
+        out = io.BytesIO()
+        size = ota.apply_transfer_list("4\n2\n0\n0\nerase 2,1,5\nnew 4,0,1,5,6\nzero 2,1,5\n", io.BytesIO(data), out)
+        self.assertEqual(size, 6 * B)
+        self.assertEqual(out.getvalue()[5 * B :], bytes([2]) * B)
 
     def test_short_data_and_unknown_commands_refused(self):
         with self.assertRaises(ValueError):
