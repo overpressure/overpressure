@@ -288,6 +288,10 @@ class JobsTest(Base):
         statuses = [t["status"] for s in stages for t in s["tasks"]]
         self.assertIn("done", statuses)  # the demo starts as if all but the last stage were done
         self.assertEqual(statuses[-1], "pending")
+        earlier = self.request("plan", codename="planned")["result"]["earlier"]
+        self.assertEqual(earlier["status"], "stopped")  # and that run stopped, with when
+        self.assertIn("at", earlier)
+        self.assertIsNone(self.request("plan", codename="planned", workflow="upgrade")["result"]["earlier"])
 
     def test_the_finished_page_keeps_the_actions_it_can_offer(self):
         page = self.request("finished_page", codename="planned", workflow="install")["result"]

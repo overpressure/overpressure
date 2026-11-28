@@ -177,6 +177,23 @@ export function runLeft(state: RunState): Left {
   );
 }
 
+/** When something happened, in words: "today at 14:02", "yesterday at 09:15", "on 3 November at 18:40". */
+export function when(at: string, now: Date = new Date()): string {
+  const then = new Date(at);
+  if (Number.isNaN(then.getTime())) return "";
+  const time = then.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((day(now) - day(then)) / 86_400_000);
+  if (days === 0) return `today at ${time}`;
+  if (days === 1) return `yesterday at ${time}`;
+  const date = then.toLocaleDateString([], {
+    day: "numeric",
+    month: "long",
+    ...(then.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+  return `on ${date} at ${time}`;
+}
+
 /** A time in words: "under a minute", "about 6 min", "about 1 h 20 min"; "" for nothing known. */
 export function duration(left: Left): string {
   const { seconds, atLeast } = left;

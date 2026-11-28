@@ -121,6 +121,22 @@ export interface RecordedStage extends PlanStage {
   tasks: (PlanTask & { status: TaskStatus })[];
 }
 
+/** How the last run of a workflow ended, and when (UTC, ISO 8601); "running": it was cut off. */
+export interface Earlier {
+  status: "done" | "failed" | "stopped" | "running";
+  at: string;
+  task?: string | null;
+  error?: string;
+  where?: string;
+  offer?: string;
+}
+
+/** The plan request's answer. */
+export interface PlanAnswer {
+  stages: RecordedStage[];
+  earlier: Earlier | null;
+}
+
 export interface FinishedPage {
   title: string;
   text: string;

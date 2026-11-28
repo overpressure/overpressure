@@ -11,7 +11,9 @@ import {
   type Found,
   type HeadsetEntry,
   type Hello,
+  type Earlier,
   type JobKind,
+  type PlanAnswer,
   type RecordedStage,
   type Settings,
 } from "./protocol";
@@ -19,12 +21,13 @@ import { apply, initial, type RunState } from "./run";
 
 export type Page = "loading" | "welcome" | "setup" | "library" | "headset" | "run" | "advanced";
 
-/** A workflow chosen after an earlier run of it: continue, or start over from a stage. */
-export interface Sheet {
+/** A workflow chosen, before it runs: its plan as the last run left it, and how that run ended. */
+export interface Ready {
   codename: string;
   workflow: string;
   title: string;
   stages: RecordedStage[];
+  earlier: Earlier | null;
 }
 
 /** An earlier overpressure's data to bring over: a folder found (from, question), or the app asking for one (ask). */
@@ -53,7 +56,8 @@ export class AppState {
   jobs = $state<Record<string, JobState>>({});
   /** The job under way, or the last one, by id. */
   job = $state<string | null>(null);
-  sheet = $state<Sheet | null>(null);
+  /** The workflow the run page shows before it runs. */
+  ready = $state<Ready | null>(null);
   /** The last look at each headset on USB, by codename. */
   looks = $state<Record<string, Found>>({});
   problem = $state("");
@@ -198,20 +202,25 @@ export class AppState {
     return this.jobs[id] as JobState;
   }
 
-  /** Choose WORKFLOW of the open headset: after an earlier run of it, ask first (continue or start over). */
+  /** Choose WORKFLOW of the open headset. One that changes the headset, or that ran before, opens the run page
+   *  ready to start: what it does, how the last run ended, Continue or run a stage again. Another starts at once. */
   async choose(workflow: string): Promise<void> {
     const headset = this.headset;
     if (!headset || this.running || this.jobRunning || this.busy) return;
-    const title = headset.workflows.find((w) => w.key === workflow)?.title ?? workflow;
+    const chosen = headset.workflows.find((w) => w.key === workflow);
+    const title = chosen?.title ?? workflow;
     this.busy = `Preparing ${title}…`;
     try {
-      const { stages } = await this.engine.request<{ stages: RecordedStage[] }>("plan", {
+      const { stages, earlier } = await this.engine.request<PlanAnswer>("plan", {
         codename: headset.codename,
         workflow,
       });
-      const begun = stages.some((s) => s.tasks.some((t) => t.status === "done" || t.status === "skipped"));
-      if (begun) this.sheet = { codename: headset.codename, workflow, title, stages };
-      else await this.begin(workflow);
+      const begun = stages.some((s) => s.tasks.some((t) => t.status !== "pending"));
+      if (begun || earlier || chosen?.changes) {
+        this.run = null;
+        this.ready = { codename: headset.codename, workflow, title, stages, earlier: earlier ?? null };
+        this.page = "run";
+      } else await this.begin(workflow);
     } catch (error) {
       this.say(error instanceof Error ? error.message : String(error));
     } finally {
@@ -223,7 +232,7 @@ export class AppState {
   async begin(workflow: string, restart = ""): Promise<void> {
     const headset = this.headset;
     if (!headset) return;
-    this.sheet = null;
+    this.ready = null;
     try {
       const { run: id } = await this.engine.request<{ run: string }>("start", {
         codename: headset.codename,
@@ -244,6 +253,7 @@ export class AppState {
   /** Leave the run's page for TO (the headset's page by default): a finished run is closed, a running one goes on. */
   leaveRun(to: "headset" | "library" = "headset"): void {
     if (this.run && !this.running) this.run = null;
+    this.ready = null;
     this.page = to === "headset" && this.headset ? "headset" : "library";
   }
 }

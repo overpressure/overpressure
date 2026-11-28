@@ -40,7 +40,7 @@ from .window.advanced import DemoProcess, StepProcess, Steps, browse, demo_check
 from .window.installer import BackupJob, ChildEngine, DemoBackupJob, DemoEngine
 
 #: The protocol's major and minor version: a new request or field raises the minor, a change the major.
-PROTOCOL = (0, 8)
+PROTOCOL = (0, 9)
 #: The app's settings, beside the window's (out/window.json).
 SETTINGS = "out/app.json"
 APPEARANCES = ("system", "light", "dark")
@@ -665,6 +665,7 @@ class Server:
             engine.start(["--plan"])
             stages: list[dict[str, Any]] = []
             status: dict[str, str] = {}
+            earlier: dict[str, Any] | None = None
             while True:
                 kind, value = engine.items.get(timeout=120)
                 if kind == "exit":
@@ -675,10 +676,12 @@ class Server:
                         stages = event["stages"]
                     elif event.get("event") == "task":
                         status[event["task"]] = event["status"]
+                    elif event.get("event") == "earlier":
+                        earlier = {k: v for k, v in event.items() if k != "event"}
             for stage in stages:
                 for task in stage["tasks"]:
                     task["status"] = status.get(task["id"], "pending")
-            return {"stages": stages}
+            return {"stages": stages, "earlier": earlier}
 
         return Later(work)
 

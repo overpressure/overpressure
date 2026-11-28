@@ -352,6 +352,14 @@ class TextUI:
             self.say(("  ! " if event.get("level") == "warning" else "  i ") + event["text"])
         elif kind == "finished":
             self.finished(event)
+        elif kind == "earlier":  # how the last run ended (--plan)
+            how = {DONE: "finished", FAILED: "failed", STOPPED: "stopped", RUNNING: "was cut off"}
+            title = self.tasks.get(event.get("task") or "", {}).get("title", "")
+            self.say(
+                f"\nLast run ({event.get('at', '')}): {how.get(event['status'], event['status'])}"
+                + (f" in {title}" if title else "")
+                + (f": {event['error']}" if event.get("error") else "")
+            )
 
     def finished(self, event: dict) -> None:
         """Write how the run ended."""
@@ -799,6 +807,7 @@ class Engine:
         self.secrets: set[str] = set()
         self.stopping = False
         self.state: dict = {"schema": SCHEMA, "tasks": {}}
+        self.loaded = False  #: the run has read the state file: only then may its end be recorded in it
         self._child: tuple[subprocess.Popen, bool, list[str]] | None = None  #: the child, whether it writes, its argv
         self._logs: dict[str, IO[str]] = {}
 
@@ -843,6 +852,7 @@ class Engine:
         self.state = _read_state(self.state_path) or {"schema": SCHEMA, "tasks": {}}
         if self.release and self.state.get("release", self.release) != self.release:
             self.state["tasks"] = {}
+            self.state.pop("last", None)
         if self.release:
             self.state["release"] = self.release
 
@@ -925,7 +935,11 @@ class Engine:
     def finish(
         self, status: str, task: Task | None, error: str = "", where: str = "", offer: str = ""
     ) -> str:  # the event's fields
-        """Emit the finished event (with what the window offers beside Retry, OFFER); return @p status."""
+        """Emit the finished event (with what the window offers beside Retry, OFFER); return @p status.
+
+        A workflow that changes the headset records it as its last run (`"last"`, with when), which its plan
+        shows the next time: how and when the run before ended.
+        """
         event = {
             "event": "finished",
             "status": status,
@@ -935,6 +949,9 @@ class Engine:
         }
         if offer:
             event["offer"] = offer
+        if self.loaded and self.changes:
+            self.state["last"] = {**{k: v for k, v in event.items() if k != "event"}, "at": _now()}
+            self.save_state()
         self.emit(event)
         return status
 
@@ -1092,6 +1109,10 @@ class Engine:
                 self.save_state()
             if restart:
                 self.forget(restart)
+            self.loaded = True
+            if self.changes:  # until it ends: a run cut off (the computer went down) says so the next time
+                self.state["last"] = {"status": RUNNING, "at": _now()}
+                self.save_state()
             for stage in self.stages:
                 for task in stage.tasks:
                     try:
@@ -1113,7 +1134,8 @@ class Engine:
         """Emit the plan and every task's recorded status (--plan): nothing runs.
 
         A workflow that changes nothing has no progress to show: its next run starts afresh, so every task is
-        still to come and the window offers it from its start, not as a run to continue.
+        still to come and the window offers it from its start, not as a run to continue. One that changes it
+        tells how its last run ended, and when (`earlier`; `running` when it was cut off).
         """
         self.ui.start(lambda: None)
         self.emit(self.plan_event())
@@ -1122,6 +1144,9 @@ class Engine:
         for stage in self.stages:
             for task in stage.tasks:
                 self.emit({"event": "task", "stage": stage.id, "task": task.id, "status": self.status(task.id)})
+        last = self.state.get("last")
+        if self.changes and isinstance(last, dict) and last.get("status"):
+            self.emit({"event": "earlier", **last})
 
 
 def stopped_where(task: Task, *, wrote: bool) -> str:

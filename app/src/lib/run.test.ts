@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 import { describe, expect, it } from "vitest";
 import type { RunEvent } from "./protocol";
-import { LOG_LINES, apply, duration, initial, overall, runLeft, stageStatus } from "./run";
+import { LOG_LINES, apply, duration, initial, overall, runLeft, stageStatus, when } from "./run";
 
 const RUN = "run-1";
 
@@ -108,5 +108,22 @@ describe("the time a run has left", () => {
     expect(duration({ seconds: 300, atLeast: true })).toBe("at least 5 min");
     expect(duration({ seconds: 4800, atLeast: false })).toBe("about 1 h 20 min");
     expect(duration({ seconds: 3600, atLeast: false })).toBe("about 1 h");
+  });
+});
+
+describe("when", () => {
+  const now = new Date(2026, 10, 28, 15, 0);
+  const at = (d: Date) => d.toISOString();
+  const time = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  it("says today, yesterday, or the date, with the time", () => {
+    const today = new Date(2026, 10, 28, 9, 5);
+    const yesterday = new Date(2026, 10, 27, 23, 50);
+    const earlier = new Date(2026, 10, 3, 18, 40);
+    expect(when(at(today), now)).toBe(`today at ${time(today)}`);
+    expect(when(at(yesterday), now)).toBe(`yesterday at ${time(yesterday)}`);
+    expect(when(at(earlier), now)).toMatch(/^on .*3.* at /);
+    expect(when(at(new Date(2025, 0, 2, 8, 0)), now)).toContain("2025");
+    expect(when("nonsense", now)).toBe("");
   });
 });

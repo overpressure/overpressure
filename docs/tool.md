@@ -437,8 +437,12 @@ settings; the window's title bar names overpressure.
   nothing, shows what runs on it, and offers the workflows that fit, the recommended one first (*Show every
   action* skips the look). Each workflow is a plain tile (an icon and a name; what it does in its tooltip, badges
   for erasing the headset and for why it cannot run now); the tools are tiles too: the backup (its export and
-  import), *Save logs* and Advanced mode. A workflow an earlier run began asks first, with that run's stages as
-  a bar: *Continue with* the stage it stopped at (chosen), or, folded away, start over from a stage.
+  import), *Save logs* and Advanced mode. A workflow that changes the headset, or one that ran before, opens the
+  run page ready to start (one that only looks starts at once): the status card says what it does, or how and
+  when its last run ended (failed and why, stopped, cut off, finished), that run's bar and the time left, with
+  *Start*, *Continue*, *Retry* after a failure, or *Install again* (every stage) once all are done; below, the
+  stages as that run left them, and a stage it reached offers *Run again from here*. What is done is not done
+  again unless its result is gone: each task's done check decides.
 - **A run:** one column, read from the top. The status card names what happens now (the running task, its
   progress in words), the stage (*Stage 2 of 4*), a bar split into the stages, the share done, the time left
   from the plan's estimates and *Stop*. When the engine needs the owner, *Your turn* comes right under it in the
@@ -506,7 +510,9 @@ the plan). A headset without one has no installer (exit status 2). The engine is
   a task recorded with `ctx.remember`, never a secret, such as a skipped ask), the tasks' logs beside it. A task done earlier is skipped unless its done check says its result is gone; a done check
   also skips a task whose output is already there (`skipped`). `--restart STAGE` forgets that stage and
   every later one. A finished workflow forgets the other workflows' state and records `"completed":
-  {"release": ..., "at": UTC}` in its own. The state records the headset's
+  {"release": ..., "at": UTC}` in its own. A workflow that changes the headset records its last run in
+  `"last"`: `running` with its start while it runs (still there: it was cut off), then the `finished` event's
+  fields with when it ended. The state records the headset's
   tooling (`"release"`: its tag and zip, or the development checkout); progress another release made starts
   over, the choices kept, so a changed plan never resumes in the middle, and each task's done check skips
   what is there already. `install.installed_release` reads what the headset runs: the release of its last
@@ -571,8 +577,10 @@ and writes them to the task's log file, not to the details. `progress.Meter` pri
 accept is "Done") and `form` (fields; secret ones masked). The answer is one line on stdin:
 `{"answer": ID, "accepted": true, "values": {NAME: VALUE}}`. A declined ask or a closed stdin stops the
 run; an empty required field is asked again with a note. After a failure or a stop, `where` says the
-headset's state and what to do next. `--plan --json` prints the `plan` event and a `task` event with each
-task's recorded status, and runs nothing. In a terminal the plan prints as stage headings and task lines,
+headset's state and what to do next. `--plan --json` prints the `plan` event, a `task` event with each
+task's recorded status and, for a workflow that changes the headset after a run of it, `earlier` (its `"last"`:
+`status` `done`, `failed`, `stopped` or `running` (cut off), `at`, and `task`, `error`, `where`, `offer` once
+it ended), and runs nothing. In a terminal the plan prints as stage headings and task lines,
 with asks through `input()` and `getpass()`.
 
 ### The app's server
@@ -587,7 +595,7 @@ a carry-over, a step) sends `job-line` {`line`}, `job-progress` {`fraction`, `te
 `error`}, each with `"job"`. One thing at a time: a run or a job refuses the next until it has ended.
 
 `--demo` runs nothing: the window's demo engine, steps, checks and backup jobs, a download that fetches nothing,
-releases of its own, and an install as if an earlier run had done all but its last stage (`--demo-fresh`:
+releases of its own, and an install as if an earlier run had done all but its last stage and stopped a day ago (`--demo-fresh`:
 nothing done). It treats a development checkout as a downloaded release, and offers carry-over from an earlier
 folder with `OVERPRESSURE_DEMO_CARRY_OVER=1`, and asks after one as the app's data folder does with `ask`. With
 `OVERPRESSURE_DEMO_APP_UPDATE=1` it offers an app update, whose install downloads nothing. Its headset shows up on USB 2.5 s after the page's first look, in
@@ -603,7 +611,7 @@ the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `
 | `releases` | `codename` | later: `releases` [{`version`, `prerelease`, `problem`}] (none for a headset in development), `development`, `branches` (its repository's, `main` first; `main` alone offline), `record` (what its download recorded, a preview's `branch` too) |
 | `download` | `codename`, `channel`, `version`, `branch` | `job`: the release, or the branch's newest commit (a preview of it), into `devices/` (`headset add`), then imported anew: the server runs the headset now on disk (a look it gained included); refused for a checkout, a name that is no branch, and for a headset in development but a branch |
 | `updates` | | later: `updates` {codename: newer version} |
-| `plan` | `codename`, `workflow` | later: `stages`, each task with the status an earlier run left (`install --plan`) |
+| `plan` | `codename`, `workflow` | later: `stages`, each task with the status an earlier run left, and `earlier`, how and when the last run ended, or null (`install --plan`) |
 | `start` | `codename`, `workflow`, `restart` (a stage) | `run`; refused without the disclaimer, while something runs, or when the workflow cannot run now |
 | `answer` | `run`, `answer` (the ask's id), `accepted`, `values` | {} |
 | `stop` | `run` | {}; the run stops at once, or after a write under way |

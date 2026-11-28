@@ -458,7 +458,8 @@ class DemoTests(unittest.TestCase):
             events = drained(demo, ["--plan"], model)
             model.probed()
             self.assertEqual(events[0]["event"], "plan")
-            self.assertEqual({e["event"] for e in events[1:]}, {"task"})
+            # The recorded demo's last run stopped (a day ago): its plan says so after the tasks.
+            self.assertEqual({e["event"] for e in events[1:]}, {"task", "earlier"} if recorded else {"task"})
             self.assertEqual(model.start_page, recorded)
             self.assertEqual(
                 [s.status for s in model.stages], ["done"] * 3 + ["pending"] if recorded else ["pending"] * 4

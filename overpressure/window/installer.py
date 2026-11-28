@@ -623,6 +623,12 @@ class DemoEngine:
         self.writes = {t[0] for s in self.stages for t in s[3] if t[3]}
         self.failed_once = False
         self.stopping = threading.Event()
+        # How the last run ended, as the engine records it: the recorded one stopped a day ago.
+        self.last: dict[str, Any] | None = None
+        if recorded:
+            yesterday = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - 86400))
+            first = self.stages[-1][3][0][0]
+            self.last = {"status": STOPPED, "task": first, "error": "", "where": STOPPED_BETWEEN, "at": yesterday}
 
     def start(self, extra: list[str]) -> None:
         """Start a run; EXTRA ["--plan"] only shows the plan, ["--restart", STAGE] forgets from STAGE on."""
@@ -676,7 +682,9 @@ class DemoEngine:
         if extra == ["--plan"]:
             for stage, _title, _summary, tasks in self.stages:
                 for task, *_ in tasks:
-                    self._emit("task", stage=stage, task=task, status=DONE if task in self.done else PENDING)
+                    self._emit("task", stage=stage, task=task, status=self._recorded(task))
+            if self.last:
+                self._emit("earlier", **self.last)
             self.items.put(("exit", 0))
             return
         if extra[:1] == ["--restart"]:
@@ -685,12 +693,22 @@ class DemoEngine:
                 self.done -= {task[0] for task in stage[3]}
         status, where = self._install(plan)
         if status == DONE:
-            self._emit("finished", status=DONE)
+            end = {"status": DONE, "task": None, "error": "", "where": ""}
         elif status == STOPPED:
-            self._emit("finished", status=STOPPED, task=where[0], where=where[1])
+            end = {"status": STOPPED, "task": where[0], "error": "", "where": where[1]}
         else:
-            self._emit("finished", status=FAILED, task=status, error=where[0], where=where[1])
+            end = {"status": FAILED, "task": status, "error": where[0], "where": where[1]}
+        self._emit("finished", **end)
+        if self.workflow == INSTALL:  # the others change nothing in the demo: they start afresh
+            self.last = {**end, "at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())}
         self.items.put(("exit", 0))
+
+    def _recorded(self, task: str) -> str:
+        """Return TASK's status as the last run left it."""
+        if task in self.done:
+            return DONE
+        failed = self.last and self.last["status"] == FAILED and self.last["task"] == task
+        return FAILED if failed else PENDING
 
     def _install(self, plan: list[dict[str, Any]]) -> tuple[str, tuple[str, str]]:
         for stage in plan:

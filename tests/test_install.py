@@ -373,6 +373,44 @@ class EngineTests(unittest.TestCase):
         self.engine((Stage("a", "A", "", (Task("one", "One", task),)),), ui).run()
         self.assertEqual([e["line"] for e in ui.events if e["event"] == "log"], ["printed", "to stderr"])
 
+    def test_the_plan_tells_how_and_when_the_last_run_ended(self):
+        def broke(_ctx: Context) -> None:
+            msg = "it broke"
+            raise install.Failed(msg, "Nothing changed.")
+
+        def earlier() -> dict:
+            ui = Recorder()
+            self.engine(self.plan(), ui).show_plan()
+            return next(e for e in ui.events if e["event"] == "earlier")
+
+        ui = Recorder()
+        self.engine(self.plan(), ui).show_plan()
+        self.assertNotIn("earlier", ui.kinds())  # no run yet
+        self.assertEqual(self.engine(self.plan(run=broke), Recorder()).run(), "failed")
+        last = earlier()
+        self.assertEqual(
+            {k: last[k] for k in ("status", "task", "error", "where")},
+            {"status": "failed", "task": "three", "error": "it broke", "where": "Nothing changed."},
+        )
+        self.assertRegex(last["at"], r"^\d{4}-\d\d-\d\dT")
+        # Under way, the record says so: a run cut off (the computer went down) shows as one the next time.
+        seen: list[str] = []
+        state = self.folder / "state.json"
+        peek = self.task("three", run=lambda _c: seen.append(json.loads(state.read_text())["last"]["status"]))
+        stages = (*self.plan()[:1], Stage("b", "Stage B", "", (peek,)))
+        self.assertEqual(self.engine(stages, Recorder()).run(), "done")
+        self.assertEqual(seen, ["running"])
+        self.assertEqual((earlier()["status"], earlier()["task"]), ("done", None))
+        # A run refused before it read the state leaves the record as it was.
+        before = state.read_text()
+        lock = install.Lock(self.out / "lock")
+        self.assertTrue(lock.acquire())
+        try:
+            self.assertEqual(self.engine(self.plan(), Recorder()).run(), "failed")
+        finally:
+            lock.release()
+        self.assertEqual(state.read_text(), before)
+
     def test_one_engine_at_a_time(self):
         lock = install.Lock(self.out / "lock")
         self.assertTrue(lock.acquire())

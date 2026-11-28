@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: Unlicense -->
 <!-- A run's stages as a list down the page, in order, each with its mark (done, under way, failed, or its number)
      and how long it takes. The stage under way, or the one that failed, is open: its tasks, each with what it does
-     now, its own bar when how far it is is known, and the notes it left. Any other stage opens with a click. -->
+     now, its own bar when how far it is is known, and the notes it left. Any other stage opens with a click.
+     Before a run (AGAIN given) it shows what an earlier one left: nothing spins, the next stage is open, and a
+     stage that run reached offers "Run again from here". -->
 <script lang="ts">
   import Badge from "./Badge.svelte";
   import Icon from "./Icon.svelte";
@@ -13,22 +15,25 @@
     run: RunState;
     /** The stage the run is in (0-based). */
     active: number;
+    /** Before a run: start it again from a stage (its records forgotten). */
+    again?: (stage: string) => void;
   }
 
-  let { run, active }: Props = $props();
+  let { run, active, again }: Props = $props();
 
   /** Stages opened or closed by the owner, by id; the others follow the run. */
   let toggled = $state<Record<string, boolean>>({});
 
   const ended = $derived(run.finished !== null);
+  const ready = $derived(again !== undefined);
 
   function open(stage: StageState, index: number): boolean {
     const status = stageStatus(stage);
-    const follows = status === "failed" || (!ended && index === active);
+    const follows = status === "failed" || (!ended && index === active && !(ready && status === "done"));
     return toggled[stage.id] ?? follows;
   }
 
-  function meta(stage: StageState, index: number): string {
+  function meta(stage: StageState): string {
     const status = stageStatus(stage);
     if (status === "done") return stage.tasks.every((t) => t.status === "skipped") ? "Already done" : "Done";
     if (status === "failed") return "Failed";
@@ -38,6 +43,7 @@
   }
 
   function taskState(task: TaskState): string {
+    if (task.status === "running" && ready) return "Cut off";
     if (task.status === "running") return run.ask ? "Waiting for you" : task.progress || "Working…";
     if (task.status === "done") return "Done";
     if (task.status === "skipped") return "Already there";
@@ -52,7 +58,7 @@
   {#each run.stages as stage, i (stage.id)}
     {@const status = stageStatus(stage)}
     {@const isOpen = open(stage, i)}
-    {@const current = !ended && i === active && status !== "done"}
+    {@const current = !ended && !ready && i === active && status !== "done"}
     <li class="stage {status}" class:current>
       <span class="rail" aria-hidden="true"></span>
       <button
@@ -71,7 +77,7 @@
         {#if stage.tasks.some((t) => t.writes) && status !== "done"}
           <Badge icon="alert" tone="warn" tip="Writes to the headset" focusable={false} />
         {/if}
-        <span class="meta">{meta(stage, i)}</span>
+        <span class="meta">{meta(stage)}</span>
         <span class="chevron" class:turned={isOpen}><Icon name="right" size={14} /></span>
       </button>
 
@@ -82,7 +88,8 @@
             {#each stage.tasks as task (task.id)}
               <li class="task {task.status}">
                 <span class="tmark" aria-hidden="true">
-                  {#if task.status === "running"}<Spinner size={12} />
+                  {#if task.status === "running" && ready}<Icon name="stop" size={12} />
+                  {:else if task.status === "running"}<Spinner size={12} />
                   {:else if task.status === "done" || task.status === "skipped"}<Icon name="check" size={12} />
                   {:else if task.status === "failed"}<Icon name="alert" size={12} />
                   {:else}<span class="dot"></span>{/if}
@@ -105,6 +112,14 @@
               </li>
             {/each}
           </ul>
+          {#if again && status !== "pending"}
+            <div class="again">
+              <span>Its tasks and those after it run again; what is still on the headset is skipped.</span>
+              <button class="btn secondary" onclick={() => again(stage.id)}
+                ><Icon name="refresh" size={14} /> Run again from here</button
+              >
+            </div>
+          {/if}
         </div>
       {/if}
     </li>
@@ -339,6 +354,17 @@
     height: 100%;
     background: var(--blue);
     transition: width 0.3s ease;
+  }
+
+  .again {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
   }
 
   .note {

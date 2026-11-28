@@ -14,11 +14,11 @@
   import CloseDialog from "./components/CloseDialog.svelte";
   import Icon from "./components/Icon.svelte";
   import Spinner from "./components/Spinner.svelte";
-  import StartSheet from "./components/StartSheet.svelte";
   import UpdateDialog from "./components/UpdateDialog.svelte";
   import Advanced from "./pages/Advanced.svelte";
   import Headset from "./pages/Headset.svelte";
   import Library from "./pages/Library.svelte";
+  import Ready from "./pages/Ready.svelte";
   import Run from "./pages/Run.svelte";
   import Setup from "./pages/Setup.svelte";
   import Welcome from "./pages/Welcome.svelte";
@@ -52,7 +52,7 @@
         return [
           { label: "Headsets", go: toLibrary },
           { label: name, go: toHeadset },
-          { label: app.run ? runTitle(app.run.workflow) : "" },
+          { label: app.run ? runTitle(app.run.workflow) : (app.ready?.title ?? "") },
         ];
       default:
         return [];
@@ -185,6 +185,8 @@
       <Advanced headset={app.headset} />
     {:else if app.page === "run" && app.run}
       <Run />
+    {:else if app.page === "run" && app.ready}
+      <Ready ready={app.ready} />
     {/if}
   </main>
 
@@ -210,7 +212,6 @@
   </footer>
 </div>
 
-{#if app.sheet}<StartSheet sheet={app.sheet} />{/if}
 {#if app.updateOpen && app.appUpdate}<UpdateDialog {...app.appUpdate} />{/if}
 {#if closing}<CloseDialog onclose={() => (closing = false)} />{/if}
 
