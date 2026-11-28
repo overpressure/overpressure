@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from . import REPO, linux, usbaccess, usblink, windows_ncm
+from . import REPO, linux, localconfig, usbaccess, usblink, windows_ncm
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -127,16 +127,17 @@ def version_check(host: Host, name: str, argv: Sequence[str], needed_for: str, f
 
 
 def env_check(root: Path = REPO, needed_for: str = HEADSET) -> Check:
-    """Check that .env, which names the headset's serials and private files, is there."""
-    env = root / ".env"
+    """Check that overpressure has records of the headset (its serials), or a developer's .env names them.
+
+    Named ".env" as interface 1 has it; the installer provides what it checks.
+    """
+    found = next((p for p in (root / localconfig.RECORDS, root / ".env") if p.exists()), None)
     return Check(
         ".env",
         needed_for,
-        OK if env.exists() else MISSING,
-        str(env) if env.exists() else "no .env",
-        ""
-        if env.exists()
-        else "copy .env.example and devices/<codename>/env.example into .env; fill in the serials and files",
+        OK if found else MISSING,
+        str(found) if found else "nothing recorded about the headset yet",
+        "" if found else "the installer records the headset's serials when it finds it",
     )
 
 
@@ -155,7 +156,7 @@ def serial_checks(settings: DeviceSettings, needed_for: str = HEADSET, edl_neede
                 needed_for if name != "edl_serial" else edl_needed_for,
                 OK if value else MISSING,
                 "set" if value else "empty",
-                "" if value else f"set it in .env ({what})",
+                "" if value else f"the installer records it when it finds the headset ({what})",
             )
         )
     return checks
@@ -210,7 +211,7 @@ def edl_tool_check(host: Host, settings: DeviceSettings, needed_for: str = EDL) 
     found = edl.is_file() or (not edl.is_absolute() and host.which(str(edl)))
     fix = FETCH
     if settings.edl:
-        fix = f"{settings.key('edl')} in .env names a file that is not there: remove it to use the fetched edl-ng"
+        fix = f"{settings.key('edl')} names a file that is not there: remove it to use the fetched edl-ng"
     return Check(
         "edl-ng", needed_for, OK if found else MISSING, str(edl) if found else f"no {edl}", "" if found else fix
     )

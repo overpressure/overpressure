@@ -87,7 +87,7 @@ link may not leave its repository, so links between this repository and a headse
   the headset interface changes, a test fails until then).
 - `Install.cmd`, `Install.command`, `install.sh`: the start scripts (a pinned uv, a managed Python and
   CustomTkinter into `cache/`, then the window).
-- Private and generated, ignored: `backup/`, `assets/`, `cache/`, `out/`, `.env`.
+- Private and generated, ignored: `backup/`, `assets/`, `cache/`, `out/`, `settings.json`, `.env`.
 
 ## Commands
 
@@ -114,9 +114,9 @@ CLAUDE.md lists its build and hardware commands.
 ## Hard rules (every headset)
 
 - **Private data.** Never commit or redistribute device data or vendor files: `backup/`,
-  `assets/`, `out/`, `cache/` and `.env` are ignored on purpose. Valve's packages and the built
-  userspace archives are private too. Docs and code must not contain device serials or similar
-  identifiers; they belong in `.env`. `python scripts/check-private.py --history` before a push
+  `assets/`, `out/`, `cache/`, `settings.json` and `.env` are ignored on purpose. Valve's packages and the
+  built userspace archives are private too. Docs and code must not contain device serials or similar
+  identifiers; overpressure records them in `out/records.json`, a developer's own go into `.env`. `python scripts/check-private.py --history` before a push
   (`--repo devices/<codename> --history` for a headset's).
 - **Hardware actions need a recoverable path**, as each headset's CLAUDE.md defines it. Ask
   the user before the first flash or low-level (EDL, bootloader) action in a new conversation.

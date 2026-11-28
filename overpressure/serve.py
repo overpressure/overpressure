@@ -26,6 +26,7 @@ import itertools
 import json
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -40,11 +41,15 @@ from .window.advanced import DemoProcess, StepProcess, Steps, browse, demo_check
 from .window.installer import BackupJob, ChildEngine, DemoBackupJob, DemoEngine
 
 #: The protocol's major and minor version: a new request or field raises the minor, a change the major.
-PROTOCOL = (0, 9)
-#: The app's settings, beside the window's (out/window.json).
-SETTINGS = "out/app.json"
+PROTOCOL = (0, 10)
+#: What the app remembers (the version whose disclaimer was seen), beside the window's (out/window.json).
+STATE = "out/app.json"
 APPEARANCES = ("system", "light", "dark")
-DEFAULTS: dict[str, Any] = {"appearance": "system", "disclaimer_every_start": True, "disclaimer_seen": ""}
+#: The owner's settings the app's Settings page shows (localconfig.OWNER_FILE), with their defaults.
+DEFAULTS: dict[str, Any] = {"appearance": "system", "disclaimer_every_start": True, "ssh_public_key": ""}
+#: A public key's first word, by its kind (an OpenSSH .pub file).
+KEY_KINDS = ("ssh-", "ecdsa-", "sk-")
+KEY_MOST = 16384  # a public key file is small; a larger one is something else
 #: How a run's engine is made: (codename, name, workflow) -> an engine (ChildEngine, DemoEngine, a test's fake).
 Engines = Callable[[str, str, str], Union[ChildEngine, DemoEngine]]
 #: The demo's branches of a headset's repository, main first.
@@ -161,6 +166,19 @@ class Download:
 
 #: How a carry job names what came over, one line each.
 BROUGHT = "brought: "
+
+
+def key_problem(path: Path) -> str:
+    """Return why PATH is no public SSH key (an OpenSSH .pub file), or ""."""
+    try:
+        if not path.is_file() or path.stat().st_size > KEY_MOST:
+            return f"{path} is no public key file"
+        first = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return f"{path} cannot be read"
+    if not first.startswith(KEY_KINDS):
+        return f"{path} is no public key (a .pub file starts with ssh-ed25519, ssh-rsa or ecdsa-...)"
+    return ""
 
 
 def _amount(done: int, total: int) -> str:
@@ -379,19 +397,26 @@ class Server:
 
     # -- settings and the disclaimer --------------------------------------------------------
     def settings(self) -> dict[str, Any]:
-        """Return the app's settings, the defaults for what the file lacks."""
+        """Return the app's settings, the defaults for what the files lack, and the folder they are kept in.
+
+        An app before the owner's settings file kept its appearance in its own file: that still counts.
+        """
         try:
-            data = json.loads((self.root / SETTINGS).read_text(encoding="utf-8"))
+            data = json.loads((self.root / STATE).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        found = data if isinstance(data, dict) else {}
-        return {key: found.get(key, value) for key, value in DEFAULTS.items()}
+        kept = data if isinstance(data, dict) else {}
+        owner = localconfig.owner_settings(self.root)
+        found = {key: owner.get(key, kept.get(key, value)) for key, value in DEFAULTS.items()}
+        return {**found, "disclaimer_seen": str(kept.get("disclaimer_seen", "")), "folder": str(self.root)}
 
     def save(self, settings: dict[str, Any]) -> None:
-        """Keep SETTINGS in the settings file."""
-        path = self.root / SETTINGS
+        """Keep the owner's settings in their file, and what the app remembers in its own."""
+        localconfig.save_owner_settings({key: settings[key] for key in DEFAULTS}, self.root)
+        path = self.root / STATE
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(settings, indent=1) + "\n", encoding="utf-8", newline="\n")
+        state = {"disclaimer_seen": settings["disclaimer_seen"]}
+        path.write_text(json.dumps(state, indent=1) + "\n", encoding="utf-8", newline="\n")
 
     def disclaimer_due(self) -> bool:
         """Tell whether the app shows the disclaimer on this start: on every start, else once per version."""
@@ -424,8 +449,26 @@ class Server:
             msg = f"appearance is one of {', '.join(APPEARANCES)}"
             raise RefusedError(msg)
         settings["appearance"] = appearance
+        if "disclaimer_every_start" in message:
+            settings["disclaimer_every_start"] = message["disclaimer_every_start"] is True
+        if "ssh_public_key" in message:
+            key = str(message["ssh_public_key"] or "").strip()
+            problem = key_problem(Path(key)) if key else ""
+            if problem:
+                raise RefusedError(problem)
+            settings["ssh_public_key"] = key
         self.save(settings)
         return settings
+
+    def _open_folder(self, _message: dict[str, Any]) -> dict[str, Any]:
+        """Show the folder overpressure keeps its data in, in the system's file manager (the demo: nothing)."""
+        if not self.demo:
+            if sys.platform == "win32":
+                os.startfile(self.root)  # noqa: S606  # Windows only: our own folder
+            else:
+                opener = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.Popen([opener, str(self.root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # noqa: S603  # a fixed program on our own folder
+        return {}
 
     def _accept_disclaimer(self, message: dict[str, Any]) -> dict[str, Any]:
         settings = self.settings()
@@ -1003,6 +1046,7 @@ class Server:
         "hello": _hello,
         "settings": _settings,
         "set_settings": _set_settings,
+        "open_folder": _open_folder,
         "accept_disclaimer": _accept_disclaimer,
         "headsets": _headsets,
         "assess": _assess,

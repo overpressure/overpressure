@@ -101,7 +101,7 @@ python -m unittest                   # the tool's host tests and each downloaded
 headsets share. `devices/<codename>/` holds one headset each, downloaded or a Git clone of its repository
 (`git clone https://github.com/overpressure/phoenix devices/phoenix`): its plan, images and drivers. A new
 headset is a repository of its own and an entry in the catalogue ([adding a headset](docs/adding-a-headset.md)). Device data, vendor files and builds
-stay in the ignored `backup/`, `assets/`, `cache/`, `out/` and `.env`. See [CONTRIBUTING.md](CONTRIBUTING.md) and
+stay in the ignored `backup/`, `assets/`, `cache/`, `out/`, `settings.json` and `.env`. See [CONTRIBUTING.md](CONTRIBUTING.md) and
 [SECURITY.md](SECURITY.md).
 
 ## License

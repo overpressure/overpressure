@@ -1,6 +1,6 @@
 # Headset interface reference
 
-**TL;DR.** Every name a headset may use in headset interface 1.12, `overpressure.api.v1`: its
+**TL;DR.** Every name a headset may use in headset interface 1.13, `overpressure.api.v1`: its
 modules, and in each its functions and classes with their signatures, dataclass fields and constants, each
 with the first paragraph of its documentation. A headset imports only these
 (`from overpressure.api.v1 import REPO, qualcomm`, `from overpressure.api.v1.headset import Headset, Step`).
@@ -277,7 +277,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
   - `container_ready(self) -> bool`: Tell whether the build container's image is built.
   - `linux(self, script: str, timeout: float = 90) -> dict[str, str]`: Return the KEY=VALUE lines that @p script prints in the build container (a probe: unnamed).
 - `version_check(host: Host, name: str, argv: Sequence[str], needed_for: str, fix: str) -> Check`: Check a program that answers a version query: its first output line, or how to get it.
-- `env_check(root: Path = REPO, needed_for: str = HEADSET) -> Check`: Check that .env, which names the headset's serials and private files, is there.
+- `env_check(root: Path = REPO, needed_for: str = HEADSET) -> Check`: Check that overpressure has records of the headset (its serials), or a developer's .env names them.
 - `serial_checks(settings: DeviceSettings, needed_for: str = HEADSET, edl_needed_for: str = EDL) -> list[Check]`: Check that the headset's adb, fastboot and EDL serials are set.
 - `backup_check(folder: Path, needed_for: str = HEADSET, fix: str = "python -m overpressure device backup") -> Check`: Check the EDL backup: its manifest, and every file in it present at its recorded size.
 - `loader_check(settings: DeviceSettings, needed_for: str = EDL, fix: str = "the headset's signed Firehose loader") -> Check`: Check that the Firehose loader the loader setting names is there.
@@ -444,7 +444,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 
 `overpressure.api.v1.headset`: the headset, its steps, workflows and finished page ([source](../overpressure/headset.py)).
 
-- `SUPPORTED: dict[int, int] = {1: 12}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
+- `SUPPORTED: dict[int, int] = {1: 13}`: The headset interface, MAJOR.MINOR (docs/adding-a-headset.md#the-headset-interface): each major this overpressure runs, with its newest minor. A minor only adds to its major; a change that breaks one makes a new major, and the old one stays, as its module overpressure.api.vMAJOR, until it is retired (RETIRED).
 - `API = f"{max(SUPPORTED)}.{SUPPORTED[max(SUPPORTED)]}"`: The newest interface: what a new headset is made for.
 - `RETIRED: dict[int, str] = {}`: The majors this overpressure no longer runs, each with the last overpressure version that ran it.
 - `MANIFEST = "headset.json"`: A headset folder's description of itself: devices/<codename>/headset.json.
@@ -638,8 +638,8 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
   - `choose(self, ask: Ask) -> bool`: Ask a yes-or-no question whose no goes on (@p ask's decline); return True for its accept.
   - `run(self, argv: Sequence[str | os.PathLike[str]], *, stdin: bytes | None = None, progress: Callable[[str], tuple[float | None, str] | None] | None = None) -> str`: Run a child program from the repository root, its output streamed to the log; return its output.
   - `output(self, argv: Sequence[str | os.PathLike[str]], timeout: float = 60, *, check: bool = True) -> str`: Run a short program (a poll, a query) without streaming; its output goes to the log file only.
-  - `settings(self, cls: type[S]) -> S`: Return the settings of @p cls from .env as they are now (earlier tasks may have written it).
-  - `set_setting(self, key: str, value: str) -> None`: Set KEY=VALUE in .env: what the installer finds out (a serial), never a secret.
+  - `settings(self, cls: type[S]) -> S`: Return the settings of @p cls as they are now (earlier tasks may have recorded some).
+  - `set_setting(self, key: str, value: str) -> None`: Record KEY=VALUE (localconfig.update): what the installer finds out (a serial), never a secret.
   - `remember(self, choice: str) -> None`: Record the owner's CHOICE for this task in the state (never a secret): a later run reads it back.
   - `recall(self, task: str) -> str`: Return the choice the task @p task recorded, in this run or an earlier one; "" without one.
   - `completed(self, task: str) -> bool`: Tell whether the task @p task is done or skipped, in this run or an earlier one.
@@ -747,6 +747,11 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - `ROOT = REPO`
 - `EXE = ".exe" if sys.platform == "win32" else ""`
 - `QUOTE_PAIR = 2`
+- `RECORDS = Path("out") / "records.json"`: What overpressure found out (the serials, where the backup is), by key, in the root.
+- `OWNER_FILE = Path("settings.json")`: The owner's settings (the app's Settings page), in the root.
+- `OWNER = ("ssh_public_key",)`: The settings the owner sets, by name: the same for every headset (their keys any headset's).
+- `DEVELOPER`: Where a program or a private file comes from: a developer's override only, never recorded.
+- `RETIRED = ".env.old"`: What a migrated .env is kept as.
 - class `Settings` (@dataclass): The settings every headset shares; a headset adds its own fields and PREFIX.
   - `PREFIX: ClassVar[str] = "OVERPRESSURE_"`
   - `platform_tools: str = ""`
@@ -769,8 +774,14 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
   - `edl_program(self) -> Path`: Return the edl setting when set, else the fetched edl-ng, else edl-ng on PATH.
   - `ncm(self) -> Path | None`: Return the Python for the Windows NCM initialization.
 - `parse(text: str) -> dict`: Return the KEY=VALUE lines; blank lines and # comments are skipped, quotes around a value removed.
-- `update(values: Mapping[str, str], path: Path | None = None, example: Path | None = None) -> None`: Set KEY=VALUE lines in .env, keeping every other line and comment.
-- `load(cls: type[S] = Settings, path: Path | None = None, environ: Mapping[str, str] | None = None) -> S`: Return the settings of class @p cls from .env and the environment.
+- `records(root: Path | None = None) -> dict[str, str]`: Return what overpressure recorded, by key.
+- `owner_settings(root: Path | None = None) -> dict`: Return the owner's settings file as it is (the app keeps its own settings there too).
+- `save_owner_settings(values: Mapping[str, object], root: Path | None = None) -> None`: Set VALUES in the owner's settings file, keeping the rest of it.
+- `record(values: Mapping[str, str], root: Path | None = None) -> None`: Record VALUES by key: an owner setting goes to the owner's settings, the rest to the records.
+- `update(values: Mapping[str, str], path: Path | None = None, example: Path | None = None) -> None`: Record VALUES (record()); given a .env PATH, set KEY=VALUE lines there instead, keeping the rest.
+- `load(cls: type[S] = Settings, path: Path | None = None, environ: Mapping[str, str] | None = None) -> S`: Return the settings of class @p cls: the defaults, the records, the owner's, then .env and the environment.
+- `migrate(env: Path, root: Path | None = None) -> list[str]`: Move what an earlier overpressure kept in the .env ENV into ROOT's records and owner's settings.
+- `retire(root: Path | None = None) -> Path | None`: Migrate the .env an earlier overpressure wrote in ROOT, once, and keep it as .env.old; return that.
 
 ## lp
 

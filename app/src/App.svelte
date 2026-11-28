@@ -20,6 +20,7 @@
   import Library from "./pages/Library.svelte";
   import Ready from "./pages/Ready.svelte";
   import Run from "./pages/Run.svelte";
+  import SettingsPage from "./pages/Settings.svelte";
   import Setup from "./pages/Setup.svelte";
   import Welcome from "./pages/Welcome.svelte";
 
@@ -27,7 +28,9 @@
 
   const progress = $derived(app.run ? Math.round(overall(app.run).fraction * 100) : 0);
   const job = $derived(app.job ? app.jobs[app.job] : undefined);
-  const inner = $derived(app.page === "headset" || app.page === "run" || app.page === "advanced");
+  const inner = $derived(
+    app.page === "headset" || app.page === "run" || app.page === "advanced" || app.page === "settings",
+  );
 
   interface Crumb {
     label: string;
@@ -42,6 +45,8 @@
         return [{ label: "Welcome" }];
       case "setup":
         return [{ label: "First setup" }];
+      case "settings":
+        return [{ label: "Settings" }];
       case "library":
         return [{ label: "Headsets" }];
       case "headset":
@@ -80,6 +85,7 @@
 
   function back(): void {
     if (app.page === "run") app.leaveRun();
+    else if (app.page === "settings") app.page = app.settingsFrom;
     else if (app.page === "advanced") app.page = "headset";
     else app.page = "library";
   }
@@ -140,17 +146,7 @@
         >
         {#if menuOpen && app.settings}
           <div class="menu" role="menu">
-            <label class="row"
-              >Appearance
-              <select
-                value={app.settings.appearance}
-                onchange={(e) => app.setAppearance(e.currentTarget.value as Appearance)}
-              >
-                <option value="system">System</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-              </select></label
-            >
+            <button role="menuitem" onclick={() => menu(() => app.openSettings())}>Settings</button>
             <hr />
             {#if app.headset?.has_steps}
               <button role="menuitem" onclick={() => menu(() => app.openAdvanced())}>Advanced mode</button>
@@ -183,6 +179,8 @@
       <Headset headset={app.headset} />
     {:else if app.page === "advanced" && app.headset}
       <Advanced headset={app.headset} />
+    {:else if app.page === "settings" && app.settings}
+      <SettingsPage settings={app.settings} />
     {:else if app.page === "run" && app.run}
       <Run />
     {:else if app.page === "run" && app.ready}
@@ -315,20 +313,6 @@
     border: 1px solid var(--line);
     background: var(--panel);
     box-shadow: 0 5px 18px var(--shadow);
-  }
-
-  .menu .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 10px;
-  }
-
-  .menu select {
-    background: var(--button);
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    padding: 3px 6px;
   }
 
   .menu hr {

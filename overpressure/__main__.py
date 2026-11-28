@@ -52,6 +52,7 @@ inside the build container and on GitHub Actions (overpressure/elevated.py).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -348,6 +349,8 @@ def main(argv: list[str] | None = None) -> int:
     if disclaimer.FLAG in argv:  # anywhere: no command has an option of that name
         argv.remove(disclaimer.FLAG)
         disclaimer.accept()
+    with contextlib.suppress(OSError):  # an earlier overpressure's .env: its records move out, once
+        localconfig.retire()
     codename = None
     if argv[:1] == ["--device"] and len(argv) > 1:
         codename, argv = argv[1], argv[2:]

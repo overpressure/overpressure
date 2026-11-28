@@ -266,7 +266,7 @@ class DeviceChecksTests(unittest.TestCase):
         # A setting that names a missing edl-ng is what to fix: fetching would not change it.
         named = doctor.edl_tool_check(FakeHost(tools=()), replace(s, edl="cache/edl-ng/edl-ng.exe"))
         self.assertEqual(missing.status, named.status)
-        self.assertIn("EXAMPLE_EDL in .env", named.fix)
+        self.assertIn("EXAMPLE_EDL names a file", named.fix)
 
     def test_the_backup_by_its_manifest(self):
         folder = self.root / "backup"

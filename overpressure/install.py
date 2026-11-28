@@ -19,7 +19,7 @@ line on stdout, answers to its asks one per line on stdin, for the window; witho
 the same as text for a terminal, its asks through input() and getpass(). --plan only shows the
 plan and what is done; --restart STAGE forgets what was done from that stage on.
 
-Secret values (a form's secret fields) never reach a log, the state, .env, a command line, an
+Secret values (a form's secret fields) never reach a log, the state, the records, a command line, an
 event or stderr: they live in the task's memory only. Stopping (Ctrl-C, or the window closing
 the engine's stdin) ends the run at once wherever it waits: an ask, a wait through ctx.clock (every
 until() a task runs), a child that does not write (it is ended). A child that writes to the headset
@@ -666,16 +666,16 @@ class Context:
         return out
 
     def settings(self, cls: type[S]) -> S:
-        """Return the settings of @p cls from .env as they are now (earlier tasks may have written it)."""
+        """Return the settings of @p cls as they are now (earlier tasks may have recorded some)."""
         return localconfig.load(cls, self.engine.env)
 
     def set_setting(self, key: str, value: str) -> None:
-        """Set KEY=VALUE in .env: what the installer finds out (a serial), never a secret."""
+        """Record KEY=VALUE (localconfig.update): what the installer finds out (a serial), never a secret."""
         if any(secret in value for secret in self.engine.secrets):
-            msg = f"refusing to write a secret into .env ({key})"
+            msg = f"refusing to record a secret ({key})"
             raise Failed(msg)
         localconfig.update({key: value}, self.engine.env)
-        self.engine.write_log(self.task, f"saved {key} in .env")
+        self.engine.write_log(self.task, f"recorded {key}")
 
     def remember(self, choice: str) -> None:
         """Record the owner's CHOICE for this task in the state (never a secret): a later run reads it back."""
@@ -779,7 +779,7 @@ class Engine:
         release: str = "",
         changes: bool = True,
     ) -> None:
-        """Run @p stages of the headset @p info through @p ui; tests pass the root folder, .env and fakes.
+        """Run @p stages of the headset @p info through @p ui; tests pass the root folder, a .env and fakes.
 
         The lock is @p root/lock, the state and the logs are in @p root/<codename> for the install and
         in @p root/<codename>/<workflow> for another @p workflow; finished, it forgets the state of the
@@ -798,7 +798,7 @@ class Engine:
         self.release = release  #: the headset's tooling (catalogue.identity): progress made by another starts over
         self.changes = changes
         self.folder = workflow_folder(root, info.codename, workflow)
-        self.env = env if env is not None else localconfig.ROOT / ".env"
+        self.env = env  #: None: the records and settings (localconfig); a test's .env otherwise
         self.spawn: Spawn = spawn or self._spawn
         self.capture: Capture = capture or _capture
         self.clock = clock

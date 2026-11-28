@@ -26,7 +26,7 @@ python -m overpressure devices
 ```
 
 That commit is a headset with everything below except its images: `headset.json`, `HEADSET` with one command
-(`dev status`) and two steps, its `.env` settings and doctor checks, host tests, a README in the template's
+(`dev status`) and two steps, its settings and doctor checks, host tests, a README in the template's
 form, `CLAUDE.md`, `docs/`, CI, the release workflow, issue forms and CODEOWNERS.
 
 ```text
@@ -35,7 +35,7 @@ devices/<codename>/   a clone of overpressure/<codename>
   __init__.py      makes devices.<codename> importable
   README.md        what works and what doesn't, and how to install it: headset-readme-template.md's form
   CLAUDE.md        its rules and hardware workflow
-  env.example      its keys in .env, with their comments (a new .env starts with them)
+  env.example      its keys, with their comments: a developer's overrides (tool.md#settings)
   tooling/         its host tooling: HEADSET in __init__.py, the command modules
   tests/           its host tests (with an __init__.py), run by python -m unittest
   docs/            its documents
@@ -148,7 +148,7 @@ Most of what a headset on its stock Android kernel needs is generic:
 
 | Need | Module |
 | --- | --- |
-| Its settings in `.env`: serials, the EDL backup, the Firehose loader, edl-ng, the NCM Python, the owner's SSH key | `overpressure.localconfig.DeviceSettings` |
+| Its settings: serials, the EDL backup, the Firehose loader, edl-ng, the NCM Python, the owner's SSH key | `overpressure.localconfig.DeviceSettings` |
 | Its dependency checks: settings, EDL backup and tools, adb and fastboot, Windows' USB link (the build container is checked for every headset) | `overpressure.doctor` |
 | Stock firmware: a boot image or partitions from the vendor's OTA, checked against the zip | `overpressure.ota` |
 | A file pinned by size and SHA-256 out of a vendor's remote zip (a loader, say), over HTTP ranges | `overpressure.ota.PinnedMember`, `fetch_pinned` |
@@ -213,6 +213,7 @@ same (the command line and the window are overpressure's to test).
 | Valve's kernel, since 1.7: the pinned release (`Release`, `release`, `fetch`, `current`, `mismatches`, `build`) and the contracts (`Contract`, `check`, `source_file`, `IN_PACKAGES`); a boot image with it (`command_line`, `keyed_words`, `appended`, `with_kernel`, `DEBUG`, `trace_words`) | `overpressure.kernelpin`, `overpressure.kernelimage` |
 | The image's packages, since 1.7: pacman's databases and closures (`Database`, `closure`, `repositories`, `lock`), the downloads before the install (`Prefetch`, `manifest`, `local`) | `overpressure.pacman`, `overpressure.prefetch` |
 | The headset runtime, since 1.8 ([runtime.md](runtime.md)): stage 1 and the installed system on it for a headset made for 1.8 or newer (`Spec.runtime` and `RUNTIME` decide otherwise), the PC's side of its contract (`RUN`, `LIB`, `ETC`, `CONTACT`, `TEST_RUN`, `TEST_AUTHENTICATED`, `TEST_CONNECT_TIMEOUT`, `TEST_TIMEOUT`, `BUILD_INFO`, `HEADSET`, `WORD`, `word`) | `overpressure.stage1`, `overpressure.contract` |
+| Settings without `.env`, since 1.13: `load` reads the defaults, the records (`records`, `record`: `RECORDS`), the owner's settings (`owner_settings`, `save_owner_settings`: `OWNER_FILE`, `OWNER`) and a developer's `.env` and environment; `update` without a path records; `migrate` and `retire` move an earlier `.env` out (`RETIRED`), leaving where programs came from (`DEVELOPER`) | `overpressure.localconfig` |
 | An EDL loader freed after a session that broke mid-transfer, since 1.12: `unstick` reads what it still sends (`drain_session` with `ComReader`, Qualcomm's serial driver on Windows, or `UsbReader.queued`), then restarts it normally, and the caller enters EDL mode again from the system that starts; nothing is sent to it before the restart | `overpressure.qualcomm` |
 | A new super's layout, since 1.12: `op_list` reads a full OTA's `dynamic_partitions_op_list`, `build` writes the metadata of its partitions (each one read-only extent, aligned on the disk) for a `Layout`; `partitions` reads it back | `overpressure.lp` |
 | A catalog build's mirrors, since 1.12: `sources` (its url, then its `mirrors`) and `fastest` (the host that serves a range of the archive fastest, a host with another size left out) | `overpressure.ota` |
@@ -283,8 +284,10 @@ HEADSET = Example()
   under `/var/tmp`, and a tool it needs goes into the build image, by pull request to
   [overpressure/builder](https://github.com/overpressure/builder), then a new pin in `overpressure/linux.py`. `writes=True` makes the
   window ask first.
-- **Settings** in `.env` are a dataclass derived from `overpressure.localconfig.Settings` with the
-  headset's own key prefix, so headsets share one `.env`. A headset on a stock Android bootloader derives
+- **Settings** are a dataclass derived from `overpressure.localconfig.Settings` with the headset's own key
+  prefix, read in layers: the defaults, what the installer recorded, the owner's settings and a developer's
+  overrides ([tool.md](tool.md#settings)). Give a place or a tool a default, never a setting the owner must
+  fill in: the installer records what it finds out. A headset on a stock Android bootloader derives
   from `DeviceSettings`: `adb_serial`, `fastboot_serial`, `edl_serial`, `identity` (default
   `backup/device.json`), `backup` (`backup/stock`), `loader` (`assets/firehose.elf`), `edl`, `ncm_python`
   and `ssh_public_key`, with `edl_program()` and `ncm()` resolving the tools. The headset adds only its own
@@ -312,7 +315,7 @@ opens it: a headset that uses them declares `"api": "1.1"`). Example:
 `Task`s); empty, the default, means no installer. A task runs in an `overpressure.install.Context`: it runs
 programs with their output streamed, reports progress (`ctx.progress`, or the programs' own
 [progress lines](tool.md#events); a task without them is shown against its `estimate`) and notes, asks the owner (`Ask`: a consent, an
-action, a form; secret fields never leave the engine) and writes settings to `.env`; a `done` check skips
+action, a form; secret fields never leave the engine) and records what it finds out (`ctx.set_setting`); a `done` check skips
 work whose output is already there. The engine keeps the state in `out/install/<codename>/`, resumes after
 a failure and drives the window through JSON events ([tool.md](tool.md#the-installer)). Reuse the
 headset's steps' command lines. Example:
@@ -327,8 +330,8 @@ they are (a headset that marks one declares `"api": "1.3"`, or offers it only wh
 field). The PICO 4 has an upgrade, the way back to stock and a check of the headset.
 
 **The backup as one file.** `Headset.backup_set()` returns the backup, the identity, the other files and
-the `.env` settings the way back needs on another computer (`BackupSet`), and `Headset.adopt_backup()`
-names an imported one in `.env`; with them `python -m overpressure backup export|import FILE` and the
+the settings the way back needs on another computer (`BackupSet`), and `Headset.adopt_backup()`
+records an imported one; with them `python -m overpressure backup export|import FILE` and the
 window's backup card work.
 
 **Logs for a bug report.** The window's *Save logs…* (`python -m overpressure support-bundle FILE`) writes one
@@ -384,7 +387,7 @@ class ExampleRamBoot(RamBootTarget):
     up_timeout = 120
     refused_hint = "Boot stage 1 from a partition instead: python -m overpressure dev flash."
 
-    def __init__(self, settings):  # the headset's .env settings
+    def __init__(self, settings):  # the headset's settings (localconfig)
         self.settings = settings
 
     @property

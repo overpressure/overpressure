@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import io
 import json
 import queue
@@ -15,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
-from overpressure import disclaimer, serve
+from overpressure import disclaimer, localconfig, serve
 from overpressure import headset as headsets
 from overpressure.headset import Action, AfterInstall, Found, Headset, Info, Param, Registry, Step
 from overpressure.install import Stage, Task
@@ -165,9 +166,9 @@ class ServeTest(Base):
         self.request("accept_disclaimer", every_start=False)
         self.assertEqual(self.environ.get(disclaimer.ENV), "1")
         self.assertFalse(self.request("hello")["result"]["disclaimer"]["due"])
-        settings = json.loads((self.root / serve.SETTINGS).read_text(encoding="utf-8"))
-        settings["disclaimer_seen"] = "an older version"
-        (self.root / serve.SETTINGS).write_text(json.dumps(settings), encoding="utf-8")
+        state = json.loads((self.root / serve.STATE).read_text(encoding="utf-8"))
+        state["disclaimer_seen"] = "an older version"
+        (self.root / serve.STATE).write_text(json.dumps(state), encoding="utf-8")
         self.assertTrue(self.request("hello")["result"]["disclaimer"]["due"])
 
     def test_disclaimer_ticked_shows_on_every_start(self):
@@ -179,6 +180,32 @@ class ServeTest(Base):
         self.assertEqual(self.request("set_settings", appearance="dark")["result"]["appearance"], "dark")
         self.assertEqual(self.request("settings")["result"]["appearance"], "dark")
         self.assertIn("error", self.request("set_settings", appearance="pink"))
+        # The owner's settings file keeps them; what the app remembers stays in its own.
+        self.assertEqual(localconfig.owner_settings(self.root)["appearance"], "dark")
+        self.assertEqual(self.request("settings")["result"]["folder"], str(self.root))
+
+    def test_an_earlier_apps_appearance_still_counts(self):
+        (self.root / "out").mkdir(exist_ok=True)
+        (self.root / serve.STATE).write_text('{"appearance": "light", "disclaimer_seen": "1"}', encoding="utf-8")
+        found = self.request("settings")["result"]
+        self.assertEqual((found["appearance"], found["disclaimer_seen"]), ("light", "1"))
+
+    def test_the_owners_ssh_key_is_a_public_key_file(self):
+        public, private = self.root / "id.pub", self.root / "id"
+        public.write_text("ssh-ed25519 AAAA me@pc\n", encoding="utf-8")
+        private.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n", encoding="utf-8")
+        self.assertIn("no public key", self.request("set_settings", ssh_public_key=str(private))["error"])
+        self.assertIn("error", self.request("set_settings", ssh_public_key=str(self.root / "none.pub")))
+        found = self.request("set_settings", ssh_public_key=str(public), disclaimer_every_start=False)["result"]
+        self.assertEqual((found["ssh_public_key"], found["disclaimer_every_start"]), (str(public), False))
+
+        @dataclasses.dataclass
+        class Example(localconfig.DeviceSettings):
+            PREFIX = "EXAMPLE_"
+
+        with mock.patch.object(localconfig, "ROOT", self.root):
+            self.assertEqual(localconfig.load(Example, environ={}).ssh_public_key, str(public))  # every headset's
+        self.assertEqual(self.request("set_settings", ssh_public_key="")["result"]["ssh_public_key"], "")
 
     def test_headsets_list_the_catalogue_and_the_registry(self):
         found = {h["codename"]: h for h in self.request("headsets")["result"]["headsets"]}
@@ -362,14 +389,16 @@ class AppCarryOverTest(Base):
         self.addCleanup(lambda: shutil.rmtree(old, ignore_errors=True))
         (old / "overpressure" / "__init__.py").write_text("", encoding="utf-8")
         (old / "pyproject.toml").write_text("", encoding="utf-8")
-        (old / ".env").write_text("x=1\n", encoding="utf-8")
+        (old / ".env").write_text("PICO4_ADB_SERIAL=A1\nPICO4_EDL=cache/edl-ng/edl-ng.exe\n", encoding="utf-8")
         checked = self.request("carry_check", **{"from": str(old)})["result"]
         self.assertIn(str(old), checked["question"])
         events, end = self.job(self.request("carry", **{"from": str(old)}))
         self.assertEqual(end["code"], 0)
-        self.assertIn(serve.BROUGHT + "the settings (.env)", [e.get("line") for e in events])
+        brought = serve.BROUGHT + "your settings and what overpressure knows about the headset"
+        self.assertIn(brought, [e.get("line") for e in events])
         self.assertTrue([e for e in events if e["event"] == "job-progress" and e["fraction"] == 1.0])
-        self.assertTrue((self.root / ".env").is_file())
+        self.assertEqual(localconfig.records(self.root), {"PICO4_ADB_SERIAL": "A1"})  # not where its edl-ng was
+        self.assertFalse((self.root / ".env").exists())
         self.assertIn("already", self.request("carry", **{"from": str(self.root)})["error"])  # refused, no job
 
 

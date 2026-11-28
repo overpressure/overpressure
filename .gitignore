@@ -12,6 +12,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# the owner's settings when the app runs from a checkout
+/settings.json
 # Local credentials and editor/agent state
 id_ed25519*
 known_hosts

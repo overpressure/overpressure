@@ -19,7 +19,7 @@ import {
 } from "./protocol";
 import { apply, initial, type RunState } from "./run";
 
-export type Page = "loading" | "welcome" | "setup" | "library" | "headset" | "run" | "advanced";
+export type Page = "loading" | "welcome" | "setup" | "library" | "headset" | "run" | "advanced" | "settings";
 
 /** A workflow chosen, before it runs: its plan as the last run left it, and how that run ended. */
 export interface Ready {
@@ -56,6 +56,8 @@ export class AppState {
   jobs = $state<Record<string, JobState>>({});
   /** The job under way, or the last one, by id. */
   job = $state<string | null>(null);
+  /** The page the Settings page came from. */
+  settingsFrom = $state<Page>("library");
   /** The workflow the run page shows before it runs. */
   ready = $state<Ready | null>(null);
   /** The last look at each headset on USB, by codename. */
@@ -160,7 +162,18 @@ export class AppState {
   }
 
   async setAppearance(appearance: Appearance): Promise<void> {
-    this.settings = await this.engine.request<Settings>("set_settings", { appearance });
+    await this.setSettings({ appearance });
+  }
+
+  /** Change some of the owner's settings; the engine's refusal (a file that is no public key) is thrown. */
+  async setSettings(fields: Partial<Omit<Settings, "folder" | "disclaimer_seen">>): Promise<void> {
+    this.settings = await this.engine.request<Settings>("set_settings", fields);
+  }
+
+  /** Open the Settings page; Back returns to the page it came from. */
+  openSettings(): void {
+    if (this.page !== "settings") this.settingsFrom = this.page;
+    this.page = "settings";
   }
 
   say(text: string): void {

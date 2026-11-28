@@ -38,7 +38,7 @@ class DeviceSettingsTests(unittest.TestCase):
             (s.identity, s.backup, s.loader), ("backup/device.json", "backup/stock", "assets/firehose.elf")
         )
         self.assertEqual(s.edl_program(), localconfig.ROOT / "tools/edl-ng")
-        with self.assertRaisesRegex(ValueError, "set EXAMPLE_EDL_SERIAL in .env"):
+        with self.assertRaisesRegex(ValueError, "not recorded EXAMPLE_EDL_SERIAL yet"):
             s.require("adb_serial", "edl_serial")
 
     def test_an_empty_value_keeps_the_default(self):
@@ -104,6 +104,63 @@ class UpdateTests(unittest.TestCase):
             self.skipTest("no hard links here")
         localconfig.update({"EXAMPLE_ADB_SERIAL": "A3"}, self.env, self.example)
         self.assertEqual(link.read_text(), "EXAMPLE_ADB_SERIAL=A3\n")
+
+
+class StoreTests(unittest.TestCase):
+    """The records, the owner's settings and a developer's overrides, each over the one before."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        patcher = mock.patch.object(localconfig, "ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_layers(self):
+        self.assertEqual(localconfig.load(Example, environ={}).adb_serial, "")
+        localconfig.update({"EXAMPLE_ADB_SERIAL": "A1", "EXAMPLE_SSH_PUBLIC_KEY": "me.pub"})  # as the installer
+        self.assertEqual(localconfig.records(), {"EXAMPLE_ADB_SERIAL": "A1"})
+        self.assertEqual(localconfig.owner_settings(), {"ssh_public_key": "me.pub"})  # the owner's, any headset's
+        s = localconfig.load(Example, environ={})
+        self.assertEqual((s.adb_serial, s.ssh_public_key), ("A1", "me.pub"))
+        self.assertFalse((self.root / ".env").exists())  # nothing writes a .env
+        # A developer's .env, then the environment, over both.
+        (self.root / ".env").write_text("EXAMPLE_ADB_SERIAL=DEV\n", encoding="utf-8")
+        self.assertEqual(localconfig.load(Example, environ={}).adb_serial, "DEV")
+        self.assertEqual(localconfig.load(Example, environ={"EXAMPLE_ADB_SERIAL": "ENV"}).adb_serial, "ENV")
+
+    def test_a_record_never_says_where_a_program_comes_from(self):
+        localconfig.record({"EXAMPLE_EDL": "cache/edl-ng/edl-ng.exe", "EXAMPLE_FIRMWARE": "2.0"})
+        s = localconfig.load(Example, environ={})
+        self.assertEqual((s.edl, s.firmware), ("", "2.0"))
+        with self.assertRaisesRegex(ValueError, "one line"):
+            localconfig.record({"EXAMPLE_ADB_SERIAL": "a\nb"})
+
+    def test_an_earlier_env_is_migrated_once_and_kept(self):
+        env = self.root / ".env"
+        env.write_text(
+            "# mine\nEXAMPLE_ADB_SERIAL=A1\nEXAMPLE_EDL=cache/edl-ng/edl-ng.exe\nEXAMPLE_FIRMWARE=\n"
+            "EXAMPLE_SSH_PUBLIC_KEY=me.pub\nOVERPRESSURE_PRIVATE_WORDS=x\n",
+            encoding="utf-8",
+        )
+        localconfig.record({"EXAMPLE_EDL_SERIAL": "E1"})
+        kept = localconfig.retire()
+        self.assertEqual(kept, self.root / ".env.old")
+        self.assertFalse(env.exists())
+        self.assertEqual(localconfig.records(), {"EXAMPLE_ADB_SERIAL": "A1", "EXAMPLE_EDL_SERIAL": "E1"})
+        self.assertEqual(localconfig.owner_settings(), {"ssh_public_key": "me.pub"})
+        self.assertIsNone(localconfig.retire())  # once
+        env.write_text("EXAMPLE_ADB_SERIAL=A2\n", encoding="utf-8")
+        self.assertEqual(localconfig.retire(), self.root / ".env.old.2")
+        self.assertEqual(localconfig.records()["EXAMPLE_ADB_SERIAL"], "A1")  # what is recorded stays
+
+    def test_a_checkouts_env_is_the_developers(self):
+        (self.root / ".git").mkdir()
+        (self.root / ".env").write_text("EXAMPLE_ADB_SERIAL=DEV\n", encoding="utf-8")
+        self.assertIsNone(localconfig.retire())
+        self.assertTrue((self.root / ".env").exists())
+        self.assertEqual(localconfig.records(), {})
 
 
 if __name__ == "__main__":

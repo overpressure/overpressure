@@ -1,18 +1,29 @@
 # SPDX-License-Identifier: Unlicense
-"""Local settings of a headset's commands, read from .env at the repository root.
+"""A headset's settings: what overpressure records, what the owner sets, and developers' overrides.
 
-.env describes particular headsets (their serials and backups) and the private files their
-workflows use, so it stays out of Git; .env.example lists the keys. Each headset declares its
-settings as a dataclass derived from Settings, with its own key prefix (PICO4_ for the PICO 4),
-so several headsets can share one .env. Environment variables of the same names take precedence
-over the file. A headset on a stock Android bootloader derives from DeviceSettings, which has what
-every Qualcomm Android headset's workflow names (serials, EDL backup, loader, tools). update()
-sets keys in .env and keeps the rest of it: the installer writes the serials it finds there.
+Each headset declares its settings as a dataclass derived from Settings, with its own key prefix (PICO4_ for
+the PICO 4). A headset on a stock Android bootloader derives from DeviceSettings, which has what every
+Qualcomm Android headset's workflow names (serials, EDL backup, loader, tools). load() builds them in layers,
+each over the one before:
+
+- the defaults: fixed places (backup/stock, assets/...) and the tools overpressure fetches or ships;
+- the records (out/records.json): what the installer finds out, such as the serials, by key. update() and
+  the installer's set_setting write them; nothing else does;
+- the owner's settings (settings.json): what the app's Settings page sets, the same for every headset
+  (OWNER: the owner's own SSH key);
+- a developer's overrides: .env in the root, read only (KEY=VALUE lines; .env.example lists overpressure's),
+  then the environment. A path or a program set there replaces the fetched one.
+
+A .env that an earlier overpressure wrote in a release's or the app's folder is migrated once (retire): the
+records and the owner's settings move out of it, developers' entries go, and it is kept as .env.old. A
+development checkout's .env stays as it is. load() and update() given a .env path read and write that file
+alone, as tests do.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 from dataclasses import dataclass, fields
@@ -27,6 +38,26 @@ if TYPE_CHECKING:
 ROOT = REPO
 EXE = ".exe" if sys.platform == "win32" else ""
 QUOTE_PAIR = 2  # a quoted value is at least its two quotes
+
+#: What overpressure found out (the serials, where the backup is), by key, in the root.
+RECORDS = Path("out") / "records.json"
+#: The owner's settings (the app's Settings page), in the root.
+OWNER_FILE = Path("settings.json")
+#: The settings the owner sets, by name: the same for every headset (their keys any headset's).
+OWNER = ("ssh_public_key",)
+#: Where a program or a private file comes from: a developer's override only, never recorded.
+DEVELOPER = (
+    "platform_tools",
+    "ssh",
+    "ssh_keygen",
+    "edl",
+    "ncm_python",
+    "loader",
+    "engineering_abl",
+    "engineering_abl_sha256",
+)
+#: What a migrated .env is kept as.
+RETIRED = ".env.old"
 
 S = TypeVar("S", bound="Settings")
 
@@ -66,7 +97,10 @@ class Settings:
         """Raise unless every setting of NAMES is set, naming the missing keys."""
         missing = [self.key(n) for n in names if not getattr(self, n)]
         if missing:
-            msg = f"set {', '.join(missing)} in .env (see .env.example)"
+            msg = (
+                f"overpressure has not recorded {', '.join(missing)} yet: the installer records it when it finds "
+                "the headset (a developer sets it in the environment)"
+            )
             raise ValueError(msg)
 
 
@@ -141,15 +175,76 @@ def _line(key: str, value: str) -> str:
     raise ValueError(msg)
 
 
-def update(values: Mapping[str, str], path: Path | None = None, example: Path | None = None) -> None:
-    """Set KEY=VALUE lines in .env, keeping every other line and comment.
+def _read_json(path: Path) -> dict:
+    """Return the object in PATH; an empty one when it is missing or unreadable."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
-    A key's first line takes the new value and its later lines go (no duplicates); a key that is
-    not there is added at the end. A missing .env starts as a copy of .env.example (@p example)
+
+def _write_json(path: Path, data: Mapping[str, object]) -> None:
+    """Write DATA to PATH whole: a half-written file is never read."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(path.name + ".part")
+    part.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    part.replace(path)
+
+
+def records(root: Path | None = None) -> dict[str, str]:
+    """Return what overpressure recorded, by key."""
+    found = _read_json((ROOT if root is None else root) / RECORDS)
+    return {str(k): v for k, v in found.items() if isinstance(v, str)}
+
+
+def owner_settings(root: Path | None = None) -> dict:
+    """Return the owner's settings file as it is (the app keeps its own settings there too)."""
+    return _read_json((ROOT if root is None else root) / OWNER_FILE)
+
+
+def save_owner_settings(values: Mapping[str, object], root: Path | None = None) -> None:
+    """Set VALUES in the owner's settings file, keeping the rest of it."""
+    path = (ROOT if root is None else root) / OWNER_FILE
+    _write_json(path, {**_read_json(path), **values})
+
+
+def _owner_name(key: str) -> str:
+    """Return the owner setting KEY is (with any headset's prefix, or none), or ""."""
+    return next((name for name in OWNER if key in (name, name.upper()) or key.endswith("_" + name.upper())), "")
+
+
+def _developer(key: str) -> bool:
+    """Tell whether KEY names where a program or a private file comes from (a developer's override)."""
+    return key.startswith("OVERPRESSURE_") or any(key.endswith("_" + name.upper()) for name in DEVELOPER)
+
+
+def record(values: Mapping[str, str], root: Path | None = None) -> None:
+    """Record VALUES by key: an owner setting goes to the owner's settings, the rest to the records."""
+    root = ROOT if root is None else root
+    for key, value in values.items():
+        if "\n" in value or "\r" in value:
+            msg = f"{key}: a setting is one line"
+            raise ValueError(msg)
+    owner = {_owner_name(k): v for k, v in values.items() if _owner_name(k)}
+    found = {k: v for k, v in values.items() if not _owner_name(k)}
+    if owner:
+        save_owner_settings(owner, root)
+    if found:
+        _write_json(root / RECORDS, {**records(root), **found})
+
+
+def update(values: Mapping[str, str], path: Path | None = None, example: Path | None = None) -> None:
+    """Record VALUES (record()); given a .env PATH, set KEY=VALUE lines there instead, keeping the rest.
+
+    In a .env a key's first line takes the new value and its later lines go (no duplicates); a key that
+    is not there is added at the end. A missing .env starts as a copy of .env.example (@p example)
     and each headset's devices/<codename>/env.example, so its comments explain the keys. The file
     is written in place: .env may be a hard link shared by several checkouts.
     """
-    path = ROOT / ".env" if path is None else path
+    if path is None:
+        record(values)
+        return
     # overpressure's own template comes with its code; the headsets' with the headsets, in the data root.
     examples = [CODE / ".env.example", *sorted((ROOT / "devices").glob("*/env.example"))]
     if path.exists():
@@ -174,18 +269,71 @@ def update(values: Mapping[str, str], path: Path | None = None, example: Path | 
 
 # The default is the bound of S: sound, but ty does not accept a default for a type[S] parameter.
 def load(cls: type[S] = Settings, path: Path | None = None, environ: Mapping[str, str] | None = None) -> S:  # ty: ignore[invalid-parameter-default]
-    """Return the settings of class @p cls from .env and the environment.
+    """Return the settings of class @p cls: the defaults, the records, the owner's, then .env and the environment.
 
-    An empty value keeps the setting's default, as .env.example's comments say ("Empty: ..."): a
-    .env started from it must not empty a default such as the engineering ABL's known hash.
+    Given a .env @p path, that file and the environment alone. An empty value keeps the setting's default,
+    as .env.example's comments say ("Empty: ..."): a .env started from it must not empty a default such as
+    the engineering ABL's known hash. A record never sets where a program or a private file comes from.
     """
-    path = ROOT / ".env" if path is None else path
     environ = os.environ if environ is None else environ
-    values = parse(path.read_text(encoding="utf-8")) if path.exists() else {}
+    layers: list[Mapping[str, str]] = []
+    if path is None:
+        owner = owner_settings()
+        layers.append({k: v for k, v in records().items() if not _developer(k)})
+        layers.append({cls.key(n): owner[n] for n in OWNER if isinstance(owner.get(n), str)})
+        path = ROOT / ".env"
+    layers.append(parse(path.read_text(encoding="utf-8")) if path.exists() else {})
+    layers.append(environ)
     settings = cls()
     for item in fields(cls):
         key = cls.key(item.name)
-        value = environ.get(key, values.get(key))
-        if value:
-            setattr(settings, item.name, value)
+        for layer in layers:
+            if layer.get(key):
+                setattr(settings, item.name, layer[key])
     return settings
+
+
+def _checkout(root: Path) -> bool:
+    """Tell whether ROOT is a development checkout (its .env is the developer's own)."""
+    return (root / ".git").exists()
+
+
+def migrate(env: Path, root: Path | None = None) -> list[str]:
+    """Move what an earlier overpressure kept in the .env ENV into ROOT's records and owner's settings.
+
+    The serials and the other records go to the records, the owner's settings to theirs (neither replacing
+    what ROOT has), and where a program or a private file comes from goes: the fetched or fixed ones count
+    now. Return the keys moved.
+    """
+    root = ROOT if root is None else root
+    try:
+        values = parse(env.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    have, mine = records(root), owner_settings(root)
+
+    def kept(key: str) -> bool:
+        return bool(mine.get(_owner_name(key)) if _owner_name(key) else have.get(key))
+
+    moved = {k: v for k, v in values.items() if v and not _developer(k) and not kept(k)}
+    record(moved, root)
+    return sorted(moved)
+
+
+def retire(root: Path | None = None) -> Path | None:
+    """Migrate the .env an earlier overpressure wrote in ROOT, once, and keep it as .env.old; return that.
+
+    A development checkout's .env is the developer's: it stays.
+    """
+    root = ROOT if root is None else root
+    env = root / ".env"
+    if _checkout(root) or not env.is_file():
+        return None
+    migrate(env, root)
+    kept = root / RETIRED
+    number = 1
+    while kept.exists():
+        number += 1
+        kept = root / f"{RETIRED}.{number}"
+    env.replace(kept)
+    return kept

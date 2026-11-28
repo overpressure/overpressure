@@ -22,7 +22,8 @@ It is Python 3.9+ on the standard library, with pinned packages where they spare
 tool: brotli (the stock OTA), pyusb with libusb-package (EDL devices, Windows' USB network link), truststore
 (HTTPS verified by the system's own verifier, [Downloads](#downloads)), and Tk with CustomTkinter for the
 window. It runs on Windows, Linux and macOS, from the repository root, where
-`.env` and the private folders (`out/`, `cache/`, `assets/`, `backup/`) live.
+the owner's settings (`settings.json`) and the private folders (`out/`, `cache/`, `assets/`, `backup/`) live
+([Settings](#settings)).
 
 ## Headsets in devices/
 
@@ -88,9 +89,28 @@ python -m overpressure tools [NAME...]
 ```
 
 fetches the pinned platform-tools (adb, fastboot) and edl-ng into `cache/tools`, each archive checked by
-its SHA-256 ([overpressure/tools.py](../overpressure/tools.py)). A headset's settings that name its own
-copies take precedence, then the fetched ones, then PATH. Only this command downloads them; the window has
-it as *Fetch the host tools*. Windows' USB network link needs no tool: it uses pyusb and libusb-package.
+its SHA-256 ([overpressure/tools.py](../overpressure/tools.py)). A developer's override (the environment or
+a checkout's `.env`, [Settings](#settings)) takes precedence, then the fetched ones, then PATH. Only this
+command downloads them; the window has it as *Fetch the host tools*. Windows' USB network link needs no tool:
+it uses pyusb and libusb-package.
+
+## Settings
+
+Little is the owner's to set, and nothing about where things are: the backup is in `backup/stock`, the
+unlock files in `assets/`, the tools are the fetched or shipped ones. A headset's settings
+([overpressure/localconfig.py](../overpressure/localconfig.py)) come in layers, each over the one before:
+
+| Layer | Where | Who writes it |
+| --- | --- | --- |
+| The defaults | the code: fixed places, the fetched tools, pinned hashes | nobody |
+| The records | `out/records.json`, by key (`PICO4_ADB_SERIAL`): the serials, a backup imported elsewhere | the installer (`ctx.set_setting`), a backup's import |
+| The owner's settings | `settings.json`: the appearance, the disclaimer on every start, the owner's own SSH key (any headset's) | the app's *Settings* page |
+| A developer's overrides | `.env` in a checkout (`KEY=VALUE` lines; `.env.example`), then the environment | the developer, by hand |
+
+Nothing writes a `.env`. A `.env` an earlier overpressure left in a release's or the app's folder is migrated
+on the first start (`localconfig.retire`): its serials and other records go to the records, the SSH key to
+`settings.json`, where its programs came from goes, and the file stays as `.env.old`. A checkout's `.env` is the
+developer's and stays. The app's *Settings* page shows the owner's settings and the data folder (*Open*).
 
 ## Downloads
 
@@ -336,14 +356,15 @@ carries the next one's development version (`2026.12.0.dev0`), so a preview is n
 it ([releasing.md](releasing.md#versions)).
 
 A newer release unpacks into a folder of its own, beside the one before. What the owner made is in the earlier
-folder: the settings (`.env`), the headset's backup (`backup/`, the way back to its own system), the installer's
+folder: the owner's settings (`settings.json`), what overpressure recorded about the headset (`out/records.json`;
+an older folder's `.env`, migrated on the way), the headset's backup (`backup/`, the way back to its own system), the installer's
 records (`out/install/`, which say what the headset runs), the headsets downloaded into `devices/`, and the
 files a headset's way back also needs (`Headset.backup_set`: the PICO 4's SSH key for its maintenance system).
 On its first start in a fresh folder the window finds the earlier one beside it and asks before it opens; *Yes*
 moves the backup (a rename on the same disk) and copies the rest, replacing nothing the new folder has, and
-the earlier folder gets a `MOVED.txt` that says where its backup went. A setting that names a file left behind
-(a tool of its own in the earlier `cache/`) is commented out in the new `.env`, so the fetched tool takes its
-place. *No* is remembered
+the earlier folder gets a `MOVED.txt` that says where its backup went. The settings and records merge key by
+key, and where the earlier folder's programs came from (a tool of its own in its `cache/`) stays behind: the
+fetched tools count here. *No* is remembered
 (`out/carried-over.json`), and a checkout is never asked. `python -m overpressure carry-over [FOLDER]` does the
 same from a terminal ([overpressure/carryover.py](../overpressure/carryover.py)).
 
@@ -394,7 +415,7 @@ The Python is relocatable, so the app runs it where it was installed, without th
 site-packages, no `PYTHONPATH` or `PYTHONHOME`. On Windows: Python 3.12.15 with brotli, pyusb, libusb-package and
 truststore, 59 MB in 2,300 files, overpressure 3 MB; the installer is about 16 MB.
 
-**Two roots.** overpressure's own files are `overpressure.CODE`; the owner's data (`.env`, `backup/`, `assets/`,
+**Two roots.** overpressure's own files are `overpressure.CODE`; the owner's data (`settings.json`, `backup/`, `assets/`,
 `cache/`, `out/`, the headsets in `devices/`) is `overpressure.REPO`, the data root. In a checkout and a release's
 folder both are that folder, as ever. The app's engine is marked as such (`.bundled` in its root) and keeps its data
 where an update or an uninstall never reaches: on Windows `%LOCALAPPDATA%\overpressure-data` (the per-user installer
@@ -457,6 +478,9 @@ settings; the window's title bar names overpressure.
   page leaves the run going; the status bar leads back to it and says when the run waits for the owner.
 - **Advanced mode:** the steps by group (a drop-down in a narrow window), a step's parameters with *Browse…*, its
   command line with *Copy*, *Run* (a step that writes asks first) or *Stop*, its output; the dependency checks.
+- **Settings** (the gear's menu): the appearance, the disclaimer on every start, the owner's own SSH key
+  (*Choose…*, *Remove*; a file that is no public key is refused) and the data folder (*Open*), each kept at
+  once ([Settings](#settings)).
 
 Closing the window while a run or a job is under way asks first: *Keep it running*, or *Stop and close*, which ends
 the engine's stdin (a write under way finishes first). A second click on the window's close button closes it
@@ -528,18 +552,17 @@ the plan). A headset without one has no installer (exit status 2). The engine is
   program that writes to the headset runs in its own process group and is never cut off: the stop takes
   effect when it has ended. The stopped task is pending again, and `finished`'s `where` says the headset's
   state.
-- **Secrets.** A form's secret values stay in the engine's memory: never in a log, the state, `.env`, a
+- **Secrets.** A form's secret values stay in the engine's memory: never in a log, the state, the records, a
   command line (refused), an event or stderr; a program gets them on its stdin only. Text that would carry
   one shows `***`.
-- **Settings.** What the installer finds out (a headset's serials) it writes to `.env`
-  (`localconfig.update`: the key's line replaced, everything else kept; a missing `.env` starts as
-  `.env.example` and each headset's `env.example`).
+- **Settings.** What the installer finds out (a headset's serials) it records (`ctx.set_setting`,
+  `localconfig.update`: `out/records.json`; the owner's SSH key goes to `settings.json`) ([Settings](#settings)).
 - **Power.** Before each task that writes to the headset the engine checks the computer's battery again
   and fails the task before its write when it has dropped below the limit ([the command
   line](#the-command-line)).
 - **Exit status.** 0 finished, 1 failed, 2 a usage error, no installer or a refused workflow, 3 stopped.
 - **The backup as one file.** `backup export FILE` writes the headset's backup (`Headset.backup_set()`: the
-  verified backup folder, the identity, other files and the `.env` settings the way back needs on another
+  verified backup folder, the identity, other files and the settings the way back needs on another
   computer) as one uncompressed tar ([overpressure/backup.py](../overpressure/backup.py)), whose partition
   images are sparse members (GNU's PAX format 1.0: their zero runs are not stored; tarfile and GNU tar read
   them back whole):
@@ -548,8 +571,8 @@ the plan). A headset without one has no installer (exit status 2). The engine is
   the file read back after; it appears only when both match, never over an existing file. `backup import
   FILE` refuses another kind of headset, another headset than this computer's identity, a damaged file and
   any file that would replace a different one; a backup already there with the same manifest is kept,
-  another gets a new folder beside it. The imported backup is verified, then `Headset.adopt_backup` names
-  it in `.env`, its zero runs handed back to the disk as a new backup's are
+  another gets a new folder beside it. The imported backup is verified, then `Headset.adopt_backup` records
+  it, its zero runs handed back to the disk as a new backup's are
   ([overpressure/holes.py](../overpressure/holes.py)). An export holds what reaches the headset's maintenance
   system: keep it private.
 
@@ -606,7 +629,8 @@ the state `OVERPRESSURE_DEMO_STATE` names (`maker` by default; `overpressure`, `
 | Request | Fields | Answer |
 | --- | --- | --- |
 | `hello` | | `protocol` (major.minor; an app refuses a newer major), `version`, `platform`, `demo`, `first_setup` (the first setup follows the disclaimer), `disclaimer` {`title`, `text`, `accept`, `due`, `accepted`} |
-| `settings`, `set_settings` | `appearance`: `system`, `light` or `dark` | the settings, kept in `out/app.json` |
+| `settings`, `set_settings` | `appearance`: `system`, `light` or `dark`; `disclaimer_every_start`; `ssh_public_key` (a public key file, or empty; anything else is refused) | the settings, kept in `settings.json`, with `disclaimer_seen` (`out/app.json`) and `folder` (the data folder) |
+| `open_folder` | | {}; the data folder in the system's file manager (the demo: nothing) |
 | `accept_disclaimer` | `every_start` | the settings; the disclaimer is accepted for the server and every program it starts. Unticked, it is due again with a new overpressure |
 | `headsets` | | `headsets` [{`codename`, `name`, `soc`, `year`, `repository`, `development` (no release yet), `downloaded`, `checkout`, `channel`, `branch` (a preview's), `pinned`, `refused`, `has_steps`, `assesses` (it looks at itself on USB), `workflows` [{`key`, `title`, `summary`, `erases`, `changes`, `problem` (why it cannot run now, or empty)}]}]: the catalogue's, those in development and those in `devices/` |
 | `assess` | `codename`, `first` (the page has just opened) | later: what a look at the headset on USB found without changing it (`Headset.assess`): `state` (`absent`, `maker`, `overpressure`, `bootloader`, `recovery`, `edl`, `unknown`), `system`, `version`, `facts` [[label, value]], `workflows` (those that fit, the recommended one first; none when nothing fits as it is), `note` (what to do then, or why); `assesses` false for a headset that cannot look. Refused while something runs |
@@ -727,7 +751,7 @@ an administrator.
 | [overpressure/lp.py](../overpressure/lp.py) | `super`'s logical partitions: the metadata Android's dynamic partitions use |
 | [overpressure/progress.py](../overpressure/progress.py) | The progress lines a child program prints, which the installer and the window show as bars |
 | [overpressure/version.py](../overpressure/version.py) | This overpressure's version in the tags' spelling, its channel and commit (`--version`) |
-| [overpressure/localconfig.py](../overpressure/localconfig.py) | `.env`: each headset's settings with its own key prefix; `DeviceSettings`, what every Qualcomm Android headset names |
+| [overpressure/localconfig.py](../overpressure/localconfig.py) | each headset's settings with its own key prefix, in layers: defaults, the records (`out/records.json`), the owner's (`settings.json`), a developer's `.env` and the environment; the one-time migration of an earlier `.env`; `DeviceSettings`, what every Qualcomm Android headset names |
 | [overpressure/fastboot.py](../overpressure/fastboot.py) | flashing an image sparse above a size, raw below; a restart into the bootloader that returns once its new session is listed; the RAM boot: `fastboot boot` with the headset's checks, never a write |
 | [overpressure/doctor.py](../overpressure/doctor.py) | the dependency checks: the host's, the build container's, then the headset's (`Headset.dependencies()`) from the shared ones (settings, EDL backup and tools, adb and fastboot, Windows' USB link, Linux's USB access) |
 | [overpressure/usbaccess.py](../overpressure/usbaccess.py) | Linux's USB access: what the installed udev rules grant for each USB mode, the fix per distribution, a connected device's access |

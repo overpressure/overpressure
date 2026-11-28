@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from overpressure import carryover
+from overpressure import carryover, localconfig
 
 
 def folder(root: Path, name: str) -> Path:
@@ -44,7 +44,8 @@ class CarryOverTests(unittest.TestCase):
         key = self.new / "out" / "dev" / "id_ed25519"
         brought = carryover.carry(self.old, self.new, headset_files=lambda: [key], say=lambda _text: None)
         self.assertEqual(len(brought), 5, brought)
-        self.assertEqual((self.new / ".env").read_text(encoding="utf-8"), "PICO4_BACKUP=backup/stock\n")
+        self.assertFalse((self.new / ".env").exists())  # its .env migrated: the records keep what it named
+        self.assertEqual(localconfig.records(self.new), {"PICO4_BACKUP": "backup/stock"})
         self.assertTrue((self.new / "backup" / "stock" / "manifest.json").is_file())
         self.assertFalse((self.old / "backup").exists())  # moved, not kept twice
         self.assertIn(str(self.new / "backup"), (self.old / carryover.MOVED).read_text(encoding="utf-8"))
@@ -79,27 +80,34 @@ class CarryOverTests(unittest.TestCase):
         self.assertEqual((self.new / "backup" / "stock" / "image.bin").stat().st_size, 3 * 1024 * 1024)
         self.assertFalse((self.old / "backup").exists())
 
-    def test_settings_naming_files_left_behind_are_commented_out(self):
-        (self.old / "cache" / "edl-ng").mkdir(parents=True)
-        (self.old / "cache" / "edl-ng" / "edl-ng.exe").write_text("", encoding="utf-8")
+    def test_an_older_env_comes_as_records_and_settings_without_its_programs(self):
         (self.old / ".env").write_text(
             "PICO4_BACKUP=backup/stock\nPICO4_EDL=cache/edl-ng/edl-ng.exe\nPICO4_EDL_SERIAL=ABC\n"
-            "PICO4_LOADER=assets/none.elf\n",
+            "PICO4_NCM_PYTHON=cache/edl-venv/Scripts/python.exe\nPICO4_SSH_PUBLIC_KEY=C:/me/id.pub\n"
+            "OVERPRESSURE_PRIVATE_WORDS=secret\n",
             encoding="utf-8",
         )
-        said: list[str] = []
-        carryover.carry(self.old, self.new, say=said.append)
-        lines = (self.new / ".env").read_text(encoding="utf-8").splitlines()
-        # The backup moved here and the serial is no file: both stay; a path missing in both folders stays too.
-        self.assertEqual(lines[0], "PICO4_BACKUP=backup/stock")
-        self.assertEqual(lines[2:], ["PICO4_EDL_SERIAL=ABC", "PICO4_LOADER=assets/none.elf"])
-        self.assertTrue(lines[1].startswith("# Left in ") and lines[1].endswith("PICO4_EDL=cache/edl-ng/edl-ng.exe"))
-        self.assertTrue(any("PICO4_EDL" in text for text in said))
+        localconfig.save_owner_settings({"appearance": "dark"}, self.new)  # the app's own, before the question
+        carryover.carry(self.old, self.new, say=lambda _text: None)
+        # Where its programs came from stays behind: the fetched ones count here.
+        self.assertEqual(localconfig.records(self.new), {"PICO4_BACKUP": "backup/stock", "PICO4_EDL_SERIAL": "ABC"})
+        self.assertEqual(localconfig.owner_settings(self.new), {"appearance": "dark", "ssh_public_key": "C:/me/id.pub"})
+
+    def test_a_newer_folders_settings_and_records_merge_key_by_key(self):
+        (self.old / ".env").unlink()
+        localconfig.record({"PICO4_ADB_SERIAL": "OLD", "PICO4_EDL_SERIAL": "E1"}, self.old)
+        localconfig.save_owner_settings({"appearance": "light", "ssh_public_key": "k.pub"}, self.old)
+        localconfig.record({"PICO4_ADB_SERIAL": "NEW"}, self.new)
+        localconfig.save_owner_settings({"appearance": "dark"}, self.new)
+        brought = carryover.carry(self.old, self.new, say=lambda _text: None)
+        self.assertIn("your settings and what overpressure knows about the headset", brought)
+        self.assertEqual(localconfig.records(self.new), {"PICO4_ADB_SERIAL": "NEW", "PICO4_EDL_SERIAL": "E1"})
+        self.assertEqual(localconfig.owner_settings(self.new), {"appearance": "dark", "ssh_public_key": "k.pub"})
 
     def test_nothing_here_is_replaced(self):
-        (self.new / ".env").write_text("OWN=1\n", encoding="utf-8")
+        localconfig.record({"PICO4_BACKUP": "backup/mine"}, self.new)
         carryover.carry(self.old, self.new, say=lambda _text: None)
-        self.assertEqual((self.new / ".env").read_text(encoding="utf-8"), "OWN=1\n")
+        self.assertEqual(localconfig.records(self.new), {"PICO4_BACKUP": "backup/mine"})
 
     def test_a_declined_folder_is_not_asked_about_again(self):
         carryover.decline(self.old, self.new)

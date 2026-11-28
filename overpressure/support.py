@@ -6,9 +6,9 @@
 The zip holds about.txt (this overpressure, the headset's release, this computer's system), the installer's
 records of the headset under installer/ (out/install/<codename>/: each step's log and every workflow's state)
 and what the headset adds under headset/ (Headset.support_files: its own logs, its device's bundle). Every text
-file is masked: the values of the serial settings (.env and the environment), what the headset names
-(Headset.support_masks) and this computer's home folder; a binary file goes in as it is (a headset's own bundle
-masks itself). Nothing is sent anywhere: the owner reads the file and attaches it to a bug report.
+file is masked: the values of the serial settings (recorded, a developer's .env, the environment), what the
+headset names (Headset.support_masks) and this computer's home folder; a binary file goes in as it is (a
+headset's own bundle masks itself). Nothing is sent anywhere: the owner reads the file and attaches it to a bug report.
 """
 
 from __future__ import annotations
@@ -101,8 +101,11 @@ def bundle(  # noqa: PLR0913  # the headset and the file; where things are keywo
     environ: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Write the bundle of @p headset to @p target (a zip); return its members."""
+    environ = os.environ if environ is None else environ
+    # The serials the installer recorded count as the environment's: masked the same way.
     found = identifiers(
-        env if env is not None else localconfig.ROOT / ".env", os.environ if environ is None else environ
+        env if env is not None else localconfig.ROOT / ".env",
+        {**(localconfig.records(root) if env is None else {}), **environ},
     )
     unmasked = None
     try:

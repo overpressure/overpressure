@@ -28,10 +28,15 @@ export interface AppUpdate {
   notes: string;
 }
 
+/** The owner's settings (settings.json in the data folder) and where they are kept. */
 export interface Settings {
   appearance: Appearance;
   disclaimer_every_start: boolean;
   disclaimer_seen: string;
+  /** The owner's own public key (.pub), enrolled on the installed system besides this computer's; "" for none. */
+  ssh_public_key: string;
+  /** The folder overpressure keeps its data in. */
+  folder: string;
 }
 
 export interface Workflow {

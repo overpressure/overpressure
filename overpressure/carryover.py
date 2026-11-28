@@ -2,11 +2,12 @@
 """An owner's data from the overpressure folder this one replaces (docs/tool.md#a-newer-overpressure).
 
 A newer release unpacks into a folder of its own (overpressure-VERSION), beside the one before it. What the
-owner made lives in the earlier folder: the settings (.env), the headset's backup (backup/, the way back to
-its own system), the installer's records (out/install/, which say what the headset runs) and the headsets
-downloaded into devices/. A fresh folder finds the earlier one beside it and brings that over: the backup
-moves (a rename on the same disk; it is too large to keep twice), the rest is copied, and nothing that is
-here already is replaced. A headset names the other files its way back needs (Headset.backup_set): those
+owner made lives in the earlier folder: the owner's settings (settings.json), what overpressure recorded about
+the headset (out/records.json; an older folder's .env, migrated on the way), the headset's backup (backup/,
+the way back to its own system), the installer's records (out/install/, which say what the headset runs) and
+the headsets downloaded into devices/. A fresh folder finds the earlier one beside it and brings that over:
+the backup moves (a rename on the same disk; it is too large to keep twice), the rest is copied, and nothing
+that is here already is replaced. A headset names the other files its way back needs (Headset.backup_set): those
 are copied too. The window asks on its first start in a fresh folder; `python -m overpressure carry-over
 [FOLDER]` does it from a terminal.
 """
@@ -21,7 +22,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from . import REPO, progress
+from . import REPO, localconfig, progress
 from . import version as own_version
 
 if TYPE_CHECKING:
@@ -29,8 +30,9 @@ if TYPE_CHECKING:
 
 #: What a fresh folder decided about an earlier one: brought over, or declined (then never asked again).
 RECORD = Path("out") / "carried-over.json"
-#: The owner's own data, by its place in an overpressure folder.
+#: The owner's own data, by its place in an overpressure folder (an older one's settings in .env).
 SETTINGS, BACKUP, INSTALLER, DEVICES = Path(".env"), Path("backup"), Path("out") / "install", Path("devices")
+RECORDS = localconfig.RECORDS
 #: The earlier folder's note where its backup went.
 MOVED = "MOVED.txt"
 
@@ -41,8 +43,11 @@ def is_overpressure(folder: Path) -> bool:
 
 
 def owners_data(folder: Path) -> list[Path]:
-    """Return what of the owner's data FOLDER holds, by its place there."""
-    return [part for part in (SETTINGS, BACKUP, INSTALLER) if (folder / part).exists()]
+    """Return what of the owner's data FOLDER holds, by its place there.
+
+    The app's own settings (settings.json) do not count: they are written before the first setup asks.
+    """
+    return [part for part in (SETTINGS, RECORDS, BACKUP, INSTALLER) if (folder / part).exists()]
 
 
 def fresh(root: Path = REPO) -> bool:
@@ -165,6 +170,8 @@ class _Count:
     def add(self, size: int, *, final: bool = False) -> None:
         """Count SIZE more bytes as done."""
         self.done += size
+        if final and not self.total:
+            self.done = self.total = 1  # nothing to copy (settings alone): done all the same
         if final or time.monotonic() - self.last >= REPORT_EVERY:
             self._tell()
 
@@ -233,10 +240,8 @@ def _copy(src: Path, dst: Path, count: _Count) -> None:
 
 
 def _plan(old: Path, root: Path) -> list[tuple[Path, Path, str]]:
-    """Return what of OLD's settings, downloaded headsets and installer records ROOT takes: (from, to, words)."""
+    """Return what of OLD's downloaded headsets and installer records ROOT takes: (from, to, words)."""
     plan: list[tuple[Path, Path, str]] = []
-    if (old / SETTINGS).is_file() and not (root / SETTINGS).exists():
-        plan.append((old / SETTINGS, root / SETTINGS, "the settings (.env)"))
     for folder in sorted((old / DEVICES).glob("*/")) if (old / DEVICES).is_dir() else []:
         # Downloaded headsets (a release or a preview); a development checkout is the developer's own.
         if not (folder / "headset.json").is_file() or (folder / ".git").exists():
@@ -269,7 +274,7 @@ def carry(
     plan = _plan(old, root)
     backup = (old / BACKUP).exists() and not (root / BACKUP).exists()
     count = _Count(sum(_size(src) for src, _dst, _words in plan) + (_size(old / BACKUP) if backup else 0), report)
-    brought: list[str] = []
+    brought = _settings(old, root)
     for src, dst, words in plan:
         count.start(f"Copying {words}")
         _copy(src, dst, count)
@@ -293,36 +298,26 @@ def carry(
         )
         brought.append("the backup (backup/, moved)")
     count.add(0, final=True)
-    if any(dst == root / SETTINGS for _src, dst, _words in plan):
-        left = left_behind(old, root)
-        if left:
-            say(f"Settings that name files left in {old}, now commented out in .env: {', '.join(left)}")
     _record(root, {"from": str(old), "version": own_version.describe(old), "brought": brought})
     return brought
 
 
-def left_behind(old: Path, root: Path = REPO) -> list[str]:
-    """Comment out the settings in ROOT's .env that name a file OLD has and ROOT has not; return their keys.
+def _settings(old: Path, root: Path) -> list[str]:
+    """Bring OLD's settings and records over, key by key, keeping ROOT's own; return what came, in words.
 
-    A path setting is relative to its folder: one into what stays behind (cache/: a tool built or fetched
-    there, an edl-ng or a Python) would name nothing here and keep the fetched tool from being used. Commented
-    out, the setting's default takes over; the line stays for the owner to see.
+    An older folder's .env is migrated (localconfig.migrate): its records and the owner's settings come,
+    where its programs came from does not (a tool of its own in its cache/ would name nothing here).
     """
-    path = root / SETTINGS
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    keys: list[str] = []
-    for n, line in enumerate(lines):
-        key, sep, value = line.strip().partition("=")
-        value = value.strip().strip("\"'")
-        if line.lstrip().startswith("#") or not sep or not value or not any(c in value for c in "/\\"):
-            continue
-        if Path(value).is_absolute() or not (old / value).exists() or (root / value).exists():
-            continue
-        lines[n] = f"# Left in {old} (carry-over): {line}"
-        keys.append(key.strip())
-    if keys:
-        path.write_text("".join(lines), encoding="utf-8", newline="")
-    return keys
+    mine = localconfig.owner_settings(root)
+    owner = {k: v for k, v in localconfig.owner_settings(old).items() if k not in mine}
+    if owner:
+        localconfig.save_owner_settings(owner, root)
+    have = localconfig.records(root)
+    found = {k: v for k, v in localconfig.records(old).items() if k not in have}
+    if found:
+        localconfig.record(found, root)
+    moved = localconfig.migrate(old / SETTINGS, root) if (old / SETTINGS).is_file() else []
+    return ["your settings and what overpressure knows about the headset"] if owner or found or moved else []
 
 
 def question(old: Path) -> str:
