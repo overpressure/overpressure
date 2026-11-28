@@ -6,9 +6,11 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Callable
@@ -16,6 +18,7 @@ from unittest import mock
 
 from overpressure import REPO, disclaimer, fastboot, linux, runner
 from overpressure import __main__ as cli
+from overpressure import headset as headset_module
 from overpressure.headset import Command, Headset, Info, Param, Registry, Step, discover
 
 #: The command line's own words: a step may name them instead of a command of the headset.
@@ -251,6 +254,39 @@ class RegistryTests(unittest.TestCase):
                     pass
                 else:
                     self.assertIn(words[0], headset.commands(), (codename, step.key))
+
+
+class FreshImportTests(unittest.TestCase):
+    """A long-lived process runs the headset on disk: a download that replaced its folder is imported anew."""
+
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.package = f"opfresh{os.getpid()}"
+        sys.path.insert(0, str(self.root))
+        self.addCleanup(sys.path.remove, str(self.root))
+        self.addCleanup(lambda: [sys.modules.pop(n) for n in list(sys.modules) if n.startswith(self.package)])
+
+    def download(self, value: int) -> Path:
+        """Put a headset's tooling in place as a download does: a new folder renamed over the old one."""
+        folder, fresh = self.root / self.package, self.root / f".{self.package}.new"
+        (fresh / "tooling").mkdir(parents=True)
+        (fresh / "tooling" / "__init__.py").write_text("from .part import VALUE\n", encoding="utf-8")
+        (fresh / "tooling" / "part.py").write_text(f"VALUE = {value}\n", encoding="utf-8")
+        if folder.exists():
+            shutil.rmtree(folder)
+        fresh.rename(folder)
+        return folder / "tooling" / "__init__.py"
+
+    def test_a_replaced_folder_is_imported_anew_and_an_unchanged_one_is_kept(self):
+        name = f"{self.package}.tooling"
+        first = headset_module.import_fresh(name, [self.download(1)])
+        self.assertEqual(first.VALUE, 1)
+        self.assertIs(headset_module.import_fresh(name, [self.root / self.package / "tooling" / "__init__.py"]), first)
+        second = headset_module.import_fresh(name, [self.download(2)])
+        self.assertEqual(second.VALUE, 2)  # the package and the module under it, both new
+        self.assertIsNot(second, first)
 
 
 class CommandLineTests(unittest.TestCase):

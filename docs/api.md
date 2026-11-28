@@ -546,6 +546,7 @@ The interface's package itself ([source](../overpressure/api/v1/__init__.py)).
 - `runs() -> str`: Return the interfaces this overpressure runs, in words.
 - `api_problem(value: object) -> str`: Return why this overpressure cannot run a headset made for interface VALUE, "" when it can.
 - `refusal(codename: str, data: dict) -> str`: Return why a headset folder with headset.json DATA cannot run here, or "" when it can.
+- `import_fresh(name: str, files: Iterable[Path]) -> ModuleType`: Import module NAME, anew when FILES changed since this process imported it.
 - `discover() -> Registry`: Every devices/<codename>/tooling package that exports HEADSET, whose headset.json this interface runs.
 
 ## install

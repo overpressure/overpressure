@@ -33,7 +33,8 @@ from typing import TYPE_CHECKING, Callable
 from . import REPO
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
+    from types import ModuleType
 
     from .fastboot import RamBootTarget
     from .install import Stage
@@ -454,11 +455,47 @@ def refusal(codename: str, data: dict) -> str:
     return ""
 
 
+#: What each module imported by import_fresh was imported from: its files' stamps, by module name.
+_STAMPS: dict[str, tuple[tuple[int, int, int], ...]] = {}
+
+
+def _stamp(files: Iterable[Path]) -> tuple[tuple[int, int, int], ...]:
+    """Return what tells @p files apart from earlier ones of the same name: inode, size and time; 0s when missing."""
+    return tuple(_file_stamp(path) for path in files)
+
+
+def _file_stamp(path: Path) -> tuple[int, int, int]:
+    """Return @p path's inode, size and time; 0s when it is missing."""
+    try:
+        found = path.stat()
+    except OSError:
+        return (0, 0, 0)
+    return (found.st_ino, found.st_size, found.st_mtime_ns)
+
+
+def import_fresh(name: str, files: Iterable[Path]) -> ModuleType:
+    """Import module NAME, anew when FILES changed since this process imported it.
+
+    A long-lived process (the app's server) keeps what it imported. A download replaces a headset's folder
+    (another release, another branch): then the package and every module under it are imported again, so that
+    the process runs the headset it has on disk, not the one it started with.
+    """
+    stamp = _stamp(files)
+    if _STAMPS.get(name, stamp) != stamp:
+        top = name.rsplit(".", 1)[0]  # devices.phoenix of devices.phoenix.tooling: the whole headset
+        for loaded in [n for n in sys.modules if n == top or n.startswith(top + ".")]:
+            del sys.modules[loaded]
+        importlib.invalidate_caches()
+    _STAMPS[name] = stamp
+    return importlib.import_module(name)
+
+
 def discover() -> Registry:
     """Every devices/<codename>/tooling package that exports HEADSET, whose headset.json this interface runs.
 
     The headsets live in the data root's devices/ (REPO; in a checkout its own folder): they name their files
-    relative to it, as the build container's /work does.
+    relative to it, as the build container's /work does. A headset whose folder a download replaced since this
+    process imported it is imported anew (import_fresh).
     """
     registry = Registry()
     for folder in sorted((REPO / "devices").glob("*/tooling/__init__.py")):
@@ -467,7 +504,8 @@ def discover() -> Registry:
         if refused:
             registry.refused[codename] = refused
             continue
-        module = importlib.import_module(f"devices.{codename}.tooling")
+        root = folder.parent.parent
+        module = import_fresh(f"devices.{codename}.tooling", (folder, root / MANIFEST))
         headset = getattr(module, "HEADSET", None)
         if isinstance(headset, Headset):
             if headset.info.codename != codename:
