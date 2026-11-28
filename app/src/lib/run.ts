@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 // A run as its events tell it: the plan's stages and tasks, their states, notes, the pending ask, the log,
-// and how far the whole run is. No timers: the ring moves only with what the engine reports.
+// how far the whole run is and how long it still takes. No timers: progress moves only with what the engine
+// reports.
 import type { PlanStage, PlanTask, RunEvent, TaskStatus } from "./protocol";
 
 /** The details view keeps the last lines only. */
@@ -115,7 +116,8 @@ export function stageFraction(stage: StageState): number {
 
 export type StageStatus = "pending" | "active" | "done" | "failed";
 
-export function stageStatus(stage: StageState): StageStatus {
+/** A stage's status from its tasks' (a run's, or as an earlier run left them). */
+export function stageStatus(stage: { tasks: { status: TaskStatus }[] }): StageStatus {
   const states = stage.tasks.map((t) => t.status);
   if (states.includes("failed")) return "failed";
   if (states.length > 0 && states.every((s) => FINISHED.includes(s))) return "done";
@@ -124,7 +126,7 @@ export function stageStatus(stage: StageState): StageStatus {
 }
 
 export interface Overall {
-  /** The whole run's share done, 0 to 1: each stage an equal part of the ring. */
+  /** The whole run's share done, 0 to 1: each stage an equal part of it. */
   fraction: number;
   /** The stage the run is in: the first not done (the last when all are). */
   stage: number;
@@ -142,4 +144,48 @@ export function overall(state: RunState): Overall {
     tasks.find((t) => t.status === "running" || t.status === "failed") ??
     tasks.find((t) => !FINISHED.includes(t.status));
   return { fraction, stage, task };
+}
+
+/** How long what is left takes, by the plan's estimates: seconds, and whether a task without one makes it more. */
+export interface Left {
+  seconds: number;
+  /** A task left has no estimate: it takes at least this long. */
+  atLeast: boolean;
+}
+
+/** The tasks not finished yet, a running one by what of it is left (its reported fraction, else all of it). */
+export function stageLeft(stage: StageState): Left {
+  let seconds = 0;
+  let atLeast = false;
+  for (const task of stage.tasks) {
+    if (FINISHED.includes(task.status)) continue;
+    if (task.seconds === null) {
+      atLeast = true;
+      continue;
+    }
+    const share = task.status === "running" && task.fraction !== null ? 1 - Math.min(Math.max(task.fraction, 0), 1) : 1;
+    seconds += task.seconds * share;
+  }
+  return { seconds, atLeast };
+}
+
+/** What the whole run has left. */
+export function runLeft(state: RunState): Left {
+  return state.stages.map(stageLeft).reduce(
+    (sum, left) => ({ seconds: sum.seconds + left.seconds, atLeast: sum.atLeast || left.atLeast }),
+    { seconds: 0, atLeast: false },
+  );
+}
+
+/** A time in words: "under a minute", "about 6 min", "about 1 h 20 min"; "" for nothing known. */
+export function duration(left: Left): string {
+  const { seconds, atLeast } = left;
+  if (seconds <= 0) return "";
+  const about = atLeast ? "at least" : "about";
+  if (seconds < 60) return atLeast ? "at least a minute" : "under a minute";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${about} ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return `${about} ${hours} h${rest ? ` ${rest} min` : ""}`;
 }

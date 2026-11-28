@@ -189,7 +189,11 @@
   </main>
 
   <footer class="status">
-    {#if app.running}
+    {#if app.running && app.run?.ask}
+      <button class="status-run waiting" onclick={() => (app.page = "run")}
+        ><Icon name="info" size={13} />{app.run.headset}: waiting for you · Open</button
+      >
+    {:else if app.running}
       <button class="status-run" onclick={() => (app.page = "run")}
         ><span class="dot"></span>{app.run?.headset}: {progress}% · Open</button
       >
@@ -377,6 +381,11 @@
     gap: 7px;
     font-size: 11px;
     padding: 0;
+  }
+
+  .status-run.waiting {
+    color: var(--blue-text);
+    font-weight: 600;
   }
 
   button.status-run:hover {

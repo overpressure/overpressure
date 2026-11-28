@@ -1,20 +1,31 @@
 <!-- SPDX-License-Identifier: Unlicense -->
-<!-- A workflow chosen after an earlier run of it: continue where it stopped (the first option, chosen), or start
-     over from a stage (its tasks run again; a stage that writes to the headset says so). -->
+<!-- A workflow chosen after an earlier run of it: how far that run came (the run page's bar and marks), and
+     "Continue with" the stage it stopped at, chosen; or, folded away, start over from a stage (its tasks run
+     again; a stage that writes to the headset says so). -->
 <script lang="ts">
   import { app, type Sheet } from "../lib/app.svelte";
+  import { stageStatus } from "../lib/run";
   import Badge from "./Badge.svelte";
   import Icon from "./Icon.svelte";
+  import StageBar from "./StageBar.svelte";
 
   let { sheet }: { sheet: Sheet } = $props();
 
   let dialog = $state<HTMLDialogElement>();
   /** "" continues; a stage's id starts over from it. */
   let from = $state("");
+  let earlier = $state(false);
 
-  const finished = (s: Sheet["stages"][number]) => s.tasks.every((t) => t.status === "done" || t.status === "skipped");
-  const done = $derived(sheet.stages.filter(finished).length);
+  const statuses = $derived(sheet.stages.map((s) => stageStatus(s)));
+  const done = $derived(statuses.filter((s) => s === "done").length);
+  const next = $derived(sheet.stages[statuses.findIndex((s) => s !== "done")]);
   const chosen = $derived(sheet.stages.find((s) => s.id === from));
+  const bar = $derived(
+    sheet.stages.map((s, i) => {
+      const finished = s.tasks.filter((t) => t.status === "done" || t.status === "skipped").length;
+      return { title: s.title, status: statuses[i] ?? "pending", fraction: s.tasks.length ? finished / s.tasks.length : 0 };
+    }),
+  );
 
   $effect(() => {
     dialog?.showModal();
@@ -28,26 +39,42 @@
 
 <dialog bind:this={dialog} aria-labelledby="sheet-title" onclose={() => (app.sheet = null)}>
   <div class="title">
-    <h2 id="sheet-title">{sheet.title}: welcome back</h2>
+    <h2 id="sheet-title">Continue {sheet.title}?</h2>
     <button class="iconbtn" aria-label="Close" onclick={close}><Icon name="close" /></button>
   </div>
   <div class="body">
-    <p class="muted">An earlier run did {done} of {sheet.stages.length} stages.</p>
+    <div class="progress">
+      <StageBar stages={bar} label="An earlier run did {done} of {sheet.stages.length} stages" />
+      <p class="muted">An earlier run did {done} of {sheet.stages.length} stages.</p>
+    </div>
     <fieldset>
       <legend class="sr-only">Where to start</legend>
       <label class="option continue">
         <input type="radio" name="from" value="" bind:group={from} />
-        <span class="text"><b>Continue where it stopped</b><small>What is done stays done.</small></span>
+        <span class="text"
+          ><b>{next ? `Continue with “${next.title}”` : "Continue where it stopped"}</b><small
+            >What is done stays done.</small
+          ></span
+        >
       </label>
-      <p class="over muted">Or start over from a stage:</p>
-      {#each sheet.stages as s (s.id)}
-        <label class="option">
-          <input type="radio" name="from" value={s.id} bind:group={from} />
-          <span class="mark" class:done={finished(s)}>{#if finished(s)}<Icon name="check" size={12} />{/if}</span>
-          <span class="text">{s.title}</span>
-          {#if s.tasks.some((t) => t.writes)}<Badge icon="alert" tone="warn" tip="Writes to the headset" focusable={false} />{/if}
-        </label>
-      {/each}
+      <details bind:open={earlier} ontoggle={() => !earlier && (from = "")}>
+        <summary>Start over from a stage</summary>
+        <div class="stages">
+          {#each sheet.stages as s, i (s.id)}
+            <label class="option">
+              <input type="radio" name="from" value={s.id} bind:group={from} />
+              <span class="mark {statuses[i]}"
+                >{#if statuses[i] === "done"}<Icon name="check" size={12} />{:else if statuses[i] === "failed"}<Icon
+                    name="alert"
+                    size={12}
+                  />{:else}{i + 1}{/if}</span
+              >
+              <span class="text">{s.title}</span>
+              {#if s.tasks.some((t) => t.writes)}<Badge icon="alert" tone="warn" tip="Writes to the headset" focusable={false} />{/if}
+            </label>
+          {/each}
+        </div>
+      </details>
     </fieldset>
     {#if chosen}
       <p class="callout info">From “{chosen.title}” on, every task runs again, also those an earlier run finished.</p>
@@ -72,7 +99,16 @@
   .body {
     padding: 0 20px 16px;
     display: grid;
-    gap: 12px;
+    gap: 14px;
+  }
+
+  .progress {
+    display: grid;
+    gap: 8px;
+  }
+
+  .progress p {
+    font-size: 12px;
   }
 
   fieldset {
@@ -80,7 +116,7 @@
     margin: 0;
     padding: 0;
     display: grid;
-    gap: 4px;
+    gap: 8px;
   }
 
   .option {
@@ -105,7 +141,7 @@
   }
 
   .continue {
-    padding: 10px;
+    padding: 12px;
   }
 
   .text {
@@ -118,25 +154,47 @@
     color: var(--muted);
   }
 
-  .over {
-    margin: 8px 0 2px;
+  summary {
+    width: fit-content;
+    padding: 4px 2px;
+    color: var(--muted);
     font-size: 12px;
+    cursor: pointer;
+  }
+
+  summary:hover {
+    color: var(--blue);
+  }
+
+  .stages {
+    display: grid;
+    gap: 4px;
+    margin-top: 6px;
   }
 
   .mark {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     flex-shrink: 0;
     border-radius: 50%;
-    border: 1px solid var(--line);
+    border: 2px solid var(--track);
     display: grid;
     place-items: center;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 650;
   }
 
   .mark.done {
-    background: var(--good-bg);
-    color: var(--good-text);
-    border-color: var(--good-text);
+    background: var(--green);
+    border-color: var(--green);
+    color: var(--bg);
+  }
+
+  .mark.failed {
+    background: var(--bad-bg);
+    border-color: var(--red);
+    color: var(--red);
   }
 
   .callout {

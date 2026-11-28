@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 import { describe, expect, it } from "vitest";
 import type { RunEvent } from "./protocol";
-import { LOG_LINES, apply, initial, overall, stageStatus } from "./run";
+import { LOG_LINES, apply, duration, initial, overall, runLeft, stageStatus } from "./run";
 
 const RUN = "run-1";
 
@@ -80,5 +80,33 @@ describe("a run's state", () => {
     apply(state, { run: RUN, event: "finished", status: "stopped", task: null });
     expect(state.ask).toBeNull();
     expect(state.finished?.status).toBe("stopped");
+  });
+});
+
+describe("the time a run has left", () => {
+  it("adds the estimates of what is not done, a running task by what of it is left", () => {
+    const state = initial(RUN);
+    const timed = plan();
+    if (timed.event !== "plan") throw new Error("a plan");
+    timed.stages[0]!.tasks[0]!.seconds = 120;
+    timed.stages[1]!.tasks[0]!.seconds = 600;
+    timed.stages[1]!.tasks[1]!.seconds = 60;
+    apply(state, timed);
+    expect(runLeft(state)).toEqual({ seconds: 780, atLeast: false });
+    apply(state, { run: RUN, event: "task", stage: "a", task: "a1", status: "done" });
+    apply(state, { run: RUN, event: "task", stage: "b", task: "b1", status: "running" });
+    apply(state, { run: RUN, event: "progress", task: "b1", fraction: 0.5, text: "writing" });
+    expect(runLeft(state)).toEqual({ seconds: 360, atLeast: false });
+    expect(duration(runLeft(state))).toBe("about 6 min");
+  });
+
+  it("says when a task without an estimate makes it longer, and nothing when nothing is known", () => {
+    const state = initial(RUN);
+    apply(state, plan());
+    expect(duration(runLeft(state))).toBe("");
+    expect(duration({ seconds: 30, atLeast: false })).toBe("under a minute");
+    expect(duration({ seconds: 300, atLeast: true })).toBe("at least 5 min");
+    expect(duration({ seconds: 4800, atLeast: false })).toBe("about 1 h 20 min");
+    expect(duration({ seconds: 3600, atLeast: false })).toBe("about 1 h");
   });
 });

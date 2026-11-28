@@ -437,12 +437,18 @@ settings; the window's title bar names overpressure.
   nothing, shows what runs on it, and offers the workflows that fit, the recommended one first (*Show every
   action* skips the look). Each workflow is a plain tile (an icon and a name; what it does in its tooltip, badges
   for erasing the headset and for why it cannot run now); the tools are tiles too: the backup (its export and
-  import), *Save logs* and Advanced mode. A workflow an earlier run began asks first: continue (chosen), or start
-  over from a stage.
-- **A run:** in two columns, the ring with a segment and the name of each stage, and beside it where it stands:
-  the active stage's tasks, the notes, *Details* (the log) and *Stop*; the engine's questions come as dialogs.
-  Its end shows the headset's own words and next steps, or why it failed with *Retry* and, where offered,
-  *Import backup…*. Leaving the page leaves the run going; the status bar leads back to it.
+  import), *Save logs* and Advanced mode. A workflow an earlier run began asks first, with that run's stages as
+  a bar: *Continue with* the stage it stopped at (chosen), or, folded away, start over from a stage.
+- **A run:** one column, read from the top. The status card names what happens now (the running task, its
+  progress in words), the stage (*Stage 2 of 4*), a bar split into the stages, the share done, the time left
+  from the plan's estimates and *Stop*. When the engine needs the owner, *Your turn* comes right under it in the
+  page (its first field takes the keyboard) and the card says *Waiting for you*. Below, every stage in order with
+  its mark (done, under way, failed or its number) and its time; the stage under way, or the one that failed,
+  is open with its tasks: a spinner on the running one, its own bar when its progress is measured, and the
+  notes it left; any other stage opens with a click. At the end the status card turns into the result: the
+  headset's own words and next steps with *Done*, or why it failed with *Retry* and, where offered, *Import
+  backup…*, or *Stopped* with *Start again*. The log is folded away at the bottom, with *Copy*. Leaving the
+  page leaves the run going; the status bar leads back to it and says when the run waits for the owner.
 - **Advanced mode:** the steps by group (a drop-down in a narrow window), a step's parameters with *Browse…*, its
   command line with *Copy*, *Run* (a step that writes asks first) or *Stop*, its output; the dependency checks.
 
