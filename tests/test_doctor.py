@@ -10,7 +10,7 @@ import json
 import os
 import tempfile
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 from unittest import mock
@@ -263,6 +263,10 @@ class DeviceChecksTests(unittest.TestCase):
         self.assertEqual(doctor.edl_tool_check(FakeHost(tools=("edl-ng.exe", "edl-ng")), s).status, doctor.OK)
         missing = doctor.edl_tool_check(FakeHost(tools=()), s)
         self.assertEqual((missing.status, missing.fix), (doctor.MISSING, doctor.FETCH))
+        # A setting that names a missing edl-ng is what to fix: fetching would not change it.
+        named = doctor.edl_tool_check(FakeHost(tools=()), replace(s, edl="cache/edl-ng/edl-ng.exe"))
+        self.assertEqual(missing.status, named.status)
+        self.assertIn("EXAMPLE_EDL in .env", named.fix)
 
     def test_the_backup_by_its_manifest(self):
         folder = self.root / "backup"

@@ -79,6 +79,23 @@ class CarryOverTests(unittest.TestCase):
         self.assertEqual((self.new / "backup" / "stock" / "image.bin").stat().st_size, 3 * 1024 * 1024)
         self.assertFalse((self.old / "backup").exists())
 
+    def test_settings_naming_files_left_behind_are_commented_out(self):
+        (self.old / "cache" / "edl-ng").mkdir(parents=True)
+        (self.old / "cache" / "edl-ng" / "edl-ng.exe").write_text("", encoding="utf-8")
+        (self.old / ".env").write_text(
+            "PICO4_BACKUP=backup/stock\nPICO4_EDL=cache/edl-ng/edl-ng.exe\nPICO4_EDL_SERIAL=ABC\n"
+            "PICO4_LOADER=assets/none.elf\n",
+            encoding="utf-8",
+        )
+        said: list[str] = []
+        carryover.carry(self.old, self.new, say=said.append)
+        lines = (self.new / ".env").read_text(encoding="utf-8").splitlines()
+        # The backup moved here and the serial is no file: both stay; a path missing in both folders stays too.
+        self.assertEqual(lines[0], "PICO4_BACKUP=backup/stock")
+        self.assertEqual(lines[2:], ["PICO4_EDL_SERIAL=ABC", "PICO4_LOADER=assets/none.elf"])
+        self.assertTrue(lines[1].startswith("# Left in ") and lines[1].endswith("PICO4_EDL=cache/edl-ng/edl-ng.exe"))
+        self.assertTrue(any("PICO4_EDL" in text for text in said))
+
     def test_nothing_here_is_replaced(self):
         (self.new / ".env").write_text("OWN=1\n", encoding="utf-8")
         carryover.carry(self.old, self.new, say=lambda _text: None)

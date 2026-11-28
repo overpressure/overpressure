@@ -341,7 +341,9 @@ records (`out/install/`, which say what the headset runs), the headsets download
 files a headset's way back also needs (`Headset.backup_set`: the PICO 4's SSH key for its maintenance system).
 On its first start in a fresh folder the window finds the earlier one beside it and asks before it opens; *Yes*
 moves the backup (a rename on the same disk) and copies the rest, replacing nothing the new folder has, and
-the earlier folder gets a `MOVED.txt` that says where its backup went. *No* is remembered
+the earlier folder gets a `MOVED.txt` that says where its backup went. A setting that names a file left behind
+(a tool of its own in the earlier `cache/`) is commented out in the new `.env`, so the fetched tool takes its
+place. *No* is remembered
 (`out/carried-over.json`), and a checkout is never asked. `python -m overpressure carry-over [FOLDER]` does the
 same from a terminal ([overpressure/carryover.py](../overpressure/carryover.py)).
 

@@ -293,8 +293,36 @@ def carry(
         )
         brought.append("the backup (backup/, moved)")
     count.add(0, final=True)
+    if any(dst == root / SETTINGS for _src, dst, _words in plan):
+        left = left_behind(old, root)
+        if left:
+            say(f"Settings that name files left in {old}, now commented out in .env: {', '.join(left)}")
     _record(root, {"from": str(old), "version": own_version.describe(old), "brought": brought})
     return brought
+
+
+def left_behind(old: Path, root: Path = REPO) -> list[str]:
+    """Comment out the settings in ROOT's .env that name a file OLD has and ROOT has not; return their keys.
+
+    A path setting is relative to its folder: one into what stays behind (cache/: a tool built or fetched
+    there, an edl-ng or a Python) would name nothing here and keep the fetched tool from being used. Commented
+    out, the setting's default takes over; the line stays for the owner to see.
+    """
+    path = root / SETTINGS
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    keys: list[str] = []
+    for n, line in enumerate(lines):
+        key, sep, value = line.strip().partition("=")
+        value = value.strip().strip("\"'")
+        if line.lstrip().startswith("#") or not sep or not value or not any(c in value for c in "/\\"):
+            continue
+        if Path(value).is_absolute() or not (old / value).exists() or (root / value).exists():
+            continue
+        lines[n] = f"# Left in {old} (carry-over): {line}"
+        keys.append(key.strip())
+    if keys:
+        path.write_text("".join(lines), encoding="utf-8", newline="")
+    return keys
 
 
 def question(old: Path) -> str:

@@ -202,11 +202,17 @@ def loader_check(
 
 
 def edl_tool_check(host: Host, settings: DeviceSettings, needed_for: str = EDL) -> Check:
-    """Check that edl-ng is there: the edl setting's, the fetched one or one on PATH."""
+    """Check that edl-ng is there: the edl setting's, the fetched one or one on PATH.
+
+    A setting that names a missing file is what to fix: fetching the tools would not change it.
+    """
     edl = settings.edl_program()
     found = edl.is_file() or (not edl.is_absolute() and host.which(str(edl)))
+    fix = FETCH
+    if settings.edl:
+        fix = f"{settings.key('edl')} in .env names a file that is not there: remove it to use the fetched edl-ng"
     return Check(
-        "edl-ng", needed_for, OK if found else MISSING, str(edl) if found else f"no {edl}", "" if found else FETCH
+        "edl-ng", needed_for, OK if found else MISSING, str(edl) if found else f"no {edl}", "" if found else fix
     )
 
 
